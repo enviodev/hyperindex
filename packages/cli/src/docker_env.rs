@@ -19,12 +19,15 @@ use tokio::time::Duration;
 
 const POSTGRES_IMAGE: &str = "postgres:18.3";
 const HASURA_IMAGE: &str = "hasura/graphql-engine:v2.43.0";
+const CLICKHOUSE_IMAGE: &str = "clickhouse/clickhouse-server:26.2.15.4";
 const CONFIG_HASH_LABEL: &str = "dev.envio.config-hash";
 const SOCKET_TIMEOUT: u64 = 120;
 
 const PG_CONTAINER: &str = "envio-postgres";
 const HASURA_CONTAINER: &str = "envio-hasura";
+const CH_CONTAINER: &str = "envio-clickhouse";
 const VOLUME: &str = "envio-postgres-data";
+const CH_VOLUME: &str = "envio-clickhouse-data";
 const NETWORK: &str = "envio-network";
 
 /// Extra Docker socket locations that `connect_with_local_defaults()` may miss.
@@ -147,7 +150,16 @@ async fn connect_docker() -> anyhow::Result<Docker> {
     )
 }
 
+const DEFAULT_PG_HOST: &str = "localhost";
+const DEFAULT_CH_URL: &str = "http://localhost:8123";
+
 struct EnvConfig {
+    /// None when the user hasn't set ENVIO_PG_HOST — that's our signal that
+    /// they want the Dockerised Postgres and we'll point everything at
+    /// DEFAULT_PG_HOST. Some(value) means "I manage this myself", which
+    /// bypasses the container entirely regardless of what the value is
+    /// (even "localhost").
+    pg_host: Option<String>,
     pg_port: String,
     pg_password: String,
     pg_user: String,
@@ -156,6 +168,53 @@ struct EnvConfig {
     hasura_port: String,
     hasura_enable_console: String,
     hasura_admin_secret: String,
+    /// Same presence-is-the-flag rule as pg_host: None → start our
+    /// ClickHouse container at DEFAULT_CH_URL; Some(url) → user manages it.
+    ch_host: Option<String>,
+    ch_user: String,
+    ch_password: String,
+    ch_database: String,
+}
+
+/// Parsed view of `ENVIO_CLICKHOUSE_HOST`. Scheme-derived default port lets
+/// users omit `:8123` on managed ClickHouse URLs like `https://…cloud`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClickHouseUrl {
+    scheme: String,
+    host: String,
+    port: u16,
+}
+
+impl ClickHouseUrl {
+    fn parse(raw: &str) -> anyhow::Result<Self> {
+        let url = reqwest::Url::parse(raw).with_context(|| {
+            format!(
+                "ENVIO_CLICKHOUSE_HOST={raw:?} is not a valid URL.\n\
+                 Expected format: http://host:port (e.g. http://localhost:8123).\n\
+                 Unset the variable to let the CLI start a local Docker container instead."
+            )
+        })?;
+        let scheme = url.scheme().to_string();
+        if scheme != "http" && scheme != "https" {
+            anyhow::bail!(
+                "ENVIO_CLICKHOUSE_HOST={raw:?} uses unsupported scheme {scheme:?}.\n\
+                 Only http:// and https:// are supported."
+            );
+        }
+        let host = url
+            .host_str()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "ENVIO_CLICKHOUSE_HOST={raw:?} has no hostname.\n\
+                     Expected format: http://host:port (e.g. http://localhost:8123)."
+                )
+            })?
+            .to_string();
+        let port = url
+            .port()
+            .unwrap_or(if scheme == "https" { 443 } else { 8123 });
+        Ok(Self { scheme, host, port })
+    }
 }
 
 impl EnvConfig {
@@ -165,16 +224,17 @@ impl EnvConfig {
             .load()
             .ok();
 
+        let var_opt = |name: &str| -> Option<String> {
+            std::env::var(name)
+                .ok()
+                .or_else(|| dotenv.as_ref().and_then(|m: &EnvMap| m.var(name).ok()))
+        };
         let var = |name: &str, default: &str| -> String {
-            std::env::var(name).unwrap_or_else(|_| {
-                dotenv
-                    .as_ref()
-                    .and_then(|m: &EnvMap| m.var(name).ok())
-                    .unwrap_or_else(|| default.to_string())
-            })
+            var_opt(name).unwrap_or_else(|| default.to_string())
         };
 
         Self {
+            pg_host: var_opt("ENVIO_PG_HOST"),
             pg_port: var("ENVIO_PG_PORT", "5433"),
             pg_password: var("ENVIO_PG_PASSWORD", "testing"),
             pg_user: var("ENVIO_PG_USER", "postgres"),
@@ -183,20 +243,76 @@ impl EnvConfig {
             hasura_port: var("HASURA_EXTERNAL_PORT", "8080"),
             hasura_enable_console: var("HASURA_GRAPHQL_ENABLE_CONSOLE", "true"),
             hasura_admin_secret: var("HASURA_GRAPHQL_ADMIN_SECRET", "testing"),
+            ch_host: var_opt("ENVIO_CLICKHOUSE_HOST"),
+            ch_user: var("ENVIO_CLICKHOUSE_USERNAME", "default"),
+            ch_password: var("ENVIO_CLICKHOUSE_PASSWORD", "testing"),
+            ch_database: var("ENVIO_CLICKHOUSE_DATABASE", "envio_sink"),
         }
     }
 
-    /// Deterministic hash of all config values used to detect drift.
-    fn config_hash(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(&self.pg_port);
-        hasher.update(&self.pg_password);
-        hasher.update(&self.pg_user);
-        hasher.update(&self.pg_database);
-        hasher.update(&self.hasura_port);
-        hasher.update(&self.hasura_enable_console);
-        hasher.update(&self.hasura_admin_secret);
-        format!("{:x}", hasher.finalize())
+    /// External ⇔ the user set ENVIO_PG_HOST at all. Any value (even the
+    /// literal "localhost") is treated as an explicit "I manage Postgres
+    /// myself"; unset means we boot the Dockerised Postgres.
+    fn pg_is_external(&self) -> bool {
+        self.pg_host.is_some()
+    }
+
+    /// The host string to connect to — either the user-provided value when
+    /// external, or DEFAULT_PG_HOST for our own container.
+    fn pg_host_str(&self) -> &str {
+        self.pg_host.as_deref().unwrap_or(DEFAULT_PG_HOST)
+    }
+
+    /// External ⇔ the user set ENVIO_CLICKHOUSE_HOST at all. Same rule as
+    /// pg_is_external; unset means we boot the container at DEFAULT_CH_URL.
+    fn ch_is_external(&self) -> bool {
+        self.ch_host.is_some()
+    }
+
+    /// The raw URL string — either the user-provided value when external,
+    /// or DEFAULT_CH_URL for our own container.
+    fn ch_host_str(&self) -> &str {
+        self.ch_host.as_deref().unwrap_or(DEFAULT_CH_URL)
+    }
+
+    /// Parse the effective URL (user's when external, default otherwise).
+    /// The caller decides when to fail — we only parse if ClickHouse is
+    /// actually selected, so users who never opt into ClickHouse can keep
+    /// garbage in ENVIO_CLICKHOUSE_HOST.
+    fn ch_url(&self) -> anyhow::Result<ClickHouseUrl> {
+        ClickHouseUrl::parse(self.ch_host_str())
+    }
+
+    /// Per-service config hashes so that changing one service's config only
+    /// recreates *that* container instead of all of them. Host fields are
+    /// excluded: when external, no container is created; when local, the
+    /// host is always the hardcoded default and can't vary.
+    fn pg_config_hash(&self) -> String {
+        let mut h = Sha256::new();
+        h.update(&self.pg_port);
+        h.update(&self.pg_password);
+        h.update(&self.pg_user);
+        h.update(&self.pg_database);
+        format!("{:x}", h.finalize())
+    }
+
+    fn hasura_config_hash(&self) -> String {
+        let mut h = Sha256::new();
+        h.update(&self.pg_password);
+        h.update(&self.pg_user);
+        h.update(&self.pg_database);
+        h.update(&self.hasura_port);
+        h.update(&self.hasura_enable_console);
+        h.update(&self.hasura_admin_secret);
+        format!("{:x}", h.finalize())
+    }
+
+    fn ch_config_hash(&self) -> String {
+        let mut h = Sha256::new();
+        h.update(&self.ch_user);
+        h.update(&self.ch_password);
+        h.update(&self.ch_database);
+        format!("{:x}", h.finalize())
     }
 }
 
@@ -372,21 +488,43 @@ async fn is_service_reachable(host: &str, port: u16) -> bool {
         .unwrap_or(false)
 }
 
-/// Check whether Hasura is reachable by hitting its healthz endpoint.
-async fn is_hasura_healthy(host: &str, port: u16) -> bool {
-    let url = format!("http://{}:{}/hasura/healthz?strict=true", host, port);
-    let client = reqwest::Client::builder()
+/// Shared HTTP client for health probes, built once and reused across the
+/// initial probe and subsequent wait loops. Avoids allocating a new
+/// connection pool + TLS context on every tick.
+fn build_probe_client() -> reqwest::Client {
+    reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
-        .build();
-    match client {
-        Ok(c) => c
-            .get(&url)
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false),
-        Err(_) => false,
-    }
+        .build()
+        .expect("failed to build HTTP client for health probes")
+}
+
+/// Check whether Hasura is reachable by hitting its healthz endpoint.
+async fn is_hasura_healthy(client: &reqwest::Client, host: &str, port: u16) -> bool {
+    let url = format!("http://{}:{}/hasura/healthz?strict=true", host, port);
+    client
+        .get(&url)
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+/// Check whether ClickHouse is reachable by hitting its `/ping` endpoint.
+/// Uses the caller-provided scheme so that `https://` cloud ClickHouse
+/// endpoints work without extra wiring.
+async fn is_clickhouse_healthy(
+    client: &reqwest::Client,
+    scheme: &str,
+    host: &str,
+    port: u16,
+) -> bool {
+    let url = format!("{scheme}://{host}:{port}/ping");
+    client
+        .get(&url)
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }
 
 async fn stop_and_remove(docker: &Docker, name: &str) {
@@ -526,57 +664,177 @@ async fn ensure_container(
     Ok(true)
 }
 
-/// Return value from `up()` so callers know whether Hasura is active.
-pub struct UpResult {
-    pub hasura_enabled: bool,
+/// Caller-supplied parameters for `up()`. Bundles the project root (used to
+/// locate `.env`) alongside feature flags like ClickHouse so that callers
+/// only need to construct one value and the signature can grow without
+/// touching every call site.
+#[derive(Debug, Clone, Copy)]
+pub struct UpOptions<'a> {
+    pub project_root: &'a Path,
+    pub clickhouse: bool,
 }
 
-pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
-    let env = EnvConfig::from_project(project_root);
-    let pg_host_port: u16 = env
-        .pg_port
-        .parse()
-        .context("ENVIO_PG_PORT is not a valid port")?;
-    let hasura_host_port: u16 = env
-        .hasura_port
-        .parse()
-        .context("HASURA_EXTERNAL_PORT is not a valid port")?;
+/// Return value from `up()` so callers know which services are active and
+/// get any env vars the indexer subprocess must see (e.g. credentials for a
+/// ClickHouse container we just booted).
+pub struct UpResult {
+    pub hasura_enabled: bool,
+    pub clickhouse_enabled: bool,
+    pub indexer_env: Vec<(String, String)>,
+}
 
-    // Probe locally-published ports to see if containers are already running.
-    // Always check localhost since Docker publishes on 0.0.0.0, regardless of
-    // what ENVIO_PG_HOST is set to (that controls where the runtime connects).
-    let probe_host = "localhost";
-    let (pg_alive, hasura_alive) =
-        tokio::join!(is_service_reachable(probe_host, pg_host_port), async {
+pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
+    let env = EnvConfig::from_project(opts.project_root);
+    let pg_host_port: u16 = env.pg_port.parse().with_context(|| {
+        format!(
+            "ENVIO_PG_PORT={:?} is not a valid port number. \
+             Remove it from your .env / environment to use the default (5433).",
+            env.pg_port
+        )
+    })?;
+    let hasura_host_port: u16 = env.hasura_port.parse().with_context(|| {
+        format!(
+            "HASURA_EXTERNAL_PORT={:?} is not a valid port number. \
+             Remove it from your .env / environment to use the default (8080).",
+            env.hasura_port
+        )
+    })?;
+
+    // Parse the ClickHouse URL only when the project actually opts into
+    // ClickHouse — garbage in ENVIO_CLICKHOUSE_HOST shouldn't break users
+    // who never turn ClickHouse on.
+    let ch_url = if opts.clickhouse {
+        Some(env.ch_url()?)
+    } else {
+        None
+    };
+    let ch_url_ref = ch_url.as_ref();
+    let probe_client = build_probe_client();
+
+    // Probe each service at the configured host. When external the env var
+    // tells us where to look; when local the container publishes on 0.0.0.0
+    // so "localhost" reaches it. Hasura is always our own container.
+    let pg_probe_host = env.pg_host_str();
+    let hasura_probe_host = "localhost";
+    let pg_external = env.pg_is_external();
+    let ch_external = env.ch_is_external();
+    let (pg_alive, hasura_alive, ch_alive) = tokio::join!(
+        is_service_reachable(pg_probe_host, pg_host_port),
+        async {
             if !env.hasura_enabled {
                 return false;
             }
-            is_hasura_healthy(probe_host, hasura_host_port).await
-        });
+            is_hasura_healthy(&probe_client, hasura_probe_host, hasura_host_port).await
+        },
+        async {
+            match ch_url_ref {
+                Some(u) => is_clickhouse_healthy(&probe_client, &u.scheme, &u.host, u.port).await,
+                None => false,
+            }
+        }
+    );
 
-    let need_pg = !pg_alive;
+    // External + unreachable → bail with actionable guidance instead of
+    // silently starting a Docker container the user didn't ask for.
+    if pg_external && !pg_alive {
+        anyhow::bail!(
+            "Postgres is not reachable at {host}:{port} (from ENVIO_PG_HOST).\n\
+             \n\
+             Possible fixes:\n\
+             - Verify the host is running and accepts connections on that port.\n\
+             - Unset ENVIO_PG_HOST to let the CLI start a local Docker container instead.",
+            host = env.pg_host_str(),
+            port = pg_host_port
+        );
+    }
+    if let Some(url) = ch_url_ref {
+        if ch_external && !ch_alive {
+            anyhow::bail!(
+                "ClickHouse is not reachable at {scheme}://{host}:{port}/ping \
+                 (from ENVIO_CLICKHOUSE_HOST={raw:?}).\n\
+                 \n\
+                 Possible fixes:\n\
+                 - Verify ClickHouse is running and the /ping endpoint responds.\n\
+                 - Check that the URL scheme, host, and port are correct.\n\
+                 - Unset ENVIO_CLICKHOUSE_HOST to let the CLI start a local Docker container instead.",
+                raw = env.ch_host_str(),
+                scheme = url.scheme,
+                host = url.host,
+                port = url.port
+            );
+        }
+    }
+
+    let need_pg = !pg_external && !pg_alive;
     let need_hasura = env.hasura_enabled && !hasura_alive;
+    let need_ch = opts.clickhouse && !ch_external && !ch_alive;
 
-    if pg_alive {
-        println!("Postgres already reachable on port {pg_host_port}, skipping container");
+    if pg_external {
+        println!(
+            "Using your Postgres at {}:{} (from ENVIO_PG_HOST)",
+            env.pg_host_str(),
+            pg_host_port
+        );
+    } else if pg_alive {
+        println!("Using Postgres already running on port {pg_host_port}");
     }
     if env.hasura_enabled && hasura_alive {
-        println!("Hasura already healthy on port {hasura_host_port}, skipping container");
+        println!("Using Hasura already running on port {hasura_host_port}");
     }
     if !env.hasura_enabled {
-        println!("Hasura disabled (ENVIO_HASURA=false), skipping");
+        println!("Hasura disabled (ENVIO_HASURA=false)");
+    }
+    if let Some(url) = ch_url_ref {
+        if ch_external {
+            println!(
+                "Using your ClickHouse at {} (from ENVIO_CLICKHOUSE_HOST)",
+                env.ch_host_str()
+            );
+        } else if ch_alive {
+            println!("Using ClickHouse already running on port {}", url.port);
+        }
     }
 
-    // If both services are already running, nothing to do.
-    if !need_pg && !need_hasura {
+    // Build the env vars we need to pass to the indexer subprocess. When
+    // ClickHouse is selected, the runtime requires all four variables set —
+    // we pass them unconditionally so that both the managed-container case
+    // (runtime sees our container creds) and the external case (runtime
+    // sees the user-provided URL as-is) work without the user having to
+    // duplicate values into .env.
+    let indexer_env = if opts.clickhouse {
+        vec![
+            (
+                "ENVIO_CLICKHOUSE_HOST".to_string(),
+                env.ch_host_str().to_string(),
+            ),
+            ("ENVIO_CLICKHOUSE_USERNAME".to_string(), env.ch_user.clone()),
+            (
+                "ENVIO_CLICKHOUSE_PASSWORD".to_string(),
+                env.ch_password.clone(),
+            ),
+            (
+                "ENVIO_CLICKHOUSE_DATABASE".to_string(),
+                env.ch_database.clone(),
+            ),
+        ]
+    } else {
+        Vec::new()
+    };
+
+    // If all services are already running, nothing to do.
+    if !need_pg && !need_hasura && !need_ch {
         return Ok(UpResult {
             hasura_enabled: env.hasura_enabled,
+            clickhouse_enabled: opts.clickhouse,
+            indexer_env,
         });
     }
 
     // We need Docker for at least one container.
     let docker = connect_docker().await?;
-    let config_hash = env.config_hash();
+    let pg_hash = env.pg_config_hash();
+    let hasura_hash = env.hasura_config_hash();
+    let ch_hash = env.ch_config_hash();
 
     // Run full pipelines for each container in parallel:
     // pull image → create infra → ensure container.
@@ -610,7 +868,7 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
 
         let pg_body = ContainerCreateBody {
             image: Some(POSTGRES_IMAGE.to_string()),
-            labels: Some(make_labels(&config_hash)),
+            labels: Some(make_labels(&pg_hash)),
             env: Some(vec![
                 format!("POSTGRES_PASSWORD={}", env.pg_password),
                 format!("POSTGRES_USER={}", env.pg_user),
@@ -634,7 +892,7 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
             ..Default::default()
         };
 
-        ensure_container(&docker, PG_CONTAINER, &config_hash, pg_host_port, pg_body).await?;
+        ensure_container(&docker, PG_CONTAINER, &pg_hash, pg_host_port, pg_body).await?;
         Ok(())
     };
 
@@ -662,14 +920,24 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
             map
         };
 
+        // When Postgres runs in our own container, Hasura reaches it via the
+        // shared Docker network using the container name on the internal port.
+        // When Postgres is externally-managed, point Hasura at the user-
+        // supplied host/port — the user is responsible for ensuring that
+        // address is routable from the Hasura container.
+        let (db_host, db_port) = if pg_external {
+            (env.pg_host_str(), pg_host_port)
+        } else {
+            (PG_CONTAINER, 5432u16)
+        };
         let db_url = format!(
-            "postgres://{}:{}@{}:5432/{}",
-            env.pg_user, env.pg_password, PG_CONTAINER, env.pg_database
+            "postgres://{}:{}@{}:{}/{}",
+            env.pg_user, env.pg_password, db_host, db_port, env.pg_database
         );
 
         let hasura_body = ContainerCreateBody {
             image: Some(HASURA_IMAGE.to_string()),
-            labels: Some(make_labels(&config_hash)),
+            labels: Some(make_labels(&hasura_hash)),
             user: Some("1001:1001".to_string()),
             env: Some(vec![
                 format!("HASURA_GRAPHQL_DATABASE_URL={db_url}"),
@@ -713,7 +981,7 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         ensure_container(
             &docker,
             HASURA_CONTAINER,
-            &config_hash,
+            &hasura_hash,
             hasura_host_port,
             hasura_body,
         )
@@ -721,9 +989,71 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         Ok(())
     };
 
-    let (pg_res, hasura_res) = tokio::join!(pg_pipeline, hasura_pipeline);
+    // ClickHouse pipeline — only entered when ch_url was parsed (opts.clickhouse),
+    // so the `if let` always matches when need_ch is true. No expect() needed.
+    let clickhouse_pipeline = async {
+        let Some(url) = ch_url_ref else {
+            return Ok::<(), anyhow::Error>(());
+        };
+        if !need_ch {
+            return Ok(());
+        }
+        let (img_res, net_res, vol_res) = tokio::join!(
+            ensure_image(&docker, CLICKHOUSE_IMAGE),
+            ensure_network(&docker, NETWORK),
+            ensure_volume(&docker, CH_VOLUME),
+        );
+        img_res?;
+        net_res?;
+        vol_res?;
+
+        let ch_port_bindings = {
+            let mut map = HashMap::new();
+            map.insert(
+                "8123/tcp".to_string(),
+                Some(vec![PortBinding {
+                    host_ip: Some("0.0.0.0".to_string()),
+                    host_port: Some(url.port.to_string()),
+                }]),
+            );
+            map
+        };
+
+        let ch_body = ContainerCreateBody {
+            image: Some(CLICKHOUSE_IMAGE.to_string()),
+            labels: Some(make_labels(&ch_hash)),
+            env: Some(vec![
+                format!("CLICKHOUSE_USER={}", env.ch_user),
+                format!("CLICKHOUSE_PASSWORD={}", env.ch_password),
+                format!("CLICKHOUSE_DB={}", env.ch_database),
+            ]),
+            host_config: Some(HostConfig {
+                port_bindings: Some(ch_port_bindings),
+                mounts: Some(vec![Mount {
+                    target: Some("/var/lib/clickhouse".to_string()),
+                    source: Some(CH_VOLUME.to_string()),
+                    typ: Some(MountTypeEnum::VOLUME),
+                    ..Default::default()
+                }]),
+                restart_policy: Some(RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::ALWAYS),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            networking_config: Some(make_networking_config(NETWORK)),
+            ..Default::default()
+        };
+
+        ensure_container(&docker, CH_CONTAINER, &ch_hash, url.port, ch_body).await?;
+        Ok(())
+    };
+
+    let (pg_res, hasura_res, ch_res) =
+        tokio::join!(pg_pipeline, hasura_pipeline, clickhouse_pipeline);
     pg_res?;
     hasura_res?;
+    ch_res?;
 
     // Wait for services to become healthy before handing control back.
     let wait_pg = async {
@@ -733,14 +1063,19 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         eprint!("Waiting for Postgres...");
         let start = std::time::Instant::now();
         loop {
-            if is_service_reachable(probe_host, pg_host_port).await {
+            if is_service_reachable(pg_probe_host, pg_host_port).await {
                 eprintln!(" ready ({:.1}s)", start.elapsed().as_secs_f64());
                 return Ok(());
             }
             if start.elapsed() > Duration::from_secs(60) {
                 eprintln!();
                 anyhow::bail!(
-                    "Postgres did not become reachable on port {pg_host_port} within 60s"
+                    "Postgres did not become reachable on port {pg_host_port} within 60 s.\n\
+                     \n\
+                     Try:\n\
+                     - docker logs {PG_CONTAINER}\n\
+                     - docker ps -a | grep {PG_CONTAINER}\n\
+                     - Ensure nothing else is using port {pg_host_port}."
                 );
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -755,15 +1090,19 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         eprint!("Waiting for Hasura...");
         let start = std::time::Instant::now();
         loop {
-            if is_hasura_healthy(probe_host, hasura_host_port).await {
+            if is_hasura_healthy(&probe_client, hasura_probe_host, hasura_host_port).await {
                 eprintln!(" ready ({:.1}s)", start.elapsed().as_secs_f64());
                 return Ok(());
             }
             if start.elapsed() > Duration::from_secs(120) {
                 eprintln!();
                 anyhow::bail!(
-                    "Hasura did not become healthy on port {hasura_host_port} within 120s.\n\
-                     Check container logs: docker logs {HASURA_CONTAINER}"
+                    "Hasura did not become healthy on port {hasura_host_port} within 120 s.\n\
+                     \n\
+                     Try:\n\
+                     - docker logs {HASURA_CONTAINER}\n\
+                     - Verify Postgres is running (Hasura depends on it).\n\
+                     - Ensure nothing else is using port {hasura_host_port}."
                 );
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -771,10 +1110,43 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         }
     };
 
-    tokio::try_join!(wait_pg, wait_hasura)?;
+    let wait_ch = async {
+        let Some(url) = ch_url_ref else {
+            return Ok::<(), anyhow::Error>(());
+        };
+        if !need_ch {
+            return Ok(());
+        }
+        eprint!("Waiting for ClickHouse...");
+        let start = std::time::Instant::now();
+        loop {
+            if is_clickhouse_healthy(&probe_client, &url.scheme, &url.host, url.port).await {
+                eprintln!(" ready ({:.1}s)", start.elapsed().as_secs_f64());
+                return Ok(());
+            }
+            if start.elapsed() > Duration::from_secs(60) {
+                eprintln!();
+                anyhow::bail!(
+                    "ClickHouse did not become healthy on port {port} within 60 s.\n\
+                     \n\
+                     Try:\n\
+                     - docker logs {CH_CONTAINER}\n\
+                     - docker ps -a | grep {CH_CONTAINER}\n\
+                     - Ensure nothing else is using port {port}.",
+                    port = url.port
+                );
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            eprint!(".");
+        }
+    };
+
+    tokio::try_join!(wait_pg, wait_hasura, wait_ch)?;
 
     Ok(UpResult {
         hasura_enabled: env.hasura_enabled,
+        clickhouse_enabled: opts.clickhouse,
+        indexer_env,
     })
 }
 
@@ -786,19 +1158,42 @@ pub async fn down() -> anyhow::Result<()> {
     tokio::join!(
         stop_and_remove(&docker, HASURA_CONTAINER),
         stop_and_remove(&docker, PG_CONTAINER),
+        stop_and_remove(&docker, CH_CONTAINER),
     );
 
-    let (vol_res, net_res) = tokio::join!(
-        docker.remove_volume(
-            VOLUME,
-            None::<bollard::query_parameters::RemoveVolumeOptions>
-        ),
+    // Volumes / network may not exist if the user never ran `up` or only
+    // used a subset of services. Probe first so missing resources don't
+    // produce spurious errors.
+    let pg_vol_exists = docker.inspect_volume(VOLUME).await.is_ok();
+    let ch_vol_exists = docker.inspect_volume(CH_VOLUME).await.is_ok();
+
+    async fn remove_volume_if_exists(
+        docker: &Docker,
+        name: &str,
+        exists: bool,
+    ) -> anyhow::Result<()> {
+        if exists {
+            docker
+                .remove_volume(name, None::<bollard::query_parameters::RemoveVolumeOptions>)
+                .await
+                .with_context(|| format!("Failed to remove volume {name}"))?;
+        }
+        Ok(())
+    }
+
+    let (pg_vol_res, ch_vol_res, net_res) = tokio::join!(
+        remove_volume_if_exists(&docker, VOLUME, pg_vol_exists),
+        remove_volume_if_exists(&docker, CH_VOLUME, ch_vol_exists),
         docker.remove_network(NETWORK),
     );
 
     let mut failed = false;
-    if let Err(e) = vol_res {
-        eprintln!("Failed to remove volume {VOLUME}: {e}");
+    if let Err(e) = pg_vol_res {
+        eprintln!("{e:#}");
+        failed = true;
+    }
+    if let Err(e) = ch_vol_res {
+        eprintln!("{e:#}");
         failed = true;
     }
     if let Err(e) = net_res {
@@ -819,9 +1214,9 @@ pub async fn down() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn config_hash_deterministic() {
-        let env1 = EnvConfig {
+    fn default_env() -> EnvConfig {
+        EnvConfig {
+            pg_host: None,
             pg_port: "5433".into(),
             pg_password: "testing".into(),
             pg_user: "postgres".into(),
@@ -830,42 +1225,184 @@ mod tests {
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
-        };
-        let env2 = EnvConfig {
-            pg_port: "5433".into(),
-            pg_password: "testing".into(),
-            pg_user: "postgres".into(),
-            pg_database: "envio-dev".into(),
-            hasura_enabled: true,
-            hasura_port: "8080".into(),
-            hasura_enable_console: "true".into(),
-            hasura_admin_secret: "testing".into(),
-        };
-        assert_eq!(env1.config_hash(), env2.config_hash());
+            ch_host: None,
+            ch_user: "default".into(),
+            ch_password: "testing".into(),
+            ch_database: "envio_sink".into(),
+        }
     }
 
     #[test]
-    fn config_hash_changes_on_diff() {
-        let env1 = EnvConfig {
-            pg_port: "5433".into(),
-            pg_password: "testing".into(),
-            pg_user: "postgres".into(),
-            pg_database: "envio-dev".into(),
-            hasura_enabled: true,
-            hasura_port: "8080".into(),
-            hasura_enable_console: "true".into(),
-            hasura_admin_secret: "testing".into(),
-        };
+    fn per_service_hashes_are_deterministic() {
+        let d = default_env();
+        assert_eq!(
+            (
+                d.pg_config_hash(),
+                d.hasura_config_hash(),
+                d.ch_config_hash()
+            ),
+            (
+                default_env().pg_config_hash(),
+                default_env().hasura_config_hash(),
+                default_env().ch_config_hash()
+            )
+        );
+    }
+
+    #[test]
+    fn pg_hash_changes_on_pg_port() {
         let env2 = EnvConfig {
             pg_port: "5434".into(),
-            pg_password: "testing".into(),
-            pg_user: "postgres".into(),
-            pg_database: "envio-dev".into(),
-            hasura_enabled: true,
-            hasura_port: "8080".into(),
-            hasura_enable_console: "true".into(),
-            hasura_admin_secret: "testing".into(),
+            ..default_env()
         };
-        assert_ne!(env1.config_hash(), env2.config_hash());
+        assert_ne!(default_env().pg_config_hash(), env2.pg_config_hash());
+    }
+
+    #[test]
+    fn ch_hash_independent_from_pg() {
+        // Changing a PG field must not change the ClickHouse hash.
+        let env2 = EnvConfig {
+            pg_password: "new_password".into(),
+            ..default_env()
+        };
+        assert_eq!(default_env().ch_config_hash(), env2.ch_config_hash());
+        assert_ne!(default_env().pg_config_hash(), env2.pg_config_hash());
+    }
+
+    #[test]
+    fn hasura_hash_changes_on_pg_password() {
+        // Hasura's DB URL embeds PG creds, so PG password change is drift.
+        let env2 = EnvConfig {
+            pg_password: "new_password".into(),
+            ..default_env()
+        };
+        assert_ne!(
+            default_env().hasura_config_hash(),
+            env2.hasura_config_hash()
+        );
+    }
+
+    #[test]
+    fn pg_is_external_iff_env_var_set() {
+        assert!(!default_env().pg_is_external());
+        // Any value — even "localhost" — counts as external when explicitly set.
+        let values = ["localhost", "127.0.0.1", "db.example.com"];
+        let results: Vec<bool> = values
+            .iter()
+            .map(|h| {
+                EnvConfig {
+                    pg_host: Some((*h).into()),
+                    ..default_env()
+                }
+                .pg_is_external()
+            })
+            .collect();
+        assert_eq!(results, vec![true, true, true]);
+    }
+
+    #[test]
+    fn pg_host_str_returns_default_when_unset() {
+        assert_eq!(default_env().pg_host_str(), DEFAULT_PG_HOST);
+        let ext = EnvConfig {
+            pg_host: Some("db.example.com".into()),
+            ..default_env()
+        };
+        assert_eq!(ext.pg_host_str(), "db.example.com");
+    }
+
+    #[test]
+    fn ch_hash_changes_on_ch_password() {
+        let env2 = EnvConfig {
+            ch_password: "secret".into(),
+            ..default_env()
+        };
+        assert_ne!(default_env().ch_config_hash(), env2.ch_config_hash());
+    }
+
+    #[test]
+    fn ch_is_external_iff_env_var_set() {
+        assert!(!default_env().ch_is_external());
+        let values = [
+            "http://localhost:8123",
+            "http://127.0.0.1:8123",
+            "https://ch.cloud.example.com",
+        ];
+        let results: Vec<bool> = values
+            .iter()
+            .map(|h| {
+                EnvConfig {
+                    ch_host: Some((*h).into()),
+                    ..default_env()
+                }
+                .ch_is_external()
+            })
+            .collect();
+        assert_eq!(results, vec![true, true, true]);
+    }
+
+    #[test]
+    fn ch_host_str_returns_default_when_unset() {
+        assert_eq!(default_env().ch_host_str(), DEFAULT_CH_URL);
+        let ext = EnvConfig {
+            ch_host: Some("http://10.0.0.5:9000".into()),
+            ..default_env()
+        };
+        assert_eq!(ext.ch_host_str(), "http://10.0.0.5:9000");
+    }
+
+    #[test]
+    fn ch_url_parses_host_port_scheme() {
+        let cases = [
+            ("http://localhost:8123", ("http", "localhost", 8123u16)),
+            (
+                "https://ch.example.com",
+                ("https", "ch.example.com", 443u16),
+            ),
+            ("http://ch.example.com", ("http", "ch.example.com", 8123u16)),
+            ("http://10.0.0.5:9000", ("http", "10.0.0.5", 9000u16)),
+        ];
+        let parsed: Vec<(String, String, u16)> = cases
+            .iter()
+            .map(|(raw, _)| {
+                let u = ClickHouseUrl::parse(raw).unwrap();
+                (u.scheme, u.host, u.port)
+            })
+            .collect();
+        let expected: Vec<(String, String, u16)> = cases
+            .iter()
+            .map(|(_, (s, h, p))| ((*s).to_string(), (*h).to_string(), *p))
+            .collect();
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn ch_url_rejects_invalid() {
+        let cases = [
+            "not-a-url",
+            "ftp://ch.example.com",
+            "http://",
+            "clickhouse:8123",
+        ];
+        let results: Vec<bool> = cases
+            .iter()
+            .map(|raw| ClickHouseUrl::parse(raw).is_err())
+            .collect();
+        assert_eq!(results, vec![true, true, true, true]);
+    }
+
+    #[test]
+    fn up_options_copies_values() {
+        // Smoke test that UpOptions threads both fields and is Copy so
+        // callers don't need to clone before passing in.
+        let root = Path::new("/tmp/project");
+        let a = UpOptions {
+            project_root: root,
+            clickhouse: true,
+        };
+        let b = a;
+        assert_eq!(
+            (a.project_root, a.clickhouse, b.project_root, b.clickhouse),
+            (root, true, root, true)
+        );
     }
 }

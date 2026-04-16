@@ -1,13 +1,14 @@
 ---
 source: packages/cli/src/hbs_templating/contract_import_templates.rs
+assertion_line: 1104
 expression: content
 ---
-import { describe, it, expect } from "vitest";
+import { describe, it } from "vitest";
 import { createTestIndexer, type Contract1_NewGravatar } from "generated";
 import { TestHelpers } from "envio";
 
 describe("Contract1 contract NewGravatar event tests", () => {
-  it("Contract1_NewGravatar is created correctly", async () => {
+  it("Contract1_NewGravatar is created correctly", async (t) => {
     const indexer = createTestIndexer();
 
     // Creating mock for Contract1 contract NewGravatar event
@@ -25,8 +26,6 @@ describe("Contract1 contract NewGravatar event tests", () => {
     await indexer.process({
       chains: {
         1: {
-          startBlock: 0,
-          endBlock: 0,
           simulate: [event],
         },
       },
@@ -44,6 +43,19 @@ describe("Contract1 contract NewGravatar event tests", () => {
       imageUrl: event.params.imageUrl,
     };
     // Asserting that the entity in the mock database is the same as the expected entity
-    expect(actualContract1NewGravatar, "Actual Contract1NewGravatar should be the same as the expected Contract1NewGravatar").toEqual(expectedContract1NewGravatar);
+    t.expect(actualContract1NewGravatar, "Actual Contract1NewGravatar should be the same as the expected Contract1NewGravatar").toEqual(expectedContract1NewGravatar);
   });
+});
+
+describe("Indexer smoke test", () => {
+  it("processes the first block with events on chain 1", async (t) => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({ chains: { 1: {} } });
+
+    t.expect(result.changes.length, "Should have at least one change").toBeGreaterThan(0);
+    const firstChange = result.changes[0]!;
+    t.expect(firstChange.chainId).toBe(1);
+    t.expect(firstChange.eventsProcessed).toBeGreaterThan(0);
+  }, 60_000);
 });

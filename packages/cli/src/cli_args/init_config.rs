@@ -30,6 +30,8 @@ pub mod evm {
     pub enum Template {
         Greeter,
         Erc20,
+        #[strum(serialize = "Feature: External Calls")]
+        FeatureExternalCalls,
         #[strum(serialize = "Feature: Factory Contract")]
         FeatureFactory,
     }
@@ -164,6 +166,7 @@ pub mod evm {
                     output: None,
                     handlers: None,
                     full_batch_size: None,
+                    storage: None,
                 },
                 ecosystem: None,
                 contracts,
@@ -223,7 +226,7 @@ pub mod fuel {
         Greeter,
     }
 
-    #[derive(Clone, Debug, Display, Eq, Hash, PartialEq, EnumIter)]
+    #[derive(Clone, Debug, Display, Eq, Hash, PartialEq, EnumIter, EnumString, ValueEnum)]
     pub enum Network {
         Mainnet = 9889,
         Testnet = 0,
@@ -306,6 +309,7 @@ pub mod fuel {
                     output: None,
                     handlers: None,
                     full_batch_size: None,
+                    storage: None,
                 },
                 ecosystem: EcosystemTag::Fuel,
                 contracts: None,

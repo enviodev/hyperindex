@@ -17,13 +17,20 @@ type onBlockArgs<'block, 'context> = {
   context: 'context,
 }
 
-@genType
+// Internal-only types for the `indexer.onBlock` (and SVM `onSlot`) plumbing.
+// User-facing TypeScript declarations live in `packages/envio/index.d.ts` —
+// keep these out of `genType` so the canonical TS shape isn't shadowed by a
+// generated `unknown`-typed stub in `Envio.gen.ts`.
+type onBlockWhereArgs<'chain> = {chain: 'chain}
+
+// `where` returns a value interpreted at runtime by `Main.res::onBlockHandlerFn`:
+//   - `false` → skip this chain
+//   - `true` / omit → register on this chain with no extra filter
+//   - a filter object whose shape is ecosystem-specific (see the `Evm*` /
+//     `Fuel*` / `Svm*` `OnBlock`/`OnSlot` types in `packages/envio/index.d.ts`)
 type onBlockOptions<'chain> = {
   name: string,
-  chain: 'chain,
-  interval?: int,
-  startBlock?: int,
-  endBlock?: int,
+  where?: onBlockWhereArgs<'chain> => unknown,
 }
 
 type whereOperator<'fieldType> = {
@@ -138,7 +145,7 @@ let createEffect = (
         callsPerDuration: calls,
         durationMs: per->durationToMs,
         availableCalls: calls,
-        windowStartTime: Js.Date.now(),
+        windowStartTime: Date.now(),
         queueCount: 0,
         nextWindowPromise: None,
       })
@@ -146,24 +153,32 @@ let createEffect = (
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
 }
 
-type evmSimulateEventItem = {
-  contract: string,
-  event: string,
-  params?: Js.Json.t,
-  srcAddress?: Address.t,
-  logIndex?: int,
-  block?: Js.Json.t,
-  transaction?: Js.Json.t,
+type fuelBlockInput = {
+  id?: string,
+  height?: int,
+  time?: int,
 }
 
-type fuelSimulateEventItem = {
+type fuelTransactionInput = {id?: string}
+
+type evmSimulateItem = {
   contract: string,
   event: string,
-  params: Js.Json.t,
+  params?: JSON.t,
   srcAddress?: Address.t,
   logIndex?: int,
-  block?: Js.Json.t,
-  transaction?: Js.Json.t,
+  block?: Internal.evmBlockInput,
+  transaction?: Internal.evmTransactionInput,
+}
+
+type fuelSimulateItem = {
+  contract: string,
+  event: string,
+  params: JSON.t,
+  srcAddress?: Address.t,
+  logIndex?: int,
+  block?: fuelBlockInput,
+  transaction?: fuelTransactionInput,
 }
 
 module TestHelpers = {
@@ -191,6 +206,6 @@ module TestHelpers = {
         "0xdD2FD4581271e230360230F9337D5c0430Bf44C0",
         "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
       ]->Belt.Array.map(Address.Evm.fromStringOrThrow)
-    let defaultAddress = mockAddresses[0]
+    let defaultAddress = mockAddresses->Belt.Array.getUnsafe(0)
   }
 }

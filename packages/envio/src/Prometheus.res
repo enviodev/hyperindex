@@ -22,7 +22,7 @@ module Labels = {
       switch nonStringFields {
       | [] => items->Belt.Array.map(item => item.location)->Ok
       | nonStringItems =>
-        let nonStringItems = nonStringItems->Js.Array2.joinWith(", ")
+        let nonStringItems = nonStringItems->Array.joinUnsafe(", ")
         Error(
           `Label schema must be an object with string (or optional string) values. Non string values: ${nonStringItems}`,
         )
@@ -55,7 +55,7 @@ module MakeSafePromMetric = (
     switch labelSchema->Labels.getLabelNames {
     | Ok(labelNames) =>
       if metricNames->Utils.Set.has(name) {
-        Js.Exn.raiseError("Duplicate prometheus metric name: " ++ name)
+        JsError.throwWithMessage("Duplicate prometheus metric name: " ++ name)
       } else {
         metricNames->Utils.Set.add(name)->ignore
         let metric = M.make({
@@ -67,7 +67,7 @@ module MakeSafePromMetric = (
         {metric, labelSchema}
       }
 
-    | Error(error) => Js.Exn.raiseError(error)
+    | Error(error) => JsError.throwWithMessage(error)
     }
 
   let handleFloat = ({metric, labelSchema}: t<'a>, ~labels: 'a, ~value) =>
@@ -116,7 +116,6 @@ module SafeGauge = MakeSafePromMetric({
   let handleInt = PromClient.Gauge.set
   let handleFloat = PromClient.Gauge.setFloat
 })
-
 
 module ProcessingBatch = {
   let loadTimeCounter = PromClient.Counter.makeCounter({
@@ -230,7 +229,7 @@ module PreloadHandler = {
     mutable pendingCount: int,
     timerRef: Hrtime.timeRef,
   }
-  let operations: Js.Dict.t<operationRef> = Js.Dict.empty()
+  let operations: dict<operationRef> = Dict.make()
 
   let makeKey = (~contract, ~event) => contract ++ ":" ++ event
 
@@ -239,7 +238,7 @@ module PreloadHandler = {
     switch operations->Utils.Dict.dangerouslyGetNonOption(key) {
     | Some(operationRef) => operationRef.pendingCount = operationRef.pendingCount + 1
     | None =>
-      operations->Js.Dict.set(
+      operations->Dict.set(
         key,
         {
           pendingCount: 1,
@@ -253,7 +252,7 @@ module PreloadHandler = {
   let endOperation = (timerRef, ~contract, ~event) => {
     let key = makeKey(~contract, ~event)
     let labels = {"contract": contract, "event": event}
-    let operationRef = operations->Js.Dict.unsafeGet(key)
+    let operationRef = operations->Dict.getUnsafe(key)
     operationRef.pendingCount = operationRef.pendingCount - 1
     if operationRef.pendingCount === 0 {
       timeCounter->SafeCounter.handleFloat(
@@ -351,7 +350,7 @@ module ProcessStartTimeSeconds = {
   })
 
   let set = () => {
-    gauge->PromClient.Gauge.setFloat(Js.Date.now() /. 1000.0)
+    gauge->PromClient.Gauge.setFloat(Date.now() /. 1000.0)
   }
 }
 
@@ -596,9 +595,7 @@ module RollbackSuccess = {
   let increment = (~timeSeconds: float, ~rollbackedProcessedEvents: float) => {
     timeCounter->PromClient.Counter.incMany(timeSeconds->(Utils.magic: float => int))
     counter->PromClient.Counter.inc
-    eventsCounter->PromClient.Counter.incMany(
-      rollbackedProcessedEvents->Utils.floatToInt,
-    )
+    eventsCounter->PromClient.Counter.incMany(rollbackedProcessedEvents->Utils.floatToInt)
   }
 }
 
@@ -666,10 +663,7 @@ module ProgressEventsCount = {
   )
 
   let set = (~processedCount: float, ~chainId) => {
-    gauge->SafeGauge.handleFloat(
-      ~labels=chainId,
-      ~value=processedCount,
-    )
+    gauge->SafeGauge.handleFloat(~labels=chainId, ~value=processedCount)
   }
 }
 
@@ -794,13 +788,13 @@ module StorageLoad = {
     mutable pendingCount: int,
     timerRef: Hrtime.timeRef,
   }
-  let operations = Js.Dict.empty()
+  let operations = Dict.make()
 
   let startOperation = (~operation) => {
     switch operations->Utils.Dict.dangerouslyGetNonOption(operation) {
     | Some(operationRef) => operationRef.pendingCount = operationRef.pendingCount + 1
     | None =>
-      operations->Js.Dict.set(
+      operations->Dict.set(
         operation,
         (
           {
@@ -814,7 +808,7 @@ module StorageLoad = {
   }
 
   let endOperation = (timerRef, ~operation, ~whereSize, ~size) => {
-    let operationRef = operations->Js.Dict.unsafeGet(operation)
+    let operationRef = operations->Dict.getUnsafe(operation)
     operationRef.pendingCount = operationRef.pendingCount - 1
     if operationRef.pendingCount === 0 {
       timeCounter->SafeCounter.handleFloat(

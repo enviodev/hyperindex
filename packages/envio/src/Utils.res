@@ -10,12 +10,12 @@ external importPathWithJson: (
   string,
   @as(json`{with: {type: "json"}}`) _,
 ) => promise<{
-  "default": Js.Json.t,
+  "default": JSON.t,
 }> = "import"
 
 let delay = milliseconds =>
-  Js.Promise2.make((~resolve, ~reject as _) => {
-    let _interval = Js.Global.setTimeout(_ => {
+  Promise.make((resolve, _) => {
+    let _interval = setTimeout(_ => {
       resolve()
     }, milliseconds)
   })
@@ -77,55 +77,51 @@ module Option = {
 
   let getExn = (opt, message) => {
     switch opt {
-    | None => Js.Exn.raiseError(message)
+    | None => JsError.throwWithMessage(message)
     | Some(v) => v
     }
   }
 }
 
-module Tuple = {
-  /**Access a tuple value by its index*/
-  @warning("-27")
-  let get = (tuple: 'a, index: int): option<'b> => %raw(`tuple[index]`)
-}
-
 module Dict = {
-  @get_index
+  include Dict
+
   /**
     It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
    */
+  @get_index
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
 
   let getOrInsertEmptyDict = (dict, key) => {
     switch dict->dangerouslyGetNonOption(key) {
     | Some(d) => d
     | None => {
-        let d = Js.Dict.empty()
-        dict->Js.Dict.set(key, d)
+        let d = Dict.make()
+        dict->Dict.set(key, d)
         d
       }
     }
   }
 
-  @get_index
   /**
     It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
    */
+  @get_index
   external dangerouslyGetByIntNonOption: (dict<'a>, int) => option<'a> = ""
 
   let has: (dict<'a>, string) => bool = %raw(`(dict, key) => key in dict`)
 
   let push = (dict, key, value) => {
     switch dict->dangerouslyGetNonOption(key) {
-    | Some(arr) => arr->Js.Array2.push(value)->ignore
-    | None => dict->Js.Dict.set(key, [value])
+    | Some(arr) => arr->Array.push(value)
+    | None => dict->Dict.set(key, [value])
     }
   }
 
   let pushMany = (dict, key, values) => {
     switch dict->dangerouslyGetNonOption(key) {
-    | Some(arr) => arr->Js.Array2.pushMany(values)->ignore
-    | None => dict->Js.Dict.set(key, values)
+    | Some(arr) => arr->Array.pushMany(values)
+    | None => dict->Dict.set(key, values)
     }
   }
 
@@ -247,6 +243,8 @@ module UnsafeIntOperators = {
 type asyncIterator<'a>
 
 module Array = {
+  include Array
+
   let immutableEmpty: array<unknown> = []
 
   @send
@@ -266,18 +264,18 @@ module Array = {
 
       let rec loop = (i, j, k) => {
         if i < Array.length(xs) && j < Array.length(ys) {
-          if f(xs[i], ys[j]) {
-            result[k] = xs[i]
+          if f(xs->Belt.Array.getUnsafe(i), ys->Belt.Array.getUnsafe(j)) {
+            result->Belt.Array.setUnsafe(k, xs->Belt.Array.getUnsafe(i))
             loop(i + 1, j, k + 1)
           } else {
-            result[k] = ys[j]
+            result->Belt.Array.setUnsafe(k, ys->Belt.Array.getUnsafe(j))
             loop(i, j + 1, k + 1)
           }
         } else if i < Array.length(xs) {
-          result[k] = xs[i]
+          result->Belt.Array.setUnsafe(k, xs->Belt.Array.getUnsafe(i))
           loop(i + 1, j, k + 1)
         } else if j < Array.length(ys) {
-          result[k] = ys[j]
+          result->Belt.Array.setUnsafe(k, ys->Belt.Array.getUnsafe(j))
           loop(i, j + 1, k + 1)
         }
       }
@@ -296,7 +294,7 @@ module Array = {
   */
   let setIndexImmutable = (arr: array<'a>, index: int, value: 'a): array<'a> => {
     let shallowCopy = arr->Belt.Array.copy
-    shallowCopy->Js.Array2.unsafe_set(index, value)
+    shallowCopy->Array.setUnsafe(index, value)
     shallowCopy
   }
 
@@ -305,9 +303,9 @@ module Array = {
       if index >= Array.length(results) {
         Ok(output)
       } else {
-        switch results->Js.Array2.unsafe_get(index) {
+        switch results->Array.getUnsafe(index) {
         | Ok(value) => {
-            output[index] = value
+            output->Belt.Array.setUnsafe(index, value)
             loop(index + 1, output)
           }
         | Error(_) as err => err->(magic: result<'a, 'b> => result<array<'a>, 'b>)
@@ -315,14 +313,14 @@ module Array = {
       }
     }
 
-    loop(0, Belt.Array.makeUninitializedUnsafe(results->Js.Array2.length))
+    loop(0, Belt.Array.makeUninitializedUnsafe(results->Array.length))
   }
 
   /**
 Helper to check if a value exists in an array
 */
   let includes = (arr: array<'a>, val: 'a) =>
-    arr->Js.Array2.find(item => item == val)->Belt.Option.isSome
+    arr->Array.find(item => item == val)->Belt.Option.isSome
 
   let isEmpty = (arr: array<_>) =>
     switch arr {
@@ -338,7 +336,7 @@ Helper to check if a value exists in an array
 
   let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     for i in 0 to arr->Array.length - 1 {
-      let item = arr[i]
+      let item = arr->Belt.Array.getUnsafe(i)
       await item->fn
     }
   }
@@ -352,9 +350,7 @@ Helper to check if a value exists in an array
     if index < 0 {
       array->Array.copy
     } else {
-      array
-      ->Js.Array2.slice(~start=0, ~end_=index)
-      ->Js.Array2.concat(array->Js.Array2.sliceFrom(index + 1))
+      array->Array.slice(~start=0, ~end=index)->Array.concat(array->Array.slice(~start=index + 1))
     }
   }
 
@@ -362,14 +358,14 @@ Helper to check if a value exists in an array
   let first = (arr: array<'a>): option<'a> => arr->Belt.Array.get(0)
 
   let lastUnsafe = (arr: array<'a>): 'a => arr->Belt.Array.getUnsafe(arr->Array.length - 1)
-  let firstUnsafe = (arr: array<'a>): 'a => arr->Js.Array2.unsafe_get(0)
+  let firstUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(0)
 
   let findReverseWithIndex = (arr: array<'a>, fn: 'a => bool): option<('a, int)> => {
     let rec loop = (index: int) => {
       if index < 0 {
         None
       } else {
-        let item = arr[index]
+        let item = arr->Belt.Array.getUnsafe(index)
         if fn(item) {
           Some((item, index))
         } else {
@@ -380,13 +376,6 @@ Helper to check if a value exists in an array
     loop(arr->Array.length - 1)
   }
 
-  /** 
-  Currently a bug in rescript if you ignore the return value of spliceInPlace 
-  https://github.com/rescript-lang/rescript-compiler/issues/6991
-  */
-  @send
-  external spliceInPlace: (array<'a>, ~pos: int, ~remove: int) => array<'a> = "splice"
-
   /**
   Interleaves an array with a separator
 
@@ -394,10 +383,10 @@ Helper to check if a value exists in an array
   */
   let interleave = (arr: array<'a>, separator: 'a) => {
     let interleaved = []
-    arr->Js.Array2.forEachi((v, i) => {
-      interleaved->Js.Array2.push(v)->ignore
+    arr->Array.forEachWithIndex((v, i) => {
+      interleaved->Array.push(v)
       if i < arr->Array.length - 1 {
-        interleaved->Js.Array2.push(separator)->ignore
+        interleaved->Array.push(separator)
       }
     })
     interleaved
@@ -426,9 +415,10 @@ Helper to check if a value exists in an array
 }
 
 module String = {
+  include String
+
   let capitalize = str => {
-    str->Js.String2.slice(~from=0, ~to_=1)->Js.String.toUpperCase ++
-      str->Js.String2.sliceToEnd(~from=1)
+    str->String.slice(~start=0, ~end=1)->String.toUpperCase ++ str->String.slice(~start=1)
   }
 
   /**
@@ -459,12 +449,12 @@ module Url = {
     // - (https?:\/\/) : Required http:// or https:// (capturing group)
     // - ([^\/?]+) : Capture hostname (one or more characters that aren't / or ?)
     // - .* : Match rest of the string
-    let regex = %re("/https?:\/\/([^\/?]+).*/")
-    switch Js.Re.exec_(regex, url) {
+    let regex = /https?:\/\/([^\/?]+).*/
+    switch RegExp.exec(regex, url) {
     | Some(result) =>
-      switch Js.Re.captures(result)->Belt.Array.get(1) {
-      | Some(host) => host->Js.Nullable.toOption
-      | None => None
+      switch RegExp.Result.matches(result)->Belt.Array.get(0) {
+      | Some(Some(host)) => Some(host)
+      | Some(None) | None => None
       }
     | None => None
     }
@@ -490,7 +480,7 @@ bet the actual underlying exn
 let unwrapResultExn = res =>
   switch res {
   | Ok(v) => v
-  | Error(exn) => exn->raise
+  | Error(exn) => exn->throw
   }
 
 external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
@@ -502,14 +492,14 @@ module Schema = {
   // In a nutshell, this is completely unsafe.
   let dbDate =
     S.json(~validate=false)
-    ->(magic: S.t<Js.Json.t> => S.t<Js.Date.t>)
-    ->S.preprocess(_ => {serializer: date => date->magic->Js.Date.toISOString})
+    ->(magic: S.t<JSON.t> => S.t<Date.t>)
+    ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
 
   // ClickHouse expects timestamps as numbers (milliseconds), not ISO strings
   let clickHouseDate =
     S.json(~validate=false)
-    ->(magic: S.t<Js.Json.t> => S.t<Js.Date.t>)
-    ->S.preprocess(_ => {serializer: date => date->magic->Js.Date.getTime})
+    ->(magic: S.t<JSON.t> => S.t<Date.t>)
+    ->S.preprocess(_ => {serializer: date => date->magic->Date.getTime})
 
   // When trying to serialize data to Json pg type, it will fail with
   // PostgresError: column "params" is of type json but expression is of type boolean
@@ -537,7 +527,7 @@ module Schema = {
 }
 
 let getVariantsTags = variants => {
-  variants->Js.Array2.map(variant => variant->S.parseOrThrow(Schema.variantTag))
+  variants->Array.map(variant => variant->S.parseOrThrow(Schema.variantTag))
 }
 
 module Set = {
@@ -565,7 +555,7 @@ module Set = {
   @send
   external add: (t<'value>, 'value) => t<'value> = "add"
 
-  let addMany = (set, values) => values->Js.Array2.forEach(value => set->add(value)->ignore)
+  let addMany = (set, values) => values->Array.forEach(value => set->add(value)->ignore)
 
   @ocaml.doc("Removes all elements from the `Set` object.") @send
   external clear: t<'value> => unit = "clear"
@@ -628,16 +618,16 @@ external entries: t<'value> => Js_iterator.t<('value, 'value)> = "entries"
 module Record = {
   type t<'key, 'value>
 
-  external fromDict: Js.Dict.t<'value> => t<'key, 'value> = "%identity"
+  external fromDict: dict<'value> => t<'key, 'value> = "%identity"
   let fromArray: array<('key, 'value)> => t<'key, 'value> = pairs =>
-    pairs->(magic: array<('key, 'value)> => array<(string, 'value)>)->Js.Dict.fromArray->fromDict
+    pairs->(magic: array<('key, 'value)> => array<(string, 'value)>)->Dict.fromArray->fromDict
 
   @get_index external getUnsafe: (t<'key, 'value>, 'key) => 'value = ""
   @get_index external get: (t<'key, 'value>, 'key) => option<'value> = ""
 }
 
 module WeakMap = {
-  type t<'k, 'v> = Js.WeakMap.t<'k, 'v>
+  type t<'k, 'v> = WeakMap.t<'k, 'v>
 
   @new external make: unit => t<'k, 'v> = "WeakMap"
 
@@ -661,7 +651,7 @@ module WeakMap = {
 }
 
 module Map = {
-  type t<'k, 'v> = Js.Map.t<'k, 'v>
+  type t<'k, 'v> = Map.t<'k, 'v>
 
   @new external make: unit => t<'k, 'v> = "Map"
 
@@ -681,7 +671,7 @@ module Proxy = {
 
 module Hash = {
   let fail = name => {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Failed to get hash for ${name}. If you're using a custom Sury schema make it based on the string type with a decoder: const myTypeSchema = S.transform(S.string, undefined, (yourType) => yourType.toString())`,
     )
   }
@@ -690,36 +680,36 @@ module Hash = {
   // just to stick to at least some sort of spec.
   // After Sury v11 is out we'll be able to do it with schema
   let rec makeOrThrow = (any: 'a): string => {
-    switch any->Js.typeof {
-    | "string" => `"${any->magic}"` // Ideally should escape here,
+    switch any->typeof {
+    | #string => `"${any->magic}"` // Ideally should escape here,
     // but since we don't parse it back, it's fine to keep it super simple
-    | "number" => any->magic->Js.Int.toString
-    | "bigint" => `"${any->magic->BigInt.toString}"`
-    | "boolean" => any->magic ? "true" : "false"
-    | "undefined" => "null"
-    | "object" =>
+    | #number => any->magic->Int.toString
+    | #bigint => `"${any->magic->BigInt.toString}"`
+    | #boolean => any->magic ? "true" : "false"
+    | #undefined => "null"
+    | #object =>
       if any === %raw(`null`) {
         "null"
-      } else if any->Js.Array2.isArray {
+      } else if any->Array.isArray {
         let any: array<'a> = any->magic
         let hash = ref("[")
-        for i in 0 to any->Js.Array2.length - 1 {
+        for i in 0 to any->Array.length - 1 {
           if i !== 0 {
             hash := hash.contents ++ ","
           }
-          hash := hash.contents ++ any->Js.Array2.unsafe_get(i)->makeOrThrow
+          hash := hash.contents ++ any->Array.getUnsafe(i)->makeOrThrow
         }
         hash.contents ++ "]"
       } else {
         let any: dict<'a> = any->magic
-        let constructor = any->Js.Dict.unsafeGet("constructor")->magic
+        let constructor = any->Dict.getUnsafe("constructor")->magic
         if constructor === %raw(`Object`) {
           let hash = ref("{")
-          let keys = any->Js.Dict.keys->Js.Array2.sortInPlace
+          let keys = any->Dict.keysToArray->Array.toSorted(String.compare)
           let isFirst = ref(true)
-          for i in 0 to keys->Js.Array2.length - 1 {
-            let key = keys->Js.Array2.unsafe_get(i)
-            let value = any->Js.Dict.unsafeGet(key)
+          for i in 0 to keys->Array.length - 1 {
+            let key = keys->Array.getUnsafe(i)
+            let value = any->Dict.getUnsafe(key)
             if value !== %raw(`undefined`) {
               if isFirst.contents {
                 isFirst := false
@@ -729,7 +719,7 @@ module Hash = {
               // Ideally should escape and wrap the key in double quotes
               // but since we don't need to decode the hash,
               // it's fine to keep it super simple
-              hash := hash.contents ++ `"${key}":${any->Js.Dict.unsafeGet(key)->makeOrThrow}`
+              hash := hash.contents ++ `"${key}":${any->Dict.getUnsafe(key)->makeOrThrow}`
             }
           }
           hash.contents ++ "}"
@@ -739,17 +729,16 @@ module Hash = {
           fail((constructor->magic)["name"])
         }
       }
-    | "symbol"
-    | "function" =>
+    | #symbol
+    | #function =>
       (any->magic)["toString"]()
-    | typeof => fail(typeof)
     }
   }
 }
 
 let prettifyExn = exn => {
-  switch exn->Js.Exn.anyToExnInternal {
-  | Js.Exn.Error(e) => e->(magic: Js.Exn.t => exn)
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(e) => e->(magic: JsExn.t => exn)
   | exn => exn
   }
 }
@@ -763,6 +752,72 @@ module EnvioPackage = {
     }),
   ) catch {
   | S.Raised(error) =>
-    Js.Exn.raiseError(`Failed to get package.json in envio package: ${error->S.Error.message}`)
+    JsError.throwWithMessage(
+      `Failed to get package.json in envio package: ${error->S.Error.message}`,
+    )
   }
+}
+
+module BigInt = {
+  let arrayToStringArray: array<bigint> => array<string> = %raw(`(arr) => {
+    const res = new Array(arr.length);
+    for (let i = 0; i < arr.length; i++) {
+      res[i] = arr[i].toString();
+    }
+    return res;
+  }`)
+
+  let schema =
+    S.string
+    ->S.setName("BigInt")
+    ->S.transform(s => {
+      parser: string =>
+        switch string->BigInt.fromString {
+        | Some(bigInt) => bigInt
+        | None => s.fail("The string is not valid BigInt")
+        },
+      serializer: bigint => bigint->BigInt.toString,
+    })
+
+  let nativeSchema = S.bigint
+}
+
+// Top-level alias for genType. The `BigInt` module name gets escaped to
+// `$$BigInt` in the compiled .res.mjs because it shadows the JS builtin,
+// which breaks `UtilsJS.BigInt.schema` references in genType output.
+// Re-exporting under an unescaped name keeps the .gen.ts wrapper happy.
+@genType
+let bigIntSchema = BigInt.schema
+
+module Promise = {
+  // Async-callback variant of `Promise.make`. The stdlib only ships the
+  // sync variant, but we rely on the async one in a couple of places.
+  @new
+  external makeAsync: ((@uncurry ('a => unit), 'e => unit) => promise<unit>) => promise<'a> =
+    "Promise"
+
+  // `catch` that swallows rejections silently. Handy for fire-and-forget
+  // promises that must not take the process down on failure.
+  %%private(let noop = (() => ())->Obj.magic)
+  let silentCatch = (promise: promise<'a>): promise<'a> => {
+    promise->Promise.catch(_ => noop())
+  }
+
+  // Like `catch`, but the callback returns a plain value instead of a new
+  // promise. Used when the fallback is a ready-made default.
+  @send
+  external catchResolve: (promise<'a>, exn => 'a) => promise<'a> = "catch"
+
+  // Drop a promise's resolved value. We can't use `Promise.ignore` for this
+  // because that returns `unit`, not `promise<unit>`.
+  external ignoreValue: promise<'a> => promise<unit> = "%identity"
+
+  // Escape hatches for awaiting non-promise values / producing fake promises
+  // in type-directed contexts. Used by a handful of bindings that need to
+  // interoperate with raw JS values.
+  external unsafe_async: 'a => promise<'a> = "%identity"
+  external unsafe_await: promise<'a> => 'a = "?await"
+
+  // Detects Thenable-like values at runtime (anything with a `.catch` method).
+  let isCatchable: 'any => bool = %raw(`value => value && typeof value.catch === 'function'`)
 }

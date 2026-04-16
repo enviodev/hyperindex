@@ -2,7 +2,7 @@
 @get external getTimestamp: Internal.eventBlock => int = "time"
 @get external getId: Internal.eventBlock => string = "id"
 
-let cleanUpRawEventFieldsInPlace: Js.Json.t => unit = %raw(`fields => {
+let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.id
     delete fields.height
     delete fields.time
@@ -19,4 +19,10 @@ let ecosystem: Ecosystem.t = {
   getTimestamp,
   getId,
   cleanUpRawEventFieldsInPlace,
+  onBlockMethodName: "onBlock",
+  // Fuel filter shape: `{block: {height: {_gte?, _lte?, _every?}}}`.
+  // Inner range chunk parsed by `blockRangeSchema` in `Main.res`.
+  onBlockFilterSchema: S.object(s =>
+    s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))))
+  ),
 }

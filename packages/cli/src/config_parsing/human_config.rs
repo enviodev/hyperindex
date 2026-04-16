@@ -87,6 +87,62 @@ pub struct BaseConfig {
         description = "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)"
     )]
     pub full_batch_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Configuration for the storage backends the indexer writes to. Defaults to \
+                       `postgres: true` when omitted. ClickHouse requires Postgres to be enabled \
+                       (it is not supported as a single storage yet), and at least one backend \
+                       must be enabled."
+    )]
+    pub storage: Option<StorageConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct StorageConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub postgres: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clickhouse: Option<bool>,
+}
+
+// Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
+// constraints Storage::resolve enforces at codegen time: ClickHouse requires
+// Postgres, and at least one backend must be enabled. Without this, an IDE
+// validating against the schema would accept configs the CLI later rejects.
+impl JsonSchema for StorageConfig {
+    fn schema_name() -> Cow<'static, str> {
+        "StorageConfig".into()
+    }
+
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "properties": {
+                "postgres": {
+                    "description": "Whether to use Postgres as a storage backend (default: true).",
+                    "type": ["boolean", "null"]
+                },
+                "clickhouse": {
+                    "description": "Whether to additionally sync the indexed data to ClickHouse. \
+                                    Requires Postgres to be enabled (default: false).",
+                    "type": ["boolean", "null"]
+                }
+            },
+            "additionalProperties": false,
+            // Storage::resolve rejects any `postgres: false` config: with
+            // `clickhouse: true` it fails as "ClickHouse not supported as a
+            // single storage yet"; with clickhouse absent or false the
+            // defaults resolve to all-backends-disabled. So the only
+            // schema-valid shape is one without an explicit `postgres: false`.
+            "not": {
+                "properties": {
+                    "postgres": { "const": false }
+                },
+                "required": ["postgres"]
+            }
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -269,7 +325,18 @@ pub mod evm {
     }
 
     #[subenum(RpcTransactionField)]
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[derive(
+        Debug,
+        Serialize,
+        Deserialize,
+        PartialEq,
+        Eq,
+        Hash,
+        Clone,
+        Display,
+        JsonSchema,
+        strum::EnumIter,
+    )]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
     pub enum TransactionField {
@@ -324,7 +391,18 @@ pub mod evm {
     }
 
     #[subenum(RpcBlockField)]
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[derive(
+        Debug,
+        Serialize,
+        Deserialize,
+        PartialEq,
+        Eq,
+        Hash,
+        Clone,
+        Display,
+        JsonSchema,
+        strum::EnumIter,
+    )]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
     pub enum BlockField {
@@ -990,6 +1068,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -1041,6 +1120,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -1051,6 +1131,63 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         assert_eq!(
             serde_yaml::to_string(&cfg).unwrap(),
             "name: Fuel indexer\necosystem: fuel\nchains: []\n"
+        );
+    }
+
+    #[test]
+    fn deserialize_storage_config() {
+        use super::StorageConfig;
+
+        // Both fields present
+        let yaml = "postgres: true\nclickhouse: true\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: Some(true),
+                clickhouse: Some(true),
+            }
+        );
+
+        // Only clickhouse set
+        let yaml = "clickhouse: true\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: None,
+                clickhouse: Some(true),
+            }
+        );
+
+        // Unknown field should fail (deny_unknown_fields)
+        let yaml = "postgres: true\nbigquery: true\n";
+        let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown field `bigquery`"),
+            "Unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn deserialize_evm_config_with_storage() {
+        use super::evm::HumanConfig as EvmConfig;
+        let yaml = r#"
+name: storage-test
+storage:
+  postgres: true
+  clickhouse: true
+chains:
+  - id: 1
+    start_block: 0
+"#;
+        let cfg: EvmConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            cfg.base.storage,
+            Some(super::StorageConfig {
+                postgres: Some(true),
+                clickhouse: Some(true),
+            })
         );
     }
 

@@ -21,7 +21,7 @@ type initialChainState = {
   progressBlockNumber: int,
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   dynamicContracts: array<Internal.indexingContract>,
   sourceBlockNumber: int,
 }
@@ -174,10 +174,9 @@ let make = (
   ~allEnums,
   ~storage,
 ) => {
-  let allEntities =
-    userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.entityConfig])
+  let allEntities = userEntities->Array.concat([InternalTable.EnvioAddresses.entityConfig])
   let allEnums =
-    allEnums->Js.Array2.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
+    allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
     userEntities,
     allEntities,
@@ -229,8 +228,8 @@ let init = {
           let initialState = await persistence.storage.resumeInitialState()
           persistence.writtenCheckpointId = initialState.checkpointId
           persistence.storageStatus = Ready(initialState)
-          let progress = Js.Dict.empty()
-          initialState.chains->Js.Array2.forEach(c => {
+          let progress = Dict.make()
+          initialState.chains->Array.forEach(c => {
             progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
           })
           Logging.info({
@@ -250,7 +249,7 @@ let getInitializedStorageOrThrow = persistence => {
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
-    Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
+    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready(_) => persistence.storage
   }
 }
@@ -259,7 +258,7 @@ let getInitializedState = persistence => {
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
-    Js.Exn.raiseError(`Failed to access the initial state. The Persistence layer is not initialized.`)
+    JsError.throwWithMessage(`Failed to access the initial state. The Persistence layer is not initialized.`)
   | Ready(initialState) => initialState
   }
 }
@@ -277,7 +276,7 @@ let writeBatch = (
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
-    Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
+    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
     persistence.storage.writeBatch(
       ~batch,
@@ -288,19 +287,19 @@ let writeBatch = (
       ~allEntities=persistence.allEntities,
       ~updatedEntities,
       ~updatedEffectsCache={
-        effectCacheWriteData->Belt.Array.mapU(({effect, items, invalidationsCount}) => {
+        effectCacheWriteData->Array.map(({effect, items, invalidationsCount}) => {
           let effectName = effect.name
           let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
           | Some(c) => c
           | None => {
               let c = {effectName, count: 0}
-              cache->Js.Dict.set(effectName, c)
+              cache->Dict.set(effectName, c)
               c
             }
           }
           let shouldInitialize = effectCacheRecord.count === 0
           effectCacheRecord.count =
-            effectCacheRecord.count + items->Js.Array2.length - invalidationsCount
+            effectCacheRecord.count + items->Array.length - invalidationsCount
           Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
           {effect, items, shouldInitialize}
         })
@@ -315,13 +314,13 @@ let prepareRollbackDiff = async (
 ): rollbackDiff => {
   let entityChanges =
     await persistence.allEntities
-    ->Belt.Array.map(async entityConfig => {
+    ->Array.map(async entityConfig => {
       let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
         ~entityConfig,
         ~rollbackTargetCheckpointId,
       )
 
-      let removedIds = removedIdsResult->Js.Array2.map(data => data["id"])
+      let removedIds = removedIdsResult->Array.map(data => data["id"])
       let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
 
       ({entityConfig, removedIds, restoredEntities}: rollbackEntityDiff)
@@ -336,7 +335,7 @@ let isWriting = persistence => persistence.writePromise !== None
 let getLastCheckpointId = (batch: Batch.t) =>
   switch batch.checkpointIds->Utils.Array.last {
   | Some(id) => id
-  | None => Js.Exn.raiseError("Unexpected empty batch: no checkpoint IDs")
+  | None => JsError.throwWithMessage("Unexpected empty batch: no checkpoint IDs")
   }
 
 let rec executeWrite = persistence => {

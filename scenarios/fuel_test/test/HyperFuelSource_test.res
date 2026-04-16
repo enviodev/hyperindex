@@ -1,5 +1,4 @@
 open Vitest
-open Belt
 
 describe("HyperFuelSource - getNormalRecieptsSelection", () => {
   let contractName1 = "TestContract"
@@ -13,7 +12,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     let selectionConfig = {
       dependsOnAddresses: true,
       eventConfigs: contracts->Array.flatMap(c => {
-        c.events->Array.keepMap(
+        c.events->Array.filterMap(
           e => {
             if e.isWildcard {
               None
@@ -28,16 +27,14 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
   }
 
   let mockAddressesByContractName = () => {
-    Js.Dict.fromArray([(contractName1, [address1, address2]), (contractName2, [address3])])
+    Dict.fromArray([(contractName1, [address1, address2]), (contractName2, [address3])])
   }
 
   it("Receipts Selection with no contracts", t => {
     let getNormalRecieptsSelection = mock(~contracts=[])
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [],
-    )
+    ).toEqual([])
   })
 
   it("Receipts Selection with no events", t => {
@@ -51,9 +48,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [],
-    )
+    ).toEqual([])
   })
 
   it("Receipts Selection with single non-wildcard log event", t => {
@@ -76,6 +71,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -83,16 +79,14 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          rb: [1n],
-          receiptType: [LogData],
-          rootContractId: [address1, address2],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        rb: [1n],
+        receiptType: [LogData],
+        rootContractId: [address1, address2],
+        txStatus: [1],
+      },
+    ])
   })
 
   it(
@@ -114,6 +108,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 handler: None,
                 contractRegister: None,
                 paramsRawEventSchema: %raw(`"Not relevat"`),
+                simulateParamsSchema: %raw(`"Not relevat"`),
               },
             ],
           },
@@ -131,6 +126,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 handler: None,
                 contractRegister: None,
                 paramsRawEventSchema: %raw(`"Not relevat"`),
+                simulateParamsSchema: %raw(`"Not relevat"`),
               },
             ],
           },
@@ -138,20 +134,18 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       )
       t.expect(
         getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-      ).toEqual(
-        [
-          {
-            receiptType: [Transfer, TransferOut],
-            rootContractId: [address1, address2],
-            txStatus: [1],
-          },
-          {
-            receiptType: [Transfer, TransferOut],
-            rootContractId: [address3],
-            txStatus: [1],
-          },
-        ],
-      )
+      ).toEqual([
+        {
+          receiptType: [Transfer, TransferOut],
+          rootContractId: [address1, address2],
+          txStatus: [1],
+        },
+        {
+          receiptType: [Transfer, TransferOut],
+          rootContractId: [address3],
+          txStatus: [1],
+        },
+      ])
     },
   )
 
@@ -172,6 +166,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -189,6 +184,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -196,20 +192,18 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint],
-          rootContractId: [address1, address2],
-          txStatus: [1],
-        },
-        {
-          receiptType: [Mint],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Mint],
+        rootContractId: [address1, address2],
+        txStatus: [1],
+      },
+      {
+        receiptType: [Mint],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Receipts Selection with non-wildcard burn event", t => {
@@ -229,6 +223,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -246,6 +241,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -253,20 +249,18 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Burn],
-          rootContractId: [address1, address2],
-          txStatus: [1],
-        },
-        {
-          receiptType: [Burn],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Burn],
+        rootContractId: [address1, address2],
+        txStatus: [1],
+      },
+      {
+        receiptType: [Burn],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Receipts Selection with all possible events together", t => {
@@ -289,6 +283,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "2",
@@ -304,6 +299,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "Mint",
@@ -316,6 +312,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "Burn",
@@ -328,6 +325,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "Transfer",
@@ -340,6 +338,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "Call",
@@ -352,6 +351,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -372,6 +372,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "Burn",
@@ -384,6 +385,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -392,32 +394,30 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       ~message=`Note that non-wildcard events should be skipped`,
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint, Burn, Transfer, TransferOut],
-          rootContractId: [address1, address2],
-          txStatus: [1],
-        },
-        {
-          rb: [1n],
-          receiptType: [LogData],
-          rootContractId: [address1, address2],
-          txStatus: [1],
-        },
-        {
-          receiptType: [Burn],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-        {
-          rb: [3n],
-          receiptType: [LogData],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Mint, Burn, Transfer, TransferOut],
+        rootContractId: [address1, address2],
+        txStatus: [1],
+      },
+      {
+        rb: [1n],
+        receiptType: [LogData],
+        rootContractId: [address1, address2],
+        txStatus: [1],
+      },
+      {
+        receiptType: [Burn],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+      {
+        rb: [3n],
+        receiptType: [LogData],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Fails with non-wildcard Call event", t => {
@@ -439,15 +439,14 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                   handler: None,
                   contractRegister: None,
                   paramsRawEventSchema: %raw(`"Not relevat"`),
+                  simulateParamsSchema: %raw(`"Not relevat"`),
                 },
               ],
             },
           ],
         )
       },
-    ).toThrowError(
-      "Call receipt indexing currently supported only in wildcard mode",
-    )
+    ).toThrowError("Call receipt indexing currently supported only in wildcard mode")
   })
 
   it("Fails when contract has multiple mint events", t => {
@@ -469,6 +468,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                   handler: None,
                   contractRegister: None,
                   paramsRawEventSchema: %raw(`"Not relevat"`),
+                  simulateParamsSchema: %raw(`"Not relevat"`),
                 },
                 {
                   id: "Mint",
@@ -481,15 +481,14 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                   handler: None,
                   contractRegister: None,
                   paramsRawEventSchema: %raw(`"Not relevat"`),
+                  simulateParamsSchema: %raw(`"Not relevat"`),
                 },
               ],
             },
           ],
         )
       },
-    ).toThrowError(
-      "Duplicate event detected: MyEvent2 for contract TestContract on chain 0",
-    )
+    ).toThrowError("Duplicate event detected: MyEvent2 for contract TestContract on chain 0")
   })
 
   it("Fails when contract has multiple burn events", t => {
@@ -511,6 +510,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                   handler: None,
                   contractRegister: None,
                   paramsRawEventSchema: %raw(`"Not relevat"`),
+                  simulateParamsSchema: %raw(`"Not relevat"`),
                 },
                 {
                   id: "Burn",
@@ -523,15 +523,14 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                   handler: None,
                   contractRegister: None,
                   paramsRawEventSchema: %raw(`"Not relevat"`),
+                  simulateParamsSchema: %raw(`"Not relevat"`),
                 },
               ],
             },
           ],
         )
       },
-    ).toThrowError(
-      "Duplicate event detected: MyEvent2 for contract TestContract on chain 0",
-    )
+    ).toThrowError("Duplicate event detected: MyEvent2 for contract TestContract on chain 0")
   })
 
   it(
@@ -553,6 +552,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 handler: None,
                 contractRegister: None,
                 paramsRawEventSchema: %raw(`"Not relevat"`),
+                simulateParamsSchema: %raw(`"Not relevat"`),
               },
               {
                 id: "Mint",
@@ -565,6 +565,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 handler: None,
                 contractRegister: None,
                 paramsRawEventSchema: %raw(`"Not relevat"`),
+                simulateParamsSchema: %raw(`"Not relevat"`),
               },
             ],
           },
@@ -572,15 +573,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       )
       t.expect(
         getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-      ).toEqual(
-        [
-          {
-            receiptType: [Mint],
-            rootContractId: [address1, address2],
-            txStatus: [1],
-          },
-        ],
-      )
+      ).toEqual([
+        {
+          receiptType: [Mint],
+          rootContractId: [address1, address2],
+          txStatus: [1],
+        },
+      ])
     },
   )
 
@@ -601,6 +600,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -618,6 +618,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -625,15 +626,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Mint],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
 
     // The same but with different event registration order
     let getNormalRecieptsSelection = mock(
@@ -652,6 +651,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -669,6 +669,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -676,15 +677,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Mint],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Works with wildcard burn and non-wildcard burn together in different contract", t => {
@@ -704,6 +703,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -721,6 +721,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -728,15 +729,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Burn],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Burn],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
 
     // The same but with different event registration order
     let getNormalRecieptsSelection = mock(
@@ -755,6 +754,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -772,6 +772,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -779,15 +780,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Burn],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Burn],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
   })
 })
 
@@ -798,7 +797,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: contracts->Array.flatMap(c => {
-        c.events->Array.keepMap(
+        c.events->Array.filterMap(
           e => {
             if e.isWildcard {
               Some((e :> Internal.eventConfig))
@@ -809,7 +808,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         )
       }),
     }->HyperFuelSource.getSelectionConfig(~chain)
-    selectionConfig.getRecieptsSelection(~addressesByContractName=Js.Dict.empty())
+    selectionConfig.getRecieptsSelection(~addressesByContractName=Dict.make())
   }
 
   it("Receipts Selection with no contracts", t => {
@@ -817,9 +816,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     t.expect(
       wildcardReceiptsSelection,
       ~message=`It should never happen, since the partition like this wouldn't exist`,
-    ).toEqual(
-      [],
-    )
+    ).toEqual([])
   })
 
   it("Receipts Selection with no events", t => {
@@ -834,9 +831,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     t.expect(
       wildcardReceiptsSelection,
       ~message=`It should never happen, since the partition like this wouldn't exist`,
-    ).toEqual(
-      [],
-    )
+    ).toEqual([])
   })
 
   it("Receipts Selection with all possible events together", t => {
@@ -859,6 +854,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "2",
@@ -874,6 +870,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "Mint",
@@ -886,6 +883,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "Burn",
@@ -898,6 +896,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "Transfer",
@@ -910,6 +909,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "Call",
@@ -922,6 +922,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -942,6 +943,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "Burn",
@@ -954,6 +956,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -962,19 +965,17 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     t.expect(
       wildcardReceiptsSelection,
       ~message=`Note that wildcard events should be skipped`,
-    ).toEqual(
-      [
-        {
-          receiptType: [Call],
-          txStatus: [1],
-        },
-        {
-          rb: [2n],
-          receiptType: [LogData],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Call],
+        txStatus: [1],
+      },
+      {
+        rb: [2n],
+        receiptType: [LogData],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Works with wildcard mint and non-wildcard mint together in different contract", t => {
@@ -994,6 +995,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -1011,21 +1013,18 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
       ],
     )
-    t.expect(
-      wildcardReceiptsSelection,
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint],
-          txStatus: [1],
-        },
-      ],
-    )
+    t.expect(wildcardReceiptsSelection).toEqual([
+      {
+        receiptType: [Mint],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Receipts Selection with wildcard mint event", t => {
@@ -1045,21 +1044,18 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
       ],
     )
-    t.expect(
-      wildcardReceiptsSelection,
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint],
-          txStatus: [1],
-        },
-      ],
-    )
+    t.expect(wildcardReceiptsSelection).toEqual([
+      {
+        receiptType: [Mint],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Receipts Selection with wildcard burn event", t => {
@@ -1079,21 +1075,18 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
       ],
     )
-    t.expect(
-      wildcardReceiptsSelection,
-    ).toEqual(
-      [
-        {
-          receiptType: [Burn],
-          txStatus: [1],
-        },
-      ],
-    )
+    t.expect(wildcardReceiptsSelection).toEqual([
+      {
+        receiptType: [Burn],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Receipts Selection with multiple wildcard log event", t => {
@@ -1116,6 +1109,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
             {
               id: "2",
@@ -1131,6 +1125,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -1151,21 +1146,18 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               handler: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
+              simulateParamsSchema: %raw(`"Not relevat"`),
             },
           ],
         },
       ],
     )
-    t.expect(
-      wildcardReceiptsSelection,
-    ).toEqual(
-      [
-        {
-          rb: [1n, 2n, 3n],
-          receiptType: [LogData],
-          txStatus: [1],
-        },
-      ],
-    )
+    t.expect(wildcardReceiptsSelection).toEqual([
+      {
+        rb: [1n, 2n, 3n],
+        receiptType: [LogData],
+        txStatus: [1],
+      },
+    ])
   })
 })

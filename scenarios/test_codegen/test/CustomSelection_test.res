@@ -1,45 +1,25 @@
 open Vitest
 
-type expectedTransactionFields = {
-  to: option<Address.t>,
-  from: option<Address.t>,
-  hash: string,
-}
-
-type expectedBlockFields = {
-  number: int,
-  timestamp: int,
-  hash: string,
-  parentHash: string,
-}
-
-type expectedGlobalTransactionFields = {
-  transactionIndex: int,
-  hash: string,
-}
-
-type expectedGlobalBlockFields = {
-  number: int,
-  timestamp: int,
-  hash: string,
-}
-
 // Compile-time type assertions for custom field selection
-// These verify that generated record types match expected field sets
-let _ = (
-  (Obj.magic(): Indexer.Gravatar.CustomSelection.transaction :> expectedTransactionFields) :> Indexer.Gravatar.CustomSelection.transaction
-)
-let _ = (
-  (Obj.magic(): Indexer.Gravatar.CustomSelection.block :> expectedBlockFields) :> Indexer.Gravatar.CustomSelection.block
-)
+// Verify that selected fields have the expected types
+let _ = (event: Indexer.Gravatar.CustomSelection.event) => {
+  let _to: option<Address.t> = event.transaction.to
+  let _from: option<Address.t> = event.transaction.from
+  let _hash: string = event.transaction.hash
+  let _number: int = event.block.number
+  let _timestamp: int = event.block.timestamp
+  let _blockHash: string = event.block.hash
+  let _parentHash: string = event.block.parentHash
+}
 
 // Events without custom field selection should use the global one
-let _ = (
-  (Obj.magic(): Indexer.Gravatar.EmptyEvent.transaction :> expectedGlobalTransactionFields) :> Indexer.Gravatar.EmptyEvent.transaction
-)
-let _ = (
-  (Obj.magic(): Indexer.Gravatar.EmptyEvent.block :> expectedGlobalBlockFields) :> Indexer.Gravatar.EmptyEvent.block
-)
+let _ = (event: Indexer.Gravatar.EmptyEvent.event) => {
+  let _transactionIndex: int = event.transaction.transactionIndex
+  let _hash: string = event.transaction.hash
+  let _number: int = event.block.number
+  let _timestamp: int = event.block.timestamp
+  let _blockHash: string = event.block.hash
+}
 
 Async.it("Handles event with a custom field selection (in ReScript)", async t => {
   let indexer = Indexer.createTestIndexer()

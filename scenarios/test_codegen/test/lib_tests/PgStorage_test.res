@@ -115,9 +115,18 @@ describe("Test PgStorage SQL generation functions", () => {
         )
 
         // Index names must differ so CREATE INDEX IF NOT EXISTS doesn't skip the second
-        t.expect(queryAsc, ~message="Same fields with different directions must produce different index names").not.toBe(queryDesc)
-        t.expect(queryAsc->Js.String2.includes("\"t_a_b\""), ~message="ASC index name has no suffix").toBeTruthy()
-        t.expect(queryDesc->Js.String2.includes("\"t_a_desc_b_desc\""), ~message="DESC index name encodes direction").toBeTruthy()
+        t.expect(
+          queryAsc,
+          ~message="Same fields with different directions must produce different index names",
+        ).not.toBe(queryDesc)
+        t.expect(
+          queryAsc->String.includes("\"t_a_b\""),
+          ~message="ASC index name has no suffix",
+        ).toBeTruthy()
+        t.expect(
+          queryDesc->String.includes("\"t_a_desc_b_desc\""),
+          ~message="DESC index name encodes direction",
+        ).toBeTruthy()
       },
     )
   })
@@ -126,26 +135,26 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should create indices for A entity table",
       async t => {
-        let query = PgStorage.makeCreateTableIndicesQuery(Mock.entityConfig(A).table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableIndicesQuery(
+          MockIndexer.entityConfig(A).table,
+          ~pgSchema="test_schema",
+        )
 
         let expectedIndices = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
-        t.expect(
-          query,
-          ~message="Indices SQL should match exactly",
-        ).toBe(expectedIndices)
+        t.expect(query, ~message="Indices SQL should match exactly").toBe(expectedIndices)
       },
     )
 
     Async.it(
       "Should handle table with no indices",
       async t => {
-        let query = PgStorage.makeCreateTableIndicesQuery(Mock.entityConfig(B).table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableIndicesQuery(
+          MockIndexer.entityConfig(B).table,
+          ~pgSchema="test_schema",
+        )
 
         // B entity has no indexed fields, so should return empty string
-        t.expect(
-          query,
-          ~message="Should return empty string for table with no indices",
-        ).toBe("")
+        t.expect(query, ~message="Should return empty string for table with no indices").toBe("")
       },
     )
   })
@@ -155,16 +164,13 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create SQL for A entity table",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          Mock.entityConfig(A).table,
+          MockIndexer.entityConfig(A).table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
 
         let expectedTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));`
-        t.expect(
-          query,
-          ~message="A table SQL should match exactly",
-        ).toBe(expectedTableSql)
+        t.expect(query, ~message="A table SQL should match exactly").toBe(expectedTableSql)
       },
     )
 
@@ -172,16 +178,13 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create SQL for B entity table with derived fields",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          Mock.entityConfig(B).table,
+          MockIndexer.entityConfig(B).table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
 
         let expectedBTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."B"("id" TEXT NOT NULL, "c_id" TEXT, PRIMARY KEY("id"));`
-        t.expect(
-          query,
-          ~message="B table SQL should match exactly",
-        ).toBe(expectedBTableSql)
+        t.expect(query, ~message="B table SQL should match exactly").toBe(expectedBTableSql)
       },
     )
 
@@ -189,16 +192,15 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should handle default values",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          Mock.entityConfig(A).table,
+          MockIndexer.entityConfig(A).table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
 
         let expectedDefaultTestSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));`
-        t.expect(
-          query,
-          ~message="Default value table SQL should match exactly",
-        ).toBe(expectedDefaultTestSql)
+        t.expect(query, ~message="Default value table SQL should match exactly").toBe(
+          expectedDefaultTestSql,
+        )
       },
     )
   })
@@ -208,13 +210,13 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create complete initialization queries",
       async t => {
         let entities = [
-          Mock.entityConfig(A),
-          Mock.entityConfig(B),
-          Mock.entityConfig(EntityWith63LenghtName______________________________________one),
-          Mock.entityConfig(EntityWith63LenghtName______________________________________two),
-          Mock.entityConfig(EntityWithAllTypes),
+          MockIndexer.entityConfig(A),
+          MockIndexer.entityConfig(B),
+          MockIndexer.entityConfig(EntityWith63LenghtName______________________________________one),
+          MockIndexer.entityConfig(EntityWith63LenghtName______________________________________two),
+          MockIndexer.entityConfig(EntityWithAllTypes),
         ]
-        let enums = Mock.config.allEnums
+        let enums = MockIndexer.config.allEnums
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
@@ -309,10 +311,9 @@ INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "max
 VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
        (137, 0, NULL, 200, 0, NULL, -1, -1, NULL, 0, false);`
 
-        t.expect(
-          mainQuery,
-          ~message="Main query should match expected SQL exactly",
-        ).toBe(expectedMainQuery)
+        t.expect(mainQuery, ~message="Main query should match expected SQL exactly").toBe(
+          expectedMainQuery,
+        )
       },
     )
 
@@ -395,7 +396,7 @@ $$ LANGUAGE plpgsql;`)
       "Should create SQL for single entity with indices",
       async t => {
         // Test with just entity A which has an indexed field
-        let entities = [Mock.entityConfig(A)]
+        let entities = [MockIndexer.entityConfig(A)]
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
@@ -453,10 +454,9 @@ SELECT
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "public"."envio_chains";`
 
-        t.expect(
-          mainQuery,
-          ~message="Single entity SQL should match expected output exactly",
-        ).toBe(expectedMainQuery)
+        t.expect(mainQuery, ~message="Single entity SQL should match expected output exactly").toBe(
+          expectedMainQuery,
+        )
 
         // Verify functions query contains the A history function
         t.expect(
@@ -533,18 +533,15 @@ $$ LANGUAGE plpgsql;`)
       async t => {
         let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
-          ~table=Mock.entityConfig(EntityWithAllNonArrayTypes).table,
-          ~itemSchema=Mock.entityConfig(EntityWithAllNonArrayTypes).schema,
+          ~table=MockIndexer.entityConfig(EntityWithAllNonArrayTypes).table,
+          ~itemSchema=MockIndexer.entityConfig(EntityWithAllNonArrayTypes).schema,
           ~isRawEvents=false,
         )
 
         let expectedQuery = `INSERT INTO "test_schema"."EntityWithAllNonArrayTypes" ("id", "string", "optString", "int_", "optInt", "float_", "optFloat", "bool", "optBool", "bigInt", "optBigInt", "bigDecimal", "optBigDecimal", "bigDecimalWithConfig", "enumField", "optEnumField", "timestamp", "optTimestamp")
 SELECT * FROM unnest($1::TEXT[],$2::TEXT[],$3::TEXT[],$4::INTEGER[],$5::INTEGER[],$6::DOUBLE PRECISION[],$7::DOUBLE PRECISION[],$8::INTEGER[]::BOOLEAN[],$9::INTEGER[]::BOOLEAN[],$10::NUMERIC[],$11::NUMERIC[],$12::NUMERIC[],$13::NUMERIC[],$14::NUMERIC(10, 8)[],$15::TEXT[]::"test_schema".AccountType[],$16::TEXT[]::"test_schema".AccountType[],$17::TIMESTAMP WITH TIME ZONE[],$18::TIMESTAMP WITH TIME ZONE NULL[])ON CONFLICT("id") DO UPDATE SET "string" = EXCLUDED."string","optString" = EXCLUDED."optString","int_" = EXCLUDED."int_","optInt" = EXCLUDED."optInt","float_" = EXCLUDED."float_","optFloat" = EXCLUDED."optFloat","bool" = EXCLUDED."bool","optBool" = EXCLUDED."optBool","bigInt" = EXCLUDED."bigInt","optBigInt" = EXCLUDED."optBigInt","bigDecimal" = EXCLUDED."bigDecimal","optBigDecimal" = EXCLUDED."optBigDecimal","bigDecimalWithConfig" = EXCLUDED."bigDecimalWithConfig","enumField" = EXCLUDED."enumField","optEnumField" = EXCLUDED."optEnumField","timestamp" = EXCLUDED."timestamp","optTimestamp" = EXCLUDED."optTimestamp";`
 
-        t.expect(
-          query,
-          ~message="Should generate correct unnest insert SQL",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="Should generate correct unnest insert SQL").toBe(expectedQuery)
       },
     )
 
@@ -561,10 +558,7 @@ SELECT * FROM unnest($1::TEXT[],$2::TEXT[],$3::TEXT[],$4::INTEGER[],$5::INTEGER[
         let expectedQuery = `INSERT INTO "test_schema"."raw_events" ("chain_id", "event_id", "event_name", "contract_name", "block_number", "log_index", "src_address", "block_hash", "block_timestamp", "block_fields", "transaction_fields", "params")
 SELECT * FROM unnest($1::INTEGER[],$2::BIGINT[],$3::TEXT[],$4::TEXT[],$5::INTEGER[],$6::INTEGER[],$7::TEXT[],$8::TEXT[],$9::INTEGER[],$10::JSONB[],$11::JSONB[],$12::JSONB[]);`
 
-        t.expect(
-          query,
-          ~message="Don't need EXCLUDED for raw events",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="Don't need EXCLUDED for raw events").toBe(expectedQuery)
       },
     )
   })
@@ -575,8 +569,8 @@ SELECT * FROM unnest($1::INTEGER[],$2::BIGINT[],$3::TEXT[],$4::TEXT[],$5::INTEGE
       async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
-          ~table=Mock.entityConfig(A).table,
-          ~itemSchema=Mock.entityConfig(A).schema,
+          ~table=MockIndexer.entityConfig(A).table,
+          ~itemSchema=MockIndexer.entityConfig(A).schema,
           ~itemsCount=2,
         )
 
@@ -596,8 +590,8 @@ VALUES($1,$3,$5),($2,$4,$6)ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_
       async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
-          ~table=Mock.entityConfig(B).table,
-          ~itemSchema=Mock.entityConfig(B).schema,
+          ~table=MockIndexer.entityConfig(B).table,
+          ~itemSchema=MockIndexer.entityConfig(B).schema,
           ~itemsCount=1,
         )
 
@@ -696,10 +690,9 @@ WHERE cp."block_hash" IS NOT NULL
           ~chainConfigs=[],
         )
 
-        t.expect(
-          query,
-          ~message="Should return empty string when no chain configs provided",
-        ).toBe(None)
+        t.expect(query, ~message="Should return empty string when no chain configs provided").toBe(
+          None,
+        )
       },
     )
 
@@ -725,10 +718,9 @@ WHERE cp."block_hash" IS NOT NULL
         let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
 VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false);`
 
-        t.expect(
-          query,
-          ~message="Should generate correct INSERT VALUES SQL for single chain",
-        ).toBe(Some(expectedQuery))
+        t.expect(query, ~message="Should generate correct INSERT VALUES SQL for single chain").toBe(
+          Some(expectedQuery),
+        )
       },
     )
 
@@ -817,21 +809,21 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
 "progress_block" as "progressBlockNumber",
 "source_block" as "sourceBlockNumber",
 (
+  -- envio_addresses.id is a composite "{chainId}-{address}" string produced by
+  -- Config.EnvioAddresses.makeId; extract the address by taking everything
+  -- after the first '-'. Keep in sync with makeId / getAddress.
   SELECT COALESCE(json_agg(json_build_object(
-    'address', "contract_address",
+    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
     'contractName', "contract_name",
-    'startBlock', "registering_event_block_number",
-    'registrationBlock', "registering_event_block_number"
+    'startBlock', "registration_block",
+    'registrationBlock', "registration_block"
   )), '[]'::json)
-  FROM "test_schema"."dynamic_contract_registry"
+  FROM "test_schema"."envio_addresses"
   WHERE "chain_id" = chains."id"
 ) as "dynamicContracts"
 FROM "test_schema"."envio_chains" as chains;`
 
-        t.expect(
-          query,
-          ~message="Initial state SQL should match exactly",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="Initial state SQL should match exactly").toBe(expectedQuery)
       },
     )
   })
@@ -859,10 +851,7 @@ FROM "test_schema"."envio_chains" as chains;`
         let expectedQuery = `INSERT INTO "test_schema"."envio_checkpoints" ("id", "chain_id", "block_number", "block_hash", "events_processed")
 SELECT * FROM unnest($1::BIGINT[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INTEGER[]);`
 
-        t.expect(
-          query,
-          ~message="Insert checkpoints SQL should match exactly",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="Insert checkpoints SQL should match exactly").toBe(expectedQuery)
       },
     )
   })
@@ -898,10 +887,9 @@ WHERE
 ORDER BY "id" DESC
 LIMIT 1;`
 
-        t.expect(
-          query,
-          ~message="Rollback target checkpoint SQL should match exactly",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="Rollback target checkpoint SQL should match exactly").toBe(
+          expectedQuery,
+        )
       },
     )
   })
@@ -922,11 +910,53 @@ FROM "test_schema"."envio_checkpoints"
 WHERE "id" > $1
 GROUP BY "chain_id";`
 
-        t.expect(
-          query,
-          ~message="Rollback progress diff SQL should match exactly",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="Rollback progress diff SQL should match exactly").toBe(
+          expectedQuery,
+        )
       },
     )
   })
+})
+
+describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
+  // Exercises the requireEnv path in makeStorageFromEnv that's only taken
+  // when `storage.clickhouse: true` in config.yaml. The test suite does not
+  // set any ENVIO_CLICKHOUSE_* vars, so this should throw a user-friendly
+  // error pointing at the first missing one (ENVIO_CLICKHOUSE_HOST).
+  Async.it(
+    "Throws when storage.clickhouse=true but ENVIO_CLICKHOUSE_HOST is missing",
+    async t => {
+      let config = {
+        ...MockIndexer.config,
+        storage: ({postgres: true, clickhouse: true}: Config.storage),
+      }
+      let message = switch try {
+        let _ = PgStorage.makeStorageFromEnv(~config)
+        None
+      } catch {
+      | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
+      | _ => None
+      } {
+      | Some(m) => m
+      | None => ""
+      }
+      t.expect(
+        message,
+        ~message="Should throw a helpful error naming the missing env var",
+      ).toMatch(%re(`/ClickHouse storage is enabled.*ENVIO_CLICKHOUSE_HOST/`))
+    },
+  )
+
+  Async.it(
+    "Does not throw when storage.clickhouse=false (default)",
+    async t => {
+      let config = {
+        ...MockIndexer.config,
+        storage: ({postgres: true, clickhouse: false}: Config.storage),
+      }
+      // Just ensure construction succeeds without touching ClickHouse env vars.
+      let _ = PgStorage.makeStorageFromEnv(~config)
+      t.expect(true, ~message="Expected no throw when clickhouse is disabled").toBe(true)
+    },
+  )
 })

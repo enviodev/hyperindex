@@ -1,101 +1,26 @@
-///A module used for flattening and dealing with tuples and nested
-///tuples in event params
+///Helpers for enumerating event params with their original positional index.
+///Tuple params (including `tuple[]` / `tuple[N]`) are kept intact as single
+///entity fields typed as JSON — the handler just assigns the whole value
+///through a magic cast and the entity column stores the nested object as
+///JSON. This keeps the contract-import path uniform for every ABI type
+///without having to invent column names for nested struct fields.
 mod nested_params {
     use super::*;
+    #[cfg(test)]
+    use crate::config_parsing::abi_compat::AbiType;
     use crate::config_parsing::abi_compat::EventParam;
-    use alloy_dyn_abi::DynSolType;
-    pub type ParamIndex = usize;
 
-    ///Recursive Representation of param token. With reference to it's own index
-    ///if it is a tuple
-    enum NestedEventParam {
-        Param(EventParam, ParamIndex),
-        TupleParam(ParamIndex, Box<NestedEventParam>),
-        Tuple(Vec<NestedEventParam>),
-    }
-
-    impl NestedEventParam {
-        ///Constructs NestedEventParam from an EventParam
-        fn from(event_input: EventParam, param_index: usize) -> Self {
-            if let DynSolType::Tuple(param_types) = &event_input.kind {
-                //in the tuple case return a Tuple type with an array of inner
-                //event params
-                Self::Tuple(
-                    param_types
-                        .iter()
-                        .enumerate()
-                        .map(|(i, p)| {
-                            let inner_event_input = EventParam {
-                                // Keep the same name as the event input name
-                                name: event_input.name.clone(),
-                                kind: p.clone(),
-                                //Tuple fields can't be indexed
-                                indexed: false,
-                            };
-                            //Recursively get the inner NestedEventParam type
-                            Self::TupleParam(
-                                i,
-                                Box::new(Self::from(inner_event_input, param_index)),
-                            )
-                        })
-                        .collect(),
-                )
-            } else {
-                Self::Param(event_input, param_index)
-            }
-        }
-        //Turns the recursive NestedEventParam structure into a vec of FlattenedEventParam structs
-        //This is the internal function that takes an array as a second param. The public function
-        //calls this with an empty vec.
-        fn get_flattened_inputs_inner(
-            &self,
-            mut accessor_indexes: Vec<ParamIndex>,
-        ) -> Vec<FlattenedEventParam> {
-            match &self {
-                Self::Param(e, i) => {
-                    let accessor_indexes = if accessor_indexes.is_empty() {
-                        None
-                    } else {
-                        Some(accessor_indexes)
-                    };
-
-                    vec![FlattenedEventParam {
-                        event_param_pos: *i,
-                        event_param: e.clone(),
-                        accessor_indexes,
-                    }]
-                }
-                Self::TupleParam(i, arg_or_tuple) => {
-                    accessor_indexes.push(*i);
-                    arg_or_tuple.get_flattened_inputs_inner(accessor_indexes)
-                }
-                Self::Tuple(params) => params
-                    .iter()
-                    .flat_map(|param| param.get_flattened_inputs_inner(accessor_indexes.clone()))
-                    .collect::<Vec<_>>(),
-            }
-        }
-
-        //Public function that converts the NestedEventParam into a Vec of FlattenedEventParams
-        //calls the internal function with an empty vec of accessor indexes
-        pub fn get_flattened_inputs(&self) -> Vec<FlattenedEventParam> {
-            self.get_flattened_inputs_inner(vec![])
-        }
-    }
-
-    ///A flattened representation of an event param, meaning
-    ///tuples/structs would broken into a single FlattenedEventParam for each
-    ///param that it contains and include accessor indexes for where to find that param
-    ///within its parent tuple/struct
+    ///Positional wrapper around an `EventParam`. Retained as a module boundary
+    ///so the rest of the template code can depend on a stable shape even if
+    ///the enumeration logic grows in the future.
     #[derive(Debug, Clone, PartialEq)]
     pub struct FlattenedEventParam {
-        event_param_pos: usize,
+        pub event_param_pos: usize,
         pub event_param: EventParam,
-        pub accessor_indexes: Option<Vec<ParamIndex>>,
     }
 
     impl FlattenedEventParam {
-        ///Gets a named paramter or constructs a name using the parameter's index
+        ///Gets a named parameter or constructs a name using the parameter's index
         ///if the param is nameless
         fn get_param_name(&self) -> String {
             match &self.event_param.name {
@@ -103,65 +28,28 @@ mod nested_params {
                 name => name.clone(),
             }
         }
-        ///Gets the key of the param for the entity representing the event
-        ///If this is not a tuple it will be the same as the "event_param_key"
-        ///eg. MyEventEntity has a param called myTupleParam_1_2, where as the
-        ///event_param_key is myTupleParam with accessor_indexes of [1, 2]
-        ///In a JS template this would be myTupleParam[1][2] to get the value of the parameter
+
+        ///Key to use for the generated entity column. Same as the event param
+        ///name in almost all cases; `id` is renamed to `event_id` because `id`
+        ///is reserved for the entity primary key.
         pub fn get_entity_key(&self) -> CapitalizedOptions {
-            let accessor_indexes_string = self.accessor_indexes.as_ref().map_or_else(
-                //If there is no accessor_indexes this is an empty string
-                || "".to_string(),
-                |accessor_indexes| {
-                    format!(
-                        "_{}",
-                        //join each index with "_"
-                        //eg. _1_2 for a double nested tuple
-                        accessor_indexes
-                            .iter()
-                            .map(|u| u.to_string())
-                            .collect::<Vec<_>>()
-                            .join("_")
-                    )
-                },
-            );
-
-            //Join the param name with the accessor_indexes_string
-            //eg. myTupleParam_1_2 or myNonTupleParam if there are no accessor indexes
-            let mut entity_key = format!("{}{}", self.get_param_name(), accessor_indexes_string);
-
-            // Check if entity_key is "id" and rename to "event_id"
+            let mut entity_key = self.get_param_name();
             if entity_key == "id" {
                 entity_key = "event_id".to_string();
             }
-
             entity_key.to_capitalized_options()
         }
 
-        ///Gets the event param "key" for the event type. Will be the same
-        ///as the entity key if the type is not a tuple. In the case of a tuple
-        ///entity key will append _0_1 for eg to represent thested param in a flat structure
-        ///the event param key will not append this and will need to access that tuple at the given
-        ///index
+        ///Key used to access the param on the runtime event object. Always the
+        ///param name; only differs from `get_entity_key` when the entity key
+        ///was renamed.
         pub fn get_event_param_key(&self) -> CapitalizedOptions {
             self.get_param_name().to_capitalized_options()
         }
 
         ///Used for constructing in tests
         #[cfg(test)]
-        pub fn new(
-            name: &str,
-            kind: DynSolType,
-            indexed: bool,
-            accessor_indexes: Vec<usize>,
-            event_param_pos: usize,
-        ) -> Self {
-            let accessor_indexes = if accessor_indexes.is_empty() {
-                None
-            } else {
-                Some(accessor_indexes)
-            };
-
+        pub fn new(name: &str, kind: AbiType, indexed: bool, event_param_pos: usize) -> Self {
             FlattenedEventParam {
                 event_param_pos,
                 event_param: EventParam {
@@ -169,22 +57,17 @@ mod nested_params {
                     kind,
                     indexed,
                 },
-                accessor_indexes,
             }
         }
     }
 
-    ///Take an event, and if any param is a tuple type,
-    ///it flattens it into an event with more params
-    ///MyEvent(address myAddress, (uint256, bool) myTupleParam) ->
-    ///MyEvent(address myAddress, uint256 myTupleParam_1, uint256 myTupleParam_2)
-    ///This representation makes it easy to have single field conversions
     pub fn flatten_event_inputs(event_inputs: Vec<EventParam>) -> Vec<FlattenedEventParam> {
         event_inputs
             .into_iter()
             .enumerate()
-            .flat_map(|(i, event_input)| {
-                NestedEventParam::from(event_input, i).get_flattened_inputs()
+            .map(|(i, event_input)| FlattenedEventParam {
+                event_param_pos: i,
+                event_param: event_input,
             })
             .collect()
     }
@@ -202,9 +85,8 @@ use crate::{
     type_schema::RecordField,
     utils::text::{Capitalize, CapitalizedOptions},
 };
-use alloy_dyn_abi::DynSolType;
 use anyhow::{Context, Result};
-use nested_params::{flatten_event_inputs, FlattenedEventParam, ParamIndex};
+use nested_params::{flatten_event_inputs, FlattenedEventParam};
 use serde::Serialize;
 use std::{path::Path, vec};
 
@@ -269,11 +151,8 @@ impl Contract {
         content.push_str(" * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features\n");
         content.push_str(" */\n");
 
-        // Import statement for contract module
-        content.push_str(&format!(
-            "import {{ {} }} from \"generated\";\n",
-            self.name.capitalized
-        ));
+        // Import the indexer instance
+        content.push_str("import { indexer } from \"generated\";\n");
 
         // Import type statement for entity types
         if !self.imported_events.is_empty() {
@@ -284,11 +163,11 @@ impl Contract {
             content.push_str("} from \"generated\";\n");
         }
 
-        // Handler registrations
+        // Handler registrations using indexer.onEvent
         for event in &self.imported_events {
             content.push('\n');
             content.push_str(&format!(
-                "{}.{}.handler(async ({{ event, context }}) => {{\n",
+                "indexer.onEvent({{ contract: \"{}\", event: \"{}\" }}, async ({{ event, context }}) => {{\n",
                 self.name.capitalized, event.name
             ));
             content.push_str(&format!(
@@ -297,20 +176,15 @@ impl Contract {
             ));
             content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
 
-            // Add params
+            // Add params. Tuple params (including `tuple[]`) flow through as
+            // JSON entity columns — TypeScript's `unknown` trivially accepts
+            // the structured event param value, so no cast is needed.
             for param in &event.params {
+                let value = format!("event.params.{}", param.event_key.original);
                 content.push_str(&format!(
-                    "    {}: event.params.{}",
-                    param.entity_key.uncapitalized, param.event_key.original
+                    "    {}: {},\n",
+                    param.entity_key.uncapitalized, value
                 ));
-
-                // Add tuple accessor indexes if present
-                if let Some(indexes) = &param.tuple_param_accessor_indexes {
-                    for index in indexes {
-                        content.push_str(&format!("[{}]", index));
-                    }
-                }
-                content.push_str(",\n");
             }
 
             content.push_str("  };\n\n");
@@ -335,11 +209,11 @@ impl Contract {
         content.push('\n');
         content.push_str("open Indexer\n");
 
-        // Handler registrations
+        // Handler registrations using indexer.onEvent + GADT event identity
         for event in &self.imported_events {
             content.push('\n');
             content.push_str(&format!(
-                "{}.{}.handler(async ({{event, context}}) => {{\n",
+                "indexer.onEvent({{event: {}({})}}, async ({{event, context}}) => {{\n",
                 self.name.capitalized, event.name
             ));
             content.push_str(&format!(
@@ -348,26 +222,20 @@ impl Contract {
             ));
             content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
 
-            // Add params
+            // Add params. Leaf params pass through directly; addresses get
+            // a `->Address.toString` conversion. Tuple params (including
+            // `tuple[]`) flow through as JSON entity columns — the event
+            // value is already a structured JS object at runtime, so we only
+            // need a magic cast so ReScript's type system accepts assigning
+            // it to the `JSON.t` entity column.
             for param in &event.params {
-                content.push_str(&format!(
-                    "    {}: event.params.{}",
-                    param.entity_key.uncapitalized, param.event_key.uncapitalized
-                ));
+                let base = format!("event.params.{}", param.event_key.uncapitalized);
+                content.push_str(&format!("    {}: {}", param.entity_key.uncapitalized, base));
 
-                // Add tuple accessor indexes if present
-                if let Some(indexes) = &param.tuple_param_accessor_indexes {
-                    for index in indexes {
-                        content.push_str(&format!(
-                            "\n      ->Utils.Tuple.get({})->Belt.Option.getUnsafe",
-                            index
-                        ));
-                    }
-                }
-
-                // Add address conversion if needed
                 if param.is_eth_address {
                     content.push_str("\n      ->Address.toString");
+                } else if param.is_json_entity_field {
+                    content.push_str("->(Utils.magic: _ => JSON.t)");
                 }
 
                 content.push_str(",\n");
@@ -384,7 +252,7 @@ impl Contract {
         content
     }
     /// Generates TypeScript test file content for this contract
-    pub fn generate_typescript_test_content(&self, _is_fuel: bool, chain_id: u64) -> String {
+    pub fn generate_typescript_test_content(&self, is_fuel: bool, chain_id: u64) -> String {
         let first_event = match self.imported_events.first() {
             Some(event) => event,
             None => return String::new(),
@@ -400,101 +268,130 @@ impl Contract {
         let mut content = String::new();
 
         // Imports
-        content.push_str("import { describe, it, expect } from \"vitest\";\n");
-        content.push_str(&format!(
-            "import {{ createTestIndexer, type {} }} from \"generated\";\n",
-            entity_name
-        ));
-        if has_address_param {
-            content.push_str("import { TestHelpers } from \"envio\";\n");
+        content.push_str("import { describe, it } from \"vitest\";\n");
+        if is_fuel {
+            content.push_str("import { createTestIndexer } from \"generated\";\n");
+        } else {
+            content.push_str(&format!(
+                "import {{ createTestIndexer, type {} }} from \"generated\";\n",
+                entity_name
+            ));
+            if has_address_param {
+                content.push_str("import { TestHelpers } from \"envio\";\n");
+            }
         }
 
-        content.push_str(&format!(
-            "\ndescribe(\"{} contract {} event tests\", () => {{\n",
-            contract_name, event_name
-        ));
-        content.push_str(&format!(
-            "  it(\"{}_{} is created correctly\", async () => {{\n",
-            contract_name, event_name
-        ));
-        content.push_str("    const indexer = createTestIndexer();\n");
+        // Mock event test — skip for Fuel because Fuel event params can't be
+        // extracted from the ABI yet, so the generated mock may be incomplete.
+        if !is_fuel {
+            content.push_str(&format!(
+                "\ndescribe(\"{} contract {} event tests\", () => {{\n",
+                contract_name, event_name
+            ));
+            content.push_str(&format!(
+                "  it(\"{}_{} is created correctly\", async (t) => {{\n",
+                contract_name, event_name
+            ));
+            content.push_str("    const indexer = createTestIndexer();\n");
 
-        // Mock event
-        content.push_str(&format!(
-            "\n    // Creating mock for {} contract {} event\n",
-            contract_name, event_name
-        ));
-        content.push_str("    const event = {\n");
-        content.push_str(&format!(
-            "      contract: \"{}\" as const,\n",
-            contract_name
-        ));
-        content.push_str(&format!("      event: \"{}\" as const,\n", event_name));
-        if !first_event.params.is_empty() {
-            content.push_str("      params: {\n");
+            // Mock event
+            content.push_str(&format!(
+                "\n    // Creating mock for {} contract {} event\n",
+                contract_name, event_name
+            ));
+            content.push_str("    const event = {\n");
+            content.push_str(&format!(
+                "      contract: \"{}\" as const,\n",
+                contract_name
+            ));
+            content.push_str(&format!("      event: \"{}\" as const,\n", event_name));
+            if !first_event.params.is_empty() {
+                content.push_str("      params: {\n");
+                for param in &first_event.params {
+                    content.push_str(&format!(
+                        "        {}: {},\n",
+                        param.js_name, param.default_value_typescript
+                    ));
+                }
+                content.push_str("      },\n");
+            }
+            content.push_str("    };\n");
+
+            // Process
+            content.push_str("\n    await indexer.process({\n");
+            content.push_str("      chains: {\n");
+            content.push_str(&format!("        {}: {{\n", chain_id));
+            content.push_str("          simulate: [event],\n");
+            content.push_str("        },\n");
+            content.push_str("      },\n");
+            content.push_str("    });\n");
+
+            // Get actual entity
+            content.push_str("\n    // Getting the actual entity from the test indexer\n");
+            content.push_str(&format!(
+                "    let actual{}{} = await indexer.{}_{}.getOrThrow(\"{}\");\n",
+                contract_name, event_name, contract_name, event_name, entity_id
+            ));
+
+            // Expected entity
+            content.push_str("\n    // Creating the expected entity\n");
+            content.push_str(&format!(
+                "    const expected{}{}: {}_{} = {{\n",
+                contract_name, event_name, contract_name, event_name
+            ));
+            content.push_str(&format!("      id: \"{}\",\n", entity_id));
             for param in &first_event.params {
                 content.push_str(&format!(
-                    "        {}: {},\n",
-                    param.js_name, param.default_value_typescript
+                    "      {}: event.params.{},\n",
+                    param.entity_key.uncapitalized, param.js_name
                 ));
             }
-            content.push_str("      },\n");
-        }
-        content.push_str("    };\n");
+            content.push_str("    };\n");
 
-        // Process
-        content.push_str("\n    await indexer.process({\n");
-        content.push_str("      chains: {\n");
-        content.push_str(&format!("        {}: {{\n", chain_id));
-        content.push_str("          startBlock: 0,\n");
-        content.push_str("          endBlock: 0,\n");
-        content.push_str("          simulate: [event],\n");
-        content.push_str("        },\n");
-        content.push_str("      },\n");
-        content.push_str("    });\n");
-
-        // Get actual entity
-        content.push_str("\n    // Getting the actual entity from the test indexer\n");
-        content.push_str(&format!(
-            "    let actual{}{} = await indexer.{}_{}.getOrThrow(\"{}\");\n",
-            contract_name, event_name, contract_name, event_name, entity_id
-        ));
-
-        // Expected entity
-        content.push_str("\n    // Creating the expected entity\n");
-        content.push_str(&format!(
-            "    const expected{}{}: {}_{} = {{\n",
-            contract_name, event_name, contract_name, event_name
-        ));
-        content.push_str(&format!("      id: \"{}\",\n", entity_id));
-        for param in &first_event.params {
+            // Assert
+            content.push_str(
+                "    // Asserting that the entity in the mock database is the same as the expected entity\n",
+            );
             content.push_str(&format!(
-                "      {}: event.params.{},\n",
-                param.entity_key.uncapitalized, param.js_name
+                "    t.expect(actual{}{}, \"Actual {}{} should be the same as the expected {}{}\").toEqual(expected{}{});\n",
+                contract_name, event_name,
+                contract_name, event_name,
+                contract_name, event_name,
+                contract_name, event_name,
             ));
+
+            content.push_str("  });\n");
+            content.push_str("});\n");
         }
-        content.push_str("    };\n");
 
-        // Assert
-        content.push_str(
-            "    // Asserting that the entity in the mock database is the same as the expected entity\n",
-        );
+        // Auto-exit smoke test: fetches first block with events from HyperSync and exits
+        content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
         content.push_str(&format!(
-            "    expect(actual{}{}, \"Actual {}{} should be the same as the expected {}{}\").toEqual(expected{}{});\n",
-            contract_name, event_name,
-            contract_name, event_name,
-            contract_name, event_name,
-            contract_name, event_name,
+            "  it(\"processes the first block with events on chain {}\", async (t) => {{\n",
+            chain_id
         ));
-
-        content.push_str("  });\n");
+        content.push_str("    const indexer = createTestIndexer();\n\n");
+        content.push_str(&format!(
+            "    const result = await indexer.process({{ chains: {{ {}: {{}} }} }});\n\n",
+            chain_id
+        ));
+        content.push_str(
+            "    t.expect(result.changes.length, \"Should have at least one change\").toBeGreaterThan(0);\n",
+        );
+        content.push_str("    const firstChange = result.changes[0]!;\n");
+        content.push_str(&format!(
+            "    t.expect(firstChange.chainId).toBe({});\n",
+            chain_id
+        ));
+        content.push_str("    t.expect(firstChange.eventsProcessed).toBeGreaterThan(0);\n");
+        content.push_str("  }, 60_000);\n");
         content.push_str("});\n");
 
         content
     }
 
     /// Generates ReScript test file content for this contract
-    pub fn generate_rescript_test_content(&self, _is_fuel: bool, chain_id: u64) -> String {
+    pub fn generate_rescript_test_content(&self, is_fuel: bool, chain_id: u64) -> String {
         let first_event = match self.imported_events.first() {
             Some(event) => event,
             None => return String::new(),
@@ -509,85 +406,119 @@ impl Contract {
 
         content.push_str("open Vitest\n");
         content.push_str("open Indexer\n");
-        content.push_str(&format!(
-            "\ndescribe(\"{} contract {} event tests\", () => {{\n",
-            contract_name, event_name
-        ));
-        content.push_str(&format!(
-            "  Async.it(\"{} handler creates {} entity\", async t => {{\n",
-            event_name, entity_name
-        ));
-        content.push_str("    let indexer = createTestIndexer()\n");
 
-        // Process with simulate item using makeSimulateItem
-        content.push_str("\n    let _ = await indexer.process({\n");
-        content.push_str("      chains: {\n");
-        content.push_str(&format!("        \\\"{}\": {{\n", chain_id));
-        content.push_str("          startBlock: 0,\n");
-        content.push_str("          endBlock: 0,\n");
-
-        // Generate makeSimulateItem call using GADT-based eventIdentity
-        if first_event.params.is_empty() {
+        // Mock event test — skip for Fuel because Fuel event params can't be
+        // extracted from the ABI yet, so the generated mock may be incomplete.
+        if !is_fuel {
             content.push_str(&format!(
-                "          simulate: [makeSimulateItem(OnEvent({{event: {}({})}}))],\n",
+                "\ndescribe(\"{} contract {} event tests\", () => {{\n",
                 contract_name, event_name
             ));
-        } else {
             content.push_str(&format!(
-                "          simulate: [\n\
-                 \x20           makeSimulateItem(\n\
-                 \x20             OnEvent({{\n\
-                 \x20               event: {}({}),\n\
-                 \x20               params: {{\n",
-                contract_name, event_name
+                "  Async.it(\"{} handler creates {} entity\", async t => {{\n",
+                event_name, entity_name
+            ));
+            content.push_str("    let indexer = createTestIndexer()\n");
+
+            // Process with simulate item using makeSimulateItem
+            content.push_str("\n    let _ = await indexer.process({\n");
+            content.push_str("      chains: {\n");
+            content.push_str(&format!("        \\\"{}\": {{\n", chain_id));
+
+            // Generate makeSimulateItem call using GADT-based eventIdentity
+            if first_event.params.is_empty() {
+                content.push_str(&format!(
+                    "          simulate: [makeSimulateItem(OnEvent({{event: {}({})}}))],\n",
+                    contract_name, event_name
+                ));
+            } else {
+                content.push_str(&format!(
+                    "          simulate: [\n\
+                     \x20           makeSimulateItem(\n\
+                     \x20             OnEvent({{\n\
+                     \x20               event: {}({}),\n\
+                     \x20               params: {{\n",
+                    contract_name, event_name
+                ));
+                for param in &first_event.params {
+                    content.push_str(&format!(
+                        "                  {}: {},\n",
+                        param.res_name, param.default_value_rescript
+                    ));
+                }
+                content.push_str("              },\n");
+                content.push_str("            }),\n");
+                content.push_str("          ),\n");
+                content.push_str("          ],\n");
+            }
+
+            content.push_str("        },\n");
+            content.push_str("      },\n");
+            content.push_str("    })\n");
+
+            // Get actual entity and assert against expected
+            content.push_str(&format!(
+                "\n    let actual{contract_name}{event_name} = await indexer.\\\"{entity_name}\".getOrThrow(\"{entity_id}\")\n",
+            ));
+
+            content.push_str(&format!(
+                "\n    let expected{contract_name}{event_name}: Entities.{entity_name}.t = {{\n\
+                 \x20     id: \"{entity_id}\",\n",
             ));
             for param in &first_event.params {
+                let value = if param.is_eth_address {
+                    format!("{}->Address.toString", param.default_value_rescript)
+                } else if param.is_json_entity_field {
+                    // Tuple defaults are structured records (matching the
+                    // runtime event shape); cast to `JSON.t` for the entity
+                    // column.
+                    format!(
+                        "{}->(Utils.magic: _ => JSON.t)",
+                        param.default_value_rescript
+                    )
+                } else {
+                    param.default_value_rescript.clone()
+                };
                 content.push_str(&format!(
-                    "                  {}: {},\n",
-                    param.res_name, param.default_value_rescript
+                    "      {}: {},\n",
+                    param.entity_key.uncapitalized, value
                 ));
             }
-            content.push_str("              },\n");
-            content.push_str("            }),\n");
-            content.push_str("          ),\n");
-            content.push_str("          ],\n");
-        }
+            content.push_str("    }\n");
 
-        content.push_str("        },\n");
-        content.push_str("      },\n");
-        content.push_str("    })\n");
-
-        // Get actual entity and assert against expected
-        content.push_str(&format!(
-            "\n    let actual{contract_name}{event_name} = await indexer.\\\"{entity_name}\".getOrThrow(\"{entity_id}\")\n",
-        ));
-
-        content.push_str(&format!(
-            "\n    let expected{contract_name}{event_name}: Entities.{entity_name}.t = {{\n\
-             \x20     id: \"{entity_id}\",\n",
-        ));
-        for param in &first_event.params {
-            let value = if param.is_eth_address {
-                format!("{}->Address.toString", param.default_value_rescript)
-            } else {
-                param.default_value_rescript.clone()
-            };
+            // Assert
             content.push_str(&format!(
-                "      {}: {},\n",
-                param.entity_key.uncapitalized, value
+                "\n    t.expect(\n\
+                 \x20     actual{contract_name}{event_name},\n\
+                 \x20     ~message=\"Actual {entity_name} should be the same as the expected {entity_name}\",\n\
+                 \x20   ).toEqual(expected{contract_name}{event_name})\n",
             ));
+
+            content.push_str("  })\n");
+            content.push_str("})\n");
         }
-        content.push_str("    }\n");
 
-        // Assert
+        // Auto-exit smoke test: fetches first block with events from HyperSync and exits
+        let chain_config_type = if is_fuel {
+            "fuelChainConfig"
+        } else {
+            "evmChainConfig"
+        };
+        content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
         content.push_str(&format!(
-            "\n    t.expect(\n\
-             \x20     actual{contract_name}{event_name},\n\
-             \x20     ~message=\"Actual {entity_name} should be the same as the expected {entity_name}\",\n\
-             \x20   ).toEqual(expected{contract_name}{event_name})\n",
+            "  Async.it(\"processes the first block with events on chain {}\", async t => {{\n",
+            chain_id
         ));
-
-        content.push_str("  })\n");
+        content.push_str("    let indexer = createTestIndexer()\n\n");
+        content.push_str(&format!(
+            "    let result = await indexer.process({{\n      chains: {{\n        \\\"{}\": ({{}} : TestIndexer.{}),\n      }},\n    }})\n\n",
+            chain_id, chain_config_type
+        ));
+        content.push_str("    t.expect(\n");
+        content.push_str("      result.changes->Array.length,\n");
+        content.push_str("      ~message=\"Should have at least one change\",\n");
+        content.push_str("    ).toBeGreaterThan(0)\n");
+        content.push_str("  }, ~timeout=60_000)\n");
         content.push_str("})\n");
 
         content
@@ -706,21 +637,27 @@ impl Event {
 pub struct Param {
     res_name: String,
     js_name: String,
-    ///Event param name + index if its a tuple ie. myTupleParam_0_1 or just myRegularParam
+    ///Entity column name. Matches the param name, except for `id` which is
+    ///renamed to `event_id` to avoid clashing with the entity primary key.
     entity_key: CapitalizedOptions,
-    ///Just the event param name accessible on the event type
+    ///Runtime event-object key. Same as the param name.
     event_key: CapitalizedOptions,
-    ///List of nested acessors so for a nested tuple Some([0, 1]) this can be used combined with
-    ///the event key ie. event.params.myTupleParam[0][1]
-    tuple_param_accessor_indexes: Option<Vec<ParamIndex>>,
     graphql_type: FieldType,
     is_eth_address: bool,
+    ///True when the param is a tuple (struct), `tuple[]`, or `tuple[N]`.
+    ///These render as JSON entity columns; the ReScript handler casts the
+    ///structured value through `Utils.magic` so the type checker accepts it
+    ///against the `JSON.t` entity field. TypeScript's `unknown` accepts any
+    ///value so no cast is needed.
+    is_json_entity_field: bool,
     default_value_rescript: String,
     default_value_typescript: String,
 }
 
 impl Param {
     fn from_event_param(flattened_event_param: FlattenedEventParam) -> Result<Self> {
+        use crate::config_parsing::abi_compat::AbiType;
+
         let js_name = flattened_event_param.event_param.name.to_string();
         let res_name = RecordField::to_valid_rescript_name(&js_name);
         let eth_param: crate::config_parsing::event_parsing::EvmEventParam =
@@ -728,18 +665,32 @@ impl Param {
         let type_ident = abi_to_rescript_type(&eth_param);
         let default_value_rescript = type_ident.get_default_value_rescript();
         let default_value_typescript = type_ident.get_default_value_non_rescript();
+
+        // Detect tuple / array-of-tuple params. These get flattened to a
+        // single JSON entity column instead of per-field expansion, so the
+        // contract-import path handles every ABI shape uniformly.
+        let is_json_entity_field = match &flattened_event_param.event_param.kind {
+            AbiType::Tuple(_) => true,
+            AbiType::Array(inner) | AbiType::FixedArray(inner, _) => {
+                matches!(inner.as_ref(), AbiType::Tuple(_))
+            }
+            _ => false,
+        };
+
         Ok(Param {
             res_name,
             js_name,
             entity_key: flattened_event_param.get_entity_key(),
             event_key: flattened_event_param.get_event_param_key(),
-            tuple_param_accessor_indexes: flattened_event_param.accessor_indexes,
-            graphql_type: FieldType::from_dyn_sol_type(&flattened_event_param.event_param.kind)
-                .context(format!(
-                    "Converting eth event param '{}' to gql scalar",
-                    flattened_event_param.event_param.name
-                ))?,
-            is_eth_address: matches!(flattened_event_param.event_param.kind, DynSolType::Address),
+            graphql_type: FieldType::from_dyn_sol_type(
+                &flattened_event_param.event_param.kind.to_dyn_sol_type(),
+            )
+            .context(format!(
+                "Converting eth event param '{}' to gql scalar",
+                flattened_event_param.event_param.name
+            ))?,
+            is_eth_address: matches!(flattened_event_param.event_param.kind, AbiType::Address),
+            is_json_entity_field,
             default_value_rescript,
             default_value_typescript,
         })
@@ -914,112 +865,94 @@ impl AutoSchemaHandlerTemplate {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::config_parsing::abi_compat::EventParam;
+    use crate::config_parsing::abi_compat::{AbiTupleField, AbiType, EventParam};
     use pretty_assertions::assert_eq;
 
-    #[test]
-    fn flatten_event_with_tuple() {
-        let event_inputs = vec![
-            EventParam {
-                name: "user".to_string(),
-                kind: DynSolType::Address,
-                indexed: false,
-            },
-            EventParam {
-                name: "myTupleParam".to_string(),
-                kind: DynSolType::Tuple(vec![DynSolType::Uint(256), DynSolType::Bool]),
-                indexed: false,
-            },
-        ];
+    fn unnamed(kind: AbiType) -> AbiTupleField {
+        AbiTupleField { name: None, kind }
+    }
 
-        let expected_flat_inputs = vec![
-            FlattenedEventParam::new("user", DynSolType::Address, false, vec![], 0),
-            FlattenedEventParam::new("myTupleParam", DynSolType::Uint(256), false, vec![0], 1),
-            FlattenedEventParam::new("myTupleParam", DynSolType::Bool, false, vec![1], 1),
-        ];
-
-        let actual_flat_inputs = flatten_event_inputs(event_inputs);
-        assert_eq!(expected_flat_inputs, actual_flat_inputs);
-
-        let expected_entity_keys: Vec<_> = vec!["user", "myTupleParam_0", "myTupleParam_1"]
-            .into_iter()
-            .map(|s| s.to_string().to_capitalized_options())
-            .collect();
-
-        let actual_entity_keys: Vec<_> = actual_flat_inputs
-            .iter()
-            .map(|f| f.get_entity_key())
-            .collect();
-
-        assert_eq!(expected_entity_keys, actual_entity_keys);
+    fn named(name: &str, kind: AbiType) -> AbiTupleField {
+        AbiTupleField {
+            name: Some(name.to_string()),
+            kind,
+        }
     }
 
     #[test]
-    fn flatten_event_with_nested_tuple() {
+    fn flatten_event_preserves_params_one_to_one() {
+        // Tuples no longer get broken apart into separate columns; they ride
+        // along as a single param (the contract-import entity column is JSON).
+        // The only responsibility of `flatten_event_inputs` now is to pair
+        // each input with its positional index.
         let event_inputs = vec![
             EventParam {
-                //nameless param should compute to "_0"
+                // Nameless param should compute to "_0".
                 name: "".to_string(),
-                kind: DynSolType::Address,
+                kind: AbiType::Address,
                 indexed: false,
             },
             EventParam {
                 name: "myTupleParam".to_string(),
-                kind: DynSolType::Tuple(vec![
-                    DynSolType::Tuple(vec![DynSolType::Uint(8), DynSolType::Uint(8)]),
-                    DynSolType::Bool,
-                ]),
+                kind: AbiType::Tuple(vec![unnamed(AbiType::Uint(256)), unnamed(AbiType::Bool)]),
                 indexed: false,
             },
             EventParam {
-                //param named "id" should compute to "event_id"
+                name: "tranches".to_string(),
+                kind: AbiType::Array(Box::new(AbiType::Tuple(vec![
+                    named("amount", AbiType::Uint(128)),
+                    named("timestamp", AbiType::Uint(40)),
+                ]))),
+                indexed: false,
+            },
+            EventParam {
+                // `id` should be renamed to `event_id` for the entity column.
                 name: "id".to_string(),
-                kind: DynSolType::String,
+                kind: AbiType::String,
                 indexed: false,
             },
         ];
 
         let expected_flat_inputs = vec![
-            FlattenedEventParam::new("", DynSolType::Address, false, vec![], 0),
-            FlattenedEventParam::new("myTupleParam", DynSolType::Uint(8), false, vec![0, 0], 1),
-            FlattenedEventParam::new("myTupleParam", DynSolType::Uint(8), false, vec![0, 1], 1),
-            FlattenedEventParam::new("myTupleParam", DynSolType::Bool, false, vec![1], 1),
-            FlattenedEventParam::new("id", DynSolType::String, false, vec![], 2),
+            FlattenedEventParam::new("", AbiType::Address, false, 0),
+            FlattenedEventParam::new(
+                "myTupleParam",
+                AbiType::Tuple(vec![unnamed(AbiType::Uint(256)), unnamed(AbiType::Bool)]),
+                false,
+                1,
+            ),
+            FlattenedEventParam::new(
+                "tranches",
+                AbiType::Array(Box::new(AbiType::Tuple(vec![
+                    named("amount", AbiType::Uint(128)),
+                    named("timestamp", AbiType::Uint(40)),
+                ]))),
+                false,
+                2,
+            ),
+            FlattenedEventParam::new("id", AbiType::String, false, 3),
         ];
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
         assert_eq!(expected_flat_inputs, actual_flat_inputs);
 
-        // test that `entity_key`s are correct
-        let expected_entity_keys: Vec<_> = vec![
-            "_0",
-            "myTupleParam_0_0",
-            "myTupleParam_0_1",
-            "myTupleParam_1",
-            "event_id",
-        ]
-        .into_iter()
-        .map(|s| s.to_string().to_capitalized_options())
-        .collect();
-
+        let expected_entity_keys: Vec<_> = vec!["_0", "myTupleParam", "tranches", "event_id"]
+            .into_iter()
+            .map(|s| s.to_string().to_capitalized_options())
+            .collect();
         let actual_entity_keys: Vec<_> = actual_flat_inputs
             .iter()
             .map(|f| f.get_entity_key())
             .collect();
-
         assert_eq!(expected_entity_keys, actual_entity_keys);
 
-        // test that `event_key`s are correct
-        let expected_event_keys: Vec<_> =
-            vec!["_0", "myTupleParam", "myTupleParam", "myTupleParam", "id"]
-                .into_iter()
-                .map(|s| s.to_string().to_capitalized_options())
-                .collect();
-
+        let expected_event_keys: Vec<_> = vec!["_0", "myTupleParam", "tranches", "id"]
+            .into_iter()
+            .map(|s| s.to_string().to_capitalized_options())
+            .collect();
         let actual_event_keys: Vec<_> = actual_flat_inputs
             .iter()
             .map(|f| f.get_event_param_key())
             .collect();
-
         assert_eq!(expected_event_keys, actual_event_keys);
     }
 
@@ -1090,5 +1023,42 @@ mod test {
             Event::get_entity_id_code(IS_FUEL, &Language::TypeScript),
             "`${event.chainId}_${event.block.height}_${event.logIndex}`".to_string()
         );
+    }
+
+    // End-to-end contract-import snapshots driven by the real Sablier V2
+    // LockupTranched ABI. `CreateLockupTranchedStream` has a mix of tuple
+    // shapes (named struct, nested struct, `tuple[]`) that previously bailed
+    // out of contract-import entirely. Each tuple param now lands as a JSON
+    // entity column; the ReScript handler adds a `Utils.magic` cast to
+    // satisfy the `JSON.t` column type.
+
+    #[test]
+    fn typescript_handler_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::TypeScript);
+        let content = template.imported_contracts[0].generate_typescript_handler_content(false);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn rescript_handler_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::ReScript);
+        let content = template.imported_contracts[0].generate_rescript_handler_content(false);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn typescript_test_file_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::TypeScript);
+        let content = template.imported_contracts[0]
+            .generate_typescript_test_content(false, template.first_chain_id);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn rescript_test_file_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::ReScript);
+        let content = template.imported_contracts[0]
+            .generate_rescript_test_content(false, template.first_chain_id);
+        insta::assert_snapshot!(content);
     }
 }

@@ -183,9 +183,37 @@ let evmNullableTransactionFields = Utils.Set.fromArray(
   ),
 )
 
-// Shared EVM transaction fields type used by both RPC and HyperSync sources
-// Field names match HyperSyncClient.ResponseTypes.transaction for consistency
-type evmTransactionFields = {
+type evmBlockInput = {
+  number?: int,
+  timestamp?: int,
+  hash?: string,
+  parentHash?: string,
+  nonce?: bigint,
+  sha3Uncles?: string,
+  logsBloom?: string,
+  transactionsRoot?: string,
+  stateRoot?: string,
+  receiptsRoot?: string,
+  miner?: Address.t,
+  difficulty?: bigint,
+  totalDifficulty?: bigint,
+  extraData?: string,
+  size?: bigint,
+  gasLimit?: bigint,
+  gasUsed?: bigint,
+  uncles?: array<string>,
+  baseFeePerGas?: bigint,
+  blobGasUsed?: bigint,
+  excessBlobGas?: bigint,
+  parentBeaconBlockRoot?: string,
+  withdrawalsRoot?: string,
+  l1BlockNumber?: int,
+  sendCount?: string,
+  sendRoot?: string,
+  mixHash?: string,
+}
+
+type evmTransactionInput = {
   from?: Address.t,
   to?: Address.t,
   gas?: bigint,
@@ -216,16 +244,20 @@ type evmTransactionFields = {
   type_?: int,
   root?: string,
   status?: int,
+  accessList?: JSON.t,
   // L2 specific fields (Optimism, Arbitrum, etc.)
   l1Fee?: bigint,
   l1GasPrice?: bigint,
   l1GasUsed?: bigint,
   l1FeeScalar?: float,
   gasUsedForL1?: bigint,
+  authorizationList?: JSON.t,
 }
 
 @genType
 type genericEvent<'params, 'block, 'transaction> = {
+  contractName: string,
+  eventName: string,
   params: 'params,
   chainId: int,
   srcAddress: Address.t,
@@ -296,11 +328,11 @@ type handlerArgs = {
 type handler = genericHandler<handlerArgs>
 
 @genType
-type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
+type genericHandlerWithLoader<'loader, 'handler, 'where> = {
   loader: 'loader,
   handler: 'handler,
   wildcard?: bool,
-  eventFilters?: 'eventFilters,
+  where?: 'where,
 }
 
 // This is private so it's not manually constructed internally
@@ -320,6 +352,7 @@ type eventConfig = private {
   handler: option<handler>,
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
+  simulateParamsSchema: S.schema<eventParams>,
 }
 
 type fuelEventKind =
@@ -345,7 +378,11 @@ type topicSelection = {
   topic3: array<EvmTypes.Hex.t>,
 }
 
-type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}
+// Per-event, per-invocation arguments passed to a `where` callback. The
+// concrete `chain` shape (which contract key it exposes) is generated per
+// event in user-project codegen — here it's an open record so codegen'd
+// types subtype-coerce into it cleanly.
+type onEventWhereArgs<'chain> = {chain: 'chain}
 
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
@@ -441,9 +478,9 @@ external getItemDcs: item => option<dcs> = "dcs"
 external setItemDcs: (item, dcs) => unit = "dcs"
 
 @genType
-type eventOptions<'eventFilters> = {
+type eventOptions<'where> = {
   wildcard?: bool,
-  eventFilters?: 'eventFilters,
+  where?: 'where,
 }
 
 @genType
@@ -453,7 +490,7 @@ type fuelSupplyParams = {
 }
 let fuelSupplyParamsSchema = S.schema(s => {
   subId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(Utils.BigInt.schema),
 })
 @genType
 type fuelTransferParams = {
@@ -464,8 +501,10 @@ type fuelTransferParams = {
 let fuelTransferParamsSchema = S.schema(s => {
   to: s.matches(Address.schema),
   assetId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(Utils.BigInt.schema),
 })
+
+type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
 
 type entity = private {id: string}
 type genericEntityConfig<'entity> = {
@@ -513,7 +552,7 @@ type effect = {
   rateLimit: option<rateLimitState>,
 }
 let cacheTablePrefix = "envio_effect_"
-let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<effectOutput>)
+let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
 let effectCacheItemRowsSchema = S.array(
   S.schema(s => {id: s.matches(S.string), output: s.matches(cacheOutputSchema)}),
 )
@@ -528,7 +567,7 @@ let makeCacheTable = (~effectName) => {
 }
 
 @genType.import(("./Types.ts", "Invalid"))
-type noEventFilters
+type noOnEventWhere
 
 type checkpointId = bigint
 

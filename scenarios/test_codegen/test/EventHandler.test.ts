@@ -6,11 +6,25 @@ import {
   type Indexer,
   type EvmChainId,
   type EvmChainName,
+  type EvmEvent,
   type FuelChainId,
+  type FuelEvent,
   type SvmChainId,
   type TestIndexer,
+  type EvmOnEventOptions,
+  type EvmOnEventHandler,
+  type EvmContractRegisterOptions,
+  type EvmContractRegisterHandler,
+  type EvmOnEventContext,
+  type EvmContractRegisterContext,
+  type EvmOnEventWhere,
 } from "generated";
-import { type Address } from "envio";
+import {
+  type Address,
+  type EvmOnBlockWhereResult,
+  type EvmOnBlockFilter,
+  type EvmOnBlockOptions,
+} from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 import { createTestIndexer } from "generated";
 
@@ -683,6 +697,45 @@ describe("Use Envio test framework to test event handlers", () => {
     );
   });
 
+  it("captured contractRegister add() throws after handler resolved", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    // Two sequential FactoryEvent events:
+    //   1. testCase "captureAdd"       — contractRegister handler stashes
+    //      context.chain.SimpleNft.add into a module-scoped variable.
+    //   2. testCase "callCapturedAdd"  — onEvent handler tries to call the
+    //      captured closure. By then the first event's contractRegister params
+    //      have isResolved=true, so the closure must throw. The handler
+    //      records the outcome via the CustomSelectionTestPass entity id.
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "captureAdd" },
+            },
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "callCapturedAdd" },
+            },
+          ],
+        },
+      },
+    });
+
+    const sets = result.changes[0]?.CustomSelectionTestPass?.sets ?? [];
+    assert.ok(
+      sets.some((e: { id: string }) => e.id === "captured-add-threw"),
+      `Captured contractRegister add() should throw after handler resolved. Got entity ids: ${sets.map((e: { id: string }) => e.id).join(", ")}`
+    );
+  });
+
   it("Should be able to run effect with cache", async () => {
     const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
@@ -747,6 +800,29 @@ describe("Use Envio test framework to test event handlers", () => {
                 contract: "Gravatar",
                 event: "FactoryEvent",
                 params: { contract: dcAddress, testCase: "handlerInHandler" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+  });
+
+  it("Should throw when registering an onBlock handler after the indexer has finished initializing", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    await assert.rejects(
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "onBlockInHandler" },
               },
             ],
           },
@@ -847,27 +923,105 @@ describe("Use Envio test framework to test event handlers", () => {
           chains: {},
         }),
       {
-        message: "createTestIndexer requires exactly one chain to be defined",
+        message: "createTestIndexer requires at least one chain to be defined",
       }
     );
   });
 
-  it("createTestIndexer throws when multiple chains are defined", () => {
+  it("createTestIndexer processes multiple chains with simulate", async () => {
     const indexer = createTestIndexer();
 
-    assert.throws(
-      () =>
-        indexer.process({
-          chains: {
-            1: { startBlock: 1, endBlock: 100 },
-            137: { startBlock: 1, endBlock: 100 },
+    // Chain 1337 is listed first but has higher ID - should be processed second
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 1n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Chain 1337",
+                imageUrl: "https://example.com/1337.png",
+              },
+            },
+          ],
+        },
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            { contract: "Noop", event: "EmptyEvent" },
+          ],
+        },
+      },
+    });
+
+    // Chains are sorted by chain ID: chain 1 first, then chain 1337
+    assert.deepEqual(result, {
+      changes: [
+        {
+          block: 1,
+          chainId: 1,
+          eventsProcessed: 1,
+        },
+        {
+          block: 1,
+          chainId: 1337,
+          eventsProcessed: 1,
+          Gravatar: {
+            sets: [
+              {
+                id: "1",
+                owner_id: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Chain 1337",
+                imageUrl: "https://example.com/1337.png",
+                updatesCount: 1n,
+                size: "SMALL",
+              },
+            ],
           },
-        }),
-      {
-        message:
-          "createTestIndexer does not support processing multiple chains at once. Found 2 chains defined",
-      }
-    );
+        },
+      ],
+    });
+  });
+
+  // Regression for https://github.com/enviodev/hyperindex/issues/538: a struct
+  // event param must reach the handler as a named record. If the runtime still
+  // delivered it as a positional tuple, the handler would blow up on
+  // `event.params.contactDetails.name` (undefined property access).
+  it("named struct params reach the handler as records (#538)", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "TestEvent",
+              params: {
+                id: 42n,
+                user: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                contactDetails: { name: "Alice", email: "alice@example.com" },
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    assert.deepEqual(result.changes[0]?.SimpleEntity, {
+      sets: [
+        {
+          id: "TestEvent_42",
+          value: "Alice:alice@example.com",
+        },
+      ],
+    });
   });
 
   it("createTestIndexer throws when process is called while already running", async () => {
@@ -919,14 +1073,20 @@ describe("Use Envio test framework to test event handlers", () => {
   it("createTestIndexer throws when startBlock overlaps with previously processed blocks", async () => {
     const indexer = createTestIndexer();
 
-    // First process: blocks 1-100
+    // First process: block 1 with simulate event (WriteBatch sets progress to block 1)
     await indexer.process({
       chains: {
-        1: { startBlock: 1, endBlock: 100 },
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            { contract: "Gravatar", event: "EmptyEvent", block: { number: 100 } },
+          ],
+        },
       },
     });
 
-    // Second process with startBlock <= 100 should throw
+    // Second process with startBlock <= 100 should throw (progress block is 100 from WriteBatch)
     assert.throws(
       () =>
         indexer.process({
@@ -964,7 +1124,6 @@ describe("Use Envio test framework to test event handlers", () => {
       expectType<TypeEqual<typeof change.block, number>>(true);
       expectType<TypeEqual<typeof change.chainId, number>>(true);
       expectType<TypeEqual<typeof change.eventsProcessed, number>>(true);
-      expectType<TypeEqual<typeof change.blockHash, string | undefined>>(true);
 
       // Verify entity changes have expected structure
       const userChange = change.User;
@@ -1231,5 +1390,377 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.strictEqual(result.changes.length, 1);
     assert.strictEqual(result.changes[0]!.eventsProcessed, 2);
     assert.strictEqual(result.changes[0]!.Gravatar?.sets?.length, 2);
+  });
+
+  it("simulate with missing params fills all fields with defaults", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            { contract: "Gravatar", event: "NewGravatar" },
+          ],
+        },
+      },
+    });
+
+    // All param fields get default values: bigint→0n, address→zero, string→""
+    assert.deepEqual(result, {
+      changes: [{
+        block: 1,
+        chainId: 1337,
+        eventsProcessed: 1,
+        Gravatar: {
+          sets: [{
+            id: "0",
+            owner_id: "0x0000000000000000000000000000000000000000",
+            displayName: "",
+            imageUrl: "",
+            updatesCount: 1n,
+            size: "SMALL",
+          }],
+        },
+      }],
+    });
+  });
+
+  it("simulate with partial params fills missing fields with defaults", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 1n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    // Provided fields are used, missing fields get defaults
+    assert.deepEqual(result, {
+      changes: [{
+        block: 1,
+        chainId: 1337,
+        eventsProcessed: 1,
+        Gravatar: {
+          sets: [{
+            id: "1",
+            owner_id: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            displayName: "",
+            imageUrl: "",
+            updatesCount: 1n,
+            size: "SMALL",
+          }],
+        },
+      }],
+    });
+  });
+
+  it("EvmEvent type", () => {
+    // EvmEvent without generics is a union of all events
+    type AllEvents = EvmEvent;
+
+    // contractName and eventName are discriminant fields with literal types
+    expectType<
+      TypeEqual<
+        AllEvents["contractName"],
+        | "Gravatar"
+        | "NftFactory"
+        | "SimpleNft"
+        | "TestEvents"
+        | "Noop"
+        | "EventFiltersTest"
+      >
+    >(true);
+
+    // Narrowing to a specific contract's events
+    type GravatarEvent = EvmEvent<"Gravatar">;
+    expectType<
+      TypeEqual<
+        GravatarEvent["contractName"],
+        "Gravatar"
+      >
+    >(true);
+
+    // Narrowing to a specific event
+    type NewGravatarEvent = EvmEvent<"Gravatar", "NewGravatar">;
+    expectType<TypeEqual<NewGravatarEvent["contractName"], "Gravatar">>(true);
+    expectType<TypeEqual<NewGravatarEvent["eventName"], "NewGravatar">>(true);
+    expectType<TypeEqual<NewGravatarEvent["chainId"], EvmChainId>>(true);
+    expectType<TypeEqual<NewGravatarEvent["logIndex"], number>>(true);
+    expectType<TypeEqual<NewGravatarEvent["srcAddress"], `0x${string}`>>(true);
+    expectType<
+      TypeEqual<
+        NewGravatarEvent["params"],
+        {
+          readonly id: bigint;
+          readonly owner: `0x${string}`;
+          readonly displayName: string;
+          readonly imageUrl: string;
+        }
+      >
+    >(true);
+
+    // Block and transaction have proper types
+    expectType<TypeEqual<NewGravatarEvent["block"]["number"], number>>(true);
+    expectType<TypeEqual<NewGravatarEvent["block"]["timestamp"], number>>(true);
+    expectType<TypeEqual<NewGravatarEvent["block"]["hash"], string>>(true);
+
+    // Non-configured ecosystem event types return error string
+    expectType<
+      TypeEqual<
+        FuelEvent,
+        "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
+      >
+    >(true);
+  });
+});
+
+describe("onEvent / contractRegister types", () => {
+  it("EvmOnEventOptions resolves contract/event literals from Event", () => {
+    type GravatarNewGravatar = EvmEvent<"Gravatar", "NewGravatar">;
+    type Opts = EvmOnEventOptions<GravatarNewGravatar>;
+
+    // Gravatar.NewGravatar has no indexed params, so the project-bound
+    // EvmEventFilters lookup resolves params to {} and `where` is typed
+    // as `EvmOnEventWhere<{}, "Gravatar">` rather than `unknown`.
+    expectType<
+      TypeEqual<
+        Opts,
+        {
+          readonly contract: "Gravatar";
+          readonly event: "NewGravatar";
+          readonly wildcard?: boolean;
+          readonly where?: EvmOnEventWhere<{}, "Gravatar">;
+        }
+      >
+    >(true);
+  });
+
+  it("EvmContractRegisterOptions has same shape as EvmOnEventOptions", () => {
+    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
+    expectType<
+      TypeEqual<EvmContractRegisterOptions<Ev>, EvmOnEventOptions<Ev>>
+    >(true);
+  });
+
+  it("EvmOnEventHandler has correct args shape", () => {
+    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
+    type Handler = EvmOnEventHandler<Ev>;
+
+    expectType<
+      TypeEqual<
+        Handler,
+        (args: { event: Ev; context: EvmOnEventContext }) => Promise<void>
+      >
+    >(true);
+  });
+
+  it("EvmContractRegisterHandler uses EvmContractRegisterContext", () => {
+    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
+    type Handler = EvmContractRegisterHandler<Ev>;
+
+    expectType<
+      TypeEqual<
+        Handler,
+        (args: {
+          event: Ev;
+          context: EvmContractRegisterContext;
+        }) => Promise<void>
+      >
+    >(true);
+  });
+
+  it("EvmOnEventContext has chain info and entity ops", () => {
+    expectType<TypeEqual<EvmOnEventContext["chain"]["id"], EvmChainId>>(true);
+    expectType<TypeEqual<EvmOnEventContext["chain"]["isLive"], boolean>>(true);
+    expectType<TypeEqual<EvmOnEventContext["isPreload"], boolean>>(true);
+
+    // Entity ops are available on context
+    expectType<
+      TypeEqual<
+        EvmOnEventContext["User"]["get"],
+        (id: string) => Promise<User | undefined>
+      >
+    >(true);
+    expectType<
+      TypeEqual<EvmOnEventContext["User"]["set"], (entity: User) => void>
+    >(true);
+  });
+
+  it("EvmContractRegisterContext has chain.ContractName.add() registration", () => {
+    expectType<
+      TypeEqual<EvmContractRegisterContext["chain"]["id"], EvmChainId>
+    >(true);
+    expectType<
+      TypeEqual<
+        EvmContractRegisterContext["chain"]["NftFactory"]["add"],
+        (address: Address) => void
+      >
+    >(true);
+    expectType<
+      TypeEqual<
+        EvmContractRegisterContext["chain"]["SimpleNft"]["add"],
+        (address: Address) => void
+      >
+    >(true);
+    expectType<
+      TypeEqual<
+        EvmContractRegisterContext["chain"]["Gravatar"]["add"],
+        (address: Address) => void
+      >
+    >(true);
+  });
+
+  it("EvmContractRegisterContext does not expose entity operations", () => {
+    // @ts-expect-error - User entity ops should not be on contractRegister context
+    type _userOnCr = EvmContractRegisterContext["User"];
+  });
+
+  it("indexer.onEvent rejects invalid contract/event combinations", () => {
+    indexer.onEvent(
+      // @ts-expect-error - "BadContract" is not a configured contract
+      { contract: "BadContract", event: "X" },
+      async () => {},
+    );
+
+    indexer.onEvent(
+      // @ts-expect-error - "BadEvent" is not an event of Gravatar
+      { contract: "Gravatar", event: "BadEvent" },
+      async () => {},
+    );
+
+    // Valid combination should compile (no @ts-expect-error)
+    indexer.onEvent(
+      { contract: "Gravatar", event: "NewGravatar" },
+      async ({ event }) => {
+        expectType<TypeEqual<typeof event.params.displayName, string>>(true);
+      },
+    );
+  });
+
+  it("indexer.contractRegister exposes context.chain.ContractName.add()", () => {
+    indexer.contractRegister(
+      { contract: "NftFactory", event: "SimpleNftCreated" },
+      async ({ event, context }) => {
+        // event is typed
+        expectType<
+          TypeEqual<typeof event.params.contractAddress, `0x${string}`>
+        >(true);
+        // chain.ContractName.add(address) is available
+        context.chain.SimpleNft.add(event.params.contractAddress);
+        context.chain.NftFactory.add(event.params.contractAddress);
+        // @ts-expect-error - UnknownContract is not configured
+        context.chain.UnknownContract.add(event.params.contractAddress);
+      },
+    );
+  });
+
+  it("EvmOnEventHandler defaults to union of all events", () => {
+    // Without args, the handler accepts the union of all EVM events
+    type DefaultHandler = EvmOnEventHandler;
+    type DefaultArgs = Parameters<DefaultHandler>[0];
+
+    // The event field is the union of all EVM events
+    expectType<TypeEqual<DefaultArgs["event"], EvmEvent>>(true);
+    expectType<TypeEqual<DefaultArgs["context"], EvmOnEventContext>>(true);
+  });
+
+  it("EvmOnEventOptions rejects invalid Event constraint", () => {
+    // EventLike requires contractName and eventName fields
+    // @ts-expect-error - missing required fields
+    type _bad = EvmOnEventOptions<{ foo: "bar" }>;
+  });
+
+  it("EvmOnEventOptions preserves contract/event pairing across union members", () => {
+    // With distributive conditional typing, a union Event type yields a union
+    // of options where each member's contract/event are paired together.
+    // Mismatched pairings (e.g. contract: "Gravatar", event: "SimpleNftCreated")
+    // must be rejected.
+    type UnionEvent =
+      | EvmEvent<"Gravatar", "NewGravatar">
+      | EvmEvent<"NftFactory", "SimpleNftCreated">;
+    type UnionOpts = EvmOnEventOptions<UnionEvent>;
+
+    // Valid pairings compile
+    const _a: UnionOpts = { contract: "Gravatar", event: "NewGravatar" };
+    const _b: UnionOpts = {
+      contract: "NftFactory",
+      event: "SimpleNftCreated",
+    };
+
+    // @ts-expect-error - "SimpleNftCreated" is not an event of "Gravatar"
+    const _bad1: UnionOpts = {
+      contract: "Gravatar",
+      event: "SimpleNftCreated",
+    };
+    // @ts-expect-error - "NewGravatar" is not an event of "NftFactory"
+    const _bad2: UnionOpts = {
+      contract: "NftFactory",
+      event: "NewGravatar",
+    };
+  });
+
+  // Type-level surface checks for `indexer.onBlock`. These assertions are
+  // cheap (no runtime), but they catch regressions where the `where`-return
+  // type widens back to include `void`/`undefined` — which the runtime no
+  // longer silently accepts, so the TS type must stay strict.
+  it("indexer.onBlock exists on the indexer (value-level)", () => {
+    expectType<typeof indexer.onBlock>(indexer.onBlock);
+    // Smoke-check the options shape by constructing one. If `where` ever
+    // loses `void` exclusion, the implicit-return negative test below
+    // catches it; this ensures the `name` + `where` shape still type-checks.
+    const _opts: Parameters<typeof indexer.onBlock>[0] = {
+      name: "someBlockHandler",
+      where: ({ chain }) => (chain.id === 1 ? true : false),
+    };
+    expectType<Parameters<typeof indexer.onBlock>[0]>(_opts);
+  });
+
+  it("EvmOnBlockWhereResult excludes void/undefined", () => {
+    // Narrow intent: the result type is exactly `boolean | EvmOnBlockFilter`.
+    expectType<TypeEqual<EvmOnBlockWhereResult, boolean | EvmOnBlockFilter>>(
+      true
+    );
+    // Negative: a function whose body omits a return path is rejected.
+    // `noImplicitReturns`/the declared return type catches the missing
+    // return, so the assignment below should fail to type-check.
+    type _Predicate = (args: {
+      readonly chain: { readonly id: number };
+    }) => EvmOnBlockWhereResult;
+    // @ts-expect-error - implicit undefined return is not assignable
+    const _missingReturn: _Predicate = ({ chain }) => {
+      if (chain.id === 1) return true;
+      // Falls through with no return — must be a type error.
+    };
+  });
+
+  it("EvmOnBlockFilter accepts partial/empty shapes (strict-key checks live in the runtime schema)", () => {
+    // The TS type uses `?:` for every field and doesn't catch typos
+    // (e.g. `_gt` is fine to TS). The runtime `S.strict` on
+    // `blockRangeSchema` is what rejects them with a clear error. This
+    // assertion documents that split: TS validates *shape*, runtime
+    // validates *keys*.
+    const _ok: EvmOnBlockFilter = {
+      block: { number: { _gte: 1, _lte: 10, _every: 2 } },
+    };
+    const _partial: EvmOnBlockFilter = { block: { number: { _gte: 1 } } };
+    const _empty: EvmOnBlockFilter = {};
+    expectType<EvmOnBlockFilter>(_ok);
+    expectType<EvmOnBlockFilter>(_partial);
+    expectType<EvmOnBlockFilter>(_empty);
   });
 });

@@ -441,9 +441,43 @@ pub struct SystemConfig {
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
+    pub storage: Storage,
     pub human_config: HumanConfig,
     pub lowercase_addresses: bool,
     pub handlers: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Storage {
+    pub postgres: bool,
+    pub clickhouse: bool,
+}
+
+impl Storage {
+    pub fn resolve(config: Option<&human_config::StorageConfig>) -> Result<Self> {
+        let (postgres, clickhouse) = match config {
+            // Default: only Postgres enabled
+            None => (true, false),
+            Some(s) => (s.postgres.unwrap_or(true), s.clickhouse.unwrap_or(false)),
+        };
+        if clickhouse && !postgres {
+            return Err(anyhow!(
+                "ClickHouse is not supported as a single storage yet. Please enable Postgres \
+                 alongside ClickHouse in the `storage` config."
+            ));
+        }
+        if !postgres && !clickhouse {
+            return Err(anyhow!(
+                "At least one storage backend must be enabled. Please set `postgres: true` \
+                 in the `storage` config (or omit the `storage` section entirely to use the \
+                 default)."
+            ));
+        }
+        Ok(Self {
+            postgres,
+            clickhouse,
+        })
+    }
 }
 
 //Getter methods for system config
@@ -550,6 +584,7 @@ impl SystemConfig {
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
+        let storage = Storage::resolve(base_config.storage.as_ref())?;
 
         // Create a new ParsedProjectPaths that uses the output field from config if specified
         let final_project_paths = {
@@ -745,6 +780,7 @@ impl SystemConfig {
                     schema,
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
+                    storage,
                     lowercase_addresses: matches!(
                         evm_config.address_format,
                         Some(super::human_config::evm::AddressFormat::Lowercase)
@@ -889,6 +925,7 @@ impl SystemConfig {
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
+                    storage,
                     lowercase_addresses: false,
                     handlers: base_config.handlers.clone(),
                     human_config,
@@ -930,6 +967,7 @@ impl SystemConfig {
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: false,
+                    storage,
                     lowercase_addresses: false,
                     handlers: None,
                     human_config,
@@ -1527,7 +1565,8 @@ impl Event {
             PathBuf::from(&abi_file_path),
         )
         .context("Failed to get path to ABI relative to the root of the project")?;
-        let fuel_abi = FuelAbi::parse(abi_path).context("Failed to parse ABI".to_string())?;
+        let fuel_abi = FuelAbi::parse(abi_path, abi_file_path.to_string())
+            .context("Failed to parse ABI".to_string())?;
 
         let mut events = vec![];
 
@@ -1673,6 +1712,99 @@ impl FieldSelection {
                 },
             ],
         )
+    }
+
+    /// Returns a FieldSelection containing ALL available EVM block and transaction fields.
+    /// Used for generating complete TypeScript types where unselected fields are typed as `never`.
+    pub fn all_evm() -> Self {
+        use human_config::evm::{BlockField, TransactionField};
+        use strum::IntoEnumIterator;
+
+        let block_fields: Vec<SelectedField> = BlockField::iter()
+            .map(|field| {
+                let data_type = match field {
+                    BlockField::ParentHash => TypeIdent::String,
+                    BlockField::Nonce => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::Sha3Uncles => TypeIdent::String,
+                    BlockField::LogsBloom => TypeIdent::String,
+                    BlockField::TransactionsRoot => TypeIdent::String,
+                    BlockField::StateRoot => TypeIdent::String,
+                    BlockField::ReceiptsRoot => TypeIdent::String,
+                    BlockField::Miner => TypeIdent::Address,
+                    BlockField::Difficulty => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::TotalDifficulty => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::ExtraData => TypeIdent::String,
+                    BlockField::Size => TypeIdent::BigInt,
+                    BlockField::GasLimit => TypeIdent::BigInt,
+                    BlockField::GasUsed => TypeIdent::BigInt,
+                    BlockField::Uncles => TypeIdent::option(TypeIdent::array(TypeIdent::String)),
+                    BlockField::BaseFeePerGas => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::BlobGasUsed => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::ExcessBlobGas => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::ParentBeaconBlockRoot => TypeIdent::option(TypeIdent::String),
+                    BlockField::WithdrawalsRoot => TypeIdent::option(TypeIdent::String),
+                    BlockField::L1BlockNumber => TypeIdent::option(TypeIdent::Int),
+                    BlockField::SendCount => TypeIdent::option(TypeIdent::String),
+                    BlockField::SendRoot => TypeIdent::option(TypeIdent::String),
+                    BlockField::MixHash => TypeIdent::option(TypeIdent::String),
+                };
+                SelectedField {
+                    name: field.to_string(),
+                    data_type,
+                }
+            })
+            .collect();
+
+        let transaction_fields: Vec<SelectedField> = TransactionField::iter()
+            .map(|field| {
+                let data_type = match field {
+                    TransactionField::TransactionIndex => TypeIdent::Int,
+                    TransactionField::Hash => TypeIdent::String,
+                    TransactionField::From => TypeIdent::option(TypeIdent::Address),
+                    TransactionField::To => TypeIdent::option(TypeIdent::Address),
+                    TransactionField::Gas => TypeIdent::BigInt,
+                    TransactionField::GasPrice => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::MaxPriorityFeePerGas => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::MaxFeePerGas => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::CumulativeGasUsed => TypeIdent::BigInt,
+                    TransactionField::EffectiveGasPrice => TypeIdent::BigInt,
+                    TransactionField::GasUsed => TypeIdent::BigInt,
+                    TransactionField::Input => TypeIdent::String,
+                    TransactionField::Nonce => TypeIdent::BigInt,
+                    TransactionField::Value => TypeIdent::BigInt,
+                    TransactionField::V => TypeIdent::option(TypeIdent::String),
+                    TransactionField::R => TypeIdent::option(TypeIdent::String),
+                    TransactionField::S => TypeIdent::option(TypeIdent::String),
+                    TransactionField::ContractAddress => TypeIdent::option(TypeIdent::Address),
+                    TransactionField::LogsBloom => TypeIdent::String,
+                    TransactionField::Root => TypeIdent::option(TypeIdent::String),
+                    TransactionField::Status => TypeIdent::option(TypeIdent::Int),
+                    TransactionField::YParity => TypeIdent::option(TypeIdent::String),
+                    TransactionField::MaxFeePerBlobGas => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::BlobVersionedHashes => {
+                        TypeIdent::option(TypeIdent::array(TypeIdent::String))
+                    }
+                    TransactionField::Type => TypeIdent::option(TypeIdent::Int),
+                    TransactionField::L1Fee => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::L1GasPrice => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::L1GasUsed => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::L1FeeScalar => TypeIdent::option(TypeIdent::Float),
+                    TransactionField::GasUsedForL1 => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::AccessList => {
+                        TypeIdent::option(TypeIdent::array(TypeIdent::Unknown))
+                    }
+                    TransactionField::AuthorizationList => {
+                        TypeIdent::option(TypeIdent::array(TypeIdent::Unknown))
+                    }
+                };
+                SelectedField {
+                    name: field.to_string(),
+                    data_type,
+                }
+            })
+            .collect();
+
+        Self::new(transaction_fields, block_fields)
     }
 
     pub fn try_from_config_field_selection(
@@ -2288,6 +2420,7 @@ mod test {
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: None,
             contracts: None,
@@ -2336,6 +2469,7 @@ mod test {
                 output: Some("custom/output".to_string()),
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: None,
             contracts: None,
@@ -2368,6 +2502,82 @@ mod test {
         assert_eq!(
             system_config_with_output.parsed_project_paths.generated,
             expected_custom_path
+        );
+    }
+
+    #[test]
+    fn test_storage_resolve() {
+        use super::human_config::StorageConfig;
+
+        // Default (None) -> postgres only
+        assert_eq!(
+            super::Storage::resolve(None).unwrap(),
+            super::Storage {
+                postgres: true,
+                clickhouse: false
+            }
+        );
+
+        // Empty struct -> defaults
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: None,
+                clickhouse: None,
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: true,
+                clickhouse: false
+            }
+        );
+
+        // Both enabled -> ok
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: Some(true),
+                clickhouse: Some(true),
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: true,
+                clickhouse: true
+            }
+        );
+
+        // ClickHouse without Postgres -> user-friendly error
+        let err = super::Storage::resolve(Some(&StorageConfig {
+            postgres: Some(false),
+            clickhouse: Some(true),
+        }))
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("ClickHouse is not supported as a single storage yet"),
+            "Unexpected error: {err}"
+        );
+
+        // All storages disabled -> user-friendly error
+        let err = super::Storage::resolve(Some(&StorageConfig {
+            postgres: Some(false),
+            clickhouse: Some(false),
+        }))
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("At least one storage backend must be enabled"),
+            "Unexpected error: {err}"
+        );
+
+        // postgres explicitly false with clickhouse omitted -> same error
+        let err = super::Storage::resolve(Some(&StorageConfig {
+            postgres: Some(false),
+            clickhouse: None,
+        }))
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("At least one storage backend must be enabled"),
+            "Unexpected error: {err}"
         );
     }
 }

@@ -5,7 +5,7 @@ type syncing = {
 }
 type synced = {
   ...syncing,
-  timestampCaughtUpToHeadOrEndblock: Js.Date.t,
+  timestampCaughtUpToHeadOrEndblock: Date.t,
 }
 
 type progress = SearchingForEvents | Syncing(syncing) | Synced(synced)

@@ -4,20 +4,23 @@ Pure subscription-based implementation of the HyperSync height stream.
 
 let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (unit => unit) => {
   let eventsourceRef = ref(None)
+  let errorCount = ref(0)
+  let baseDuration = 50
   // Timeout doesn't do anything for initialization
-  let timeoutIdRef = ref(Js.Global.setTimeout(() => (), 0))
+  let timeoutIdRef = ref(setTimeout(() => (), 0))
 
   // On every successful ping or height event, clear the timeout and set a new one.
   // If the timeout lapses, close and reconnect the EventSource.
   let rec updateTimeoutId = () => {
-    timeoutIdRef.contents->Js.Global.clearTimeout
+    timeoutIdRef.contents->clearTimeout
 
     // Should receive a ping at least every 5s, so 15s is a safe margin
     // for staleness to restart the EventSource connection
     let staleTimeMillis = 15_000
-    let newTimeoutId = Js.Global.setTimeout(() => {
+    let newTimeoutId = setTimeout(() => {
       Logging.trace({
         "msg": "Timeout fired for height stream",
+        "chainId": chainId,
         "url": hyperSyncUrl,
         "staleTimeMillis": staleTimeMillis,
       })
@@ -29,6 +32,13 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
   // Instantiate a new EventSource and set it to the shared refs.
   // Add the necessary event listeners, handle errors
   // and update the timeout.
+  and scheduleReconnect = () => {
+    // Clear any pending stale/reconnect timeout to avoid double reconnect
+    timeoutIdRef.contents->clearTimeout
+    let delay =
+      baseDuration * Math.pow(2.0, ~exp=errorCount.contents->Belt.Int.toFloat)->Belt.Float.toInt
+    timeoutIdRef := setTimeout(() => refreshEventSource(), Pervasives.min(delay, 60_000))
+  }
   and refreshEventSource = () => {
     // Close the old EventSource if it exists (on a new connection after timeout)
     switch eventsourceRef.contents {
@@ -45,7 +55,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
             url,
             ~args={
               ...args,
-              headers: Js.Dict.fromArray([
+              headers: Dict.fromArray([
                 ("Authorization", `Bearer ${apiToken}`),
                 ("User-Agent", userAgent),
               ]),
@@ -61,14 +71,25 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     updateTimeoutId()
 
     es->EventSource.onopen(_ => {
-      Logging.trace({"msg": "SSE connection opened for height stream", "url": hyperSyncUrl})
+      errorCount := 0
+      Logging.trace({
+        "msg": "SSE connection opened for height stream",
+        "chainId": chainId,
+        "url": hyperSyncUrl,
+      })
     })
 
     es->EventSource.onerror(error => {
+      errorCount := errorCount.contents + 1
       Logging.trace({
-        "msg": "EventSource error",
-        "error": error->Js.Exn.message,
+        "msg": "EventSource error on height stream, reconnecting",
+        "chainId": chainId,
+        "url": hyperSyncUrl,
+        "status": error.status,
+        "error": error.message,
+        "errorCount": errorCount.contents,
       })
+      scheduleReconnect()
     })
 
     es->EventSource.addEventListener("ping", _event => {
@@ -91,7 +112,12 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
         updateTimeoutId()
         // Call the callback with the new height
         onHeight(height)
-      | None => Logging.trace({"msg": "Height was not a number in event.data", "data": event.data})
+      | None =>
+        Logging.trace({
+          "msg": "Height was not a number in event.data",
+          "chainId": chainId,
+          "data": event.data,
+        })
       }
     })
   }
@@ -101,7 +127,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
 
   // Return unsubscribe function
   () => {
-    timeoutIdRef.contents->Js.Global.clearTimeout
+    timeoutIdRef.contents->clearTimeout
     switch eventsourceRef.contents {
     | Some(es) => es->EventSource.close
     | None => ()

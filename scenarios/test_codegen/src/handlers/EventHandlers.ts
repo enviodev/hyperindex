@@ -8,19 +8,12 @@ import {
   TestHelpers,
 } from "envio";
 import {
-  TestEvents,
-  EventFiltersTest,
-  Gravatar,
   BigDecimal,
-  NftFactory,
-  SimpleNft,
+  indexer,
   type EvmChainId,
+  type EvmEvent,
   type NftCollection,
   type User,
-  type eventLog,
-  type NftFactory_SimpleNftCreated_eventArgs,
-  type NftFactory_SimpleNftCreated_event,
-  onBlock,
 } from "generated";
 import { expectType, type TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
@@ -137,7 +130,7 @@ expectType<
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
-Gravatar.CustomSelection.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ event, context }) => {
   if (0) {
     const _ = await context.effect(noopEffect, undefined);
     context.log.error("There's an error");
@@ -160,30 +153,7 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
   S.assertOrThrow(event.block, blockSchema)!;
   deepEqual(context.chain.id, event.chainId);
 
-  // We already do type checking in the tests,
-  // but double-check that we receive correct types
-  // in the handler args as well
-  expectType<
-    TypeEqual<
-      typeof event.transaction,
-      {
-        readonly to: `0x${string}` | undefined;
-        readonly from: `0x${string}` | undefined;
-        readonly hash: string;
-      }
-    >
-  >(true);
-  expectType<
-    TypeEqual<
-      typeof event.block,
-      {
-        readonly number: number;
-        readonly timestamp: number;
-        readonly hash: string;
-        readonly parentHash: string;
-      }
-    >
-  >(true);
+  // Type checking for custom field selection is done in CustomSelection.test.ts
 
   // Test chain field accessibility in TypeScript
   expectType<
@@ -201,13 +171,18 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
   });
 });
 
-NftFactory.SimpleNftCreated.contractRegister(({ event, context }) => {
-  context.addSimpleNft(event.params.contractAddress);
+indexer.contractRegister({ contract: "NftFactory", event: "SimpleNftCreated" }, async ({ event, context }) => {
+  context.chain.SimpleNft.add(event.params.contractAddress);
 });
 
-NftFactory.SimpleNftCreated.handler(async ({ event, context }) => {
-  const testType: NftFactory_SimpleNftCreated_event =
-    event satisfies eventLog<NftFactory_SimpleNftCreated_eventArgs>;
+indexer.onEvent({ contract: "NftFactory", event: "SimpleNftCreated" }, async ({ event, context }) => {
+  // Type validation: EvmEvent params match handler event params
+  expectType<
+    TypeEqual<
+      typeof event.params,
+      EvmEvent<"NftFactory", "SimpleNftCreated">["params"]
+    >
+  >(true);
 
   let nftCollection: NftCollection = {
     id: event.params.contractAddress,
@@ -228,7 +203,7 @@ NftFactory.SimpleNftCreated.handler(async ({ event, context }) => {
   });
 });
 
-SimpleNft.Transfer.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async ({ event, context }) => {
   const [loadedUserFrom, loadedUserTo, nftCollectionUpdated, existingToken] =
     await Promise.all([
       context.User.get(event.params.from),
@@ -299,86 +274,136 @@ export const hashingTestParams = {
   fixedBytes32: new Uint8Array(32).fill(0x12),
   struct: [50n, "test"] satisfies [bigint, string],
 };
-TestEvents.IndexedUint.handler(async (_) => {}, {
-  eventFilters: {
-    num: [hashingTestParams.id],
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedUint",
+    where: { params: { num: [hashingTestParams.id] } },
   },
-});
-TestEvents.IndexedInt.handler(async (_) => {}, {
-  eventFilters: {
-    num: [-hashingTestParams.id],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedInt",
+    where: { params: { num: [-hashingTestParams.id] } },
   },
-});
-TestEvents.IndexedBool.handler(async (_) => {}, {
-  eventFilters: {
-    isTrue: [hashingTestParams.isTrue],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedBool",
+    where: { params: { isTrue: [hashingTestParams.isTrue] } },
   },
-});
-TestEvents.IndexedAddress.handler(async (_) => {}, {
-  eventFilters: {
-    addr: [hashingTestParams.addr],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedAddress",
+    where: { params: { addr: [hashingTestParams.addr] } },
   },
-});
-TestEvents.IndexedBytes.handler(async (_) => {}, {
-  eventFilters: {
-    dynBytes: [bytesToHex(hashingTestParams.dynBytes)],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedBytes",
+    where: { params: { dynBytes: [bytesToHex(hashingTestParams.dynBytes)] } },
   },
-});
-TestEvents.IndexedFixedBytes.handler(async (_) => {}, {
-  eventFilters: {
-    fixedBytes: [bytesToHex(hashingTestParams.fixedBytes32)],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedFixedBytes",
+    where: { params: { fixedBytes: [bytesToHex(hashingTestParams.fixedBytes32)] } },
   },
-});
-TestEvents.IndexedString.handler(async (_) => {}, {
-  eventFilters: {
-    str: [hashingTestParams.str],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedString",
+    where: { params: { str: [hashingTestParams.str] } },
   },
-});
-TestEvents.IndexedStruct.handler(async (_) => {}, {
-  eventFilters: {
-    testStruct: hashingTestParams.struct,
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedStruct",
+    where: { params: { testStruct: hashingTestParams.struct } },
   },
-});
-TestEvents.IndexedArray.handler(async (_) => {}, {
-  eventFilters: {
-    array: [[hashingTestParams.id, hashingTestParams.id + 1n]],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedArray",
+    where: { params: { array: [[hashingTestParams.id, hashingTestParams.id + 1n]] } },
   },
-});
-TestEvents.IndexedFixedArray.handler(async (_) => {}, {
-  eventFilters: {
-    array: [[hashingTestParams.id, hashingTestParams.id + 1n]],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedFixedArray",
+    where: { params: { array: [[hashingTestParams.id, hashingTestParams.id + 1n]] } },
   },
-});
-TestEvents.IndexedNestedArray.handler(async (_) => {}, {
-  eventFilters: {
-    array: [
-      [
-        [hashingTestParams.id, hashingTestParams.id],
-        [hashingTestParams.id, hashingTestParams.id],
-      ],
-    ],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedNestedArray",
+    where: {
+      params: {
+        array: [
+          [
+            [hashingTestParams.id, hashingTestParams.id],
+            [hashingTestParams.id, hashingTestParams.id],
+          ],
+        ],
+      },
+    },
   },
-});
-TestEvents.IndexedStructArray.handler(async (_) => {}, {
-  eventFilters: {
-    array: [[hashingTestParams.struct, hashingTestParams.struct]],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedStructArray",
+    where: { params: { array: [[hashingTestParams.struct, hashingTestParams.struct]] } },
   },
-});
-TestEvents.IndexedNestedStruct.handler(async (_) => {}, {
-  eventFilters: {
-    nestedStruct: [[hashingTestParams.id, hashingTestParams.struct]],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedNestedStruct",
+    where: { params: { nestedStruct: [[hashingTestParams.id, hashingTestParams.struct]] } },
   },
-});
-TestEvents.IndexedStructWithArray.handler(async (_) => {}, {
-  eventFilters: {
-    structWithArray: [
-      [hashingTestParams.id, hashingTestParams.id + 1n],
-      [hashingTestParams.str, hashingTestParams.str],
-    ],
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "TestEvents",
+    event: "IndexedStructWithArray",
+    where: {
+      params: {
+        structWithArray: [
+          [hashingTestParams.id, hashingTestParams.id + 1n],
+          [hashingTestParams.str, hashingTestParams.str],
+        ],
+      },
+    },
   },
-});
+  async (_) => {},
+);
 
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 const WHITELISTED_ADDRESSES = {
   137: [
     "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as const,
@@ -386,85 +411,110 @@ const WHITELISTED_ADDRESSES = {
   ],
   100: ["0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as const],
 };
-EventFiltersTest.Transfer.handler(async (_) => {}, {
-  wildcard: true,
-  eventFilters: ({ chainId }) => {
-    if (chainId !== 100 && chainId !== 137) {
-      return false;
-    }
-    return [
-      { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chainId] },
-      { from: WHITELISTED_ADDRESSES[chainId], to: ZERO_ADDRESS },
-    ];
+indexer.onEvent(
+  {
+    contract: "EventFiltersTest",
+    event: "Transfer",
+    wildcard: true,
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
+        return false;
+      }
+      return {
+        params: [
+          { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chain.id] },
+          { from: WHITELISTED_ADDRESSES[chain.id], to: ZERO_ADDRESS },
+        ],
+      };
+    },
   },
-});
-EventFiltersTest.EmptyFiltersArray.handler(async (_) => {}, {
-  wildcard: true,
-  eventFilters: ({ chainId }) => {
-    if (chainId !== 100 && chainId !== 137) {
-      return false;
-    }
-    return [];
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "EventFiltersTest",
+    event: "EmptyFiltersArray",
+    wildcard: true,
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
+        return false;
+      }
+      return { params: [] };
+    },
   },
-});
-EventFiltersTest.WildcardWithAddress.handler(async (_) => {}, {
-  wildcard: true,
-  eventFilters: ({ chainId, addresses }) => {
-    if (chainId !== 100 && chainId !== 137) {
-      return false;
-    }
-    return [
-      { from: ZERO_ADDRESS, to: addresses },
-      { from: addresses, to: ZERO_ADDRESS },
-    ];
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "EventFiltersTest",
+    event: "WildcardWithAddress",
+    wildcard: true,
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
+        return false;
+      }
+      const addresses = chain.EventFiltersTest.addresses;
+      return {
+        params: [
+          { from: ZERO_ADDRESS, to: addresses },
+          { from: addresses, to: ZERO_ADDRESS },
+        ],
+      };
+    },
   },
-});
-EventFiltersTest.WithExcessField.handler(async (_) => {}, {
-  wildcard: true,
-  eventFilters: ({ chainId }) => {
-    if (chainId !== 100 && chainId !== 137) {
-      return false;
-    }
-    return { from: ZERO_ADDRESS, to: ZERO_ADDRESS };
+  async (_) => {},
+);
+indexer.onEvent(
+  {
+    contract: "EventFiltersTest",
+    event: "WithExcessField",
+    wildcard: true,
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
+        return false;
+      }
+      return { params: { from: ZERO_ADDRESS, to: ZERO_ADDRESS } };
+    },
   },
-});
+  async (_) => {},
+);
 
-Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
+indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
   expectType<TypeEqual<typeof context.log, Logger>>(true);
 
   switch (event.params.testCase) {
     case "throwOnHangingRegistration":
       setTimeout(() => {
         try {
-          context.addSimpleNft(event.params.contract);
+          context.chain.SimpleNft.add(event.params.contract);
         } catch (error) {
           deepEqual(
             error,
             new Error(
-              `Impossible to access context.addSimpleNft after the contract register is resolved. Make sure you didn't miss an await in the handler.`,
+              `Impossible to access context.chain after the contract register is resolved. Make sure you didn't miss an await in the handler.`,
             ),
           );
         }
       }, 0);
       break;
     case "asyncRegistration":
-      return new Promise((resolve) =>
+      return new Promise<void>((resolve) =>
         setTimeout(() => {
-          context.addSimpleNft(event.params.contract);
+          context.chain.SimpleNft.add(event.params.contract);
           resolve();
         }, 0),
       );
     case "syncRegistration":
-      context.addSimpleNft(event.params.contract);
+      context.chain.SimpleNft.add(event.params.contract);
       break;
     case "validatesAddress":
       // This should throw because the address is invalid
       // @ts-expect-error
-      context.addSimpleNft("invalid-address");
+      context.chain.SimpleNft.add("invalid-address");
       break;
     case "checksumsAddress":
       // This should work and the address should be checksummed
-      context.addSimpleNft(event.params.contract);
+      context.chain.SimpleNft.add(event.params.contract);
       break;
   }
 });
@@ -519,7 +569,7 @@ const throwingEffect = createEffect(
 let getOrThrowInLoaderCount = 0;
 let loaderSetCount = 0;
 
-Gravatar.FactoryEvent.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
   switch (event.params.testCase) {
     case "getOrThrow - ignores the first fail in loader": {
       switch (getOrThrowInLoaderCount) {
@@ -698,12 +748,18 @@ Gravatar.FactoryEvent.handler(async ({ event, context }) => {
     }
 
     case "handlerInHandler": {
-      Gravatar.FactoryEvent.handler(async ({ event, context }) => {});
+      indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {});
       break;
     }
 
     case "onBlockInHandler": {
-      onBlock({ name: "test", chain: 1 }, async () => {});
+      // Late-registration guard: `indexer.onBlock` called from inside a
+      // handler must throw (registration phase has already ended).
+      // The matching test asserts `assert.rejects` against this branch.
+      indexer.onBlock(
+        { name: "onblock_late", where: ({ chain }) => chain.id === 1 },
+        async () => {},
+      );
       break;
     }
 
@@ -740,51 +796,77 @@ Gravatar.FactoryEvent.handler(async ({ event, context }) => {
   }
 });
 
-EventFiltersTest.FilterTestEvent.handler(
-  async ({ event }) => {
-    if (event.params.addr === "0x000") {
-      throw new Error("This should not be called");
-    }
-  },
-  {
-    eventFilters: ({ chainId }) => {
-      if (chainId !== 100 && chainId !== 137) {
-        return false;
-      }
-      return {
-        addr: ["0x000"],
-      };
+indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where: ({ chain }) => {
+  if (chain.id !== 100 && chain.id !== 137) {
+    return false;
+  }
+  return {
+    params: {
+      addr: ["0x000" as `0x${string}`],
     },
-  },
-);
+  };
+} }, async ({ event }) => {
+  if (event.params.addr === "0x000") {
+    throw new Error("This should not be called");
+  }
+});
 
 // Duplicate handler registration tests
 
 // Same options (no options) → should compose without error.
 // The composed handler sets an additional entity to prove it ran.
-Gravatar.CustomSelection.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ event, context }) => {
   context.CustomSelectionTestPass.set({
     id: "composed-" + event.transaction.hash,
   });
 });
 
 // Same options → composed contractRegister registers an additional contract
-Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
+indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
   if (event.params.testCase === "composeContractRegister") {
-    context.addNftFactory(event.params.contract);
+    context.chain.NftFactory.add(event.params.contract);
+  }
+});
+
+// Capture the inner add() closure in one contractRegister invocation, then try
+// to invoke the captured closure from a later onEvent handler (after the first
+// handler has resolved and params.isResolved === true). The call must throw —
+// this guards against the captured-add bypass where
+// `const add = context.chain.X.add` survives past handler resolution.
+// We signal success via the CustomSelectionTestPass entity so the test can
+// observe the outcome across the createTestIndexer worker boundary.
+let _capturedCrAdd: ((address: `0x${string}`) => void) | null = null;
+indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
+  if (event.params.testCase === "captureAdd") {
+    _capturedCrAdd = context.chain.SimpleNft.add;
+  }
+});
+indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
+  if (event.params.testCase === "callCapturedAdd" && _capturedCrAdd) {
+    const outcome = (() => {
+      try {
+        _capturedCrAdd!("0x1234567890123456789012345678901234567890");
+        return "captured-add-did-not-throw";
+      } catch {
+        return "captured-add-threw";
+      }
+    })();
+    context.CustomSelectionTestPass.set({
+      id: outcome,
+    });
   }
 });
 
 // Different options → should throw
 export let mismatchedHandlerOptionsError: Error | undefined;
 try {
-  Gravatar.CustomSelection.handler(async () => {}, { wildcard: true });
+  indexer.onEvent({ contract: "Gravatar", event: "CustomSelection", wildcard: true }, async () => {});
 } catch (e) {
   mismatchedHandlerOptionsError = e as Error;
 }
 
 // Handler for testing simulate block/logIndex behavior
-Gravatar.EmptyEvent.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, context }) => {
   context.SimulateTestEvent.set({
     id: `${event.block.number}_${event.logIndex}`,
     blockNumber: event.block.number,
@@ -792,3 +874,60 @@ Gravatar.EmptyEvent.handler(async ({ event, context }) => {
     timestamp: event.block.timestamp,
   });
 });
+
+// Regression test for https://github.com/enviodev/hyperindex/issues/538:
+// the `contactDetails` param is a Solidity struct (`ContactDetails { name, email }`),
+// and the handler must see it as a named record so that `.name` / `.email`
+// field access works — not as a positional tuple that would require indexing.
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, context }) => {
+  context.SimpleEntity.set({
+    id: `TestEvent_${event.params.id}`,
+    value: `${event.params.contactDetails.name}:${event.params.contactDetails.email}`,
+  });
+});
+
+// Module-scope `indexer.onBlock` registrations exercising the four code paths
+// in `Main.res::onBlockFn` at indexer-init time:
+//   - boolean predicate (true/false per chain)
+//   - filter-object predicate (range + stride)
+//   - default (no `where`, registers on every chain)
+//   - skip-all (`where: () => false`, triggers the zero-match warn log)
+//
+// All non-skip-all predicates pin to chain 137 (configured in config.yaml
+// but not used by any existing simulate/process test) so the handlers
+// register without crashing the per-chain validation in `ChainFetcher.res`
+// and don't fire on existing test runs (which would pollute the
+// `result.changes` array). Handlers are no-ops — the value here is
+// validating the registration paths (`where` evaluated per chain, range
+// schema parsed) without throwing. End-to-end block-firing behavior is
+// covered by `lib_tests/FetchState_onBlock_test.res` at the layer below.
+indexer.onBlock(
+  { name: "test_onblock_bool", where: ({ chain }) => chain.id === 137 },
+  async () => {},
+);
+indexer.onBlock(
+  {
+    name: "test_onblock_filter",
+    where: ({ chain }) =>
+      chain.id === 137
+        ? { block: { number: { _gte: 100, _lte: 200, _every: 5 } } }
+        : false,
+  },
+  async () => {},
+);
+// `test_onblock_default` would register on every configured chain — but
+// that fires on every block of every test indexer run, polluting their
+// `result.changes` deep-equal assertions. Pin it to chain 137 too; the
+// `where: undefined` branch in `Main.res::onBlockFn` is covered separately
+// by the no-`where` `indexer.onSlot` registration in
+// `scenarios/svm_test/src/handlers/SlotHandler.ts` (svm_test has no
+// `result.changes` deep-equals so the default-fires-everywhere handler
+// is harmless there).
+indexer.onBlock(
+  { name: "test_onblock_default", where: ({ chain }) => chain.id === 137 },
+  async () => {},
+);
+indexer.onBlock(
+  { name: "test_onblock_skip_all", where: () => false },
+  async () => {},
+);

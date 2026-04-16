@@ -1,11 +1,11 @@
 open Vitest
 
 let mockChain = ChainMap.Chain.makeUnsafe(~chainId=1)
-let mockAddress1 = Envio.TestHelpers.Addresses.mockAddresses[0]
-let mockAddress2 = Envio.TestHelpers.Addresses.mockAddresses[1]
+let mockAddress1 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+let mockAddress2 = Envio.TestHelpers.Addresses.mockAddresses[1]->Option.getOrThrow
 
 let mockFromArray = (array): EventRouter.t<'a> => {
-  Js.Dict.fromArray(array)
+  Dict.fromArray(array)
 }
 
 describe("EventRouter", () => {
@@ -29,15 +29,13 @@ describe("EventRouter", () => {
       ~isWildcard=false,
     )
 
-    t.expect(
-      router,
-    ).toEqual(
+    t.expect(router).toEqual(
       mockFromArray([
         (
           "test-event-tag",
           {
             wildcard: None,
-            byContractName: Js.Dict.fromArray([("Contract1", 1), ("Contract2", 2)]),
+            byContractName: Dict.fromArray([("Contract1", 1), ("Contract2", 2)]),
           },
         ),
       ]),
@@ -93,7 +91,9 @@ describe("EventRouter", () => {
           ~isWildcard=true,
         )
       },
-    ).toThrowError("Another event is already registered with the same signature that would interfer with wildcard filtering: Event1 for contract Contract2 on chain 1")
+    ).toThrowError(
+      "Another event is already registered with the same signature that would interfer with wildcard filtering: Event1 for contract Contract2 on chain 1",
+    )
   })
 
   it("get doesn't returns the correct eventMod without address in mapping if unique", t => {
@@ -113,12 +113,10 @@ describe("EventRouter", () => {
         ~tag="test-event-tag",
         ~contractAddress=mockAddress1,
         ~blockNumber=0,
-        ~indexingContracts=Js.Dict.empty(),
+        ~indexingContracts=Dict.make(),
       ),
       ~message=`We can return Some, but we want to always check that event is after contract startBlock`,
-    ).toEqual(
-      None,
-    )
+    ).toEqual(None)
   })
 
   it(
@@ -147,8 +145,8 @@ describe("EventRouter", () => {
         ~isWildcard=false,
       )
 
-      let indexingContracts = Js.Dict.empty()
-      indexingContracts->Js.Dict.set(
+      let indexingContracts = Dict.make()
+      indexingContracts->Dict.set(
         nonWildcardContractAddress->Address.toString,
         {
           Internal.startBlock: 0,
@@ -166,9 +164,7 @@ describe("EventRouter", () => {
           ~indexingContracts,
         ),
         ~message="Should return the non wildcard event",
-      ).toEqual(
-        Some("non-wildcard"),
-      )
+      ).toEqual(Some("non-wildcard"))
 
       t.expect(
         router->EventRouter.get(
@@ -178,25 +174,21 @@ describe("EventRouter", () => {
           ~indexingContracts,
         ),
         ~message="Should return the wildcard event",
-      ).toEqual(
-        Some("wildcard"),
-      )
+      ).toEqual(Some("wildcard"))
     },
   )
 
   it("fromEvmEventModsOrThrow works", t => {
-    let item = Indexer.Gravatar.NewGravatar.register()
+    let item = MockConfig.getEvmEventConfig(~contractName="Gravatar", ~eventName="NewGravatar")
     let router = EventRouter.fromEvmEventModsOrThrow([item], ~chain=mockChain)
 
-    t.expect(
-      router,
-    ).toEqual(
+    t.expect(router).toEqual(
       mockFromArray([
         (
           "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b_1",
           {
             wildcard: None,
-            byContractName: Js.Dict.fromArray([("Gravatar", item)]),
+            byContractName: Dict.fromArray([("Gravatar", item)]),
           },
         ),
       ]),

@@ -1,11 +1,9 @@
-open Belt
-
 type chainData = {
   chainId: float,
   poweredByHyperSync: bool,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   numEventsProcessed: float,
   latestFetchedBlockNumber: int,
   // Need this for API backwards compatibility
@@ -24,7 +22,7 @@ type state =
   Active({
       envioVersion: string,
       chains: array<chainData>,
-      indexerStartTime: Js.Date.t,
+      indexerStartTime: Date.t,
       isPreRegisteringDynamicContracts: bool,
       isUnorderedMultichainMode: bool,
       rollbackOnReorg: bool,
@@ -58,7 +56,48 @@ let stateSchema = S.union([
   })),
 ])
 
+// Shape of the user-returned `{_gte?, _lte?, _every?}` filter chunk after
+// the ecosystem-specific wrapper is stripped. Shared across all ecosystems —
+// the outer `block.number` / `block.height` / `slot` unwrap lives on each
+// ecosystem's `onBlockFilterSchema`, and the inner range fields are the
+// same everywhere.
+type blockRange = {
+  _gte: option<int>,
+  _lte: option<int>,
+  _every: int,
+}
+
+// `S.strict` rejects unknown fields so typos like `_gt` / `_evry` surface
+// with a readable schema error pointing at the offending key, instead of
+// silently registering a broken filter. `_every` defaults to 1 inside the
+// schema so the caller always sees a plain `int`, and `intMin(1)` rejects
+// zero/negative strides — `(blockNumber - startBlock) % 0` would crash and
+// any negative stride would never match.
+let blockRangeSchema: S.t<blockRange> = S.object(s => {
+  _gte: s.field("_gte", S.option(S.int)),
+  _lte: s.field("_lte", S.option(S.int)),
+  _every: s.field("_every", S.option(S.int->S.intMin(1))->S.Option.getOr(1)),
+})->S.strict
+
+let defaultBlockRange: blockRange = {_gte: None, _lte: None, _every: 1}
+
 let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
+
+// Persistence is set by Main.start before handler modules load, so that
+// the exported indexer value can lazily expose DB state (startBlock,
+// endBlock, isLive, dynamic contract addresses) once it's ready.
+let globalPersistenceRef: ref<option<Persistence.t>> = ref(None)
+
+let getInitialChainState = (~chainId: int): option<Persistence.initialChainState> => {
+  switch globalPersistenceRef.contents {
+  | Some(persistence) =>
+    switch persistence.storageStatus {
+    | Ready(initialState) => initialState.chains->Array.find(c => c.id === chainId)
+    | _ => None
+    }
+  | None => None
+  }
+}
 
 let getGlobalIndexer = (~config: Config.t): 'indexer => {
   let indexer = Utils.Object.createNullObject()
@@ -80,18 +119,37 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   ->Array.forEach(chainConfig => {
     let chainIdStr = chainConfig.id->Int.toString
 
-    chainIds->Js.Array2.push(chainConfig.id)->ignore
+    chainIds->Array.push(chainConfig.id)->ignore
 
     let chainObj = Utils.Object.createNullObject()
     chainObj
     ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
-    ->Utils.Object.definePropertyWithValue(
+    ->Utils.Object.defineProperty(
       "startBlock",
-      {enumerable: true, value: chainConfig.startBlock},
+      {
+        enumerable: true,
+        get: () => {
+          switch getInitialChainState(~chainId=chainConfig.id) {
+          | Some(chainState) => chainState.startBlock
+          | None => chainConfig.startBlock
+          }
+        },
+      },
     )
-    ->Utils.Object.definePropertyWithValue(
+    ->Utils.Object.defineProperty(
       "endBlock",
-      {enumerable: true, value: chainConfig.endBlock},
+      {
+        enumerable: true,
+        get: () => {
+          // Persistence may store endBlock=None (eg the test indexer's
+          // auto-exit mode where the user didn't specify an endBlock).
+          // Only override the config when persistence has an explicit value.
+          switch getInitialChainState(~chainId=chainConfig.id) {
+          | Some({endBlock: Some(_) as eb}) => eb
+          | _ => chainConfig.endBlock
+          }
+        },
+      },
     )
     ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
     ->Utils.Object.defineProperty(
@@ -100,12 +158,20 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
         enumerable: true,
         get: () => {
           switch globalGsManagerRef.contents {
-          | None => false
           | Some(gsManager) =>
             let state = gsManager->GlobalStateManager.getState
             let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
             let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
             chainFetcher->ChainFetcher.isReady
+          // Before the GlobalStateManager is available (eg during handler
+          // module load after resume), derive liveness from persistence:
+          // a chain is considered live when it previously caught up to head
+          // or endBlock (timestampCaughtUpToHeadOrEndblock is set).
+          | None =>
+            switch getInitialChainState(~chainId=chainConfig.id) {
+            | Some(chainState) => chainState.timestampCaughtUpToHeadOrEndblock->Option.isSome
+            | None => false
+            }
           }
         },
       },
@@ -124,7 +190,6 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
           enumerable: true,
           get: () => {
             switch globalGsManagerRef.contents {
-            | None => contract.addresses
             | Some(gsManager) => {
                 let state = gsManager->GlobalStateManager.getState
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
@@ -133,14 +198,31 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
 
                 // Collect all addresses for this contract name from indexingContracts
                 let addresses = []
-                let values = indexingContracts->Js.Dict.values
+                let values = indexingContracts->Dict.valuesToArray
                 for idx in 0 to values->Array.length - 1 {
-                  let indexingContract = values->Js.Array2.unsafe_get(idx)
+                  let indexingContract = values->Array.getUnsafe(idx)
                   if indexingContract.contractName === contract.name {
                     addresses->Array.push(indexingContract.address)->ignore
                   }
                 }
                 addresses
+              }
+            // Before the GlobalStateManager is available (eg during handler
+            // module load after resume), combine static addresses from config
+            // with dynamic contracts persisted in the database.
+            | None =>
+              switch getInitialChainState(~chainId=chainConfig.id) {
+              | Some(chainState) =>
+                let addresses = contract.addresses->Array.copy
+                chainState.dynamicContracts->Array.forEach(
+                  dc => {
+                    if dc.contractName === contract.name {
+                      addresses->Array.push(dc.address)->ignore
+                    }
+                  },
+                )
+                addresses
+              | None => contract.addresses
               }
             }
           },
@@ -170,6 +252,204 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   ->ignore
   indexer->Utils.Object.definePropertyWithValue("chains", {enumerable: true, value: chains})->ignore
 
+  // Parse eventIdentity config to extract contractName, eventName, and options.
+  // Supports two runtime formats:
+  // - From TypeScript: { contract: "X", event: "Y", wildcard?, where? }
+  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, where? }
+  let parseIdentityConfig = (identityConfig: 'a) => {
+    let raw =
+      identityConfig->(
+        Utils.magic: 'a => {
+          "contract": unknown,
+          "event": unknown,
+          "wildcard": option<bool>,
+          "where": option<JSON.t>,
+        }
+      )
+    // Detect format: if "contract" is a string, it's the TS format
+    let (contractName, eventName) = if typeof(raw["contract"]) === #string {
+      // TS format: { contract: "X", event: "Y" }
+      (
+        raw["contract"]->(Utils.magic: unknown => string),
+        raw["event"]->(Utils.magic: unknown => string),
+      )
+    } else {
+      // ReScript GADT format: { event: { contract: "X", _0: "Y" } }
+      let event = raw["event"]->(Utils.magic: unknown => {"contract": string, "_0": string})
+      (event["contract"], event["_0"])
+    }
+    let wildcard = raw["wildcard"]
+    let where = raw["where"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, where) {
+    | (None, None) => None
+    | (wildcard, where) =>
+      Some({
+        ?wildcard,
+        where: ?where->(Utils.magic: option<JSON.t> => option<_>),
+      })
+    }
+    (contractName, eventName, eventOptions)
+  }
+
+  // onEvent: delegates to HandlerRegister.setHandler
+  let onEventFn = (identityConfig: 'a, handler: 'b) => {
+    let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
+    HandlerRegister.setHandler(
+      ~contractName,
+      ~eventName,
+      handler->(
+        Utils.magic: 'b => Internal.genericHandler<
+          Internal.genericHandlerArgs<Internal.event, Internal.handlerContext>,
+        >
+      ),
+      ~eventOptions,
+    )
+  }
+
+  // contractRegister: delegates to HandlerRegister.setContractRegister
+  let contractRegisterFn = (identityConfig: 'a, handler: 'b) => {
+    let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
+    HandlerRegister.setContractRegister(
+      ~contractName,
+      ~eventName,
+      handler->(
+        Utils.magic: 'b => Internal.genericContractRegister<
+          Internal.genericContractRegisterArgs<Internal.event, Internal.contractRegisterContext>,
+        >
+      ),
+      ~eventOptions,
+    )
+  }
+
+  // SVM exposes the block handler as `indexer.onSlot`; EVM/Fuel expose it as
+  // `indexer.onBlock`. The choice lives on the ecosystem record so adding a
+  // new ecosystem doesn't require editing this file. Used both as the
+  // attached property name and in error messages so the cited call-site
+  // matches what the user wrote.
+  let onBlockMethodName = config.ecosystem.onBlockMethodName
+
+  // Two-stage parse: first the ecosystem-specific outer schema unwraps the
+  // wrapper (`block.number` / `block.height` / `slot`) and surfaces the
+  // inner chunk as raw `unknown`; then the shared `blockRangeSchema`
+  // validates the `{_gte?, _lte?, _every?}` fields. Keeping the inner
+  // validation in one place means typos and shape mismatches surface with
+  // the same user-friendly error regardless of ecosystem.
+  let extractRange = (filter: unknown, ~name): blockRange =>
+    try {
+      switch filter->S.parseOrThrow(config.ecosystem.onBlockFilterSchema) {
+      | None => defaultBlockRange
+      | Some(inner) => inner->S.parseOrThrow(blockRangeSchema)
+      }
+    } catch {
+    | S.Raised(exn) =>
+      JsError.throwWithMessage(
+        `\`indexer.${onBlockMethodName}("${name}")\` \`where\` returned an invalid filter: ${exn
+          ->Utils.prettifyExn
+          ->(Utils.magic: exn => string)}`,
+      )
+    }
+
+  // `where` is evaluated once per configured chain at registration time.
+  // Decoded ranges/stride feed directly into `HandlerRegister.registerOnBlock`
+  // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
+  // math at `FetchState.res:619` stays untouched.
+  let onBlockFn = (rawOptions: 'a, handler: 'b) => {
+    let raw =
+      rawOptions->(
+        Utils.magic: 'a => {
+          "name": string,
+          "where": option<Envio.onBlockWhereArgs<unknown> => unknown>,
+        }
+      )
+    let typedHandler = handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>)
+    let chainsDict = chains->(Utils.magic: {..} => dict<unknown>)
+    let name = raw["name"]
+    let logger = Logging.createChild(~params={"onBlock": name})
+
+    // `where` must be a function (unlike onEvent, which also accepts a static
+    // value). A static value would have to be evaluated against every chain
+    // independently, which has no useful semantic for block handlers.
+    // Normalize undefined/null to None up front so the per-chain loop below
+    // can't accidentally call `null` as a predicate (ReScript treats a JS
+    // `null` value as `Some(null)` when the field is typed as option).
+    let where = switch raw["where"]->(Utils.magic: option<'a> => unknown) {
+    | w if w === %raw(`undefined`) || w === %raw(`null`) => None
+    | w if typeof(w) === #function => Some(raw["where"]->Option.getUnsafe)
+    | w =>
+      JsError.throwWithMessage(
+        `\`indexer.${onBlockMethodName}("${name}")\` expected \`where\` to be a function or omitted, but got ${(typeof(
+            w,
+          ) :> string)}.`,
+      )
+    }
+
+    let matchedAny = ref(false)
+
+    config.chainMap
+    ->ChainMap.values
+    ->Array.forEach(chainConfig => {
+      let chainId = chainConfig.id
+      let chainObj = chainsDict->Dict.getUnsafe(chainId->Int.toString)
+
+      // Predicate returns `true` → match with no filter; `false` → skip;
+      // any plain object → structured filter. `undefined`/`null` returns
+      // are rejected — the TS type excludes `void`, so a missing return is
+      // a user bug we surface early rather than silently match-all.
+      let result = switch where {
+      | None => %raw(`true`)
+      | Some(predicate) => predicate({chain: chainObj})
+      }
+
+      let (shouldRegister, range) = if result === %raw(`true`) {
+        (true, defaultBlockRange)
+      } else if result === %raw(`false`) {
+        (false, defaultBlockRange)
+      } else if typeof(result) === #object && !(result->Array.isArray) && result !== %raw(`null`) {
+        (true, extractRange(result, ~name))
+      } else {
+        // Reject numbers, strings, functions, arrays, undefined, null —
+        // anything that isn't bool or a plain object would silently
+        // misregister.
+        JsError.throwWithMessage(
+          `\`indexer.${onBlockMethodName}("${name}")\` \`where\` predicate returned an invalid value of type ${(typeof(
+              result,
+            ) :> string)}. Expected boolean or a filter object.`,
+        )
+      }
+
+      if shouldRegister {
+        matchedAny := true
+        HandlerRegister.registerOnBlock(
+          ~name,
+          ~chainId,
+          ~interval=range._every,
+          ~startBlock=range._gte,
+          ~endBlock=range._lte,
+          ~handler=typedHandler,
+        )
+      }
+    })
+
+    // Catches misconfigured `where` predicates that return `false` for every
+    // configured chain — the handler would otherwise never fire with no hint.
+    // Includes the ecosystem-specific method name so SVM users see "onSlot"
+    // and don't get confused looking for a "Block handler" they never wrote.
+    if !matchedAny.contents {
+      logger->Logging.childWarn(
+        `\`indexer.${onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
+      )
+    }
+  }
+
+  indexer
+  ->Utils.Object.definePropertyWithValue("onEvent", {enumerable: true, value: onEventFn})
+  ->Utils.Object.definePropertyWithValue(
+    "contractRegister",
+    {enumerable: true, value: contractRegisterFn},
+  )
+  ->Utils.Object.definePropertyWithValue(onBlockMethodName, {enumerable: true, value: onBlockFn})
+  ->ignore
+
   indexer->(Utils.magic: 'a => 'indexer)
 }
 
@@ -179,7 +459,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   let app = make()
 
   let consoleCorsMiddleware = (req, res, next) => {
-    switch req.headers->Js.Dict.get("origin") {
+    switch req.headers->Dict.get("origin") {
     | Some(origin) if origin === Env.prodEnvioAppUrl || origin === Env.envioAppUrl =>
       res->setHeader("Access-Control-Allow-Origin", origin)
     | _ => ()
@@ -218,7 +498,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
     if isDevelopmentMode {
       (ctx.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
       ->Promise.thenResolve(_ => res->json(Boolean(true)))
-      ->Promise.done
+      ->Promise.ignore
     } else {
       res->json(Boolean(false))
     }
@@ -245,7 +525,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
 
   let server = app->listen(Env.serverPort)
   server->Express.onError(err => {
-    let code = (err->(Utils.magic: Js.Exn.t => {..}))["code"]
+    let code = (err->(Utils.magic: JsExn.t => {..}))["code"]
     if code === "EADDRINUSE" {
       Logging.error(
         `Port ${Env.serverPort->Int.toString} is already in use. To fix this either:` ++
@@ -268,8 +548,9 @@ type mainArgs = Yargs.parsedArgs<args>
 
 let start = async (
   ~makeGeneratedConfig: unit => Config.t,
-  ~persistence: Persistence.t,
+  ~persistence: option<Persistence.t>=?,
   ~isTest=false,
+  ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
@@ -279,8 +560,19 @@ let start = async (
   // Note: isTest overrides isDevelopmentMode to ensure proper process exit in test mode.
   let isDevelopmentMode = !isTest && Env.Db.password === "testing"
 
-  // Register all handlers first, then get the config with registrations
+  // Initialize persistence first so the exported indexer value contains state from the database
+  // when handler files are loaded (they may access the indexer at module top level).
   let configWithoutRegistrations = makeGeneratedConfig()
+  let persistence = switch persistence {
+  | Some(p) => p
+  | None => PgStorage.makePersistenceFromConfig(~config=configWithoutRegistrations)
+  }
+  globalPersistenceRef := Some(persistence)
+  await persistence->Persistence.init(
+    ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
+  )
+
+  // Register all handlers, then get the config with registrations
   let registrations = await HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
   let config = makeGeneratedConfig()
   let config = if isTest {
@@ -322,11 +614,11 @@ let start = async (
               )
               let knownHeight =
                 cf->ChainFetcher.hasProcessedToEndblock
-                  ? cf.fetchState.endBlock->Option.getWithDefault(cf.fetchState.knownHeight)
+                  ? cf.fetchState.endBlock->Option.getOr(cf.fetchState.knownHeight)
                   : cf.fetchState.knownHeight
 
               {
-                chainId: cf.chainConfig.id->Js.Int.toFloat,
+                chainId: cf.chainConfig.id->Int.toFloat,
                 poweredByHyperSync: (
                   cf.sourceManager->SourceManager.getActiveSource
                 ).poweredByHyperSync,
@@ -360,14 +652,18 @@ let start = async (
     )
   }
 
-  await ctx.persistence->Persistence.init(~chainConfigs=ctx.config.chainMap->ChainMap.values)
-
   let chainManager = await ChainManager.makeFromDbState(
     ~initialState=ctx.persistence->Persistence.getInitializedState,
     ~config=ctx.config,
     ~registrations=ctx.registrations,
   )
-  let globalState = GlobalState.make(~ctx, ~chainManager, ~isDevelopmentMode, ~shouldUseTui)
+  let globalState = GlobalState.make(
+    ~ctx,
+    ~chainManager,
+    ~isDevelopmentMode,
+    ~shouldUseTui,
+    ~exitAfterFirstEventBlock,
+  )
   let gsManager = globalState->GlobalStateManager.make
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)

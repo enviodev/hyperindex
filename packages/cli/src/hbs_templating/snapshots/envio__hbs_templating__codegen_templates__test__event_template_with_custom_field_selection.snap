@@ -1,0 +1,151 @@
+---
+source: packages/cli/src/hbs_templating/codegen_templates.rs
+expression: event_template.module_code
+---
+
+let name = "NewGravatar"
+let contractName = contractName
+type params = unit
+/** Event params with all fields optional. Missing fields use default values. */
+type paramsConstructor = unit
+type block = {
+    number: int,
+    timestamp: int,
+    hash: string,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - parentHash")
+    parentHash?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - nonce")
+    nonce?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - sha3Uncles")
+    sha3Uncles?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - logsBloom")
+    logsBloom?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - transactionsRoot")
+    transactionsRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - stateRoot")
+    stateRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - receiptsRoot")
+    receiptsRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - miner")
+    miner?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - difficulty")
+    difficulty?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - totalDifficulty")
+    totalDifficulty?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - extraData")
+    extraData?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - size")
+    size?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - gasLimit")
+    gasLimit?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - gasUsed")
+    gasUsed?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - uncles")
+    uncles?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - baseFeePerGas")
+    baseFeePerGas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - blobGasUsed")
+    blobGasUsed?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - excessBlobGas")
+    excessBlobGas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - parentBeaconBlockRoot")
+    parentBeaconBlockRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - withdrawalsRoot")
+    withdrawalsRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - l1BlockNumber")
+    l1BlockNumber?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - sendCount")
+    sendCount?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - sendRoot")
+    sendRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      block_fields:\n        - mixHash")
+    mixHash?: unit,
+}
+type transaction = {
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - transactionIndex")
+    transactionIndex?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - hash")
+    hash?: unit,
+    from: option<Address.t>,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - to")
+    to?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - gas")
+    gas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - gasPrice")
+    gasPrice?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - maxPriorityFeePerGas")
+    maxPriorityFeePerGas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - maxFeePerGas")
+    maxFeePerGas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - cumulativeGasUsed")
+    cumulativeGasUsed?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - effectiveGasPrice")
+    effectiveGasPrice?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - gasUsed")
+    gasUsed?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - input")
+    input?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - nonce")
+    nonce?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - value")
+    value?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - v")
+    v?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - r")
+    r?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - s")
+    s?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - contractAddress")
+    contractAddress?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - logsBloom")
+    logsBloom?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - root")
+    root?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - status")
+    status?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - yParity")
+    yParity?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - accessList")
+    accessList?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - maxFeePerBlobGas")
+    maxFeePerBlobGas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - blobVersionedHashes")
+    blobVersionedHashes?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - type")
+    type_?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - l1Fee")
+    l1Fee?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - l1GasPrice")
+    l1GasPrice?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - l1GasUsed")
+    l1GasUsed?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - l1FeeScalar")
+    l1FeeScalar?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - gasUsedForL1")
+    gasUsedForL1?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: NewGravatar\n    field_selection:\n      transaction_fields:\n        - authorizationList")
+    authorizationList?: unit,
+}
+
+type event = {
+  /** The name of the contract that emitted this event. */
+  contractName: string,
+  /** The name of the event. */
+  eventName: string,
+  /** The parameters or arguments associated with this event. */
+  params: params,
+  /** The unique identifier of the blockchain network where this event occurred. */
+  chainId: chainId,
+  /** The address of the contract that emitted this event. */
+  srcAddress: Address.t,
+  /** The index of this event's log within the block. */
+  logIndex: int,
+  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+  transaction: transaction,
+  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+  block: block,
+}
+
+type whereParams = {}
+
+type onEventWhere = Internal.noOnEventWhere

@@ -1,31 +1,34 @@
-open Belt
-
 type t<'key, 'val> = {
   dict: dict<'val>,
   hash: 'key => string,
 }
 
 let make = (~hash): t<'key, 'val> => {
-  dict: Js.Dict.empty(),
+  dict: Dict.make(),
   hash,
 }
 
-let set = (self: t<'key, 'val>, key, value) => self.dict->Js.Dict.set(key->self.hash, value)
+let set = (self: t<'key, 'val>, key, value) => self.dict->Dict.set(key->self.hash, value)
 
-let setByHash = (self: t<'key, 'val>, hash, value) => self.dict->Js.Dict.set(hash, value)
+let setByHash = (self: t<'key, 'val>, hash, value) => self.dict->Dict.set(hash, value)
 
 let hasByHash = (self: t<'key, 'val>, hash) => {
   self.dict->Utils.Dict.has(hash)
 }
 
 let getUnsafeByHash = (self: t<'key, 'val>, hash) => {
-  self.dict->Js.Dict.unsafeGet(hash)
+  self.dict->Dict.getUnsafe(hash)
 }
 
 let get = (self: t<'key, 'val>, key: 'key) =>
   self.dict->Utils.Dict.dangerouslyGetNonOption(key->self.hash)
 
-let values = (self: t<'key, 'val>) => self.dict->Js.Dict.values
+let values = (self: t<'key, 'val>) => self.dict->Dict.valuesToArray
+
+let clone = (self: t<'key, 'val>) => {
+  dict: self.dict->Utils.Dict.shallowCopy,
+  hash: self.hash,
+}
 
 module Entity = {
   type relatedEntityId = string
@@ -86,7 +89,7 @@ module Entity = {
       let fieldValue =
         entity
         ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
-        ->Js.Dict.get(fieldName)
+        ->Dict.get(fieldName)
         ->Option.getUnsafe
       if !(index->TableIndices.Index.evaluate(~fieldName, ~fieldValue)) {
         entityIndices->Utils.Set.delete(index)->ignore
@@ -94,13 +97,11 @@ module Entity = {
     })
 
     self.fieldNameIndices.dict
-    ->Js.Dict.keys
+    ->Dict.keysToArray
     ->Array.forEach(fieldName => {
       switch (
-        entity
-        ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
-        ->Js.Dict.get(fieldName),
-        self.fieldNameIndices.dict->Js.Dict.get(fieldName),
+        entity->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)->Dict.get(fieldName),
+        self.fieldNameIndices.dict->Dict.get(fieldName),
       ) {
       | (Some(fieldValue), Some(indices)) =>
         indices
@@ -143,7 +144,7 @@ module Entity = {
   ) => {
     let shouldWriteEntity =
       allowOverWriteEntity ||
-      inMemTable.table.dict->Js.Dict.get(key->inMemTable.table.hash)->Option.isNone
+      inMemTable.table.dict->Dict.get(key->inMemTable.table.hash)->Option.isNone
 
     //Only initialize a row in the case where it is none
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
@@ -156,7 +157,7 @@ module Entity = {
         inMemTable->updateIndices(~entity, ~entityIndices)
       | None => ()
       }
-      inMemTable.table.dict->Js.Dict.set(
+      inMemTable.table.dict->Dict.set(
         key->inMemTable.table.hash,
         {
           latest: entity,
@@ -239,7 +240,7 @@ module Entity = {
   It's needed to prevent an additional round trips to the database for deleted entities. */
   let getUnsafe = (inMemTable: t<'entity>) => (key: string) =>
     inMemTable.table.dict
-    ->Js.Dict.unsafeGet(key)
+    ->Dict.getUnsafe(key)
     ->rowToEntity
 
   let hasIndex = (
@@ -266,13 +267,14 @@ module Entity = {
     let getEntity = inMemTable->getUnsafe
     fieldValueHash => {
       switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
-      | None => Js.Exn.raiseError(`Unexpected error. Must have an index on field ${fieldName}`)
+      | None =>
+        JsError.throwWithMessage(`Unexpected error. Must have an index on field ${fieldName}`)
       | Some(indicesSerializedToValue) => {
           // Should match TableIndices.toString logic
           let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
           switch indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) {
           | None =>
-            Js.Exn.raiseError(
+            JsError.throwWithMessage(
               `Unexpected error. Must have an index for the value ${fieldValueHash} on field ${fieldName}`,
             )
           | Some(indexEntry) => {
@@ -281,7 +283,7 @@ module Entity = {
               let res =
                 indexEntry.relatedEntityIds
                 ->Utils.Set.toArray
-                ->Array.keepMap(entityId => {
+                ->Array.filterMap(entityId => {
                   switch hasByHash(inMemTable.table, entityId) {
                   | true => getEntity(entityId)
                   | false => None
@@ -307,7 +309,7 @@ module Entity = {
         let fieldValue =
           entity
           ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
-          ->Js.Dict.unsafeGet(fieldName)
+          ->Dict.getUnsafe(fieldName)
         if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
           let _ = row.entityIndices->Utils.Set.add(index)
           let _ = relatedEntityIds->Utils.Set.add(entity->getEntityIdUnsafe)
@@ -361,7 +363,7 @@ module Entity = {
   let updates = (inMemTable: t<'entity>) => {
     inMemTable.table
     ->values
-    ->Array.keepMapU(v =>
+    ->Array.filterMap(v =>
       switch v.status {
       | Updated(update) => Some(update)
       | Loaded => None
@@ -372,7 +374,7 @@ module Entity = {
   let values = (inMemTable: t<'entity>) => {
     inMemTable.table
     ->values
-    ->Array.keepMap(rowToEntity)
+    ->Array.filterMap(rowToEntity)
   }
 
   // After a background write completes:
@@ -380,15 +382,15 @@ module Entity = {
   // 2. Evict entities that lost all indices, or reset Updated→Loaded if indices remain
   let cleanupAfterWrite = (inMemTable: t<'entity>, ~writtenCheckpointId: bigint) => {
     // Phase 1: Remove stale indices from fieldNameIndices
-    let fieldNameKeys = inMemTable.fieldNameIndices.dict->Js.Dict.keys
+    let fieldNameKeys = inMemTable.fieldNameIndices.dict->Dict.keysToArray
     for i in 0 to fieldNameKeys->Array.length - 1 {
-      let fieldNameKey = fieldNameKeys->Js.Array2.unsafe_get(i)
+      let fieldNameKey = fieldNameKeys->Array.getUnsafe(i)
       switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldNameKey) {
       | None => ()
       | Some(indicesSerializedToValue) =>
-        let indexKeys = indicesSerializedToValue.dict->Js.Dict.keys
+        let indexKeys = indicesSerializedToValue.dict->Dict.keysToArray
         for j in 0 to indexKeys->Array.length - 1 {
-          let indexKey = indexKeys->Js.Array2.unsafe_get(j)
+          let indexKey = indexKeys->Array.getUnsafe(j)
           switch indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(indexKey) {
           | None => ()
           | Some(indexEntry) =>
@@ -406,7 +408,7 @@ module Entity = {
         }
 
         // If no indices left for this field, remove the field entry
-        if indicesSerializedToValue.dict->Js.Dict.keys->Array.length === 0 {
+        if indicesSerializedToValue.dict->Dict.keysToArray->Array.length === 0 {
           inMemTable.fieldNameIndices.dict->Utils.Dict.deleteInPlace(fieldNameKey)
         }
       }
@@ -414,9 +416,9 @@ module Entity = {
 
     // Phase 2: Clean up entities
     let remainingChangeCount = ref(0.)
-    let keys = inMemTable.table.dict->Js.Dict.keys
+    let keys = inMemTable.table.dict->Dict.keysToArray
     for idx in 0 to keys->Array.length - 1 {
-      let key = keys->Js.Array2.unsafe_get(idx)
+      let key = keys->Array.getUnsafe(idx)
       switch inMemTable.table.dict->Utils.Dict.dangerouslyGetNonOption(key) {
       | None => ()
       | Some(row) =>
@@ -433,13 +435,13 @@ module Entity = {
             inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
           } else {
             // Written to DB, still has active index — reset to Loaded
-            inMemTable.table.dict->Js.Dict.set(key, {...row, status: Loaded})
+            inMemTable.table.dict->Dict.set(key, {...row, status: Loaded})
           }
         | Updated(update) =>
           remainingChangeCount := remainingChangeCount.contents +. 1.
           // Clear already-written history but keep the update status
           // since it has changes newer than what was written
-          inMemTable.table.dict->Js.Dict.set(
+          inMemTable.table.dict->Dict.set(
             key,
             {
               ...row,
@@ -454,5 +456,17 @@ module Entity = {
       }
     }
     inMemTable.changeCount = remainingChangeCount.contents
+  }
+
+  let clone = ({table, fieldNameIndices, changeCount}: t<'entity>) => {
+    table: table->clone,
+    fieldNameIndices: {
+      ...fieldNameIndices,
+      dict: fieldNameIndices.dict
+      ->Dict.toArray
+      ->Array.map(((k, v)) => (k, v->clone))
+      ->Dict.fromArray,
+    },
+    changeCount,
   }
 }

@@ -1,11 +1,9 @@
-use alloy_dyn_abi::DynSolType;
-
-use crate::config_parsing::abi_compat::EventParam;
-use crate::type_schema::TypeIdent;
+use crate::config_parsing::abi_compat::{AbiType, EventParam};
+use crate::type_schema::{RecordField, TypeIdent};
 
 pub struct EvmEventParam<'a> {
     pub name: &'a str,
-    abi_type: &'a DynSolType,
+    abi_type: &'a AbiType,
 }
 
 impl<'a> From<&'a EventParam> for EvmEventParam<'a> {
@@ -17,156 +15,95 @@ impl<'a> From<&'a EventParam> for EvmEventParam<'a> {
     }
 }
 
-impl EvmEventParam<'_> {
-    /// Returns the depth of the nested type
-    /// A value type would return 0
-    /// An array or tuple type would have a nested type
-    /// Tuple depth is only calculated on the first element of the tuple
-    /// as this corrisponds with the check on SingleOrMultiple in the rescript code
-    pub fn get_nested_type_depth(&self) -> usize {
-        fn rec(param: &DynSolType, accum: usize) -> usize {
-            match param {
-                DynSolType::Tuple(params) => match params.first() {
-                    Some(p) => rec(p, accum + 1),
-                    None => accum,
-                },
-                DynSolType::Array(p) | DynSolType::FixedArray(p, _) => rec(p, accum + 1),
-                _ => accum,
-            }
-        }
-        rec(self.abi_type, 0)
-    }
+pub fn abi_to_rescript_type(param: &EvmEventParam) -> TypeIdent {
+    abi_type_to_rescript(param.abi_type)
+}
 
-    pub fn get_topic_encoder(&self) -> String {
-        struct IsValueEncoder(bool);
-        struct IsNestedType(bool);
-        fn rec(param: &DynSolType, is_nested_type: IsNestedType) -> (String, IsValueEncoder) {
-            fn value_encoder(encoder: &str) -> (String, IsValueEncoder) {
-                (encoder.to_string(), IsValueEncoder(true))
-            }
-            fn non_value_encoder(encoder: &str) -> (String, IsValueEncoder) {
-                (encoder.to_string(), IsValueEncoder(false))
-            }
-            match &param {
-                DynSolType::String | DynSolType::Bytes if !is_nested_type.0 => {
-                    //In the case of a string or bytes param we simply create a keccak256 hash of the value
-                    //unless it is a nested type inside a tuple or array
-                    non_value_encoder("TopicFilter.castToHexUnsafe")
-                }
-                // Since we have bytes as a string type,
-                // they should already be passed to event filters as a hex
-                // NOTE: This is tested only for the bytes32 type
-                // Might need to keccak256 for bigger size or pad for smaller size
-                DynSolType::FixedBytes(_) if !is_nested_type.0 => {
-                    value_encoder("TopicFilter.castToHexUnsafe")
-                }
-                DynSolType::Address => value_encoder("TopicFilter.fromAddress"),
-                DynSolType::Uint(_) => value_encoder("TopicFilter.fromBigInt"),
-                DynSolType::Int(_) => value_encoder("TopicFilter.fromSignedBigInt"),
-                DynSolType::Bytes | DynSolType::FixedBytes(_) => {
-                    value_encoder("TopicFilter.fromBytes")
-                }
-                DynSolType::Bool => value_encoder("TopicFilter.fromBool"),
-                DynSolType::String => value_encoder("TopicFilter.fromString"),
-                DynSolType::Tuple(params) => {
-                    //TODO: test for nested tuples
-                    let tuple_arg = "tuple";
-                    let params_applied = params
-                        .iter()
-                        .enumerate()
-                        .map(|(i, p)| {
-                            let (param_encoder, _) = rec(p, IsNestedType(true));
-                            format!(
-                                "{tuple_arg}->Utils.Tuple.get({i})->Belt.Option.\
-                                 getUnsafe->{param_encoder}"
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ");
+/// Same as [`abi_to_rescript_type`] but discards component names, using the
+/// positional index (`"0"`, `"1"`, …) as the JS object key instead. Used for
+/// contexts like the ReScript `eventFilter` type where component names from
+/// the ABI may clash with other identifiers or where callers want a stable
+/// shape regardless of ABI naming. The rendered type is still a JS object
+/// (`{"0": ..., "1": ...}`) so it remains inlinable inside generics and
+/// optional fields without needing a lifted alias.
+pub fn abi_to_rescript_type_positional(param: &EvmEventParam) -> TypeIdent {
+    abi_type_to_rescript_positional(param.abi_type)
+}
 
-                    non_value_encoder(
-                        format!("({tuple_arg}) => TopicFilter.concat([{params_applied}])").as_str(),
-                    )
-                }
-                DynSolType::Array(p) | DynSolType::FixedArray(p, _) => {
-                    let (param_encoder, _) = rec(p, IsNestedType(true));
-                    non_value_encoder(
-                        format!(
-                            "(arr) => TopicFilter.concat(arr->Belt.Array.map({param_encoder}))"
-                        )
-                        .as_str(),
-                    )
-                }
-                DynSolType::Function => {
-                    unreachable!("Function type should be filtered out before reaching here")
-                }
-            }
+fn abi_type_to_rescript_positional(ty: &AbiType) -> TypeIdent {
+    match ty {
+        AbiType::Uint(_) => TypeIdent::BigInt,
+        AbiType::Int(_) => TypeIdent::BigInt,
+        AbiType::Bool => TypeIdent::Bool,
+        AbiType::Address => TypeIdent::Address,
+        AbiType::Bytes => TypeIdent::String,
+        AbiType::String => TypeIdent::String,
+        AbiType::FixedBytes(_) => TypeIdent::String,
+        AbiType::Function => {
+            unreachable!("Function type should be filtered out before reaching here")
         }
-        match rec(self.abi_type, IsNestedType(false)) {
-            (encoder, IsValueEncoder(false)) => {
-                format!("(value) => TopicFilter.keccak256(value->{encoder})")
-            }
-            (encoder, IsValueEncoder(true)) => encoder,
+        AbiType::Array(inner) => TypeIdent::Array(Box::new(abi_type_to_rescript_positional(inner))),
+        AbiType::FixedArray(inner, _) => {
+            TypeIdent::Array(Box::new(abi_type_to_rescript_positional(inner)))
         }
+        AbiType::Tuple(fields) => TypeIdent::Record(
+            fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    RecordField::new(i.to_string(), abi_type_to_rescript_positional(&f.kind))
+                })
+                .collect(),
+        ),
     }
 }
 
-pub fn abi_to_rescript_type(param: &EvmEventParam) -> TypeIdent {
-    match &param.abi_type {
-        DynSolType::Uint(_) => TypeIdent::BigInt,
-        DynSolType::Int(_) => TypeIdent::BigInt,
-        DynSolType::Bool => TypeIdent::Bool,
-        DynSolType::Address => TypeIdent::Address,
-        DynSolType::Bytes => TypeIdent::String,
-        DynSolType::String => TypeIdent::String,
-        DynSolType::FixedBytes(_) => TypeIdent::String,
-        DynSolType::Function => {
+fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
+    match ty {
+        AbiType::Uint(_) => TypeIdent::BigInt,
+        AbiType::Int(_) => TypeIdent::BigInt,
+        AbiType::Bool => TypeIdent::Bool,
+        AbiType::Address => TypeIdent::Address,
+        AbiType::Bytes => TypeIdent::String,
+        AbiType::String => TypeIdent::String,
+        AbiType::FixedBytes(_) => TypeIdent::String,
+        AbiType::Function => {
             unreachable!("Function type should be filtered out before reaching here")
         }
-        DynSolType::Array(abi_type) => {
-            let sub_param = EvmEventParam {
-                abi_type,
-                name: param.name,
-            };
-            TypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
-        }
-        DynSolType::FixedArray(abi_type, _) => {
-            let sub_param = EvmEventParam {
-                abi_type,
-                name: param.name,
-            };
-
-            TypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
-        }
-        DynSolType::Tuple(abi_types) => {
-            let rescript_types: Vec<TypeIdent> = abi_types
-                .iter()
-                .map(|abi_type| {
-                    let ethereum_param = EvmEventParam {
-                        // Note the name doesn't matter since it's creating tuple without keys
-                        //   it is only included so that the type is the same for recursion.
-                        name: "",
-                        abi_type,
-                    };
-
-                    abi_to_rescript_type(&ethereum_param)
-                })
-                .collect();
-
-            TypeIdent::Tuple(rescript_types)
+        AbiType::Array(inner) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
+        AbiType::FixedArray(inner, _) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
+        AbiType::Tuple(fields) => {
+            // All tuples render as inline records so handlers can access fields
+            // by key (`event.params.commonParams["funder"]`) regardless of whether
+            // the ABI names them. Unnamed components fall back to their positional
+            // index as the JS object key (e.g. `commonParams["0"]`). At runtime the
+            // raw positional decoder output is remapped into an object via
+            // `componentsToRemapper` in `EventConfigBuilder.res`.
+            // `AbiTupleField` constructors normalise empty source names to `None`,
+            // so `Some(_)` always carries a non-empty identifier.
+            TypeIdent::Record(
+                fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| {
+                        let name = f.name.clone().unwrap_or_else(|| i.to_string());
+                        RecordField::new(name, abi_type_to_rescript(&f.kind))
+                    })
+                    .collect(),
+            )
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{abi_to_rescript_type, EvmEventParam};
-    use crate::config_parsing::abi_compat;
-    use alloy_dyn_abi::DynSolType;
+    use super::{abi_to_rescript_type, AbiType, EvmEventParam};
+    use crate::config_parsing::abi_compat::{self, AbiTupleField};
+    use crate::type_schema::{RecordField, TypeIdent};
 
     #[test]
     fn test_record_type_array() {
-        let array_string_type = DynSolType::Array(Box::new(DynSolType::String));
+        let array_string_type = AbiType::Array(Box::new(AbiType::String));
         let param = EvmEventParam {
             abi_type: &array_string_type,
             name: "myArray",
@@ -182,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_record_type_fixed_array() {
-        let array_fixed_arr_type = DynSolType::FixedArray(Box::new(DynSolType::String), 1);
+        let array_fixed_arr_type = AbiType::FixedArray(Box::new(AbiType::String), 1);
         let param = EvmEventParam {
             abi_type: &array_fixed_arr_type,
             name: "myArrayFixed",
@@ -196,19 +133,134 @@ mod tests {
     }
 
     #[test]
-    fn test_record_type_tuple() {
-        let tuple_type = DynSolType::Tuple(vec![DynSolType::String, DynSolType::Uint(256)]);
+    fn test_record_type_unnamed_tuple_uses_positional_keys() {
+        let tuple_type = AbiType::Tuple(vec![
+            AbiTupleField {
+                name: None,
+                kind: AbiType::String,
+            },
+            AbiTupleField {
+                name: None,
+                kind: AbiType::Uint(256),
+            },
+        ]);
         let param = EvmEventParam {
             abi_type: &tuple_type,
-            name: "myArrayFixed",
+            name: "myTuple",
         };
 
-        let parsed_rescript_string = abi_to_rescript_type(&param);
+        let parsed = abi_to_rescript_type(&param);
 
+        // Fully anonymous tuples also render as inline records — every component
+        // falls back to its positional index as the JS object key so handlers
+        // access fields uniformly via `["0"]` / `["1"]`.
         assert_eq!(
-            parsed_rescript_string.to_string(),
-            String::from("(string, bigint)")
-        )
+            parsed.to_string(),
+            "{\"0\": string, \"1\": bigint}".to_string()
+        );
+        assert_eq!(
+            parsed.to_ts_type_string(),
+            "{ readonly 0: string; readonly 1: bigint }"
+        );
+    }
+
+    #[test]
+    fn test_record_type_named_tuple_uses_field_names() {
+        let tuple_type = AbiType::Tuple(vec![
+            AbiTupleField {
+                name: Some("funder".to_string()),
+                kind: AbiType::Address,
+            },
+            AbiTupleField {
+                name: Some("amount".to_string()),
+                kind: AbiType::Uint(256),
+            },
+        ]);
+        let param = EvmEventParam {
+            abi_type: &tuple_type,
+            name: "commonParams",
+        };
+
+        let parsed = abi_to_rescript_type(&param);
+
+        match &parsed {
+            TypeIdent::Record(fields) => {
+                assert_eq!(
+                    fields,
+                    &vec![
+                        RecordField::new("funder".to_string(), TypeIdent::Address),
+                        RecordField::new("amount".to_string(), TypeIdent::BigInt),
+                    ]
+                );
+            }
+            _ => panic!("expected Record"),
+        }
+        // Inline records render as ReScript JS object types so they can be nested
+        // inside other records without requiring lifted type aliases.
+        assert_eq!(
+            parsed.to_string(),
+            "{\"funder\": Address.t, \"amount\": bigint}"
+        );
+        assert_eq!(
+            parsed.to_ts_type_string(),
+            "{ readonly funder: Address; readonly amount: bigint }"
+        );
+    }
+
+    #[test]
+    fn test_record_type_mixed_named_tuple_uses_index_for_unnamed() {
+        // Mixed-name tuples (some components named, others not) still render as
+        // an inline record. Unnamed fields fall back to their positional index
+        // as the JS object key, with no leading underscore. `AbiTupleField`
+        // constructors normalise empty source names to `None`, which is what
+        // the codegen relies on here.
+        let tuple_type = AbiType::Tuple(vec![
+            AbiTupleField {
+                name: Some("funder".to_string()),
+                kind: AbiType::Address,
+            },
+            AbiTupleField {
+                name: None,
+                kind: AbiType::Uint(256),
+            },
+            AbiTupleField {
+                name: None,
+                kind: AbiType::Bool,
+            },
+            AbiTupleField {
+                name: Some("recipient".to_string()),
+                kind: AbiType::Address,
+            },
+        ]);
+        let param = EvmEventParam {
+            abi_type: &tuple_type,
+            name: "commonParams",
+        };
+
+        let parsed = abi_to_rescript_type(&param);
+
+        match &parsed {
+            TypeIdent::Record(fields) => {
+                assert_eq!(
+                    fields,
+                    &vec![
+                        RecordField::new("funder".to_string(), TypeIdent::Address),
+                        RecordField::new("1".to_string(), TypeIdent::BigInt),
+                        RecordField::new("2".to_string(), TypeIdent::Bool),
+                        RecordField::new("recipient".to_string(), TypeIdent::Address),
+                    ]
+                );
+            }
+            _ => panic!("expected Record"),
+        }
+        assert_eq!(
+            parsed.to_string(),
+            "{\"funder\": Address.t, \"1\": bigint, \"2\": bool, \"recipient\": Address.t}"
+        );
+        assert_eq!(
+            parsed.to_ts_type_string(),
+            "{ readonly funder: Address; readonly 1: bigint; readonly 2: boolean; readonly recipient: Address }"
+        );
     }
 
     #[test]
@@ -231,9 +283,11 @@ mod tests {
 
         assert_eq!(user_address_res_type.to_string(), "Address.t".to_string());
         assert_eq!(amount_uint256_res_type.to_string(), "bigint".to_string());
+        // Bare signature strings have no component names, so tuple components
+        // fall back to their positional index as the JS object key.
         assert_eq!(
             tuple_bool_string_res_type.to_string(),
-            "(bool, Address.t)".to_string()
+            "{\"0\": bool, \"1\": Address.t}".to_string()
         );
         assert_eq!(bytes_arr_res_type.to_string(), "array<string>".to_string());
 
@@ -247,7 +301,7 @@ mod tests {
         );
         assert_eq!(
             tuple_bool_string_res_type.get_default_value_rescript(),
-            "(false, Envio.TestHelpers.Addresses.defaultAddress)".to_string()
+            "{\"0\": false, \"1\": Envio.TestHelpers.Addresses.defaultAddress}".to_string()
         );
         assert_eq!(
             bytes_arr_res_type.get_default_value_rescript(),

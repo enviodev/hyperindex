@@ -7,6 +7,9 @@ full_batch_size: 1000
 rollback_on_reorg: false
 save_full_history: true
 raw_events: true
+storage:
+  postgres: true
+  clickhouse: true
 field_selection:
   transaction_fields:
     - hash

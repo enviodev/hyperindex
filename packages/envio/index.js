@@ -3,7 +3,8 @@
 // on the JS side, so we need to do it here
 
 import * as Sury from "rescript-schema";
-import { schema as bigintSchema } from "./src/bindings/BigInt.res.mjs";
+import { $$BigInt as UtilsBigInt } from "./src/Utils.res.mjs";
+const bigintSchema = UtilsBigInt.schema;
 import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.res.mjs";
 
 // Re-export everything from envioGen
@@ -37,7 +38,7 @@ export const S = {
   tuple: Sury.tuple,
   merge: Sury.merge,
   optional: Sury.optional,
-  nullable: Sury.nullable,
+  nullable: (schema) => Sury.union([schema, null]),
   bigDecimal: bigDecimalSchema,
   // Nullish type will change in "sury@10"
   // nullish: Sury.nullish,

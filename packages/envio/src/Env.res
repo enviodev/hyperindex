@@ -121,17 +121,13 @@ module Db = {
   let maxConnections = envSafe->EnvSafe.get("ENVIO_PG_MAX_CONNECTIONS", S.int, ~fallback=2)
 }
 
-module ClickHouseSink = {
-  let host = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_HOST", S.option(S.string))
-  let database = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_DATABASE", S.option(S.string))
-  let username = switch host {
-  | None => ""
-  | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_USERNAME", S.string)
-  }
-  let password = switch host {
-  | None => ""
-  | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_PASSWORD", S.string)
-  }
+// Required env vars are validated lazily in PgStorage when the user
+// opts into ClickHouse via `storage.clickhouse: true` in config.yaml.
+module ClickHouse = {
+  let host = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_HOST", S.option(S.string))
+  let database = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_DATABASE", S.option(S.string))
+  let username = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_USERNAME", S.option(S.string))
+  let password = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_PASSWORD", S.option(S.string))
 }
 
 module Hasura = {
@@ -151,7 +147,7 @@ module Hasura = {
       ~devFallback="http://localhost:8080/v1/metadata",
     )
 
-  let url = graphqlEndpoint->Js.String2.slice(~from=0, ~to_=-("/v1/metadata"->Js.String2.length))
+  let url = graphqlEndpoint->String.slice(~start=0, ~end=-("/v1/metadata"->String.length))
 
   let role = envSafe->EnvSafe.get("HASURA_GRAPHQL_ROLE", S.string, ~devFallback="admin")
 
@@ -165,7 +161,7 @@ module Hasura = {
       // Will be removed once comma support is added — don't rely on this.
       S.string->S.transform(s => {
         parser: string =>
-          switch string->Js.String2.split("&") {
+          switch string->String.split("&") {
           | []
           | [_] =>
             s.fail(`Provide an array of entities in the JSON format.`)

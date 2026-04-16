@@ -20,18 +20,16 @@ describe("decodeEventLogOrThrow", () => {
     }
     let decodedEvent = eventLog->Viem.decodeEventLogOrThrow
 
-    t.expect(decodedEvent).toEqual(
-      {
-        args: {
-          "fee": 3000,
-          "pool": "0xe13514AaCc27a3dFd2ae0db6aDA4eF7658c1E435",
-          "tickSpacing": 60,
-          "token0": "0x27D2DECb4bFC9C76F0309b8E88dec3a601Fe25a8",
-          "token1": "0x4200000000000000000000000000000000000006",
-        },
-        eventName: "PoolCreated",
+    t.expect(decodedEvent).toEqual({
+      args: {
+        "fee": 3000,
+        "pool": "0xe13514AaCc27a3dFd2ae0db6aDA4eF7658c1E435",
+        "tickSpacing": 60,
+        "token0": "0x27D2DECb4bFC9C76F0309b8E88dec3a601Fe25a8",
+        "token1": "0x4200000000000000000000000000000000000006",
       },
-    )
+      eventName: "PoolCreated",
+    })
   })
 
   it("if there's a param without name, it decodes as an array, which we don't want", t => {

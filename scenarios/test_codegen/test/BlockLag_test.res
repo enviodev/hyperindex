@@ -4,11 +4,11 @@ describe("E2E blockLag tests", () => {
   Async.it(
     "Chain with blockLag=1 should be marked as synced to head when at knownHeight - blockLag",
     async t => {
-      let sourceMock = Mock.Source.make(
+      let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -21,12 +21,12 @@ describe("E2E blockLag tests", () => {
 
       // Enter reorg threshold the standard way:
       // knownHeight=300, maxReorgDepth=200, so initial fetch is blocks 1-100
-      await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+      await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
       t.expect(
         await indexerMock.metric("envio_reorg_threshold"),
         ~message="Should be in reorg threshold",
-      ).toEqual([{value: "1", labels: Js.Dict.empty()}])
+      ).toEqual([{value: "1", labels: Dict.make()}])
 
       // Wait for the next query dispatch after entering reorg threshold
       await Utils.delay(0)
@@ -43,7 +43,7 @@ describe("E2E blockLag tests", () => {
       // After entering reorg threshold, blockLag is updated to chainConfig.blockLag=1.
       // The indexer fetches from block 101 up to knownHeight - blockLag = 299.
       t.expect(
-        sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
+        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
         ~message="Should request items from block 101 to 299 (knownHeight - blockLag)",
       ).toEqual(Some({"fromBlock": 101, "toBlock": Some(299), "retry": 0, "p": "0"}))
 
@@ -64,7 +64,7 @@ describe("E2E blockLag tests", () => {
       t.expect(
         await indexerMock.metric("hyperindex_synced_to_head"),
         ~message="Chain with blockLag=1 should be synced to head because progress (299) >= knownHeight (300) - blockLag (1)",
-      ).toEqual([{value: "1", labels: Js.Dict.empty()}])
+      ).toEqual([{value: "1", labels: Dict.make()}])
 
       // Wait for next query dispatch
       await Utils.delay(0)
@@ -76,23 +76,19 @@ describe("E2E blockLag tests", () => {
 
       // Should request from block 300 up to knownHeight - blockLag = 300.
       t.expect(
-        sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
+        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
         ~message="Should request items from block 300 to 300 (knownHeight 301 - blockLag 1)",
       ).toEqual(Some({"fromBlock": 300, "toBlock": Some(300), "retry": 0, "p": "0"}))
 
       // Advance chain height to 301 and resolve fetch up to block 300.
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=300,
-        ~knownHeight=301,
-      )
+      sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300, ~knownHeight=301)
       await indexerMock.getBatchWritePromise()
 
       // Still synced: progressBlockNumber=300 >= knownHeight(301) - blockLag(1) = 300
       t.expect(
         await indexerMock.metric("hyperindex_synced_to_head"),
         ~message="Chain with blockLag=1 should still be synced after height advances",
-      ).toEqual([{value: "1", labels: Js.Dict.empty()}])
+      ).toEqual([{value: "1", labels: Dict.make()}])
     },
   )
 })

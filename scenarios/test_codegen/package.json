@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "rescript",
-    "watch": "rescript -w",
-    "test": "rescript && tsc --noEmit && vitest run",
+    "build": "rescript-legacy",
+    "watch": "rescript-legacy -w",
+    "test": "rescript-legacy && tsc --noEmit && vitest run",
     "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs",
     "codegen": "envio codegen",
     "docker-up": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- local docker up",
@@ -23,8 +23,8 @@
     "@types/node": "^24.10.1",
     "tsx": "4.21.0",
     "vitest": "4.0.18",
-    "rescript": "11.1.3",
-    "rescript-schema": "9.3.4"
+    "rescript": "12.2.0",
+    "rescript-schema": "9.5.1"
   },
   "dependencies": {
     "bignumber.js": "^9.1.2",

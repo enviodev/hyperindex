@@ -11,9 +11,9 @@ module EntityTables = {
   type t = dict<InMemoryTable.Entity.t<Internal.entity>>
   exception UndefinedEntity({entityName: string})
   let make = (entities: array<Internal.entityConfig>): t => {
-    let init = Js.Dict.empty()
-    entities->Belt.Array.forEach(entityConfig => {
-      init->Js.Dict.set((entityConfig.name :> string), InMemoryTable.Entity.make())
+    let init = Dict.make()
+    entities->Array.forEach(entityConfig => {
+      init->Dict.set((entityConfig.name :> string), InMemoryTable.Entity.make())
     })
     init
   }
@@ -30,6 +30,13 @@ module EntityTables = {
         ~msg="Unexpected, entity InMemoryTable is undefined",
       )
     }
+  }
+
+  let clone = (self: t) => {
+    self
+    ->Dict.toArray
+    ->Array.map(((k, v)) => (k, v->InMemoryTable.Entity.clone))
+    ->Dict.fromArray
   }
 }
 
@@ -48,12 +55,25 @@ type t = {
   mutable totalChangeCount: float,
 }
 
-let make = (~entities: array<Internal.entityConfig>): t => {
+let make = (~entities: array<Internal.entityConfig>, ~rollbackTargetCheckpointId=None): t => {
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
   entities: EntityTables.make(entities),
-  effects: Js.Dict.empty(),
-  rollbackTargetCheckpointId: None,
+  effects: Dict.make(),
+  rollbackTargetCheckpointId,
   totalChangeCount: 0.,
+}
+
+let clone = (self: t) => {
+  rawEvents: self.rawEvents->InMemoryTable.clone,
+  entities: self.entities->EntityTables.clone,
+  effects: Dict.mapValues(self.effects, table => {
+    idsToStore: table.idsToStore->Array.copy,
+    invalidationsCount: table.invalidationsCount,
+    dict: table.dict->Utils.Dict.shallowCopy,
+    effect: table.effect,
+  }),
+  rollbackTargetCheckpointId: self.rollbackTargetCheckpointId,
+  totalChangeCount: self.totalChangeCount,
 }
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
@@ -63,11 +83,11 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   | None =>
     let table = {
       idsToStore: [],
-      dict: Js.Dict.empty(),
+      dict: Dict.make(),
       invalidationsCount: 0,
       effect,
     }
-    inMemoryStore.effects->Js.Dict.set(key, table)
+    inMemoryStore.effects->Dict.set(key, table)
     table
   }
 }
@@ -97,28 +117,24 @@ let entitySet = (
 let cleanupAfterWrite = (inMemoryStore: t, ~writtenCheckpointId: bigint) => {
   inMemoryStore.totalChangeCount = 0.
   inMemoryStore.entities
-  ->Js.Dict.values
-  ->Belt.Array.forEach(table => {
+  ->Dict.valuesToArray
+  ->Array.forEach(table => {
     table->InMemoryTable.Entity.cleanupAfterWrite(~writtenCheckpointId)
     inMemoryStore.totalChangeCount = inMemoryStore.totalChangeCount +. table.changeCount
   })
 
   // Clear raw events - they've been written
   inMemoryStore.rawEvents.dict
-  ->Js.Dict.keys
-  ->Belt.Array.forEach(key => {
+  ->Dict.keysToArray
+  ->Array.forEach(key => {
     inMemoryStore.rawEvents.dict->Utils.Dict.deleteInPlace(key)
   })
 
   // Clear effect cache write tracking
   inMemoryStore.effects
-  ->Js.Dict.values
-  ->Belt.Array.forEach(table => {
-    Js.Array2.removeCountInPlace(
-      table.idsToStore,
-      ~pos=0,
-      ~count=table.idsToStore->Array.length,
-    )->ignore
+  ->Dict.valuesToArray
+  ->Array.forEach(table => {
+    table.idsToStore->Array.splice(~start=0, ~remove=table.idsToStore->Array.length, ~insert=[])
     table.invalidationsCount = 0
   })
 
@@ -135,7 +151,7 @@ let prepareForNextBatch = async (
   ~isInReorgThreshold: bool,
   ~persistence: Persistence.t,
 ) => {
-  let updatedEntities = persistence.allEntities->Belt.Array.keepMapU(entityConfig => {
+  let updatedEntities = persistence.allEntities->Array.filterMap(entityConfig => {
     let updates =
       inMemoryStore
       ->getInMemTable(~entityConfig)
@@ -149,16 +165,16 @@ let prepareForNextBatch = async (
 
   let effectCacheWriteData =
     inMemoryStore.effects
-    ->Js.Dict.values
-    ->Belt.Array.keepMapU(({idsToStore, dict, effect, invalidationsCount}) => {
+    ->Dict.valuesToArray
+    ->Array.filterMap(({idsToStore, dict, effect, invalidationsCount}) => {
       switch idsToStore {
       | [] => None
       | ids =>
-        let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
-        ids->Belt.Array.forEachWithIndex((index, id) => {
-          items->Js.Array2.unsafe_set(
+        let items = Belt.Array.makeUninitializedUnsafe(ids->Array.length)
+        ids->Array.forEachWithIndex((id, index) => {
+          items->Array.setUnsafe(
             index,
-            ({id, output: dict->Js.Dict.unsafeGet(id)}: Internal.effectCacheItem),
+            ({id, output: dict->Dict.getUnsafe(id)}: Internal.effectCacheItem),
           )
         })
         Some({Persistence.effect, items, invalidationsCount})
@@ -202,8 +218,8 @@ let prepareForNextBatch = async (
 let applyRollbackDiff = (inMemoryStore: t, ~rollbackDiff: Persistence.rollbackDiff) => {
   inMemoryStore.rollbackTargetCheckpointId = Some(rollbackDiff.rollbackTargetCheckpointId)
 
-  rollbackDiff.entityChanges->Belt.Array.forEach(({entityConfig, removedIds, restoredEntities}) => {
-    removedIds->Js.Array2.forEach(entityId => {
+  rollbackDiff.entityChanges->Array.forEach(({entityConfig, removedIds, restoredEntities}) => {
+    removedIds->Array.forEach(entityId => {
       inMemoryStore->entitySet(
         ~entityConfig,
         ~change=Delete({
@@ -215,7 +231,7 @@ let applyRollbackDiff = (inMemoryStore: t, ~rollbackDiff: Persistence.rollbackDi
       )
     })
 
-    restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
+    restoredEntities->Array.forEach((entity: Internal.entity) => {
       inMemoryStore->entitySet(
         ~entityConfig,
         ~change=Set({
@@ -231,36 +247,30 @@ let applyRollbackDiff = (inMemoryStore: t, ~rollbackDiff: Persistence.rollbackDi
 }
 
 let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
-  let entityConfig = InternalTable.DynamicContractRegistry.entityConfig
+  let entityConfig = InternalTable.EnvioAddresses.entityConfig
 
   let itemIdx = ref(0)
 
   for checkpoint in 0 to batch.checkpointIds->Array.length - 1 {
-    let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpoint)
-    let chainId = batch.checkpointChainIds->Js.Array2.unsafe_get(checkpoint)
-    let checkpointEventsProcessed =
-      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpoint)
+    let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpoint)
+    let chainId = batch.checkpointChainIds->Array.getUnsafe(checkpoint)
+    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpoint)
 
     for idx in 0 to checkpointEventsProcessed - 1 {
-      let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
+      let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item->Internal.getItemDcs {
       | None => ()
       | Some(dcs) =>
         // Currently only events support contract registration, so we can cast to event item
         let eventItem = item->Internal.castUnsafeEventItem
         for dcIdx in 0 to dcs->Array.length - 1 {
-          let dc = dcs->Js.Array2.unsafe_get(dcIdx)
-          let entity: InternalTable.DynamicContractRegistry.t = {
-            id: InternalTable.DynamicContractRegistry.makeId(~chainId, ~contractAddress=dc.address),
+          let dc = dcs->Array.getUnsafe(dcIdx)
+          let entity: InternalTable.EnvioAddresses.t = {
+            id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
             chainId,
-            contractAddress: dc.address,
             contractName: dc.contractName,
-            registeringEventBlockNumber: eventItem.blockNumber,
-            registeringEventLogIndex: eventItem.logIndex,
-            registeringEventBlockTimestamp: eventItem.timestamp,
-            registeringEventContractName: eventItem.eventConfig.contractName,
-            registeringEventName: eventItem.eventConfig.name,
-            registeringEventSrcAddress: eventItem.event.srcAddress,
+            registrationBlock: eventItem.blockNumber,
+            registrationLogIndex: eventItem.logIndex,
           }
 
           inMemoryStore->entitySet(
@@ -268,7 +278,7 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
             ~change=Set({
               entityId: entity.id,
               checkpointId,
-              entity: entity->InternalTable.DynamicContractRegistry.castToInternal,
+              entity: entity->InternalTable.EnvioAddresses.castToInternal,
             }),
             ~shouldSaveHistory,
           )

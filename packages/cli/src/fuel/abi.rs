@@ -65,6 +65,10 @@ pub struct FuelLog {
 pub struct FuelAbi {
     pub path_buf: PathBuf,
     pub path: String,
+    /// The ABI path relative to the project root, as referenced in config.yaml.
+    /// Used by codegen to emit portable import paths; `path_buf` is the absolute
+    /// resolved path used for file system access at parse time.
+    pub path_relative_to_root: String,
     pub raw: String,
     program: UnifiedProgramABI,
     logs: HashMap<String, FuelLog>,
@@ -177,7 +181,7 @@ impl FuelAbi {
                                         ),
                                         //if the type_id is in the generic_param_name_map
                                         //it is a generic param
-                                        |generic_name| TypeIdent::GenericParam(generic_name),
+                                        TypeIdent::GenericParam,
                                     )
                                 })
                                 .collect();
@@ -391,7 +395,7 @@ impl FuelAbi {
         Ok(logs_map)
     }
 
-    pub fn parse(path_buf: PathBuf) -> Result<Self> {
+    pub fn parse(path_buf: PathBuf, path_relative_to_root: String) -> Result<Self> {
         let path = path_buf
             .to_str()
             .context("The ABI file path is invalid Unicode")?
@@ -414,6 +418,7 @@ impl FuelAbi {
         Ok(Self {
             path,
             path_buf,
+            path_relative_to_root,
             raw,
             program,
             logs,

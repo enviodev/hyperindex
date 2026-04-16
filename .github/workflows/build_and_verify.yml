@@ -1,10 +1,22 @@
 name: Build & Verify
 
 on:
-  pull_request:
+  # pull_request_target for ALL PRs (same-repo and forks). Runs with
+  # secrets. Fork PRs are gated by the `fork-ci` environment which
+  # requires manual approval from a reviewer before jobs proceed.
+  # Same-repo PRs use the `internal` environment (no restrictions).
+  #
+  # Security: the workflow file is always taken from the default branch
+  # (enforced since Dec 2025), so forks cannot modify the environment
+  # gate. All jobs check out github.event.pull_request.head.sha —
+  # pinned at event creation, so a push after approval cannot swap code.
+  pull_request_target:
   push:
     branches:
       - main
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,15 +24,46 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # ── Authorize ──────────────────────────────────────────────────────
+
+  # Routes to the right GitHub Environment:
+  #   - push to main          → `internal` (no restrictions)
+  #   - same-repo PR          → `internal` (no restrictions)
+  #   - fork PR               → `fork-ci`  (requires reviewer approval)
+  #
+  # Setup (one-time):
+  #   Settings → Environments → create `internal` (no rules) and
+  #   `fork-ci` (add required reviewers: your team).
+  #
+  # This replaces the entire /ok-to-test slash-command gate: no
+  # issue_comment trigger, no SHA validation, no author_association
+  # check, no reaction code. GitHub's environment approval handles
+  # authorization natively. Each new fork push triggers a new run
+  # that requires fresh approval.
+  authorize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    environment: >-
+      ${{
+        github.event_name == 'pull_request_target' &&
+        github.event.pull_request.head.repo.full_name != github.repository &&
+        'fork-ci' || 'internal'
+      }}
+    steps:
+      - run: echo "Authorized"
+
   # ── Build ───────────────────────────────────────────────────────────
 
   # Build envio CLI binary for linux-x64 and wrap it in a platform npm package
   build-linux-package:
     runs-on: ubuntu-22.04
     timeout-minutes: 9
+    needs: authorize
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -62,10 +105,12 @@ jobs:
   build-envio-package:
     runs-on: ubuntu-latest
     timeout-minutes: 9
-    needs: build-linux-package
+    needs: authorize
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: pnpm/action-setup@v5
         with:
@@ -95,18 +140,26 @@ jobs:
 
   # ── Verify ──────────────────────────────────────────────────────────
 
-  # Cargo unit tests - no artifacts needed, independent compilation
+  # Cargo lint and unit tests - no artifacts needed, independent compilation
   cargo-test:
     runs-on: ubuntu-latest
     timeout-minutes: 9
+    needs: authorize
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: ./.github/actions/cargo-cache
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
 
       - name: Cargo Test
         run: cargo test --no-default-features
@@ -116,9 +169,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 9
     continue-on-error: true
+    needs: authorize
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -131,11 +187,13 @@ jobs:
   # Template tests - verify envio templates can be initialized and built
   template-tests:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: [build-linux-package, build-envio-package]
     timeout-minutes: 9
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Run template tests
@@ -146,7 +204,7 @@ jobs:
   # Requires DB services (postgres + hasura)
   scenarios-test:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: [build-linux-package, build-envio-package]
     timeout-minutes: 9
 
     services:
@@ -180,6 +238,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
@@ -201,9 +261,15 @@ jobs:
           pnpm exec envio codegen
           pnpm test
 
+      - name: svm_test
+        working-directory: scenarios/svm_test
+        run: |
+          pnpm exec envio codegen
+          pnpm test
+
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
-        if: failure() && github.ref == 'refs/heads/main'
+        if: failure() && github.event_name == 'push'
         with:
           severity: error
           details: "Tests Failed on main!"
@@ -212,7 +278,7 @@ jobs:
   # E2E test - runs envio dev with a real indexer scenario
   e2e-test:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: [build-linux-package, build-envio-package]
     timeout-minutes: 9
 
     services:
@@ -245,7 +311,7 @@ jobs:
           - 8080:8080
 
       clickhouse:
-        image: clickhouse/clickhouse-server:latest
+        image: clickhouse/clickhouse-server:26.2.15.4
         env:
           CLICKHOUSE_PASSWORD: testing
         options: >-
@@ -258,6 +324,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
@@ -266,6 +334,12 @@ jobs:
             if curl -sSf http://localhost:8080/healthz >/dev/null; then
               echo "Hasura is up"; exit 0; fi; sleep 1; done
           echo "Hasura did not become ready"; exit 1
+
+      - name: Run smoke test
+        working-directory: scenarios/e2e_test
+        run: |
+          pnpm exec envio codegen
+          pnpm test
 
       - name: Run E2E test
         working-directory: packages/e2e-tests
@@ -277,7 +351,7 @@ jobs:
 
       - name: E2E Test Failure Notification
         uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
-        if: failure() && github.ref == 'refs/heads/main'
+        if: failure() && github.event_name == 'push'
         with:
           severity: error
           details: "E2E Tests Failed on main!"

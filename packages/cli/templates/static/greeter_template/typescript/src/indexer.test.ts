@@ -1,10 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it } from "vitest";
 import { createTestIndexer, type User } from "generated";
 import { TestHelpers } from "envio";
 const { Addresses } = TestHelpers;
 
 describe("Greeter template tests", () => {
-  it("A NewGreeting event creates a User entity", async () => {
+  it("A NewGreeting event creates a User entity", async (t) => {
     const indexer = createTestIndexer();
     const userAddress = Addresses.defaultAddress;
     const greeting = "Hi there";
@@ -12,8 +12,6 @@ describe("Greeter template tests", () => {
     await indexer.process({
       chains: {
         137: {
-          startBlock: 45336336,
-          endBlock: 45336336,
           simulate: [
             {
               contract: "Greeter",
@@ -33,10 +31,10 @@ describe("Greeter template tests", () => {
     };
 
     const actualUserEntity = await indexer.User.getOrThrow(userAddress);
-    expect(actualUserEntity).toEqual(expectedUserEntity);
+    t.expect(actualUserEntity).toEqual(expectedUserEntity);
   });
 
-  it("2 Greetings from the same users results in that user having a greeter count of 2", async () => {
+  it("2 Greetings from the same users results in that user having a greeter count of 2", async (t) => {
     const indexer = createTestIndexer();
     const userAddress = Addresses.defaultAddress;
     const greeting = "Hi there";
@@ -45,8 +43,6 @@ describe("Greeter template tests", () => {
     await indexer.process({
       chains: {
         137: {
-          startBlock: 45336336,
-          endBlock: 45336336,
           simulate: [
             {
               contract: "Greeter",
@@ -64,10 +60,10 @@ describe("Greeter template tests", () => {
     });
 
     const actualUserEntity = await indexer.User.getOrThrow(userAddress);
-    expect(actualUserEntity.numberOfGreetings).toBe(2);
+    t.expect(actualUserEntity.numberOfGreetings).toBe(2);
   });
 
-  it("2 Greetings from the same users results in the latest greeting being the greeting from the second event", async () => {
+  it("2 Greetings from the same users results in the latest greeting being the greeting from the second event", async (t) => {
     const indexer = createTestIndexer();
     const userAddress = Addresses.defaultAddress;
     const greeting = "Hi there";
@@ -76,8 +72,6 @@ describe("Greeter template tests", () => {
     await indexer.process({
       chains: {
         137: {
-          startBlock: 45336336,
-          endBlock: 45336336,
           simulate: [
             {
               contract: "Greeter",
@@ -95,6 +89,6 @@ describe("Greeter template tests", () => {
     });
 
     const actualUserEntity = await indexer.User.getOrThrow(userAddress);
-    expect(actualUserEntity.latestGreeting).toBe(greetingAgain);
+    t.expect(actualUserEntity.latestGreeting).toBe(greetingAgain);
   });
 });

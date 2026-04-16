@@ -13,7 +13,7 @@
 // } from "./helpers/node-and-contracts";
 // import { deployContracts } from "./helpers/setupNodeAndContracts";
 
-// import { runMigrationsNoLogs, createSql } from "./helpers/utils";
+// import { runMigrationsNoLogs, createSql } from "./helpers/TestHelpers.gen";
 
 // import {
 //   getLocalChainConfig,
@@ -108,8 +108,8 @@
 //     expect(rowsToken.count).to.be.gt(0);
 //   });
 
-//   it("should have 1 row in the dynamic_contract_registry table", async function () {
-//     let rowsDCR = await sql`SELECT * FROM public.dynamic_contract_registry`;
+//   it("should have 1 row in the envio_addresses table", async function () {
+//     let rowsDCR = await sql`SELECT * FROM public.envio_addresses`;
 //     console.log(rowsDCR);
 //     expect(rowsDCR.count).to.be.eq(1);
 //   });

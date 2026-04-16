@@ -1,5 +1,3 @@
-open Belt
-
 type sourceSyncOptions = {
   initialBlockInterval?: int,
   backoffMultiplicative?: float,
@@ -19,19 +17,6 @@ type contract = {
   startBlock: option<int>,
   // EVM-specific: event sighashes for HyperSync queries
   eventSignatures: array<string>,
-}
-
-type codegenContract = {
-  name: string,
-  addresses: array<string>,
-  events: array<Internal.eventConfig>,
-  startBlock: option<int>,
-}
-
-// Source config is now parsed from internal.config.json and sources are created lazily
-type codegenChain = {
-  id: int,
-  contracts: array<codegenContract>,
 }
 
 // Source config parsed from internal.config.json - sources are created lazily in ChainFetcher
@@ -71,7 +56,14 @@ type sourceSync = {
   pollingInterval: int,
 }
 
-type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
+type multichain = Internal.multichain =
+  | @as("ordered") Ordered
+  | @as("unordered") Unordered
+
+type storage = {
+  postgres: bool,
+  clickhouse: bool,
+}
 
 type contractHandler = {
   name: string,
@@ -85,6 +77,7 @@ type t = {
   contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
+  storage: storage,
   multichain: multichain,
   chainMap: ChainMap.t<chain>,
   defaultChain: option<chain>,
@@ -93,45 +86,44 @@ type t = {
   maxAddrInPartition: int,
   batchSize: int,
   lowercaseAddresses: bool,
-  addContractNameToContractNameMapping: dict<string>,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
 }
 
-module DynamicContractRegistry = {
-  let name = "dynamic_contract_registry"
+module EnvioAddresses = {
+  let name = "envio_addresses"
   let index = -1
 
-  let makeId = (~chainId, ~contractAddress) => {
-    chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
+  let makeId = (~chainId, ~address) => {
+    chainId->Belt.Int.toString ++ "-" ++ address->Address.toString
   }
 
-  @genType
   type t = {
     id: string,
     @as("chain_id") chainId: int,
-    @as("registering_event_block_number") registeringEventBlockNumber: int,
-    @as("registering_event_log_index") registeringEventLogIndex: int,
-    @as("registering_event_block_timestamp") registeringEventBlockTimestamp: int,
-    @as("registering_event_contract_name") registeringEventContractName: string,
-    @as("registering_event_name") registeringEventName: string,
-    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
-    @as("contract_address") contractAddress: Address.t,
+    @as("registration_block") registrationBlock: int,
+    // -1 when the address was registered from a block handler (no log index)
+    @as("registration_log_index") registrationLogIndex: int,
     @as("contract_name") contractName: string,
+  }
+
+  // Extract the raw contract address from the composite id ({chainId}-{address}).
+  // Inverse of makeId. Keep in sync with makeId above and the SUBSTRING SQL in
+  // InternalTable.Chains.makeGetInitialStateQuery.
+  let getAddress = (entity: t): Address.t => {
+    let sepIdx = entity.id->String.indexOf("-")
+    entity.id
+    ->String.slice(~start=sepIdx + 1, ~end=entity.id->String.length)
+    ->Address.unsafeFromString
   }
 
   let schema = S.schema(s => {
     id: s.matches(S.string),
     chainId: s.matches(S.int),
-    registeringEventBlockNumber: s.matches(S.int),
-    registeringEventLogIndex: s.matches(S.int),
-    registeringEventContractName: s.matches(S.string),
-    registeringEventName: s.matches(S.string),
-    registeringEventSrcAddress: s.matches(Address.schema),
-    registeringEventBlockTimestamp: s.matches(S.int),
-    contractAddress: s.matches(Address.schema),
+    registrationBlock: s.matches(S.int),
+    registrationLogIndex: s.matches(S.int),
     contractName: s.matches(S.string),
   })
 
@@ -142,13 +134,9 @@ module DynamicContractRegistry = {
     ~fields=[
       Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
       Table.mkField("chain_id", Int32, ~fieldSchema=S.int),
-      Table.mkField("registering_event_block_number", Int32, ~fieldSchema=S.int),
-      Table.mkField("registering_event_log_index", Int32, ~fieldSchema=S.int),
-      Table.mkField("registering_event_block_timestamp", Int32, ~fieldSchema=S.int),
-      Table.mkField("registering_event_contract_name", String, ~fieldSchema=S.string),
-      Table.mkField("registering_event_name", String, ~fieldSchema=S.string),
-      Table.mkField("registering_event_src_address", String, ~fieldSchema=Address.schema),
-      Table.mkField("contract_address", String, ~fieldSchema=Address.schema),
+      Table.mkField("registration_block", Int32, ~fieldSchema=S.int),
+      // -1 sentinel when registered from a block handler (no log index)
+      Table.mkField("registration_log_index", Int32, ~fieldSchema=S.int),
       Table.mkField("contract_name", String, ~fieldSchema=S.string),
     ],
   )
@@ -185,6 +173,13 @@ let rpcConfigSchema = S.schema(s =>
   }
 )
 
+let chainContractSchema = S.schema(s =>
+  {
+    "addresses": s.matches(S.option(S.array(S.string))),
+    "startBlock": s.matches(S.option(S.int)),
+  }
+)
+
 let publicConfigChainSchema = S.schema(s =>
   {
     "id": s.matches(S.int),
@@ -197,6 +192,8 @@ let publicConfigChainSchema = S.schema(s =>
     "rpcs": s.matches(S.option(S.array(rpcConfigSchema))),
     // SVM source config
     "rpc": s.matches(S.option(S.string)),
+    // Per-chain contract data (addresses and optional start block)
+    "contracts": s.matches(S.option(S.dict(chainContractSchema))),
   }
 )
 
@@ -204,8 +201,11 @@ let contractEventItemSchema = S.schema(s =>
   {
     "event": s.matches(S.string),
     "name": s.matches(S.string),
-    "blockFields": s.matches(S.option(S.array(S.string))),
-    "transactionFields": s.matches(S.option(S.array(S.string))),
+    "sighash": s.matches(S.string),
+    "params": s.matches(S.option(S.array(EventConfigBuilder.eventParamSchema))),
+    "kind": s.matches(S.option(S.string)),
+    "blockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
+    "transactionFields": s.matches(S.option(S.array(Internal.evmTransactionFieldSchema))),
   }
 )
 
@@ -280,18 +280,18 @@ let entityJsonSchema = S.schema(s =>
 
 let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>) => {
   let typ = prop["type"]
-  let isNullable = prop["isNullable"]->Option.getWithDefault(false)
-  let isArray = prop["isArray"]->Option.getWithDefault(false)
-  let isIndex = prop["isIndex"]->Option.getWithDefault(false)
+  let isNullable = prop["isNullable"]->Option.getOr(false)
+  let isArray = prop["isArray"]->Option.getOr(false)
+  let isIndex = prop["isIndex"]->Option.getOr(false)
 
   let (fieldType, baseSchema) = switch typ {
   | "string" => (Table.String, S.string->S.toUnknown)
   | "boolean" => (Table.Boolean, S.bool->S.toUnknown)
   | "int" => (Table.Int32, S.int->S.toUnknown)
-  | "bigint" => (Table.BigInt({precision: ?prop["precision"]}), BigInt.schema->S.toUnknown)
+  | "bigint" => (Table.BigInt({precision: ?prop["precision"]}), Utils.BigInt.schema->S.toUnknown)
   | "bigdecimal" => (
       Table.BigDecimal({
-        config: ?prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getWithDefault(0))),
+        config: ?prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getOr(0))),
       }),
       BigDecimal.schema->S.toUnknown,
     )
@@ -300,18 +300,27 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
   | "json" => (Table.Json, S.json(~validate=false)->S.toUnknown)
   | "date" => (Table.Date, Utils.Schema.dbDate->S.toUnknown)
   | "enum" => {
-      let enumName = prop["enum"]->Option.getExn
-      let enumConfig =
-        enumConfigsByName
-        ->Js.Dict.get(enumName)
-        ->Option.getExn
+      let enumName = prop["enum"]->Option.getOrThrow
+
+      // Build contracts for this chain from per-chain contract data + contract configs
+
+      // Get per-chain contract data (addresses, startBlock)
+
+      // Build event configs from JSON (field selections resolved inline)
+
+      // Build sourceConfig from the parsed chain config
+
+      // Build syncConfig from flattened fields
+
+      // Fuel doesn't have reorgs, SVM reorg handling is not supported
+      let enumConfig = enumConfigsByName->Dict.get(enumName)->Option.getOrThrow
       (Table.Enum({config: enumConfig}), enumConfig.schema->S.toUnknown)
     }
   | "entity" => {
-      let entityName = prop["entity"]->Option.getExn
+      let entityName = prop["entity"]->Option.getOrThrow
       (Table.Entity({name: entityName}), S.string->S.toUnknown)
     }
-  | other => Js.Exn.raiseError("Unknown field type in entity config: " ++ other)
+  | other => JsError.throwWithMessage("Unknown field type in entity config: " ++ other)
   }
 
   let fieldSchema = if isArray {
@@ -330,7 +339,7 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
 
 let parseEnumsFromJson = (enumsJson: dict<array<string>>): array<Table.enumConfig<Table.enum>> => {
   enumsJson
-  ->Js.Dict.entries
+  ->Dict.toArray
   ->Array.map(((name, variants)) =>
     Table.makeEnumConfig(~name, ~variants)->Table.fromGenericEnumConfig
   )
@@ -340,7 +349,7 @@ let parseEntitiesFromJson = (
   entitiesJson: array<'entityJson>,
   ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
 ): array<Internal.entityConfig> => {
-  entitiesJson->Array.mapWithIndex((index, entityJson) => {
+  entitiesJson->Array.mapWithIndex((entityJson, index) => {
     let entityName = entityJson["name"]
 
     let fields: array<Table.fieldOrDerived> = entityJson["properties"]->Array.map(prop => {
@@ -362,7 +371,7 @@ let parseEntitiesFromJson = (
 
     let derivedFields: array<Table.fieldOrDerived> =
       entityJson["derivedFields"]
-      ->Option.getWithDefault([])
+      ->Option.getOr([])
       ->Array.map(df =>
         Table.mkDerivedFromField(
           df["fieldName"],
@@ -373,7 +382,7 @@ let parseEntitiesFromJson = (
 
     let compositeIndices =
       entityJson["compositeIndices"]
-      ->Option.getWithDefault([])
+      ->Option.getOr([])
       ->Array.map(ci =>
         ci->Array.map(
           f => {
@@ -393,7 +402,7 @@ let parseEntitiesFromJson = (
     // Use db field names (with _id suffix for linked entities) as schema locations
     // to match the database column names used in Table.toSqlParams
     let schema = S.schema(s => {
-      let dict = Js.Dict.empty()
+      let dict = Dict.make()
       entityJson["properties"]->Array.forEach(
         prop => {
           let (_, fieldSchema, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
@@ -401,7 +410,7 @@ let parseEntitiesFromJson = (
           | Some(_) => prop["name"] ++ "_id"
           | None => prop["name"]
           }
-          dict->Js.Dict.set(dbFieldName, s.matches(fieldSchema))
+          dict->Dict.set(dbFieldName, s.matches(fieldSchema))
         },
       )
       dict
@@ -419,6 +428,13 @@ let parseEntitiesFromJson = (
   })
 }
 
+let publicConfigStorageSchema = S.schema(s =>
+  {
+    "postgres": s.matches(S.bool),
+    "clickhouse": s.matches(S.option(S.bool)),
+  }
+)
+
 let publicConfigSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
@@ -429,6 +445,7 @@ let publicConfigSchema = S.schema(s =>
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
     "rawEvents": s.matches(S.option(S.bool)),
+    "storage": s.matches(publicConfigStorageSchema),
     "evm": s.matches(S.option(publicConfigEvmSchema)),
     "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
     "svm": s.matches(S.option(publicConfigEcosystemSchema)),
@@ -437,75 +454,11 @@ let publicConfigSchema = S.schema(s =>
   }
 )
 
-// Always-included block fields (number, timestamp, hash) are not in the JSON;
-// they're prepended at runtime so they're always present.
-let alwaysIncludedBlockFields: array<Internal.evmBlockField> = [Number, Timestamp, Hash]
-
-// Enrich EVM event configs with field selections from the JSON config.
-// Mutates the event configs in-place to set selectedBlockFields/selectedTransactionFields.
-let enrichEvmFieldSelections = (
-  events: array<Internal.eventConfig>,
-  ~jsonEvents: option<array<_>>,
-  ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>,
-  ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>,
-) => {
-  // Build a lookup by event name for events with per-event field overrides
-  let fieldsByName: Js.Dict.t<_> = Js.Dict.empty()
-  switch jsonEvents {
-  | Some(jes) =>
-    jes->Array.forEach(je => {
-      let name = je["name"]
-      if je["blockFields"] != None || je["transactionFields"] != None {
-        fieldsByName->Js.Dict.set(name, je)
-      }
-    })
-  | None => ()
-  }
-  events->Js.Array2.forEachi((event, i) => {
-    let evmEvent = event->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-    let (selectedBlockFields, selectedTransactionFields) = switch fieldsByName->Js.Dict.get(
-      evmEvent.name,
-    ) {
-    | Some(je) => (
-        switch je["blockFields"] {
-        | Some(fields) =>
-          // Prepend always-included block fields for per-event overrides too
-          Utils.Set.fromArray(
-            Array.concat(
-              alwaysIncludedBlockFields,
-              fields->(Utils.magic: array<string> => array<Internal.evmBlockField>),
-            ),
-          )
-        | None => globalBlockFieldsSet
-        },
-        switch je["transactionFields"] {
-        | Some(fields) =>
-          Utils.Set.fromArray(
-            fields->(Utils.magic: array<string> => array<Internal.evmTransactionField>),
-          )
-        | None => globalTransactionFieldsSet
-        },
-      )
-    | None => (globalBlockFieldsSet, globalTransactionFieldsSet)
-    }
-    events->Js.Array2.unsafe_set(
-      i,
-      {...evmEvent, selectedBlockFields, selectedTransactionFields}->(
-        Utils.magic: Internal.evmEventConfig => Internal.eventConfig
-      ),
-    )
-  })
-}
-
-let fromPublic = (
-  publicConfigJson: Js.Json.t,
-  ~codegenChains: array<codegenChain>=[],
-  ~maxAddrInPartition=5000,
-) => {
+let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
   | S.Raised(exn) =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Invalid internal.config.ts: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`,
     )
   }
@@ -520,20 +473,20 @@ let fromPublic = (
   | (None, Some(ecosystemConfig), None) => (ecosystemConfig["chains"], Ecosystem.Fuel)
   | (None, None, Some(ecosystemConfig)) => (ecosystemConfig["chains"], Ecosystem.Svm)
   | (None, None, None) =>
-    Js.Exn.raiseError("Invalid indexer config: No ecosystem configured (evm, fuel, or svm)")
+    JsError.throwWithMessage("Invalid indexer config: No ecosystem configured (evm, fuel, or svm)")
   | _ =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       "Invalid indexer config: Multiple ecosystems are not supported for a single indexer",
     )
   }
 
   // Extract EVM-specific options with defaults
   let lowercaseAddresses = switch publicConfig["evm"] {
-  | Some(evm) => evm["addressFormat"]->Option.getWithDefault(Checksum) == Lowercase
+  | Some(evm) => evm["addressFormat"]->Option.getOr(Checksum) == Lowercase
   | None => false
   }
 
-  // Parse ABIs from public config
+  // Parse contract configs (ABIs, events, handlers)
   let publicContractsConfig = switch (ecosystemName, publicConfig["evm"], publicConfig["fuel"]) {
   | (Ecosystem.Evm, Some(evm), _) => evm["contracts"]
   | (Ecosystem.Fuel, _, Some(fuel)) => fuel["contracts"]
@@ -545,92 +498,107 @@ let fromPublic = (
   | Some(evm) => (
       Utils.Set.fromArray(
         Array.concat(
-          alwaysIncludedBlockFields,
-          evm["globalBlockFields"]->Option.getWithDefault([]),
+          EventConfigBuilder.alwaysIncludedBlockFields,
+          evm["globalBlockFields"]->Option.getOr([]),
         ),
       ),
-      Utils.Set.fromArray(evm["globalTransactionFields"]->Option.getWithDefault([])),
+      Utils.Set.fromArray(evm["globalTransactionFields"]->Option.getOr([])),
     )
-  | None => (Utils.Set.fromArray(alwaysIncludedBlockFields), Utils.Set.make())
+  | None => (Utils.Set.fromArray(EventConfigBuilder.alwaysIncludedBlockFields), Utils.Set.make())
   }
 
-  // Store ABI and event signatures for each contract
-  let contractsWithAbis: Js.Dict.t<(EvmTypes.Abi.t, array<string>)> = Js.Dict.empty()
-  // Per-event field selection overrides, keyed by capitalized contract name
-  let jsonEventsByContract: Js.Dict.t<array<_>> = Js.Dict.empty()
+  // Build contract data lookup: ABI, event signatures, event configs (keyed by capitalized name)
+  let contractDataByName: dict<{
+    "abi": EvmTypes.Abi.t,
+    "eventSignatures": array<string>,
+    "events": option<array<_>>,
+  }> = Dict.make()
   switch publicContractsConfig {
   | Some(contractsDict) =>
     contractsDict
-    ->Js.Dict.entries
+    ->Dict.toArray
     ->Array.forEach(((contractName, contractConfig)) => {
       let capitalizedName = contractName->Utils.String.capitalize
-      let abi = contractConfig["abi"]->(Utils.magic: Js.Json.t => EvmTypes.Abi.t)
+      let abi = contractConfig["abi"]->(Utils.magic: JSON.t => EvmTypes.Abi.t)
       let eventSignatures = switch contractConfig["events"] {
       | Some(events) => events->Array.map(eventItem => eventItem["event"])
       | None => []
       }
-      contractsWithAbis->Js.Dict.set(capitalizedName, (abi, eventSignatures))
-      switch contractConfig["events"] {
-      | Some(events) => jsonEventsByContract->Js.Dict.set(capitalizedName, events)
-      | None => ()
-      }
+      contractDataByName->Dict.set(
+        capitalizedName,
+        {"abi": abi, "eventSignatures": eventSignatures, "events": contractConfig["events"]},
+      )
     })
   | None => ()
   }
 
-  // Index codegenChains by id for efficient lookup
-  let codegenChainById = Js.Dict.empty()
-  codegenChains->Array.forEach(codegenChain => {
-    codegenChainById->Js.Dict.set(codegenChain.id->Int.toString, codegenChain)
-  })
+  // Build event configs for a contract from JSON event items
+  let buildContractEvents = (~contractName, ~events: option<array<_>>, ~abi, ~chainId: int) => {
+    switch events {
+    | None => []
+    | Some(eventItems) =>
+      eventItems->Array.map(eventItem => {
+        let eventName = eventItem["name"]
+        let sighash = eventItem["sighash"]
+        let params = eventItem["params"]->Option.getOr([])
+        let kind = eventItem["kind"]
+        // Get handler registration data
+        let isWildcard = HandlerRegister.isWildcard(~contractName, ~eventName)
+        let handler = HandlerRegister.getHandler(~contractName, ~eventName)
+        let contractRegister = HandlerRegister.getContractRegister(~contractName, ~eventName)
 
-  // Create a dictionary to store merged contracts with ABIs by chain id
-  let contractsByChainId: Js.Dict.t<array<contract>> = Js.Dict.empty()
-  codegenChains->Array.forEach(codegenChain => {
-    let mergedContracts = codegenChain.contracts->Array.map(codegenContract => {
-      switch contractsWithAbis->Js.Dict.get(codegenContract.name) {
-      | Some((abi, eventSignatures)) =>
-        // Parse addresses based on ecosystem and address format
-        let parsedAddresses = codegenContract.addresses->Array.map(
-          addressString => {
-            switch ecosystemName {
-            | Ecosystem.Evm =>
-              if lowercaseAddresses {
-                addressString->Address.Evm.fromStringLowercaseOrThrow
-              } else {
-                addressString->Address.Evm.fromStringOrThrow
-              }
-            | Ecosystem.Fuel | Ecosystem.Svm => addressString->Address.unsafeFromString
-            }
-          },
-        )
-
-        // Enrich EVM event configs with field selections from JSON config
-        if ecosystemName == Ecosystem.Evm {
-          enrichEvmFieldSelections(
-            codegenContract.events,
-            ~jsonEvents=jsonEventsByContract->Js.Dict.get(codegenContract.name),
+        switch ecosystemName {
+        | Ecosystem.Fuel =>
+          switch kind {
+          | Some(fuelKind) =>
+            (EventConfigBuilder.buildFuelEventConfig(
+              ~contractName,
+              ~eventName,
+              ~kind=fuelKind,
+              ~sighash,
+              ~rawAbi=abi->(Utils.magic: EvmTypes.Abi.t => JSON.t),
+              ~isWildcard,
+              ~handler,
+              ~contractRegister,
+            ) :> Internal.eventConfig)
+          | None =>
+            JsError.throwWithMessage(
+              `Fuel event ${contractName}.${eventName} is missing "kind" in internal config`,
+            )
+          }
+        | _ =>
+          (EventConfigBuilder.buildEvmEventConfig(
+            ~contractName,
+            ~eventName,
+            ~sighash,
+            ~params,
+            ~isWildcard,
+            ~handler,
+            ~contractRegister,
+            ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
+            ~probeChainId=chainId,
+            ~blockFields=?eventItem["blockFields"],
+            ~transactionFields=?eventItem["transactionFields"],
             ~globalBlockFieldsSet,
             ~globalTransactionFieldsSet,
-          )
+          ) :> Internal.eventConfig)
         }
-        // Convert codegenContract to contract by adding abi and eventSignatures
-        {
-          name: codegenContract.name,
-          abi,
-          addresses: parsedAddresses,
-          events: codegenContract.events,
-          startBlock: codegenContract.startBlock,
-          eventSignatures,
-        }
-      | None =>
-        Js.Exn.raiseError(
-          `Contract "${codegenContract.name}" is missing ABI in public config (internal.config.ts)`,
-        )
+      })
+    }
+  }
+
+  // Parse address based on ecosystem and address format
+  let parseAddress = addressString => {
+    switch ecosystemName {
+    | Ecosystem.Evm =>
+      if lowercaseAddresses {
+        addressString->Address.Evm.fromStringLowercaseOrThrow
+      } else {
+        addressString->Address.Evm.fromStringOrThrow
       }
-    })
-    contractsByChainId->Js.Dict.set(codegenChain.id->Int.toString, mergedContracts)
-  })
+    | Ecosystem.Fuel | Ecosystem.Svm => addressString->Address.unsafeFromString
+    }
+  }
 
   // Helper to convert parsed RPC config to evmRpcConfig
   let parseRpcSourceFor = (sourceFor: rpcSourceFor): Source.sourceFor => {
@@ -641,34 +609,55 @@ let fromPublic = (
     }
   }
 
-  // Merge codegenChains with names from publicConfig
+  // Build chains from JSON config (no more codegenChains)
   let chains =
     publicChainsConfig
-    ->Js.Dict.keys
-    ->Js.Array2.map(chainName => {
-      let publicChainConfig = publicChainsConfig->Js.Dict.unsafeGet(chainName)
+    ->Dict.keysToArray
+    ->Array.map(chainName => {
+      let publicChainConfig = publicChainsConfig->Dict.getUnsafe(chainName)
       let chainId = publicChainConfig["id"]
-      let codegenChain = switch codegenChainById->Js.Dict.get(chainId->Int.toString) {
-      | Some(c) => c
-      | None =>
-        Js.Exn.raiseError(`Chain with id ${chainId->Int.toString} not found in codegen chains`)
-      }
-      let mergedContracts = switch contractsByChainId->Js.Dict.get(chainId->Int.toString) {
-      | Some(contracts) => contracts
-      | None =>
-        Js.Exn.raiseError(
-          `Contracts for chain with id ${chainId->Int.toString} not found in merged contracts`,
-        )
-      }
 
-      // Build sourceConfig from the parsed chain config
+      let chainContracts = publicChainConfig["contracts"]->Option.getOr(Dict.make())
+      let contracts =
+        contractDataByName
+        ->Dict.toArray
+        ->Array.map(((capitalizedName, contractData)) => {
+          let chainContract = chainContracts->Dict.get(capitalizedName)
+          let addresses =
+            chainContract
+            ->Option.flatMap(cc => cc["addresses"])
+            ->Option.getOr([])
+            ->Array.map(parseAddress)
+          let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
+
+          // Build event configs from JSON (field selections resolved inline)
+          // chainId is threaded in so the where-callback detection probe
+          // exercises the callback with this chain's real id — handlers
+          // that branch on `chain.id` are taken through the same path
+          // they will follow at runtime.
+          let events = buildContractEvents(
+            ~contractName=capitalizedName,
+            ~events=contractData["events"],
+            ~abi=contractData["abi"],
+            ~chainId,
+          )
+
+          {
+            name: capitalizedName,
+            abi: contractData["abi"],
+            addresses,
+            events,
+            startBlock,
+            eventSignatures: contractData["eventSignatures"],
+          }
+        })
+
       let sourceConfig = switch ecosystemName {
       | Ecosystem.Evm =>
         let rpcs =
           publicChainConfig["rpcs"]
-          ->Option.getWithDefault([])
+          ->Option.getOr([])
           ->Array.map((rpcConfig): evmRpcConfig => {
-            // Build syncConfig from flattened fields
             let initialBlockInterval = rpcConfig["initialBlockInterval"]
             let backoffMultiplicative = rpcConfig["backoffMultiplicative"]
             let accelerationAdditive = rpcConfig["accelerationAdditive"]
@@ -711,46 +700,38 @@ let fromPublic = (
       | Ecosystem.Fuel =>
         switch publicChainConfig["hypersync"] {
         | Some(hypersync) => FuelSourceConfig({hypersync: hypersync})
-        | None => Js.Exn.raiseError(`Chain ${chainName} is missing hypersync endpoint in config`)
+        | None =>
+          JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
         }
       | Ecosystem.Svm =>
         switch publicChainConfig["rpc"] {
         | Some(rpc) => SvmSourceConfig({rpc: rpc})
-        | None => Js.Exn.raiseError(`Chain ${chainName} is missing rpc endpoint in config`)
+        | None => JsError.throwWithMessage(`Chain ${chainName} is missing rpc endpoint in config`)
         }
       }
 
       {
         name: chainName,
-        id: codegenChain.id,
+        id: chainId,
         startBlock: publicChainConfig["startBlock"],
         endBlock: ?publicChainConfig["endBlock"],
         maxReorgDepth: switch ecosystemName {
-        | Ecosystem.Evm => publicChainConfig["maxReorgDepth"]->Option.getWithDefault(200)
-        // Fuel doesn't have reorgs, SVM reorg handling is not supported
+        | Ecosystem.Evm => publicChainConfig["maxReorgDepth"]->Option.getOr(200)
+
         | Ecosystem.Fuel | Ecosystem.Svm => 0
         },
-        blockLag: publicChainConfig["blockLag"]->Option.getWithDefault(0),
-        contracts: mergedContracts,
+        blockLag: publicChainConfig["blockLag"]->Option.getOr(0),
+        contracts,
         sourceConfig,
       }
     })
 
   let chainMap =
     chains
-    ->Js.Array2.map(chain => {
+    ->Array.map(chain => {
       (ChainMap.Chain.makeUnsafe(~chainId=chain.id), chain)
     })
     ->ChainMap.fromArrayUnsafe
-
-  // Build the contract name mapping for efficient lookup
-  let addContractNameToContractNameMapping = Js.Dict.empty()
-  chains->Array.forEach(chainConfig => {
-    chainConfig.contracts->Array.forEach(contract => {
-      let addKey = "add" ++ contract.name->Utils.String.capitalize
-      addContractNameToContractNameMapping->Js.Dict.set(addKey, contract.name)
-    })
-  })
 
   let ecosystem = switch ecosystemName {
   | Ecosystem.Evm => Evm.ecosystem
@@ -761,34 +742,32 @@ let fromPublic = (
   // Parse enums and entities from JSON config
   let allEnums =
     publicConfig["enums"]
-    ->Option.getWithDefault(Js.Dict.empty())
+    ->Option.getOr(Dict.make())
     ->parseEnumsFromJson
 
   let enumConfigsByName =
-    allEnums
-    ->Js.Array2.map(enumConfig => (enumConfig.name, enumConfig))
-    ->Js.Dict.fromArray
+    allEnums->Array.map(enumConfig => (enumConfig.name, enumConfig))->Dict.fromArray
 
   let userEntities =
     publicConfig["entities"]
-    ->Option.getWithDefault([])
+    ->Option.getOr([])
     ->parseEntitiesFromJson(~enumConfigsByName)
 
-  let allEntities = userEntities->Js.Array2.concat([DynamicContractRegistry.entityConfig])
+  let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 
   let userEntitiesByName =
     userEntities
-    ->Js.Array2.map(entityConfig => {
+    ->Array.map(entityConfig => {
       (entityConfig.name, entityConfig)
     })
-    ->Js.Dict.fromArray
+    ->Dict.fromArray
 
   // Extract contract handlers from the public config
   let contractHandlers = switch publicContractsConfig {
   | Some(contractsDict) =>
     contractsDict
-    ->Js.Dict.entries
-    ->Js.Array2.map(((contractName, contractConfig)) => {
+    ->Dict.toArray
+    ->Array.map(((contractName, contractConfig)) => {
       {
         name: contractName->Utils.String.capitalize,
         handler: contractConfig["handler"],
@@ -800,24 +779,55 @@ let fromPublic = (
   {
     name: publicConfig["name"],
     description: publicConfig["description"],
-    handlers: publicConfig["handlers"]->Option.getWithDefault("src/handlers"),
+    handlers: publicConfig["handlers"]->Option.getOr("src/handlers"),
     contractHandlers,
-    shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getWithDefault(true),
-    shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getWithDefault(false),
-    multichain: publicConfig["multichain"]->Option.getWithDefault(Unordered),
+    shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
+    shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
+    storage: {
+      postgres: publicConfig["storage"]["postgres"],
+      clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
+    },
+    multichain: publicConfig["multichain"]->Option.getOr(Unordered),
     chainMap,
     defaultChain: chains->Array.get(0),
-    enableRawEvents: publicConfig["rawEvents"]->Option.getWithDefault(false),
+    enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
     ecosystem,
     maxAddrInPartition,
-    batchSize: publicConfig["fullBatchSize"]->Option.getWithDefault(5000),
+    batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     lowercaseAddresses,
-    addContractNameToContractNameMapping,
     userEntitiesByName,
     userEntities,
     allEntities,
     allEnums,
   }
+}
+
+// Look up an event config by (contract, event) name. When `chainId` is given,
+// returns that chain's per-chain event config (matters for where-callback
+// probe detection, which runs with the chain's real id). Without `chainId`,
+// falls back to the first chain that declares this event.
+let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<int>=?) => {
+  let chains = switch chainId {
+  | Some(chainId) =>
+    let chain = ChainMap.Chain.makeUnsafe(~chainId)
+    switch config.chainMap->ChainMap.get(chain) {
+    | chainConfig => [chainConfig]
+    | exception _ =>
+      JsError.throwWithMessage(
+        `Chain ${chainId->Int.toString} is not configured. Add it to config.yaml or pass a configured chain.`,
+      )
+    }
+  | None => config.chainMap->ChainMap.values
+  }
+  chains->Array.reduce(None, (acc, chain) => {
+    switch acc {
+    | Some(_) => acc
+    | None =>
+      chain.contracts
+      ->Array.find(c => c.name == contractName)
+      ->Belt.Option.flatMap(contract => contract.events->Array.find(e => e.name == eventName))
+    }
+  })
 }
 
 let shouldSaveHistory = (config, ~isInReorgThreshold) =>
@@ -830,7 +840,16 @@ let getChain = (config, ~chainId) => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId)
   config.chainMap->ChainMap.has(chain)
     ? chain
-    : Js.Exn.raiseError(
+    : JsError.throwWithMessage(
         "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
       )
+}
+
+@val external envioConfigEnv: option<string> = "process.env.ENVIO_CONFIG"
+
+let fromEnv = () => {
+  switch envioConfigEnv {
+  | Some(configStr) => configStr->JSON.parseOrThrow->fromPublic
+  | None => JsError.throwWithMessage("ENVIO_CONFIG environment variable is not set")
+  }
 }

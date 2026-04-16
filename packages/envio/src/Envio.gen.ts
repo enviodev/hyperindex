@@ -9,7 +9,7 @@ import type {Effect as $$effect} from './Types.ts';
 
 import type {Logger as $$logger} from './Types.ts';
 
-import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen.js';
+import type {S_t as RescriptSchema_S_t} from './RescriptSchema.gen.js';
 
 export type blockEvent = { readonly number: number };
 
@@ -18,14 +18,6 @@ export type fuelBlockEvent = { readonly height: number };
 export type svmOnBlockArgs<context> = { readonly slot: number; readonly context: context };
 
 export type onBlockArgs<block,context> = { readonly block: block; readonly context: context };
-
-export type onBlockOptions<chain> = {
-  readonly name: string; 
-  readonly chain: chain; 
-  readonly interval?: number; 
-  readonly startBlock?: number; 
-  readonly endBlock?: number
-};
 
 export type logger = $$logger;
 

@@ -21,8 +21,18 @@ let noopEffect = Envio.createEffect(
   },
 )
 
-Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
+Indexer.indexer.onEvent({event: Indexer.Gravatar(NewGravatar)}, async ({event, context}) => {
   let () = await context.effect(noopEffect, ())
+
+  // Compile-time type check: contractName and eventName fields are accessible as strings
+  // Runtime check: verify the discriminant fields have correct values
+  let contractName: string = event.contractName
+  let eventName: string = event.eventName
+  if contractName !== "Gravatar" || eventName !== "NewGravatar" {
+    JsError.throwWithMessage(
+      `Expected contractName="Gravatar" eventName="NewGravatar", got contractName="${contractName}" eventName="${eventName}"`,
+    )
+  }
 
   let gravatarSize: Indexer.Enums.GravatarSize.t = SMALL
   let gravatarObject: Indexer.Entities.Gravatar.t = {
@@ -37,7 +47,7 @@ Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
   context.\"Gravatar".set(gravatarObject)
 })
 
-Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
+Indexer.indexer.onEvent({event: Indexer.Gravatar(UpdatedGravatar)}, async ({event, context}) => {
   let maybeGravatar = await context.\"Gravatar".get(event.params.id->BigInt.toString)
 
   /// Some examples of user logging
@@ -85,7 +95,7 @@ Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
     ~params={
       "type": "error",
       "data": {"blockHash": event.block.hash},
-      "err": ExampleException("some error processing the event")->Js.Exn.asJsExn,
+      "err": ExampleException("some error processing the event")->JsExn.fromException,
     },
   )
 
@@ -115,43 +125,46 @@ Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
 let aIdWithGrandChildC = "aIdWithGrandChildC"
 let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
-Indexer.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
-  let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Indexer.id) =>
-    switch await context.\"A".get(idOfGrandparent) {
-    | Some(a) =>
-      let optB = await context.\"B".get(a.b_id)
+Indexer.indexer.onEvent(
+  {event: Indexer.Gravatar(TestEventThatCopiesBigIntViaLinkedEntities)},
+  async ({context}) => {
+    let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Indexer.id) =>
+      switch await context.\"A".get(idOfGrandparent) {
+      | Some(a) =>
+        let optB = await context.\"B".get(a.b_id)
 
-      switch optB->Belt.Option.flatMap(b => b.c_id) {
-      | Some(c_id) =>
-        switch await context.\"C".get(c_id) {
-        | Some(cWithText) =>
-          context.\"A".set({
-            ...a,
-            optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
-          })
+        switch optB->Belt.Option.flatMap(b => b.c_id) {
+        | Some(c_id) =>
+          switch await context.\"C".get(c_id) {
+          | Some(cWithText) =>
+            context.\"A".set({
+              ...a,
+              optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
+            })
+          | None => ()
+          }
         | None => ()
         }
       | None => ()
       }
-    | None => ()
-    }
 
-  await copyStringFromGrandchildIfAvailable(aIdWithGrandChildC)
-  await copyStringFromGrandchildIfAvailable(aIdWithNoGrandChildC)
-})
+    await copyStringFromGrandchildIfAvailable(aIdWithGrandChildC)
+    await copyStringFromGrandchildIfAvailable(aIdWithNoGrandChildC)
+  },
+)
 
 // Generates modules for both TestEvent and TestEventWithCustomName
-Indexer.Gravatar.TestEventWithCustomName.handler(async _ => {
+Indexer.indexer.onEvent({event: Indexer.Gravatar(TestEventWithCustomName)}, async _ => {
   ()
 })
-Indexer.Gravatar.TestEvent.handler(async _ => {
+Indexer.indexer.onEvent({event: Indexer.Gravatar(TestEvent)}, async _ => {
   ()
 })
 
 // Test chain accessibility - exposed for testing
 let lastEmptyEventChain: ref<option<Internal.chainInfo>> = ref(None)
 
-Indexer.Gravatar.EmptyEvent.handler(async ({context}) => {
+Indexer.indexer.onEvent({event: Indexer.Gravatar(EmptyEvent)}, async ({context}) => {
   // This handler tests that chain state is accessible in the context
   // Chain will have isLive: false during sync and isLive: true during live indexing
   lastEmptyEventChain := Some(context.chain)

@@ -13,8 +13,24 @@ async fn execute_command(
     args: Vec<&str>,
     current_dir: &Path,
 ) -> anyhow::Result<std::process::ExitStatus> {
+    execute_command_with_env(cmd, args, current_dir, &[]).await
+}
+
+/// Like execute_command, but lets the caller inject extra env vars into the
+/// child process without clobbering the inherited environment. Used by the
+/// dev flow to forward credentials for containers we just booted.
+///
+/// Precedence: `extra_env` values override identically-named vars inherited
+/// from the parent process (including those loaded from `.env`).
+async fn execute_command_with_env(
+    cmd: &str,
+    args: Vec<&str>,
+    current_dir: &Path,
+    extra_env: &[(String, String)],
+) -> anyhow::Result<std::process::ExitStatus> {
     tokio::process::Command::new(cmd)
         .args(&args)
+        .envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .current_dir(current_dir)
         .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
         .kill_on_drop(true) //needed so that dropped threads calling this will also drop
@@ -72,7 +88,7 @@ pub mod rescript {
     use std::path::Path;
 
     pub async fn build(path: &Path) -> Result<std::process::ExitStatus> {
-        let args = vec!["rescript"];
+        let args = vec!["rescript-legacy"];
         execute_command("pnpm", args, path).await
     }
 }
@@ -189,12 +205,15 @@ pub mod codegen {
 }
 
 pub mod start {
-    use super::{execute_command, to_js_path};
+    use super::{execute_command_with_env, to_js_path};
     use crate::config_parsing::system_config::SystemConfig;
     use anyhow::anyhow;
     use pathdiff::diff_paths;
 
-    pub async fn start_indexer(config: &SystemConfig) -> anyhow::Result<()> {
+    pub async fn start_indexer(
+        config: &SystemConfig,
+        extra_env: &[(String, String)],
+    ) -> anyhow::Result<()> {
         // Compute the relative path from project root to generated directory
         let relative_generated = diff_paths(
             &config.parsed_project_paths.generated,
@@ -208,7 +227,13 @@ pub mod start {
         let args = vec!["--no-warnings", &index_path];
 
         // Run from project root to ensure proper cwd for handlers
-        let exit = execute_command(cmd, args, &config.parsed_project_paths.project_root).await?;
+        let exit = execute_command_with_env(
+            cmd,
+            args,
+            &config.parsed_project_paths.project_root,
+            extra_env,
+        )
+        .await?;
 
         if !exit.success() {
             return Err(anyhow!(
@@ -228,27 +253,35 @@ pub mod db_migrate {
 
     use std::process::ExitStatus;
 
-    use super::{execute_command, to_js_path};
     use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
-    use pathdiff::diff_paths;
+
+    async fn execute_migration(script: &str, config: &SystemConfig) -> anyhow::Result<ExitStatus> {
+        let config_json = config
+            .to_public_config_json()
+            .context("Failed to serialize config to JSON")?;
+        let current_dir = &config.parsed_project_paths.project_root;
+        tokio::process::Command::new("node")
+            .args(["-e", script])
+            .env("ENVIO_CONFIG", &config_json)
+            .current_dir(current_dir)
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .context("Failed to spawn node process for migration")?
+            .wait()
+            .await
+            .context("Failed to wait for migration process")
+    }
 
     pub async fn run_up_migrations(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let relative_generated = diff_paths(
-            &config.parsed_project_paths.generated,
-            &config.parsed_project_paths.project_root,
+        let exit = execute_migration(
+            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true))",
+            config,
         )
-        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
-
-        let migration_script = format!(
-            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true))",
-            to_js_path(&relative_generated)
-        );
-        let args = vec!["-e", &migration_script];
-        let current_dir = &config.parsed_project_paths.project_root;
-        let exit = execute_command("node", args, current_dir).await?;
+        .await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed to run db migrations"));
@@ -262,38 +295,22 @@ pub mod db_migrate {
     }
 
     pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<ExitStatus> {
-        let relative_generated = diff_paths(
-            &config.parsed_project_paths.generated,
-            &config.parsed_project_paths.project_root,
+        execute_migration(
+            "import('envio/src/Migrations.res.mjs').then(m => m.runDownMigrations(true))",
+            config,
         )
-        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
-
-        let migration_script = format!(
-            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runDownMigrations(true))",
-            to_js_path(&relative_generated)
-        );
-        let args = vec!["-e", &migration_script];
-        let current_dir = &config.parsed_project_paths.project_root;
-        execute_command("node", args, current_dir).await
+        .await
     }
 
     pub async fn run_db_setup(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let relative_generated = diff_paths(
-            &config.parsed_project_paths.generated,
-            &config.parsed_project_paths.project_root,
+        let exit = execute_migration(
+            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true, true))",
+            config,
         )
-        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
-
-        let migration_script = format!(
-            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))",
-            to_js_path(&relative_generated)
-        );
-        let args = vec!["-e", &migration_script];
-        let current_dir = &config.parsed_project_paths.project_root;
-        let exit = execute_command("node", args, current_dir).await?;
+        .await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed to run db migrations"));

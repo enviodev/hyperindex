@@ -144,8 +144,9 @@ export function buildPackageJson(
  */
 export function compileRescript(envioDir: string): void {
   console.log("Compiling ReScript...");
-  // Use the rescript binary directly to avoid pnpm workspace detection issues
-  execSync("./node_modules/.bin/rescript", {
+  // Use the rescript-legacy binary directly to avoid pnpm workspace detection issues.
+  // With pnpm's default isolated layout, the bin is in envio's own node_modules.
+  execSync("./node_modules/.bin/rescript-legacy", {
     cwd: envioDir,
     stdio: "inherit",
   });

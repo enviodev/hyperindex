@@ -2,13 +2,13 @@ open Vitest
 
 describe("Test makeClickHouseEntitySchema", () => {
   Async.it("Should serialize Date fields using getTime() instead of ISO string", async t => {
-    let entityConfig = Mock.entityConfig(EntityWithAllTypes)
+    let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
 
     // Create a schema using makeClickHouseEntitySchema
     let clickHouseSchema = ClickHouse.makeClickHouseEntitySchema(entityConfig.table)
 
     // Create a test entity with nullable timestamp
-    let testDate = Js.Date.fromFloat(1234567890123.0)
+    let testDate = Date.fromTime(1234567890123.0)
     let testEntity: Indexer.Entities.EntityWithAllTypes.t = {
       id: "test-id",
       string: "test",
@@ -42,10 +42,7 @@ describe("Test makeClickHouseEntitySchema", () => {
       ->(Utils.magic: Indexer.Entities.EntityWithAllTypes.t => Internal.entity)
       ->S.reverseConvertToJsonOrThrow(clickHouseSchema)
 
-    t.expect(
-      serialized,
-      ~message="Entity should be serialized with timestamps as numbers",
-    ).toEqual(
+    t.expect(serialized, ~message="Entity should be serialized with timestamps as numbers").toEqual(
       %raw(`{
           "id": "test-id",
           "string": "test",
@@ -102,7 +99,7 @@ ORDER BY (id)`
     Async.it(
       "Should create SQL for A entity history table",
       async t => {
-        let entityConfig = Mock.entityConfig(EntityWithAllTypes)
+        let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
         let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_history_EntityWithAllTypes\` (
@@ -136,10 +133,9 @@ ORDER BY (id)`
 ENGINE = MergeTree()
 ORDER BY (id, envio_checkpoint_id)`
 
-        t.expect(
-          query,
-          ~message="A entity history table SQL should match exactly",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="A entity history table SQL should match exactly").toBe(
+          expectedQuery,
+        )
       },
     )
   })
@@ -148,7 +144,7 @@ ORDER BY (id, envio_checkpoint_id)`
     Async.it(
       "Should create SQL for A entity view",
       async t => {
-        let entity = Mock.entityConfig(EntityWithAllTypes)
+        let entity = MockIndexer.entityConfig(EntityWithAllTypes)
         let query = ClickHouse.makeCreateViewQuery(~entityConfig=entity, ~database="test_db")
 
         let expectedQuery = `CREATE VIEW IF NOT EXISTS test_db.\`EntityWithAllTypes\` AS

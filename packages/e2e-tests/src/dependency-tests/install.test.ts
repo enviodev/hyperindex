@@ -134,6 +134,29 @@ describe("Isolated dependency e2e", () => {
 
       await killProcessOnPort(config.indexerPort);
 
+      // The e2e test (run earlier in the same CI job) patches
+      // envio_chains.end_block to 10861775. The Postgres in CI is a GH
+      // Actions service container, so `envio stop` can't reset it; and
+      // this test reuses an existing persisted_state file so envio dev
+      // skips migrations. Reset end_block via Hasura before starting so
+      // the handler check sees the fresh config value.
+      // (envio dev -r would do this via a clean migration, but the
+      // isolated dependency install lacks envio's transitive rescript-envsafe
+      // at the project root, which db_migrate needs.)
+      await fetch(`http://localhost:${config.hasuraPort}/v2/query`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-hasura-admin-secret": config.hasuraAdminSecret,
+        },
+        body: JSON.stringify({
+          type: "run_sql",
+          args: {
+            sql: `UPDATE public.envio_chains SET end_block = 10861774 WHERE id = 1`,
+          },
+        }),
+      }).catch(() => {});
+
       // Copy the base project into <tmpRoot>/<pm>/e2e_test/ so the
       // relative path "../../packages/envio" still resolves to tmpRoot/packages/envio.
       projectDir = path.join(tmpRoot, pm, "e2e_test");
@@ -186,6 +209,14 @@ describe("Isolated dependency e2e", () => {
         env: {
           TUI_OFF: "true",
           ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
+          // e2e_test config.yaml declares `storage.clickhouse: true`, so
+          // PgStorage validates these env vars at indexer start.
+          ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
+          ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
+          ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+          // Fresh start (after the SQL reset above): handler check uses
+          // the config endBlock as the source of truth.
+          E2E_EXPECTED_END_BLOCK: "10861774",
         },
       });
 

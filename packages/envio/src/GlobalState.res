@@ -1,5 +1,3 @@
-open Belt
-
 type chain = ChainMap.Chain.t
 type rollbackState =
   | NoRollback
@@ -45,10 +43,11 @@ type t = {
   processedBatches: int,
   currentlyProcessingBatch: bool,
   rollbackState: rollbackState,
-  indexerStartTime: Js.Date.t,
+  indexerStartTime: Date.t,
   writeThrottlers: WriteThrottlers.t,
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
+  exitAfterFirstEventBlock: bool,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
@@ -59,17 +58,19 @@ let make = (
   ~chainManager: ChainManager.t,
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
+  ~exitAfterFirstEventBlock=false,
 ) => {
   {
     ctx,
     currentlyProcessingBatch: false,
     processedBatches: 0,
     chainManager,
-    indexerStartTime: Js.Date.make(),
+    indexerStartTime: Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(),
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
+    exitAfterFirstEventBlock,
     id: 0,
   }
 }
@@ -97,7 +98,7 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
-type shouldExit = ExitWithSuccess | NoExit
+type shouldExit = ExitWithSuccess | ExitWithError(string) | NoExit
 
 // Need to dispatch an action for every async operation
 // to get access to the latest state.
@@ -150,25 +151,25 @@ let updateChainMetadataTable = (
   ~persistence: Persistence.t,
   ~throttler: Throttler.t,
 ) => {
-  let chainsData: dict<InternalTable.Chains.metaFields> = Js.Dict.empty()
+  let chainsData: dict<InternalTable.Chains.metaFields> = Dict.make()
 
   cm.chainFetchers
   ->ChainMap.values
   ->Belt.Array.forEach(cf => {
-    chainsData->Js.Dict.set(
+    chainsData->Dict.set(
       cf.chainConfig.id->Belt.Int.toString,
       {
-        firstEventBlockNumber: cf.fetchState.firstEventBlock->Js.Null.fromOption,
+        firstEventBlockNumber: cf.fetchState.firstEventBlock->Null.fromOption,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         latestFetchedBlockNumber: cf.fetchState->FetchState.bufferBlockNumber,
-        timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
+        timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Null.fromOption,
       },
     )
   })
 
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
-    persistence.storage.setChainMeta(chainsData)->Promise.ignoreValue
+    persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
   )
 }
 
@@ -210,7 +211,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
         switch batch->Batch.findLastEventItem(~chainId=chain->ChainMap.Chain.toChainId) {
         | Some(eventItem) => {
             let blockTimestamp = eventItem.event.block->ctx.config.ecosystem.getTimestamp
-            let currentTimeMs = Js.Date.now()->Float.toInt
+            let currentTimeMs = Date.now()->Float.toInt
             let blockTimestampMs = blockTimestamp * 1000
             let latencyMs = currentTimeMs - blockTimestampMs
 
@@ -275,7 +276,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     let cf = if cf->ChainFetcher.hasProcessedToEndblock {
       // in the case this is already set, don't reset and instead propagate the existing value
       let timestampCaughtUpToHeadOrEndblock =
-        cf->ChainFetcher.isReady ? cf.timestampCaughtUpToHeadOrEndblock : Js.Date.make()->Some
+        cf->ChainFetcher.isReady ? cf.timestampCaughtUpToHeadOrEndblock : Date.make()->Some
       {
         ...cf,
         timestampCaughtUpToHeadOrEndblock,
@@ -289,7 +290,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
       if nextQueueItemIsNone && allChainsAtHead {
         {
           ...cf,
-          timestampCaughtUpToHeadOrEndblock: Js.Date.make()->Some,
+          timestampCaughtUpToHeadOrEndblock: Date.make()->Some,
         }
       } else {
         //CASE2 -> Only calculate if case1 fails
@@ -300,7 +301,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
         if hasNoMoreEventsToProcess {
           {
             ...cf,
-            timestampCaughtUpToHeadOrEndblock: Js.Date.make()->Some,
+            timestampCaughtUpToHeadOrEndblock: Date.make()->Some,
           }
         } else {
           //Default to just returning cf
@@ -481,6 +482,25 @@ let submitPartitionQueryResponse = (
       ~newItemsWithDcs,
       ~knownHeight,
     )
+
+  // In auto-exit mode, set endBlock to the first event's block when events arrive.
+  // Also update if a partition returns events at an earlier block than current endBlock.
+  let updatedChainFetcher = if state.exitAfterFirstEventBlock && newItems->Array.length > 0 {
+    let firstEventBlock = newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber
+    switch updatedChainFetcher.fetchState.endBlock {
+    | None => {
+        ...updatedChainFetcher,
+        fetchState: {...updatedChainFetcher.fetchState, endBlock: Some(firstEventBlock)},
+      }
+    | Some(currentEndBlock) if firstEventBlock < currentEndBlock => {
+        ...updatedChainFetcher,
+        fetchState: {...updatedChainFetcher.fetchState, endBlock: Some(firstEventBlock)},
+      }
+    | Some(_) => updatedChainFetcher
+    }
+  } else {
+    updatedChainFetcher
+  }
 
   if !chainFetcher.isProgressAtHead && updatedChainFetcher.isProgressAtHead {
     updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
@@ -682,7 +702,19 @@ let actionReducer = (state: t, action: action) => {
             ExitWithSuccess
           }
         }
-      : NoExit
+      : if (
+          // In auto-exit mode, error if all chains reached head with no events found
+          state.exitAfterFirstEventBlock &&
+          state.chainManager.chainFetchers
+          ->ChainMap.values
+          ->Array.every(cf => cf.isProgressAtHead && cf.fetchState.endBlock->Belt.Option.isNone)
+        ) {
+          ExitWithError(
+            "No events found between startBlock and chain head. Cannot auto-detect endBlock.",
+          )
+        } else {
+          NoExit
+        }
 
     (
       state,
@@ -829,7 +861,7 @@ let injectedTaskReducer = (
 ) => {
   switch task {
   | ProcessPartitionQueryResponse(partitionQueryResponse) =>
-    state->processPartitionQueryResponse(partitionQueryResponse, ~dispatchAction)->Promise.done
+    state->processPartitionQueryResponse(partitionQueryResponse, ~dispatchAction)->Promise.ignore
   | PruneStaleEntityHistory =>
     let runPrune = async () => {
       switch state.chainManager->ChainManager.getSafeCheckpointId {
@@ -884,6 +916,8 @@ let injectedTaskReducer = (
         ~persistence=state.ctx.persistence,
       )
       dispatchAction(SuccessExit)
+    | ExitWithError(msg) =>
+      dispatchAction(ErrorExit(ErrorHandling.make(JsError.throwWithMessage(msg))))
     | NoExit =>
       // Check for background write errors (non-blocking)
       if state.ctx.persistence->Persistence.isWriting {
@@ -893,7 +927,7 @@ let injectedTaskReducer = (
           dispatchAction(ErrorExit(exn->ErrorHandling.make(~msg="Background write failed")))
           Promise.resolve()
         })
-        ->Promise.done
+        ->Promise.ignore
       }
       updateChainMetadataTable(
         chainManager,
@@ -1015,7 +1049,7 @@ let injectedTaskReducer = (
     //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
     | {rollbackState: NoRollback | RollbackReady(_)} =>
-      Js.Exn.raiseError("Internal error: Rollback initiated with invalid state")
+      JsError.throwWithMessage("Internal error: Rollback initiated with invalid state")
     | {rollbackState: ReorgDetected({chain, blockNumber: reorgBlockNumber})} => {
         let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
 
@@ -1067,21 +1101,21 @@ let injectedTaskReducer = (
         }
       }
 
-      let eventsProcessedDiffByChain = Js.Dict.empty()
-      let newProgressBlockNumberPerChain = Js.Dict.empty()
+      let eventsProcessedDiffByChain = Dict.make()
+      let newProgressBlockNumberPerChain = Dict.make()
       let rollbackedProcessedEvents = ref(0.)
 
       {
         let rollbackProgressDiff = await state.ctx.persistence.storage.getRollbackProgressDiff(
           ~rollbackTargetCheckpointId,
         )
-        for idx in 0 to rollbackProgressDiff->Js.Array2.length - 1 {
-          let diff = rollbackProgressDiff->Js.Array2.unsafe_get(idx)
+        for idx in 0 to rollbackProgressDiff->Array.length - 1 {
+          let diff = rollbackProgressDiff->Array.getUnsafe(idx)
           eventsProcessedDiffByChain->Utils.Dict.setByInt(
             diff["chain_id"],
             {
               let eventsProcessedDiff =
-                Float.fromString(diff["events_processed_diff"])->Option.getExn
+                Float.fromString(diff["events_processed_diff"])->Option.getOrThrow
               rollbackedProcessedEvents := rollbackedProcessedEvents.contents +. eventsProcessedDiff
               eventsProcessedDiff
             },
@@ -1179,7 +1213,7 @@ let injectedTaskReducer = (
 
       logger->Logging.childTrace({
         "msg": "Finished rollback on reorg",
-        "entityChanges": rollbackDiff.entityChanges->Belt.Array.length,
+        "entityChanges": rollbackDiff.entityChanges->Array.length,
         "rollbackedEvents": rollbackedProcessedEvents.contents,
         "beforeCheckpointId": state.chainManager.committedCheckpointId,
         "targetCheckpointId": rollbackTargetCheckpointId,

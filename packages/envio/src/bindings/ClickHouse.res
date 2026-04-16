@@ -57,7 +57,7 @@ let getClickHouseFieldType = (
       if precision > 38 {
         "String"
       } else {
-        `Decimal(${precision->Js.Int.toString},0)`
+        `Decimal(${precision->Int.toString},0)`
       }
     }
   | BigDecimal({?config}) =>
@@ -67,7 +67,7 @@ let getClickHouseFieldType = (
       if precision > 38 || scale > precision {
         "String"
       } else {
-        `Decimal(${precision->Js.Int.toString},${scale->Js.Int.toString})`
+        `Decimal(${precision->Int.toString},${scale->Int.toString})`
       }
     }
   | Boolean => "Bool"
@@ -86,7 +86,7 @@ let getClickHouseFieldType = (
           let variantStr = variant->(Utils.magic: 'a => string)
           `'${variantStr}'`
         })
-        ->Js.Array2.joinWith(", ")
+        ->Array.joinUnsafe(", ")
       `${enumType}(${enumValues})`
     }
   | Entity(_) => "String"
@@ -104,7 +104,7 @@ let getClickHouseFieldType = (
 // Creates an entity schema from table definition, using clickHouseDate for Date fields
 let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
   S.schema(s => {
-    let dict = Js.Dict.empty()
+    let dict = Dict.make()
     table.fields->Belt.Array.forEach(field => {
       switch field {
       | Field(f) => {
@@ -124,10 +124,11 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
           | UInt52 => {
               let uint52Schema =
                 S.float
-                ->S.preprocess(_ => {
-                  parser: unknown =>
-                    unknown->(Utils.magic: unknown => string)->Js.Float.fromString,
-                })
+                ->S.preprocess(
+                  _ => {
+                    parser: unknown => unknown->(Utils.magic: unknown => string)->Float.parseFloat,
+                  },
+                )
                 ->S.toUnknown
               if f.isNullable {
                 S.null(uint52Schema)->S.toUnknown
@@ -139,12 +140,12 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
             }
           | _ => f.fieldSchema
           }
-          dict->Js.Dict.set(fieldName, s.matches(fieldSchema))
+          dict->Dict.set(fieldName, s.matches(fieldSchema))
         }
       | DerivedFrom(_) => () // Skip derived fields
       }
     })
-    dict->(Utils.magic: Js.Dict.t<unknown> => Internal.entity)
+    dict->(Utils.magic: dict<unknown> => Internal.entity)
   })
 }
 
@@ -164,7 +165,7 @@ let rec insertWithRetry = async (
     await client->insert({table, values, format})
   } catch {
   | exn if retries > 0 =>
-    let delayMs = Js.Math.min_int(1000, 100 + 900 * (8 - retries) / 7)
+    let delayMs = Math.Int.min(1000, 100 + 900 * (8 - retries) / 7)
     if Array.length(values) > 1 {
       logger->Logging.childWarn({
         "msg": "ClickHouse insert failed, splitting batch in half and retrying",
@@ -175,8 +176,8 @@ let rec insertWithRetry = async (
       })
       await Utils.delay(delayMs)
       let mid = Array.length(values) / 2
-      let first = values->Js.Array2.slice(~start=0, ~end_=mid)
-      let second = values->Js.Array2.sliceFrom(mid)
+      let first = values->Array.slice(~start=0, ~end=mid)
+      let second = values->Array.slice(~start=mid)
       await insertWithRetry(client, ~table, ~values=first, ~format, ~retries=retries - 1)
       await insertWithRetry(client, ~table, ~values=second, ~format, ~retries=retries - 1)
     } else {
@@ -201,7 +202,7 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
     let checkpointRows = []
     for idx in 0 to checkpointsCount - 1 {
       checkpointRows
-      ->Js.Array2.push((
+      ->Array.push((
         batch.checkpointIds->Belt.Array.getUnsafe(idx)->BigInt.toString,
         batch.checkpointChainIds->Belt.Array.getUnsafe(idx),
         batch.checkpointBlockNumbers->Belt.Array.getUnsafe(idx),
@@ -220,7 +221,7 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
       )
     } catch {
     | exn =>
-      raise(
+      throw(
         Persistence.StorageError({
           message: `Failed to insert checkpoints into ClickHouse table "${InternalTable.Checkpoints.table.tableName}"`,
           reason: exn->Utils.prettifyExn,
@@ -232,7 +233,7 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
 
 type setUpdatesCache = {
   tableName: string,
-  convertOrThrow: Change.t<Internal.entity> => Js.Json.t,
+  convertOrThrow: Change.t<Internal.entity> => JSON.t,
 }
 
 let setUpdatesOrThrow = async (
@@ -280,14 +281,14 @@ let setUpdatesOrThrow = async (
 
     try {
       // Convert entity updates to ClickHouse row format
-      let values = updates->Js.Array2.map(update => {
+      let values = updates->Array.map(update => {
         update.latestChange->convertOrThrow
       })
 
       await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
     } catch {
     | exn =>
-      raise(
+      throw(
         Persistence.StorageError({
           message: `Failed to insert items into ClickHouse table "${tableName}"`,
           reason: exn->Utils.prettifyExn,
@@ -319,7 +320,7 @@ let makeCreateHistoryTableQuery = (~entityConfig: Internal.entityConfig, ~databa
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
     )}\` (
-  ${fieldDefinitions->Js.Array2.joinWith(",\n  ")},
+  ${fieldDefinitions->Array.joinUnsafe(",\n  ")},
   \`${EntityHistory.checkpointIdFieldName}\` ${getClickHouseFieldType(
       ~fieldType=UInt64,
       ~isNullable=false,
@@ -391,7 +392,7 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
       | DerivedFrom(_) => None
       }
     })
-    ->Js.Array2.joinWith(", ")
+    ->Array.joinUnsafe(", ")
 
   `CREATE VIEW IF NOT EXISTS ${database}.\`${entityConfig.name}\` AS
 SELECT ${entityFields}
@@ -421,20 +422,20 @@ let initialize = async (
       entities->Belt.Array.map(entityConfig =>
         client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database)})
       ),
-    )->Promise.ignoreValue
+    )->Utils.Promise.ignoreValue
     await client->exec({query: makeCreateCheckpointsTableQuery(~database)})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
         client->exec({query: makeCreateViewQuery(~entityConfig, ~database)})
       ),
-    )->Promise.ignoreValue
+    )->Utils.Promise.ignoreValue
 
     Logging.trace("ClickHouse sink initialization completed successfully")
   } catch {
   | exn => {
       Logging.errorWithExn(exn, "Failed to initialize ClickHouse sink")
-      Js.Exn.raiseError("ClickHouse initialization failed")
+      JsError.throwWithMessage("ClickHouse initialization failed")
     }
   }
 }
@@ -451,7 +452,7 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
         exn,
         `ClickHouse sink database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
       )
-      Js.Exn.raiseError("ClickHouse resume failed")
+      JsError.throwWithMessage("ClickHouse resume failed")
     }
 
     // Get all history tables
@@ -468,17 +469,17 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
           query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString}`,
         })
       }),
-    )->Promise.ignoreValue
+    )->Utils.Promise.ignoreValue
 
     // Delete stale checkpoints
     await client->exec({
       query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->BigInt.toString}`,
     })
   } catch {
-  | Persistence.StorageError(_) as exn => raise(exn)
+  | Persistence.StorageError(_) as exn => throw(exn)
   | exn => {
       Logging.errorWithExn(exn, "Failed to resume ClickHouse sink")
-      Js.Exn.raiseError("ClickHouse resume failed")
+      JsError.throwWithMessage("ClickHouse resume failed")
     }
   }
 }

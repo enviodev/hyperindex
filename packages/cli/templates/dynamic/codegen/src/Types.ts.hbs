@@ -2,8 +2,41 @@
 // which we can't get using GenType
 // Use @genType.import to link the types back to ReScript code
 
-import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter } from "envio";
-import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities, Enums } from "../envio.d.ts";
+import type {
+  Logger,
+  IndexerFromConfig,
+  EffectCaller,
+  GetWhereFilter,
+  Address,
+  EvmOnEventContext as GEvmOnEventContext,
+  EvmContractRegisterContext as GEvmContractRegisterContext,
+  FuelOnEventContext as GFuelOnEventContext,
+  FuelContractRegisterContext as GFuelContractRegisterContext,
+  EvmOnEvent,
+  FuelOnEvent,
+  EvmOnEventOptions as GEvmOnEventOptions,
+  EvmOnEventHandler as GEvmOnEventHandler,
+  EvmContractRegisterOptions as GEvmContractRegisterOptions,
+  EvmContractRegisterHandler as GEvmContractRegisterHandler,
+  FuelOnEventOptions as GFuelOnEventOptions,
+  FuelOnEventHandler as GFuelOnEventHandler,
+  FuelContractRegisterOptions as GFuelContractRegisterOptions,
+  FuelContractRegisterHandler as GFuelContractRegisterHandler,
+} from "envio";
+export type {
+  SingleOrMultiple,
+  EvmOnEventWhere,
+  EvmOnEventWhereFilter,
+  EvmOnEventWhereArgs,
+  EvmOnEventWhereChain,
+  FuelOnEventWhere,
+  FuelOnEventWhereFilter,
+  FuelOnEventWhereArgs,
+  FuelOnEventWhereChain,
+} from "envio";
+import type { EvmChains, EvmContracts, EvmEventFilters, FuelChains, FuelContracts, FuelEventFilters, SvmChains, Entities, Enums } from "../envio.d.ts";
+export type { EvmEventFilters, FuelEventFilters } from "../envio.d.ts";
+export type { EvmChainId, FuelChainId, SvmChainId } from "../envio.d.ts";
 
 // Utility type to check if an object type is empty
 type IsEmptyObject<T> = keyof T extends never ? true : false;
@@ -12,11 +45,6 @@ type IsEmptyObject<T> = keyof T extends never ? true : false;
 export type EvmChainName = IsEmptyObject<EvmChains> extends true
   ? "EvmChainName is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"
   : keyof EvmChains;
-
-/** Union of all configured EVM chain IDs. */
-export type EvmChainId = IsEmptyObject<EvmChains> extends true
-  ? "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"
-  : EvmChains[keyof EvmChains]["id"];
 
 /** Union of all configured EVM contract names. */
 export type EvmContractName = IsEmptyObject<EvmContracts> extends true
@@ -28,36 +56,46 @@ export type FuelChainName = IsEmptyObject<FuelChains> extends true
   ? "FuelChainName is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
   : keyof FuelChains;
 
-/** Union of all configured Fuel chain IDs. */
-export type FuelChainId = IsEmptyObject<FuelChains> extends true
-  ? "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
-  : FuelChains[keyof FuelChains]["id"];
-
 /** Union of all configured Fuel contract names. */
 export type FuelContractName = IsEmptyObject<FuelContracts> extends true
   ? "FuelContractName is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
   : keyof FuelContracts;
+
+/** Lookup an EVM event type by contract and event name. Without generics, returns a discriminated union of all EVM events. */
+export type EvmEvent<
+  TContractName extends keyof EvmContracts = keyof EvmContracts,
+  TEventName extends string = string
+> = IsEmptyObject<EvmContracts> extends true
+  ? "EvmEvent is not available. Configure EVM contracts in config.yaml and run 'pnpm envio codegen'"
+  : {
+    [C in TContractName]: EvmContracts[C][TEventName & keyof EvmContracts[C]]
+  }[TContractName];
+
+/** Lookup a Fuel event type by contract and event name. Without generics, returns a discriminated union of all Fuel events. */
+export type FuelEvent<
+  TContractName extends keyof FuelContracts = keyof FuelContracts,
+  TEventName extends string = string
+> = IsEmptyObject<FuelContracts> extends true
+  ? "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
+  : {
+    [C in TContractName]: FuelContracts[C][TEventName & keyof FuelContracts[C]]
+  }[TContractName];
 
 /** Union of all configured SVM chain names. */
 export type SvmChainName = IsEmptyObject<SvmChains> extends true
   ? "SvmChainName is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
   : keyof SvmChains;
 
-/** Union of all configured SVM chain IDs. */
-export type SvmChainId = IsEmptyObject<SvmChains> extends true
-  ? "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
-  : SvmChains[keyof SvmChains]["id"];
-
 // Construct config type from generated types
 type IndexerConfigTypes = (IsEmptyObject<EvmChains> extends true
   ? {}
   : {
-      evm: { chains: EvmChains; contracts: EvmContracts };
+      evm: { chains: EvmChains; contracts: EvmContracts; eventFilters: EvmEventFilters };
     }) &
   (IsEmptyObject<FuelChains> extends true
     ? {}
     : {
-        fuel: { chains: FuelChains; contracts: FuelContracts };
+        fuel: { chains: FuelChains; contracts: FuelContracts; eventFilters: FuelEventFilters };
       }) &
   (IsEmptyObject<SvmChains> extends true
     ? {}
@@ -84,6 +122,86 @@ import type {
 
 /** The test indexer type. Allows running the indexer for specific block ranges and inspecting results. */
 export type TestIndexer = TestIndexerFromConfig<IndexerConfigTypes>;
+
+// Local EventLike constraint (envio/index.d.ts has the same internal definition).
+// We can't import it because it's not exported there.
+type _EventLike = { readonly contractName: string; readonly eventName: string };
+
+// When the ecosystem isn't configured, EvmEvent/FuelEvent resolves to an error string.
+// Filter to a structural event type so the project aliases stay usable in non-configured cases.
+type _ProjectEvmEvent = EvmEvent extends _EventLike ? EvmEvent : never;
+type _ProjectFuelEvent = FuelEvent extends _EventLike ? FuelEvent : never;
+
+/** Context for indexer.onEvent handlers in EVM ecosystem (bound to project config). */
+export type EvmOnEventContext = GEvmOnEventContext<IndexerConfigTypes>;
+
+/** Context for indexer.contractRegister handlers in EVM ecosystem (bound to project config). */
+export type EvmContractRegisterContext = GEvmContractRegisterContext<IndexerConfigTypes>;
+
+/** Context for indexer.onEvent handlers in Fuel ecosystem (bound to project config). */
+export type FuelOnEventContext = GFuelOnEventContext<IndexerConfigTypes>;
+
+/** Context for indexer.contractRegister handlers in Fuel ecosystem (bound to project config). */
+export type FuelContractRegisterContext = GFuelContractRegisterContext<IndexerConfigTypes>;
+
+// Resolve the indexed-parameter shape (`{params: ...}`) for a given event from
+// the project-bound EvmEventFilters / FuelEventFilters lookup tables. Used to
+// thread per-event narrowing into the exported option aliases so wrapper code
+// types `where` the same way `indexer.onEvent` does.
+type _EvmFilterParams<Event extends _EventLike> =
+  EvmEventFilters[Event["contractName"] & keyof EvmEventFilters] extends Record<string, any>
+    ? EvmEventFilters[Event["contractName"] & keyof EvmEventFilters][Event["eventName"] &
+        keyof EvmEventFilters[Event["contractName"] & keyof EvmEventFilters]] extends {
+        readonly params: infer P;
+      }
+      ? P
+      : {}
+    : {};
+type _FuelFilterParams<Event extends _EventLike> =
+  FuelEventFilters[Event["contractName"] & keyof FuelEventFilters] extends Record<string, any>
+    ? FuelEventFilters[Event["contractName"] & keyof FuelEventFilters][Event["eventName"] &
+        keyof FuelEventFilters[Event["contractName"] & keyof FuelEventFilters]] extends {
+        readonly params: infer P;
+      }
+      ? P
+      : {}
+    : {};
+
+/** Options for indexer.onEvent in EVM ecosystem. Pass an EvmEvent to type the contract+event. */
+export type EvmOnEventOptions<Event extends _EventLike = _ProjectEvmEvent> = GEvmOnEventOptions<
+  Event,
+  _EvmFilterParams<Event>
+>;
+
+/** Handler for indexer.onEvent in EVM ecosystem. Context is bound to the project's EvmOnEventContext. */
+export type EvmOnEventHandler<Event extends _EventLike = _ProjectEvmEvent> =
+  GEvmOnEventHandler<Event, EvmOnEventContext>;
+
+/** Options for indexer.contractRegister in EVM ecosystem. */
+export type EvmContractRegisterOptions<Event extends _EventLike = _ProjectEvmEvent> =
+  GEvmContractRegisterOptions<Event, _EvmFilterParams<Event>>;
+
+/** Handler for indexer.contractRegister in EVM ecosystem. Context is bound to the project's EvmContractRegisterContext. */
+export type EvmContractRegisterHandler<Event extends _EventLike = _ProjectEvmEvent> =
+  GEvmContractRegisterHandler<Event, EvmContractRegisterContext>;
+
+/** Options for indexer.onEvent in Fuel ecosystem. */
+export type FuelOnEventOptions<Event extends _EventLike = _ProjectFuelEvent> = GFuelOnEventOptions<
+  Event,
+  _FuelFilterParams<Event>
+>;
+
+/** Handler for indexer.onEvent in Fuel ecosystem. */
+export type FuelOnEventHandler<Event extends _EventLike = _ProjectFuelEvent> =
+  GFuelOnEventHandler<Event, FuelOnEventContext>;
+
+/** Options for indexer.contractRegister in Fuel ecosystem. */
+export type FuelContractRegisterOptions<Event extends _EventLike = _ProjectFuelEvent> =
+  GFuelContractRegisterOptions<Event, _FuelFilterParams<Event>>;
+
+/** Handler for indexer.contractRegister in Fuel ecosystem. */
+export type FuelContractRegisterHandler<Event extends _EventLike = _ProjectFuelEvent> =
+  GFuelContractRegisterHandler<Event, FuelContractRegisterContext>;
 
 export type HandlerContext = {
   /**

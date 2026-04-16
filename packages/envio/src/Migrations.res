@@ -1,8 +1,3 @@
-let resetStorage = async () => {
-  Logging.trace("Resetting storage")
-  await Indexer.Generated.codegenPersistence.storage.reset()
-}
-
 type t
 @module external process: t = "process"
 
@@ -14,12 +9,10 @@ let runUpMigrations = async (
   // Reset is used for db-setup
   ~reset=false,
 ) => {
-  let config = Indexer.Generated.configWithoutRegistrations
+  let config = Config.fromEnv()
+  let persistence = PgStorage.makePersistenceFromConfig(~config)
   let exitCode = try {
-    await Indexer.Generated.codegenPersistence->Persistence.init(
-      ~reset,
-      ~chainConfigs=config.chainMap->ChainMap.values,
-    )
+    await persistence->Persistence.init(~reset, ~chainConfigs=config.chainMap->ChainMap.values)
     Success
   } catch {
   | _ => Failure
@@ -31,16 +24,20 @@ let runUpMigrations = async (
 }
 
 let runDownMigrations = async (~shouldExit) => {
-  let exitCode = ref(Success)
-  await resetStorage()->Promise.catch(err => {
-    exitCode := Failure
+  let config = Config.fromEnv()
+  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let exitCode = try {
+    await persistence.storage.reset()
+    Success
+  } catch {
+  | err =>
     err
     ->ErrorHandling.make(~msg="Error dropping entity tables")
     ->ErrorHandling.log
-    Promise.resolve()
-  })
-  if shouldExit {
-    process->exit(exitCode.contents)
+    Failure
   }
-  exitCode.contents
+  if shouldExit {
+    process->exit(exitCode)
+  }
+  exitCode
 }

@@ -53,9 +53,11 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       env: {
         TUI_OFF: "true",
         ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
-        ENVIO_CLICKHOUSE_SINK_HOST: config.clickhouseUrl,
-        ENVIO_CLICKHOUSE_SINK_USERNAME: config.clickhouseUsername,
-        ENVIO_CLICKHOUSE_SINK_PASSWORD: config.clickhousePassword,
+        ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
+        ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
+        ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+        // First run: no DB state yet, fallback returns the config endBlock
+        E2E_EXPECTED_END_BLOCK: "10861774",
       },
     });
 
@@ -198,4 +200,53 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       envio_change: "SET",
     });
   });
+
+  it("should resume with DB state on second start", async () => {
+    const patchedEndBlock = 10861775; // original 10861774 + 1
+
+    // Patch envio_chains.end_block via Hasura run_sql
+    const sqlRes = await fetch(`http://localhost:${config.hasuraPort}/v2/query`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-hasura-admin-secret": config.hasuraAdminSecret,
+      },
+      body: JSON.stringify({
+        type: "run_sql",
+        args: {
+          sql: `UPDATE public.envio_chains SET end_block = ${patchedEndBlock} WHERE id = 1`,
+        },
+      }),
+    });
+    expect(sqlRes.ok).toBe(true);
+
+    await killProcessOnPort(config.indexerPort);
+
+    let secondProcess: ChildProcess | null = null;
+    try {
+      secondProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
+        cwd: PROJECT_DIR,
+        env: {
+          TUI_OFF: "true",
+          ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
+          ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
+          ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
+          ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+          E2E_EXPECTED_END_BLOCK: String(patchedEndBlock),
+        },
+      });
+
+      // If the handler's endBlock check fails, the indexer crashes and
+      // waitForOutput rejects. Success means DB state was used.
+      await waitForOutput(
+        secondProcess,
+        "All chains are caught up to end blocks",
+        120_000
+      );
+    } finally {
+      if (secondProcess) {
+        secondProcess.kill("SIGKILL");
+      }
+    }
+  }, 180_000);
 });

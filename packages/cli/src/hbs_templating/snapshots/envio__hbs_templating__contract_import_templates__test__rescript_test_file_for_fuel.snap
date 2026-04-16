@@ -5,29 +5,19 @@ expression: content
 open Vitest
 open Indexer
 
-describe("Greeter contract NewGreeting event tests", () => {
-  Async.it("NewGreeting handler creates Greeter_NewGreeting entity", async t => {
+describe("Indexer smoke test", () => {
+  Async.it("processes the first block with events on chain 0", async t => {
     let indexer = createTestIndexer()
 
-    let _ = await indexer.process({
+    let result = await indexer.process({
       chains: {
-        \"0": {
-          startBlock: 0,
-          endBlock: 0,
-          simulate: [makeSimulateItem(OnEvent({event: Greeter(NewGreeting)}))],
-        },
+        \"0": ({} : TestIndexer.fuelChainConfig),
       },
     })
 
-    let actualGreeterNewGreeting = await indexer.\"Greeter_NewGreeting".getOrThrow("0_0_0")
-
-    let expectedGreeterNewGreeting: Entities.Greeter_NewGreeting.t = {
-      id: "0_0_0",
-    }
-
     t.expect(
-      actualGreeterNewGreeting,
-      ~message="Actual Greeter_NewGreeting should be the same as the expected Greeter_NewGreeting",
-    ).toEqual(expectedGreeterNewGreeting)
-  })
+      result.changes->Array.length,
+      ~message="Should have at least one change",
+    ).toBeGreaterThan(0)
+  }, ~timeout=60_000)
 })

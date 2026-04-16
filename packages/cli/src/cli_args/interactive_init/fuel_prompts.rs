@@ -38,6 +38,9 @@ fn get_local_or_explorer_import(args: &ContractImportArgs) -> LocalOrExplorerImp
         None => LocalOrExplorerImport::Local(LocalImportArgs {
             abi_file: None,
             contract_name: None,
+            blockchain: None,
+            single_contract: false,
+            all_events: false,
         }),
     }
 }
@@ -48,7 +51,10 @@ fn get_abi_path_string(local_import_args: &LocalImportArgs) -> Result<String> {
     match &local_import_args.abi_file {
         Some(p) => Ok(p.clone()),
         None => prompt_abi_file_path(|path| {
-            let maybe_parsed_abi = FuelAbi::parse(PathBuf::from(&path));
+            // Validation-only parse; the path_relative_to_root argument is
+            // unused here because the interactive prompt only checks the
+            // file is parseable.
+            let maybe_parsed_abi = FuelAbi::parse(PathBuf::from(&path), path.to_string());
             match maybe_parsed_abi {
                 Ok(_) => Validation::Valid,
                 Err(e) => Validation::Invalid(e.into()),
@@ -107,13 +113,20 @@ impl Contract for SelectedContract {
 
 //Constructs SelectedContract via local prompt. Uses abis and manual
 //network/contract config
-async fn get_contract_import_selection(args: ContractImportArgs) -> Result<SelectedContract> {
+async fn get_contract_import_selection(mut args: ContractImportArgs) -> Result<SelectedContract> {
     let local_or_explorer_import = get_local_or_explorer_import(&args);
     let LocalOrExplorerImport::Local(local_import_args) = local_or_explorer_import;
 
+    // Merge flags from subcommand into parent (flags can appear on either level)
+    args.all_events = args.all_events || local_import_args.all_events;
+    args.single_contract = args.single_contract || local_import_args.single_contract;
+
     let abi_path_string =
         get_abi_path_string(&local_import_args).context("Failed getting Fuel ABI path")?;
-    let abi = FuelAbi::parse(PathBuf::from(&abi_path_string)).context("Failed parsing Fuel ABI")?;
+    // During interactive init we only need ABI parsing — the eventual codegen
+    // uses the relative path stored in the project's config.yaml, not this one.
+    let abi = FuelAbi::parse(PathBuf::from(&abi_path_string), abi_path_string.clone())
+        .context("Failed parsing Fuel ABI")?;
 
     let mut selected_events: Vec<EventConfig> = abi
         .get_logs()
@@ -143,12 +156,17 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
 
     let name = get_contract_name(&local_import_args).context("Failed getting contract name")?;
 
-    let choose_from_networks =
-        Select::new("Choose network:", vec![Network::Mainnet, Network::Testnet])
+    let choose_from_networks = match local_import_args.blockchain {
+        Some(network) => network,
+        None => Select::new("Choose network:", vec![Network::Mainnet, Network::Testnet])
             .prompt()
-            .context("Failed during prompt for network")?;
+            .context("Failed during prompt for network")?,
+    };
 
-    let addresses = vec![prompt_contract_address(None)?];
+    let addresses = vec![match args.contract_address {
+        Some(ref addr) => addr.clone(),
+        None => prompt_contract_address(None)?,
+    }];
 
     Ok(SelectedContract {
         name: normalize_contract_name(name),
@@ -161,7 +179,12 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
 
 //Constructs SelectedContract via local prompt. Uses abis and manual
 //network/contract config
-async fn prompt_selected_contracts(args: ContractImportArgs) -> Result<Vec<SelectedContract>> {
+async fn prompt_selected_contracts(mut args: ContractImportArgs) -> Result<Vec<SelectedContract>> {
+    // Merge flags from subcommand into parent (flags can appear on either level)
+    if let Some(LocalOrExplorerImport::Local(ref local_args)) = args.local_or_explorer {
+        args.single_contract = args.single_contract || local_args.single_contract;
+        args.all_events = args.all_events || local_args.all_events;
+    }
     let should_prompt_to_continue_adding = !args.single_contract;
     let first_contract = get_contract_import_selection(args).await?;
     let mut contracts = vec![first_contract];

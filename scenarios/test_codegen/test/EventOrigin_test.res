@@ -23,12 +23,12 @@ describe("Chains State", () => {
     it(
       "should support multiple chains with different states",
       t => {
-        let chains: Internal.chains = Js.Dict.empty()
-        chains->Js.Dict.set("1", {Internal.id: 1, isLive: false})
-        chains->Js.Dict.set("2", {Internal.id: 2, isLive: true})
+        let chains: Internal.chains = Dict.make()
+        chains->Dict.set("1", {Internal.id: 1, isLive: false})
+        chains->Dict.set("2", {Internal.id: 2, isLive: true})
 
-        t.expect(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isLive)).toBe(Some(false))
-        t.expect(chains->Js.Dict.get("2")->Belt.Option.map(c => c.isLive)).toBe(Some(true))
+        t.expect(chains->Dict.get("1")->Belt.Option.map(c => c.isLive)).toBe(Some(false))
+        t.expect(chains->Dict.get("2")->Belt.Option.map(c => c.isLive)).toBe(Some(true))
       },
     )
   })
@@ -44,13 +44,15 @@ describe("Chains State", () => {
 
         let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
-        let chains = Js.Dict.empty()
-        chains->Js.Dict.set("1337", {Internal.id: 1337, isLive: false})
+        let chains = Dict.make()
+        chains->Dict.set("1337", {Internal.id: 1337, isLive: false})
 
         let handlerContext = UserContext.getHandlerContext({
           item,
           loadManager,
-          persistence: Indexer.Generated.codegenPersistence,
+          persistence: PgStorage.makePersistenceFromConfig(
+            ~config=Indexer.Generated.configWithoutRegistrations,
+          ),
           inMemoryStore,
           shouldSaveHistory: false,
           isPreload: false,
