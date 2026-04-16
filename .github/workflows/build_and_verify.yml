@@ -286,45 +286,28 @@ jobs:
           node -e '
             const { createRequire } = require("node:module");
             const req = createRequire(require.resolve("envio/package.json"));
-            try {
-              const addon = req("envio-linux-x64");
-              console.log("Addon loaded, exports:", Object.keys(addon));
-            } catch (e) {
-              console.error("Addon load FAILED:", e.message);
-            }
-          ' 2>&1 || true
-          echo "=== Testing envio init ==="
+            const addon = req("envio-linux-x64");
+            console.log("Addon loaded, exports:", Object.keys(addon));
+          '
+          echo "=== Running envio init ==="
           TMPDIR=$(mktemp -d)
-          node -e '
-            const { createRequire } = require("node:module");
-            const path = require("path");
-            const fs = require("fs");
-            const req = createRequire(import.meta.url);
-            const pkgJson = req.resolve("envio/package.json");
-            const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf-8"));
-            const binRel = typeof pkg.bin === "string" ? pkg.bin : pkg.bin.envio;
-            const binAbs = path.resolve(path.dirname(pkgJson), binRel);
-            console.log("bin.mjs:", binAbs);
-          ' 2>&1 || true
-          echo "=== Running envio init directly ==="
           node -e "
             const { createRequire } = require('node:module');
             const path = require('path');
             const fs = require('fs');
-            const { execSync } = require('child_process');
+            const { spawnSync } = require('child_process');
             const req = createRequire(import.meta.url);
             const pkgJson = req.resolve('envio/package.json');
             const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf-8'));
             const binRel = typeof pkg.bin === 'string' ? pkg.bin : pkg.bin.envio;
             const binAbs = path.resolve(path.dirname(pkgJson), binRel);
-            try {
-              execSync('node ' + binAbs + ' init -n test-diag -d ${TMPDIR}/test-diag template -t greeter -l typescript', { stdio: 'inherit', timeout: 30000 });
-              console.log('SUCCESS');
-            } catch (e) {
-              console.error('FAILED with code:', e.status);
-            }
-          " 2>&1 || true
-          rm -rf "$TMPDIR"
+            console.log('bin:', binAbs);
+            const r = spawnSync('node', [binAbs, 'init', '-n', 'test-diag', '-d', '${TMPDIR}/test-diag', 'template', '-t', 'greeter', '-l', 'typescript'], { encoding: 'utf8', timeout: 30000 });
+            console.log('exit code:', r.status);
+            if (r.stdout) console.log('stdout:', r.stdout.slice(0, 2000));
+            if (r.stderr) console.error('stderr:', r.stderr.slice(0, 2000));
+            if (r.status !== 0) process.exit(1);
+          "
 
       - name: Run template tests
         working-directory: packages/e2e-tests
