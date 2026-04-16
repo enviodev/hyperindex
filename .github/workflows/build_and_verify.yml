@@ -159,20 +159,13 @@ jobs:
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
 
       - uses: ./.github/actions/cargo-cache
-        with:
-          cache-suffix: x86_64-unknown-linux-musl
-
-      - name: Install musl-tools
-        run: sudo apt-get install -y musl-tools
 
       - name: Build envio NAPI addon
         env:
           SVM_TARGET_PLATFORM: linux-amd64
-        run: cargo build --release --lib --target x86_64-unknown-linux-musl
+        run: cargo build --release --lib
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -184,21 +177,7 @@ jobs:
           node packages/build-envio/build-platform-package.ts \
             --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
           mkdir -p envio-linux-x64
-          # Find the cdylib output — name varies by target triple
-          echo "=== cdylib candidates ==="
-          ls -la target/x86_64-unknown-linux-musl/release/libenvio* 2>/dev/null || true
-          ls -la target/x86_64-unknown-linux-musl/release/envio* 2>/dev/null || true
-          # Copy whichever shared lib exists (.so or .dylib)
-          CDYLIB=$(find target/x86_64-unknown-linux-musl/release -maxdepth 1 \
-            \( -name 'libenvio.so' -o -name 'libenvio*.so' -o -name 'envio.dll' \) \
-            -print -quit)
-          if [ -z "$CDYLIB" ]; then
-            echo "ERROR: No cdylib found in target/x86_64-unknown-linux-musl/release/"
-            ls -la target/x86_64-unknown-linux-musl/release/ | head -30
-            exit 1
-          fi
-          cp "$CDYLIB" envio-linux-x64/envio.node
-          echo "Copied $CDYLIB -> envio-linux-x64/envio.node"
+          cp target/release/libenvio.so envio-linux-x64/envio.node
 
       - name: Upload linux-x64 platform npm package
         uses: actions/upload-artifact@v7
