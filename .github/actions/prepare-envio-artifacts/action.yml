@@ -3,6 +3,8 @@ description: >
   Set up pnpm + Node.js, download pre-built envio artifacts, and install
   dependencies. The committed .pnpmfile.cjs hook redirects envio
   dependencies to these artifacts instead of the dev workspace member.
+  After install, the NAPI addon (.node file) is copied into the installed
+  envio package so Core.res can find it via the sibling-file fallback.
 
 runs:
   using: composite
@@ -27,16 +29,26 @@ runs:
         name: npm-pkg-envio-linux-x64
         path: .envio-artifacts/envio-linux-x64
 
-    - name: Verify artifacts
-      shell: bash
-      run: |
-        echo "=== envio artifact ==="
-        ls -la .envio-artifacts/envio/bin.mjs .envio-artifacts/envio/src/Core.res.mjs
-        echo "=== envio-linux-x64 artifact ==="
-        ls -la .envio-artifacts/envio-linux-x64/
-        echo "=== envio-linux-x64 package.json ==="
-        cat .envio-artifacts/envio-linux-x64/package.json
-
     - name: Install dependencies
       shell: bash
       run: pnpm install --no-frozen-lockfile
+
+    # Post-install: inject the NAPI addon into every installed copy of
+    # envio. The production artifact intentionally excludes envio.node
+    # (it ships via envio-linux-x64), so we copy it in after pnpm install
+    # to make Core.res's sibling-file fallback work in CI tests.
+    - name: Inject NAPI addon into installed envio
+      shell: bash
+      run: |
+        ADDON=.envio-artifacts/envio-linux-x64/envio.node
+        if [ ! -f "$ADDON" ]; then
+          echo "ERROR: $ADDON not found"
+          ls -la .envio-artifacts/envio-linux-x64/
+          exit 1
+        fi
+        # Copy into every pnpm-installed envio location
+        find node_modules -path "*/envio/src/Core.res.mjs" -exec dirname {} \; | while read src_dir; do
+          pkg_dir=$(dirname "$src_dir")
+          cp "$ADDON" "$pkg_dir/envio.node"
+          echo "Injected envio.node into $pkg_dir"
+        done
