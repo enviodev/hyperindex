@@ -1,26 +1,20 @@
 name: Build & Verify
 
 on:
-  # Same-repo PRs and main pushes get full CI automatically.
-  pull_request:
+  # pull_request_target for ALL PRs (same-repo and forks). Runs with
+  # secrets. Fork PRs are gated by the `fork-ci` environment which
+  # requires manual approval from a reviewer before jobs proceed.
+  # Same-repo PRs use the `internal` environment (no restrictions).
+  #
+  # Security: the workflow file is always taken from the default branch
+  # (enforced since Dec 2025), so forks cannot modify the environment
+  # gate. All jobs check out github.event.pull_request.head.sha —
+  # pinned at event creation, so a push after approval cannot swap code.
+  pull_request_target:
   push:
     branches:
       - main
-  # Fork PRs require per-commit approval from a reviewer via comment:
-  #
-  #     /ok-to-test <7-40 char hex SHA>
-  #
-  # The gate verifies (1) the commenter has write/admin access and (2)
-  # the approved SHA is still a prefix of the PR's current HEAD — so any
-  # push after review invalidates the approval, closing the "push after
-  # label" race. All downstream jobs pin checkout to the resolved HEAD
-  # SHA, and a trailing `report` job publishes a commit status against
-  # that SHA so branch protection sees the result on the PR. Pattern
-  # matches Kubernetes Prow's /ok-to-test and imjohnbo/ok-to-test.
-  issue_comment:
-    types: [created]
 
-# Default to read-only; jobs opt into write scopes as needed.
 permissions:
   contents: read
 
@@ -30,119 +24,60 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # ── Gate ────────────────────────────────────────────────────────────
+  # ── Authorize ──────────────────────────────────────────────────────
 
-  # Resolves the commit SHA downstream jobs check out, and authorizes
-  # fork PRs via /ok-to-test comment. Admits:
-  #   - push to main
-  #   - same-repo pull_request (forks are blocked here; they must use
-  #     /ok-to-test to get a run with secrets)
-  #   - issue_comment starting with /ok-to-test on a PR
+  # Routes to the right GitHub Environment:
+  #   - push to main          → `internal` (no restrictions)
+  #   - same-repo PR          → `internal` (no restrictions)
+  #   - fork PR               → `fork-ci`  (requires reviewer approval)
   #
-  # For the comment path the script enforces: commenter has write/admin
-  # permission AND the approved SHA is a prefix of the PR's current HEAD.
-  # A mismatch means someone pushed after review → reject and require
-  # re-review. Reactions on the triggering comment give live feedback
-  # (🚀 accept, 👎 reject).
-  gate:
+  # Setup (one-time):
+  #   Settings → Environments → create `internal` (no rules) and
+  #   `fork-ci` (add required reviewers: your team).
+  #
+  # This replaces the entire /ok-to-test slash-command gate: no
+  # issue_comment trigger, no SHA validation, no author_association
+  # check, no reaction code. GitHub's environment approval handles
+  # authorization natively. Each new fork push triggers a new run
+  # that requires fresh approval.
+  authorize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    environment: >-
+      ${{
+        github.event_name == 'pull_request_target' &&
+        github.event.pull_request.head.repo.full_name != github.repository &&
+        'fork-ci' || 'internal'
+      }}
+    steps:
+      - run: echo "Authorized"
+
+  # Post pending build-verify status on PRs to block merge until CI
+  # passes. pull_request_target check runs attach to the default
+  # branch SHA (not the PR head), so branch protection can't see them.
+  # This commit status fills the gap — configure branch protection to
+  # require the `build-verify` context.
+  pending-status:
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 1
     permissions:
-      contents: read
-      # Both scopes are needed empirically. Docs claim issues: write
-      # alone covers reactions on issue comments (and PR comments are
-      # issue comments under the hood), but in practice GitHub routes
-      # PR-comment reactions through the pull_requests permission too
-      # — granting only one yields "Resource not accessible by
-      # integration". Vite and Svelte ecosystem-ci-trigger workflows
-      # both declare BOTH scopes for exactly this reason; we match.
-      # Note: if the error persists with both granted, the repo-level
-      # "Actions → General → Workflow permissions" setting may be
-      # restricting the token below what the workflow requests.
-      issues: write
-      pull-requests: write
-    if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request != null &&
-       startsWith(github.event.comment.body, '/ok-to-test'))
-    outputs:
-      sha: ${{ steps.resolve.outputs.sha }}
+      statuses: write
     steps:
-      - name: Resolve & authorize SHA
-        id: resolve
-        uses: actions/github-script@v8
+      - uses: actions/github-script@v8
         with:
           script: |
-            if (context.eventName === 'push') {
-              core.setOutput('sha', context.sha);
-              return;
-            }
-            if (context.eventName === 'pull_request') {
-              core.setOutput('sha', context.payload.pull_request.head.sha);
-              return;
-            }
-
-            // issue_comment: /ok-to-test <sha>
-            const { owner, repo } = context.repo;
-            const commentId = context.payload.comment.id;
-            const react = async (content) => {
-              try {
-                await github.rest.reactions.createForIssueComment({
-                  owner, repo, comment_id: commentId, content,
-                });
-              } catch (e) {
-                // Don't let a reaction failure mask the real outcome.
-                core.warning(`Could not add ${content} reaction: ${e.message}`);
-              }
-            };
-            const reject = async (msg) => {
-              await react('-1');
-              core.setFailed(msg);
-            };
-
-            const body = context.payload.comment.body.trim();
-            const m = body.match(/^\/ok-to-test\s+([0-9a-f]{7,40})\b/i);
-            if (!m) return reject('Usage: /ok-to-test <7-40 hex char SHA>');
-            const shaArg = m[1].toLowerCase();
-
-            // Authorize via comment.author_association rather than the
-            // collaborators/permission API — the latter requires
-            // `administration: read` which the default GITHUB_TOKEN
-            // cannot grant ("Resource not accessible by integration").
-            //
-            // Allowed values:
-            //   OWNER        — repo owner (personal repos only; unused here)
-            //   MEMBER       — member of the org that owns this repo; for
-            //                  org repos this is how admins show up, since
-            //                  OWNER is reserved for personal-repo owners
-            //   COLLABORATOR — explicitly invited outside collaborator
-            // All three require an explicit trust action by the base repo
-            // (ownership / org membership / invite). CONTRIBUTOR and NONE
-            // are rejected — a merged PR in the past doesn't grant CI
-            // approval rights.
-            const assoc = context.payload.comment.author_association;
-            if (!['OWNER', 'MEMBER', 'COLLABORATOR'].includes(assoc)) {
-              return reject(
-                `@${context.payload.comment.user.login} (${assoc}) cannot approve CI — ` +
-                `must be OWNER, MEMBER, or COLLABORATOR of ${owner}/${repo}.`
-              );
-            }
-
-            const pr = await github.rest.pulls.get({
-              owner, repo, pull_number: context.payload.issue.number,
+            const isFork = context.payload.pull_request.head.repo.full_name !== '${{ github.repository }}';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.payload.pull_request.head.sha,
+              state: 'pending',
+              context: 'build-verify',
+              description: isFork
+                ? 'Awaiting environment approval and CI'
+                : 'CI running',
             });
-            if (!pr.data.head.sha.startsWith(shaArg)) {
-              return reject(
-                `Stale approval: current HEAD is ${pr.data.head.sha.substring(0, 12)}, ` +
-                `but command approved ${shaArg}. Re-review HEAD and comment again.`
-              );
-            }
-
-            await react('rocket');
-            core.setOutput('sha', pr.data.head.sha);
 
   # ── Build ───────────────────────────────────────────────────────────
 
@@ -150,12 +85,12 @@ jobs:
   build-linux-package:
     runs-on: ubuntu-22.04
     timeout-minutes: 9
-    needs: gate
+    needs: authorize
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.gate.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -197,12 +132,12 @@ jobs:
   build-envio-package:
     runs-on: ubuntu-latest
     timeout-minutes: 9
-    needs: [gate, build-linux-package]
+    needs: build-linux-package
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.gate.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: pnpm/action-setup@v5
         with:
@@ -236,12 +171,12 @@ jobs:
   cargo-test:
     runs-on: ubuntu-latest
     timeout-minutes: 9
-    needs: gate
+    needs: authorize
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.gate.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -261,12 +196,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 9
     continue-on-error: true
-    needs: gate
+    needs: authorize
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.gate.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -279,13 +214,13 @@ jobs:
   # Template tests - verify envio templates can be initialized and built
   template-tests:
     runs-on: ubuntu-latest
-    needs: [gate, build-envio-package]
+    needs: build-envio-package
     timeout-minutes: 9
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.gate.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Run template tests
@@ -296,7 +231,7 @@ jobs:
   # Requires DB services (postgres + hasura)
   scenarios-test:
     runs-on: ubuntu-latest
-    needs: [gate, build-envio-package]
+    needs: build-envio-package
     timeout-minutes: 9
 
     services:
@@ -331,7 +266,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.gate.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
@@ -361,7 +296,7 @@ jobs:
 
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
-        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: failure() && github.event_name == 'push'
         with:
           severity: error
           details: "Tests Failed on main!"
@@ -370,7 +305,7 @@ jobs:
   # E2E test - runs envio dev with a real indexer scenario
   e2e-test:
     runs-on: ubuntu-latest
-    needs: [gate, build-envio-package]
+    needs: build-envio-package
     timeout-minutes: 9
 
     services:
@@ -417,7 +352,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.gate.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
@@ -443,7 +378,7 @@ jobs:
 
       - name: E2E Test Failure Notification
         uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
-        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: failure() && github.event_name == 'push'
         with:
           severity: error
           details: "E2E Tests Failed on main!"
@@ -451,20 +386,14 @@ jobs:
 
   # ── Report ──────────────────────────────────────────────────────────
 
-  # Publish an aggregate commit status pinned to the resolved SHA. For
-  # issue_comment-triggered fork runs, the workflow's native check-runs
-  # are attached to the default branch's SHA (not the PR head), so they
-  # are invisible to PR branch protection. This job fills that gap by
-  # posting a status tied to the PR's actual HEAD — configure branch
-  # protection to require the `build-verify` context.
-  #
-  # Runs on all events via `if: always()`, but only posts when the gate
-  # resolved a SHA (i.e. the gate passed). Rejected /ok-to-test comments
-  # leave no dangling status.
+  # Post aggregate build-verify commit status to the PR head SHA (or
+  # push SHA). pull_request_target check runs attach to the default
+  # branch SHA and are invisible to PR branch protection — this fills
+  # the gap. Configure branch protection to require `build-verify`.
   report:
     if: always()
     needs:
-      - gate
+      - authorize
       - build-linux-package
       - build-envio-package
       - cargo-test
@@ -477,12 +406,12 @@ jobs:
       statuses: write
     steps:
       - name: Post commit status
-        if: needs.gate.outputs.sha != ''
         uses: actions/github-script@v8
         env:
           RESULTS: ${{ toJSON(needs) }}
         with:
           script: |
+            const sha = '${{ github.event.pull_request.head.sha || github.sha }}';
             const needs = JSON.parse(process.env.RESULTS);
             const required = [
               'build-linux-package', 'build-envio-package', 'cargo-test',
@@ -491,7 +420,10 @@ jobs:
             const failed = required.filter(n => needs[n]?.result === 'failure');
             const cancelled = required.filter(n => needs[n]?.result === 'cancelled');
             let state, description;
-            if (cancelled.length) {
+            if (needs.authorize?.result !== 'success') {
+              state = 'error';
+              description = 'authorize job did not succeed';
+            } else if (cancelled.length) {
               state = 'error';
               description = `cancelled: ${cancelled.join(', ')}`;
             } else if (failed.length) {
@@ -504,7 +436,7 @@ jobs:
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ needs.gate.outputs.sha }}',
+              sha,
               state,
               context: 'build-verify',
               description: description.substring(0, 140),
