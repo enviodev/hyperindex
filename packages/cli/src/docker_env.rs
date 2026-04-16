@@ -477,40 +477,43 @@ async fn is_service_reachable(host: &str, port: u16) -> bool {
         .unwrap_or(false)
 }
 
-/// Check whether Hasura is reachable by hitting its healthz endpoint.
-async fn is_hasura_healthy(host: &str, port: u16) -> bool {
-    let url = format!("http://{}:{}/hasura/healthz?strict=true", host, port);
-    let client = reqwest::Client::builder()
+/// Shared HTTP client for health probes, built once and reused across the
+/// initial probe and subsequent wait loops. Avoids allocating a new
+/// connection pool + TLS context on every tick.
+fn build_probe_client() -> reqwest::Client {
+    reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
-        .build();
-    match client {
-        Ok(c) => c
-            .get(&url)
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false),
-        Err(_) => false,
-    }
+        .build()
+        .expect("failed to build HTTP client for health probes")
+}
+
+/// Check whether Hasura is reachable by hitting its healthz endpoint.
+async fn is_hasura_healthy(client: &reqwest::Client, host: &str, port: u16) -> bool {
+    let url = format!("http://{}:{}/hasura/healthz?strict=true", host, port);
+    client
+        .get(&url)
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }
 
 /// Check whether ClickHouse is reachable by hitting its `/ping` endpoint.
 /// Uses the caller-provided scheme so that `https://` cloud ClickHouse
 /// endpoints work without extra wiring.
-async fn is_clickhouse_healthy(scheme: &str, host: &str, port: u16) -> bool {
+async fn is_clickhouse_healthy(
+    client: &reqwest::Client,
+    scheme: &str,
+    host: &str,
+    port: u16,
+) -> bool {
     let url = format!("{scheme}://{host}:{port}/ping");
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build();
-    match client {
-        Ok(c) => c
-            .get(&url)
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false),
-        Err(_) => false,
-    }
+    client
+        .get(&url)
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }
 
 async fn stop_and_remove(docker: &Docker, name: &str) {
@@ -692,6 +695,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     // avoids scattered `.expect()` calls whose invariant ("ch_url is Some
     // when opts.clickhouse") would only be checked at runtime.
     let ch_url_ref = ch_url.as_ref();
+    let probe_client = build_probe_client();
 
     // Probe each service at the configured host. When external the env var
     // tells us where to look; when local the container publishes on 0.0.0.0
@@ -706,11 +710,11 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             if !env.hasura_enabled {
                 return false;
             }
-            is_hasura_healthy(hasura_probe_host, hasura_host_port).await
+            is_hasura_healthy(&probe_client, hasura_probe_host, hasura_host_port).await
         },
         async {
             match ch_url_ref {
-                Some(u) => is_clickhouse_healthy(&u.scheme, &u.host, u.port).await,
+                Some(u) => is_clickhouse_healthy(&probe_client, &u.scheme, &u.host, u.port).await,
                 None => false,
             }
         }
@@ -1064,7 +1068,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         eprint!("Waiting for Hasura...");
         let start = std::time::Instant::now();
         loop {
-            if is_hasura_healthy(hasura_probe_host, hasura_host_port).await {
+            if is_hasura_healthy(&probe_client, hasura_probe_host, hasura_host_port).await {
                 eprintln!(" ready ({:.1}s)", start.elapsed().as_secs_f64());
                 return Ok(());
             }
@@ -1088,7 +1092,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         eprint!("Waiting for ClickHouse...");
         let start = std::time::Instant::now();
         loop {
-            if is_clickhouse_healthy(&url.scheme, &url.host, url.port).await {
+            if is_clickhouse_healthy(&probe_client, &url.scheme, &url.host, url.port).await {
                 eprintln!(" ready ({:.1}s)", start.elapsed().as_secs_f64());
                 return Ok(());
             }
