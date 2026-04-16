@@ -35,6 +35,7 @@
   },
   "files": [
     "bin.mjs",
+    "envio.node",
     "evm.schema.json",
     "fuel.schema.json",
     "svm.schema.json",
