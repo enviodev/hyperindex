@@ -179,6 +179,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
       }),
     )
   },
+  populateConfigAddresses: async (~chainConfigs as _) => (),
   dumpEffectCache: async () => (),
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),

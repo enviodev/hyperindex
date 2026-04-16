@@ -108,6 +108,9 @@ type storage = {
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
   ) => promise<(array<{"id": string}>, array<unknown>)>,
+  // Insert config addresses into envio_addresses with registration block/log = -1.
+  // Uses ON CONFLICT DO NOTHING so dynamically registered addresses are not overwritten.
+  populateConfigAddresses: (~chainConfigs: array<Config.chain>) => promise<unit>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,
@@ -200,6 +203,7 @@ let init = {
             "progress": progress,
           })
         }
+        await persistence.storage.populateConfigAddresses(~chainConfigs)
         resolveRef.contents()
       }
     } catch {

@@ -1623,10 +1623,38 @@ let make = (
     )
   }
 
+  let populateConfigAddresses = async (~chainConfigs: array<Config.chain>) => {
+    let ids = []
+    let chainIds = []
+    let contractNames = []
+    chainConfigs->Array.forEach(chain => {
+      chain.contracts->Array.forEach(contract => {
+        contract.addresses->Array.forEach(
+          address => {
+            ids->Array.push(Config.EnvioAddresses.makeId(~chainId=chain.id, ~address))->ignore
+            chainIds->Array.push(chain.id)->ignore
+            contractNames->Array.push(contract.name)->ignore
+          },
+        )
+      })
+    })
+
+    if ids->Array.length > 0 {
+      let negOnes = Array.make(~length=ids->Array.length, -1)
+      await sql->Postgres.unpreparedUnsafe(
+        `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
+SELECT * FROM unnest($1::text[],$2::int[],$3::int[],$4::int[],$5::text[])
+ON CONFLICT("id") DO NOTHING;`,
+        (ids, chainIds, negOnes, negOnes, contractNames)->(Utils.magic: _ => unknown),
+      )
+    }
+  }
+
   {
     isInitialized,
     initialize,
     resumeInitialState,
+    populateConfigAddresses,
     loadByFieldOrThrow,
     loadByIdsOrThrow,
     dumpEffectCache,
