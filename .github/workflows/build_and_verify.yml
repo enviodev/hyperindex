@@ -280,6 +280,31 @@ jobs:
           ref: ${{ needs.gate.outputs.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
+      - name: Verify NAPI addon loads
+        run: |
+          echo "=== Checking envio-linux-x64 package ==="
+          ls -la node_modules/envio-linux-x64/ 2>/dev/null || echo "NOT FOUND at root"
+          find node_modules/.pnpm -path "*/envio-linux-x64/envio.node" 2>/dev/null | head -3
+          echo "=== Testing addon load ==="
+          node -e '
+            const { createRequire } = require("node:module");
+            const req = createRequire(require.resolve("envio/package.json"));
+            try {
+              const addon = req("envio-linux-x64");
+              console.log("Addon loaded, exports:", Object.keys(addon));
+            } catch (e) {
+              console.error("Addon load FAILED:", e.message);
+            }
+          ' 2>&1 || true
+          echo "=== Testing bin.mjs --help ==="
+          node -e '
+            const { createRequire } = require("node:module");
+            const path = require("path");
+            const pkgPath = createRequire(import.meta.url).resolve("envio/package.json");
+            const binMjs = path.resolve(path.dirname(pkgPath), "bin.mjs");
+            console.log("bin.mjs at:", binMjs);
+          ' 2>&1 || true
+
       - name: Run template tests
         working-directory: packages/e2e-tests
         run: pnpm test:templates
