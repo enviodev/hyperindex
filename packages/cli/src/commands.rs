@@ -205,7 +205,7 @@ pub mod codegen {
 }
 
 pub mod start {
-    use super::{execute_command_with_env, to_js_path};
+    use super::to_js_path;
     use crate::config_parsing::system_config::SystemConfig;
     use anyhow::anyhow;
     use pathdiff::diff_paths;
@@ -214,7 +214,6 @@ pub mod start {
         config: &SystemConfig,
         extra_env: &[(String, String)],
     ) -> anyhow::Result<()> {
-        // Compute the relative path from project root to generated directory
         let relative_generated = diff_paths(
             &config.parsed_project_paths.generated,
             &config.parsed_project_paths.project_root,
@@ -223,11 +222,6 @@ pub mod start {
 
         let index_path = format!("./{}/src/Index.res.mjs", to_js_path(&relative_generated));
 
-        let cmd = "node";
-        let args = vec!["--no-warnings", &index_path];
-
-        // Forward the resolved config.yaml path so the NAPI addon in the
-        // child Node process finds the same file.
         let config_path = config
             .parsed_project_paths
             .config
@@ -236,17 +230,16 @@ pub mod start {
         let mut env: Vec<(String, String)> = extra_env.to_vec();
         env.push(("ENVIO_CONFIG".to_string(), config_path));
 
-        // Run from project root to ensure proper cwd for handlers
-        let exit =
-            execute_command_with_env(cmd, args, &config.parsed_project_paths.project_root, &env)
-                .await?;
+        // Use the JS callback if available (NAPI), otherwise spawn node
+        let script = format!("import('{}')", index_path);
+        crate::napi::run_js_or_spawn(&script, &config.parsed_project_paths.project_root, &env)
+            .await
+            .map_err(|e| {
+                anyhow!(
+                "Indexer crashed: {e}\nFor more details, restart with 'TUI_OFF=true envio start'."
+            )
+            })?;
 
-        if !exit.success() {
-            return Err(anyhow!(
-                "Indexer crashed. For more details see the error logs above the TUI. Can't find \
-                 them? Restart the indexer with the 'TUI_OFF=true envio start' command."
-            ));
-        }
         println!(
             "\nIndexer has successfully finished processing all events on all chains. Exiting \
              process."
@@ -255,49 +248,31 @@ pub mod start {
     }
 }
 pub mod db_migrate {
-    use anyhow::{anyhow, Context};
-
-    use std::process::ExitStatus;
+    use anyhow::Context;
 
     use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
 
-    async fn execute_migration(script: &str, config: &SystemConfig) -> anyhow::Result<ExitStatus> {
-        // The Node runtime loads config in-process via the NAPI addon
-        // (Core.getConfigJson → Config.fromConfigView). We forward the
-        // config.yaml path through `ENVIO_CONFIG` so the addon finds the
-        // same file even when cwd differs.
-        let current_dir = &config.parsed_project_paths.project_root;
+    async fn execute_migration(script: &str, config: &SystemConfig) -> anyhow::Result<()> {
         let config_path = config
             .parsed_project_paths
             .config
             .to_string_lossy()
             .into_owned();
-        tokio::process::Command::new("node")
-            .args(["-e", script])
-            .env("ENVIO_CONFIG", &config_path)
-            .current_dir(current_dir)
-            .stdin(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .context("Failed to spawn node process for migration")?
-            .wait()
-            .await
-            .context("Failed to wait for migration process")
+        let env = vec![("ENVIO_CONFIG".to_string(), config_path)];
+
+        crate::napi::run_js_or_spawn(script, &config.parsed_project_paths.project_root, &env).await
     }
 
     pub async fn run_up_migrations(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let exit = execute_migration(
+        execute_migration(
             "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true))",
             config,
         )
-        .await?;
-
-        if !exit.success() {
-            return Err(anyhow!("Failed to run db migrations"));
-        }
+        .await
+        .context("Failed to run db migrations")?;
 
         persisted_state
             .upsert_to_db()
@@ -306,7 +281,7 @@ pub mod db_migrate {
         Ok(())
     }
 
-    pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<ExitStatus> {
+    pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<()> {
         execute_migration(
             "import('envio/src/Migrations.res.mjs').then(m => m.runDownMigrations(true))",
             config,
@@ -318,15 +293,12 @@ pub mod db_migrate {
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let exit = execute_migration(
+        execute_migration(
             "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true, true))",
             config,
         )
-        .await?;
-
-        if !exit.success() {
-            return Err(anyhow!("Failed to run db migrations"));
-        }
+        .await
+        .context("Failed to run db migrations")?;
 
         persisted_state
             .upsert_to_db()

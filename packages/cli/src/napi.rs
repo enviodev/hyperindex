@@ -4,26 +4,77 @@ use crate::{
 };
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
+use napi::threadsafe_function::ThreadsafeFunction;
+use std::sync::OnceLock;
 
-/// Set up the envio package directory for version resolution.
-///
-/// When running as a NAPI addon, `get_envio_version()` can't find
-/// `packages/envio` by walking up from `current_exe()` (which is Node)
-/// or `current_dir()` (which may be a temp dir). The JS caller passes
-/// its own package directory (resolved from `import.meta.url`) so Rust
-/// can find it.
 fn set_envio_package_dir(dir: &Option<String>) {
     if let Some(d) = dir {
         std::env::set_var("ENVIO_PACKAGE_DIR", d);
     }
 }
 
-/// Get the resolved indexer config as a JSON string.
-///
-/// Synchronous — no tokio runtime needed. Reads `config.yaml` (or the path
-/// given in `config_path` / `ENVIO_CONFIG` env var), parses it through the
-/// full `SystemConfig` pipeline, and serialises the public config JSON that
-/// the Node runtime consumes.
+/// Global JS runner callback. Set by `run_cli` before executing commands.
+/// Rust calls this instead of spawning child Node processes.
+static JS_RUNNER: OnceLock<ThreadsafeFunction<String, ()>> = OnceLock::new();
+
+/// Execute a JS script in the caller's Node process via the callback.
+/// Falls back to spawning `node -e <script>` if no callback is set.
+pub async fn run_js_or_spawn(
+    script: &str,
+    current_dir: &std::path::Path,
+    extra_env: &[(String, String)],
+) -> anyhow::Result<()> {
+    if let Some(runner) = JS_RUNNER.get() {
+        // Build env setup + cwd change as JS prefix
+        let env_setup: String = extra_env
+            .iter()
+            .map(|(k, v)| {
+                format!(
+                    "process.env[{}] = {};",
+                    serde_json::to_string(k).unwrap_or_default(),
+                    serde_json::to_string(v).unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("");
+
+        let cwd_setup = format!(
+            "process.chdir({});",
+            serde_json::to_string(&current_dir.to_string_lossy()).unwrap_or_default()
+        );
+
+        let full_script = format!("{}{}{}", cwd_setup, env_setup, script);
+
+        runner
+            .call_async(Ok(full_script))
+            .await
+            .map_err(|e| anyhow::anyhow!("JS callback failed: {}", e))?;
+
+        Ok(())
+    } else {
+        // Fallback: spawn node process (for non-NAPI invocations)
+        let mut cmd = tokio::process::Command::new("node");
+        cmd.args(["-e", script])
+            .current_dir(current_dir)
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true);
+
+        for (k, v) in extra_env {
+            cmd.env(k, v);
+        }
+
+        let exit = cmd.spawn()?.wait().await?;
+
+        if !exit.success() {
+            return Err(anyhow::anyhow!(
+                "Node script exited with code {}",
+                exit.code().unwrap_or(-1)
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[napi_derive::napi]
 pub fn get_config_json(
     config_path: Option<String>,
@@ -50,14 +101,23 @@ pub fn get_config_json(
 
 /// Run the envio CLI with the given arguments.
 ///
-/// Async — NAPI manages the tokio runtime automatically. This is the entry
-/// point used by `bin.mjs` to run any CLI command in-process (no child
-/// process spawn).
+/// `run_js` is a callback that Rust calls to execute JS code in the
+/// caller's Node process — used for migrations and indexer start instead
+/// of spawning child `node` processes.
 #[napi_derive::napi]
-pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> napi::Result<i32> {
+pub async fn run_cli(
+    args: Vec<String>,
+    envio_package_dir: Option<String>,
+    #[napi(ts_arg_type = "(script: string) => Promise<void>")] run_js: ThreadsafeFunction<
+        String,
+        (),
+    >,
+) -> napi::Result<i32> {
     set_envio_package_dir(&envio_package_dir);
 
-    // Prepend a fake argv[0] so clap's arg parser sees the expected layout
+    // Store the callback globally so commands.rs can use it
+    let _ = JS_RUNNER.set(run_js);
+
     let mut full_args = vec!["envio".to_string()];
     full_args.extend(args);
 
@@ -65,8 +125,6 @@ pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> na
         .version(crate::config_parsing::system_config::VERSION)
         .try_get_matches_from(&full_args)
         .map_err(|e| {
-            // Clap prints help/version to stdout and returns Err — surface
-            // these as a zero-exit rather than an error.
             if e.use_stderr() {
                 napi::Error::from_reason(format!("{e}"))
             } else {
