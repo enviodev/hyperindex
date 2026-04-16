@@ -34,22 +34,40 @@ loadEnvFile(path.join(rootDir, ".env"));
 
 /**
  * Resolve the envio command and base args.
- * Priority: ENVIO_BIN → installed bin via node_modules.
+ * Priority: ENVIO_BIN → installed bin.mjs via require.resolve.
  *
- * We resolve the *installed* envio (via node_modules/.bin or the pnpm-
- * linked artifact) rather than the source checkout's bin.mjs, because in
- * CI the source checkout has uncompiled .res files — only the artifact
+ * We resolve the *installed* envio's bin.mjs (via require.resolve) rather
+ * than the source checkout's, because in CI the source checkout has
+ * uncompiled .res files — only the artifact installed into node_modules
  * has the compiled .res.mjs output that Core.res.mjs imports.
+ *
+ * We use `node <absolute-path>` instead of `pnpm exec envio` because
+ * template tests run from temp directories with no node_modules.
  */
 function resolveEnvio(): { command: string; args: string[] } {
   if (process.env.ENVIO_BIN) {
     return { command: process.env.ENVIO_BIN, args: [] };
   }
 
-  // node_modules/.bin/envio is set up by pnpm and points to the
-  // installed envio package's bin.mjs (artifact in CI, workspace link
-  // in local dev). Using "pnpm exec" ensures PATH includes .bin/.
-  return { command: "pnpm", args: ["exec", "envio"] };
+  // require.resolve finds the installed envio package (artifact in CI,
+  // workspace link in local dev). We go from package.json → bin.mjs.
+  try {
+    const pkgJson = require.resolve("envio/package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf-8"));
+    const binRel = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.envio;
+    if (binRel) {
+      const binAbs = path.resolve(path.dirname(pkgJson), binRel);
+      if (fs.existsSync(binAbs)) {
+        return { command: "node", args: [binAbs] };
+      }
+    }
+  } catch {}
+
+  throw new Error(
+    "envio not found. Either:\n" +
+      "  - Set ENVIO_BIN env var\n" +
+      "  - Run `pnpm install` to install the envio package"
+  );
 }
 
 const envio = resolveEnvio();
