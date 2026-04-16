@@ -37,28 +37,29 @@ loadEnvFile(path.join(rootDir, ".env"));
  * Resolve the envio command and base args.
  * Priority: ENVIO_BIN → installed bin.mjs via require.resolve.
  *
- * We resolve the *installed* envio's bin.mjs (via require.resolve) rather
+ * We resolve the *installed* envio's bin.mjs (via createRequire) rather
  * than the source checkout's, because in CI the source checkout has
  * uncompiled .res files — only the artifact installed into node_modules
  * has the compiled .res.mjs output that Core.res.mjs imports.
  *
  * We use `node <absolute-path>` instead of `pnpm exec envio` because
  * template tests run from temp directories with no node_modules.
+ *
+ * e2e-tests declares envio as a devDependency so createRequire resolves
+ * to the installed package (CI artifact or workspace link).
  */
 function resolveEnvio(): { command: string; args: string[] } {
   if (process.env.ENVIO_BIN) {
     return { command: process.env.ENVIO_BIN, args: [] };
   }
 
-  // Use createRequire for ESM compatibility. Resolves the installed envio
-  // package (artifact in CI, workspace link in local dev).
+  const req = createRequire(import.meta.url);
   try {
-    const req = createRequire(import.meta.url);
-    const pkgJson = req.resolve("envio/package.json");
-    const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf-8"));
+    const pkgJsonPath = req.resolve("envio/package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
     const binRel = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.envio;
     if (binRel) {
-      const binAbs = path.resolve(path.dirname(pkgJson), binRel);
+      const binAbs = path.resolve(path.dirname(pkgJsonPath), binRel);
       if (fs.existsSync(binAbs)) {
         return { command: "node", args: [binAbs] };
       }
