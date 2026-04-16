@@ -55,7 +55,7 @@ const getBlockEffect = createEffect(
     if (parsedData.error) {
       throw new Error(parsedData.error);
     }
-    return parsedData.result;
+    return parsedData.result ?? null;
   }
 );
 
