@@ -589,6 +589,7 @@ let start = async (
     Ctx.registrations,
     config,
     persistence,
+    inMemoryStore: InMemoryStore.make(~entities=persistence.allEntities),
   }
 
   let envioVersion = Utils.EnvioPackage.value.version

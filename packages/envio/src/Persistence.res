@@ -35,6 +35,18 @@ type initialState = {
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
 
+type rollbackEntityDiff = {
+  entityConfig: Internal.entityConfig,
+  removedIds: array<string>,
+  restoredEntities: array<Internal.entity>,
+}
+
+type rollbackDiff = {
+  rollbackTargetCheckpointId: Internal.checkpointId,
+  rollbackDiffCheckpointId: Internal.checkpointId,
+  entityChanges: array<rollbackEntityDiff>,
+}
+
 type operator = [#">" | #"=" | #"<"]
 
 type updatedEffectCache = {
@@ -46,6 +58,12 @@ type updatedEffectCache = {
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
   updates: array<Internal.inMemoryStoreEntityUpdate<Internal.entity>>,
+}
+
+type effectCacheWriteData = {
+  effect: Internal.effect,
+  items: array<Internal.effectCacheItem>,
+  invalidationsCount: int,
 }
 
 type storage = {
@@ -126,12 +144,26 @@ type storageStatus =
   | Initializing(promise<unit>)
   | Ready(initialState)
 
+type writeArgs = {
+  batch: Batch.t,
+  config: Config.t,
+  isInReorgThreshold: bool,
+  updatedEntities: array<updatedEntity>,
+  rawEvents: array<InternalTable.RawEvents.t>,
+  effectCacheWriteData: array<effectCacheWriteData>,
+  rollbackTargetCheckpointId: option<Internal.checkpointId>,
+  onWriteComplete: bigint => unit,
+}
+
 type t = {
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
   mutable storageStatus: storageStatus,
   mutable storage: storage,
+  mutable writePromise: option<promise<unit>>,
+  mutable pendingWrite: option<writeArgs>,
+  mutable writtenCheckpointId: bigint,
 }
 
 exception StorageError({message: string, reason: exn})
@@ -151,6 +183,9 @@ let make = (
     allEnums,
     storageStatus: Unknown,
     storage,
+    writePromise: None,
+    pendingWrite: None,
+    writtenCheckpointId: 0n,
   }
 }
 
@@ -179,6 +214,7 @@ let init = {
             ~chainConfigs,
           )
           Logging.info(`The indexer storage is ready. Starting indexing!`)
+          persistence.writtenCheckpointId = initialState.checkpointId
           persistence.storageStatus = Ready(initialState)
         } else if (
           // In case of a race condition,
@@ -190,6 +226,7 @@ let init = {
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState()
+          persistence.writtenCheckpointId = initialState.checkpointId
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {
@@ -230,74 +267,41 @@ let writeBatch = (
   persistence,
   ~batch,
   ~config,
-  ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
+  ~updatedEntities,
+  ~rawEvents,
+  ~effectCacheWriteData: array<effectCacheWriteData>,
+  ~rollbackTargetCheckpointId,
 ) =>
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
     JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
-    let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
-      let updates =
-        inMemoryStore
-        ->InMemoryStore.getInMemTable(~entityConfig)
-        ->InMemoryTable.Entity.updates
-      if updates->Utils.Array.isEmpty {
-        None
-      } else {
-        Some({entityConfig, updates})
-      }
-    })
     persistence.storage.writeBatch(
       ~batch,
-      ~rawEvents=inMemoryStore.rawEvents->InMemoryTable.values,
-      ~rollbackTargetCheckpointId=inMemoryStore.rollbackTargetCheckpointId,
+      ~rawEvents,
+      ~rollbackTargetCheckpointId,
       ~isInReorgThreshold,
       ~config,
       ~allEntities=persistence.allEntities,
       ~updatedEntities,
       ~updatedEffectsCache={
-        inMemoryStore.effects
-        ->Dict.keysToArray
-        ->Belt.Array.keepMap(effectName => {
-          let inMemTable = inMemoryStore.effects->Dict.getUnsafe(effectName)
-          let {idsToStore, dict, effect, invalidationsCount} = inMemTable
-          switch idsToStore {
-          | [] => None
-          | ids => {
-              let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
-              ids->Belt.Array.forEachWithIndex((index, id) => {
-                items->Array.setUnsafe(
-                  index,
-                  (
-                    {
-                      id,
-                      output: dict->Dict.getUnsafe(id),
-                    }: Internal.effectCacheItem
-                  ),
-                )
-              })
-              Some({
-                let effectName = effect.name
-                let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(
-                  effectName,
-                ) {
-                | Some(c) => c
-                | None => {
-                    let c = {effectName, count: 0}
-                    cache->Dict.set(effectName, c)
-                    c
-                  }
-                }
-                let shouldInitialize = effectCacheRecord.count === 0
-                effectCacheRecord.count =
-                  effectCacheRecord.count + items->Array.length - invalidationsCount
-                Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
-                {effect, items, shouldInitialize}
-              })
+        effectCacheWriteData->Array.map(({effect, items, invalidationsCount}) => {
+          let effectName = effect.name
+          let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
+          | Some(c) => c
+          | None => {
+              let c = {effectName, count: 0}
+              cache->Dict.set(effectName, c)
+              c
             }
           }
+          let shouldInitialize = effectCacheRecord.count === 0
+          effectCacheRecord.count =
+            effectCacheRecord.count + items->Array.length - invalidationsCount
+          Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
+          {effect, items, shouldInitialize}
         })
       },
     )
@@ -307,59 +311,120 @@ let prepareRollbackDiff = async (
   persistence: t,
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
-) => {
-  let inMemStore = InMemoryStore.make(
-    ~entities=persistence.allEntities,
-    ~rollbackTargetCheckpointId,
-  )
-
-  let deletedEntities = Dict.make()
-  let setEntities = Dict.make()
-
-  let _ =
+): rollbackDiff => {
+  let entityChanges =
     await persistence.allEntities
-    ->Belt.Array.map(async entityConfig => {
-      let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
-
+    ->Array.map(async entityConfig => {
       let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
         ~entityConfig,
         ~rollbackTargetCheckpointId,
       )
 
-      // Process removed IDs
-      removedIdsResult->Array.forEach(data => {
-        deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
-        entityTable->InMemoryTable.Entity.set(
-          Delete({
-            entityId: data["id"],
-            checkpointId: rollbackDiffCheckpointId,
-          }),
-          ~shouldSaveHistory=false,
-          ~containsRollbackDiffChange=true,
-        )
-      })
-
+      let removedIds = removedIdsResult->Array.map(data => data["id"])
       let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
 
-      // Process restored entities
-      restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
-        setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-        entityTable->InMemoryTable.Entity.set(
-          Set({
-            entityId: entity.id,
-            checkpointId: rollbackDiffCheckpointId,
-            entity,
-          }),
-          ~shouldSaveHistory=false,
-          ~containsRollbackDiffChange=true,
-        )
-      })
+      ({entityConfig, removedIds, restoredEntities}: rollbackEntityDiff)
     })
     ->Promise.all
 
-  {
-    "inMemStore": inMemStore,
-    "deletedEntities": deletedEntities,
-    "setEntities": setEntities,
+  {rollbackTargetCheckpointId, rollbackDiffCheckpointId, entityChanges}
+}
+
+let isWriting = persistence => persistence.writePromise !== None
+
+let getLastCheckpointId = (batch: Batch.t) =>
+  switch batch.checkpointIds->Utils.Array.last {
+  | Some(id) => id
+  | None => JsError.throwWithMessage("Unexpected empty batch: no checkpoint IDs")
   }
+
+let rec executeWrite = persistence => {
+  switch persistence.pendingWrite {
+  | None => ()
+  | Some({
+      batch,
+      config,
+      isInReorgThreshold,
+      updatedEntities,
+      rawEvents,
+      effectCacheWriteData,
+      rollbackTargetCheckpointId,
+      onWriteComplete,
+    }) =>
+    persistence.pendingWrite = None
+
+    let logger = Logging.getLogger()
+    let timeRef = Hrtime.makeTimer()
+
+    let promise = (
+      async () => {
+        try {
+          await persistence->writeBatch(
+            ~batch,
+            ~config,
+            ~isInReorgThreshold,
+            ~updatedEntities,
+            ~rawEvents,
+            ~effectCacheWriteData,
+            ~rollbackTargetCheckpointId,
+          )
+
+          persistence.writtenCheckpointId = batch->getLastCheckpointId
+
+          let dbWriteDuration = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+          logger->Logging.childTrace({
+            "msg": "Background write completed",
+            "write_time_elapsed": dbWriteDuration,
+          })
+          Prometheus.ProcessingBatch.setDbWriteDuration(~dbWriteDuration)
+
+          onWriteComplete(persistence.writtenCheckpointId)
+
+          persistence.writePromise = None
+
+          // If a new write was queued during this write, start it
+          executeWrite(persistence)
+        } catch {
+        | StorageError({message, reason}) =>
+          persistence.writePromise = None
+          reason->ErrorHandling.mkLogAndRaise(~msg=message, ~logger)
+        | exn =>
+          persistence.writePromise = None
+          exn->ErrorHandling.mkLogAndRaise(~msg="Failed writing batch to database", ~logger)
+        }
+      }
+    )()
+
+    persistence.writePromise = Some(promise)
+  }
+}
+
+// Queue a write. If not currently writing, starts immediately.
+let startWrite = (persistence, ~writeArgs) => {
+  persistence.pendingWrite = Some(writeArgs)
+  if !isWriting(persistence) {
+    executeWrite(persistence)
+  }
+}
+
+// Await the current write and any pending writes.
+@raises("WriteError")
+let awaitCurrentWrite = async persistence => {
+  let continue = ref(true)
+  while continue.contents {
+    switch persistence.writePromise {
+    | Some(promise) => await promise
+    | None => continue := false
+    }
+  }
+}
+
+// Flush all pending and in-progress writes.
+@raises("WriteError")
+let flushWrites = async persistence => {
+  // Start any pending write that hasn't begun yet
+  if !isWriting(persistence) {
+    executeWrite(persistence)
+  }
+  await awaitCurrentWrite(persistence)
 }

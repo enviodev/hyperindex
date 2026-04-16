@@ -138,9 +138,12 @@ module ProcessingBatch = {
     "help": "Total number of batch writes to storage.",
   })
 
-  let registerMetrics = (~loadDuration, ~handlerDuration, ~dbWriteDuration) => {
-    loadTimeCounter->PromClient.Counter.incMany(loadDuration->(Utils.magic: float => int))
+  let setLoaderAndHandlerDurations = (~loaderDuration, ~handlerDuration) => {
+    loadTimeCounter->PromClient.Counter.incMany(loaderDuration->(Utils.magic: float => int))
     handlerTimeCounter->PromClient.Counter.incMany(handlerDuration->(Utils.magic: float => int))
+  }
+
+  let setDbWriteDuration = (~dbWriteDuration) => {
     writeTimeCounter->PromClient.Counter.incMany(dbWriteDuration->(Utils.magic: float => int))
     writeCount->PromClient.Counter.inc
   }

@@ -19,6 +19,7 @@ let loadByField: (
   ~shouldGroup: bool,
   ~item: Internal.item,
   ~fieldValue: 'fieldValue,
+  ~checkpointId: bigint,
 ) => promise<array<Internal.entity>>
 
 let loadEffect: (

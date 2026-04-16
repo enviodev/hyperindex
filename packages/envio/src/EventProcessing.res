@@ -358,28 +358,13 @@ let runBatchHandlersOrThrow = async (
   }
 }
 
-let registerProcessEventBatchMetrics = (
-  ~logger,
-  ~loadDuration,
-  ~handlerDuration,
-  ~dbWriteDuration,
-) => {
-  logger->Logging.childTrace({
-    "msg": "Finished processing batch",
-    "loader_time_elapsed": loadDuration,
-    "handlers_time_elapsed": handlerDuration,
-    "write_time_elapsed": dbWriteDuration,
-  })
-
-  Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration, ~dbWriteDuration)
-}
-
 type logPartitionInfo = {
   batchSize: int,
   firstItemTimestamp: option<int>,
   firstItemBlockNumber?: int,
   lastItemBlockNumber?: int,
 }
+
 
 let processEventBatch = async (
   ~batch: Batch.t,
@@ -432,30 +417,17 @@ let processEventBatch = async (
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    try {
-      await ctx.persistence->Persistence.writeBatch(
-        ~batch,
-        ~config=ctx.config,
-        ~inMemoryStore,
-        ~isInReorgThreshold,
-      )
+    let loaderDuration = elapsedTimeAfterLoaders
+    let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
 
-      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-      let loaderDuration = elapsedTimeAfterLoaders
-      let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
-      let dbWriteDuration = elapsedTimeAfterDbWrite -. elapsedTimeAfterProcessing
-      registerProcessEventBatchMetrics(
-        ~logger,
-        ~loadDuration=loaderDuration,
-        ~handlerDuration,
-        ~dbWriteDuration,
-      )
-      Ok()
-    } catch {
-    | Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.make(~msg=message, ~logger)->Error
-    | exn => exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
-    }
+    logger->Logging.childTrace({
+      "msg": "Finished processing batch",
+      "loader_time_elapsed": loaderDuration,
+      "handlers_time_elapsed": handlerDuration,
+    })
+    Prometheus.ProcessingBatch.setLoaderAndHandlerDurations(~loaderDuration, ~handlerDuration)
+
+    Ok()
   } catch {
   | ProcessingError({message, exn, item}) =>
     exn
