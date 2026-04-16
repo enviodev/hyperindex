@@ -118,13 +118,14 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
     fs.copyFileSync(localPath, nodePath);
   }
 
+  // Cache the path for child processes (migrations, indexer start)
+  // so they skip pnpm list + cargo build entirely.
+  process.env.ENVIO_NATIVE_ADDON_PATH = nodePath;
+
   return req(nodePath);
 }`)
 
-let loadAddon = () => {
-  let req = createRequire(importMetaUrl)
-  let platformPkg = `envio-${processPlatform}-${processArch}`
-
+let loadAddonNormal = (req, platformPkg) => {
   // ── Production flow ───────────────────────────────────────────────
   // 1. Platform-specific package (envio-linux-x64, envio-darwin-arm64)
   try {
@@ -154,6 +155,26 @@ let loadAddon = () => {
         )
       }
     }
+  }
+}
+
+let loadAddon = () => {
+  let req = createRequire(importMetaUrl)
+  let platformPkg = `envio-${processPlatform}-${processArch}`
+
+  // Step 0: Pre-resolved addon path from parent process.
+  // When the parent already built/loaded the addon, it sets
+  // ENVIO_NATIVE_ADDON_PATH so child processes (migrations, indexer)
+  // skip pnpm list + cargo build entirely.
+  let envAddonPath: option<string> = %raw(`process.env.ENVIO_NATIVE_ADDON_PATH || undefined`)
+  switch envAddonPath {
+  | Some(p) if existsSync(p) =>
+    try {
+      callRequire(req, p)
+    } catch {
+    | _ => loadAddonNormal(req, platformPkg)
+    }
+  | _ => loadAddonNormal(req, platformPkg)
   }
 }
 
