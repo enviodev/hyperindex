@@ -49,13 +49,13 @@ const getBlockEffect = createEffect(
       data = await res.json();
     } catch (error) {
       context.log.warn(`Failed to parse block data`);
-      return undefined;
+      return null;
     }
     const parsedData = S.parseOrThrow(data, getBlockDataSchema);
     if (parsedData.error) {
       throw new Error(parsedData.error);
     }
-    return parsedData.result;
+    return parsedData.result ?? null;
   }
 );
 
