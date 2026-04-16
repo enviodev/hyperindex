@@ -232,6 +232,7 @@ let getSourceNewHeight = async (
   ~isLive,
   ~status: ref<status>,
   ~logger,
+  ~reducedPolling=false,
 ) => {
   let source = sourceState.source
   let initialHeight = sourceState.knownHeight
@@ -294,7 +295,9 @@ let getSourceNewHeight = async (
             sourceState.unsubscribe = Some(unsubscribe)
           | _ =>
             // Slowdown polling when the chain isn't progressing
-            let pollingInterval = if status.contents === Stalled {
+            let pollingInterval = if reducedPolling {
+              60_000
+            } else if status.contents === Stalled {
               sourceManager.stalledPollingInterval
             } else {
               source.pollingInterval
@@ -397,7 +400,7 @@ let getNextSource = (sourceManager, ~isLive, ~excludedSources=?) => {
 }
 
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
-let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
+let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPolling=false) => {
   let {sourcesState} = sourceManager
 
   let logger = Logging.createChild(
@@ -406,13 +409,23 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
       "knownHeight": knownHeight,
     },
   )
-  logger->Logging.childTrace("Initiating check for new blocks.")
+  if reducedPolling {
+    logger->Logging.childTrace(
+      "Waiting for new blocks with reduced polling (60s). Chain is caught up, waiting for other chains to backfill.",
+    )
+  } else {
+    logger->Logging.childTrace("Initiating check for new blocks.")
+  }
 
   let mainSources = sourceManager->getNextSources(~isLive)
 
   let status = ref(Active)
 
-  let stallTimeout = if isLive {
+  // Use a much longer stall timeout when reduced polling is active
+  // to avoid spurious stall warnings while waiting for other chains to backfill
+  let stallTimeout = if reducedPolling {
+    10 * 60_000
+  } else if isLive {
     sourceManager.newBlockStallTimeoutLive
   } else {
     sourceManager.newBlockStallTimeout
@@ -430,6 +443,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
           ~isLive,
           ~status,
           ~logger,
+          ~reducedPolling,
         ),
       )
     })
@@ -479,6 +493,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
                 ~isLive,
                 ~status,
                 ~logger,
+                ~reducedPolling,
               ),
             )
           }),
