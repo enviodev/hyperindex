@@ -52,32 +52,29 @@ jobs:
     steps:
       - run: echo "Authorized"
 
-  # Post pending build-verify status on PRs to block merge until CI
-  # passes. pull_request_target check runs attach to the default
-  # branch SHA (not the PR head), so branch protection can't see them.
-  # This commit status fills the gap — configure branch protection to
-  # require the `build-verify` context.
-  pending-status:
-    if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    permissions:
-      statuses: write
-    steps:
-      - uses: actions/github-script@v8
-        with:
-          script: |
-            const isFork = context.payload.pull_request.head.repo.full_name !== '${{ github.repository }}';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: context.payload.pull_request.head.sha,
-              state: 'pending',
-              context: 'build-verify',
-              description: isFork
-                ? 'Awaiting environment approval and CI'
-                : 'CI running',
-            });
+  # # Commented out: statuses work with branch protection out of the box.
+  # # Restore if branch protection stops seeing pull_request_target checks.
+  # pending-status:
+  #   if: github.event_name == 'pull_request_target'
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 1
+  #   permissions:
+  #     statuses: write
+  #   steps:
+  #     - uses: actions/github-script@v8
+  #       with:
+  #         script: |
+  #           const isFork = context.payload.pull_request.head.repo.full_name !== '${{ github.repository }}';
+  #           await github.rest.repos.createCommitStatus({
+  #             owner: context.repo.owner,
+  #             repo: context.repo.repo,
+  #             sha: context.payload.pull_request.head.sha,
+  #             state: 'pending',
+  #             context: 'build-verify',
+  #             description: isFork
+  #               ? 'Awaiting environment approval and CI'
+  #               : 'CI running',
+  #           });
 
   # ── Build ───────────────────────────────────────────────────────────
 
@@ -384,62 +381,59 @@ jobs:
           details: "E2E Tests Failed on main!"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
 
-  # ── Report ──────────────────────────────────────────────────────────
-
-  # Post aggregate build-verify commit status to the PR head SHA.
-  # pull_request_target check runs attach to the default branch SHA
-  # and are invisible to PR branch protection — this fills the gap.
-  # Skipped on push (check runs already attach to the correct SHA).
-  # Configure branch protection to require `build-verify`.
-  report:
-    if: always() && github.event_name == 'pull_request_target'
-    needs:
-      - authorize
-      - build-linux-package
-      - build-envio-package
-      - cargo-test
-      - template-tests
-      - scenarios-test
-      - e2e-test
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    permissions:
-      statuses: write
-    steps:
-      - name: Post commit status
-        uses: actions/github-script@v8
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-        with:
-          script: |
-            const sha = '${{ github.event.pull_request.head.sha || github.sha }}';
-            const needs = JSON.parse(process.env.RESULTS);
-            const required = [
-              'build-linux-package', 'build-envio-package', 'cargo-test',
-              'template-tests', 'scenarios-test', 'e2e-test',
-            ];
-            const failed = required.filter(n => needs[n]?.result === 'failure');
-            const cancelled = required.filter(n => needs[n]?.result === 'cancelled');
-            let state, description;
-            if (needs.authorize?.result !== 'success') {
-              state = 'error';
-              description = 'authorize job did not succeed';
-            } else if (cancelled.length) {
-              state = 'error';
-              description = `cancelled: ${cancelled.join(', ')}`;
-            } else if (failed.length) {
-              state = 'failure';
-              description = `failed: ${failed.join(', ')}`;
-            } else {
-              state = 'success';
-              description = 'all jobs passed';
-            }
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha,
-              state,
-              context: 'build-verify',
-              description: description.substring(0, 140),
-              target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-            });
+  # # ── Report ──────────────────────────────────────────────────────────
+  #
+  # # Commented out: statuses work with branch protection out of the box.
+  # # Restore if branch protection stops seeing pull_request_target checks.
+  # report:
+  #   if: always() && github.event_name == 'pull_request_target'
+  #   needs:
+  #     - authorize
+  #     - build-linux-package
+  #     - build-envio-package
+  #     - cargo-test
+  #     - template-tests
+  #     - scenarios-test
+  #     - e2e-test
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 1
+  #   permissions:
+  #     statuses: write
+  #   steps:
+  #     - name: Post commit status
+  #       uses: actions/github-script@v8
+  #       env:
+  #         RESULTS: ${{ toJSON(needs) }}
+  #       with:
+  #         script: |
+  #           const sha = '${{ github.event.pull_request.head.sha || github.sha }}';
+  #           const needs = JSON.parse(process.env.RESULTS);
+  #           const required = [
+  #             'build-linux-package', 'build-envio-package', 'cargo-test',
+  #             'template-tests', 'scenarios-test', 'e2e-test',
+  #           ];
+  #           const failed = required.filter(n => needs[n]?.result === 'failure');
+  #           const cancelled = required.filter(n => needs[n]?.result === 'cancelled');
+  #           let state, description;
+  #           if (needs.authorize?.result !== 'success') {
+  #             state = 'error';
+  #             description = 'authorize job did not succeed';
+  #           } else if (cancelled.length) {
+  #             state = 'error';
+  #             description = `cancelled: ${cancelled.join(', ')}`;
+  #           } else if (failed.length) {
+  #             state = 'failure';
+  #             description = `failed: ${failed.join(', ')}`;
+  #           } else {
+  #             state = 'success';
+  #             description = 'all jobs passed';
+  #           }
+  #           await github.rest.repos.createCommitStatus({
+  #             owner: context.repo.owner,
+  #             repo: context.repo.repo,
+  #             sha,
+  #             state,
+  #             context: 'build-verify',
+  #             description: description.substring(0, 140),
+  #             target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+  #           });
