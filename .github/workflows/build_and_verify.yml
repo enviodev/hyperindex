@@ -132,7 +132,7 @@ jobs:
   build-envio-package:
     runs-on: ubuntu-latest
     timeout-minutes: 9
-    needs: build-linux-package
+    needs: authorize
 
     steps:
       - uses: actions/checkout@v6
@@ -214,7 +214,7 @@ jobs:
   # Template tests - verify envio templates can be initialized and built
   template-tests:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: [build-linux-package, build-envio-package]
     timeout-minutes: 9
 
     steps:
@@ -231,7 +231,7 @@ jobs:
   # Requires DB services (postgres + hasura)
   scenarios-test:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: [build-linux-package, build-envio-package]
     timeout-minutes: 9
 
     services:
@@ -305,7 +305,7 @@ jobs:
   # E2E test - runs envio dev with a real indexer scenario
   e2e-test:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: [build-linux-package, build-envio-package]
     timeout-minutes: 9
 
     services:
@@ -386,12 +386,13 @@ jobs:
 
   # ── Report ──────────────────────────────────────────────────────────
 
-  # Post aggregate build-verify commit status to the PR head SHA (or
-  # push SHA). pull_request_target check runs attach to the default
-  # branch SHA and are invisible to PR branch protection — this fills
-  # the gap. Configure branch protection to require `build-verify`.
+  # Post aggregate build-verify commit status to the PR head SHA.
+  # pull_request_target check runs attach to the default branch SHA
+  # and are invisible to PR branch protection — this fills the gap.
+  # Skipped on push (check runs already attach to the correct SHA).
+  # Configure branch protection to require `build-verify`.
   report:
-    if: always()
+    if: always() && github.event_name == 'pull_request_target'
     needs:
       - authorize
       - build-linux-package
