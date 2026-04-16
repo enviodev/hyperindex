@@ -230,8 +230,16 @@ pub mod start {
         let mut env: Vec<(String, String)> = extra_env.to_vec();
         env.push(("ENVIO_CONFIG".to_string(), config_path));
 
-        // Use the JS callback if available (NAPI), otherwise spawn node
-        let script = format!("import('{}')", index_path);
+        // Build an absolute path for the import() call. ESM import()
+        // resolves relative to the importing module's URL (bin.mjs in
+        // pnpm's store), not cwd. Using an absolute path avoids this.
+        let abs_index_path = config
+            .parsed_project_paths
+            .project_root
+            .join(&index_path)
+            .canonicalize()
+            .unwrap_or_else(|_| config.parsed_project_paths.project_root.join(&index_path));
+        let script = format!("import('{}')", to_js_path(&abs_index_path));
         crate::napi::run_js_or_spawn(&script, &config.parsed_project_paths.project_root, &env)
             .await
             .map_err(|e| {

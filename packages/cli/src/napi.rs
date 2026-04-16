@@ -42,6 +42,7 @@ pub async fn run_js_or_spawn(
         );
 
         let full_script = format!("{}{}{}", cwd_setup, env_setup, script);
+        let script_preview: String = script.chars().take(120).collect();
 
         // Use a oneshot channel to wait for the JS callback completion.
         // We can't use call_async directly because its return type (Unknown)
@@ -68,8 +69,13 @@ pub async fn run_js_or_spawn(
         );
 
         rx.await
-            .map_err(|_| anyhow::anyhow!("JS callback channel closed"))?
-            .map_err(|e| anyhow::anyhow!("JS callback failed: {}", e))?;
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "JS callback channel closed unexpectedly.\nScript: {}",
+                    script_preview
+                )
+            })?
+            .map_err(|e| anyhow::anyhow!("JS script failed: {}\nScript: {}", e, script_preview))?;
 
         Ok(())
     } else {
