@@ -12,6 +12,7 @@ const path = require("path");
 // reinstalls envio from packages/envio without rescript build artifacts,
 // dropping new files like src/Migrations.res.mjs.
 const ARTIFACT_DIR = path.join(__dirname, ".envio-artifacts", "envio");
+const PLATFORM_ARTIFACT_DIR = path.join(__dirname, ".envio-artifacts", "envio-linux-x64");
 
 const hooks = {};
 
@@ -28,9 +29,11 @@ if (fs.existsSync(ARTIFACT_DIR)) {
     }
 
     // Redirect envio-linux-x64 in the artifact's optionalDependencies
-    // to the local platform binary artifact
+    // to the local platform NAPI addon artifact. Use an absolute path
+    // because pnpm resolves file: paths relative to its content store,
+    // not the original package location.
     if (pkg.name === "envio" && pkg.optionalDependencies?.["envio-linux-x64"]) {
-      pkg.optionalDependencies["envio-linux-x64"] = "file:../envio-linux-x64";
+      pkg.optionalDependencies["envio-linux-x64"] = `file:${PLATFORM_ARTIFACT_DIR}`;
     }
 
     return pkg;
