@@ -55,57 +55,8 @@ const PUBLISH_FILES = [
   "src",
 ];
 
-/** Production bin.mjs — resolves the platform-specific binary and spawns it. */
-const PRODUCTION_BIN_MJS = `#!/usr/bin/env node
-//@ts-check
-
-import { spawnSync } from "child_process";
-import { createRequire } from "module";
-
-const require = createRequire(import.meta.url);
-
-/**
- * Returns the executable path for envio located inside node_modules.
- * The naming convention is envio-\${os}-\${arch}
- * @see https://nodejs.org/api/os.html#osarch
- * @see https://nodejs.org/api/os.html#osplatform
- * @example "x/xx/node_modules/envio-darwin-arm64"
- */
-function getExePath() {
-  const pkg = \`envio-\${process.platform}-\${process.arch}\`;
-  const bin = "bin/envio";
-
-  try {
-    return require.resolve(\`\${pkg}/\${bin}\`);
-  } catch {}
-
-  throw new Error(
-    \`Couldn't find envio binary package "\${pkg}".\\n\` +
-      \`Checked: require.resolve("\${pkg}/\${bin}")\\n\` +
-      \`If you're using pnpm, yarn, or npm with --omit=optional, ensure optional \` +
-      \`dependencies are installed:\\n\` +
-      \`  npm install \${pkg}\\n\`
-  );
-}
-
-/**
- * Runs \`envio\` with args using nodejs spawn
- */
-function runEnvio() {
-  const args = process.argv.slice(2);
-  const exePath = getExePath();
-
-  const processResult = spawnSync(exePath, args, { stdio: "inherit" });
-
-  if (processResult.error) {
-    console.error(\`Failed to run envio binary at \${exePath}: \${processResult.error.message}\`);
-    process.exit(1);
-  }
-  process.exit(processResult.status ?? 1);
-}
-
-runEnvio();
-`;
+/** Files to copy into the platform packages (envio-{os}-{arch}). */
+const PLATFORM_PKG_FILES = ["bin/envio"] as const;
 
 // ── Core logic ──────────────────────────────────────────────────────
 
@@ -206,15 +157,14 @@ export function build(opts: BuildOptions): void {
     compileRescript(envioDir);
   }
 
-  // 2. Copy publish files to dist
+  // 2. Copy publish files to dist (bin.mjs is now the same for dev and
+  //    production — it imports Core.res.mjs which resolves the NAPI addon)
   copyPublishFiles(envioDir, outDir);
+  // Copy bin.mjs from source (no longer replaced with a production variant)
+  fs.copyFileSync(path.join(envioDir, "bin.mjs"), path.join(outDir, "bin.mjs"));
   console.log(`Copied publish files to ${outDir}`);
 
-  // 3. Write production bin.mjs (replaces the dev version)
-  fs.writeFileSync(path.join(outDir, "bin.mjs"), PRODUCTION_BIN_MJS);
-  console.log("Wrote production bin.mjs");
-
-  // 4. Write publish-ready package.json into dist
+  // 3. Write publish-ready package.json into dist
   const devPkg = JSON.parse(
     fs.readFileSync(path.join(envioDir, "package.json"), "utf-8")
   );

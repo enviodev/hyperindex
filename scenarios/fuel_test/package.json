@@ -6,8 +6,8 @@
     "res:clean": "rescript-legacy clean",
     "res:build": "rescript-legacy",
     "res:watch": "rescript-legacy -w",
-    "codegen": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- codegen",
-    "dev": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- dev",
+    "codegen": "envio codegen",
+    "dev": "envio dev",
     "test": "rescript-legacy && tsc --noEmit && vitest run",
     "start": "envio start"
   },

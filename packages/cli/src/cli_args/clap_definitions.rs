@@ -62,23 +62,9 @@ pub enum CommandType {
     ///Start the indexer without any automatic codegen
     Start(StartArgs),
 
-    /// Inspect the resolved indexer configuration
-    #[command(subcommand)]
-    Config(ConfigSubcommand),
-
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
-}
-
-#[derive(Debug, Subcommand)]
-pub enum ConfigSubcommand {
-    /// Print the resolved indexer configuration as JSON.
-    ///
-    /// NOTE: the printed JSON is an internal format used by HyperIndex's own
-    /// runtime handoff. It is not stable and may change without notice until
-    /// the feature is stabilized.
-    View,
 }
 
 #[derive(Debug, Subcommand)]

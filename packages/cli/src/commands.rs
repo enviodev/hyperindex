@@ -247,11 +247,10 @@ pub mod db_migrate {
     use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
 
     async fn execute_migration(script: &str, config: &SystemConfig) -> anyhow::Result<ExitStatus> {
-        // The Node runtime resolves the indexer config on its own by shelling
-        // out to `envio config view` (see `Config.res::fromConfigView`), so no
-        // JSON payload is injected here. We do forward the config.yaml path via
-        // the `ENVIO_CONFIG` env var so the child CLI picks up the same file
-        // even when spawned from a different cwd.
+        // The Node runtime loads config in-process via the NAPI addon
+        // (Core.getConfigJson → Config.fromConfigView). We forward the
+        // config.yaml path through `ENVIO_CONFIG` so the addon finds the
+        // same file even when cwd differs.
         let current_dir = &config.parsed_project_paths.project_root;
         let config_path = config
             .parsed_project_paths

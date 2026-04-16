@@ -27,9 +27,9 @@ runs:
         name: npm-pkg-envio-linux-x64
         path: .envio-artifacts/envio-linux-x64
 
-    - name: Make binary executable
+    - name: Make NAPI addon readable
       shell: bash
-      run: chmod +x .envio-artifacts/envio-linux-x64/bin/envio
+      run: chmod +r .envio-artifacts/envio-linux-x64/envio.node
 
     - name: Install dependencies
       shell: bash

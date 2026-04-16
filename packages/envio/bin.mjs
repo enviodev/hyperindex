@@ -1,81 +1,16 @@
 #!/usr/bin/env node
-//@ts-check
-"use strict";
 
-import { spawnSync } from "child_process";
-import path from "path";
+// Thin CLI entry point. Loads the envio NAPI addon via Core.res and runs
+// the CLI in-process — no child process spawn.
 
-/**
- * Runs `envio` with args using nodejs spawn
- */
-function runLocalEnvio() {
-  const args = process.argv.slice(2);
+import { runCli } from "./src/Core.res.mjs";
 
-  const caller = process.argv[1];
-  if (!caller.endsWith("/envio/bin.mjs")) {
-    throw new Error(
-      `Unexpected call to local envio package. Either use cargo or use the local package via npm scripts. Caller: ${caller}`
-    );
-  }
-
-  // Use the user's cwd as the pnpm project root. We used to derive it from
-  // `caller`, but pnpm's symlinked layout (node_modules/.pnpm/envio@.../...)
-  // defeats that heuristic. cwd is correct both when the user runs `envio`
-  // themselves and when the Node runtime spawns the CLI during indexer start.
-  const root = process.cwd();
-
-  const pnpmListResult = spawnSync("pnpm", ["list", "envio", "--json"], {
-    cwd: root,
-  });
-  if (pnpmListResult.status !== 0) {
-    throw new Error(
-      `Failed to run pnpm list envio --json. Error: ${pnpmListResult.stderr}`
-    );
-  }
-  let pnpmList;
-  try {
-    const outputString = pnpmListResult.output.toString();
-    // It starts and ends with , so we need to remove it before parsing
-    const jsonString = outputString.slice(1, -1);
-    pnpmList = JSON.parse(jsonString);
-  } catch (e) {
-    throw new Error(
-      `Invalid pnpm list envio --json output. Error: ${e.message}`
-    );
-  }
-
-  let envioVersion;
-  try {
-    envioVersion = pnpmList[0].dependencies["envio"].version;
-  } catch (e) {
-    throw new Error(
-      `Failed to get envio version from pnpm list envio --json output. Error: ${e.message}. Pnpm list: ${pnpmList}`
-    );
-  }
-
-  if (!envioVersion.startsWith("file:")) {
-    throw new Error(
-      `Unexpected envio version. It should have the file: protocol. Actual: ${envioVersion}`
-    );
-  }
-
-  // It should be correctly set by lenvio init command,
-  // so we can rely on it to find a path to the local repository.
-  // We can't use the actual path from the node_modules folder,
-  // because it's stored in the global .pnpm and we can't get a path to binary using it.
-  const relativeLocalEnvioPath = envioVersion.replace("file:", "");
-
-  const processResult = spawnSync(
-    "cargo",
-    [
-      "run",
-      "--manifest-path",
-      path.join(relativeLocalEnvioPath, "../cli/Cargo.toml"),
-      ...args,
-    ],
-    { stdio: "inherit" }
-  );
-  process.exit(processResult.status ?? 0);
+try {
+  const code = await runCli(process.argv.slice(2));
+  process.exit(code);
+} catch (e) {
+  // NAPI surfaces Rust errors as JS exceptions. The error message from
+  // the Rust side is already user-friendly.
+  console.error(e.message || e);
+  process.exit(1);
 }
-
-runLocalEnvio();
