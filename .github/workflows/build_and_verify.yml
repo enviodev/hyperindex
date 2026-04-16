@@ -282,9 +282,6 @@ jobs:
 
       - name: Verify NAPI addon loads
         run: |
-          echo "=== Checking envio-linux-x64 package ==="
-          ls -la node_modules/envio-linux-x64/ 2>/dev/null || echo "NOT FOUND at root"
-          find node_modules/.pnpm -path "*/envio-linux-x64/envio.node" 2>/dev/null | head -3
           echo "=== Testing addon load ==="
           node -e '
             const { createRequire } = require("node:module");
@@ -296,14 +293,38 @@ jobs:
               console.error("Addon load FAILED:", e.message);
             }
           ' 2>&1 || true
-          echo "=== Testing bin.mjs --help ==="
+          echo "=== Testing envio init ==="
+          TMPDIR=$(mktemp -d)
           node -e '
             const { createRequire } = require("node:module");
             const path = require("path");
-            const pkgPath = createRequire(import.meta.url).resolve("envio/package.json");
-            const binMjs = path.resolve(path.dirname(pkgPath), "bin.mjs");
-            console.log("bin.mjs at:", binMjs);
+            const fs = require("fs");
+            const req = createRequire(import.meta.url);
+            const pkgJson = req.resolve("envio/package.json");
+            const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf-8"));
+            const binRel = typeof pkg.bin === "string" ? pkg.bin : pkg.bin.envio;
+            const binAbs = path.resolve(path.dirname(pkgJson), binRel);
+            console.log("bin.mjs:", binAbs);
           ' 2>&1 || true
+          echo "=== Running envio init directly ==="
+          node -e "
+            const { createRequire } = require('node:module');
+            const path = require('path');
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+            const req = createRequire(import.meta.url);
+            const pkgJson = req.resolve('envio/package.json');
+            const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf-8'));
+            const binRel = typeof pkg.bin === 'string' ? pkg.bin : pkg.bin.envio;
+            const binAbs = path.resolve(path.dirname(pkgJson), binRel);
+            try {
+              execSync('node ' + binAbs + ' init -n test-diag -d ${TMPDIR}/test-diag template -t greeter -l typescript', { stdio: 'inherit', timeout: 30000 });
+              console.log('SUCCESS');
+            } catch (e) {
+              console.error('FAILED with code:', e.status);
+            }
+          " 2>&1 || true
+          rm -rf "$TMPDIR"
 
       - name: Run template tests
         working-directory: packages/e2e-tests
