@@ -66,36 +66,28 @@ let findRepoRoot: unit => option<string> = %raw(`function() {
   if (fromFile) return fromFile;
 
   // 3. Decode pnpm store path. When envio is installed via file: protocol,
-  //    pnpm encodes the source path in the directory name:
-  //    envio@file+..+..+hyperindex+packages+envio_react-dom@...
-  //    Decode: file+<path> where + = / (relative to project root)
+  //    pnpm encodes the source path in the directory name. This can be
+  //    double-nested when the generated/ dir's envio points through the
+  //    parent project's pnpm store:
+  //    envio@file+..+node_modules+.pnpm+envio@file+..+..+hyperindex+packages+envio_...
+  //    We extract ALL file+<path> segments, decode each, and try to find
+  //    one that leads to the hyperindex repo root.
   var thisFile = Nodeurl.fileURLToPath(import.meta.url);
-  var parts = thisFile.split(path.sep);
-  for (var i = 0; i < parts.length; i++) {
-    if (parts[i].startsWith("envio@file+")) {
-      // Extract the file: path portion (before the first _)
-      var encoded = parts[i].replace(/^envio@/, "");
-      var filePart = encoded.split("_")[0];
-      // file+..+..+hyperindex+packages+envio → ../../hyperindex/packages/envio
-      var decoded = filePart.replace(/^file\+/, "").replace(/\+/g, path.sep);
-      // Resolve relative to the project that installed envio.
-      // Walk up from thisFile to find the project root (parent of node_modules).
-      // Path: .../food/node_modules/.pnpm/envio@file+.../node_modules/envio/...
-      // We need "food" — the directory that CONTAINS node_modules.
-      for (var j = i - 1; j >= 0; j--) {
-        if (parts[j] === "node_modules" || parts[j] === ".pnpm") {
-          // Skip node_modules/.pnpm pair: project root is before node_modules
-          var rootIdx = (parts[j] === ".pnpm" && j > 0 && parts[j-1] === "node_modules") ? j - 1 : j;
-          var projectRoot = parts.slice(0, rootIdx).join(path.sep) || path.sep;
-          var envioSrc = path.resolve(projectRoot, decoded);
-          var repoRoot = path.resolve(envioSrc, "..", "..");
-          if (fs.existsSync(path.join(repoRoot, "packages", "cli", "Cargo.toml"))) {
-            return repoRoot;
-          }
-          break;
-        }
+  var dirName = thisFile.split(path.sep).find(function(p) { return p.startsWith("envio@file+"); });
+  if (dirName) {
+    // Find all file+<path> segments in the directory name
+    var fileRefs = dirName.match(/file\+[^_]+/g) || [];
+    // Find the top-level node_modules parent for resolving relative paths
+    var nmIdx = thisFile.lastIndexOf(path.sep + "node_modules" + path.sep);
+    var projectRoot = nmIdx >= 0 ? thisFile.substring(0, nmIdx) : process.cwd();
+
+    for (var k = fileRefs.length - 1; k >= 0; k--) {
+      var decoded = fileRefs[k].replace(/^file\+/, "").replace(/\+/g, path.sep);
+      var envioSrc = path.resolve(projectRoot, decoded);
+      var candidate = path.resolve(envioSrc, "..", "..");
+      if (fs.existsSync(path.join(candidate, "packages", "cli", "Cargo.toml"))) {
+        return candidate;
       }
-      break;
     }
   }
 
