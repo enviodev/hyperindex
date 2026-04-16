@@ -76,14 +76,11 @@ export function buildPackageJson(
   delete pkg.private;
   delete pkg.scripts;
 
-  // Remove envio.node from files — it's only used in CI artifacts and
-  // local dev. Production installs get the addon via the platform package
-  // (envio-linux-x64 etc.), not a bundled .node file.
-  if (Array.isArray(pkg.files)) {
-    pkg.files = (pkg.files as string[]).filter((f) => f !== "envio.node");
-  }
-
   // Keep bin pointing to bin.mjs (same path as dev, but production content)
+  // Note: envio.node is listed in files but won't exist in the published
+  // package (production gets the addon via envio-linux-x64). npm/pnpm
+  // silently ignore missing files entries. In CI artifacts, envio.node IS
+  // present and pnpm needs the files entry to install it.
   pkg.bin = "./bin.mjs";
 
   // Add optional platform-specific dependencies
