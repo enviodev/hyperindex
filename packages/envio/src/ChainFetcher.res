@@ -36,6 +36,7 @@ let make = (
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
   ~knownHeight=0,
+  ~useConfigAddresses=true,
 ): t => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -116,17 +117,19 @@ let make = (
     | _ => ()
     }
 
-    contract.addresses->Array.forEach(address => {
-      contracts->Array.push({
-        Internal.address,
-        contractName: contract.name,
-        startBlock: switch contract.startBlock {
-        | Some(startBlock) => startBlock
-        | None => chainConfig.startBlock
-        },
-        registrationBlock: None,
+    if useConfigAddresses {
+      contract.addresses->Array.forEach(address => {
+        contracts->Array.push({
+          Internal.address,
+          contractName: contract.name,
+          startBlock: switch contract.startBlock {
+          | Some(startBlock) => startBlock
+          | None => chainConfig.startBlock
+          },
+          registrationBlock: None,
+        })
       })
-    })
+    }
   })
 
   dynamicContracts->Array.forEach(dc => contracts->Array.push(dc))
@@ -303,6 +306,7 @@ let makeFromDbState = async (
   ~config,
   ~registrations,
   ~targetBufferSize,
+  ~cleanRun,
 ) => {
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
@@ -334,6 +338,7 @@ let makeFromDbState = async (
     ~targetBufferSize,
     ~isInReorgThreshold,
     ~knownHeight=resumedChainState.sourceBlockNumber,
+    ~useConfigAddresses=cleanRun,
   )
 }
 

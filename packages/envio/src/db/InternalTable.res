@@ -195,12 +195,21 @@ WHERE "${(#id: field :> string)}" = $1;`
   -- envio_addresses.id is a composite "{chainId}-{address}" string produced by
   -- Config.EnvioAddresses.makeId; extract the address by taking everything
   -- after the first '-'. Keep in sync with makeId / getAddress.
-  SELECT COALESCE(json_agg(json_build_object(
-    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
-    'contractName', "contract_name",
-    'startBlock', "registration_block",
-    'registrationBlock', "registration_block"
-  )), '[]'::json)
+  SELECT COALESCE(json_agg(
+    CASE WHEN "registration_block" = -1
+      THEN json_build_object(
+        'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
+        'contractName', "contract_name",
+        'startBlock', 0
+      )
+      ELSE json_build_object(
+        'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
+        'contractName', "contract_name",
+        'startBlock', "registration_block",
+        'registrationBlock', "registration_block"
+      )
+    END
+  ), '[]'::json)
   FROM "${pgSchema}"."${EnvioAddresses.table.tableName}"
   WHERE "chain_id" = chains."${(#id: field :> string)}"
 ) as "dynamicContracts"

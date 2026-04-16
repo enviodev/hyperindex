@@ -1252,8 +1252,7 @@ let make = (
       Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
     })
 
-    // Populate config addresses into envio_addresses with registration block/log = -1.
-    // Uses ON CONFLICT DO NOTHING so dynamically registered addresses are not overwritten.
+    // Populate config addresses into envio_addresses with registration_block/log = -1
     let ids = []
     let addrChainIds = []
     let addrContractNames = []
@@ -1269,12 +1268,10 @@ let make = (
       })
     })
     if ids->Array.length > 0 {
-      let negOnes = Array.make(~length=ids->Array.length, -1)
       await sql->Postgres.unpreparedUnsafe(
         `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
-SELECT * FROM unnest($1::text[],$2::int[],$3::int[],$4::int[],$5::text[])
-ON CONFLICT("id") DO NOTHING;`,
-        (ids, addrChainIds, negOnes, negOnes, addrContractNames)->(Utils.magic: _ => unknown),
+SELECT *, -1, -1 FROM unnest($1::text[],$2::int[],$3::text[]);`,
+        (ids, addrChainIds, addrContractNames)->(Utils.magic: _ => unknown),
       )
     }
 
