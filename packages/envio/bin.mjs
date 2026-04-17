@@ -33,7 +33,12 @@ async function handleCommand(id, command, data) {
             process.env[k] = v;
           }
         }
-        await import(data.indexPath);
+        // Index.res exports `promise` — the async main() that runs the
+        // indexer. We await it so Rust knows when the indexer finishes
+        // (or crashes). Without this, import() resolves immediately
+        // after module load and Rust thinks the indexer is done.
+        const indexModule = await import(data.indexPath);
+        await indexModule.promise;
         break;
       }
       default:
