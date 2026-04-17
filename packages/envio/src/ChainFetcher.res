@@ -303,7 +303,6 @@ let makeFromDbState = async (
   ~config,
   ~registrations,
   ~targetBufferSize,
-  ~cleanRun,
 ) => {
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
@@ -316,14 +315,8 @@ let makeFromDbState = async (
       ? resumedChainState.progressBlockNumber
       : resumedChainState.startBlock - 1
 
-  let indexingAddresses = if cleanRun {
-    configAddresses(chainConfig)
-  } else {
-    resumedChainState.indexingAddresses
-  }
-
   make(
-    ~indexingAddresses,
+    ~indexingAddresses=resumedChainState.indexingAddresses,
     ~chainConfig,
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock,

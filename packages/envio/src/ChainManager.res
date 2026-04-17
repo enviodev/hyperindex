@@ -72,7 +72,6 @@ let makeFromDbState = async (
           ~targetBufferSize,
           ~config,
           ~registrations,
-          ~cleanRun=initialState.cleanRun,
         ),
       )
     })
