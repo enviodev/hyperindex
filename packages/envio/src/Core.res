@@ -41,18 +41,25 @@ let callRequire: ({..}, string) => addon = %raw(`(req, id) => req(id)`)
 //
 // This flow is ONLY used when the production paths fail (no platform
 // package, no sibling .node). Production users never reach this code.
-let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
+let loadDevAddon: ({..}, string, string) => addon = %raw(`function(req, platformPkg, envioDir) {
   var cp = Nodechild_process;
   var path = Nodepath;
   var fs = Nodefs;
-  var url = Nodeurl;
 
-  // Derive repo root from this file's location:
-  // Core.res.mjs is at packages/envio/src/ → repo root is ../../..
-  var thisDir = path.dirname(url.fileURLToPath(import.meta.url));
-  var repoRoot = path.resolve(thisDir, "..", "..", "..");
+  // Walk up from envioDir looking for the repo root (has packages/cli/Cargo.toml).
+  // Works whether envioDir is packages/envio or deep in node_modules/.pnpm/.
+  var repoRoot = null;
+  var dir = path.resolve(envioDir);
+  for (var i = 0; i < 10; i++) {
+    dir = path.dirname(dir);
+    if (dir === path.dirname(dir)) break;
+    if (fs.existsSync(path.join(dir, "packages", "cli", "Cargo.toml"))) {
+      repoRoot = dir;
+      break;
+    }
+  }
 
-  if (!fs.existsSync(path.join(repoRoot, "packages", "cli", "Cargo.toml"))) {
+  if (!repoRoot) {
     // Not in the source repo — try pnpm list to find it
     var result;
     try {
@@ -125,8 +132,6 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
 let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
 let resolveRequire: ({..}, string) => string = %raw(`(req, id) => req.resolve(id)`)
 
-// Propagate the resolved .node path via env var so forked processes
-// (vitest forks, pnpm install sub-processes) can skip resolution.
 let propagateAddonPath = (req, id) =>
   try {
     setEnvVar("ENVIO_NATIVE_ADDON_PATH", resolveRequire(req, id))
@@ -134,15 +139,15 @@ let propagateAddonPath = (req, id) =>
   | _ => ()
   }
 
+let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
+
 let loadAddonFromPaths = (req, platformPkg) => {
-  // 1. Platform-specific package (envio-linux-x64, envio-darwin-arm64)
   try {
     let addon = callRequire(req, platformPkg)
     propagateAddonPath(req, platformPkg)
     addon
   } catch {
   | _ =>
-    // 2. Sibling .node file (CI artifact injected post-install)
     let thisFile = fileURLToPath(importMetaUrl)
     let siblingNode = pathJoin2(pathDirname(thisFile), pathJoin2("..", "envio.node"))
     try {
@@ -151,8 +156,9 @@ let loadAddonFromPaths = (req, platformPkg) => {
       addon
     } catch {
     | _ =>
-      // 3. Local dev: pnpm list → cargo build → load
-      switch loadDevAddon(req, platformPkg)->(Utils.magic: addon => option<addon>) {
+      switch loadDevAddon(req, platformPkg, envioPackageDir)->(
+        Utils.magic: addon => option<addon>
+      ) {
       | Some(addon) => addon
       | None =>
         JsError.throwWithMessage(
@@ -172,9 +178,6 @@ let loadAddon = () => {
   let req = createRequire(importMetaUrl)
   let platformPkg = `envio-${processPlatform}-${processArch}`
 
-  // Check env var first — set by parent process after successful load.
-  // Vitest forks and template tests in temp dirs may not resolve the
-  // platform package, but inherit this env var from the parent.
   let envAddonPath: option<string> = %raw(`process.env.ENVIO_NATIVE_ADDON_PATH || undefined`)
   switch envAddonPath {
   | Some(p) if existsSync(p) =>
@@ -188,8 +191,6 @@ let loadAddon = () => {
 }
 
 let addonRef: ref<option<addon>> = ref(None)
-
-let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
 
 let getAddon = () =>
   switch addonRef.contents {
