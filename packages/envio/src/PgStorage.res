@@ -1270,7 +1270,7 @@ let make = (
     if ids->Array.length > 0 {
       await sql->Postgres.unpreparedUnsafe(
         `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
-SELECT *, -1, -1 FROM unnest($1::text[],$2::int[],$3::text[]);`,
+SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::text[]) AS t(id, chain_id, contract_name);`,
         (ids, addrChainIds, addrContractNames)->(Utils.magic: _ => unknown),
       )
     }
