@@ -67,8 +67,10 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       120_000
     );
 
-    // Kill immediately so envio dev doesn't tear down docker before tests query it.
-    // The "Exiting with success" → process.exit(0) path runs docker compose down.
+    // Wait for throttled DB writes (_meta.isReady) to flush after indexing completes
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // Kill so envio dev doesn't tear down docker before tests query it.
     indexerProcess.kill("SIGKILL");
     indexerProcess = null;
 
