@@ -18,7 +18,4 @@ let main = async () => {
   }
 }
 
-// Export the Promise so callers (bin.mjs start-indexer) can await it.
-// When run directly via `node Index.res.mjs`, the Promise keeps the
-// process alive until the indexer finishes or crashes.
-let promise = main()
+main()->ignore

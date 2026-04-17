@@ -22,30 +22,24 @@ async function handleCommand(id, command, data) {
         break;
       }
       case "start-indexer": {
-        // The indexer is a long-running process. Main.start() sets up
-        // event loop tasks and returns immediately — the indexer runs
-        // via async dispatches until all chains finish (endBlock) or
-        // indefinitely (no endBlock).
-        //
-        // We spawn a child node process for this because:
-        // 1. Main.start doesn't return a Promise that tracks completion
-        // 2. The indexer needs its own clean module state (no prom-client
-        //    collisions from migration imports)
-        // 3. The TUI/stdin needs a clean process context
-        const { spawn } = await import("node:child_process");
-        const child = spawn("node", ["--no-warnings", data.indexPath], {
-          cwd: data.cwd,
-          env: { ...process.env, ...data.env },
-          stdio: "inherit",
-        });
-        await new Promise((resolve, reject) => {
-          child.on("close", (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`Indexer exited with code ${code}`));
-          });
-          child.on("error", reject);
-        });
-        break;
+        // Clear prom-client registry — metrics were registered during
+        // migrations (same process), and the indexer re-registers them.
+        const promClient = await import("prom-client");
+        promClient.register.clear();
+
+        if (data.cwd) process.chdir(data.cwd);
+        if (data.env) {
+          for (const [k, v] of Object.entries(data.env)) {
+            process.env[k] = v;
+          }
+        }
+        // Start the indexer. Main.start() sets up event loop tasks and
+        // returns immediately — the indexer runs via async dispatches.
+        // When all chains finish, GlobalState calls process.exit(0).
+        // If it crashes, process.exit(1). We never signalComplete —
+        // the process lifecycle handles termination.
+        await import(data.indexPath);
+        await new Promise(() => {});
       }
       default:
         throw new Error(`Unknown command: ${command}`);
