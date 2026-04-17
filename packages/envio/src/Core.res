@@ -129,64 +129,73 @@ let loadDevAddon: ({..}, string, string) => addon = %raw(`function(req, platform
   return req(nodePath);
 }`)
 
-let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
-let resolveRequire: ({..}, string) => string = %raw(`(req, id) => req.resolve(id)`)
-
-let propagateAddonPath = (req, id) =>
-  try {
-    setEnvVar("ENVIO_NATIVE_ADDON_PATH", resolveRequire(req, id))
-  } catch {
-  | _ => ()
-  }
-
 let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
 
-let loadAddonFromPaths = (req, platformPkg) => {
+// Try require from multiple contexts to handle pnpm's virtual store.
+// In pnpm, import.meta.url resolves deep in node_modules/.pnpm/ where
+// the platform package isn't linked. Requiring from cwd handles pnpm
+// workspaces where deps are hoisted to the project root.
+let makeCwdRequire: unit => {..} = %raw(`() => Nodemodule.createRequire(process.cwd() + "/package.json")`)
+
+let tryRequire = (platformPkg): option<addon> => {
+  let reqFromFile = createRequire(importMetaUrl)
+  // 1. From file location (production npm install)
   try {
-    let addon = callRequire(req, platformPkg)
-    propagateAddonPath(req, platformPkg)
-    addon
+    Some(callRequire(reqFromFile, platformPkg))
   } catch {
   | _ =>
-    let thisFile = fileURLToPath(importMetaUrl)
-    let siblingNode = pathJoin2(pathDirname(thisFile), pathJoin2("..", "envio.node"))
+    // 2. From cwd (pnpm workspace)
     try {
-      let addon = callRequire(req, siblingNode)
-      setEnvVar("ENVIO_NATIVE_ADDON_PATH", siblingNode)
-      addon
+      Some(callRequire(makeCwdRequire(), platformPkg))
     } catch {
     | _ =>
-      switch loadDevAddon(req, platformPkg, envioPackageDir)->(
-        Utils.magic: addon => option<addon>
-      ) {
-      | Some(addon) => addon
-      | None =>
-        JsError.throwWithMessage(
-          `Couldn't load the envio native addon.\n` ++
-          `Tried:\n` ++
-          `  1. require("${platformPkg}") — not installed\n` ++
-          `  2. ${siblingNode} — not found\n` ++
-          `  3. Local dev build via pnpm list — envio is not a local file: dependency\n` ++
-          `Install the envio npm package, or if developing locally, ensure envio is\n` ++ `installed via file: protocol and cargo/pnpm are available.`,
-        )
+      // 3. Sibling .node file (CI artifact)
+      let siblingNode = pathJoin2(envioPackageDir, "envio.node")
+      try {
+        Some(callRequire(reqFromFile, siblingNode))
+      } catch {
+      | _ => None
       }
     }
   }
 }
 
 let loadAddon = () => {
-  let req = createRequire(importMetaUrl)
   let platformPkg = `envio-${processPlatform}-${processArch}`
 
+  // Fast path: pre-resolved addon path from env (CI or parent process)
   let envAddonPath: option<string> = %raw(`process.env.ENVIO_NATIVE_ADDON_PATH || undefined`)
   switch envAddonPath {
   | Some(p) if existsSync(p) =>
+    let req = createRequire(importMetaUrl)
     try {
       callRequire(req, p)
     } catch {
-    | _ => loadAddonFromPaths(req, platformPkg)
+    | _ =>
+      switch tryRequire(platformPkg) {
+      | Some(addon) => addon
+      | None =>
+        switch loadDevAddon(createRequire(importMetaUrl), platformPkg, envioPackageDir)->(
+          Utils.magic: addon => option<addon>
+        ) {
+        | Some(addon) => addon
+        | None =>
+          JsError.throwWithMessage(`Couldn't load the envio native addon. Install the envio npm package.`)
+        }
+      }
     }
-  | _ => loadAddonFromPaths(req, platformPkg)
+  | _ =>
+    switch tryRequire(platformPkg) {
+    | Some(addon) => addon
+    | None =>
+      switch loadDevAddon(createRequire(importMetaUrl), platformPkg, envioPackageDir)->(
+        Utils.magic: addon => option<addon>
+      ) {
+      | Some(addon) => addon
+      | None =>
+        JsError.throwWithMessage(`Couldn't load the envio native addon. Install the envio npm package.`)
+      }
+    }
   }
 }
 
