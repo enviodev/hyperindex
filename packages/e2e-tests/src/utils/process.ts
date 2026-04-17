@@ -145,8 +145,12 @@ export function waitForOutput(
   timeoutMs: number
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    const outputLines: string[] = [];
+
     const onData = (data: Buffer) => {
-      if (data.toString().includes(pattern)) {
+      const text = data.toString();
+      outputLines.push(text);
+      if (text.includes(pattern)) {
         cleanup();
         resolve();
       }
@@ -155,7 +159,14 @@ export function waitForOutput(
     const onClose = (code: number | null) => {
       cleanup();
       if (code === 0) resolve();
-      else reject(new Error(`Process exited with code ${code}`));
+      else {
+        const tail = outputLines.slice(-20).join("");
+        reject(
+          new Error(
+            `Process exited with code ${code}\n--- last output ---\n${tail}`
+          )
+        );
+      }
     };
 
     const timer = setTimeout(() => {
