@@ -154,16 +154,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/prepare-envio-artifacts
 
-      - name: Verify addon in envio package
-        run: |
-          ENVIO_PKG=$(node -e "console.log(require.resolve('envio/package.json').replace('/package.json',''))" 2>/dev/null || echo "NOT FOUND")
-          echo "envio package: $ENVIO_PKG"
-          ls -la "$ENVIO_PKG/envio.node" 2>/dev/null || echo "envio.node NOT in package"
-          ls -la .envio-artifacts/envio/envio.node 2>/dev/null || echo "envio.node NOT in artifacts"
-
       - name: Run scenarios test
         working-directory: scenarios/test_codegen
         run: |
+          # Copy pnpmfile so codegen's pnpm install redirects envio to CI artifact
+          cp ../../.pnpmfile.cjs .pnpmfile.cjs
           pnpm exec envio codegen
           pnpm exec rescript-legacy
           pnpm exec tsc --noEmit
