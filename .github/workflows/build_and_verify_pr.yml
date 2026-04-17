@@ -157,8 +157,9 @@ jobs:
       - name: Run scenarios test
         working-directory: scenarios/test_codegen
         run: |
-          # Copy pnpmfile so codegen's pnpm install redirects envio to CI artifact
-          cp ../../.pnpmfile.cjs .pnpmfile.cjs
+          # Symlink pnpmfile so codegen's pnpm install redirects envio to CI artifact.
+          # Symlink (not copy) so __dirname resolves to the repo root where artifacts live.
+          ln -sf ../../.pnpmfile.cjs .pnpmfile.cjs
           pnpm exec envio codegen
           pnpm exec rescript-legacy
           pnpm exec tsc --noEmit
