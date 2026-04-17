@@ -134,3 +134,6 @@ lib
 *.res.js
 *.res.mjs
 .pnpm-store
+
+# NAPI addon (built by cargo, bundled by CI)
+envio.node

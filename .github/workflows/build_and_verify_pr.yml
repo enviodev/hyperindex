@@ -79,6 +79,15 @@ jobs:
       - name: Build envio package
         run: node packages/build-envio/src/build-artifact.ts --version 0.0.1-dev --out envio-dist
 
+      - name: Bundle NAPI addon into envio package
+        uses: actions/download-artifact@v8
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: .tmp-platform-pkg
+
+      - name: Copy addon
+        run: cp .tmp-platform-pkg/envio.node envio-dist/envio.node
+
       - name: Verify artifact
         run: node packages/build-envio/src/verify-artifact.ts envio-dist
 
@@ -116,13 +125,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/prepare-envio-artifacts
-
-      - name: Verify addon
-        run: |
-          echo "ENVIO_NATIVE_ADDON_PATH=$ENVIO_NATIVE_ADDON_PATH"
-          ls -la "$ENVIO_NATIVE_ADDON_PATH" || echo "Addon not found at env var path"
-          ls -la .envio-artifacts/envio-linux-x64/envio.node || echo "Addon not found in artifacts"
-          ls -la .envio-artifacts/envio/envio.node || echo "Addon not found as sibling"
 
       - name: Run template tests
         working-directory: packages/e2e-tests
