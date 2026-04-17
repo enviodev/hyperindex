@@ -582,6 +582,12 @@ let updateInternal = (
         }
       }
 
+      let mutItems = switch mutItemsRef.contents {
+      | Some(mutItems) => mutItems
+      | None => fetchState.buffer->Array.copy
+      }
+      mutItemsRef := Some(mutItems)
+
       let newItemsCounter = ref(0)
       let latestOnBlockBlockNumber = ref(fetchState.latestOnBlockBlockNumber)
 
@@ -612,17 +618,6 @@ let updateInternal = (
             } &&
             (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockConfig.interval) === 0
           ) {
-            // Lazily allocate mutItems only when we actually have an item to
-            // push. If the onBlock loop yields nothing, we keep the original
-            // buffer reference and skip both the copy and the final sort.
-            let mutItems = switch mutItemsRef.contents {
-            | Some(mutItems) => mutItems
-            | None => {
-                let copy = fetchState.buffer->Array.copy
-                mutItemsRef := Some(copy)
-                copy
-              }
-            }
             mutItems->Array.push(
               Block({
                 onBlockConfig,
