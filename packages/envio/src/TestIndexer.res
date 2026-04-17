@@ -273,12 +273,8 @@ let makeInitialState = (
       JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
     }
 
-    let chainConfig = config.chainMap->ChainMap.get(chain)
     let processChainConfig = processConfigChains->Dict.getUnsafe(chainIdStr)
-    let indexingAddresses =
-      ChainFetcher.configAddresses(chainConfig)->Array.concat(
-        indexingAddressesByChain->Dict.get(chainIdStr)->Option.getOr([]),
-      )
+    let indexingAddresses = indexingAddressesByChain->Dict.get(chainIdStr)->Option.getOr([])
     {
       Persistence.id: chainId,
       startBlock: processChainConfig.startBlock,
@@ -517,6 +513,28 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
       entities->Dict.set(entityConfig.name, Dict.make())
       entityConfigs->Dict.set(entityConfig.name, entityConfig)
     })
+
+    // Populate config addresses into the entity dict, mirroring PgStorage.initialize
+    let envioAddressesDict = entities->Dict.getUnsafe(InternalTable.EnvioAddresses.name)
+    config.chainMap
+    ->ChainMap.values
+    ->Array.forEach(chainConfig => {
+      chainConfig.contracts->Array.forEach(contract => {
+        contract.addresses->Array.forEach(
+          address => {
+            let entity: InternalTable.EnvioAddresses.t = {
+              id: Config.EnvioAddresses.makeId(~chainId=chainConfig.id, ~address),
+              chainId: chainConfig.id,
+              contractName: contract.name,
+              registrationBlock: -1,
+              registrationLogIndex: -1,
+            }
+            envioAddressesDict->Dict.set(entity.id, entity->Config.EnvioAddresses.castToInternal)
+          },
+        )
+      })
+    })
+
     let state = {
       processInProgress: false,
       progressBlockByChain: Dict.make(),
@@ -582,9 +600,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                   `Cannot access ${contract.name}.addresses while indexer.process() is running. ` ++ "Wait for process() to complete before reading contract addresses.",
                 )
               }
-              // Start with static config addresses
-              let addresses = contract.addresses->Array.copy
-              // Add accumulated dynamic contract addresses
+              let addresses = []
               switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
               | Some(dcDict) =>
                 dcDict
