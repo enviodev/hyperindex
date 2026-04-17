@@ -273,11 +273,17 @@ let makeInitialState = (
       JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
     }
 
+    let chainConfig = config.chainMap->ChainMap.get(chain)
     let processChainConfig = processConfigChains->Dict.getUnsafe(chainIdStr)
-    let indexingAddresses =
+    let dbAddresses =
       indexingAddressesByChain
       ->Dict.get(chainIdStr)
       ->Option.getOr([])
+    let indexingAddresses = if dbAddresses->Array.length > 0 {
+      dbAddresses
+    } else {
+      ChainFetcher.configAddresses(chainConfig)
+    }
     {
       Persistence.id: chainId,
       startBlock: processChainConfig.startBlock,

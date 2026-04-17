@@ -666,11 +666,15 @@ describe("E2E rollback tests", () => {
         },
       ],
     ))
+    // Config addresses are populated during init; filter them out to check
+    // that no dynamic contracts have been stored yet
     t.expect(
       await (
         indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
           array<InternalTable.EnvioAddresses.t>,
         >
+      )->Promise.thenResolve(rows =>
+        rows->Array.filter(r => r.registrationBlock !== -1)
       ),
       ~message="Shouldn't store dynamic contracts at this point",
     ).toEqual([])
