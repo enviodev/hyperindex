@@ -1558,4 +1558,140 @@ describe("E2E tests", () => {
       })
     },
   )
+
+  Async.it(
+    "Multichain with reorg: staggered chain catch-up still enters reorg threshold",
+    async t => {
+      let sourceMock1337 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock100 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock1337.source]),
+          },
+          {
+            chain: #100,
+            sourceConfig: Config.CustomSources([sourceMock100.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      // Chain 1337 catches up first
+      await MockIndexer.Helper.initialEnterReorgThreshold(
+        ~t,
+        ~indexerMock,
+        ~sourceMock=sourceMock1337,
+      )
+
+      // System should NOT be in reorg threshold yet (chain 100 still backfilling)
+      t.expect(
+        await indexerMock.metric("envio_reorg_threshold"),
+        ~message="Should not be in reorg threshold while chain 100 is still backfilling",
+      ).toEqual([{value: "0", labels: Dict.make()}])
+
+      // Now chain 100 catches up
+      await MockIndexer.Helper.initialEnterReorgThreshold(
+        ~t,
+        ~indexerMock,
+        ~sourceMock=sourceMock100,
+      )
+
+      // System should now be in reorg threshold
+      t.expect(
+        await indexerMock.metric("envio_reorg_threshold"),
+        ~message="Should be in reorg threshold after both chains caught up",
+      ).toEqual([{value: "1", labels: Dict.make()}])
+
+      // Chains are at block 100, need to advance to 300 after threshold entry
+      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(
+        await indexerMock.metric("hyperindex_synced_to_head"),
+        ~message="All chains should be synced to head after advancing to block 300",
+      ).toEqual([{value: "1", labels: Dict.make()}])
+    },
+  )
+
+  Async.it(
+    "Multichain without reorg: staggered chain catch-up reports readiness correctly",
+    async t => {
+      let sourceMock1337 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock100 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock1337.source]),
+          },
+          {
+            chain: #100,
+            sourceConfig: Config.CustomSources([sourceMock100.source]),
+          },
+        ],
+        ~shouldRollbackOnReorg=false,
+      )
+      await Utils.delay(0)
+
+      // Without reorg, chains don't use blockLag so they fetch from startBlock to knownHeight
+      // Chain 1337 catches up first
+      t.expect(sourceMock1337.getHeightOrThrowCalls->Array.length).toEqual(1)
+      sourceMock1337.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await indexerMock.getBatchWritePromise()
+
+      // Chain 1337 should be ready, chain 100 should not
+      t.expect(
+        await indexerMock.metric("envio_progress_ready"),
+        ~message="Only chain 1337 should be ready",
+      ).toEqual([
+        {value: "0", labels: Dict.fromArray([("chainId", "100")])},
+        {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
+      ])
+      t.expect(
+        await indexerMock.metric("hyperindex_synced_to_head"),
+        ~message="Not all chains synced yet",
+      ).toEqual([{value: "0", labels: Dict.make()}])
+
+      // Chain 100 catches up
+      t.expect(sourceMock100.getHeightOrThrowCalls->Array.length).toEqual(1)
+      sourceMock100.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await indexerMock.getBatchWritePromise()
+
+      // Both chains should now be ready
+      t.expect(
+        await indexerMock.metric("envio_progress_ready"),
+        ~message="Both chains should be ready",
+      ).toEqual([
+        {value: "1", labels: Dict.fromArray([("chainId", "100")])},
+        {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
+      ])
+      t.expect(
+        await indexerMock.metric("hyperindex_synced_to_head"),
+        ~message="All chains should be synced to head",
+      ).toEqual([{value: "1", labels: Dict.make()}])
+    },
+  )
 })
