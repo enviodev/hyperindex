@@ -40,8 +40,9 @@ function verify(dir: string): void {
     }
   }
 
-  // Check no unexpected top-level files/dirs leaked in
-  const allowed = new Set(REQUIRED_FILES);
+  // Check no unexpected top-level files/dirs leaked in.
+  // envio.node is optional — present in CI artifacts, stripped for production.
+  const allowed = new Set([...REQUIRED_FILES, "envio.node"]);
   for (const entry of fs.readdirSync(dir)) {
     if (!allowed.has(entry)) {
       errors.push(`Unexpected file in artifact: ${entry}`);
