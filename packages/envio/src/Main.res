@@ -214,7 +214,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
               switch getInitialChainState(~chainId=chainConfig.id) {
               | Some(chainState) =>
                 let addresses = contract.addresses->Array.copy
-                chainState.dynamicContracts->Array.forEach(
+                chainState.indexingAddresses->Array.forEach(
                   dc => {
                     if dc.contractName === contract.name {
                       addresses->Array.push(dc.address)->ignore

@@ -262,7 +262,7 @@ let handleWriteBatch = (
 let makeInitialState = (
   ~config: Config.t,
   ~processConfigChains: dict<chainConfig>,
-  ~dynamicContractsByChain: dict<array<Internal.indexingContract>>,
+  ~indexingAddressesByChain: dict<array<Internal.indexingContract>>,
 ): Persistence.initialState => {
   let chainKeys = processConfigChains->Dict.keysToArray
   let chains = chainKeys->Array.map(chainIdStr => {
@@ -274,8 +274,8 @@ let makeInitialState = (
     }
 
     let processChainConfig = processConfigChains->Dict.getUnsafe(chainIdStr)
-    let dynamicContracts =
-      dynamicContractsByChain
+    let indexingAddresses =
+      indexingAddressesByChain
       ->Dict.get(chainIdStr)
       ->Option.getOr([])
     {
@@ -288,7 +288,7 @@ let makeInitialState = (
       numEventsProcessed: 0.,
       firstEventBlockNumber: None,
       timestampCaughtUpToHeadOrEndblock: None,
-      dynamicContracts,
+      indexingAddresses,
     }
   })
 
@@ -702,7 +702,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             chains->Dict.set(chainIdStr, processChainConfig)
 
             // Extract dynamic contracts from state.entities for each chain
-            let dynamicContractsByChain: dict<array<Internal.indexingContract>> = Dict.make()
+            let indexingAddressesByChain: dict<array<Internal.indexingContract>> = Dict.make()
             switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
             | Some(dcDict) =>
               dcDict
@@ -710,11 +710,11 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
               ->Array.forEach(entity => {
                 let dc = entity->castToEnvioAddresses
                 let dcChainIdStr = dc.chainId->Int.toString
-                let contracts = switch dynamicContractsByChain->Dict.get(dcChainIdStr) {
+                let contracts = switch indexingAddressesByChain->Dict.get(dcChainIdStr) {
                 | Some(arr) => arr
                 | None =>
                   let arr = []
-                  dynamicContractsByChain->Dict.set(dcChainIdStr, arr)
+                  indexingAddressesByChain->Dict.set(dcChainIdStr, arr)
                   arr
                 }
                 contracts->Array.push(dc->toIndexingContract)->ignore
@@ -725,7 +725,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             let initialState = makeInitialState(
               ~config,
               ~processConfigChains=chains,
-              ~dynamicContractsByChain,
+              ~indexingAddressesByChain,
             )
 
             Promise.make((resolve, reject) => {

@@ -173,7 +173,7 @@ WHERE "${(#id: field :> string)}" = $1;`
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     numEventsProcessed: float,
     progressBlockNumber: int,
-    dynamicContracts: array<Internal.indexingContract>,
+    indexingAddresses: array<Internal.indexingContract>,
     sourceBlockNumber: int,
   }
 
@@ -203,7 +203,7 @@ WHERE "${(#id: field :> string)}" = $1;`
   )), '[]'::json)
   FROM "${pgSchema}"."${EnvioAddresses.table.tableName}"
   WHERE "chain_id" = chains."${(#id: field :> string)}"
-) as "dynamicContracts"
+) as "indexingAddresses"
 FROM "${pgSchema}"."${table.tableName}" as chains;`
   }
 

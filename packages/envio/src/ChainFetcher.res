@@ -319,7 +319,7 @@ let makeFromDbState = async (
   let indexingAddresses = if cleanRun {
     configAddresses(chainConfig)
   } else {
-    resumedChainState.dynamicContracts
+    resumedChainState.indexingAddresses
   }
 
   make(
