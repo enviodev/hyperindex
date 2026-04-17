@@ -544,7 +544,7 @@ let compareBufferItem = (a: Internal.item, b: Internal.item) => {
 // Some big number which should be bigger than any log index
 let blockItemLogIndex = 16777216
 
-let numAddresses = fetchState => fetchState.indexingContracts->Dict.keysToArray->Array.length
+let numAddresses = fetchState => fetchState.indexingContracts->Utils.Dict.size
 
 /*
 Update fetchState, merge registers and recompute derived values.
@@ -582,12 +582,6 @@ let updateInternal = (
         }
       }
 
-      let mutItems = switch mutItemsRef.contents {
-      | Some(mutItems) => mutItems
-      | None => fetchState.buffer->Array.copy
-      }
-      mutItemsRef := Some(mutItems)
-
       let newItemsCounter = ref(0)
       let latestOnBlockBlockNumber = ref(fetchState.latestOnBlockBlockNumber)
 
@@ -618,6 +612,17 @@ let updateInternal = (
             } &&
             (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockConfig.interval) === 0
           ) {
+            // Lazily allocate mutItems only when we actually have an item to
+            // push. If the onBlock loop yields nothing, we keep the original
+            // buffer reference and skip both the copy and the final sort.
+            let mutItems = switch mutItemsRef.contents {
+            | Some(mutItems) => mutItems
+            | None => {
+                let copy = fetchState.buffer->Array.copy
+                mutItemsRef := Some(copy)
+                copy
+              }
+            }
             mutItems->Array.push(
               Block({
                 onBlockConfig,
@@ -1566,7 +1571,7 @@ let make = (
     )
   }
 
-  let numAddresses = indexingContracts->Dict.keysToArray->Array.length
+  let numAddresses = indexingContracts->Utils.Dict.size
   Prometheus.IndexingAddresses.set(~addressesCount=numAddresses, ~chainId)
   Prometheus.IndexingPartitions.set(
     ~partitionsCount=optimizedPartitions->OptimizedPartitions.count,
@@ -1708,7 +1713,7 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
           }
         })
 
-        if rollbackedAddressesByContractName->Dict.keysToArray->Array.length > 0 {
+        if !(rollbackedAddressesByContractName->Utils.Dict.isEmpty) {
           let id = nextKeptIdRef.contents->Int.toString
           nextKeptIdRef := nextKeptIdRef.contents + 1
           keptPartitions

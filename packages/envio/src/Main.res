@@ -505,6 +505,28 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   })
 
   let runtimeRegistry = PromClient.makeRegistry()
+
+  // Wrap perf_hooks.monitorEventLoopDelay so we can capture the histogram
+  // created by prom-client's default eventloop-lag metric and reset it
+  // periodically. Dashboards that aggregate the scraped p99 over long
+  // windows otherwise see a monotonically non-decreasing worst-case that
+  // hides whether current indexer behavior has improved.
+  let _: unit = %raw(`(() => {
+    const perfHooks = require('node:perf_hooks');
+    const origMonitor = perfHooks.monitorEventLoopDelay;
+    if (!origMonitor) return;
+    let captured = null;
+    perfHooks.monitorEventLoopDelay = function (opts) {
+      const h = origMonitor(opts);
+      captured = h;
+      return h;
+    };
+    const hourMs = 60 * 60 * 1000;
+    setInterval(() => {
+      if (captured) captured.reset();
+    }, hourMs).unref();
+  })()`)
+
   PromClient.collectDefaultMetrics({"register": runtimeRegistry})
 
   app->get("/metrics", (_req, res) => {
