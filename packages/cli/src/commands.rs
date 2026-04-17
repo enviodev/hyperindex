@@ -253,19 +253,19 @@ pub mod start {
     }
 }
 pub mod db_migrate {
-    use anyhow::Context;
-
     use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
 
     pub async fn run_up_migrations(
         _config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        crate::napi::queue_command("migration-up", serde_json::json!({ "reset": false }));
-        persisted_state
-            .upsert_to_db()
-            .await
-            .context("Failed to upsert persisted state table")?;
+        crate::napi::queue_command(
+            "migration-up",
+            serde_json::json!({
+                "reset": false,
+                "persistedState": persisted_state,
+            }),
+        );
         Ok(())
     }
 
@@ -278,11 +278,13 @@ pub mod db_migrate {
         _config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        crate::napi::queue_command("migration-up", serde_json::json!({ "reset": true }));
-        persisted_state
-            .upsert_to_db()
-            .await
-            .context("Failed to upsert persisted state table")?;
+        crate::napi::queue_command(
+            "migration-up",
+            serde_json::json!({
+                "reset": true,
+                "persistedState": persisted_state,
+            }),
+        );
         Ok(())
     }
 }

@@ -18,6 +18,10 @@ let executeCommand = async (command: command) => {
         ->Option.flatMap(JSON.Decode.bool)
         ->Option.getOr(false)
       let _code = await Migrations.runUpMigrations(~shouldExit=false, ~reset)
+      switch get("persistedState") {
+      | Some(ps) => await Core.upsertPersistedState(ps->JSON.stringify)
+      | None => ()
+      }
     }
   | "migration-down" => {
       let _code = await Migrations.runDownMigrations(~shouldExit=false)
@@ -53,12 +57,25 @@ let executeCommand = async (command: command) => {
 }
 
 let run = async args => {
-  let commandsJson = await Core.runCli(args)
-  let commands =
-    commandsJson
-    ->JSON.parseOrThrow
-    ->(Utils.magic: JSON.t => array<command>)
-  for i in 0 to commands->Array.length - 1 {
-    await executeCommand(commands->Array.getUnsafe(i))
+  try {
+    let commandsJson = await Core.runCli(args)
+    let commands =
+      commandsJson
+      ->JSON.parseOrThrow
+      ->(Utils.magic: JSON.t => array<command>)
+    for i in 0 to commands->Array.length - 1 {
+      await executeCommand(commands->Array.getUnsafe(i))
+    }
+  } catch {
+  | JsExn(e) =>
+    let msg = e->(Utils.magic: unknown => JsError.t)->JsError.message
+
+    // Clap help/version output — not an error
+    if msg === "__exit_0__" {
+      NodeJs.process->NodeJs.exitWithCode(Success)
+    } else {
+      Console.error(msg)
+      NodeJs.process->NodeJs.exitWithCode(Failure)
+    }
   }
 }

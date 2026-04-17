@@ -12,6 +12,7 @@ type addon = {
   getConfigJson: (Nullable.t<string>, Nullable.t<string>, Nullable.t<string>) => string,
   // Returns JSON array of commands for JS to execute: [["command", {...data}], ...]
   runCli: (array<string>, Nullable.t<string>) => promise<string>,
+  upsertPersistedState: string => promise<unit>,
 }
 
 // ESM-safe Node imports. @module compiles to top-level `import` statements.
@@ -218,4 +219,9 @@ let getConfigJson = (~configPath=?, ~directory=?) => {
 let runCli = args => {
   let addon = getAddon()
   addon.runCli(args, Nullable.Value(envioPackageDir))
+}
+
+let upsertPersistedState = json => {
+  let addon = getAddon()
+  addon.upsertPersistedState(json)
 }

@@ -45,6 +45,19 @@ pub fn get_config_json(
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
 }
 
+/// Upsert persisted state to the database.
+/// Called from JS after migrations have run (tables exist).
+#[napi_derive::napi]
+pub async fn upsert_persisted_state(json: String) -> napi::Result<()> {
+    let state: crate::persisted_state::PersistedState = serde_json::from_str(&json)
+        .map_err(|e| napi::Error::from_reason(format!("Failed to parse persisted state: {e}")))?;
+    state
+        .upsert_to_db()
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("Failed to upsert persisted state: {e}")))?;
+    Ok(())
+}
+
 /// Run the envio CLI. Returns a JSON array of commands for JS to execute:
 /// `[["migration-up", {"reset": false}], ["start-indexer", {"indexPath": "..."}]]`
 ///
