@@ -10,7 +10,7 @@
 
 type addon = {
   getConfigJson: (Nullable.t<string>, Nullable.t<string>, Nullable.t<string>) => string,
-  runCli: (array<string>, Nullable.t<string>, string => promise<unit>) => promise<int>,
+  runCli: (array<string>, Nullable.t<string>) => promise<int>,
 }
 
 // ESM-safe Node imports. @module compiles to top-level `import` statements.
@@ -201,7 +201,7 @@ let getConfigJson = (~configPath=?, ~directory=?) => {
   )
 }
 
-let runCli = (args, ~runJs) => {
+let runCli = args => {
   let addon = getAddon()
-  addon.runCli(args, Nullable.Value(envioPackageDir), runJs)
+  addon.runCli(args, Nullable.Value(envioPackageDir))
 }
