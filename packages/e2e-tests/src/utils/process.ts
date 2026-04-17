@@ -171,7 +171,8 @@ export function waitForOutput(
 
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error(`Timed out waiting for "${pattern}" after ${timeoutMs}ms`));
+      const tail = outputLines.slice(-30).join("");
+      reject(new Error(`Timed out waiting for "${pattern}" after ${timeoutMs}ms\n--- last output ---\n${tail}`));
     }, timeoutMs);
 
     function cleanup() {
