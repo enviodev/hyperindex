@@ -405,7 +405,8 @@ type indexingContract = {
   address: Address.t,
   contractName: string,
   startBlock: int,
-  // -1 for config addresses that shouldn't be rolled back
+  // Needed for rollback.
+  // -1 for config addresses that shouldn't be rolled back.
   registrationBlock: int,
 }
 
