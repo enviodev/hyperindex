@@ -41,7 +41,7 @@ external castToEnvioAddresses: Internal.entity => InternalTable.EnvioAddresses.t
 let toIndexingContract = (dc: InternalTable.EnvioAddresses.t): Internal.indexingContract => {
   address: dc->Config.EnvioAddresses.getAddress,
   contractName: dc.contractName,
-  startBlock: dc.startBlock,
+  startBlock: Pervasives.max(dc.registrationBlock, 0),
   registrationBlock: dc.registrationBlock === -1 ? None : Some(dc.registrationBlock),
 }
 
