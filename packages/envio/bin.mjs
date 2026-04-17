@@ -22,7 +22,11 @@ async function handleCommand(id, command, data) {
         break;
       }
       case "start-indexer": {
-        // Set env vars before importing the indexer
+        // Clear prom-client registry — metrics were registered during
+        // migrations (same process), and the indexer re-registers them.
+        const promClient = await import("prom-client");
+        promClient.register.clear();
+
         if (data.cwd) process.chdir(data.cwd);
         if (data.env) {
           for (const [k, v] of Object.entries(data.env)) {
