@@ -41,52 +41,59 @@ let callRequire: ({..}, string) => addon = %raw(`(req, id) => req(id)`)
 //
 // This flow is ONLY used when the production paths fail (no platform
 // package, no sibling .node). Production users never reach this code.
-// It uses the same `pnpm list envio --json` approach as the old bin.mjs
-// to reliably find the source repo regardless of cwd or pnpm store layout.
 let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
   var cp = Nodechild_process;
   var path = Nodepath;
   var fs = Nodefs;
+  var url = Nodeurl;
 
-  var result;
-  try {
-    result = cp.execSync("pnpm list envio --json", {
-      encoding: "utf8",
-      timeout: 10000,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  } catch (e) {
-    return null;
-  }
-
-  var parsed;
-  try {
-    var jsonStr = result.trim();
-    if (jsonStr.startsWith(",")) jsonStr = jsonStr.slice(1);
-    if (jsonStr.endsWith(",")) jsonStr = jsonStr.slice(0, -1);
-    parsed = JSON.parse(jsonStr);
-  } catch (e) {
-    return null;
-  }
-
-  var envioVersion;
-  try {
-    var pkg = Array.isArray(parsed) ? parsed[0] : parsed;
-    envioVersion = (pkg.dependencies || pkg.devDependencies || {}).envio.version;
-  } catch (e) {
-    return null;
-  }
-
-  if (!envioVersion || !envioVersion.startsWith("file:")) {
-    return null;
-  }
-
-  var envioSrcRelative = envioVersion.replace("file:", "");
-  var envioSrc = path.resolve(envioSrcRelative);
-  var repoRoot = path.resolve(envioSrc, "..", "..");
+  // Derive repo root from this file's location:
+  // Core.res.mjs is at packages/envio/src/ → repo root is ../../..
+  var thisDir = path.dirname(url.fileURLToPath(import.meta.url));
+  var repoRoot = path.resolve(thisDir, "..", "..", "..");
 
   if (!fs.existsSync(path.join(repoRoot, "packages", "cli", "Cargo.toml"))) {
-    return null;
+    // Not in the source repo — try pnpm list to find it
+    var result;
+    try {
+      result = cp.execSync("pnpm list envio --json", {
+        encoding: "utf8",
+        timeout: 10000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch (e) {
+      return null;
+    }
+
+    var parsed;
+    try {
+      var jsonStr = result.trim();
+      if (jsonStr.startsWith(",")) jsonStr = jsonStr.slice(1);
+      if (jsonStr.endsWith(",")) jsonStr = jsonStr.slice(0, -1);
+      parsed = JSON.parse(jsonStr);
+    } catch (e) {
+      return null;
+    }
+
+    var envioVersion;
+    try {
+      var pkg = Array.isArray(parsed) ? parsed[0] : parsed;
+      envioVersion = (pkg.dependencies || pkg.devDependencies || {}).envio.version;
+    } catch (e) {
+      return null;
+    }
+
+    if (!envioVersion || !envioVersion.startsWith("file:")) {
+      return null;
+    }
+
+    var envioSrcRelative = envioVersion.replace("file:", "");
+    var envioSrc = path.resolve(envioSrcRelative);
+    repoRoot = path.resolve(envioSrc, "..", "..");
+
+    if (!fs.existsSync(path.join(repoRoot, "packages", "cli", "Cargo.toml"))) {
+      return null;
+    }
   }
 
   var cliDir = path.join(repoRoot, "packages", "cli");
