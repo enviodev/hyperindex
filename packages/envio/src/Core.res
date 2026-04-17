@@ -125,18 +125,31 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
   return req(nodePath);
 }`)
 
+// Set addon path in env for child processes (migrations, indexer start)
+let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
+let resolveRequire: ({..}, string) => string = %raw(`(req, id) => req.resolve(id)`)
+
 let loadAddonNormal = (req, platformPkg) => {
   // ── Production flow ───────────────────────────────────────────────
   // 1. Platform-specific package (envio-linux-x64, envio-darwin-arm64)
   try {
-    callRequire(req, platformPkg)
+    let addon = callRequire(req, platformPkg)
+    // Propagate the resolved .node path for child processes
+    try {
+      setEnvVar("ENVIO_NATIVE_ADDON_PATH", resolveRequire(req, platformPkg))
+    } catch {
+    | _ => ()
+    }
+    addon
   } catch {
   | _ =>
     // 2. Sibling .node file (CI artifact injected post-install)
     let thisFile = fileURLToPath(importMetaUrl)
     let siblingNode = pathJoin2(pathDirname(thisFile), pathJoin2("..", "envio.node"))
     try {
-      callRequire(req, siblingNode)
+      let addon = callRequire(req, siblingNode)
+      setEnvVar("ENVIO_NATIVE_ADDON_PATH", siblingNode)
+      addon
     } catch {
     | _ =>
       // ── Local dev flow ──────────────────────────────────────────────
