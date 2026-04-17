@@ -396,6 +396,11 @@ pub fn get_envio_version() -> Result<String> {
     // the envio package directory (resolved from import.meta.url). This
     // is the most reliable path — current_exe() points to Node, and
     // current_dir() may be a temp dir (template tests run from /tmp/).
+    //
+    // Return relative to cwd (the project root) so the generated package
+    // resolves to the SAME envio instance as the parent — avoiding
+    // duplicate module instances that break shared registries
+    // (HandlerRegister, Prometheus metrics).
     if let Ok(pkg_dir) = env::var("ENVIO_PACKAGE_DIR") {
         let pkg = PathBuf::from(&pkg_dir);
         if pkg.is_dir() {
