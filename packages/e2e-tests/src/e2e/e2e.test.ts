@@ -58,6 +58,9 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
         ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
         // First run: no DB state yet, fallback returns the config endBlock
         E2E_EXPECTED_END_BLOCK: "10861774",
+        // Flush chain metadata immediately (no throttle) so isReady
+        // is in the DB before the test kills the process.
+        ENVIO_THROTTLE_CHAIN_METADATA_INTERVAL_MILLIS: "0",
       },
     });
 
