@@ -247,18 +247,8 @@ pub mod start {
             "env": env_map,
         });
 
-        crate::napi::run_command("start-indexer", &data)
-            .await
-            .map_err(|e| {
-                anyhow!(
-                    "Indexer crashed: {e}\nFor more details, restart with 'TUI_OFF=true envio start'."
-                )
-            })?;
+        crate::napi::queue_command("start-indexer", data);
 
-        println!(
-            "\nIndexer has successfully finished processing all events on all chains. Exiting \
-             process."
-        );
         Ok(())
     }
 }
@@ -271,9 +261,7 @@ pub mod db_migrate {
         _config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        crate::napi::run_command("migration-up", &serde_json::json!({ "reset": false }))
-            .await
-            .context("Failed to run db migrations")?;
+        crate::napi::queue_command("migration-up", serde_json::json!({ "reset": false }));
         persisted_state
             .upsert_to_db()
             .await
@@ -282,19 +270,15 @@ pub mod db_migrate {
     }
 
     pub async fn run_drop_schema(_config: &SystemConfig) -> anyhow::Result<()> {
-        crate::napi::run_command("migration-down", &serde_json::json!({}))
-            .await
-            .context("Failed to drop schema")
+        crate::napi::queue_command("migration-down", serde_json::json!({}));
+        Ok(())
     }
 
     pub async fn run_db_setup(
         _config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        crate::napi::run_command("migration-up", &serde_json::json!({ "reset": true }))
-            .await
-            .context("Failed to run db setup")?;
-
+        crate::napi::queue_command("migration-up", serde_json::json!({ "reset": true }));
         persisted_state
             .upsert_to_db()
             .await
