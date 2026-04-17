@@ -4082,7 +4082,6 @@ snapshots:
       postgres: 3.4.8
       prom-client: 15.1.3
       rescript: 12.2.0
-      rescript-envsafe: 5.0.0(rescript-schema@9.5.1(rescript@12.2.0))(rescript@12.2.0)
       rescript-schema: 9.5.1(rescript@12.2.0)
       tsx: 4.21.0
       viem: 2.46.2(typescript@5.9.3)
