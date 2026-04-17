@@ -126,7 +126,7 @@ let make = (
           | Some(startBlock) => startBlock
           | None => chainConfig.startBlock
           },
-          registrationBlock: None,
+          registrationBlock: -1,
         })
       })
     }
@@ -377,7 +377,7 @@ let runContractRegistersOrThrow = async (
       address: contractAddress,
       contractName,
       startBlock: contractStartBlock,
-      registrationBlock: Some(blockNumber),
+      registrationBlock: blockNumber,
     }
 
     switch item->Internal.getItemDcs {

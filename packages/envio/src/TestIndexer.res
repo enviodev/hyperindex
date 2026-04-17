@@ -42,7 +42,7 @@ let toIndexingContract = (dc: InternalTable.EnvioAddresses.t): Internal.indexing
   address: dc->Config.EnvioAddresses.getAddress,
   contractName: dc.contractName,
   startBlock: Pervasives.max(dc.registrationBlock, 0),
-  registrationBlock: dc.registrationBlock === -1 ? None : Some(dc.registrationBlock),
+  registrationBlock: dc.registrationBlock,
 }
 
 let handleLoadByIds = (

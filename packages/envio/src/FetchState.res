@@ -1541,8 +1541,7 @@ let make = (
         registeringContracts->Dict.set(contract.address->Address.toString, contract)
         indexingContracts->Dict.set(contract.address->Address.toString, contract)
 
-        // Detect dynamic contracts by registrationBlock
-        if contract.registrationBlock !== None {
+        if contract.registrationBlock !== -1 {
           dynamicContracts->Utils.Set.add(contractName)->ignore
         }
       }
@@ -1639,10 +1638,10 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   ->Dict.keysToArray
   ->Array.forEach(address => {
     let indexingContract = fetchState.indexingContracts->Dict.getUnsafe(address)
-    switch indexingContract.registrationBlock {
-    | Some(registrationBlock) if registrationBlock > targetBlockNumber =>
+    if indexingContract.registrationBlock > targetBlockNumber {
       let _ = addressesToRemove->Utils.Set.add(address->Address.unsafeFromString)
-    | _ => indexingContracts->Dict.set(address, indexingContract)
+    } else {
+      indexingContracts->Dict.set(address, indexingContract)
     }
   })
 
