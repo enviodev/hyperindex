@@ -36,10 +36,21 @@ pub fn get_config_json(
     let config = config_path
         .or_else(|| std::env::var("ENVIO_CONFIG").ok())
         .unwrap_or_else(|| "config.yaml".to_string());
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "<unknown>".to_string());
     let project_paths = ParsedProjectPaths::new(&project_root, "generated", &config)
-        .map_err(|e| napi::Error::from_reason(format!("Failed parsing project paths: {e}")))?;
-    let system_config = SystemConfig::parse_from_project_files(&project_paths)
-        .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+        .map_err(|e| {
+            napi::Error::from_reason(format!(
+                "Failed parsing project paths (cwd={cwd}, root={project_root}, config={config}): {e}"
+            ))
+        })?;
+    let system_config = SystemConfig::parse_from_project_files(&project_paths).map_err(|e| {
+        napi::Error::from_reason(format!(
+            "Config parse error (cwd={cwd}, config={}): {e}",
+            project_paths.config.display()
+        ))
+    })?;
     system_config
         .to_public_config_json()
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
