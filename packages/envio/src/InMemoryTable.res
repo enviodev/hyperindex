@@ -41,18 +41,9 @@ module Entity = {
     status: Internal.inMemoryStoreEntityStatus<'entity>,
     entityIndices: Utils.Set.t<TableIndices.Index.t>,
   }
-  // Flat (fieldName, index, relatedEntityIds) tuple kept in sync with
-  // fieldNameIndices so updateIndices can iterate without allocating
-  // a keys array on every Entity.set.
-  type indexEntry = {
-    fieldName: string,
-    index: TableIndices.Index.t,
-    relatedEntityIds: Utils.Set.t<relatedEntityId>,
-  }
   type t<'entity> = {
     table: t<string, entityWithIndices<'entity>>,
     fieldNameIndices: indexFieldNameToIndices,
-    allIndices: array<indexEntry>,
   }
 
   // Helper to extract entity ID from any entity
@@ -78,7 +69,6 @@ module Entity = {
   let make = (): t<'entity> => {
     table: make(~hash=str => str),
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
-    allIndices: [],
   }
 
   exception UndefinedKey(string)
@@ -100,29 +90,31 @@ module Entity = {
       }
     })
 
-    let allIndices = self.allIndices
-    let allIndicesLength = allIndices->Array.length
-    if allIndicesLength > 0 {
-      let entityDict = entity->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
-      let entityId = getEntityIdUnsafe(entity)
-      for i in 0 to allIndicesLength - 1 {
-        let {fieldName, index, relatedEntityIds} = allIndices->Array.getUnsafe(i)
-        switch entityDict->Dict.get(fieldName) {
-        | Some(fieldValue) =>
+    self.fieldNameIndices.dict
+    ->Dict.keysToArray
+    ->Array.forEach(fieldName => {
+      switch (
+        entity->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)->Dict.get(fieldName),
+        self.fieldNameIndices.dict->Dict.get(fieldName),
+      ) {
+      | (Some(fieldValue), Some(indices)) =>
+        indices
+        ->values
+        ->Array.forEach(((index, relatedEntityIds)) => {
           if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
             //Add entity id to indices and add index to entity indicies
-            relatedEntityIds->Utils.Set.add(entityId)->ignore
+            relatedEntityIds->Utils.Set.add(getEntityIdUnsafe(entity))->ignore
             entityIndices->Utils.Set.add(index)->ignore
           } else {
-            relatedEntityIds->Utils.Set.delete(entityId)->ignore
+            relatedEntityIds->Utils.Set.delete(getEntityIdUnsafe(entity))->ignore
           }
-        | None =>
-          UndefinedKey(fieldName)->ErrorHandling.mkLogAndRaise(
-            ~msg="Expected field name to exist on the referenced index and the provided entity",
-          )
-        }
+        })
+      | _ =>
+        UndefinedKey(fieldName)->ErrorHandling.mkLogAndRaise(
+          ~msg="Expected field name to exist on the referenced index and the provided entity",
+        )
       }
-    }
+    })
   }
 
   let deleteEntityFromIndices = (self: t<'entity>, ~entityId: string, ~entityIndices) =>
@@ -238,25 +230,23 @@ module Entity = {
   that the entity is not set to the in memory store,
   and the second option means that the entity doesn't esist/deleted.
   It's needed to prevent an additional round trips to the database for deleted entities. */
-  let getUnsafe = (inMemTable: t<'entity>) => (key: string) =>
-    inMemTable.table.dict
-    ->Dict.getUnsafe(key)
-    ->rowToEntity
+  let getUnsafe = (inMemTable: t<'entity>) =>
+    (key: string) =>
+      inMemTable.table.dict
+      ->Dict.getUnsafe(key)
+      ->rowToEntity
 
-  let hasIndex = (
-    inMemTable: t<'entity>,
-    ~fieldName,
-    ~operator: TableIndices.Operator.t,
-  ) => fieldValueHash => {
-    switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
-    | None => false
-    | Some(indicesSerializedToValue) => {
-        // Should match TableIndices.toString logic
-        let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
-        indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) !== None
+  let hasIndex = (inMemTable: t<'entity>, ~fieldName, ~operator: TableIndices.Operator.t) =>
+    fieldValueHash => {
+      switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+      | None => false
+      | Some(indicesSerializedToValue) => {
+          // Should match TableIndices.toString logic
+          let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
+          indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) !== None
+        }
       }
     }
-  }
 
   let getUnsafeOnIndex = (
     inMemTable: t<'entity>,
@@ -314,25 +304,37 @@ module Entity = {
       | None => ()
       }
     })
-    let isNewIndex = switch inMemTable.fieldNameIndices->getRow(index) {
+    switch inMemTable.fieldNameIndices->getRow(index) {
     | None =>
       inMemTable.fieldNameIndices->setRow(
         index,
         makeIndicesSerializedToValue(~index, ~relatedEntityIds),
       )
-      true
+    | Some(indicesSerializedToValue) =>
+      switch indicesSerializedToValue->getRow(index) {
+      | None => indicesSerializedToValue->setRow(index, (index, relatedEntityIds))
+      | Some(_) => () //Should not happen, this means the index already exists
+      }
+    }
+  }
+
+  let addIdToIndex = (inMemTable: t<'entity>, ~index, ~entityId) =>
+    switch inMemTable.fieldNameIndices->getRow(index) {
+    | None =>
+      inMemTable.fieldNameIndices->setRow(
+        index,
+        makeIndicesSerializedToValue(
+          ~index,
+          ~relatedEntityIds=Utils.Set.make()->Utils.Set.add(entityId),
+        ),
+      )
     | Some(indicesSerializedToValue) =>
       switch indicesSerializedToValue->getRow(index) {
       | None =>
-        indicesSerializedToValue->setRow(index, (index, relatedEntityIds))
-        true
-      | Some(_) => false //Should not happen, this means the index already exists
+        indicesSerializedToValue->setRow(index, (index, Utils.Set.make()->Utils.Set.add(entityId)))
+      | Some((_index, relatedEntityIds)) => relatedEntityIds->Utils.Set.add(entityId)->ignore
       }
     }
-    if isNewIndex {
-      inMemTable.allIndices->Array.push({fieldName, index, relatedEntityIds})->ignore
-    }
-  }
 
   let updates = (inMemTable: t<'entity>) => {
     inMemTable.table
@@ -352,31 +354,13 @@ module Entity = {
   }
 
   let clone = ({table, fieldNameIndices}: t<'entity>) => {
-    let clonedFieldNameIndices = {
+    table: table->clone,
+    fieldNameIndices: {
       ...fieldNameIndices,
       dict: fieldNameIndices.dict
       ->Dict.toArray
       ->Array.map(((k, v)) => (k, v->clone))
       ->Dict.fromArray,
-    }
-    // Rebuild the flat allIndices cache from the cloned (deep-copied) sets
-    // so rollback paths have the same O(1)-lookup structure as a live table.
-    let allIndices = []
-    clonedFieldNameIndices.dict->Utils.Dict.forEach(indicesSerializedToValue => {
-      indicesSerializedToValue.dict->Utils.Dict.forEach(((index, relatedEntityIds)) => {
-        allIndices
-        ->Array.push({
-          fieldName: index->TableIndices.Index.getFieldName,
-          index,
-          relatedEntityIds,
-        })
-        ->ignore
-      })
-    })
-    {
-      table: table->clone,
-      fieldNameIndices: clonedFieldNameIndices,
-      allIndices,
-    }
+    },
   }
 }
