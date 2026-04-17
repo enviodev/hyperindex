@@ -849,17 +849,4 @@ let getChain = (config, ~chainId) => {
 // no child spawn). Calls Core.getConfigJson which invokes the Rust config
 // parser directly. ENVIO_CONFIG env var is respected by the Rust side for
 // config path resolution.
-let fromConfigView = () => {
-  let json = Core.getConfigJson()
-  let parsed = json->JSON.parseOrThrow
-  let config = parsed->fromPublic
-  if config.chainMap->ChainMap.size === 0 {
-    JsError.throwWithMessage(
-      `Config loaded but has 0 chains. JSON keys: ${parsed
-        ->JSON.Decode.object
-        ->Option.map(d => d->Dict.keysToArray->Array.join(", "))
-        ->Option.getOr("not an object")}`,
-    )
-  }
-  config
-}
+let fromConfigView = () => Core.getConfigJson()->JSON.parseOrThrow->fromPublic

@@ -161,17 +161,6 @@ jobs:
         run: |
           ln -sf ../../.pnpmfile.cjs .pnpmfile.cjs
           pnpm exec envio codegen
-          # Verify config loads correctly before running tests
-          node -e "
-            const core = await import('envio/src/Core.res.mjs');
-            const json = core.getConfigJson();
-            const cfg = JSON.parse(json);
-            const chains = cfg.evm?.chains || {};
-            console.log('Config chains:', Object.keys(chains));
-            for (const [id, c] of Object.entries(chains)) {
-              console.log('  chain', id, '- contracts:', Object.keys(c.contracts || {}));
-            }
-          "
           pnpm exec rescript-legacy
           pnpm exec tsc --noEmit
           pnpm exec vitest run
