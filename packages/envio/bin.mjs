@@ -34,19 +34,12 @@ async function handleCommand(id, command, data) {
           }
         }
         // Start the indexer. Main.start() sets up event loop tasks and
-        // returns immediately. The indexer runs via async dispatches.
-        // When all chains finish (endBlock), GlobalState calls
-        // process.exit(0). We intercept the exit to signal Rust.
+        // returns immediately — the indexer runs via async dispatches.
+        // When all chains finish, GlobalState calls process.exit(0).
+        // If it crashes, process.exit(1). We never signalComplete —
+        // the process lifecycle handles termination.
         await import(data.indexPath);
-        // Wait for process.exit() — which the indexer calls on
-        // completion or crash. We resolve/reject based on exit code.
-        await new Promise((resolve, reject) => {
-          process.on("exit", (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`Indexer exited with code ${code}`));
-          });
-        });
-        break;
+        await new Promise(() => {});
       }
       default:
         throw new Error(`Unknown command: ${command}`);
