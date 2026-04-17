@@ -1541,6 +1541,7 @@ let make = (
         registeringContracts->Dict.set(contract.address->Address.toString, contract)
         indexingContracts->Dict.set(contract.address->Address.toString, contract)
 
+        // Detect dynamic contracts by registrationBlock
         if contract.registrationBlock !== -1 {
           dynamicContracts->Utils.Set.add(contractName)->ignore
         }

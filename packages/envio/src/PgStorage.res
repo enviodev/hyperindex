@@ -1296,16 +1296,7 @@ SELECT *, -1, -1 FROM unnest($1::text[],$2::int[],$3::text[]);`,
         numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
-        indexingAddresses: chainConfig.contracts->Array.flatMap(contract => {
-          contract.addresses->Array.map(
-            address => {
-              Internal.address,
-              contractName: contract.name,
-              startBlock: 0,
-              registrationBlock: -1,
-            },
-          )
-        }),
+        indexingAddresses: ChainFetcher.configAddresses(chainConfig),
         sourceBlockNumber: 0,
       }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,
