@@ -1562,7 +1562,12 @@ let make = (
 
   if optimizedPartitions->OptimizedPartitions.count === 0 && onBlockConfigs->Utils.Array.isEmpty {
     JsError.throwWithMessage(
-      "Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.",
+      `Invalid configuration: Nothing to fetch on chain ${chainId->Int.toString}. ` ++
+      `contracts=${contracts->Array.length->Int.toString}, ` ++
+      `eventConfigs=${eventConfigs->Array.length->Int.toString}, ` ++
+      `normalEventConfigs=${normalEventConfigs
+        ->Array.length
+        ->Int.toString}. ` ++ `Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.`,
     )
   }
 
