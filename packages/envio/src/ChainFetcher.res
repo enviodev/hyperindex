@@ -19,9 +19,24 @@ type t = {
 }
 
 //CONSTRUCTION
+let configAddresses = (chainConfig: Config.chain): array<Internal.indexingContract> => {
+  let addresses = []
+  chainConfig.contracts->Array.forEach(contract => {
+    contract.addresses->Array.forEach(address => {
+      addresses->Array.push({
+        Internal.address,
+        contractName: contract.name,
+        startBlock: 0,
+        registrationBlock: -1,
+      })
+    })
+  })
+  addresses
+}
+
 let make = (
   ~chainConfig: Config.chain,
-  ~dynamicContracts: array<Internal.indexingContract>,
+  ~indexingAddresses: array<Internal.indexingContract>,
   ~startBlock,
   ~endBlock,
   ~firstEventBlock=None,
@@ -36,7 +51,6 @@ let make = (
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
   ~knownHeight=0,
-  ~useConfigAddresses=true,
 ): t => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -45,7 +59,6 @@ let make = (
   let eventRouter = EventRouter.empty()
 
   // Aggregate events we want to fetch
-  let contracts = []
   let eventConfigs: array<Internal.eventConfig> = []
 
   let notRegisteredEvents = []
@@ -116,23 +129,7 @@ let make = (
       )
     | _ => ()
     }
-
-    if useConfigAddresses {
-      contract.addresses->Array.forEach(address => {
-        contracts->Array.push({
-          Internal.address,
-          contractName: contract.name,
-          startBlock: switch contract.startBlock {
-          | Some(startBlock) => startBlock
-          | None => chainConfig.startBlock
-          },
-          registrationBlock: -1,
-        })
-      })
-    }
   })
-
-  dynamicContracts->Array.forEach(dc => contracts->Array.push(dc))
 
   if notRegisteredEvents->Utils.Array.notEmpty {
     logger->Logging.childInfo(
@@ -173,7 +170,7 @@ let make = (
 
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
-    ~contracts,
+    ~contracts=indexingAddresses,
     ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
@@ -289,7 +286,7 @@ let makeFromConfig = (
     ~numEventsProcessed=0.,
     ~targetBufferSize,
     ~logger,
-    ~dynamicContracts=[],
+    ~indexingAddresses=configAddresses(chainConfig),
     ~isInReorgThreshold=false,
     ~knownHeight,
   )
@@ -319,8 +316,14 @@ let makeFromDbState = async (
       ? resumedChainState.progressBlockNumber
       : resumedChainState.startBlock - 1
 
+  let indexingAddresses = if cleanRun {
+    configAddresses(chainConfig)
+  } else {
+    resumedChainState.dynamicContracts
+  }
+
   make(
-    ~dynamicContracts=resumedChainState.dynamicContracts,
+    ~indexingAddresses,
     ~chainConfig,
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock,
@@ -338,7 +341,6 @@ let makeFromDbState = async (
     ~targetBufferSize,
     ~isInReorgThreshold,
     ~knownHeight=resumedChainState.sourceBlockNumber,
-    ~useConfigAddresses=cleanRun,
   )
 }
 

@@ -177,6 +177,10 @@ WHERE "${(#id: field :> string)}" = $1;`
     sourceBlockNumber: int,
   }
 
+  // FIXME: Using registering_event_block_number for startBlock
+  // seems incorrect, since there might be a custom start block
+  // for the contract.
+  // TODO: Write a repro test where it might break something and fix
   let makeGetInitialStateQuery = (~pgSchema) => {
     `SELECT "${(#id: field :> string)}" as "id",
 "${(#start_block: field :> string)}" as "startBlock",
