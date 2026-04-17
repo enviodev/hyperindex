@@ -111,23 +111,37 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
     fs.copyFileSync(localPath, nodePath);
   }
 
+  process.env.ENVIO_NATIVE_ADDON_PATH = nodePath;
   return req(nodePath);
 }`)
 
-let loadAddon = () => {
-  let req = createRequire(importMetaUrl)
-  let platformPkg = `envio-${processPlatform}-${processArch}`
+let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
+let resolveRequire: ({..}, string) => string = %raw(`(req, id) => req.resolve(id)`)
 
+// Propagate the resolved .node path via env var so forked processes
+// (vitest forks, pnpm install sub-processes) can skip resolution.
+let propagateAddonPath = (req, id) =>
+  try {
+    setEnvVar("ENVIO_NATIVE_ADDON_PATH", resolveRequire(req, id))
+  } catch {
+  | _ => ()
+  }
+
+let loadAddonFromPaths = (req, platformPkg) => {
   // 1. Platform-specific package (envio-linux-x64, envio-darwin-arm64)
   try {
-    callRequire(req, platformPkg)
+    let addon = callRequire(req, platformPkg)
+    propagateAddonPath(req, platformPkg)
+    addon
   } catch {
   | _ =>
     // 2. Sibling .node file (CI artifact injected post-install)
     let thisFile = fileURLToPath(importMetaUrl)
     let siblingNode = pathJoin2(pathDirname(thisFile), pathJoin2("..", "envio.node"))
     try {
-      callRequire(req, siblingNode)
+      let addon = callRequire(req, siblingNode)
+      setEnvVar("ENVIO_NATIVE_ADDON_PATH", siblingNode)
+      addon
     } catch {
     | _ =>
       // 3. Local dev: pnpm list → cargo build → load
@@ -144,6 +158,25 @@ let loadAddon = () => {
         )
       }
     }
+  }
+}
+
+let loadAddon = () => {
+  let req = createRequire(importMetaUrl)
+  let platformPkg = `envio-${processPlatform}-${processArch}`
+
+  // Check env var first — set by parent process after successful load.
+  // Vitest forks and template tests in temp dirs may not resolve the
+  // platform package, but inherit this env var from the parent.
+  let envAddonPath: option<string> = %raw(`process.env.ENVIO_NATIVE_ADDON_PATH || undefined`)
+  switch envAddonPath {
+  | Some(p) if existsSync(p) =>
+    try {
+      callRequire(req, p)
+    } catch {
+    | _ => loadAddonFromPaths(req, platformPkg)
+    }
+  | _ => loadAddonFromPaths(req, platformPkg)
   }
 }
 
