@@ -205,9 +205,9 @@ pub mod codegen {
 }
 
 pub mod start {
-    use super::{execute_command_with_env, to_js_path};
+    use super::to_js_path;
     use crate::config_parsing::system_config::SystemConfig;
-    use anyhow::anyhow;
+    use anyhow::{anyhow, Context};
     use pathdiff::diff_paths;
 
     pub async fn start_indexer(
@@ -237,15 +237,56 @@ pub mod start {
             env.push(("ENVIO_NATIVE_ADDON_PATH".to_string(), addon_path));
         }
 
-        let exit =
-            execute_command_with_env(cmd, args, &config.parsed_project_paths.project_root, &env)
-                .await?;
+        // Spawn with piped stderr so we can include it in the error message.
+        // Stdout stays inherited so TUI/logs display normally.
+        let mut child = tokio::process::Command::new(cmd)
+            .args(&args)
+            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .current_dir(&config.parsed_project_paths.project_root)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .context("Failed to spawn node process for indexer")?;
+
+        // Stream stderr to the terminal AND capture it for error reporting
+        let stderr_handle = child.stderr.take();
+        let stderr_capture = tokio::spawn(async move {
+            let mut buf = String::new();
+            if let Some(mut stderr) = stderr_handle {
+                use tokio::io::AsyncReadExt;
+                let mut tmp = [0u8; 4096];
+                loop {
+                    match stderr.read(&mut tmp).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let chunk = String::from_utf8_lossy(&tmp[..n]);
+                            eprint!("{}", chunk);
+                            buf.push_str(&chunk);
+                            // Keep only last 4KB for error reporting
+                            if buf.len() > 4096 {
+                                let drain = buf.len() - 4096;
+                                buf.drain(..drain);
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+            buf
+        });
+
+        let exit = child.wait().await.context("Failed to wait for indexer")?;
+        let stderr_tail = stderr_capture.await.unwrap_or_default();
 
         if !exit.success() {
-            return Err(anyhow!(
-                "Indexer crashed. For more details see the error logs above the TUI. Can't find \
-                 them? Restart the indexer with the 'TUI_OFF=true envio start' command."
-            ));
+            let msg = if stderr_tail.trim().is_empty() {
+                "Indexer crashed. For more details, restart with 'TUI_OFF=true envio start'."
+                    .to_string()
+            } else {
+                format!("Indexer crashed:\n{}", stderr_tail.trim())
+            };
+            return Err(anyhow!("{}", msg));
         }
         println!(
             "\nIndexer has successfully finished processing all events on all chains. Exiting \
@@ -259,10 +300,7 @@ pub mod db_migrate {
 
     use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
 
-    async fn execute_migration(
-        script: &str,
-        config: &SystemConfig,
-    ) -> anyhow::Result<std::process::ExitStatus> {
+    async fn execute_migration(script: &str, config: &SystemConfig) -> anyhow::Result<()> {
         let current_dir = &config.parsed_project_paths.project_root;
         let config_path = config
             .parsed_project_paths
@@ -275,32 +313,67 @@ pub mod db_migrate {
             .env("ENVIO_CONFIG", &config_path)
             .current_dir(current_dir)
             .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
 
-        // Forward the addon path so child doesn't re-run cargo build
         if let Ok(addon_path) = std::env::var("ENVIO_NATIVE_ADDON_PATH") {
             cmd.env("ENVIO_NATIVE_ADDON_PATH", addon_path);
         }
 
-        cmd.spawn()
-            .context("Failed to spawn node process for migration")?
-            .wait()
-            .await
-            .context("Failed to wait for migration process")
+        let mut child = cmd
+            .spawn()
+            .context("Failed to spawn node process for migration")?;
+
+        // Stream stderr to terminal AND capture for error reporting
+        let stderr_handle = child.stderr.take();
+        let stderr_capture = tokio::spawn(async move {
+            let mut buf = String::new();
+            if let Some(mut stderr) = stderr_handle {
+                use tokio::io::AsyncReadExt;
+                let mut tmp = [0u8; 4096];
+                loop {
+                    match stderr.read(&mut tmp).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let chunk = String::from_utf8_lossy(&tmp[..n]);
+                            eprint!("{}", chunk);
+                            buf.push_str(&chunk);
+                            if buf.len() > 4096 {
+                                let drain = buf.len() - 4096;
+                                buf.drain(..drain);
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+            buf
+        });
+
+        let exit = child.wait().await.context("Failed to wait for migration")?;
+        let stderr_tail = stderr_capture.await.unwrap_or_default();
+
+        if !exit.success() {
+            let msg = if stderr_tail.trim().is_empty() {
+                "Migration failed with no error output".to_string()
+            } else {
+                stderr_tail.trim().to_string()
+            };
+            return Err(anyhow::anyhow!("{}", msg));
+        }
+        Ok(())
     }
 
     pub async fn run_up_migrations(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let exit = execute_migration(
+        execute_migration(
             "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true))",
             config,
         )
-        .await?;
-        if !exit.success() {
-            return Err(anyhow::anyhow!("Failed to run db migrations"));
-        }
+        .await
+        .context("Failed to run db migrations")?;
         persisted_state
             .upsert_to_db()
             .await
@@ -309,29 +382,24 @@ pub mod db_migrate {
     }
 
     pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<()> {
-        let exit = execute_migration(
+        execute_migration(
             "import('envio/src/Migrations.res.mjs').then(m => m.runDownMigrations(true))",
             config,
         )
-        .await?;
-        if !exit.success() {
-            return Err(anyhow::anyhow!("Failed to drop schema"));
-        }
-        Ok(())
+        .await
+        .context("Failed to drop schema")
     }
 
     pub async fn run_db_setup(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let exit = execute_migration(
+        execute_migration(
             "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true, true))",
             config,
         )
-        .await?;
-        if !exit.success() {
-            return Err(anyhow::anyhow!("Failed to run db setup"));
-        }
+        .await
+        .context("Failed to run db setup")?;
 
         persisted_state
             .upsert_to_db()
