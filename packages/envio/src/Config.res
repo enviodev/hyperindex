@@ -103,6 +103,7 @@ module EnvioAddresses = {
   type t = {
     id: string,
     @as("chain_id") chainId: int,
+    @as("start_block") startBlock: int,
     @as("registration_block") registrationBlock: int,
     // -1 when the address was registered from a block handler (no log index)
     @as("registration_log_index") registrationLogIndex: int,
@@ -122,6 +123,7 @@ module EnvioAddresses = {
   let schema = S.schema(s => {
     id: s.matches(S.string),
     chainId: s.matches(S.int),
+    startBlock: s.matches(S.int),
     registrationBlock: s.matches(S.int),
     registrationLogIndex: s.matches(S.int),
     contractName: s.matches(S.string),
@@ -134,6 +136,7 @@ module EnvioAddresses = {
     ~fields=[
       Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
       Table.mkField("chain_id", Int32, ~fieldSchema=S.int),
+      Table.mkField("start_block", Int32, ~fieldSchema=S.int),
       Table.mkField("registration_block", Int32, ~fieldSchema=S.int),
       // -1 sentinel when registered from a block handler (no log index)
       Table.mkField("registration_log_index", Int32, ~fieldSchema=S.int),

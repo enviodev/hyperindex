@@ -122,6 +122,7 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
             id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
             chainId,
             contractName: dc.contractName,
+            startBlock: dc.startBlock,
             registrationBlock: eventItem.blockNumber,
             registrationLogIndex: eventItem.logIndex,
           }

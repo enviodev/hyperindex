@@ -1255,13 +1255,16 @@ let make = (
     // Populate config addresses into envio_addresses with registration_block/log = -1
     let ids = []
     let addrChainIds = []
+    let addrStartBlocks = []
     let addrContractNames = []
     chainConfigs->Array.forEach(chain => {
       chain.contracts->Array.forEach(contract => {
+        let startBlock = contract.startBlock->Option.getOr(chain.startBlock)
         contract.addresses->Array.forEach(
           address => {
             ids->Array.push(Config.EnvioAddresses.makeId(~chainId=chain.id, ~address))->ignore
             addrChainIds->Array.push(chain.id)->ignore
+            addrStartBlocks->Array.push(startBlock)->ignore
             addrContractNames->Array.push(contract.name)->ignore
           },
         )
@@ -1269,9 +1272,9 @@ let make = (
     })
     if ids->Array.length > 0 {
       await sql->Postgres.unpreparedUnsafe(
-        `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
-SELECT *, -1, -1 FROM unnest($1::text[],$2::int[],$3::text[]);`,
-        (ids, addrChainIds, addrContractNames)->(Utils.magic: _ => unknown),
+        `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "start_block", "registration_block", "registration_log_index", "contract_name")
+SELECT id, chain_id, start_block, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::int[],$4::text[]) AS t(id, chain_id, start_block, contract_name);`,
+        (ids, addrChainIds, addrStartBlocks, addrContractNames)->(Utils.magic: _ => unknown),
       )
     }
 
