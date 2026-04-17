@@ -1,8 +1,8 @@
 // Bindings to the native envio NAPI addon.
 //
-// Source of truth for both bin.mjs (CLI entry) and Config.fromConfigView
+// Source of truth for both Bin.run (CLI entry) and Config.fromConfigView
 // (in-process config loading). The addon is loaded once per process and
-// cached by Node's module system.
+// cached in addonRef.
 //
 // Resolution has two completely separate flows:
 //   Production: require("envio-{os}-{arch}") → .node addon
@@ -10,7 +10,6 @@
 
 type addon = {
   getConfigJson: (Nullable.t<string>, Nullable.t<string>, Nullable.t<string>) => string,
-  // Returns JSON array of commands for JS to execute: [["command", {...data}], ...]
   runCli: (array<string>, Nullable.t<string>) => promise<string>,
   upsertPersistedState: string => promise<unit>,
 }
@@ -49,8 +48,6 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
   var path = Nodepath;
   var fs = Nodefs;
 
-  // Use pnpm list to find envio's installed version/path.
-  // If it's a file: protocol, we can derive the repo root.
   var result;
   try {
     result = cp.execSync("pnpm list envio --json", {
@@ -65,7 +62,6 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
   var parsed;
   try {
     var jsonStr = result.trim();
-    // pnpm list --json output starts/ends with commas sometimes
     if (jsonStr.startsWith(",")) jsonStr = jsonStr.slice(1);
     if (jsonStr.endsWith(",")) jsonStr = jsonStr.slice(0, -1);
     parsed = JSON.parse(jsonStr);
@@ -73,7 +69,6 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
     return null;
   }
 
-  // Extract envio version — look for file: protocol
   var envioVersion;
   try {
     var pkg = Array.isArray(parsed) ? parsed[0] : parsed;
@@ -83,11 +78,9 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
   }
 
   if (!envioVersion || !envioVersion.startsWith("file:")) {
-    return null; // Not a local dev install
+    return null;
   }
 
-  // Derive repo root from the file: path
-  // e.g., file:../../packages/envio → packages/envio → repo root is ../..
   var envioSrcRelative = envioVersion.replace("file:", "");
   var envioSrc = path.resolve(envioSrcRelative);
   var repoRoot = path.resolve(envioSrc, "..", "..");
@@ -96,7 +89,6 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
     return null;
   }
 
-  // Build the addon (like cargo run — always rebuilds if source changed)
   var cliDir = path.join(repoRoot, "packages", "cli");
   try {
     cp.execSync("cargo build --lib", { cwd: cliDir, stdio: "inherit" });
@@ -104,7 +96,6 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
     throw new Error("Failed to build envio NAPI addon. Run 'cargo build --lib' in " + cliDir + " manually.");
   }
 
-  // Copy to .node extension and load
   var libName = process.platform === "darwin" ? "libenvio.dylib"
     : process.platform === "win32" ? "envio.dll"
     : "libenvio.so";
@@ -113,50 +104,33 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
   var nodePath = path.join(targetDebug, "envio.node");
 
   if (!fs.existsSync(localPath)) {
-    throw new Error("cargo build succeeded but " + localPath + " not found. Check Cargo.toml has crate-type = [\"cdylib\"].");
+    throw new Error("cargo build succeeded but " + localPath + " not found. Check Cargo.toml has crate-type = [\\"cdylib\\"].");
   }
 
   if (!fs.existsSync(nodePath) || fs.statSync(nodePath).mtimeMs < fs.statSync(localPath).mtimeMs) {
     fs.copyFileSync(localPath, nodePath);
   }
 
-  // Cache the path for child processes (migrations, indexer start)
-  // so they skip pnpm list + cargo build entirely.
-  process.env.ENVIO_NATIVE_ADDON_PATH = nodePath;
-
   return req(nodePath);
 }`)
 
-// Set addon path in env for child processes (migrations, indexer start)
-let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
-let resolveRequire: ({..}, string) => string = %raw(`(req, id) => req.resolve(id)`)
+let loadAddon = () => {
+  let req = createRequire(importMetaUrl)
+  let platformPkg = `envio-${processPlatform}-${processArch}`
 
-let loadAddonNormal = (req, platformPkg) => {
-  // ── Production flow ───────────────────────────────────────────────
   // 1. Platform-specific package (envio-linux-x64, envio-darwin-arm64)
   try {
-    let addon = callRequire(req, platformPkg)
-    // Propagate the resolved .node path for child processes
-    try {
-      setEnvVar("ENVIO_NATIVE_ADDON_PATH", resolveRequire(req, platformPkg))
-    } catch {
-    | _ => ()
-    }
-    addon
+    callRequire(req, platformPkg)
   } catch {
   | _ =>
     // 2. Sibling .node file (CI artifact injected post-install)
     let thisFile = fileURLToPath(importMetaUrl)
     let siblingNode = pathJoin2(pathDirname(thisFile), pathJoin2("..", "envio.node"))
     try {
-      let addon = callRequire(req, siblingNode)
-      setEnvVar("ENVIO_NATIVE_ADDON_PATH", siblingNode)
-      addon
+      callRequire(req, siblingNode)
     } catch {
     | _ =>
-      // ── Local dev flow ──────────────────────────────────────────────
-      // Only reached when neither production path works.
-      // Uses pnpm list to find the source repo and cargo build to compile.
+      // 3. Local dev: pnpm list → cargo build → load
       switch loadDevAddon(req, platformPkg)->(Utils.magic: addon => option<addon>) {
       | Some(addon) => addon
       | None =>
@@ -170,26 +144,6 @@ let loadAddonNormal = (req, platformPkg) => {
         )
       }
     }
-  }
-}
-
-let loadAddon = () => {
-  let req = createRequire(importMetaUrl)
-  let platformPkg = `envio-${processPlatform}-${processArch}`
-
-  // Step 0: Pre-resolved addon path from parent process.
-  // When the parent already built/loaded the addon, it sets
-  // ENVIO_NATIVE_ADDON_PATH so child processes (migrations, indexer)
-  // skip pnpm list + cargo build entirely.
-  let envAddonPath: option<string> = %raw(`process.env.ENVIO_NATIVE_ADDON_PATH || undefined`)
-  switch envAddonPath {
-  | Some(p) if existsSync(p) =>
-    try {
-      callRequire(req, p)
-    } catch {
-    | _ => loadAddonNormal(req, platformPkg)
-    }
-  | _ => loadAddonNormal(req, platformPkg)
   }
 }
 

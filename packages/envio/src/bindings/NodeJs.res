@@ -61,32 +61,6 @@ module ChildProcess = {
 
   @module("child_process")
   external execWithOptions: (string, execOptions, callback) => unit = "exec"
-
-  // `encoding` is mandatory: when omitted Node defaults to "buffer" and
-  // returns Buffer instances on stdout/stderr, which would silently violate
-  // the `string` typing below. Callers must pass "utf8" (or similar) so the
-  // typed result is accurate.
-  type spawnSyncOptions = {
-    cwd?: string,
-    env?: dict<string>,
-    encoding: string,
-    maxBuffer?: int,
-  }
-
-  // `status` is null when the child is killed by a signal before exiting; we
-  // treat null-or-nonzero as failure. `error` is set when the process itself
-  // couldn't be spawned (e.g., command not on PATH) — and Node leaves the
-  // field `undefined` (not `null`) on success, so we use `Nullable.t` which
-  // accepts both.
-  type spawnSyncResult = {
-    status: Nullable.t<int>,
-    stdout: string,
-    stderr: string,
-    error: Nullable.t<exn>,
-  }
-
-  @module("child_process")
-  external spawnSync: (string, array<string>, spawnSyncOptions) => spawnSyncResult = "spawnSync"
 }
 
 module Url = {

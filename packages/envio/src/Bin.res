@@ -17,15 +17,13 @@ let executeCommand = async (command: command) => {
         get("reset")
         ->Option.flatMap(JSON.Decode.bool)
         ->Option.getOr(false)
-      let _code = await Migrations.runUpMigrations(~shouldExit=false, ~reset)
+      await Migrations.runUpMigrations(~reset)
       switch get("persistedState") {
       | Some(ps) => await Core.upsertPersistedState(ps->JSON.stringify)
       | None => ()
       }
     }
-  | "migration-down" => {
-      let _code = await Migrations.runDownMigrations(~shouldExit=false)
-    }
+  | "migration-down" => await Migrations.runDownMigrations()
   | "start-indexer" => {
       // Clear prom-client registry — metrics were registered during
       // migrations (same process), and the indexer re-registers them.
