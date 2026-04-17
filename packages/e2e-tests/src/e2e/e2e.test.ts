@@ -71,6 +71,17 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     // The "Exiting with success" → process.exit(0) path runs docker compose down.
     indexerProcess.kill("SIGKILL");
     indexerProcess = null;
+
+    // Verify Hasura is still responsive after killing the indexer
+    const health = await graphql.poll<{ __typename: string }>({
+      query: `{ __typename }`,
+      validate: (data) => data.__typename === "query_root",
+      maxAttempts: 20,
+      timeoutMs: 10_000,
+    });
+    if (!health.success) {
+      throw new Error(`Hasura not responsive after indexer kill: ${health.error}`);
+    }
   }, 300_000); // 5 min for codegen + install + build + indexer startup
 
   afterAll(async () => {
@@ -87,18 +98,19 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
   }, 30_000);
 
   it("should have _meta with isReady true", async () => {
-    // Chain metadata uses a throttled DB write, so poll briefly
+    // After SIGKILL, Hasura is still running but may need a moment.
+    // Use generous polling to avoid flaky failures.
     const result = await graphql.poll<{
       _meta: Array<{ chainId: number; isReady: boolean }>;
     }>({
       query: `{ _meta { chainId isReady } }`,
       validate: (data) =>
         data._meta?.length > 0 && data._meta.every((m) => m.isReady),
-      maxAttempts: 10,
-      timeoutMs: 5_000,
+      maxAttempts: 30,
+      timeoutMs: 30_000,
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success, `_meta poll failed: ${result.error}, last response: ${JSON.stringify(result.lastResponse)}`).toBe(true);
     expect(result.data?._meta).toEqual([{ chainId: 1, isReady: true }]);
   });
 
