@@ -199,7 +199,7 @@ describe("FetchState.make", () => {
       },
       ~message=`Should panic if there's nothing to fetch`,
     ).toThrowError(
-      "Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.",
+      "Invalid configuration: Nothing to fetch on chain",
     )
   })
 
