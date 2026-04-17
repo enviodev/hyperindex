@@ -52,10 +52,7 @@ let schedule = async loadManager => {
 
     let inputsToLoad = []
     let currentInputKeys = []
-    calls
-    ->Dict.keysToArray
-    ->Array.forEach(inputKey => {
-      let call = calls->Dict.getUnsafe(inputKey)
+    calls->Utils.Dict.forEachWithKey((call, inputKey) => {
       if !call.isLoading {
         call.isLoading = true
         currentInputKeys->Array.push(inputKey)->ignore

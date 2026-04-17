@@ -700,23 +700,20 @@ let warnDifferentContractType = (
 
 let addressesByContractNameCount = (addressesByContractName: dict<array<Address.t>>) => {
   let numAddresses = ref(0)
-  let contractNames = addressesByContractName->Dict.keysToArray
-  for idx in 0 to contractNames->Array.length - 1 {
-    let contractName = contractNames->Array.getUnsafe(idx)
-    numAddresses :=
-      numAddresses.contents + addressesByContractName->Dict.getUnsafe(contractName)->Array.length
-  }
+  addressesByContractName->Utils.Dict.forEach(addresses => {
+    numAddresses := numAddresses.contents + addresses->Array.length
+  })
   numAddresses.contents
 }
 
 let addressesByContractNameGetAll = (addressesByContractName: dict<array<Address.t>>) => {
-  let all = ref([])
-  let contractNames = addressesByContractName->Dict.keysToArray
-  for idx in 0 to contractNames->Array.length - 1 {
-    let contractName = contractNames->Array.getUnsafe(idx)
-    all := all.contents->Array.concat(addressesByContractName->Dict.getUnsafe(contractName))
-  }
-  all.contents
+  let all = []
+  addressesByContractName->Utils.Dict.forEach(addresses => {
+    for idx in 0 to addresses->Array.length - 1 {
+      all->Array.push(addresses->Array.getUnsafe(idx))->ignore
+    }
+  })
+  all
 }
 
 /**
@@ -1027,110 +1024,105 @@ let registerDynamicContracts = (
     }
   }
 
-  let dcContractNamesToStore = registeringContractsByContract->Dict.keysToArray
-  switch dcContractNamesToStore {
-  // Dont update anything when everything was filter out
-  | [] => fetchState
-  | _ => {
-      let newPartitions = []
-      let newIndexingContracts = indexingContracts->Utils.Dict.shallowCopy
-      let dynamicContractsRef = ref(fetchState.optimizedPartitions.dynamicContracts)
-      let mutExistingPartitions = fetchState.optimizedPartitions.entities->Dict.valuesToArray
+  if registeringContractsByContract->Utils.Dict.isEmpty {
+    // Dont update anything when everything was filter out
+    fetchState
+  } else {
+    let newPartitions = []
+    let newIndexingContracts = indexingContracts->Utils.Dict.shallowCopy
+    let dynamicContractsRef = ref(fetchState.optimizedPartitions.dynamicContracts)
+    let mutExistingPartitions = fetchState.optimizedPartitions.entities->Dict.valuesToArray
 
-      for idx in 0 to dcContractNamesToStore->Array.length - 1 {
-        let contractName = dcContractNamesToStore->Array.getUnsafe(idx)
+    registeringContractsByContract->Utils.Dict.forEachWithKey((
+      registeringContracts,
+      contractName,
+    ) => {
+      // When a new contract name is added as a dynamic contract for the first time (not in dynamicContracts set):
+      // Walks through existing partitions that have addresses for this contract name
+      // - If partition has ONLY this contract's addresses -> sets dynamicContract field
+      // - If partition has this contract's addresses AND other contracts -> splits them
+      // For the sake of merging simplicity we want to make sure that
+      // partition has addresses of only one contract
+      if !(dynamicContractsRef.contents->Utils.Set.has(contractName)) {
+        dynamicContractsRef := dynamicContractsRef.contents->Utils.Set.immutableAdd(contractName)
 
-        // When a new contract name is added as a dynamic contract for the first time (not in dynamicContracts set):
-        // Walks through existing partitions that have addresses for this contract name
-        // - If partition has ONLY this contract's addresses -> sets dynamicContract field
-        // - If partition has this contract's addresses AND other contracts -> splits them
-        // For the sake of merging simplicity we want to make sure that
-        // partition has addresses of only one contract
-        if !(dynamicContractsRef.contents->Utils.Set.has(contractName)) {
-          dynamicContractsRef := dynamicContractsRef.contents->Utils.Set.immutableAdd(contractName)
+        for idx in 0 to mutExistingPartitions->Array.length - 1 {
+          let p = mutExistingPartitions->Array.getUnsafe(idx)
+          switch p.addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | None => () // Skip partitions which don't have our contract
+          | Some(addresses) =>
+            // Also filter out partitions which are 100% not mergable
+            if p.selection.dependsOnAddresses && p.mergeBlock === None {
+              if p.addressesByContractName->Utils.Dict.size === 1 {
+                mutExistingPartitions->Array.setUnsafe(
+                  idx,
+                  {
+                    ...p,
+                    dynamicContract: Some(contractName),
+                  },
+                )
+              } else {
+                let isFetching = p.mutPendingQueries->Array.length > 0
+                if isFetching {
+                  // The partition won't be split and won't get a dynamicContract field
+                  // This won't allow to optimize the partitions to the potential max
+                  // Not super critical - at least we won't have a burden of
+                  // splitting a fetching partition and then handing the response
+                  ()
+                } else {
+                  let newPartitionId =
+                    (fetchState.optimizedPartitions.nextPartitionIndex +
+                    newPartitions->Array.length)->Int.toString
 
-          for idx in 0 to mutExistingPartitions->Array.length - 1 {
-            let p = mutExistingPartitions->Array.getUnsafe(idx)
-            switch p.addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
-            | None => () // Skip partitions which don't have our contract
-            | Some(addresses) =>
-              // Also filter out partitions which are 100% not mergable
-              if p.selection.dependsOnAddresses && p.mergeBlock === None {
-                let allPartitionContractNames = p.addressesByContractName->Dict.keysToArray
-                switch allPartitionContractNames {
-                | [_] =>
+                  let restAddressesByContractName =
+                    p.addressesByContractName->Utils.Dict.shallowCopy
+                  restAddressesByContractName->Utils.Dict.deleteInPlace(contractName)
+
                   mutExistingPartitions->Array.setUnsafe(
                     idx,
                     {
                       ...p,
-                      dynamicContract: Some(contractName),
+                      addressesByContractName: restAddressesByContractName,
                     },
                   )
-                | _ => {
-                    let isFetching = p.mutPendingQueries->Array.length > 0
-                    if isFetching {
-                      // The partition won't be split and won't get a dynamicContract field
-                      // This won't allow to optimize the partitions to the potential max
-                      // Not super critical - at least we won't have a burden of
-                      // splitting a fetching partition and then handing the response
-                      ()
-                    } else {
-                      let newPartitionId =
-                        (fetchState.optimizedPartitions.nextPartitionIndex +
-                        newPartitions->Array.length)->Int.toString
 
-                      let restAddressesByContractName =
-                        p.addressesByContractName->Utils.Dict.shallowCopy
-                      restAddressesByContractName->Utils.Dict.deleteInPlace(contractName)
-
-                      mutExistingPartitions->Array.setUnsafe(
-                        idx,
-                        {
-                          ...p,
-                          addressesByContractName: restAddressesByContractName,
-                        },
-                      )
-
-                      let addressesByContractName = Dict.make()
-                      addressesByContractName->Dict.set(contractName, addresses)
-                      newPartitions->Array.push({
-                        id: newPartitionId,
-                        latestFetchedBlock: p.latestFetchedBlock,
-                        selection: fetchState.normalSelection,
-                        dynamicContract: Some(contractName),
-                        addressesByContractName,
-                        mergeBlock: None,
-                        mutPendingQueries: p.mutPendingQueries,
-                        prevQueryRange: p.prevQueryRange,
-                        prevPrevQueryRange: p.prevPrevQueryRange,
-                        latestBlockRangeUpdateBlock: p.latestBlockRangeUpdateBlock,
-                      })
-                    }
-                  }
+                  let addressesByContractName = Dict.make()
+                  addressesByContractName->Dict.set(contractName, addresses)
+                  newPartitions->Array.push({
+                    id: newPartitionId,
+                    latestFetchedBlock: p.latestFetchedBlock,
+                    selection: fetchState.normalSelection,
+                    dynamicContract: Some(contractName),
+                    addressesByContractName,
+                    mergeBlock: None,
+                    mutPendingQueries: p.mutPendingQueries,
+                    prevQueryRange: p.prevQueryRange,
+                    prevPrevQueryRange: p.prevPrevQueryRange,
+                    latestBlockRangeUpdateBlock: p.latestBlockRangeUpdateBlock,
+                  })
                 }
               }
             }
           }
         }
-
-        let registeringContracts = registeringContractsByContract->Dict.getUnsafe(contractName)
-        let _ = Utils.Dict.mergeInPlace(newIndexingContracts, registeringContracts)
       }
 
-      let optimizedPartitions = createPartitionsFromIndexingAddresses(
-        ~registeringContractsByContract,
-        ~contractConfigs=fetchState.contractConfigs,
-        ~dynamicContracts=dynamicContractsRef.contents,
-        ~normalSelection=fetchState.normalSelection,
-        ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-        ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex +
-        newPartitions->Array.length,
-        ~existingPartitions=mutExistingPartitions->Array.concat(newPartitions),
-        ~progressBlockNumber=0,
-      )
+      let _ = Utils.Dict.mergeInPlace(newIndexingContracts, registeringContracts)
+    })
 
-      fetchState->updateInternal(~optimizedPartitions, ~indexingContracts=newIndexingContracts)
-    }
+    let optimizedPartitions = createPartitionsFromIndexingAddresses(
+      ~registeringContractsByContract,
+      ~contractConfigs=fetchState.contractConfigs,
+      ~dynamicContracts=dynamicContractsRef.contents,
+      ~normalSelection=fetchState.normalSelection,
+      ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
+      ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex +
+      newPartitions->Array.length,
+      ~existingPartitions=mutExistingPartitions->Array.concat(newPartitions),
+      ~progressBlockNumber=0,
+    )
+
+    fetchState->updateInternal(~optimizedPartitions, ~indexingContracts=newIndexingContracts)
   }
 }
 

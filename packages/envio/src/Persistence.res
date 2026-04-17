@@ -258,47 +258,40 @@ let writeBatch = (
       ~allEntities=persistence.allEntities,
       ~updatedEntities,
       ~updatedEffectsCache={
-        inMemoryStore.effects
-        ->Dict.keysToArray
-        ->Belt.Array.keepMap(effectName => {
-          let inMemTable = inMemoryStore.effects->Dict.getUnsafe(effectName)
+        let acc = []
+        inMemoryStore.effects->Utils.Dict.forEach(inMemTable => {
           let {idsToStore, dict, effect, invalidationsCount} = inMemTable
           switch idsToStore {
-          | [] => None
-          | ids => {
-              let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
-              ids->Belt.Array.forEachWithIndex((index, id) => {
-                items->Array.setUnsafe(
-                  index,
-                  (
-                    {
-                      id,
-                      output: dict->Dict.getUnsafe(id),
-                    }: Internal.effectCacheItem
-                  ),
-                )
-              })
-              Some({
-                let effectName = effect.name
-                let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(
-                  effectName,
-                ) {
-                | Some(c) => c
-                | None => {
-                    let c = {effectName, count: 0}
-                    cache->Dict.set(effectName, c)
-                    c
-                  }
-                }
-                let shouldInitialize = effectCacheRecord.count === 0
-                effectCacheRecord.count =
-                  effectCacheRecord.count + items->Array.length - invalidationsCount
-                Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
-                {effect, items, shouldInitialize}
-              })
+          | [] => ()
+          | ids =>
+            let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+            ids->Belt.Array.forEachWithIndex((index, id) => {
+              items->Array.setUnsafe(
+                index,
+                (
+                  {
+                    id,
+                    output: dict->Dict.getUnsafe(id),
+                  }: Internal.effectCacheItem
+                ),
+              )
+            })
+            let effectName = effect.name
+            let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
+            | Some(c) => c
+            | None =>
+              let c = {effectName, count: 0}
+              cache->Dict.set(effectName, c)
+              c
             }
+            let shouldInitialize = effectCacheRecord.count === 0
+            effectCacheRecord.count =
+              effectCacheRecord.count + items->Array.length - invalidationsCount
+            Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
+            acc->Array.push({effect, items, shouldInitialize})->ignore
           }
         })
+        acc
       },
     )
   }
