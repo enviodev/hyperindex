@@ -27,6 +27,10 @@ runs:
         name: npm-pkg-envio-linux-x64
         path: .envio-artifacts/envio-linux-x64
 
+    - name: Inject addon into envio package
+      shell: bash
+      run: cp .envio-artifacts/envio-linux-x64/envio.node .envio-artifacts/envio/envio.node
+
     - name: Install dependencies
       shell: bash
       run: pnpm install --no-frozen-lockfile
