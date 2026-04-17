@@ -14,10 +14,8 @@ fn set_envio_package_dir(dir: &Option<String>) {
     }
 }
 
-/// Global JS runner callback.
 static JS_RUNNER: OnceLock<ThreadsafeFunction<String>> = OnceLock::new();
 
-/// Pending completion signals keyed by request ID.
 static WAITERS: OnceLock<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Result<(), String>>>>> =
     OnceLock::new();
 
@@ -27,7 +25,6 @@ fn get_waiters() -> &'static Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Res
 
 static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-/// Called by JS when an async script completes successfully.
 #[napi_derive::napi]
 pub fn signal_complete(id: f64) {
     let id = id as u64;
@@ -36,7 +33,6 @@ pub fn signal_complete(id: f64) {
     }
 }
 
-/// Called by JS when an async script fails.
 #[napi_derive::napi]
 pub fn signal_error(id: f64, msg: String) {
     let id = id as u64;
@@ -45,39 +41,15 @@ pub fn signal_error(id: f64, msg: String) {
     }
 }
 
-/// Execute a JS script in-process via the callback, or spawn node as fallback.
-pub async fn run_js_or_spawn(
-    script: &str,
-    current_dir: &std::path::Path,
-    extra_env: &[(String, String)],
-) -> anyhow::Result<()> {
+/// Send a structured command to the JS callback and await completion.
+/// Format: "id|command|json-data"
+pub async fn run_command(command: &str, data: &serde_json::Value) -> anyhow::Result<()> {
     if let Some(runner) = JS_RUNNER.get() {
-        let env_setup: String = extra_env
-            .iter()
-            .map(|(k, v)| {
-                format!(
-                    "process.env[{}] = {};",
-                    serde_json::to_string(k).unwrap_or_default(),
-                    serde_json::to_string(v).unwrap_or_default()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("");
-
-        let cwd_setup = format!(
-            "process.chdir({});",
-            serde_json::to_string(&current_dir.to_string_lossy()).unwrap_or_default()
-        );
-
-        // Create a unique ID and channel for this call
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
         get_waiters().lock().unwrap().insert(id, tx);
 
-        // Send the script with ID prefix. The JS callback parses the ID,
-        // runs the script, then calls signalComplete/signalError.
-        let payload = format!("{}|{}{}{}", id, cwd_setup, env_setup, script);
-        let script_preview: String = script.chars().take(120).collect();
+        let payload = format!("{}|{}|{}", id, command, data);
 
         runner.call_with_return_value(
             Ok(payload),
@@ -86,33 +58,14 @@ pub async fn run_js_or_spawn(
         );
 
         rx.await
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "JS callback channel closed unexpectedly.\nScript: {}",
-                    script_preview
-                )
-            })?
-            .map_err(|e| anyhow::anyhow!("{}\nScript: {}", e, script_preview))?;
+            .map_err(|_| anyhow::anyhow!("JS callback channel closed for command: {}", command))?
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         Ok(())
     } else {
-        // Fallback: spawn node (non-NAPI invocations)
-        let mut cmd = tokio::process::Command::new("node");
-        cmd.args(["-e", script])
-            .current_dir(current_dir)
-            .stdin(std::process::Stdio::null())
-            .kill_on_drop(true);
-        for (k, v) in extra_env {
-            cmd.env(k, v);
-        }
-        let exit = cmd.spawn()?.wait().await?;
-        if !exit.success() {
-            return Err(anyhow::anyhow!(
-                "Node script exited with code {}",
-                exit.code().unwrap_or(-1)
-            ));
-        }
-        Ok(())
+        Err(anyhow::anyhow!(
+            "No JS runner available. This command requires running via the envio npm package."
+        ))
     }
 }
 

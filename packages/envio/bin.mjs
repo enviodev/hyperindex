@@ -1,33 +1,57 @@
 #!/usr/bin/env node
 
-// CLI entry point. Loads the NAPI addon and runs the CLI in-process.
-// The callback executes JS scripts (migrations, indexer) in-process
-// and signals completion back to Rust via signalComplete/signalError.
+// CLI entry point. Runs the CLI in-process via NAPI.
+// The callback handles JS-side operations (migrations, indexer start)
+// that Rust delegates instead of spawning child processes.
 
 import { runCli, signalComplete, signalError } from "./src/Core.res.mjs";
+
+async function handleCommand(id, command, data) {
+  try {
+    switch (command) {
+      case "migration-up": {
+        const m = await import("envio/src/Migrations.res.mjs");
+        const code = await m.runUpMigrations(false, data.reset);
+        if (code !== 0) throw new Error(`Migration failed with code ${code}`);
+        break;
+      }
+      case "migration-down": {
+        const m = await import("envio/src/Migrations.res.mjs");
+        const code = await m.runDownMigrations(false);
+        if (code !== 0) throw new Error(`Migration failed with code ${code}`);
+        break;
+      }
+      case "start-indexer": {
+        // Set env vars before importing the indexer
+        if (data.cwd) process.chdir(data.cwd);
+        if (data.env) {
+          for (const [k, v] of Object.entries(data.env)) {
+            process.env[k] = v;
+          }
+        }
+        await import(data.indexPath);
+        break;
+      }
+      default:
+        throw new Error(`Unknown command: ${command}`);
+    }
+    signalComplete(id);
+  } catch (e) {
+    signalError(id, e?.message ?? String(e));
+  }
+}
 
 try {
   const code = await runCli(
     process.argv.slice(2),
-    // Rust sends "id|script". We eval the script async, then signal
-    // completion back to Rust via sync NAPI calls.
+    // Rust sends "id|command|json-data". No eval — just structured dispatch.
     (_err, payload) => {
-      const sep = payload.indexOf("|");
-      const id = Number(payload.substring(0, sep));
-      const script = payload.substring(sep + 1);
-      (async () => {
-        try {
-          const result = await (0, eval)(script);
-          // Migrations return an exit code (0=success, 1=failure)
-          if (typeof result === "number" && result !== 0) {
-            signalError(id, `Script returned non-zero exit code: ${result}`);
-          } else {
-            signalComplete(id);
-          }
-        } catch (e) {
-          signalError(id, e?.message ?? String(e));
-        }
-      })();
+      const firstSep = payload.indexOf("|");
+      const secondSep = payload.indexOf("|", firstSep + 1);
+      const id = Number(payload.substring(0, firstSep));
+      const command = payload.substring(firstSep + 1, secondSep);
+      const data = JSON.parse(payload.substring(secondSep + 1));
+      handleCommand(id, command, data);
     }
   );
   process.exit(code);

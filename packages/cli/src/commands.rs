@@ -222,30 +222,37 @@ pub mod start {
 
         let index_path = format!("./{}/src/Index.res.mjs", to_js_path(&relative_generated));
 
-        let config_path = config
-            .parsed_project_paths
-            .config
-            .to_string_lossy()
-            .into_owned();
-        let mut env: Vec<(String, String)> = extra_env.to_vec();
-        env.push(("ENVIO_CONFIG".to_string(), config_path));
-
-        // Use absolute path for the import() — ESM import() resolves
-        // relative to the importing module, not cwd.
         let abs_index_path = config
             .parsed_project_paths
             .project_root
             .join(&index_path)
             .canonicalize()
             .unwrap_or_else(|_| config.parsed_project_paths.project_root.join(&index_path));
-        let script = format!("import('{}')", to_js_path(&abs_index_path));
 
-        crate::napi::run_js_or_spawn(&script, &config.parsed_project_paths.project_root, &env)
+        let config_path = config
+            .parsed_project_paths
+            .config
+            .to_string_lossy()
+            .into_owned();
+
+        let mut env_map = serde_json::Map::new();
+        env_map.insert("ENVIO_CONFIG".to_string(), config_path.into());
+        for (k, v) in extra_env {
+            env_map.insert(k.clone(), v.clone().into());
+        }
+
+        let data = serde_json::json!({
+            "indexPath": to_js_path(&abs_index_path),
+            "cwd": config.parsed_project_paths.project_root.to_string_lossy(),
+            "env": env_map,
+        });
+
+        crate::napi::run_command("start-indexer", &data)
             .await
             .map_err(|e| {
                 anyhow!(
-                "Indexer crashed: {e}\nFor more details, restart with 'TUI_OFF=true envio start'."
-            )
+                    "Indexer crashed: {e}\nFor more details, restart with 'TUI_OFF=true envio start'."
+                )
             })?;
 
         println!(
@@ -260,27 +267,13 @@ pub mod db_migrate {
 
     use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
 
-    async fn execute_migration(script: &str, config: &SystemConfig) -> anyhow::Result<()> {
-        let config_path = config
-            .parsed_project_paths
-            .config
-            .to_string_lossy()
-            .into_owned();
-        let env = vec![("ENVIO_CONFIG".to_string(), config_path)];
-
-        crate::napi::run_js_or_spawn(script, &config.parsed_project_paths.project_root, &env).await
-    }
-
     pub async fn run_up_migrations(
-        config: &SystemConfig,
+        _config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        execute_migration(
-            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(false))",
-            config,
-        )
-        .await
-        .context("Failed to run db migrations")?;
+        crate::napi::run_command("migration-up", &serde_json::json!({ "reset": false }))
+            .await
+            .context("Failed to run db migrations")?;
         persisted_state
             .upsert_to_db()
             .await
@@ -288,25 +281,19 @@ pub mod db_migrate {
         Ok(())
     }
 
-    pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<()> {
-        execute_migration(
-            "import('envio/src/Migrations.res.mjs').then(m => m.runDownMigrations(false))",
-            config,
-        )
-        .await
-        .context("Failed to drop schema")
+    pub async fn run_drop_schema(_config: &SystemConfig) -> anyhow::Result<()> {
+        crate::napi::run_command("migration-down", &serde_json::json!({}))
+            .await
+            .context("Failed to drop schema")
     }
 
     pub async fn run_db_setup(
-        config: &SystemConfig,
+        _config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        execute_migration(
-            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(false, true))",
-            config,
-        )
-        .await
-        .context("Failed to run db setup")?;
+        crate::napi::run_command("migration-up", &serde_json::json!({ "reset": true }))
+            .await
+            .context("Failed to run db setup")?;
 
         persisted_state
             .upsert_to_db()
