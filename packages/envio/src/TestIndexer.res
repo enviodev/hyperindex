@@ -275,15 +275,10 @@ let makeInitialState = (
 
     let chainConfig = config.chainMap->ChainMap.get(chain)
     let processChainConfig = processConfigChains->Dict.getUnsafe(chainIdStr)
-    let dbAddresses =
-      indexingAddressesByChain
-      ->Dict.get(chainIdStr)
-      ->Option.getOr([])
-    let indexingAddresses = if dbAddresses->Array.length > 0 {
-      dbAddresses
-    } else {
-      ChainFetcher.configAddresses(chainConfig)
-    }
+    let indexingAddresses =
+      ChainFetcher.configAddresses(chainConfig)->Array.concat(
+        indexingAddressesByChain->Dict.get(chainIdStr)->Option.getOr([]),
+      )
     {
       Persistence.id: chainId,
       startBlock: processChainConfig.startBlock,
