@@ -40,7 +40,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
         Internal.address: mockAddress0,
         contractName: "Gravatar",
         startBlock,
-        registrationBlock: None,
+        registrationBlock: -1,
       },
     ],
     ~startBlock,

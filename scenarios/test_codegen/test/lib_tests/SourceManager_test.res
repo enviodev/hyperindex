@@ -410,7 +410,7 @@ describe("SourceManager fetchNext", () => {
                   Internal.contractName,
                   startBlock: 0,
                   address,
-                  registrationBlock: None,
+                  registrationBlock: -1,
                 },
               )
             },
