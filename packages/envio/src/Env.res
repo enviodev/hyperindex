@@ -93,6 +93,7 @@ Logging.setLogger(
 )
 
 module Db = {
+  let devMode = envSafe->EnvSafe.get("ENVIO_DEV_MODE", S.bool, ~fallback=false)
   let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost")
   let port = envSafe->EnvSafe.get("ENVIO_PG_PORT", S.int->S.port, ~devFallback=5433)
   let user = envSafe->EnvSafe.get("ENVIO_PG_USER", S.string, ~devFallback="postgres")

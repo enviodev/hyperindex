@@ -555,10 +555,11 @@ let start = async (
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
   let shouldUseTui = !isTest && !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
-  // The most simple check to verify whether we are running in development mode
-  // and prevent exposing the console to public, when creating a real deployment.
-  // Note: isTest overrides isDevelopmentMode to ensure proper process exit in test mode.
-  let isDevelopmentMode = !isTest && Env.Db.password === "testing"
+  // isDevelopmentMode controls whether the indexer stays alive after all
+  // chains finish (keepProcessAlive) and whether the console API is exposed.
+  // Set by `envio dev` via the ENVIO_DEV_MODE env var; `envio start` leaves
+  // it unset so the process exits cleanly when indexing completes.
+  let isDevelopmentMode = !isTest && Env.Db.devMode
 
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).

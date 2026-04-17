@@ -134,7 +134,10 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
 
     println!("Starting indexer");
 
-    commands::start::start_indexer(&config, &up_result.indexer_env)
+    let mut indexer_env = up_result.indexer_env.clone();
+    indexer_env.push(("ENVIO_DEV_MODE".to_string(), "true".to_string()));
+
+    commands::start::start_indexer(&config, &indexer_env)
         .await
         .context("Failed running start on the indexer")?;
 
