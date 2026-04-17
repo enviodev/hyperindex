@@ -104,7 +104,7 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, platformPkg) {
   var nodePath = path.join(targetDebug, "envio.node");
 
   if (!fs.existsSync(localPath)) {
-    throw new Error("cargo build succeeded but " + localPath + " not found. Check Cargo.toml has crate-type = [\\"cdylib\\"].");
+    throw new Error("cargo build succeeded but " + localPath + " not found. Check Cargo.toml has crate-type = ['cdylib'].");
   }
 
   if (!fs.existsSync(nodePath) || fs.statSync(nodePath).mtimeMs < fs.statSync(localPath).mtimeMs) {
