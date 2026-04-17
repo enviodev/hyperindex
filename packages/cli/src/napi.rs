@@ -16,10 +16,10 @@ fn set_envio_package_dir(dir: &Option<String>) {
 
 static JS_RUNNER: OnceLock<ThreadsafeFunction<String>> = OnceLock::new();
 
-static WAITERS: OnceLock<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Result<(), String>>>>> =
-    OnceLock::new();
+type WaiterMap = HashMap<u64, tokio::sync::oneshot::Sender<Result<(), String>>>;
+static WAITERS: OnceLock<Mutex<WaiterMap>> = OnceLock::new();
 
-fn get_waiters() -> &'static Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Result<(), String>>>> {
+fn get_waiters() -> &'static Mutex<WaiterMap> {
     WAITERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
