@@ -117,6 +117,13 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/prepare-envio-artifacts
 
+      - name: Verify addon
+        run: |
+          echo "ENVIO_NATIVE_ADDON_PATH=$ENVIO_NATIVE_ADDON_PATH"
+          ls -la "$ENVIO_NATIVE_ADDON_PATH" || echo "Addon not found at env var path"
+          ls -la .envio-artifacts/envio-linux-x64/envio.node || echo "Addon not found in artifacts"
+          ls -la .envio-artifacts/envio/envio.node || echo "Addon not found as sibling"
+
       - name: Run template tests
         working-directory: packages/e2e-tests
         run: pnpm test:templates
