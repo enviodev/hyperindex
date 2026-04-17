@@ -121,7 +121,7 @@ pub async fn run_cli(
 
     crate::executor::execute(command_line_args)
         .await
-        .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+        .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
     Ok(0)
 }
