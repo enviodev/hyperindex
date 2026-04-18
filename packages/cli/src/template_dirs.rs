@@ -19,6 +19,7 @@ impl Template for evm::Template {
             evm::Template::Erc20 => "erc20",
             evm::Template::FeatureExternalCalls => "external_calls",
             evm::Template::FeatureFactory => "factory",
+            evm::Template::FeatureTopicFilter => "feature_filter",
         }
         .to_string()
     }

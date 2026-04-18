@@ -1,0 +1,8 @@
+type Transfer {
+  id: ID!
+  amount: BigInt!
+  from: String!
+  to: String!
+  contract: String!
+  chainId: Int!
+}

@@ -44,6 +44,8 @@ enum EvmInitOption {
     FeatureExternalCalls,
     #[strum(serialize = "Feature: Factory Contract")]
     FeatureFactory,
+    #[strum(serialize = "Feature: Topic Filter")]
+    FeatureTopicFilter,
 }
 
 impl EvmInitOption {
@@ -58,6 +60,7 @@ impl EvmInitOption {
                 Self::TemplateGreeter,
                 Self::FeatureExternalCalls,
                 Self::FeatureFactory,
+                Self::FeatureTopicFilter,
             ],
         }
     }
@@ -237,6 +240,9 @@ async fn prompt_evm_init_option(language: &Language) -> Result<Ecosystem> {
             evm::InitFlow::Template(evm::Template::FeatureExternalCalls)
         }
         EvmInitOption::FeatureFactory => evm::InitFlow::Template(evm::Template::FeatureFactory),
+        EvmInitOption::FeatureTopicFilter => {
+            evm::InitFlow::Template(evm::Template::FeatureTopicFilter)
+        }
     };
 
     Ok(Ecosystem::Evm { init_flow })

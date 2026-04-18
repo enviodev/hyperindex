@@ -40,6 +40,11 @@ const TEMPLATES: TemplateConfig[] = [
     hasTests: true,
   },
   {
+    name: "evm-feature-filter",
+    initArgs: ["template", "-t", "feature-topic-filter", "-l", "typescript"],
+    hasTests: true,
+  },
+  {
     name: "evm-external-calls",
     initArgs: ["template", "-t", "feature-external-calls", "-l", "typescript"],
   },
