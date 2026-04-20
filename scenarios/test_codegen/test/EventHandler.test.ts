@@ -188,6 +188,9 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(indexer.chains[1].Noop.addresses, [
       "0x0b2F78c5Bf6d9c12EE1225d5f374Aa91204580C3",
     ]);
+    assert.deepEqual(indexer.chains[1337].Gravatar.addresses, [
+      "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
+    ]);
     assert.deepEqual(indexer.chains[1].Noop.name, "Noop");
     assert.deepEqual(Object.keys(indexer.chains[1]), [
       "id",

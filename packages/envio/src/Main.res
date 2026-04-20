@@ -185,11 +185,11 @@ let buildChainsObject = (~config: Config.t) => {
                 let state = gsManager->GlobalStateManager.getState
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
                 let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-                let indexingContracts = chainFetcher.fetchState.indexingContracts
+                let indexingAddresses = chainFetcher.fetchState.indexingAddresses
 
-                // Collect all addresses for this contract name from indexingContracts
+                // Collect all addresses for this contract name from indexingAddresses
                 let addresses = []
-                let values = indexingContracts->Dict.valuesToArray
+                let values = indexingAddresses->Dict.valuesToArray
                 for idx in 0 to values->Array.length - 1 {
                   let indexingContract = values->Array.getUnsafe(idx)
                   if indexingContract.contractName === contract.name {
@@ -205,7 +205,7 @@ let buildChainsObject = (~config: Config.t) => {
               switch getInitialChainState(~chainId=chainConfig.id) {
               | Some(chainState) =>
                 let addresses = contract.addresses->Array.copy
-                chainState.dynamicContracts->Array.forEach(
+                chainState.indexingAddresses->Array.forEach(
                   dc => {
                     if dc.contractName === contract.name {
                       addresses->Array.push(dc.address)->ignore
@@ -315,7 +315,7 @@ let getGlobalIndexer = (): 'indexer => {
     | (wildcard, where) =>
       Some({
         ?wildcard,
-        where: ?where->(Utils.magic: option<JSON.t> => option<_>),
+        where: ?(where->(Utils.magic: option<JSON.t> => option<_>)),
       })
     }
     (contractName, eventName, eventOptions)
@@ -727,7 +727,7 @@ let start = async (
     )
   }
 
-  let chainManager = await ChainManager.makeFromDbState(
+  let chainManager = ChainManager.makeFromDbState(
     ~initialState=ctx.persistence->Persistence.getInitializedState,
     ~config=ctx.config,
     ~registrations=ctx.registrations,

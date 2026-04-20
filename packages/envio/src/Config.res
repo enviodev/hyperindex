@@ -291,7 +291,7 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
   | "bigint" => (Table.BigInt({precision: ?prop["precision"]}), Utils.BigInt.schema->S.toUnknown)
   | "bigdecimal" => (
       Table.BigDecimal({
-        config: ?prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getOr(0))),
+        config: ?(prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getOr(0)))),
       }),
       BigDecimal.schema->S.toUnknown,
     )
@@ -533,14 +533,14 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => ()
   }
 
-  // Build event configs for a contract from JSON event items. Events are
-  // built with an empty handler-registration state (isWildcard=false,
-  // handler/contractRegister=None, eventFilters=None). Post-registration
-  // configs are produced by `HandlerLoader.applyRegistrations`, which folds
-  // the registered handler state into each event. Keeping `Config` oblivious
-  // to `HandlerRegister` means `Config.loadWithoutRegistrations` is a pure
-  // function of the JSON and safe to memoize without invalidation.
-  let buildContractEvents = (~contractName, ~events: option<array<_>>, ~abi, ~chainId: int) => {
+  // Build event configs for a contract from JSON event items
+  let buildContractEvents = (
+    ~contractName,
+    ~events: option<array<_>>,
+    ~abi,
+    ~chainId: int,
+    ~startBlock: option<int>,
+  ) => {
     switch events {
     | None => []
     | Some(eventItems) =>
@@ -563,6 +563,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               ~isWildcard=false,
               ~handler=None,
               ~contractRegister=None,
+              ~startBlock?,
             ) :> Internal.eventConfig)
           | None =>
             JsError.throwWithMessage(
@@ -582,6 +583,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~probeChainId=chainId,
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
+            ~startBlock?,
             ~globalBlockFieldsSet,
             ~globalTransactionFieldsSet,
           ) :> Internal.eventConfig)
@@ -643,6 +645,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~events=contractData["events"],
             ~abi=contractData["abi"],
             ~chainId,
+            ~startBlock,
           )
 
           {

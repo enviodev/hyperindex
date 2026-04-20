@@ -1249,6 +1249,29 @@ let make = (
       Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
     })
 
+    // Populate config addresses into envio_addresses with registration_block/log = -1
+    let ids = []
+    let addrChainIds = []
+    let addrContractNames = []
+    chainConfigs->Array.forEach(chain => {
+      chain.contracts->Array.forEach(contract => {
+        contract.addresses->Array.forEach(
+          address => {
+            ids->Array.push(Config.EnvioAddresses.makeId(~chainId=chain.id, ~address))->ignore
+            addrChainIds->Array.push(chain.id)->ignore
+            addrContractNames->Array.push(contract.name)->ignore
+          },
+        )
+      })
+    })
+    if ids->Array.length > 0 {
+      await sql->Postgres.unpreparedUnsafe(
+        `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
+SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::text[]) AS t(id, chain_id, contract_name);`,
+        (ids, addrChainIds, addrContractNames)->(Utils.magic: _ => unknown),
+      )
+    }
+
     let cache = await restoreEffectCache(~withUpload=true)
 
     // Integration with other tools like Hasura
@@ -1270,7 +1293,7 @@ let make = (
         numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
-        dynamicContracts: [],
+        indexingAddresses: ChainFetcher.configAddresses(chainConfig),
         sourceBlockNumber: 0,
       }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,
@@ -1473,7 +1496,7 @@ let make = (
           timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
           numEventsProcessed: rawInitialState.numEventsProcessed,
           progressBlockNumber: rawInitialState.progressBlockNumber,
-          dynamicContracts: rawInitialState.dynamicContracts,
+          indexingAddresses: rawInitialState.indexingAddresses,
           sourceBlockNumber: rawInitialState.sourceBlockNumber,
         })
       }),
