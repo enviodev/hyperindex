@@ -29,7 +29,7 @@ let calculateTargetBufferSize = (~activeChainsCount) => {
   }
 }
 
-let makeFromDbState = async (
+let makeFromDbState = (
   ~initialState: Persistence.initialState,
   ~config: Config.t,
   ~registrations,

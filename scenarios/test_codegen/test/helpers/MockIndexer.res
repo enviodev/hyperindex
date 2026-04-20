@@ -335,7 +335,7 @@ module Indexer = {
 
     await persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values, ~reset)
 
-    let chainManager = await ChainManager.makeFromDbState(
+    let chainManager = ChainManager.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~registrations,

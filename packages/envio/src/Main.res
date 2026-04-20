@@ -285,7 +285,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     | (wildcard, where) =>
       Some({
         ?wildcard,
-        where: ?where->(Utils.magic: option<JSON.t> => option<_>),
+        where: ?(where->(Utils.magic: option<JSON.t> => option<_>)),
       })
     }
     (contractName, eventName, eventOptions)
@@ -651,7 +651,7 @@ let start = async (
     )
   }
 
-  let chainManager = await ChainManager.makeFromDbState(
+  let chainManager = ChainManager.makeFromDbState(
     ~initialState=ctx.persistence->Persistence.getInitializedState,
     ~config=ctx.config,
     ~registrations=ctx.registrations,
