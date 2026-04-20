@@ -75,7 +75,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             eventConfigs,
           },
           addressesByContractName: Dict.make(),
-          indexingContracts: fetchState.contents.indexingContracts,
+          indexingAddresses: fetchState.contents.indexingAddresses,
         }
 
         fetchState.contents->FetchState.startFetchingQueries(~queries=[query])

@@ -194,11 +194,11 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
                 let state = gsManager->GlobalStateManager.getState
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
                 let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-                let indexingContracts = chainFetcher.fetchState.indexingContracts
+                let indexingAddresses = chainFetcher.fetchState.indexingAddresses
 
-                // Collect all addresses for this contract name from indexingContracts
+                // Collect all addresses for this contract name from indexingAddresses
                 let addresses = []
-                let values = indexingContracts->Dict.valuesToArray
+                let values = indexingAddresses->Dict.valuesToArray
                 for idx in 0 to values->Array.length - 1 {
                   let indexingContract = values->Array.getUnsafe(idx)
                   if indexingContract.contractName === contract.name {

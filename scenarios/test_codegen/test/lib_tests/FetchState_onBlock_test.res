@@ -80,7 +80,7 @@ describe("FetchState onBlock functionality", () => {
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -127,7 +127,7 @@ describe("FetchState onBlock functionality", () => {
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -175,7 +175,7 @@ describe("FetchState onBlock functionality", () => {
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -227,7 +227,7 @@ describe("FetchState onBlock functionality", () => {
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -282,7 +282,7 @@ describe("FetchState onBlock functionality", () => {
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =

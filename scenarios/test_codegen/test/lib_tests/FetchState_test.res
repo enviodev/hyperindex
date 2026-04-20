@@ -113,7 +113,7 @@ let makeInitial = (
   )
 }
 
-// Helper to build indexingContracts dict for test expectations
+// Helper to build indexingAddresses dict for test expectations
 // Note: dynamic contract info is now only tracked by the register field (DC variant)
 let makeIndexingContractsWithDynamics = (
   dcs: array<Internal.indexingAddress>,
@@ -183,7 +183,7 @@ describe("FetchState.make", () => {
       buffer: [],
       normalSelection: fetchState.normalSelection,
       chainId: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
       contractConfigs: fetchState.contractConfigs,
       blockLag: 0,
       onBlockConfigs: [],
@@ -257,7 +257,7 @@ describe("FetchState.make", () => {
       endBlock: None,
       normalSelection: fetchState.normalSelection,
       chainId,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
       contractConfigs: fetchState.contractConfigs,
       blockLag: 0,
       onBlockConfigs: [],
@@ -330,7 +330,7 @@ describe("FetchState.make", () => {
         endBlock: None,
         normalSelection: fetchState.normalSelection,
         chainId,
-        indexingContracts: fetchState.indexingContracts,
+        indexingAddresses: fetchState.indexingAddresses,
         contractConfigs: fetchState.contractConfigs,
         blockLag: 0,
         onBlockConfigs: [],
@@ -446,7 +446,7 @@ describe("FetchState.make", () => {
         endBlock: None,
         normalSelection: fetchState.normalSelection,
         chainId,
-        indexingContracts: fetchState.indexingContracts,
+        indexingAddresses: fetchState.indexingAddresses,
         contractConfigs: fetchState.contractConfigs,
         blockLag: 0,
         onBlockConfigs: [],
@@ -820,11 +820,11 @@ describe("FetchState.registerDynamicContracts", () => {
 
     // Verify that both DC2 and DC3 were registered correctly
     let hasAddress1 =
-      updatedFetchState.indexingContracts
+      updatedFetchState.indexingAddresses
       ->Dict.get(mockAddress1->Address.toString)
       ->Option.isSome
     let hasAddress2 =
-      updatedFetchState.indexingContracts
+      updatedFetchState.indexingAddresses
       ->Dict.get(mockAddress2->Address.toString)
       ->Option.isSome
 
@@ -1160,7 +1160,7 @@ describe("FetchState.registerDynamicContracts", () => {
   And remove the dc from the later one, so they are not duplicated in the db`,
     ).toEqual((Some([]), Some([dc2])))
     t.expect(
-      updatedFetchState.indexingContracts,
+      updatedFetchState.indexingAddresses,
       ~message="Should choose the earliest dc from the batch",
     ).toEqual(makeIndexingContractsWithDynamics([dc2], ~static=[mockAddress0]))
     t.expect(
@@ -1212,7 +1212,7 @@ describe("FetchState.registerDynamicContracts", () => {
       fetchState->FetchState.registerDynamicContracts(// Order of dcs doesn't matter
       // but they are not sorted in fetch state
       [dc1->dcToItem, dc3->dcToItem, dc2->dcToItem])
-    t.expect(updatedFetchState.indexingContracts->Utils.Dict.size).toBe(4)
+    t.expect(updatedFetchState.indexingAddresses->Utils.Dict.size).toBe(4)
     t.expect(updatedFetchState.optimizedPartitions.entities->Dict.valuesToArray).toEqual([
       {
         ...fetchState.optimizedPartitions.entities->Dict.getUnsafe("0"),
@@ -1365,7 +1365,7 @@ describe("FetchState.registerDynamicContracts", () => {
         buffer: [],
         normalSelection: fetchState.normalSelection,
         chainId,
-        indexingContracts: fetchState.indexingContracts,
+        indexingAddresses: fetchState.indexingAddresses,
         contractConfigs: fetchState.contractConfigs,
         blockLag: 0,
         onBlockConfigs: [],
@@ -1414,7 +1414,7 @@ describe("FetchState.getNextQuery & integration", () => {
       blockLag: 0,
       normalSelection,
       chainId,
-      indexingContracts: Dict.fromArray([
+      indexingAddresses: Dict.fromArray([
         (
           mockAddress0->Address.toString,
           ({
@@ -1481,7 +1481,7 @@ describe("FetchState.getNextQuery & integration", () => {
       endBlock: None,
       normalSelection,
       chainId,
-      indexingContracts: makeIndexingContractsWithDynamics([dc3, dc2, dc1], ~static=[mockAddress0]),
+      indexingAddresses: makeIndexingContractsWithDynamics([dc3, dc2, dc1], ~static=[mockAddress0]),
       contractConfigs: makeInitial().contractConfigs,
       blockLag: 0,
       onBlockConfigs: [],
@@ -1520,7 +1520,7 @@ describe("FetchState.getNextQuery & integration", () => {
           toBlock: None,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
           isChunk: false,
         },
       ]),
@@ -1620,7 +1620,7 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
           isChunk: false,
         },
       ]),
@@ -1638,7 +1638,7 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
           isChunk: false,
         },
       ]),
@@ -1733,7 +1733,7 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])]),
           fromBlock: 1,
-          indexingContracts: fetchStateWithDcs.indexingContracts,
+          indexingAddresses: fetchStateWithDcs.indexingAddresses,
         },
         {
           partitionId: "2",
@@ -1742,7 +1742,7 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
-          indexingContracts: fetchStateWithDcs.indexingContracts,
+          indexingAddresses: fetchStateWithDcs.indexingAddresses,
         },
         // Partition 0 is not included since it's below knownHeight
       ]),
@@ -1789,7 +1789,7 @@ describe("FetchState.getNextQuery & integration", () => {
       toBlock: None,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
-      indexingContracts: fetchStateWithDcs.indexingContracts,
+      indexingAddresses: fetchStateWithDcs.indexingAddresses,
       isChunk: false,
     }
     let expectedPartition0Query: FetchState.query = {
@@ -1800,7 +1800,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
       ]),
       fromBlock: 11,
-      indexingContracts: fetchStateWithDcs.indexingContracts,
+      indexingAddresses: fetchStateWithDcs.indexingAddresses,
       isChunk: false,
     }
 
@@ -1847,7 +1847,7 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
           fromBlock: 3,
-          indexingContracts: originalFetchState.indexingContracts,
+          indexingAddresses: originalFetchState.indexingAddresses,
           isChunk: false,
         },
         {
@@ -1858,7 +1858,7 @@ describe("FetchState.getNextQuery & integration", () => {
             ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
           ]),
           fromBlock: 11,
-          indexingContracts: originalFetchState.indexingContracts,
+          indexingAddresses: originalFetchState.indexingAddresses,
           isChunk: false,
         },
       ]),
@@ -1878,7 +1878,7 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
           fromBlock: 3,
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
           isChunk: false,
         },
         {
@@ -1889,7 +1889,7 @@ describe("FetchState.getNextQuery & integration", () => {
             ("Gravatar", [mockAddress0, mockAddress1, mockAddress2, mockAddress3]),
           ]),
           fromBlock: 11,
-          indexingContracts: originalFetchState.indexingContracts,
+          indexingAddresses: originalFetchState.indexingAddresses,
           isChunk: false,
         },
       ]),
@@ -2037,7 +2037,7 @@ describe("FetchState.getNextQuery & integration", () => {
             eventConfigs: [wildcard],
           },
           addressesByContractName: Dict.make(),
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
         },
         {
           partitionId: "1",
@@ -2046,7 +2046,7 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("ContractA", [mockAddress1])]),
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
         },
         {
           partitionId: "2",
@@ -2055,7 +2055,7 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress2])]),
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
         },
       ]),
     )
@@ -2122,7 +2122,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message=`Both partitions deleted, surviving addresses recreated as partition "0"`,
     ).toEqual({
       ...fetchState,
-      indexingContracts: makeIndexingContractsWithDynamics([dc1], ~static=[mockAddress0]),
+      indexingAddresses: makeIndexingContractsWithDynamics([dc1], ~static=[mockAddress0]),
       optimizedPartitions: FetchState.OptimizedPartitions.make(
         ~partitions=[
           {
@@ -2159,7 +2159,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message=`All DCs removed, only static addr0 recreated as partition "0"`,
     ).toEqual({
       ...fetchState,
-      indexingContracts: makeIndexingContractsWithDynamics([], ~static=[mockAddress0]),
+      indexingAddresses: makeIndexingContractsWithDynamics([], ~static=[mockAddress0]),
       optimizedPartitions: FetchState.OptimizedPartitions.make(
         ~partitions=[
           {
@@ -2225,7 +2225,7 @@ describe("FetchState.getNextQuery & integration", () => {
           },
           addressesByContractName: Dict.make(),
           fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
           isChunk: false,
         },
       ],
@@ -2245,7 +2245,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message=`Should keep Wildcard partition even if it's empty`,
     ).toEqual({
       ...fetchState,
-      indexingContracts: Dict.make(),
+      indexingAddresses: Dict.make(),
       optimizedPartitions: FetchState.OptimizedPartitions.make(
         ~partitions=[
           {
@@ -2335,7 +2335,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -2377,7 +2377,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -2433,7 +2433,7 @@ describe("FetchState unit tests for specific cases", () => {
         eventConfigs: [wildcard],
       },
       addressesByContractName: Dict.make(),
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     let query1: FetchState.query = {
       partitionId: "1",
@@ -2442,7 +2442,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query0, query1])
@@ -2475,7 +2475,7 @@ describe("FetchState unit tests for specific cases", () => {
             eventConfigs: [wildcard],
           },
           addressesByContractName: Dict.make(),
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
         },
       ]),
     )
@@ -2511,7 +2511,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -2578,7 +2578,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -2691,7 +2691,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: makeInitial().normalSelection,
       addressesByContractName: Dict.make(),
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     t.expect(
@@ -2727,7 +2727,7 @@ describe("FetchState unit tests for specific cases", () => {
         partitionId: "0",
         selection: fetchState.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1])]),
-        indexingContracts: fetchState.indexingContracts,
+        indexingAddresses: fetchState.indexingAddresses,
         fromBlock: 0,
         toBlock: None,
         isChunk: false,
@@ -2785,7 +2785,7 @@ describe("FetchState unit tests for specific cases", () => {
       let partition2Query = {
         ...queries->Array.getUnsafe(0),
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
-        indexingContracts: fetchStateWithDcB.indexingContracts,
+        indexingAddresses: fetchStateWithDcB.indexingAddresses,
         partitionId: "2",
         toBlock: None, // Didn't merge because reached max addresses in partition
         fromBlock: 200,
@@ -2811,7 +2811,7 @@ describe("FetchState unit tests for specific cases", () => {
           partition2Query,
           {
             ...queryA,
-            indexingContracts: fetchStateWithBothDcsAndQueryAResponse.indexingContracts,
+            indexingAddresses: fetchStateWithBothDcsAndQueryAResponse.indexingAddresses,
             partitionId: "1",
             toBlock: Some(500),
             fromBlock: 401,
@@ -2832,7 +2832,7 @@ describe("FetchState.sortForUnorderedBatch", () => {
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
       fromBlock: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
   }
 
@@ -3090,17 +3090,17 @@ describe("Dynamic contracts with start blocks", () => {
     let updatedFetchState =
       fetchState->FetchState.registerDynamicContracts([dynamicContract->dcToItem])
 
-    // The contract should be registered in indexingContracts
+    // The contract should be registered in indexingAddresses
     t.expect(
-      updatedFetchState.indexingContracts
+      updatedFetchState.indexingAddresses
       ->Dict.get(mockAddress1->Address.toString)
       ->Option.isSome,
-      ~message="Dynamic contract should be registered in indexingContracts",
+      ~message="Dynamic contract should be registered in indexingAddresses",
     ).toBeTruthy()
 
     // Verify the startBlock is set correctly
     let registeredContract =
-      updatedFetchState.indexingContracts
+      updatedFetchState.indexingAddresses
       ->Dict.get(mockAddress1->Address.toString)
       ->Option.getOrThrow
 
@@ -3132,12 +3132,12 @@ describe("Dynamic contracts with start blocks", () => {
 
     // Verify both contracts are registered with correct startBlocks
     let contract1Registered =
-      updatedFetchState.indexingContracts
+      updatedFetchState.indexingAddresses
       ->Dict.get(mockAddress1->Address.toString)
       ->Option.getOrThrow
 
     let contract2Registered =
-      updatedFetchState.indexingContracts
+      updatedFetchState.indexingAddresses
       ->Dict.get(mockAddress2->Address.toString)
       ->Option.getOrThrow
 
@@ -3161,7 +3161,7 @@ describe("FetchState progress tracking", () => {
       selection: fs0.normalSelection,
       addressesByContractName: Dict.make(),
       fromBlock: 0,
-      indexingContracts: fs0.indexingContracts,
+      indexingAddresses: fs0.indexingAddresses,
     }
     fs0->FetchState.startFetchingQueries(~queries=[query])
     fs0->FetchState.handleQueryResult(
@@ -3252,7 +3252,7 @@ describe("FetchState buffer overflow prevention", () => {
         selection: fetchStateWithTwoPartitions.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
         fromBlock: 0,
-        indexingContracts: fetchStateWithTwoPartitions.indexingContracts,
+        indexingAddresses: fetchStateWithTwoPartitions.indexingAddresses,
       }
 
       fetchStateWithTwoPartitions->FetchState.startFetchingQueries(~queries=[query0])
@@ -3299,7 +3299,7 @@ describe("FetchState buffer overflow prevention", () => {
         selection: fetchState.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
         fromBlock: 0,
-        indexingContracts: fetchState.indexingContracts,
+        indexingAddresses: fetchState.indexingAddresses,
       }
       fetchState->FetchState.startFetchingQueries(~queries=[query3])
       let fetchStateSmallQueue =

@@ -679,7 +679,7 @@ module Source = {
             ~fromBlock,
             ~toBlock,
             ~addressesByContractName as _addressesByContractName,
-            ~indexingContracts as _,
+            ~indexingAddresses as _,
             ~knownHeight,
             ~partitionId,
             ~selection as _,
