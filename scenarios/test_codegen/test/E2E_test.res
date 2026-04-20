@@ -1,6 +1,31 @@
 open Vitest
 
 describe("E2E tests", () => {
+  Async.it("Populates config addresses into envio_addresses table on init", async t => {
+    let sourceMock = MockIndexer.Source.make([], ~chain=#1337)
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
+    )
+
+    let addresses: array<InternalTable.EnvioAddresses.t> = await indexerMock.queryRaw(
+      InternalTable.EnvioAddresses.entityConfig,
+    )
+
+    t.expect(
+      addresses
+      ->Array.filter(a => a.chainId === 1337)
+      ->Array.map(a => (
+        a->Config.EnvioAddresses.getAddress->Address.toString,
+        a.contractName,
+        a.registrationBlock,
+      )),
+      ~message="Config addresses should be inserted with registrationBlock=-1 sentinel",
+    ).toEqual([
+      ("0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3", "Gravatar", -1),
+      ("0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC", "NftFactory", -1),
+    ])
+  })
+
   Async.it("Currectly starts indexing from a non-zero start block", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
