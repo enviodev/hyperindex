@@ -851,6 +851,42 @@ describe("FetchState.registerDynamicContracts", () => {
     ).toBe(fetchState)
   })
 
+  it(
+    "Keeps dc for a contract with no events on the item so it is persisted to the db (but doesn't register it for fetching)",
+    t => {
+      let fetchState = makeInitial()
+
+      // Contract has no event configs in fetchState, so no partition is
+      // created. We still want the dc to stay on the item so that
+      // InMemoryStore.setBatchDcs writes it to envio_addresses.
+      let dc = makeDynContractRegistration(
+        ~blockNumber=10,
+        ~contractAddress=mockAddress1,
+        ~contractName="UnknownContract",
+      )
+      let item = dc->dcToItem
+
+      let updatedFetchState = fetchState->FetchState.registerDynamicContracts([item])
+
+      t.expect(
+        (
+          // dc not spliced out of the item - will be saved to db by setBatchDcs
+          item->Internal.getItemDcs,
+          // not registered for fetching
+          updatedFetchState.indexingAddresses
+          ->Dict.get(mockAddress1->Address.toString)
+          ->Option.isSome,
+          updatedFetchState.optimizedPartitions->FetchState.OptimizedPartitions.count,
+          // fetchState unchanged
+          updatedFetchState === fetchState,
+        ),
+        ~message=`dc stays on the item (persisted to db),
+          is NOT added to fetchState runtime state,
+          and fetchState is unchanged`,
+      ).toEqual((Some([dc]), false, 1, true))
+    },
+  )
+
   it("Correctly registers all valid contracts even when some are skipped in the middle", t => {
     let fetchState = makeInitial()
 
