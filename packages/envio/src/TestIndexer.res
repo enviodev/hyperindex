@@ -37,11 +37,9 @@ type testIndexerState = {
 // Cast Internal.entity back to EnvioAddresses.t
 external castToEnvioAddresses: Internal.entity => InternalTable.EnvioAddresses.t = "%identity"
 
-// Convert EnvioAddresses.t to Internal.indexingContract
-let toIndexingContract = (dc: InternalTable.EnvioAddresses.t): Internal.indexingContract => {
+let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingAddress => {
   address: dc->Config.EnvioAddresses.getAddress,
   contractName: dc.contractName,
-  startBlock: Pervasives.max(dc.registrationBlock, 0),
   registrationBlock: dc.registrationBlock,
 }
 
@@ -262,7 +260,7 @@ let handleWriteBatch = (
 let makeInitialState = (
   ~config: Config.t,
   ~processConfigChains: dict<chainConfig>,
-  ~indexingAddressesByChain: dict<array<Internal.indexingContract>>,
+  ~indexingAddressesByChain: dict<array<Internal.indexingAddress>>,
 ): Persistence.initialState => {
   let chainKeys = processConfigChains->Dict.keysToArray
   let chains = chainKeys->Array.map(chainIdStr => {
@@ -719,7 +717,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             chains->Dict.set(chainIdStr, processChainConfig)
 
             // Extract dynamic contracts from state.entities for each chain
-            let indexingAddressesByChain: dict<array<Internal.indexingContract>> = Dict.make()
+            let indexingAddressesByChain: dict<array<Internal.indexingAddress>> = Dict.make()
             switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
             | Some(dcDict) =>
               dcDict
@@ -734,7 +732,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                   indexingAddressesByChain->Dict.set(dcChainIdStr, arr)
                   arr
                 }
-                contracts->Array.push(dc->toIndexingContract)->ignore
+                contracts->Array.push(dc->toIndexingAddress)->ignore
               })
             | None => ()
             }

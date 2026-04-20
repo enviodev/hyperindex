@@ -145,14 +145,14 @@ describe("EventRouter", () => {
         ~isWildcard=false,
       )
 
-      let indexingContracts = Dict.make()
+      let indexingContracts: dict<FetchState.indexingAddress> = Dict.make()
       indexingContracts->Dict.set(
         nonWildcardContractAddress->Address.toString,
         {
-          Internal.startBlock: 0,
           contractName: nonWildcardContractName,
           address: nonWildcardContractAddress,
           registrationBlock: -1,
+          effectiveStartBlock: 0,
         },
       )
 

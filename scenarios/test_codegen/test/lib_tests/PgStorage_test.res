@@ -815,7 +815,6 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
   SELECT COALESCE(json_agg(json_build_object(
     'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
     'contractName', "contract_name",
-    'startBlock', GREATEST("registration_block", 0),
     'registrationBlock', "registration_block"
   )), '[]'::json)
   FROM "test_schema"."envio_addresses"

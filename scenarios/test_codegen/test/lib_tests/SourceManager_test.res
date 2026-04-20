@@ -406,12 +406,12 @@ describe("SourceManager fetchNext", () => {
             address => {
               indexingContracts->Dict.set(
                 address->Address.toString,
-                {
-                  Internal.contractName,
-                  startBlock: 0,
+                ({
+                  contractName,
                   address,
                   registrationBlock: -1,
-                },
+                  effectiveStartBlock: 0,
+                }: FetchState.indexingAddress),
               )
             },
           )

@@ -32,7 +32,7 @@ module Group = {
     group: t<'a>,
     ~contractAddress,
     ~blockNumber,
-    ~indexingContracts: dict<Internal.indexingContract>,
+    ~indexingContracts: dict<FetchState.indexingAddress>,
   ) =>
     switch group {
     | {wildcard, byContractName} =>
@@ -40,7 +40,7 @@ module Group = {
         contractAddress->Address.toString,
       ) {
       | Some(indexingContract) =>
-        if indexingContract.startBlock <= blockNumber {
+        if indexingContract.effectiveStartBlock <= blockNumber {
           byContractName->Utils.Dict.dangerouslyGetNonOption(indexingContract.contractName)
         } else {
           None

@@ -28,6 +28,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~endBlock=None,
       ~eventConfigs,
       ~contracts=[],
+      ~contractStartBlocks=Dict.make(),
       ~startBlock=0,
       ~targetBufferSize=5000,
       ~chainId=1,

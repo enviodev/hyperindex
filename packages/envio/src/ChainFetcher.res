@@ -19,14 +19,13 @@ type t = {
 }
 
 //CONSTRUCTION
-let configAddresses = (chainConfig: Config.chain): array<Internal.indexingContract> => {
+let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
   let addresses = []
   chainConfig.contracts->Array.forEach(contract => {
     contract.addresses->Array.forEach(address => {
       addresses->Array.push({
         Internal.address,
         contractName: contract.name,
-        startBlock: 0,
         registrationBlock: -1,
       })
     })
@@ -36,7 +35,7 @@ let configAddresses = (chainConfig: Config.chain): array<Internal.indexingContra
 
 let make = (
   ~chainConfig: Config.chain,
-  ~indexingAddresses: array<Internal.indexingContract>,
+  ~indexingAddresses: array<Internal.indexingAddress>,
   ~startBlock,
   ~endBlock,
   ~firstEventBlock=None,
@@ -168,9 +167,15 @@ let make = (
   | None => ()
   }
 
+  let contractStartBlocks = Dict.make()
+  chainConfig.contracts->Array.forEach(contract => {
+    contractStartBlocks->Dict.set(contract.name, contract.startBlock)
+  })
+
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
     ~contracts=indexingAddresses,
+    ~contractStartBlocks,
     ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
@@ -337,23 +342,9 @@ let makeFromDbState = async (
   )
 }
 
-/**
- * Helper function to get the configured start block for a contract from config
- */
-let getContractStartBlock = (
-  config: Config.t,
-  ~chain: ChainMap.Chain.t,
-  ~contractName: string,
-): option<int> => {
-  let chainConfig = config.chainMap->ChainMap.get(chain)
-  chainConfig.contracts
-  ->Array.find(contract => contract.name === contractName)
-  ->Option.flatMap(contract => contract.startBlock)
-}
-
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
-  ~chain: ChainMap.Chain.t,
+  ~chain as _chain: ChainMap.Chain.t,
   ~config: Config.t,
 ) => {
   let itemsWithDcs = []
@@ -362,16 +353,9 @@ let runContractRegistersOrThrow = async (
     let eventItem = item->Internal.castUnsafeEventItem
     let {blockNumber} = eventItem
 
-    // Use contract-specific start block if configured, otherwise fall back to registration block
-    let contractStartBlock = switch getContractStartBlock(config, ~chain, ~contractName) {
-    | Some(configuredStartBlock) => configuredStartBlock
-    | None => blockNumber
-    }
-
-    let dc: Internal.indexingContract = {
+    let dc: Internal.indexingAddress = {
       address: contractAddress,
       contractName,
-      startBlock: contractStartBlock,
       registrationBlock: blockNumber,
     }
 

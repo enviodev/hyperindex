@@ -401,16 +401,15 @@ type evmContractConfig = {
   events: array<evmEventConfig>,
 }
 
-type indexingContract = {
+type indexingAddress = {
   address: Address.t,
   contractName: string,
-  startBlock: int,
   // Needed for rollback.
   // -1 for config addresses that shouldn't be rolled back.
   registrationBlock: int,
 }
 
-type dcs = array<indexingContract>
+type dcs = array<indexingAddress>
 
 // Duplicate the type from item
 // to make item properly unboxed

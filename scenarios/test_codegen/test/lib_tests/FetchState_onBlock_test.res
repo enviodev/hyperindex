@@ -39,10 +39,10 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
       {
         Internal.address: mockAddress0,
         contractName: "Gravatar",
-        startBlock,
         registrationBlock: -1,
       },
     ],
+    ~contractStartBlocks=Dict.make(),
     ~startBlock,
     ~endBlock=None,
     ~maxAddrInPartition=3,
