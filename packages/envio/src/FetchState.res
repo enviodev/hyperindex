@@ -947,6 +947,11 @@ let registerDynamicContracts = (
   let registeringContractsByContract: dict<dict<indexingAddress>> = Dict.make()
   let earliestRegisteringEventBlockNumber = ref(%raw(`Infinity`))
   let hasDCWithFilterByAddresses = ref(false)
+  // Addresses registered for contracts without matching events. These are not
+  // added to partitions, but they are tracked on fetchState.indexingAddresses
+  // so that later conflicting registrations are detected, and are persisted
+  // to envio_addresses so they can be picked up on restart with updated config.
+  let noEventsAddresses: dict<indexingAddress> = Dict.make()
 
   for itemIdx in 0 to items->Array.length - 1 {
     let item = items->Array.getUnsafe(itemIdx)
@@ -1024,18 +1029,48 @@ let registerDynamicContracts = (
               shouldRemove := true
             }
           }
-        | None => {
-            let logger = Logging.createChild(
-              ~params={
-                "chainId": fetchState.chainId,
-                "contractAddress": dc.address->Address.toString,
-                "contractName": dc.contractName,
-              },
-            )
-            // Persist the address to the db so a future config change that adds
-            // events for this contract can pick it up on restart, but skip
-            // in-memory registration since there's nothing to fetch right now.
-            logger->Logging.childWarn(`Persisting contract registration without fetching: Contract doesn't have any events to fetch. It'll be picked up on restart if you add events for the contract.`)
+        | None =>
+          let dcAsIndexingAddress: indexingAddress = {
+            address: dc.address,
+            contractName: dc.contractName,
+            registrationBlock: dc.registrationBlock,
+            effectiveStartBlock: deriveEffectiveStartBlock(
+              ~registrationBlock=dc.registrationBlock,
+              ~contractStartBlock=None,
+            ),
+          }
+          // Prevent duplicate logging/persistence when the same address is
+          // already tracked on fetchState, either from the db on startup or
+          // from an earlier registration in this batch.
+          switch indexingAddresses->Utils.Dict.dangerouslyGetNonOption(
+            dc.address->Address.toString,
+          ) {
+          | Some(existingContract) =>
+            if existingContract.contractName != dc.contractName {
+              fetchState->warnDifferentContractType(~existingContract, ~dc=dcAsIndexingAddress)
+            }
+            shouldRemove := true
+          | None =>
+            switch noEventsAddresses->Utils.Dict.dangerouslyGetNonOption(
+              dc.address->Address.toString,
+            ) {
+            | Some(_) =>
+              // Already queued for persistence by an earlier item in this batch.
+              shouldRemove := true
+            | None =>
+              let logger = Logging.createChild(
+                ~params={
+                  "chainId": fetchState.chainId,
+                  "contractAddress": dc.address->Address.toString,
+                  "contractName": dc.contractName,
+                },
+              )
+              // Persist the address to the db so a future config change that
+              // adds events for this contract can pick it up on restart, but
+              // skip partition registration since there's nothing to fetch.
+              logger->Logging.childWarn(`Persisting contract registration without fetching: Contract doesn't have any events to fetch. It'll be picked up on restart if you add events for the contract.`)
+              noEventsAddresses->Dict.set(dc.address->Address.toString, dcAsIndexingAddress)
+            }
           }
         }
 
@@ -1051,10 +1086,18 @@ let registerDynamicContracts = (
   }
 
   let dcContractNamesToStore = registeringContractsByContract->Dict.keysToArray
-  switch dcContractNamesToStore {
+  let hasNoEventsUpdates = noEventsAddresses->Dict.keysToArray->Array.length > 0
+  switch (dcContractNamesToStore, hasNoEventsUpdates) {
   // Dont update anything when everything was filter out
-  | [] => fetchState
-  | _ => {
+  | ([], false) => fetchState
+  | ([], true) =>
+    // Only dcs for contracts without events. Track them on
+    // indexingAddresses so subsequent registrations see them, but don't touch
+    // partitions since there's nothing to fetch for them.
+    let newIndexingContracts = indexingAddresses->Utils.Dict.shallowCopy
+    let _ = Utils.Dict.mergeInPlace(newIndexingContracts, noEventsAddresses)
+    fetchState->updateInternal(~indexingAddresses=newIndexingContracts)
+  | (_, _) => {
       let newPartitions = []
       let newIndexingAddresses = indexingAddresses->Utils.Dict.shallowCopy
       let dynamicContractsRef = ref(fetchState.optimizedPartitions.dynamicContracts)
@@ -1139,6 +1182,8 @@ let registerDynamicContracts = (
         let registeringContracts = registeringContractsByContract->Dict.getUnsafe(contractName)
         let _ = Utils.Dict.mergeInPlace(newIndexingAddresses, registeringContracts)
       }
+      // Include no-events dcs so later batches detect conflicts against them.
+      let _ = Utils.Dict.mergeInPlace(newIndexingContracts, noEventsAddresses)
 
       let optimizedPartitions = createPartitionsFromIndexingAddresses(
         ~registeringContractsByContract,
