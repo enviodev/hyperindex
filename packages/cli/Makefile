@@ -1,21 +1,25 @@
+# The envio crate is a NAPI cdylib; real user flows run through the Node
+# host (packages/envio/bin.mjs). These targets regenerate committed build
+# artifacts via the `script` cargo example. See examples/script.rs.
+
 # Target to update schemas
 update-schemas:
 	@echo "Updating schemas json schemas for evm human config..."
-	cargo run -- script print-config-json-schema evm > ../envio/evm.schema.json
+	cargo run --example script -- script print-config-json-schema evm > ../envio/evm.schema.json
 	@echo "Updating schemas json schemas for fuel human config..."
-	cargo run -- script print-config-json-schema fuel > ../envio/fuel.schema.json
+	cargo run --example script -- script print-config-json-schema fuel > ../envio/fuel.schema.json
 	@echo "Updating schemas json schemas for svm human config..."
-	cargo run -- script print-config-json-schema svm > ../envio/svm.schema.json
+	cargo run --example script -- script print-config-json-schema svm > ../envio/svm.schema.json
 
 # Target to update help
 update-help:
 	@echo "Updating help doc..."
-	cargo run -- script print-cli-help-md > ./CommandLineHelp.md
+	cargo run --example script -- script print-cli-help-md > ./CommandLineHelp.md
 
 # Target to help find missing networks
 print-missing-networks:
 	@echo "Printing missing networks..."
-	cargo run -- script print-missing-networks
+	cargo run --example script -- script print-missing-networks
 
 # Target to update generated docs, depends on update-schemas and update-help
 update-generated-docs: update-schemas update-help

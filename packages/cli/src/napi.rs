@@ -1,3 +1,13 @@
+// This module is the ONLY place allowed to import from `napi` / `napi_derive`
+// — the boundary is enforced by `clippy.toml` via `disallowed_types` on the
+// `napi::*` types that every NAPI function needs (Result, Error). This
+// file-level allow is the per-file exception. Because `#[napi_derive::napi]`
+// expands into code returning `napi::Result<T>`, the type ban alone catches
+// any attempt to add NAPI bindings elsewhere in the crate — we don't need a
+// separate ban on the macro itself (clippy's `disallowed_macros` doesn't
+// honor `#[allow]` on attribute macros anyway).
+#![allow(clippy::disallowed_types)]
+
 use crate::{
     clap_definitions::CommandLineArgs, config_parsing::system_config::SystemConfig,
     project_paths::ParsedProjectPaths,
@@ -14,21 +24,13 @@ pub fn get_config_json(
     let config = config_path
         .or_else(|| std::env::var("ENVIO_CONFIG").ok())
         .unwrap_or_else(|| "config.yaml".to_string());
-    let cwd = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "<unknown>".to_string());
+    // Error messages intentionally omit absolute paths (cwd / resolved config
+    // path) — the JS caller already knows its cwd and what it passed in, and
+    // we don't want to leak filesystem layout into logs shipped off-host.
     let project_paths = ParsedProjectPaths::new(&project_root, "generated", &config)
-        .map_err(|e| {
-            napi::Error::from_reason(format!(
-                "Failed parsing project paths (cwd={cwd}, root={project_root}, config={config}): {e}"
-            ))
-        })?;
-    let system_config = SystemConfig::parse_from_project_files(&project_paths).map_err(|e| {
-        napi::Error::from_reason(format!(
-            "Config parse error (cwd={cwd}, config={}): {e}",
-            project_paths.config.display()
-        ))
-    })?;
+        .map_err(|e| napi::Error::from_reason(format!("Failed parsing project paths: {e}")))?;
+    let system_config = SystemConfig::parse_from_project_files(&project_paths)
+        .map_err(|e| napi::Error::from_reason(format!("Config parse error: {e}")))?;
     system_config
         .to_public_config_json()
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
