@@ -386,70 +386,35 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns the envio npm package specifier for codegen.
 /// - Release builds (valid semver `VERSION`) → that version, for npm.
-/// - Dev builds → `file:` path to the local `packages/envio` directory.
+/// - Dev builds → `file:{envio_package_dir}`, where the caller (NAPI host
+///   or a test) supplies the absolute path to `packages/envio`.
 ///
-/// The caller may supply `envio_package_dir` (typically the NAPI host —
-/// `Core.res` resolves it from `import.meta.url`); when present and
-/// `VERSION` is not a release, it wins over the filesystem walk. This
-/// replaces the earlier `ENVIO_PACKAGE_DIR` env var, which was implicit
-/// global state and required `unsafe std::env::set_var` in Rust 2024.
+/// A dev build without an `envio_package_dir` is a configuration error —
+/// there's no reliable way to locate the JS package from inside Rust alone.
 pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
     if is_valid_release_version_number(VERSION) {
         return Ok(VERSION.to_string());
     }
 
-    // Caller-supplied path (NAPI host) — most reliable in a dev build.
+    let pkg_dir = envio_package_dir.ok_or_else(|| {
+        anyhow!(
+            "envio version is not a release ({VERSION}) and no envio_package_dir was supplied. \
+             Run via the NAPI host (which resolves it from import.meta.url) or pass an explicit path."
+        )
+    })?;
+
     // Format as `file:{dir}` so the generated `package.json` resolves to
     // the SAME envio instance as the parent, avoiding duplicate module
     // instances that break shared registries (HandlerRegister, Prometheus
     // metrics).
-    if let Some(pkg_dir) = envio_package_dir {
-        let pkg = PathBuf::from(pkg_dir);
-        if pkg.is_dir() {
-            return Ok(format!("file:{}", pkg.to_string_lossy()));
-        }
+    let pkg = PathBuf::from(pkg_dir);
+    if !pkg.is_dir() {
+        return Err(anyhow!(
+            "envio_package_dir does not exist or is not a directory: {}",
+            pkg.display()
+        ));
     }
-
-    // Fallback for non-NAPI callers (cargo tests, standalone binary):
-    // walk up from current_exe() / current_dir() to find packages/envio.
-    let candidates = [
-        env::current_exe().and_then(|p| p.canonicalize()).ok(),
-        env::current_dir().and_then(|p| p.canonicalize()).ok(),
-    ];
-
-    for start in candidates.iter().flatten() {
-        // When the binary lives inside .envio-artifacts/ (the pre-built CI artifact),
-        // prefer .envio-artifacts/envio — it has compiled .res.mjs files that the
-        // source directory lacks. Dev binaries in target/ should use packages/envio
-        // to avoid creating a duplicate envio instance alongside workspace packages
-        // that already reference packages/envio (duplicate instances cause Prometheus
-        // metric registration collisions).
-        let prefer_artifact = start
-            .components()
-            .any(|c| c.as_os_str() == ".envio-artifacts");
-        let mut dir = Some(start.as_path());
-        while let Some(d) = dir {
-            let artifact = d.join(".envio-artifacts/envio");
-            let source = d.join("packages/envio");
-            if prefer_artifact && artifact.is_dir() {
-                return Ok(format!("file:{}", artifact.to_string_lossy()));
-            }
-            if source.is_dir() {
-                return Ok(format!("file:{}", source.to_string_lossy()));
-            }
-            if artifact.is_dir() {
-                return Ok(format!("file:{}", artifact.to_string_lossy()));
-            }
-            dir = d.parent();
-        }
-    }
-
-    let exe = env::current_exe().unwrap_or_default();
-    Err(anyhow!(
-        "could not find packages/envio above executable ({}) or cwd ({})",
-        exe.display(),
-        env::current_dir().unwrap_or_default().display()
-    ))
+    Ok(format!("file:{}", pkg.to_string_lossy()))
 }
 
 #[derive(Debug)]

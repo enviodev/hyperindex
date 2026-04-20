@@ -5,7 +5,7 @@
 //   2. Dev build:  find repo → cargo build --lib → load from target/debug/
 
 type addon = {
-  getConfigJson: (Nullable.t<string>, Nullable.t<string>, Nullable.t<string>) => string,
+  getConfigJson: (Nullable.t<string>, Nullable.t<string>) => string,
   runCli: (array<string>, Nullable.t<string>) => promise<string>,
   upsertPersistedState: string => promise<unit>,
 }
@@ -130,11 +130,7 @@ let getAddon = () =>
 
 let getConfigJson = (~configPath=?, ~directory=?) => {
   let addon = getAddon()
-  addon.getConfigJson(
-    configPath->Nullable.fromOption,
-    directory->Nullable.fromOption,
-    Nullable.Value(envioPackageDir),
-  )
+  addon.getConfigJson(configPath->Nullable.fromOption, directory->Nullable.fromOption)
 }
 
 let runCli = args => {

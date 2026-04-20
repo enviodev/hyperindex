@@ -9,15 +9,18 @@ fn to_js_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
-/// Produce the resolved public config as a `serde_json::Value` for embedding
-/// in a `Command` payload. Parsing this once in Rust lets the JS host skip
-/// the `getConfigJson` NAPI round-trip when it receives the command. The
-/// NAPI endpoint is still kept for indexers that start outside the CLI flow.
-fn resolved_config_json(config: &SystemConfig) -> anyhow::Result<serde_json::Value> {
-    let json_string = config
+/// Produce the resolved public config as a JSON string for embedding in a
+/// `Command` payload. Embedded as a string (not a parsed object), so the
+/// outer command JSON serializer doesn't re-walk the payload — JS parses
+/// it via `JSON.parse` once, right before priming `Config`.
+///
+/// Lets the JS host skip the `getConfigJson` NAPI round-trip when it receives
+/// the command; the NAPI endpoint stays available for indexers started
+/// outside the CLI flow.
+fn resolved_config_json(config: &SystemConfig) -> anyhow::Result<String> {
+    config
         .to_public_config_json()
-        .context("Failed serializing resolved config")?;
-    serde_json::from_str(&json_string).context("Failed re-parsing resolved config")
+        .context("Failed serializing resolved config")
 }
 
 async fn execute_command(

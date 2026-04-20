@@ -11,11 +11,11 @@ let executeCommand = async (command: command) => {
     ->JSON.Decode.object
     ->Option.flatMap(d => d->Dict.get(key))
 
-  // Rust embeds the resolved config in each command that needs it, so
-  // `Config.fromConfigView()` calls inside migrations / the indexer module
-  // skip the `getConfigJson` NAPI round-trip.
-  switch get("config") {
-  | Some(configJson) => Config.prime(configJson)
+  // Rust embeds the resolved config as a JSON string in each command that
+  // needs it, so `Config.fromConfigView()` calls inside migrations / the
+  // indexer module skip the `getConfigJson` NAPI round-trip.
+  switch get("config")->Option.flatMap(JSON.Decode.string) {
+  | Some(configStr) => Config.prime(configStr->JSON.parseOrThrow)
   | None => ()
   }
 

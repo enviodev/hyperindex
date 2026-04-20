@@ -2303,6 +2303,13 @@ mod test {
         format!("{}/test", env!("CARGO_MANIFEST_DIR"))
     }
 
+    // `packages/envio` relative to `packages/cli` (this crate's manifest dir).
+    // Used by tests so `get_envio_version` returns the expected `file:` path
+    // without touching the filesystem walk (which was removed).
+    fn envio_package_dir_for_tests() -> String {
+        format!("{}/../envio", env!("CARGO_MANIFEST_DIR"))
+    }
+
     fn get_project_template_helper(configs_file_name: &str) -> super::ProjectTemplate {
         let project_root = get_test_path_string_helper();
         let config = format!("configs/{}", configs_file_name);
@@ -2313,7 +2320,8 @@ mod test {
         let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");
 
-        super::ProjectTemplate::from_config(&config, None)
+        let envio_pkg = envio_package_dir_for_tests();
+        super::ProjectTemplate::from_config(&config, Some(&envio_pkg))
             .expect("should be able to get project template")
     }
 
