@@ -2,6 +2,21 @@
 let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
 let dynamicImport: string => promise<unit> = %raw(`(p) => import(p)`)
 
+// Safety net: if the indexer crashes asynchronously (unhandled rejection
+// or uncaught exception) after module load, log and exit — otherwise the
+// never-resolving keepalive below would hang the process forever.
+// Registered once per process; returns the listeners so we can remove
+// them if the indexer exits cleanly.
+let installIndexerCrashGuard: unit => unit = %raw(`() => {
+  const onFatal = (label) => (err) => {
+    const msg = err && err.stack ? err.stack : String(err);
+    console.error("[envio] Indexer " + label + ": " + msg);
+    process.exit(1);
+  };
+  process.on("unhandledRejection", onFatal("unhandledRejection"));
+  process.on("uncaughtException", onFatal("uncaughtException"));
+}`)
+
 type command = (string, JSON.t)
 
 let executeCommand = async (command: command) => {
@@ -43,37 +58,45 @@ let executeCommand = async (command: command) => {
         })
       | None => ()
       }
+      installIndexerCrashGuard()
       switch get("indexPath")->Option.flatMap(JSON.Decode.string) {
       | Some(indexPath) => await dynamicImport(indexPath)
       | None => JsError.throwWithMessage("start-indexer: missing indexPath")
       }
       // Keep the process alive — the indexer terminates via process.exit().
+      // If it crashes asynchronously instead, the guard above exits(1)
+      // rather than leaving this promise hung.
       await Promise.make((_resolve, _reject) => ())
     }
   | other => JsError.throwWithMessage(`Unknown command: ${other}`)
   }
 }
 
+// Mirrors the `RunCliOutcome` enum in packages/cli/src/napi.rs:
+//   {"outcome":"helpOrVersion"}        → clap printed help/version, exit 0
+//   {"outcome":"ok","commands":[...]}  → drain commands in order
+type runCliOutcome = {
+  outcome: string,
+  commands: option<array<command>>,
+}
+
 let run = async args => {
   try {
-    let commandsJson = await Core.runCli(args)
-    let commands =
-      commandsJson
-      ->JSON.parseOrThrow
-      ->(Utils.magic: JSON.t => array<command>)
-    for i in 0 to commands->Array.length - 1 {
-      await executeCommand(commands->Array.getUnsafe(i))
+    let outcomeJson = await Core.runCli(args)
+    let parsed = outcomeJson->JSON.parseOrThrow->(Utils.magic: JSON.t => runCliOutcome)
+    switch parsed.outcome {
+    | "helpOrVersion" => NodeJs.process->NodeJs.exitWithCode(Success)
+    | "ok" =>
+      let commands = parsed.commands->Option.getOr([])
+      for i in 0 to commands->Array.length - 1 {
+        await executeCommand(commands->Array.getUnsafe(i))
+      }
+    | other => JsError.throwWithMessage(`Unknown runCli outcome: ${other}`)
     }
   } catch {
   | JsExn(e) =>
     let msg = e->(Utils.magic: unknown => JsError.t)->JsError.message
-
-    // Clap help/version output — not an error
-    if msg === "__exit_0__" {
-      NodeJs.process->NodeJs.exitWithCode(Success)
-    } else {
-      Console.error(msg)
-      NodeJs.process->NodeJs.exitWithCode(Failure)
-    }
+    Console.error(msg)
+    NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }

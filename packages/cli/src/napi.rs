@@ -69,8 +69,22 @@ pub async fn upsert_persisted_state(json: String) -> napi::Result<()> {
     Ok(())
 }
 
-/// Run the envio CLI. Returns a JSON array of commands for JS to execute:
-/// `[["migration-up", {"reset": false}], ["start-indexer", {"indexPath": "..."}]]`
+/// Outcome of a `run_cli` invocation. Serialized to JSON and returned to JS
+/// instead of overloading the error channel with control-flow sentinels.
+#[derive(serde::Serialize)]
+#[serde(tag = "outcome", rename_all = "camelCase")]
+enum RunCliOutcome {
+    /// Clap printed help/version text to stdout. JS should exit(0).
+    HelpOrVersion,
+    /// Normal completion. JS should drain `commands` in order.
+    Ok {
+        commands: Vec<(String, serde_json::Value)>,
+    },
+}
+
+/// Run the envio CLI. Returns a JSON-serialized `RunCliOutcome`:
+/// - `{"outcome":"helpOrVersion"}` — clap printed help/version, JS exits 0
+/// - `{"outcome":"ok","commands":[["migration-up", {...}], ...]}` — JS runs each
 ///
 /// Rust handles config parsing, codegen, docker, persisted state — everything
 /// that doesn't need JS. Migrations and indexer start are queued and returned
@@ -85,17 +99,18 @@ pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> na
     let mut full_args = vec!["envio".to_string()];
     full_args.extend(args);
 
-    let matches = CommandLineArgs::command()
+    let matches = match CommandLineArgs::command()
         .version(crate::config_parsing::system_config::VERSION)
         .try_get_matches_from(&full_args)
-        .map_err(|e| {
-            if e.use_stderr() {
-                napi::Error::from_reason(format!("{e}"))
-            } else {
-                print!("{e}");
-                napi::Error::from_reason("__exit_0__".to_string())
-            }
-        })?;
+    {
+        Ok(m) => m,
+        Err(e) if !e.use_stderr() => {
+            // Help / version — clap writes to stdout; signal clean exit to JS.
+            print!("{e}");
+            return serialize_outcome(&RunCliOutcome::HelpOrVersion);
+        }
+        Err(e) => return Err(napi::Error::from_reason(format!("{e}"))),
+    };
 
     let command_line_args = CommandLineArgs::from_arg_matches(&matches)
         .context("Failed parsing command line arguments")
@@ -105,9 +120,12 @@ pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> na
         .await
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
-    // Return queued commands for JS to execute
     let commands: Vec<(String, serde_json::Value)> =
         PENDING_COMMANDS.lock().unwrap().drain(..).collect();
-    serde_json::to_string(&commands)
-        .map_err(|e| napi::Error::from_reason(format!("Failed serializing commands: {e}")))
+    serialize_outcome(&RunCliOutcome::Ok { commands })
+}
+
+fn serialize_outcome(outcome: &RunCliOutcome) -> napi::Result<String> {
+    serde_json::to_string(outcome)
+        .map_err(|e| napi::Error::from_reason(format!("Failed serializing outcome: {e}")))
 }
