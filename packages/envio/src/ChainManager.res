@@ -29,7 +29,7 @@ let calculateTargetBufferSize = (~activeChainsCount) => {
   }
 }
 
-let makeFromDbState = async (
+let makeFromDbState = (
   ~initialState: Persistence.initialState,
   ~config: Config.t,
   ~registrations,
@@ -57,24 +57,23 @@ let makeFromDbState = async (
     Prometheus.EffectCacheCount.set(~count, ~effectName)
   })
 
-  let chainFetchersArr = await initialState.chains
-  ->Array.map(async (resumedChainState: Persistence.initialChainState) => {
-    let chain = Config.getChain(config, ~chainId=resumedChainState.id)
-    let chainConfig = config.chainMap->ChainMap.get(chain)
+  let chainFetchersArr =
+    initialState.chains->Array.map((resumedChainState: Persistence.initialChainState) => {
+      let chain = Config.getChain(config, ~chainId=resumedChainState.id)
+      let chainConfig = config.chainMap->ChainMap.get(chain)
 
-    (
-      chain,
-      await chainConfig->ChainFetcher.makeFromDbState(
-        ~resumedChainState,
-        ~reorgCheckpoints=initialState.reorgCheckpoints,
-        ~isInReorgThreshold,
-        ~targetBufferSize,
-        ~config,
-        ~registrations,
-      ),
-    )
-  })
-  ->Promise.all
+      (
+        chain,
+        chainConfig->ChainFetcher.makeFromDbState(
+          ~resumedChainState,
+          ~reorgCheckpoints=initialState.reorgCheckpoints,
+          ~isInReorgThreshold,
+          ~targetBufferSize,
+          ~config,
+          ~registrations,
+        ),
+      )
+    })
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 

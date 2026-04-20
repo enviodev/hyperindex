@@ -533,7 +533,13 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
   }
 
   // Build event configs for a contract from JSON event items
-  let buildContractEvents = (~contractName, ~events: option<array<_>>, ~abi, ~chainId: int) => {
+  let buildContractEvents = (
+    ~contractName,
+    ~events: option<array<_>>,
+    ~abi,
+    ~chainId: int,
+    ~startBlock: option<int>,
+  ) => {
     switch events {
     | None => []
     | Some(eventItems) =>
@@ -560,6 +566,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
               ~isWildcard,
               ~handler,
               ~contractRegister,
+              ~startBlock?,
             ) :> Internal.eventConfig)
           | None =>
             JsError.throwWithMessage(
@@ -579,6 +586,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
             ~probeChainId=chainId,
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
+            ~startBlock?,
             ~globalBlockFieldsSet,
             ~globalTransactionFieldsSet,
           ) :> Internal.eventConfig)
@@ -640,6 +648,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
             ~events=contractData["events"],
             ~abi=contractData["abi"],
             ~chainId,
+            ~startBlock,
           )
 
           {

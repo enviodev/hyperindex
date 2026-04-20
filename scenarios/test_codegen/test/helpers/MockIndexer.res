@@ -335,7 +335,7 @@ module Indexer = {
 
     await persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values, ~reset)
 
-    let chainManager = await ChainManager.makeFromDbState(
+    let chainManager = ChainManager.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~registrations,
@@ -679,7 +679,7 @@ module Source = {
             ~fromBlock,
             ~toBlock,
             ~addressesByContractName as _addressesByContractName,
-            ~indexingContracts as _,
+            ~indexingAddresses as _,
             ~knownHeight,
             ~partitionId,
             ~selection as _,
@@ -739,6 +739,7 @@ module Source = {
                             isWildcard: false,
                             filterByAddresses: false,
                             dependsOnAddresses: false,
+                            startBlock: None,
                             handler: switch item.handler {
                             | Some(handler) =>
                               (
@@ -885,6 +886,7 @@ let evmEventConfig = (
   ~isWildcard=false,
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
+  ~startBlock: option<int>=?,
 ): Internal.evmEventConfig => {
   {
     id,
@@ -894,6 +896,7 @@ let evmEventConfig = (
     filterByAddresses,
     dependsOnAddresses: filterByAddresses ||
     dependsOnAddresses->Belt.Option.getWithDefault(!isWildcard),
+    startBlock,
     handler: None,
     contractRegister: None,
     paramsRawEventSchema: S.literal(%raw(`null`))

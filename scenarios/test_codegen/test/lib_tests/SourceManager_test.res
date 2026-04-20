@@ -189,7 +189,7 @@ describe("SourceManager source priority with Live sources", () => {
     isChunk: false,
     selection,
     addressesByContractName,
-    indexingContracts: Dict.make(),
+    indexingAddresses: Dict.make(),
   }
 
   Async.it(
@@ -391,7 +391,7 @@ describe("SourceManager fetchNext", () => {
     ~targetBufferSize=5000,
     ~knownHeight,
   ): FetchState.t => {
-    let indexingContracts = Dict.make()
+    let indexingAddresses = Dict.make()
     let latestFullyFetchedBlock = ref((partitions->Utils.Array.firstUnsafe).latestFetchedBlock)
 
     partitions->Array.forEach(partition => {
@@ -404,14 +404,14 @@ describe("SourceManager fetchNext", () => {
         ((contractName, addresses)) => {
           addresses->Array.forEach(
             address => {
-              indexingContracts->Dict.set(
+              indexingAddresses->Dict.set(
                 address->Address.toString,
-                {
-                  Internal.contractName,
-                  startBlock: 0,
+                ({
+                  contractName,
                   address,
-                  registrationBlock: None,
-                },
+                  registrationBlock: -1,
+                  effectiveStartBlock: 0,
+                }: FetchState.indexingAddress),
               )
             },
           )
@@ -435,7 +435,7 @@ describe("SourceManager fetchNext", () => {
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
       targetBufferSize,
       chainId: 0,
-      indexingContracts,
+      indexingAddresses,
       contractConfigs: Dict.make(),
       blockLag: 0,
       onBlockConfigs: [],
@@ -492,7 +492,7 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition2.addressesByContractName,
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
         },
         {
           partitionId: "0",
@@ -501,7 +501,7 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition0.addressesByContractName,
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
         },
         {
           partitionId: "1",
@@ -510,7 +510,7 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition1.addressesByContractName,
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
         },
       ])
 
@@ -559,7 +559,7 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition2.addressesByContractName,
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
         },
         {
           partitionId: "0",
@@ -568,7 +568,7 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition0.addressesByContractName,
-          indexingContracts: fetchState.indexingContracts,
+          indexingAddresses: fetchState.indexingAddresses,
         },
       ])
 
@@ -1542,7 +1542,7 @@ describe("SourceManager.executeQuery", () => {
     isChunk: false,
     selection,
     addressesByContractName,
-    indexingContracts: Dict.make(),
+    indexingAddresses: Dict.make(),
   }
 
   Async.it("Successfully executes the query", async t => {

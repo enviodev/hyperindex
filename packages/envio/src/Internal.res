@@ -353,6 +353,7 @@ type eventConfig = private {
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
   simulateParamsSchema: S.schema<eventParams>,
+  startBlock: option<int>,
 }
 
 type fuelEventKind =
@@ -401,17 +402,15 @@ type evmContractConfig = {
   events: array<evmEventConfig>,
 }
 
-type indexingContract = {
+type indexingAddress = {
   address: Address.t,
   contractName: string,
-  startBlock: int,
-  // Needed for rollback
-  // If not set, assume the contract comes from config
-  // and shouldn't be rolled back
-  registrationBlock: option<int>,
+  // Needed for rollback.
+  // -1 for config addresses that shouldn't be rolled back.
+  registrationBlock: int,
 }
 
-type dcs = array<indexingContract>
+type dcs = array<indexingAddress>
 
 // Duplicate the type from item
 // to make item properly unboxed
