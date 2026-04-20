@@ -54,26 +54,16 @@ let executeCommand = async (command: command) => {
   }
 }
 
-// Mirrors the `RunCliOutcome` enum in packages/cli/src/napi.rs:
-//   {"outcome":"helpOrVersion"}        → clap printed help/version, exit 0
-//   {"outcome":"ok","commands":[...]}  → drain commands in order
-type runCliOutcome = {
-  outcome: string,
-  commands: option<array<command>>,
-}
-
+// Rust returns a JSON array of `[name, data]` commands. An empty array means
+// there's nothing for JS to do — we fall out of the loop and the Node process
+// exits naturally with code 0 (covers `--help`/`--version` and Rust-only
+// commands like `envio codegen` / `envio init`).
 let run = async args => {
   try {
-    let outcomeJson = await Core.runCli(args)
-    let parsed = outcomeJson->JSON.parseOrThrow->(Utils.magic: JSON.t => runCliOutcome)
-    switch parsed.outcome {
-    | "helpOrVersion" => NodeJs.process->NodeJs.exitWithCode(Success)
-    | "ok" =>
-      let commands = parsed.commands->Option.getOr([])
-      for i in 0 to commands->Array.length - 1 {
-        await executeCommand(commands->Array.getUnsafe(i))
-      }
-    | other => JsError.throwWithMessage(`Unknown runCli outcome: ${other}`)
+    let commandsJson = await Core.runCli(args)
+    let commands = commandsJson->JSON.parseOrThrow->(Utils.magic: JSON.t => array<command>)
+    for i in 0 to commands->Array.length - 1 {
+      await executeCommand(commands->Array.getUnsafe(i))
     }
   } catch {
   | exn =>

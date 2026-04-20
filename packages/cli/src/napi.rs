@@ -1,6 +1,6 @@
 use crate::{
     clap_definitions::CommandLineArgs, config_parsing::system_config::SystemConfig,
-    executor::Command, project_paths::ParsedProjectPaths,
+    project_paths::ParsedProjectPaths,
 };
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
@@ -55,24 +55,15 @@ pub async fn upsert_persisted_state(json: String) -> napi::Result<()> {
     Ok(())
 }
 
-/// Outcome of a `run_cli` invocation. Serialized to JSON and returned to JS
-/// instead of overloading the error channel with control-flow sentinels.
-#[derive(serde::Serialize)]
-#[serde(tag = "outcome", rename_all = "camelCase")]
-enum RunCliOutcome<'a> {
-    /// Clap printed help/version text to stdout. JS should exit(0).
-    HelpOrVersion,
-    /// Normal completion. JS should run each command in order.
-    Ok { commands: &'a [Command] },
-}
-
-/// Run the envio CLI. Returns a JSON-serialized `RunCliOutcome`:
-/// - `{"outcome":"helpOrVersion"}` — clap printed help/version, JS exits 0
-/// - `{"outcome":"ok","commands":[["migration-up", {...}], ...]}` — JS runs each
+/// Run the envio CLI. Returns a JSON-encoded array of `Command`s for JS to
+/// dispatch in order. An empty array means there's nothing left to do — JS
+/// drops out of its loop and the Node process exits naturally with code 0
+/// (covers both `--help`/`--version` and commands like `envio codegen` /
+/// `envio init` that finish entirely in Rust).
 ///
-/// The executor layer doesn't know about NAPI; it returns a `Vec<Command>` that
-/// this shim serializes for the JS host. A pure-Rust host (tests, future
-/// binary) could consume the same return value directly.
+/// The executor layer doesn't know about NAPI; it returns a `Vec<Command>`
+/// that this shim serializes for the JS host. A pure-Rust host (tests,
+/// future binary) could consume the same return value directly.
 #[napi_derive::napi]
 pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> napi::Result<String> {
     set_envio_package_dir(&envio_package_dir);
@@ -86,9 +77,10 @@ pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> na
     {
         Ok(m) => m,
         Err(e) if !e.use_stderr() => {
-            // Help / version — clap writes to stdout; signal clean exit to JS.
+            // Help / version — clap writes to stdout; return an empty
+            // command list so JS exits cleanly.
             print!("{e}");
-            return serialize_outcome(&RunCliOutcome::HelpOrVersion);
+            return serialize_commands(&[]);
         }
         Err(e) => return Err(napi::Error::from_reason(format!("{e}"))),
     };
@@ -101,12 +93,10 @@ pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> na
         .await
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
-    serialize_outcome(&RunCliOutcome::Ok {
-        commands: &commands,
-    })
+    serialize_commands(&commands)
 }
 
-fn serialize_outcome(outcome: &RunCliOutcome<'_>) -> napi::Result<String> {
-    serde_json::to_string(outcome)
-        .map_err(|e| napi::Error::from_reason(format!("Failed serializing outcome: {e}")))
+fn serialize_commands(commands: &[crate::executor::Command]) -> napi::Result<String> {
+    serde_json::to_string(commands)
+        .map_err(|e| napi::Error::from_reason(format!("Failed serializing commands: {e}")))
 }
