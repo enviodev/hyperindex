@@ -65,7 +65,7 @@ let makeFromDbState = async (
 
       (
         chain,
-        await chainConfig->ChainFetcher.makeFromDbState(
+        chainConfig->ChainFetcher.makeFromDbState(
           ~resumedChainState,
           ~reorgCheckpoints=initialState.reorgCheckpoints,
           ~isInReorgThreshold,

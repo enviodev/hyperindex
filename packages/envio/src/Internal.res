@@ -353,6 +353,7 @@ type eventConfig = private {
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
   simulateParamsSchema: S.schema<eventParams>,
+  startBlock: option<int>,
 }
 
 type fuelEventKind =

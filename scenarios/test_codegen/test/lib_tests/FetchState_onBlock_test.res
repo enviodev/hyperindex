@@ -35,14 +35,13 @@ let makeOnBlockConfig = (
 let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
   FetchState.make(
     ~eventConfigs=[baseEventConfig],
-    ~contracts=[
+    ~addresses=[
       {
         Internal.address: mockAddress0,
         contractName: "Gravatar",
         registrationBlock: -1,
       },
     ],
-    ~contractStartBlocks=Dict.make(),
     ~startBlock,
     ~endBlock=None,
     ~maxAddrInPartition=3,

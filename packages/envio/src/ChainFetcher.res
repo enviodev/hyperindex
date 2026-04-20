@@ -167,15 +167,9 @@ let make = (
   | None => ()
   }
 
-  let contractStartBlocks = Dict.make()
-  chainConfig.contracts->Array.forEach(contract => {
-    contractStartBlocks->Dict.set(contract.name, contract.startBlock)
-  })
-
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
-    ~contracts=indexingAddresses,
-    ~contractStartBlocks,
+    ~addresses=indexingAddresses,
     ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
@@ -300,7 +294,7 @@ let makeFromConfig = (
 /**
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
-let makeFromDbState = async (
+let makeFromDbState = (
   chainConfig: Config.chain,
   ~resumedChainState: Persistence.initialChainState,
   ~reorgCheckpoints,
@@ -344,7 +338,6 @@ let makeFromDbState = async (
 
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
-  ~chain as _chain: ChainMap.Chain.t,
   ~config: Config.t,
 ) => {
   let itemsWithDcs = []

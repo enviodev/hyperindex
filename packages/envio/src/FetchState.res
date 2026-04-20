@@ -1487,8 +1487,7 @@ let make = (
   ~startBlock,
   ~endBlock,
   ~eventConfigs: array<Internal.eventConfig>,
-  ~contracts: array<Internal.indexingAddress>,
-  ~contractStartBlocks: dict<option<int>>,
+  ~addresses: array<Internal.indexingAddress>,
   ~maxAddrInPartition,
   ~chainId,
   ~targetBufferSize,
@@ -1516,9 +1515,7 @@ let make = (
         ec.contractName,
         {
           filterByAddresses: filterByAddresses || ec.filterByAddresses,
-          startBlock: contractStartBlocks
-          ->Utils.Dict.dangerouslyGetNonOption(ec.contractName)
-          ->Option.flatMap(v => v),
+          startBlock: ec.startBlock,
         },
       )
     | None =>
@@ -1526,9 +1523,7 @@ let make = (
         ec.contractName,
         {
           filterByAddresses: ec.filterByAddresses,
-          startBlock: contractStartBlocks
-          ->Utils.Dict.dangerouslyGetNonOption(ec.contractName)
-          ->Option.flatMap(v => v),
+          startBlock: ec.startBlock,
         },
       )
     }
@@ -1572,7 +1567,7 @@ let make = (
   switch normalEventConfigs {
   | [] => ()
   | _ =>
-    contracts->Array.forEach(contract => {
+    addresses->Array.forEach(contract => {
       let contractName = contract.contractName
       if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
         let contractStartBlock =

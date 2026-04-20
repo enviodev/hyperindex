@@ -739,6 +739,7 @@ module Source = {
                             isWildcard: false,
                             filterByAddresses: false,
                             dependsOnAddresses: false,
+                            startBlock: None,
                             handler: switch item.handler {
                             | Some(handler) =>
                               (
@@ -885,6 +886,7 @@ let evmEventConfig = (
   ~isWildcard=false,
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
+  ~startBlock: option<int>=?,
 ): Internal.evmEventConfig => {
   {
     id,
@@ -894,6 +896,7 @@ let evmEventConfig = (
     filterByAddresses,
     dependsOnAddresses: filterByAddresses ||
     dependsOnAddresses->Belt.Option.getWithDefault(!isWildcard),
+    startBlock,
     handler: None,
     contractRegister: None,
     paramsRawEventSchema: S.literal(%raw(`null`))

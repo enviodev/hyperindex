@@ -432,6 +432,7 @@ let buildEvmEventConfig = (
   ~probeChainId: int,
   ~blockFields: option<array<Internal.evmBlockField>>=?,
   ~transactionFields: option<array<Internal.evmTransactionField>>=?,
+  ~startBlock: option<int>=?,
   ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>=Utils.Set.make(),
   ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>=Utils.Set.make(),
 ): Internal.evmEventConfig => {
@@ -468,6 +469,7 @@ let buildEvmEventConfig = (
     getEventFiltersOrThrow,
     filterByAddresses,
     dependsOnAddresses: !isWildcard || filterByAddresses,
+    startBlock,
     convertHyperSyncEventArgs: buildHyperSyncDecoder(params),
     selectedBlockFields,
     selectedTransactionFields,
@@ -485,6 +487,7 @@ let buildFuelEventConfig = (
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
+  ~startBlock: option<int>=?,
 ): Internal.fuelEventConfig => {
   let fuelKind = switch kind {
   | "logData" =>
@@ -531,6 +534,7 @@ let buildFuelEventConfig = (
     simulateParamsSchema: paramsSchema,
     filterByAddresses: false,
     dependsOnAddresses: !isWildcard,
+    startBlock,
     kind: fuelKind,
   }
 }

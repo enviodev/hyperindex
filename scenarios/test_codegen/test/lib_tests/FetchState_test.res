@@ -95,14 +95,13 @@ let makeInitial = (
 ) => {
   FetchState.make(
     ~eventConfigs=[baseEventConfig, baseEventConfig2],
-    ~contracts=[
+    ~addresses=[
       {
         Internal.address: mockAddress0,
         contractName: "Gravatar",
         registrationBlock: -1,
       },
     ],
-    ~contractStartBlocks=Dict.make(),
     ~startBlock,
     ~endBlock=None,
     ~maxAddrInPartition,
@@ -197,8 +196,7 @@ describe("FetchState.make", () => {
       () => {
         FetchState.make(
           ~eventConfigs=[baseEventConfig],
-          ~contracts=[],
-          ~contractStartBlocks=Dict.make(),
+          ~addresses=[],
           ~startBlock=0,
           ~endBlock=None,
           ~maxAddrInPartition=2,
@@ -217,8 +215,7 @@ describe("FetchState.make", () => {
     let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
     let fetchState = FetchState.make(
       ~eventConfigs=[baseEventConfig],
-      ~contracts=[makeConfigContract("Gravatar", mockAddress1), dc],
-      ~contractStartBlocks=Dict.make(),
+      ~addresses=[makeConfigContract("Gravatar", mockAddress1), dc],
       ~startBlock=0,
       ~endBlock=None,
       ~targetBufferSize,
@@ -275,8 +272,7 @@ describe("FetchState.make", () => {
           (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
           baseEventConfig,
         ],
-        ~contracts=[makeConfigContract("ContractA", mockAddress1), dc],
-        ~contractStartBlocks=Dict.make(),
+        ~addresses=[makeConfigContract("ContractA", mockAddress1), dc],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
@@ -356,13 +352,12 @@ describe("FetchState.make", () => {
           (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
           baseEventConfig,
         ],
-        ~contracts=[
+        ~addresses=[
           makeConfigContract("ContractA", mockAddress1),
           makeConfigContract("ContractA", mockAddress2),
           dc1,
           dc2,
         ],
-        ~contractStartBlocks=Dict.make(),
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
@@ -461,15 +456,16 @@ describe("FetchState.make", () => {
       ~id="0",
       ~contractName="ContractA",
     ) :> Internal.eventConfig)
-    let contractBEventConfig = (MockIndexer.evmEventConfig(
+    let closeContractBEventConfig = (MockIndexer.evmEventConfig(
       ~id="0",
       ~contractName="ContractB",
+      ~startBlock=19_999,
     ) :> Internal.eventConfig)
 
     // --- Close startBlocks: direct push into current partition ---
     let closeFetchState = FetchState.make(
-      ~eventConfigs=[contractAEventConfig, contractBEventConfig],
-      ~contracts=[
+      ~eventConfigs=[contractAEventConfig, closeContractBEventConfig],
+      ~addresses=[
         {
           address: mockAddress0,
           contractName: "ContractA",
@@ -481,7 +477,6 @@ describe("FetchState.make", () => {
           registrationBlock: -1,
         },
       ],
-      ~contractStartBlocks=Dict.fromArray([("ContractB", Some(19_999))]),
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=3,
@@ -507,9 +502,14 @@ describe("FetchState.make", () => {
     ).toEqual(None)
 
     // --- Far startBlocks: mergeBlock on current, merge addresses into next ---
+    let farContractBEventConfig = (MockIndexer.evmEventConfig(
+      ~id="0",
+      ~contractName="ContractB",
+      ~startBlock=20_002,
+    ) :> Internal.eventConfig)
     let farFetchState = FetchState.make(
-      ~eventConfigs=[contractAEventConfig, contractBEventConfig],
-      ~contracts=[
+      ~eventConfigs=[contractAEventConfig, farContractBEventConfig],
+      ~addresses=[
         {
           address: mockAddress0,
           contractName: "ContractA",
@@ -521,7 +521,6 @@ describe("FetchState.make", () => {
           registrationBlock: -1,
         },
       ],
-      ~contractStartBlocks=Dict.fromArray([("ContractB", Some(20_002))]),
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=3,
@@ -554,15 +553,16 @@ describe("FetchState.make", () => {
         ~id="0",
         ~contractName="ContractA",
       ) :> Internal.eventConfig)
-      let contractBEventConfig = (MockIndexer.evmEventConfig(
+      let closeContractBEventConfig = (MockIndexer.evmEventConfig(
         ~id="0",
         ~contractName="ContractB",
+        ~startBlock=19_999,
       ) :> Internal.eventConfig)
 
       // --- Close startBlocks: direct push into current partition ---
       let closeFetchState = FetchState.make(
-        ~eventConfigs=[contractAEventConfig, contractBEventConfig],
-        ~contracts=[
+        ~eventConfigs=[contractAEventConfig, closeContractBEventConfig],
+        ~addresses=[
           {
             address: mockAddress0,
             contractName: "ContractA",
@@ -574,7 +574,6 @@ describe("FetchState.make", () => {
             registrationBlock: -1,
           },
         ],
-        ~contractStartBlocks=Dict.fromArray([("ContractB", Some(19_999))]),
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=3,
@@ -600,9 +599,14 @@ describe("FetchState.make", () => {
       ).toEqual(None)
 
       // --- Far startBlocks: mergeBlock on current, merge addresses into next ---
+      let farContractBEventConfig = (MockIndexer.evmEventConfig(
+        ~id="0",
+        ~contractName="ContractB",
+        ~startBlock=20_002,
+      ) :> Internal.eventConfig)
       let farFetchState = FetchState.make(
-        ~eventConfigs=[contractAEventConfig, contractBEventConfig],
-        ~contracts=[
+        ~eventConfigs=[contractAEventConfig, farContractBEventConfig],
+        ~addresses=[
           {
             address: mockAddress0,
             contractName: "ContractA",
@@ -614,7 +618,6 @@ describe("FetchState.make", () => {
             registrationBlock: -1,
           },
         ],
-        ~contractStartBlocks=Dict.fromArray([("ContractB", Some(20_002))]),
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=3,
@@ -661,11 +664,12 @@ describe("FetchState.make", () => {
       ~id="0",
       ~contractName="ContractB",
       ~filterByAddresses=true,
+      ~startBlock=100,
     ) :> Internal.eventConfig)
 
     let fetchState = FetchState.make(
       ~eventConfigs=[contractAEventConfig, contractBEventConfig],
-      ~contracts=[
+      ~addresses=[
         {
           address: mockAddress0,
           contractName: "ContractA",
@@ -677,7 +681,6 @@ describe("FetchState.make", () => {
           registrationBlock: -1,
         },
       ],
-      ~contractStartBlocks=Dict.fromArray([("ContractB", Some(100))]),
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=3,
@@ -729,11 +732,12 @@ describe("FetchState.make", () => {
         ~id="0",
         ~contractName="ContractB",
         ~filterByAddresses=true,
+        ~startBlock=100,
       ) :> Internal.eventConfig)
 
       let fetchState = FetchState.make(
         ~eventConfigs=[contractAEventConfig, contractBEventConfig],
-        ~contracts=[
+        ~addresses=[
           {
             address: mockAddress0,
             contractName: "ContractA",
@@ -745,7 +749,6 @@ describe("FetchState.make", () => {
             registrationBlock: -1,
           },
         ],
-        ~contractStartBlocks=Dict.fromArray([("ContractB", Some(100))]),
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=3,
@@ -1010,8 +1013,7 @@ describe("FetchState.registerDynamicContracts", () => {
             ~filterByAddresses=true,
           ) :> Internal.eventConfig),
         ],
-        ~contracts=[makeConfigContract("Gravatar", mockAddress0)],
-        ~contractStartBlocks=Dict.make(),
+        ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
         ~startBlock=10,
         ~endBlock=None,
         ~maxAddrInPartition=3,
@@ -1282,7 +1284,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
       let fetchState = FetchState.make(
         ~eventConfigs=[wildcard1, wildcard2, normal1, normal2],
-        ~contracts=[
+        ~addresses=[
           makeConfigContract("NftFactory", mockAddress0),
           makeConfigContract("NftFactory", mockAddress1),
           makeConfigContract("Gravatar", mockAddress2),
@@ -1298,7 +1300,6 @@ describe("FetchState.registerDynamicContracts", () => {
             ~contractAddress=mockAddress5,
           ),
         ],
-        ~contractStartBlocks=Dict.make(),
         ~endBlock=None,
         ~startBlock=0,
         ~maxAddrInPartition=1000,
@@ -2004,8 +2005,7 @@ describe("FetchState.getNextQuery & integration", () => {
           (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
           wildcard,
         ],
-        ~contracts=[makeConfigContract("ContractA", mockAddress1)],
-        ~contractStartBlocks=Dict.make(),
+        ~addresses=[makeConfigContract("ContractA", mockAddress1)],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
@@ -2201,8 +2201,7 @@ describe("FetchState.getNextQuery & integration", () => {
     let fetchState =
       FetchState.make(
         ~eventConfigs,
-        ~contracts=[],
-        ~contractStartBlocks=Dict.make(),
+        ~addresses=[],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=3,
@@ -2413,8 +2412,7 @@ describe("FetchState unit tests for specific cases", () => {
         (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
         wildcard,
       ],
-      ~contracts=[makeConfigContract("ContractA", mockAddress0)],
-      ~contractStartBlocks=Dict.make(),
+      ~addresses=[makeConfigContract("ContractA", mockAddress0)],
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=2,
@@ -2549,11 +2547,10 @@ describe("FetchState unit tests for specific cases", () => {
       ~eventConfigs=[
         (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
       ],
-      ~contracts=[
+      ~addresses=[
         makeConfigContract("ContractA", mockAddress1),
         makeConfigContract("ContractA", mockAddress2),
       ],
-      ~contractStartBlocks=Dict.make(),
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=1,
@@ -2713,8 +2710,7 @@ describe("FetchState unit tests for specific cases", () => {
 
       let fetchState = FetchState.make(
         ~eventConfigs=[baseEventConfig],
-        ~contracts=[makeConfigContract("Gravatar", mockAddress1)],
-        ~contractStartBlocks=Dict.make(),
+        ~addresses=[makeConfigContract("Gravatar", mockAddress1)],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
@@ -2917,14 +2913,13 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
     // latestFullyFetchedBlock = startBlock - 1 = 5, endBlock = 5
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
-      ~contracts=[
+      ~addresses=[
         {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           registrationBlock: -1,
         },
       ],
-      ~contractStartBlocks=Dict.make(),
       ~startBlock=6,
       ~endBlock=Some(5),
       ~maxAddrInPartition=3,
@@ -2940,14 +2935,13 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
     // latestFullyFetchedBlock = 49, endBlock = 100, head - lag = 50
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
-      ~contracts=[
+      ~addresses=[
         {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           registrationBlock: -1,
         },
       ],
-      ~contractStartBlocks=Dict.make(),
       ~startBlock=50,
       ~endBlock=Some(100),
       ~maxAddrInPartition=3,
@@ -2963,14 +2957,13 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
     // latestFullyFetchedBlock = 49, head - lag = 49
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
-      ~contracts=[
+      ~addresses=[
         {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           registrationBlock: -1,
         },
       ],
-      ~contractStartBlocks=Dict.make(),
       ~startBlock=50,
       ~endBlock=Some(100),
       ~maxAddrInPartition=3,
@@ -2986,14 +2979,13 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
     // latestFullyFetchedBlock = 50, head - lag = 50
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
-      ~contracts=[
+      ~addresses=[
         {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           registrationBlock: -1,
         },
       ],
-      ~contractStartBlocks=Dict.make(),
       ~startBlock=51,
       ~endBlock=None,
       ~maxAddrInPartition=3,
@@ -3009,14 +3001,13 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
     // latestFullyFetchedBlock = 49, head - lag = 50
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
-      ~contracts=[
+      ~addresses=[
         {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           registrationBlock: -1,
         },
       ],
-      ~contractStartBlocks=Dict.make(),
       ~startBlock=50,
       ~endBlock=None,
       ~maxAddrInPartition=3,
@@ -3032,14 +3023,13 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
     // EndBlock reached but queue has items
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
-      ~contracts=[
+      ~addresses=[
         {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           registrationBlock: -1,
         },
       ],
-      ~contractStartBlocks=Dict.make(),
       ~startBlock=6,
       ~endBlock=Some(5),
       ~maxAddrInPartition=3,
@@ -3055,14 +3045,13 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns true when the queue is empty and threshold is more than current block height", t => {
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
-      ~contracts=[
+      ~addresses=[
         {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           registrationBlock: -1,
         },
       ],
-      ~contractStartBlocks=Dict.make(),
       ~startBlock=6,
       ~endBlock=Some(5),
       ~maxAddrInPartition=3,
@@ -3345,8 +3334,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
       // Create FetchState with no event configs but with onBlockConfig
       let fetchState = FetchState.make(
         ~eventConfigs=[],
-        ~contracts=[],
-        ~contractStartBlocks=Dict.make(),
+        ~addresses=[],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=3,
