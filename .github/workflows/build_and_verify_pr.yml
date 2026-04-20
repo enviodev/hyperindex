@@ -1,0 +1,223 @@
+name: Build & Verify (PR branch)
+
+# Temporary workflow for PRs that modify the build pipeline.
+# Uses `pull_request` so the PR's workflow file / build steps are used
+# (pull_request_target always reads from the default branch).
+# Remove this file after the NAPI migration merges to main.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-linux-package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 9
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: ./.github/actions/cargo-cache
+
+      - name: Build envio NAPI addon
+        env:
+          SVM_TARGET_PLATFORM: linux-amd64
+        run: cargo build --release --lib
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Build platform npm package
+        run: |
+          node packages/build-envio/build-platform-package.ts \
+            --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
+          mkdir -p envio-linux-x64
+          cp target/release/libenvio.so envio-linux-x64/envio.node
+
+      - name: Upload linux-x64 platform npm package
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: envio-linux-x64
+
+  build-envio-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    needs: build-linux-package
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build envio package
+        run: node packages/build-envio/src/build-artifact.ts --version 0.0.1-dev --out envio-dist
+
+      - name: Verify artifact
+        run: node packages/build-envio/src/verify-artifact.ts envio-dist
+
+      - name: Upload envio npm package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-pkg-envio
+          path: envio-dist
+
+  cargo-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: ./.github/actions/cargo-cache
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Cargo Test
+        run: cargo test --no-default-features
+
+  template-tests:
+    runs-on: ubuntu-latest
+    needs: build-envio-package
+    timeout-minutes: 9
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/prepare-envio-artifacts
+
+      - name: Run template tests
+        working-directory: packages/e2e-tests
+        run: pnpm test:templates
+
+  scenarios-test:
+    runs-on: ubuntu-latest
+    needs: build-envio-package
+    timeout-minutes: 9
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testing
+          POSTGRES_DB: envio-dev
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+
+      hasura:
+        image: hasura/graphql-engine:v2.43.0
+        env:
+          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
+          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+          HASURA_GRAPHQL_NO_OF_RETRIES: 10
+          HASURA_GRAPHQL_ADMIN_SECRET: testing
+          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
+          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
+          PORT: 8080
+        ports:
+          - 8080:8080
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/prepare-envio-artifacts
+
+      - name: Run scenarios test
+        working-directory: scenarios/test_codegen
+        run: |
+          # scenarios/test_codegen has its own pnpm-workspace.yaml, so the root
+          # .pnpmfile.cjs isn't picked up when codegen triggers nested `pnpm install`.
+          # Symlink (not copy) so __dirname still resolves to the repo root.
+          ln -sf ../../.pnpmfile.cjs .pnpmfile.cjs
+          pnpm exec envio codegen
+          pnpm test
+
+  e2e-test:
+    runs-on: ubuntu-latest
+    needs: build-envio-package
+    timeout-minutes: 9
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testing
+          POSTGRES_DB: envio-dev
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+
+      hasura:
+        image: hasura/graphql-engine:v2.43.0
+        env:
+          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
+          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+          HASURA_GRAPHQL_NO_OF_RETRIES: 10
+          HASURA_GRAPHQL_ADMIN_SECRET: testing
+          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
+          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
+          PORT: 8080
+        ports:
+          - 8080:8080
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/prepare-envio-artifacts
+
+      - name: Wait for Hasura
+        run: |
+          for i in {1..60}; do
+            if curl -sSf http://localhost:8080/healthz >/dev/null; then
+              echo "Hasura is up"; exit 0; fi; sleep 1; done
+          echo "Hasura did not become ready"; exit 1
+
+      - name: Run smoke test
+        working-directory: scenarios/e2e_test
+        run: |
+          pnpm exec envio codegen
+          pnpm test
+
+      - name: Run E2E test
+        working-directory: packages/e2e-tests
+        run: pnpm test:e2e
