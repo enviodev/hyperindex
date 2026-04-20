@@ -52,14 +52,14 @@ convert_case = "0.6.0"
 dotenvy = { git = "https://github.com/enviodev/dotenvy", rev = "e2da110668572cf2d67178f192eb1fc285224040" }
 bollard = "0.20"
 futures-util = "0.3"
-napi = { version = "3", features = ["napi9", "async", "serde-json"] }
-napi-derive = "3"
+napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
+napi-derive = "=3.5.4"
 
 [features]
 integration_tests = []
 
 [build-dependencies]
-napi-build = "2"
+napi-build = "=2.3.1"
 
 [dev-dependencies]
 tempdir = "0.3.7"
