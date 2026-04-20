@@ -55,7 +55,7 @@ jobs:
   # envio package build has no Rust dependency.
   build-envio-package:
     runs-on: ubuntu-22.04
-    timeout-minutes: 12
+    timeout-minutes: 9
     needs: authorize
 
     steps:
