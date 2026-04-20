@@ -11,7 +11,6 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
   let mock = (~contracts: array<Internal.fuelContractConfig>) => {
     let selectionConfig = {
       dependsOnAddresses: true,
-              startBlock: None,
       eventConfigs: contracts->Array.flatMap(c => {
         c.events->Array.filterMap(
           e => {
@@ -827,7 +826,6 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
   let mock = (~contracts: array<Internal.fuelContractConfig>) => {
     let selectionConfig = {
       dependsOnAddresses: false,
-              startBlock: None,
       eventConfigs: contracts->Array.flatMap(c => {
         c.events->Array.filterMap(
           e => {
