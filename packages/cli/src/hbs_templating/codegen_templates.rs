@@ -1809,13 +1809,14 @@ type testIndexer = {{
 
         // Append the Generated module (was in Indexer.res.hbs, now in Rust).
         //
-        // The config is loaded lazily via `Config.fromConfigView()` (a blocking
-        // spawnSync of `envio config view`). Exposed values (`configWithoutRegistrations`,
-        // `allEntities`, `indexer`) are JS Proxies that defer the spawn until the
-        // first property read, so modules that import types from "generated" but
-        // never read config values don't pay the spawn cost at module load time.
+        // The config is loaded lazily via `Config.load()` — either from the
+        // primed CLI payload (no I/O) or via the `getConfigJson` NAPI call.
+        // Exposed values (`configWithoutRegistrations`, `allEntities`,
+        // `indexer`) are JS Proxies that defer the load until the first
+        // property read, so modules that import types from "generated" but
+        // never read config values don't pay the cost at module load time.
         let generated_module = r#"module Generated = {
-let makeGeneratedConfig = () => Config.fromConfigView()
+let makeGeneratedConfig = () => Config.load()
 
 // Memoized loader. `envio config view` is invoked at most once per process;
 // subsequent callers get the same parsed Config.t.

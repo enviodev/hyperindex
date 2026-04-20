@@ -1,4 +1,3 @@
-use crate::config_parsing::system_config::SystemConfig;
 use anyhow::Context;
 use std::path::Path;
 
@@ -7,20 +6,6 @@ use std::path::Path;
 /// which break JS imports. This helper ensures forward slashes for JS paths.
 fn to_js_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
-}
-
-/// Produce the resolved public config as a JSON string for embedding in a
-/// `Command` payload. Embedded as a string (not a parsed object), so the
-/// outer command JSON serializer doesn't re-walk the payload — JS parses
-/// it via `JSON.parse` once, right before priming `Config`.
-///
-/// Lets the JS host skip the `getConfigJson` NAPI round-trip when it receives
-/// the command; the NAPI endpoint stays available for indexers started
-/// outside the CLI flow.
-fn resolved_config_json(config: &SystemConfig) -> anyhow::Result<String> {
-    config
-        .to_public_config_json()
-        .context("Failed serializing resolved config")
 }
 
 async fn execute_command(
@@ -268,7 +253,7 @@ pub mod start {
                 "indexPath": to_js_path(&abs_index_path),
                 "cwd": config.parsed_project_paths.project_root.to_string_lossy(),
                 "env": env_map,
-                "config": super::resolved_config_json(config)?,
+                "config": config.to_public_config_json()?,
             }),
         ))
     }
@@ -288,7 +273,7 @@ pub mod db_migrate {
             serde_json::json!({
                 "reset": false,
                 "persistedState": persisted_state,
-                "config": super::resolved_config_json(config)?,
+                "config": config.to_public_config_json()?,
             }),
         ))
     }
@@ -297,7 +282,7 @@ pub mod db_migrate {
         Ok(Command::new(
             "migration-down",
             serde_json::json!({
-                "config": super::resolved_config_json(config)?,
+                "config": config.to_public_config_json()?,
             }),
         ))
     }
@@ -311,7 +296,7 @@ pub mod db_migrate {
             serde_json::json!({
                 "reset": true,
                 "persistedState": persisted_state,
-                "config": super::resolved_config_json(config)?,
+                "config": config.to_public_config_json()?,
             }),
         ))
     }
