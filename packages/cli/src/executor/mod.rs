@@ -39,10 +39,11 @@ impl Command {
 
 /// `envio_package_dir` is the absolute path of the running envio JS package
 /// when this executor is invoked via NAPI (the JS host resolves it from
-/// `import.meta.url`). It replaces the former `ENVIO_PACKAGE_DIR` env var
-/// and is used only to stamp the `envio` `file:{dir}` dep into generated
-/// / init project `package.json`s for dev builds. Pass `None` in tests or
-/// non-NAPI hosts — `get_envio_version` falls back to a filesystem walk.
+/// `import.meta.url`). Used only to stamp the `envio` `file:{dir}` dep
+/// into generated / init project `package.json`s for dev builds. `None`
+/// is fine for commands that don't call `get_envio_version` (e.g.
+/// `script` subcommands); init/codegen/dev/start on a dev build without
+/// it will error out of `get_envio_version`.
 pub async fn execute(
     command_line_args: CommandLineArgs,
     envio_package_dir: Option<&str>,
