@@ -20,11 +20,12 @@ use schemars::schema_for;
 /// A deferred work item the executor asks its host to run after Rust returns.
 ///
 /// Rust handles config parsing, codegen, docker, persisted state — everything
-/// that doesn't need JS. Work that must run in the JS event loop (migrations
-/// + indexer start, which load `envio/src/*.res.mjs` modules) is returned as
-/// `Command`s. The CLI layer knows nothing about how the host dispatches
-/// them: the NAPI shim forwards them to JS, a test harness could run them
-/// inline, a future standalone binary could spawn a Node subprocess, etc.
+/// that doesn't need JS. Work that must run in the JS event loop (migrations,
+/// indexer start — anything that loads `envio/src/*.res.mjs` modules) is
+/// returned as `Command`s. The CLI layer knows nothing about how the host
+/// dispatches them: the NAPI shim forwards them to JS, a test harness could
+/// run them inline, a future standalone binary could spawn a Node subprocess,
+/// etc.
 ///
 /// Wire format: `[name, data]` tuple — tuple structs serialize as JSON
 /// arrays by default.
