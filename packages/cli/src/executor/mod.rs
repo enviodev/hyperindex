@@ -17,10 +17,32 @@ mod local;
 use anyhow::{Context, Result};
 use schemars::schema_for;
 
-pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
+/// A deferred work item the executor asks its host to run after Rust returns.
+///
+/// Rust handles config parsing, codegen, docker, persisted state — everything
+/// that doesn't need JS. Work that must run in the JS event loop (migrations
+/// + indexer start, which load `envio/src/*.res.mjs` modules) is returned as
+/// `Command`s. The CLI layer knows nothing about how the host dispatches
+/// them: the NAPI shim forwards them to JS, a test harness could run them
+/// inline, a future standalone binary could spawn a Node subprocess, etc.
+///
+/// Wire format: `[name, data]` tuple — tuple structs serialize as JSON
+/// arrays by default.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Command(pub String, pub serde_json::Value);
+
+impl Command {
+    pub fn new(name: impl Into<String>, data: serde_json::Value) -> Self {
+        Self(name.into(), data)
+    }
+}
+
+pub async fn execute(command_line_args: CommandLineArgs) -> Result<Vec<Command>> {
     let global_project_paths = command_line_args.project_paths;
     let parsed_project_paths = ParsedProjectPaths::try_from(global_project_paths.clone())
         .context("Failed parsing project paths")?;
+
+    let mut commands: Vec<Command> = Vec::new();
 
     match command_line_args.command {
         CommandType::Init(init_args) => {
@@ -32,7 +54,7 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         }
 
         CommandType::Dev(dev_args) => {
-            dev::run_dev(parsed_project_paths, dev_args.restart).await?;
+            commands.extend(dev::run_dev(parsed_project_paths, dev_args.restart).await?);
         }
 
         CommandType::Stop => {
@@ -72,15 +94,15 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 let persisted_state = PersistedState::get_current_state(&config)
                     .context("Failed constructing persisted state")?;
 
-                commands::db_migrate::run_db_setup(&config, &persisted_state).await?;
+                commands.push(commands::db_migrate::run_db_setup(&config, &persisted_state).await?);
             }
             // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).
-            commands::start::start_indexer(&config, &[]).await?;
+            commands.push(commands::start::start_indexer(&config, &[]).await?);
         }
 
         CommandType::Local(local_commands) => {
-            local::run_local(&local_commands, &parsed_project_paths).await?;
+            commands.extend(local::run_local(&local_commands, &parsed_project_paths).await?);
         }
 
         CommandType::Script(Script::PrintCliHelpMd) => {
@@ -119,5 +141,5 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         }
     };
 
-    Ok(())
+    Ok(commands)
 }

@@ -206,14 +206,14 @@ pub mod codegen {
 
 pub mod start {
     use super::to_js_path;
-    use crate::config_parsing::system_config::SystemConfig;
+    use crate::{config_parsing::system_config::SystemConfig, executor::Command};
     use anyhow::anyhow;
     use pathdiff::diff_paths;
 
     pub async fn start_indexer(
         config: &SystemConfig,
         extra_env: &[(String, String)],
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Command> {
         let relative_generated = diff_paths(
             &config.parsed_project_paths.generated,
             &config.parsed_project_paths.project_root,
@@ -241,51 +241,50 @@ pub mod start {
             env_map.insert(k.clone(), v.clone().into());
         }
 
-        let data = serde_json::json!({
-            "indexPath": to_js_path(&abs_index_path),
-            "cwd": config.parsed_project_paths.project_root.to_string_lossy(),
-            "env": env_map,
-        });
-
-        crate::napi::queue_command("start-indexer", data);
-
-        Ok(())
+        Ok(Command::new(
+            "start-indexer",
+            serde_json::json!({
+                "indexPath": to_js_path(&abs_index_path),
+                "cwd": config.parsed_project_paths.project_root.to_string_lossy(),
+                "env": env_map,
+            }),
+        ))
     }
 }
 pub mod db_migrate {
-    use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
+    use crate::{
+        config_parsing::system_config::SystemConfig, executor::Command,
+        persisted_state::PersistedState,
+    };
 
     pub async fn run_up_migrations(
         _config: &SystemConfig,
         persisted_state: &PersistedState,
-    ) -> anyhow::Result<()> {
-        crate::napi::queue_command(
+    ) -> anyhow::Result<Command> {
+        Ok(Command::new(
             "migration-up",
             serde_json::json!({
                 "reset": false,
                 "persistedState": persisted_state,
             }),
-        );
-        Ok(())
+        ))
     }
 
-    pub async fn run_drop_schema(_config: &SystemConfig) -> anyhow::Result<()> {
-        crate::napi::queue_command("migration-down", serde_json::json!({}));
-        Ok(())
+    pub async fn run_drop_schema(_config: &SystemConfig) -> anyhow::Result<Command> {
+        Ok(Command::new("migration-down", serde_json::json!({})))
     }
 
     pub async fn run_db_setup(
         _config: &SystemConfig,
         persisted_state: &PersistedState,
-    ) -> anyhow::Result<()> {
-        crate::napi::queue_command(
+    ) -> anyhow::Result<Command> {
+        Ok(Command::new(
             "migration-up",
             serde_json::json!({
                 "reset": true,
                 "persistedState": persisted_state,
             }),
-        );
-        Ok(())
+        ))
     }
 }
 

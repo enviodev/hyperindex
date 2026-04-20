@@ -1,28 +1,14 @@
 use crate::{
     clap_definitions::CommandLineArgs, config_parsing::system_config::SystemConfig,
-    project_paths::ParsedProjectPaths,
+    executor::Command, project_paths::ParsedProjectPaths,
 };
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
-use std::sync::Mutex;
 
 fn set_envio_package_dir(dir: &Option<String>) {
     if let Some(d) = dir {
         std::env::set_var("ENVIO_PACKAGE_DIR", d);
     }
-}
-
-/// Commands queued by the executor for JS to handle after runCli returns.
-/// Migrations and indexer start are queued here instead of executed in Rust,
-/// because they need to run in the JS event loop (not in a NAPI async context).
-static PENDING_COMMANDS: Mutex<Vec<(String, serde_json::Value)>> = Mutex::new(Vec::new());
-
-/// Queue a command for JS to execute after runCli returns.
-pub fn queue_command(command: &str, data: serde_json::Value) {
-    PENDING_COMMANDS
-        .lock()
-        .unwrap()
-        .push((command.to_string(), data));
 }
 
 #[napi_derive::napi]
@@ -73,28 +59,23 @@ pub async fn upsert_persisted_state(json: String) -> napi::Result<()> {
 /// instead of overloading the error channel with control-flow sentinels.
 #[derive(serde::Serialize)]
 #[serde(tag = "outcome", rename_all = "camelCase")]
-enum RunCliOutcome {
+enum RunCliOutcome<'a> {
     /// Clap printed help/version text to stdout. JS should exit(0).
     HelpOrVersion,
-    /// Normal completion. JS should drain `commands` in order.
-    Ok {
-        commands: Vec<(String, serde_json::Value)>,
-    },
+    /// Normal completion. JS should run each command in order.
+    Ok { commands: &'a [Command] },
 }
 
 /// Run the envio CLI. Returns a JSON-serialized `RunCliOutcome`:
 /// - `{"outcome":"helpOrVersion"}` — clap printed help/version, JS exits 0
 /// - `{"outcome":"ok","commands":[["migration-up", {...}], ...]}` — JS runs each
 ///
-/// Rust handles config parsing, codegen, docker, persisted state — everything
-/// that doesn't need JS. Migrations and indexer start are queued and returned
-/// for JS to handle in its own event loop (no NAPI async limitations).
+/// The executor layer doesn't know about NAPI; it returns a `Vec<Command>` that
+/// this shim serializes for the JS host. A pure-Rust host (tests, future
+/// binary) could consume the same return value directly.
 #[napi_derive::napi]
 pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> napi::Result<String> {
     set_envio_package_dir(&envio_package_dir);
-
-    // Clear any commands from a previous run
-    PENDING_COMMANDS.lock().unwrap().clear();
 
     let mut full_args = vec!["envio".to_string()];
     full_args.extend(args);
@@ -116,16 +97,16 @@ pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> na
         .context("Failed parsing command line arguments")
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
-    crate::executor::execute(command_line_args)
+    let commands = crate::executor::execute(command_line_args)
         .await
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
-    let commands: Vec<(String, serde_json::Value)> =
-        PENDING_COMMANDS.lock().unwrap().drain(..).collect();
-    serialize_outcome(&RunCliOutcome::Ok { commands })
+    serialize_outcome(&RunCliOutcome::Ok {
+        commands: &commands,
+    })
 }
 
-fn serialize_outcome(outcome: &RunCliOutcome) -> napi::Result<String> {
+fn serialize_outcome(outcome: &RunCliOutcome<'_>) -> napi::Result<String> {
     serde_json::to_string(outcome)
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing outcome: {e}")))
 }
