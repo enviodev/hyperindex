@@ -58,8 +58,7 @@ let makeFromDbState = async (
   })
 
   let chainFetchersArr =
-    await initialState.chains
-    ->Array.map(async (resumedChainState: Persistence.initialChainState) => {
+    initialState.chains->Array.map((resumedChainState: Persistence.initialChainState) => {
       let chain = Config.getChain(config, ~chainId=resumedChainState.id)
       let chainConfig = config.chainMap->ChainMap.get(chain)
 
@@ -75,7 +74,6 @@ let makeFromDbState = async (
         ),
       )
     })
-    ->Promise.all
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
