@@ -1,4 +1,4 @@
-- Never delete comments describing unobvious logic when refactoring. Move or update them to match the new code, but preserve their intent.
+- Never delete comments that are still relevant to the code. When refactoring, move or update them to match the new code, but preserve their intent.
 - Use `pnpm` over `npm`/`npx`.
 - Always use single assert to check the whole value instead of multiple asserts for every field.
 
