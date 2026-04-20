@@ -1032,8 +1032,10 @@ let registerDynamicContracts = (
                 "contractName": dc.contractName,
               },
             )
-            logger->Logging.childWarn(`Skipping contract registration: Contract doesn't have any events to fetch.`)
-            shouldRemove := true
+            // Persist the address to the db so a future config change that adds
+            // events for this contract can pick it up on restart, but skip
+            // in-memory registration since there's nothing to fetch right now.
+            logger->Logging.childWarn(`Persisting contract registration without fetching: Contract doesn't have any events to fetch. It'll be picked up on restart if you add events for the contract.`)
           }
         }
 
@@ -1565,36 +1567,41 @@ let make = (
   let registeringContractsByContract: dict<dict<indexingAddress>> = Dict.make()
   let dynamicContracts = Utils.Set.make()
 
-  switch normalEventConfigs {
-  | [] => ()
-  | _ =>
-    addresses->Array.forEach(contract => {
-      let contractName = contract.contractName
-      switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(contractName) {
-      | Some({startBlock: contractStartBlock})
-        if contractNamesWithNormalEvents->Utils.Set.has(contractName) =>
-        let ia: indexingAddress = {
-          address: contract.address,
-          contractName: contract.contractName,
-          registrationBlock: contract.registrationBlock,
-          effectiveStartBlock: deriveEffectiveStartBlock(
-            ~registrationBlock=contract.registrationBlock,
-            ~contractStartBlock,
-          ),
-        }
-        let registeringContracts =
-          registeringContractsByContract->Utils.Dict.getOrInsertEmptyDict(contractName)
-        registeringContracts->Dict.set(contract.address->Address.toString, ia)
-        indexingAddresses->Dict.set(contract.address->Address.toString, ia)
+  addresses->Array.forEach(contract => {
+    let contractName = contract.contractName
+    let contractStartBlock = switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(
+      contractName,
+    ) {
+    | Some({startBlock}) => startBlock
+    | None => None
+    }
+    let ia: indexingAddress = {
+      address: contract.address,
+      contractName: contract.contractName,
+      registrationBlock: contract.registrationBlock,
+      effectiveStartBlock: deriveEffectiveStartBlock(
+        ~registrationBlock=contract.registrationBlock,
+        ~contractStartBlock,
+      ),
+    }
+    // Track the address on fetchState regardless of whether it currently has
+    // matching events. This way, if the config is updated later to add events
+    // for this contract, the address is already known.
+    indexingAddresses->Dict.set(contract.address->Address.toString, ia)
 
-        // Detect dynamic contracts by registrationBlock
-        if contract.registrationBlock !== -1 {
-          dynamicContracts->Utils.Set.add(contractName)->ignore
-        }
-      | _ => ()
+    // Only addresses whose contract has events that depend on addresses get
+    // registered for active fetching via partitions.
+    if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
+      let registeringContracts =
+        registeringContractsByContract->Utils.Dict.getOrInsertEmptyDict(contractName)
+      registeringContracts->Dict.set(contract.address->Address.toString, ia)
+
+      // Detect dynamic contracts by registrationBlock
+      if contract.registrationBlock !== -1 {
+        dynamicContracts->Utils.Set.add(contractName)->ignore
       }
-    })
-  }
+    }
+  })
 
   let optimizedPartitions = createPartitionsFromIndexingAddresses(
     ~registeringContractsByContract,

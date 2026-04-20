@@ -211,6 +211,51 @@ describe("FetchState.make", () => {
     )
   })
 
+  it(
+    "Keeps addresses without a matching contract on fetchState so they can be picked up after config changes",
+    t => {
+      let fetchState = FetchState.make(
+        ~eventConfigs=[baseEventConfig],
+        ~addresses=[
+          makeConfigContract("Gravatar", mockAddress0),
+          // Address for a contract that currently has no events configured.
+          // Should still be tracked on fetchState and counted via numAddresses.
+          makeDynContractRegistration(
+            ~blockNumber=42,
+            ~contractAddress=mockAddress1,
+            ~contractName="NftFactory",
+          ),
+        ],
+        ~startBlock=0,
+        ~endBlock=None,
+        ~maxAddrInPartition=3,
+        ~targetBufferSize,
+        ~chainId,
+        ~knownHeight,
+      )
+
+      t.expect(
+        (
+          fetchState->FetchState.numAddresses,
+          fetchState.indexingAddresses
+          ->Dict.get(mockAddress1->Address.toString)
+          ->Option.map(ia => ia.contractName),
+          // No partition is created for the contract without events
+          fetchState.optimizedPartitions.entities
+          ->Dict.valuesToArray
+          ->Array.every(p =>
+            p.addressesByContractName
+            ->Utils.Dict.dangerouslyGetNonOption("NftFactory")
+            ->Option.isNone
+          ),
+        ),
+        ~message=`numAddresses counts both addresses,
+          the no-events address is tracked under its contract name,
+          and no partition is created for the contract without events`,
+      ).toEqual((2, Some("NftFactory"), true))
+    },
+  )
+
   it("Creates FetchState with static and dc addresses reaching the maxAddrInPartition limit", t => {
     let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
     let fetchState = FetchState.make(
