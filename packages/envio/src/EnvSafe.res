@@ -1,7 +1,8 @@
 // Vendored from rescript-envsafe v5.0.0 (https://github.com/DZakh/rescript-envsafe).
-// Kept in-tree so we don't ship an extra npm dep just for ~150 lines of env
-// parsing; when pulling upstream fixes, diff against the v5.0.0 source. See
-// LICENSE for attribution.
+// Kept in-tree so it's compiled with our ReScript toolchain and the emitted
+// JS artifacts stay under our control (upstream's published JS may lag or
+// target a different ReScript version). Diff against the v5.0.0 source when
+// pulling upstream fixes. See LICENSE for attribution.
 @@uncurried
 
 %%private(external magic: 'a => 'b = "%identity")

@@ -1,13 +1,3 @@
-// This module is the ONLY place allowed to import from `napi` / `napi_derive`
-// — the boundary is enforced by `clippy.toml` via `disallowed_types` on the
-// `napi::*` types that every NAPI function needs (Result, Error). This
-// file-level allow is the per-file exception. Because `#[napi_derive::napi]`
-// expands into code returning `napi::Result<T>`, the type ban alone catches
-// any attempt to add NAPI bindings elsewhere in the crate — we don't need a
-// separate ban on the macro itself (clippy's `disallowed_macros` doesn't
-// honor `#[allow]` on attribute macros anyway).
-#![allow(clippy::disallowed_types)]
-
 use crate::{
     clap_definitions::CommandLineArgs, config_parsing::system_config::SystemConfig,
     project_paths::ParsedProjectPaths,
