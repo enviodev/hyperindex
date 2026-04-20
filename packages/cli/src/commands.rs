@@ -1,3 +1,4 @@
+use crate::config_parsing::system_config::SystemConfig;
 use anyhow::Context;
 use std::path::Path;
 
@@ -6,6 +7,17 @@ use std::path::Path;
 /// which break JS imports. This helper ensures forward slashes for JS paths.
 fn to_js_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
+}
+
+/// Produce the resolved public config as a `serde_json::Value` for embedding
+/// in a `Command` payload. Parsing this once in Rust lets the JS host skip
+/// the `getConfigJson` NAPI round-trip when it receives the command. The
+/// NAPI endpoint is still kept for indexers that start outside the CLI flow.
+fn resolved_config_json(config: &SystemConfig) -> anyhow::Result<serde_json::Value> {
+    let json_string = config
+        .to_public_config_json()
+        .context("Failed serializing resolved config")?;
+    serde_json::from_str(&json_string).context("Failed re-parsing resolved config")
 }
 
 async fn execute_command(
@@ -247,6 +259,7 @@ pub mod start {
                 "indexPath": to_js_path(&abs_index_path),
                 "cwd": config.parsed_project_paths.project_root.to_string_lossy(),
                 "env": env_map,
+                "config": super::resolved_config_json(config)?,
             }),
         ))
     }
@@ -258,7 +271,7 @@ pub mod db_migrate {
     };
 
     pub async fn run_up_migrations(
-        _config: &SystemConfig,
+        config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<Command> {
         Ok(Command::new(
@@ -266,16 +279,22 @@ pub mod db_migrate {
             serde_json::json!({
                 "reset": false,
                 "persistedState": persisted_state,
+                "config": super::resolved_config_json(config)?,
             }),
         ))
     }
 
-    pub async fn run_drop_schema(_config: &SystemConfig) -> anyhow::Result<Command> {
-        Ok(Command::new("migration-down", serde_json::json!({})))
+    pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<Command> {
+        Ok(Command::new(
+            "migration-down",
+            serde_json::json!({
+                "config": super::resolved_config_json(config)?,
+            }),
+        ))
     }
 
     pub async fn run_db_setup(
-        _config: &SystemConfig,
+        config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<Command> {
         Ok(Command::new(
@@ -283,6 +302,7 @@ pub mod db_migrate {
             serde_json::json!({
                 "reset": true,
                 "persistedState": persisted_state,
+                "config": super::resolved_config_json(config)?,
             }),
         ))
     }
