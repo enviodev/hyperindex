@@ -1510,12 +1510,16 @@ let make = (
 
   eventConfigs->Array.forEach(ec => {
     switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(ec.contractName) {
-    | Some({filterByAddresses}) =>
+    | Some({filterByAddresses, startBlock}) =>
       contractConfigs->Dict.set(
         ec.contractName,
         {
           filterByAddresses: filterByAddresses || ec.filterByAddresses,
-          startBlock: ec.startBlock,
+          startBlock: switch (startBlock, ec.startBlock) {
+          | (Some(a), Some(b)) => Some(Pervasives.min(a, b))
+          | (Some(_) as s, None) | (None, Some(_) as s) => s
+          | (None, None) => None
+          },
         },
       )
     | None =>
@@ -1569,11 +1573,9 @@ let make = (
   | _ =>
     addresses->Array.forEach(contract => {
       let contractName = contract.contractName
-      if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-        let contractStartBlock =
-          contractConfigs
-          ->Utils.Dict.dangerouslyGetNonOption(contractName)
-          ->Option.flatMap(c => c.startBlock)
+      switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(contractName) {
+      | Some({startBlock: contractStartBlock})
+        if contractNamesWithNormalEvents->Utils.Set.has(contractName) =>
         let ia: indexingAddress = {
           address: contract.address,
           contractName: contract.contractName,
@@ -1592,6 +1594,7 @@ let make = (
         if contract.registrationBlock !== -1 {
           dynamicContracts->Utils.Set.add(contractName)->ignore
         }
+      | _ => ()
       }
     })
   }
