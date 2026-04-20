@@ -56,9 +56,6 @@ const PUBLISH_FILES = [
   "src",
 ];
 
-/** Files to copy into the platform packages (envio-{os}-{arch}). */
-const PLATFORM_PKG_FILES = ["bin/envio"] as const;
-
 // ── Core logic ──────────────────────────────────────────────────────
 
 /**

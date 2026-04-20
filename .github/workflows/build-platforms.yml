@@ -56,10 +56,10 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
-      - name: Build binaries
+      - name: Build NAPI addon
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
-        run: cargo build --release --bins --target ${{ matrix.job.target }}
+        run: cargo build --release --lib --target ${{ matrix.job.target }}
 
       - name: Install node
         uses: actions/setup-node@v6
@@ -78,9 +78,13 @@ jobs:
           node_pkg="packages/cli/npm/envio-${node_os}-${node_arch}"
           node packages/build-envio/build-platform-package.ts \
             --version "${VERSION}" --platform "${node_os}" --arch "${node_arch}" --out "${node_pkg}"
-          mkdir -p "${node_pkg}/bin"
-          cp "target/${TARGET}/release/envio" "${node_pkg}/bin"
-          chmod +x "${node_pkg}/bin/envio"
+          # Copy the platform-specific cdylib as envio.node (matches package.json main)
+          case "${node_os}" in
+            linux)  lib_name="libenvio.so" ;;
+            darwin) lib_name="libenvio.dylib" ;;
+            *) echo "Unsupported OS: ${node_os}"; exit 1 ;;
+          esac
+          cp "target/${TARGET}/release/${lib_name}" "${node_pkg}/envio.node"
 
       - name: Upload platform npm package artifact
         uses: actions/upload-artifact@v7

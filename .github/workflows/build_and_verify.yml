@@ -266,6 +266,10 @@ jobs:
       - name: test_codegen
         working-directory: scenarios/test_codegen
         run: |
+          # scenarios/test_codegen has its own pnpm-workspace.yaml, so the root
+          # .pnpmfile.cjs isn't picked up when codegen triggers nested `pnpm install`.
+          # Symlink (not copy) so __dirname still resolves to the repo root.
+          ln -sf ../../.pnpmfile.cjs .pnpmfile.cjs
           pnpm exec envio codegen
           pnpm test
 
