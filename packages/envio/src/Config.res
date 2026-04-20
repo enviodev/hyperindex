@@ -847,17 +847,17 @@ let getChain = (config, ~chainId) => {
 
 // When the CLI hands us a command, the Rust side already parsed the config
 // and embedded the resolved JSON in the payload. `Bin.res` calls `prime`
-// with that JSON so the indexer module (loaded via `dynamicImport`) and
-// the Migrations module skip the second NAPI `getConfigJson` round-trip.
-// Module-private — only Bin.res should set it.
+// with that JSON before dispatching to `Main.start` / `Main.migrate` /
+// `Main.dropSchema`, so those functions skip the NAPI `getConfigJson`
+// round-trip. Module-private — only Bin.res should set it.
 %%private(let primedJson: ref<option<JSON.t>> = ref(None))
 let prime = (json: JSON.t): unit => primedJson := Some(json)
 
 // Load the resolved indexer config. When `Bin.res` has primed a JSON payload
 // from the CLI command, parse from that; otherwise invoke the native NAPI
-// addon (Rust config parser, ENVIO_CONFIG-respecting). The NAPI path stays
-// available so indexers started outside the CLI (e.g. direct node invocation
-// of the generated index module) still work.
+// addon (Rust config parser, ENVIO_CONFIG-respecting). The NAPI path keeps
+// non-CLI callers (worker threads spawned via `TestIndexer`, direct imports
+// from test harnesses) working without a primed payload.
 let load = () =>
   switch primedJson.contents {
   | Some(json) => json->fromPublic

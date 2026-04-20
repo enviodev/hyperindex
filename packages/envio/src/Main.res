@@ -546,9 +546,24 @@ type process
 
 type mainArgs = Yargs.parsedArgs<args>
 
+type migrateOpts = {reset: bool, persistedState: JSON.t}
+
+let migrate = async (~reset, ~persistedState) => {
+  let config = Config.load()
+  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  await persistence->Persistence.init(~reset, ~chainConfigs=config.chainMap->ChainMap.values)
+  await Core.upsertPersistedState(persistedState->JSON.stringify)
+}
+
+let dropSchema = async () => {
+  let config = Config.load()
+  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  await persistence.storage.reset()
+}
+
 let start = async (
-  ~makeGeneratedConfig: unit => Config.t,
   ~persistence: option<Persistence.t>=?,
+  ~migrate: option<migrateOpts>=?,
   ~isTest=false,
   ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
@@ -563,19 +578,27 @@ let start = async (
 
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
-  let configWithoutRegistrations = makeGeneratedConfig()
+  // `migrate`, when provided, folds the DB setup into this single `init()` call
+  // (no separate `db setup` → `start` double-init).
+  let configWithoutRegistrations = Config.load()
   let persistence = switch persistence {
   | Some(p) => p
   | None => PgStorage.makePersistenceFromConfig(~config=configWithoutRegistrations)
   }
   globalPersistenceRef := Some(persistence)
+  let reset = migrate->Option.map(m => m.reset)->Option.getOr(false)
   await persistence->Persistence.init(
+    ~reset,
     ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
   )
+  switch migrate {
+  | Some({persistedState}) => await Core.upsertPersistedState(persistedState->JSON.stringify)
+  | None => ()
+  }
 
   // Register all handlers, then get the config with registrations
   let registrations = await HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
-  let config = makeGeneratedConfig()
+  let config = Config.load()
   let config = if isTest {
     {...config, shouldRollbackOnReorg: false}
   } else {

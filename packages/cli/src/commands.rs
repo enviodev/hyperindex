@@ -1,13 +1,6 @@
 use anyhow::Context;
 use std::path::Path;
 
-/// Convert a path to a JS-compatible string with forward slashes.
-/// PathBuf::display() emits platform-specific separators (backslashes on Windows)
-/// which break JS imports. This helper ensures forward slashes for JS paths.
-fn to_js_path(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
-}
-
 async fn execute_command(
     cmd: &str,
     args: Vec<&str>,
@@ -207,98 +200,6 @@ pub mod codegen {
             .context("Failed running post codegen command sequence")?;
 
         Ok(())
-    }
-}
-
-pub mod start {
-    use super::to_js_path;
-    use crate::{config_parsing::system_config::SystemConfig, executor::Command};
-    use anyhow::anyhow;
-    use pathdiff::diff_paths;
-
-    pub async fn start_indexer(
-        config: &SystemConfig,
-        extra_env: &[(String, String)],
-    ) -> anyhow::Result<Command> {
-        let relative_generated = diff_paths(
-            &config.parsed_project_paths.generated,
-            &config.parsed_project_paths.project_root,
-        )
-        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
-
-        let index_path = format!("./{}/src/Index.res.mjs", to_js_path(&relative_generated));
-
-        let abs_index_path = config
-            .parsed_project_paths
-            .project_root
-            .join(&index_path)
-            .canonicalize()
-            .unwrap_or_else(|_| config.parsed_project_paths.project_root.join(&index_path));
-
-        let config_path = config
-            .parsed_project_paths
-            .config
-            .to_string_lossy()
-            .into_owned();
-
-        let mut env_map = serde_json::Map::new();
-        env_map.insert("ENVIO_CONFIG".to_string(), config_path.into());
-        for (k, v) in extra_env {
-            env_map.insert(k.clone(), v.clone().into());
-        }
-
-        Ok(Command::new(
-            "start-indexer",
-            serde_json::json!({
-                "indexPath": to_js_path(&abs_index_path),
-                "cwd": config.parsed_project_paths.project_root.to_string_lossy(),
-                "env": env_map,
-                "config": config.to_public_config_json()?,
-            }),
-        ))
-    }
-}
-pub mod db_migrate {
-    use crate::{
-        config_parsing::system_config::SystemConfig, executor::Command,
-        persisted_state::PersistedState,
-    };
-
-    pub async fn run_up_migrations(
-        config: &SystemConfig,
-        persisted_state: &PersistedState,
-    ) -> anyhow::Result<Command> {
-        Ok(Command::new(
-            "migration-up",
-            serde_json::json!({
-                "reset": false,
-                "persistedState": persisted_state,
-                "config": config.to_public_config_json()?,
-            }),
-        ))
-    }
-
-    pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<Command> {
-        Ok(Command::new(
-            "migration-down",
-            serde_json::json!({
-                "config": config.to_public_config_json()?,
-            }),
-        ))
-    }
-
-    pub async fn run_db_setup(
-        config: &SystemConfig,
-        persisted_state: &PersistedState,
-    ) -> anyhow::Result<Command> {
-        Ok(Command::new(
-            "migration-up",
-            serde_json::json!({
-                "reset": true,
-                "persistedState": persisted_state,
-                "config": config.to_public_config_json()?,
-            }),
-        ))
     }
 }
 

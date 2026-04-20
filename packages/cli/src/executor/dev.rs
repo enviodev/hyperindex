@@ -2,7 +2,7 @@ use crate::{
     commands,
     config_parsing::system_config::SystemConfig,
     docker_env,
-    executor::Command,
+    executor::{build_start_command, Command, MigrateOpts},
     persisted_state::{self, PersistedState, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
@@ -13,7 +13,7 @@ pub async fn run_dev(
     project_paths: ParsedProjectPaths,
     restart: bool,
     envio_package_dir: Option<&str>,
-) -> Result<Vec<Command>> {
+) -> Result<Command> {
     let config =
         SystemConfig::parse_from_project_files(&project_paths).context("Failed parsing config")?;
 
@@ -121,9 +121,7 @@ pub async fn run_dev(
         }
     };
 
-    let mut queued: Vec<Command> = Vec::new();
-
-    if should_run_db_migrations {
+    let migrate = if should_run_db_migrations {
         match persisted_state_db {
             None => println!("Restarting indexing from scratch"),
             Some(PersistedStateExists::NotExists) => {
@@ -134,23 +132,20 @@ pub async fn run_dev(
         }
         println!("Running db migrations");
 
-        queued.push(
-            commands::db_migrate::run_db_setup(&config, &current_state)
-                .await
-                .context("Failed running db setup command")?,
-        );
-    }
+        Some(MigrateOpts {
+            // `envio dev` always does a full reset when migrations are needed
+            // (matches prior behavior of `run_db_setup`).
+            reset: true,
+            persisted_state: current_state,
+        })
+    } else {
+        None
+    };
 
     println!("Starting indexer");
 
     let mut indexer_env = up_result.indexer_env.clone();
     indexer_env.push(("ENVIO_DEV_MODE".to_string(), "true".to_string()));
 
-    queued.push(
-        commands::start::start_indexer(&config, &indexer_env)
-            .await
-            .context("Failed running start on the indexer")?,
-    );
-
-    Ok(queued)
+    build_start_command(&config, migrate, &indexer_env).context("Failed building start command")
 }

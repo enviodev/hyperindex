@@ -1,81 +1,82 @@
 @val external processChdir: string => unit = "process.chdir"
 let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
-let dynamicImport: string => promise<unit> = %raw(`(p) => import(p)`)
 
-type command = (string, JSON.t)
+// Crash on unhandled promise rejections with a readable error.
+// ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".
+NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
+  Logging.errorWithExn(reason->Utils.prettifyExn, "Unhandled promise rejection")
+  NodeJs.process->NodeJs.exitWithCode(Failure)
+})
 
-let executeCommand = async (command: command) => {
-  let (name, data) = command
-  let get = key =>
-    data
-    ->JSON.Decode.object
-    ->Option.flatMap(d => d->Dict.get(key))
+// Wire format mirrors the Rust `executor::Command` enum: a tagged JSON object
+// with a `kind` discriminator. `Bin.res` decodes once and dispatches to the
+// matching `Main.*` entry point — there's no per-step queue.
+type startCmd = {
+  migrate: option<Main.migrateOpts>,
+  cwd: string,
+  env: dict<JSON.t>,
+  config: JSON.t,
+}
+type migrateCmd = {reset: bool, persistedState: JSON.t, config: JSON.t}
+type dropSchemaCmd = {config: JSON.t}
 
-  // Rust embeds the resolved config as a JSON string in each command that
-  // needs it, so `Config.load()` calls inside migrations / the indexer
-  // module skip the `getConfigJson` NAPI round-trip.
-  switch get("config")->Option.flatMap(JSON.Decode.string) {
-  | Some(configStr) => Config.prime(configStr->JSON.parseOrThrow)
-  | None => ()
+type command =
+  | Start(startCmd)
+  | Migrate(migrateCmd)
+  | DropSchema(dropSchemaCmd)
+
+let decodeCommand = (json: JSON.t): command => {
+  let obj = switch json->JSON.Decode.object {
+  | Some(o) => o
+  | None => JsError.throwWithMessage("Invalid command payload: not an object")
   }
-
-  switch name {
-  | "migration-up" => {
-      let reset =
-        get("reset")
-        ->Option.flatMap(JSON.Decode.bool)
-        ->Option.getOr(false)
-      await Migrations.runUpMigrations(~reset)
-      switch get("persistedState") {
-      | Some(ps) => await Core.upsertPersistedState(ps->JSON.stringify)
-      | None => ()
-      }
-    }
-  | "migration-down" => await Migrations.runDownMigrations()
-  | "start-indexer" => {
-      // Clear prom-client registry — metrics were registered during
-      // migrations (same process), and the indexer re-registers them.
-      PromClient.defaultRegister->PromClient.clear
-
-      switch get("cwd")->Option.flatMap(JSON.Decode.string) {
-      | Some(cwd) => processChdir(cwd)
-      | None => ()
-      }
-      switch get("env")->Option.flatMap(JSON.Decode.object) {
-      | Some(env) =>
-        env->Dict.forEachWithKey((value, key) => {
-          switch value->JSON.Decode.string {
-          | Some(v) => setEnvVar(key, v)
-          | None => ()
-          }
-        })
-      | None => ()
-      }
-      switch get("indexPath")->Option.flatMap(JSON.Decode.string) {
-      | Some(indexPath) => await dynamicImport(indexPath)
-      | None => JsError.throwWithMessage("start-indexer: missing indexPath")
-      }
-      // Keep the process alive — the indexer terminates via process.exit().
-      await Promise.make((_resolve, _reject) => ())
-    }
-  | other => JsError.throwWithMessage(`Unknown command: ${other}`)
+  let kind = switch obj->Dict.get("kind")->Option.flatMap(JSON.Decode.string) {
+  | Some(k) => k
+  | None => JsError.throwWithMessage("Invalid command payload: missing kind")
+  }
+  switch kind {
+  | "start" => Start(json->(Utils.magic: JSON.t => startCmd))
+  | "migrate" => Migrate(json->(Utils.magic: JSON.t => migrateCmd))
+  | "drop-schema" => DropSchema(json->(Utils.magic: JSON.t => dropSchemaCmd))
+  | other => JsError.throwWithMessage(`Unknown command kind: ${other}`)
   }
 }
 
-// Rust returns a JSON array of `[name, data]` commands. An empty array means
-// there's nothing for JS to do — we fall out of the loop and the Node process
-// exits naturally with code 0 (covers `--help`/`--version` and Rust-only
-// commands like `envio codegen` / `envio init`).
+let applyEnv = (env: dict<JSON.t>) =>
+  env->Dict.forEachWithKey((value, key) => {
+    switch value->JSON.Decode.string {
+    | Some(v) => setEnvVar(key, v)
+    | None => ()
+    }
+  })
+
 let run = async args => {
   try {
-    let commandsJson = await Core.runCli(args)
-    let commands = commandsJson->JSON.parseOrThrow->(Utils.magic: JSON.t => array<command>)
-    for i in 0 to commands->Array.length - 1 {
-      await executeCommand(commands->Array.getUnsafe(i))
+    switch (await Core.runCli(args))->Nullable.toOption {
+    // Rust-only command (codegen / init / stop / docker / help / version /
+    // scripts) — nothing for JS to do, exit cleanly.
+    | None => ()
+    | Some(json) =>
+      switch decodeCommand(json->JSON.parseOrThrow) {
+      | Start({migrate, cwd, env, config}) =>
+        Config.prime(config)
+        processChdir(cwd)
+        applyEnv(env)
+        // Metrics may have been registered during a prior `init()` in the
+        // same process (tests). Reset before the indexer re-registers them.
+        PromClient.defaultRegister->PromClient.clear
+        await Main.start(~migrate?)
+      | Migrate({reset, persistedState, config}) =>
+        Config.prime(config)
+        await Main.migrate(~reset, ~persistedState)
+      | DropSchema({config}) =>
+        Config.prime(config)
+        await Main.dropSchema()
+      }
     }
   } catch {
   | exn =>
-    Console.error(exn->Utils.prettifyExn)
+    exn->ErrorHandling.make(~msg="Failed at initialization")->ErrorHandling.log
     NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }

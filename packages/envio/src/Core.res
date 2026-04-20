@@ -6,7 +6,10 @@
 
 type addon = {
   getConfigJson: (~configPath: Nullable.t<string>, ~directory: Nullable.t<string>) => string,
-  runCli: (~args: array<string>, ~envioPackageDir: Nullable.t<string>) => promise<string>,
+  runCli: (
+    ~args: array<string>,
+    ~envioPackageDir: Nullable.t<string>,
+  ) => promise<Nullable.t<string>>,
   upsertPersistedState: (~json: string) => promise<unit>,
 }
 

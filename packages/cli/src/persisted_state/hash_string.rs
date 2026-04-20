@@ -8,7 +8,7 @@ use std::{
     path::PathBuf,
 };
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, sqlx::FromRow, sqlx::Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, sqlx::FromRow, sqlx::Type)]
 #[sqlx(type_name = "Text")]
 #[serde(transparent)]
 pub struct HashString(String);
