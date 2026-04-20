@@ -30,13 +30,8 @@ let callRequire: ({..}, string) => addon = %raw(`(req, id) => req(id)`)
 
 let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
 
-// Local dev: find repo root, cargo build (if sources changed), load from target/debug/.
-// Skips `cargo build --lib` when the built .so/.dylib/.dll is newer than
-// every .rs in packages/cli/src/ and packages/cli/Cargo.toml. Cargo's own
-// incremental build is usually <1s but the NAPI entrypoint still pays for
-// process spawn + dependency graph walk on every command — skipping the
-// spawn entirely drops ~400–800ms per invocation in tight dev loops.
-// Set ENVIO_FORCE_REBUILD=1 to bypass the cache.
+// Local dev: find repo root, cargo build, load from target/debug/.
+// Runs cargo build on every invocation (like cargo run).
 let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   var cp = Nodechild_process;
   var path = Nodepath;
@@ -64,8 +59,6 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
 
     var parsed;
     try {
-      // pnpm list sometimes emits stray commas around the JSON object when
-      // run from inside the workspace; strip them before parsing.
       var s = result.trim();
       if (s.startsWith(",")) s = s.slice(1);
       if (s.endsWith(",")) s = s.slice(0, -1);
@@ -84,54 +77,18 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   }
 
   var cliDir = path.join(repoRoot, "packages", "cli");
+  try {
+    cp.execSync("cargo build --lib", { cwd: cliDir, stdio: "inherit" });
+  } catch (e) {
+    throw new Error("Failed to build envio NAPI addon. Run 'cargo build --lib' in " + cliDir + " manually.");
+  }
+
   var libName = process.platform === "darwin" ? "libenvio.dylib"
     : process.platform === "win32" ? "envio.dll" : "libenvio.so";
   var srcPath = path.join(repoRoot, "target", "debug", libName);
   var nodePath = path.join(repoRoot, "target", "debug", "envio.node");
-
-  // Is the built .so newer than every source file under packages/cli?
-  // Returns false if srcPath is missing.
-  var isBuildFresh = function() {
-    if (!fs.existsSync(srcPath)) return false;
-    var builtMtime = fs.statSync(srcPath).mtimeMs;
-    var sources = [
-      path.join(cliDir, "Cargo.toml"),
-      path.join(cliDir, "build.rs"),
-    ];
-    var srcDir = path.join(cliDir, "src");
-    var templatesDir = path.join(cliDir, "templates");
-    var stack = [srcDir];
-    if (fs.existsSync(templatesDir)) stack.push(templatesDir);
-    while (stack.length) {
-      var d = stack.pop();
-      var entries;
-      try { entries = fs.readdirSync(d, { withFileTypes: true }); }
-      catch (e) { continue; }
-      for (var i = 0; i < entries.length; i++) {
-        var e = entries[i];
-        var p = path.join(d, e.name);
-        if (e.isDirectory()) stack.push(p);
-        else sources.push(p);
-      }
-    }
-    for (var j = 0; j < sources.length; j++) {
-      try {
-        if (fs.statSync(sources[j]).mtimeMs > builtMtime) return false;
-      } catch (e) { /* missing file — ignore */ }
-    }
-    return true;
-  };
-
-  var force = process.env.ENVIO_FORCE_REBUILD === "1";
-  if (force || !isBuildFresh()) {
-    try {
-      cp.execSync("cargo build --lib", { cwd: cliDir, stdio: "inherit" });
-    } catch (e) {
-      throw new Error("Failed to build envio NAPI addon. Run 'cargo build --lib' in " + cliDir + " manually.");
-    }
-    if (!fs.existsSync(srcPath)) {
-      throw new Error("cargo build succeeded but " + srcPath + " not found.");
-    }
+  if (!fs.existsSync(srcPath)) {
+    throw new Error("cargo build succeeded but " + srcPath + " not found.");
   }
 
   if (!fs.existsSync(nodePath) || fs.statSync(nodePath).mtimeMs < fs.statSync(srcPath).mtimeMs) {
