@@ -845,8 +845,21 @@ let getChain = (config, ~chainId) => {
       )
 }
 
-// Load the resolved indexer config via the native NAPI addon (in-process,
-// no child spawn). Calls Core.getConfigJson which invokes the Rust config
-// parser directly. ENVIO_CONFIG env var is respected by the Rust side for
-// config path resolution.
-let fromConfigView = () => Core.getConfigJson()->JSON.parseOrThrow->fromPublic
+// When the CLI hands us a command, the Rust side already parsed the config
+// and embedded the resolved JSON in the payload. `Bin.res` calls `prime`
+// with that JSON so the indexer module (loaded via `dynamicImport`) and
+// the Migrations module skip the second NAPI `getConfigJson` round-trip.
+// Module-private — only Bin.res should set it.
+%%private(let primedJson: ref<option<JSON.t>> = ref(None))
+let prime = (json: JSON.t): unit => primedJson := Some(json)
+
+// Load the resolved indexer config. When `Bin.res` has primed a JSON payload
+// from the CLI command, parse from that; otherwise invoke the native NAPI
+// addon (Rust config parser, ENVIO_CONFIG-respecting). The NAPI path stays
+// available so indexers started outside the CLI (e.g. direct node invocation
+// of the generated index module) still work.
+let load = () =>
+  switch primedJson.contents {
+  | Some(json) => json->fromPublic
+  | None => Core.getConfigJson()->JSON.parseOrThrow->fromPublic
+  }

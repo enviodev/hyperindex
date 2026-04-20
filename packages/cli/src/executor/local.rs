@@ -3,6 +3,7 @@ use crate::{
     commands,
     config_parsing::system_config::SystemConfig,
     docker_env,
+    executor::Command,
     persisted_state::PersistedState,
     project_paths::ParsedProjectPaths,
 };
@@ -11,9 +12,11 @@ use anyhow::{Context, Result};
 pub async fn run_local(
     local_commands: &LocalCommandTypes,
     project_paths: &ParsedProjectPaths,
-) -> Result<()> {
+) -> Result<Vec<Command>> {
     let config =
         SystemConfig::parse_from_project_files(project_paths).context("Failed parsing config")?;
+
+    let mut queued: Vec<Command> = Vec::new();
 
     match local_commands {
         LocalCommandTypes::Docker(subcommand) => match subcommand {
@@ -45,19 +48,22 @@ pub async fn run_local(
             match subcommand {
                 DbMigrateSubcommands::Up => {
                     let persisted_state = get_persisted_state()?;
-                    commands::db_migrate::run_up_migrations(&config, &persisted_state).await?;
+                    queued.push(
+                        commands::db_migrate::run_up_migrations(&config, &persisted_state).await?,
+                    );
                 }
 
                 DbMigrateSubcommands::Down => {
-                    commands::db_migrate::run_drop_schema(&config).await?;
+                    queued.push(commands::db_migrate::run_drop_schema(&config).await?);
                 }
 
                 DbMigrateSubcommands::Setup => {
                     let persisted_state = get_persisted_state()?;
-                    commands::db_migrate::run_db_setup(&config, &persisted_state).await?;
+                    queued
+                        .push(commands::db_migrate::run_db_setup(&config, &persisted_state).await?);
                 }
             }
         }
     }
-    Ok(())
+    Ok(queued)
 }

@@ -5,9 +5,9 @@
 //   2. Dev build:  find repo → cargo build --lib → load from target/debug/
 
 type addon = {
-  getConfigJson: (Nullable.t<string>, Nullable.t<string>, Nullable.t<string>) => string,
-  runCli: (array<string>, Nullable.t<string>) => promise<string>,
-  upsertPersistedState: string => promise<unit>,
+  getConfigJson: (~configPath: Nullable.t<string>, ~directory: Nullable.t<string>) => string,
+  runCli: (~args: array<string>, ~envioPackageDir: Nullable.t<string>) => promise<string>,
+  upsertPersistedState: (~json: string) => promise<unit>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"
@@ -131,18 +131,17 @@ let getAddon = () =>
 let getConfigJson = (~configPath=?, ~directory=?) => {
   let addon = getAddon()
   addon.getConfigJson(
-    configPath->Nullable.fromOption,
-    directory->Nullable.fromOption,
-    Nullable.Value(envioPackageDir),
+    ~configPath=configPath->Nullable.fromOption,
+    ~directory=directory->Nullable.fromOption,
   )
 }
 
 let runCli = args => {
   let addon = getAddon()
-  addon.runCli(args, Nullable.Value(envioPackageDir))
+  addon.runCli(~args, ~envioPackageDir=Nullable.Value(envioPackageDir))
 }
 
 let upsertPersistedState = json => {
   let addon = getAddon()
-  addon.upsertPersistedState(json)
+  addon.upsertPersistedState(~json)
 }

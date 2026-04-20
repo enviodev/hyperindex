@@ -11,6 +11,14 @@ let executeCommand = async (command: command) => {
     ->JSON.Decode.object
     ->Option.flatMap(d => d->Dict.get(key))
 
+  // Rust embeds the resolved config as a JSON string in each command that
+  // needs it, so `Config.load()` calls inside migrations / the indexer
+  // module skip the `getConfigJson` NAPI round-trip.
+  switch get("config")->Option.flatMap(JSON.Decode.string) {
+  | Some(configStr) => Config.prime(configStr->JSON.parseOrThrow)
+  | None => ()
+  }
+
   switch name {
   | "migration-up" => {
       let reset =
@@ -54,26 +62,20 @@ let executeCommand = async (command: command) => {
   }
 }
 
+// Rust returns a JSON array of `[name, data]` commands. An empty array means
+// there's nothing for JS to do — we fall out of the loop and the Node process
+// exits naturally with code 0 (covers `--help`/`--version` and Rust-only
+// commands like `envio codegen` / `envio init`).
 let run = async args => {
   try {
     let commandsJson = await Core.runCli(args)
-    let commands =
-      commandsJson
-      ->JSON.parseOrThrow
-      ->(Utils.magic: JSON.t => array<command>)
+    let commands = commandsJson->JSON.parseOrThrow->(Utils.magic: JSON.t => array<command>)
     for i in 0 to commands->Array.length - 1 {
       await executeCommand(commands->Array.getUnsafe(i))
     }
   } catch {
-  | JsExn(e) =>
-    let msg = e->(Utils.magic: unknown => JsError.t)->JsError.message
-
-    // Clap help/version output — not an error
-    if msg === "__exit_0__" {
-      NodeJs.process->NodeJs.exitWithCode(Success)
-    } else {
-      Console.error(msg)
-      NodeJs.process->NodeJs.exitWithCode(Failure)
-    }
+  | exn =>
+    Console.error(exn->Utils.prettifyExn)
+    NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }

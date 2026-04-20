@@ -70,8 +70,24 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       120_000
     );
 
-    // Wait for throttled DB writes (_meta.isReady) to flush after indexing completes
-    await new Promise((r) => setTimeout(r, 3000));
+    // Poll Hasura until `_meta.isReady` lands in the DB — avoids the prior
+    // hard `setTimeout(3000)` that was tuned to CI throttle flushes and went
+    // flaky under load. Throttle is disabled via env above, so isReady
+    // should appear within a few seconds; we allow up to 30s for slow CI.
+    const readiness = await graphql.poll<{
+      _meta: Array<{ chainId: number; isReady: boolean }>;
+    }>({
+      query: `{ _meta { chainId isReady } }`,
+      validate: (data) =>
+        data._meta?.length > 0 && data._meta.every((m) => m.isReady),
+      maxAttempts: 60,
+      timeoutMs: 30_000,
+    });
+    if (!readiness.success) {
+      throw new Error(
+        `_meta.isReady did not become true before kill: ${readiness.error}, last response: ${JSON.stringify(readiness.lastResponse)}`
+      );
+    }
 
     // Kill so envio dev doesn't tear down docker before tests query it.
     indexerProcess.kill("SIGKILL");

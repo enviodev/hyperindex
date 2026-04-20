@@ -4,34 +4,12 @@ use crate::{
 };
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
-use std::sync::Mutex;
-
-fn set_envio_package_dir(dir: &Option<String>) {
-    if let Some(d) = dir {
-        std::env::set_var("ENVIO_PACKAGE_DIR", d);
-    }
-}
-
-/// Commands queued by the executor for JS to handle after runCli returns.
-/// Migrations and indexer start are queued here instead of executed in Rust,
-/// because they need to run in the JS event loop (not in a NAPI async context).
-static PENDING_COMMANDS: Mutex<Vec<(String, serde_json::Value)>> = Mutex::new(Vec::new());
-
-/// Queue a command for JS to execute after runCli returns.
-pub fn queue_command(command: &str, data: serde_json::Value) {
-    PENDING_COMMANDS
-        .lock()
-        .unwrap()
-        .push((command.to_string(), data));
-}
 
 #[napi_derive::napi]
 pub fn get_config_json(
     config_path: Option<String>,
     directory: Option<String>,
-    envio_package_dir: Option<String>,
 ) -> napi::Result<String> {
-    set_envio_package_dir(&envio_package_dir);
     let project_root = directory.unwrap_or_else(|| ".".to_string());
     let config = config_path
         .or_else(|| std::env::var("ENVIO_CONFIG").ok())
@@ -69,45 +47,46 @@ pub async fn upsert_persisted_state(json: String) -> napi::Result<()> {
     Ok(())
 }
 
-/// Run the envio CLI. Returns a JSON array of commands for JS to execute:
-/// `[["migration-up", {"reset": false}], ["start-indexer", {"indexPath": "..."}]]`
+/// Run the envio CLI. Returns a JSON-encoded array of `Command`s for JS to
+/// dispatch in order. An empty array means there's nothing left to do — JS
+/// drops out of its loop and the Node process exits naturally with code 0
+/// (covers both `--help`/`--version` and commands like `envio codegen` /
+/// `envio init` that finish entirely in Rust).
 ///
-/// Rust handles config parsing, codegen, docker, persisted state — everything
-/// that doesn't need JS. Migrations and indexer start are queued and returned
-/// for JS to handle in its own event loop (no NAPI async limitations).
+/// The executor layer doesn't know about NAPI; it returns a `Vec<Command>`
+/// that this shim serializes for the JS host. A pure-Rust host (tests,
+/// future binary) could consume the same return value directly.
 #[napi_derive::napi]
 pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> napi::Result<String> {
-    set_envio_package_dir(&envio_package_dir);
-
-    // Clear any commands from a previous run
-    PENDING_COMMANDS.lock().unwrap().clear();
-
     let mut full_args = vec!["envio".to_string()];
     full_args.extend(args);
 
-    let matches = CommandLineArgs::command()
+    let matches = match CommandLineArgs::command()
         .version(crate::config_parsing::system_config::VERSION)
         .try_get_matches_from(&full_args)
-        .map_err(|e| {
-            if e.use_stderr() {
-                napi::Error::from_reason(format!("{e}"))
-            } else {
-                print!("{e}");
-                napi::Error::from_reason("__exit_0__".to_string())
-            }
-        })?;
+    {
+        Ok(m) => m,
+        Err(e) if !e.use_stderr() => {
+            // Help / version — clap writes to stdout; return an empty
+            // command list so JS exits cleanly.
+            print!("{e}");
+            return serialize_commands(&[]);
+        }
+        Err(e) => return Err(napi::Error::from_reason(format!("{e}"))),
+    };
 
     let command_line_args = CommandLineArgs::from_arg_matches(&matches)
         .context("Failed parsing command line arguments")
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
-    crate::executor::execute(command_line_args)
+    let commands = crate::executor::execute(command_line_args, envio_package_dir.as_deref())
         .await
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
-    // Return queued commands for JS to execute
-    let commands: Vec<(String, serde_json::Value)> =
-        PENDING_COMMANDS.lock().unwrap().drain(..).collect();
-    serde_json::to_string(&commands)
+    serialize_commands(&commands)
+}
+
+fn serialize_commands(commands: &[crate::executor::Command]) -> napi::Result<String> {
+    serde_json::to_string(commands)
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing commands: {e}")))
 }

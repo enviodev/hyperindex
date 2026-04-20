@@ -2,13 +2,18 @@ use crate::{
     commands,
     config_parsing::system_config::SystemConfig,
     docker_env,
+    executor::Command,
     persisted_state::{self, PersistedState, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
 };
 use anyhow::{anyhow, Context, Result};
 
-pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result<()> {
+pub async fn run_dev(
+    project_paths: ParsedProjectPaths,
+    restart: bool,
+    envio_package_dir: Option<&str>,
+) -> Result<Vec<Command>> {
     let config =
         SystemConfig::parse_from_project_files(&project_paths).context("Failed parsing config")?;
 
@@ -64,7 +69,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
 
         println!("Running codegen");
 
-        commands::codegen::run_codegen(&config)
+        commands::codegen::run_codegen(&config, envio_package_dir)
             .await
             .context("Failed running codegen")?;
     }
@@ -116,6 +121,8 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
         }
     };
 
+    let mut queued: Vec<Command> = Vec::new();
+
     if should_run_db_migrations {
         match persisted_state_db {
             None => println!("Restarting indexing from scratch"),
@@ -127,9 +134,11 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
         }
         println!("Running db migrations");
 
-        commands::db_migrate::run_db_setup(&config, &current_state)
-            .await
-            .context("Failed running db setup command")?;
+        queued.push(
+            commands::db_migrate::run_db_setup(&config, &current_state)
+                .await
+                .context("Failed running db setup command")?,
+        );
     }
 
     println!("Starting indexer");
@@ -137,9 +146,11 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
     let mut indexer_env = up_result.indexer_env.clone();
     indexer_env.push(("ENVIO_DEV_MODE".to_string(), "true".to_string()));
 
-    commands::start::start_indexer(&config, &indexer_env)
-        .await
-        .context("Failed running start on the indexer")?;
+    queued.push(
+        commands::start::start_indexer(&config, &indexer_env)
+            .await
+            .context("Failed running start on the indexer")?,
+    );
 
-    Ok(())
+    Ok(queued)
 }

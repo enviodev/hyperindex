@@ -1158,7 +1158,7 @@ impl ProjectTemplate {
         format!("{{ readonly params: {} }}", params_ts)
     }
 
-    pub fn from_config(cfg: &SystemConfig) -> Result<Self> {
+    pub fn from_config(cfg: &SystemConfig, envio_package_dir: Option<&str>) -> Result<Self> {
         let project_paths = &cfg.parsed_project_paths;
 
         // Compute all available fields for the ecosystem (EVM has all block/tx fields,
@@ -1809,13 +1809,14 @@ type testIndexer = {{
 
         // Append the Generated module (was in Indexer.res.hbs, now in Rust).
         //
-        // The config is loaded lazily via `Config.fromConfigView()` (a blocking
-        // spawnSync of `envio config view`). Exposed values (`configWithoutRegistrations`,
-        // `allEntities`, `indexer`) are JS Proxies that defer the spawn until the
-        // first property read, so modules that import types from "generated" but
-        // never read config values don't pay the spawn cost at module load time.
+        // The config is loaded lazily via `Config.load()` — either from the
+        // primed CLI payload (no I/O) or via the `getConfigJson` NAPI call.
+        // Exposed values (`configWithoutRegistrations`, `allEntities`,
+        // `indexer`) are JS Proxies that defer the load until the first
+        // property read, so modules that import types from "generated" but
+        // never read config values don't pay the cost at module load time.
         let generated_module = r#"module Generated = {
-let makeGeneratedConfig = () => Config.fromConfigView()
+let makeGeneratedConfig = () => Config.load()
 
 // Memoized loader. `envio config view` is invoked at most once per process;
 // subsequent callers get the same parsed Config.t.
@@ -2269,7 +2270,7 @@ let allEntities: array<Internal.entityConfig> = makeLazy(() => getCachedConfig()
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
-            envio_version: get_envio_version()?,
+            envio_version: get_envio_version(envio_package_dir)?,
             indexer_code,
             envio_dts_code,
             //Used for the package.json reference to handlers in generated
@@ -2303,6 +2304,13 @@ mod test {
         format!("{}/test", env!("CARGO_MANIFEST_DIR"))
     }
 
+    // `packages/envio` relative to `packages/cli` (this crate's manifest dir).
+    // Used by tests so `get_envio_version` returns the expected `file:` path
+    // without touching the filesystem walk (which was removed).
+    fn envio_package_dir_for_tests() -> String {
+        format!("{}/../envio", env!("CARGO_MANIFEST_DIR"))
+    }
+
     fn get_project_template_helper(configs_file_name: &str) -> super::ProjectTemplate {
         let project_root = get_test_path_string_helper();
         let config = format!("configs/{}", configs_file_name);
@@ -2313,7 +2321,8 @@ mod test {
         let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");
 
-        super::ProjectTemplate::from_config(&config)
+        let envio_pkg = envio_package_dir_for_tests();
+        super::ProjectTemplate::from_config(&config, Some(&envio_pkg))
             .expect("should be able to get project template")
     }
 

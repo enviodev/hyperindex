@@ -520,7 +520,7 @@ type testIndexer = {
 @get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
 
 module Generated = {
-let makeGeneratedConfig = () => Config.fromConfigView()
+let makeGeneratedConfig = () => Config.load()
 
 // Memoized loader. `envio config view` is invoked at most once per process;
 // subsequent callers get the same parsed Config.t.
