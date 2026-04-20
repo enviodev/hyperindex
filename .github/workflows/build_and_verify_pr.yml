@@ -45,8 +45,6 @@ jobs:
             --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
           mkdir -p envio-linux-x64
           cp target/release/libenvio.so envio-linux-x64/envio.node
-          echo "=== Platform package contents ==="
-          ls -lh envio-linux-x64/
 
       - name: Upload linux-x64 platform npm package
         uses: actions/upload-artifact@v7
@@ -78,15 +76,6 @@ jobs:
 
       - name: Build envio package
         run: node packages/build-envio/src/build-artifact.ts --version 0.0.1-dev --out envio-dist
-
-      - name: Bundle NAPI addon into envio package
-        uses: actions/download-artifact@v8
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: .tmp-platform-pkg
-
-      - name: Copy addon
-        run: cp .tmp-platform-pkg/envio.node envio-dist/envio.node
 
       - name: Verify artifact
         run: node packages/build-envio/src/verify-artifact.ts envio-dist
@@ -171,11 +160,12 @@ jobs:
       - name: Run scenarios test
         working-directory: scenarios/test_codegen
         run: |
+          # scenarios/test_codegen has its own pnpm-workspace.yaml, so the root
+          # .pnpmfile.cjs isn't picked up when codegen triggers nested `pnpm install`.
+          # Symlink (not copy) so __dirname still resolves to the repo root.
           ln -sf ../../.pnpmfile.cjs .pnpmfile.cjs
           pnpm exec envio codegen
-          pnpm exec rescript-legacy
-          pnpm exec tsc --noEmit
-          pnpm exec vitest run
+          pnpm test
 
   e2e-test:
     runs-on: ubuntu-latest

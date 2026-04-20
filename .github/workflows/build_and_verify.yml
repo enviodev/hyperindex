@@ -108,8 +108,6 @@ jobs:
             --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
           mkdir -p envio-linux-x64
           cp target/release/libenvio.so envio-linux-x64/envio.node
-          echo "=== Platform package contents ==="
-          ls -lh envio-linux-x64/
 
       - name: Upload linux-x64 platform npm package
         uses: actions/upload-artifact@v7

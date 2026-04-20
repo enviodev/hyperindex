@@ -1,9 +1,8 @@
 // Bindings to the native envio NAPI addon.
 //
 // Resolution order:
-//   1. Bundled:    require("<envioPackageDir>/envio.node") — CI artifact
-//   2. Production: require("envio-{os}-{arch}") — platform-specific npm package
-//   3. Dev build:  find repo → cargo build --lib → load from target/debug/
+//   1. Production: require("envio-{os}-{arch}") — platform-specific npm package
+//   2. Dev build:  find repo → cargo build --lib → load from target/debug/
 
 type addon = {
   getConfigJson: (Nullable.t<string>, Nullable.t<string>, Nullable.t<string>) => string,
@@ -15,7 +14,6 @@ type addon = {
 @module("node:url") external fileURLToPath: string => string = "fileURLToPath"
 @val external importMetaUrl: string = "import.meta.url"
 @module("node:path") external pathDirname: string => string = "dirname"
-@module("node:path") external pathJoin2: (string, string) => string = "join"
 @module("node:path") @variadic external pathResolve: array<string> => string = "resolve"
 @module("node:fs") external existsSync: string => bool = "existsSync"
 @module("node:child_process")
@@ -23,6 +21,8 @@ external execSyncRaw: (string, {..}) => string = "execSync"
 @val external processPlatform: string = "process.platform"
 @val external processArch: string = "process.arch"
 
+// No-ops keep the `node:fs` / `node:child_process` imports alive for the
+// %raw loadDevAddon block, which references them as Nodefs / Nodechild_process.
 let _keepFs = existsSync
 let _keepCp = execSyncRaw
 
@@ -100,33 +100,18 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
 
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
-  let bundledPath = pathJoin2(envioPackageDir, "envio.node")
   let platformPkg = `envio-${processPlatform}-${processArch}`
 
-  // 1. Bundled addon (CI artifact)
-  if existsSync(bundledPath) {
-    try {
-      callRequire(req, bundledPath)
-    } catch {
-    | _ =>
-      switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
-      | Some(addon) => addon
-      | None =>
-        JsError.throwWithMessage(`Couldn't load the envio native addon. Install the envio npm package.`)
-      }
-    }
-  } else {
-    // 2. Platform package (production)
-    try {
-      callRequire(req, platformPkg)
-    } catch {
-    | _ =>
-      // 3. Dev build (cargo build on every run)
-      switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
-      | Some(addon) => addon
-      | None =>
-        JsError.throwWithMessage(`Couldn't load the envio native addon. Install the envio npm package.`)
-      }
+  // 1. Platform package (production + CI via .pnpmfile.cjs redirect)
+  try {
+    callRequire(req, platformPkg)
+  } catch {
+  | _ =>
+    // 2. Dev build (cargo build on every run)
+    switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
+    | Some(addon) => addon
+    | None =>
+      JsError.throwWithMessage(`Couldn't load the envio native addon. Install the envio npm package.`)
     }
   }
 }

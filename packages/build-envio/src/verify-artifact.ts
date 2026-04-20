@@ -41,8 +41,9 @@ function verify(dir: string): void {
   }
 
   // Check no unexpected top-level files/dirs leaked in.
-  // envio.node is optional — present in CI artifacts, stripped for production.
-  const allowed = new Set([...REQUIRED_FILES, "envio.node"]);
+  // The native addon ships via the envio-{os}-{arch} platform package,
+  // never bundled in the envio package itself.
+  const allowed = new Set(REQUIRED_FILES);
   for (const entry of fs.readdirSync(dir)) {
     if (!allowed.has(entry)) {
       errors.push(`Unexpected file in artifact: ${entry}`);
