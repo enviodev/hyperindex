@@ -443,6 +443,17 @@
             }
           ]
         },
+        "address_filter_mode": {
+          "description": "How HyperIndex should apply address filtering for log queries. Defaults to `exact`. `topics_only` reduces request-body size by omitting the address list and filtering indexed addresses inside HyperIndex instead. Not supported for address-derived `where` filters.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AddressFilterMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "ws": {
           "description": "Optional WebSocket endpoint URL (wss:// or ws://) for real-time block header notifications via eth_subscribe(\"newHeads\"). Provides lower latency than HTTP polling for detecting new blocks.",
           "type": [
@@ -546,12 +557,37 @@
         }
       ]
     },
+    "AddressFilterMode": {
+      "oneOf": [
+        {
+          "description": "Filter logs by contract address in the upstream data source (default).",
+          "type": "string",
+          "const": "exact"
+        },
+        {
+          "description": "Fetch logs by topics only, then filter indexed contract addresses inside HyperIndex. Useful when request-body egress is the bottleneck, but can increase response size and decode work. Not supported for address-derived `where` filters.",
+          "type": "string",
+          "const": "topics_only"
+        }
+      ]
+    },
     "HypersyncConfig": {
       "type": "object",
       "properties": {
         "url": {
           "description": "URL of the HyperSync endpoint (default: The most performant HyperSync endpoint for the network)",
           "type": "string"
+        },
+        "address_filter_mode": {
+          "description": "How HyperIndex should apply address filtering for HyperSync log queries. Defaults to `exact`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AddressFilterMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,

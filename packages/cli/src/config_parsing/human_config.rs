@@ -450,6 +450,19 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(rename_all = "snake_case")]
+    pub enum AddressFilterMode {
+        #[schemars(
+            description = "Filter logs by contract address in the upstream data source (default)."
+        )]
+        Exact,
+        #[schemars(
+            description = "Fetch logs by topics only, then filter indexed contract addresses inside HyperIndex. Useful when request-body egress is the bottleneck, but can increase response size and decode work. Not supported for address-derived `where` filters."
+        )]
+        TopicsOnly,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct HypersyncConfig {
         #[serde(alias = "endpoint_url")] // TODO: Remove the alias in v3
@@ -458,6 +471,11 @@ pub mod evm {
                            endpoint for the network)"
         )]
         pub url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How HyperIndex should apply address filtering for HyperSync log queries. Defaults to `exact`."
+        )]
+        pub address_filter_mode: Option<AddressFilterMode>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -494,6 +512,11 @@ pub mod evm {
         )]
         #[serde(rename = "for", skip_serializing_if = "Option::is_none")]
         pub source_for: Option<For>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How HyperIndex should apply address filtering for log queries. Defaults to `exact`. `topics_only` reduces request-body size by omitting the address list and filtering indexed addresses inside HyperIndex instead. Not supported for address-derived `where` filters."
+        )]
+        pub address_filter_mode: Option<AddressFilterMode>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Optional WebSocket endpoint URL (wss:// or ws://) for real-time block \

@@ -4,8 +4,8 @@ use super::{
     human_config::{
         self,
         evm::{
-            Chain as EvmChain, EventConfig as EvmEventConfig, For, HumanConfig as EvmConfig, Rpc,
-            RpcSelection,
+            AddressFilterMode, Chain as EvmChain, EventConfig as EvmEventConfig, For,
+            HumanConfig as EvmConfig, Rpc, RpcSelection,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
         HumanConfig,
@@ -1054,7 +1054,10 @@ type ServerUrl = String;
 /// for ConfigYAML, so we don't break backward compatibility
 #[derive(Debug, Clone, PartialEq)]
 pub enum MainEvmDataSource {
-    HyperSync { hypersync_endpoint_url: ServerUrl },
+    HyperSync {
+        hypersync_endpoint_url: ServerUrl,
+        address_filter_mode: Option<AddressFilterMode>,
+    },
     Rpc(Rpc),
 }
 
@@ -1110,6 +1113,7 @@ impl DataSource {
             Some(RpcSelection::Url(url)) => vec![Rpc {
                 url: url.to_string(),
                 source_for: Some(default_for.clone()),
+                address_filter_mode: None,
                 ws: None,
                 initial_block_interval: None,
                 backoff_multiplicative: None,
@@ -1190,6 +1194,10 @@ impl DataSource {
 
                 MainEvmDataSource::HyperSync {
                     hypersync_endpoint_url: parsed_url,
+                    address_filter_mode: network
+                        .hypersync_config
+                        .as_ref()
+                        .and_then(|config| config.address_filter_mode.clone()),
                 }
             }
         };
@@ -2338,12 +2346,15 @@ mod test {
 
     #[test]
     fn test_hypersync_url_trailing_slash_trimming() {
-        use crate::config_parsing::human_config::evm::{Chain as EvmChain, HypersyncConfig};
+        use crate::config_parsing::human_config::evm::{
+            AddressFilterMode, Chain as EvmChain, HypersyncConfig,
+        };
 
         let network = EvmChain {
             id: 1,
             hypersync_config: Some(HypersyncConfig {
                 url: "https://somechain.hypersync.xyz//".to_string(),
+                address_filter_mode: Some(AddressFilterMode::TopicsOnly),
             }),
             rpc: None,
             start_block: 0,
@@ -2360,8 +2371,51 @@ mod test {
             DataSource::Evm {
                 main: MainEvmDataSource::HyperSync {
                     hypersync_endpoint_url: "https://somechain.hypersync.xyz".to_string(),
+                    address_filter_mode: Some(AddressFilterMode::TopicsOnly),
                 },
                 rpcs: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn test_rpc_address_filter_mode_preserved() {
+        use crate::config_parsing::human_config::evm::{
+            AddressFilterMode, Chain as EvmChain, For, Rpc, RpcSelection,
+        };
+
+        let rpc = Rpc {
+            url: "https://rpc.example.com".to_string(),
+            source_for: Some(For::Sync),
+            address_filter_mode: Some(AddressFilterMode::TopicsOnly),
+            ws: None,
+            initial_block_interval: None,
+            backoff_multiplicative: None,
+            acceleration_additive: None,
+            interval_ceiling: None,
+            backoff_millis: None,
+            fallback_stall_timeout: None,
+            query_timeout_millis: None,
+            polling_interval: None,
+        };
+        let network = EvmChain {
+            id: 1,
+            hypersync_config: None,
+            rpc: Some(RpcSelection::Single(rpc.clone())),
+            start_block: 0,
+            end_block: None,
+            max_reorg_depth: None,
+            block_lag: None,
+            contracts: None,
+        };
+
+        let sync_source = DataSource::from_evm_network_config(network).unwrap();
+
+        assert_eq!(
+            sync_source,
+            DataSource::Evm {
+                main: MainEvmDataSource::Rpc(rpc.clone()),
+                rpcs: vec![rpc],
             }
         );
     }

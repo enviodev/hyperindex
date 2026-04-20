@@ -20,15 +20,22 @@ type contract = {
 }
 
 // Source config parsed from internal.config.json - sources are created lazily in ChainFetcher
+type sourceAddressFilterMode = | @as("exact") Exact | @as("topics_only") TopicsOnly
+
 type evmRpcConfig = {
   url: string,
   sourceFor: Source.sourceFor,
+  addressFilterMode: sourceAddressFilterMode,
   syncConfig: option<sourceSyncOptions>,
   ws: option<string>,
 }
 
 type sourceConfig =
-  | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
+  | EvmSourceConfig({
+      hypersync: option<string>,
+      hypersyncAddressFilterMode: sourceAddressFilterMode,
+      rpcs: array<evmRpcConfig>,
+    })
   | FuelSourceConfig({hypersync: string})
   | SvmSourceConfig({rpc: string})
   // For tests: pass custom sources directly
@@ -156,11 +163,13 @@ module EnvioAddresses = {
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("live") Live
 
 let rpcSourceForSchema = S.enum([Sync, Fallback, Live])
+let sourceAddressFilterModeSchema = S.enum([Exact, TopicsOnly])
 
 let rpcConfigSchema = S.schema(s =>
   {
     "url": s.matches(S.string),
     "for": s.matches(rpcSourceForSchema),
+    "addressFilterMode": s.matches(S.option(sourceAddressFilterModeSchema)),
     "ws": s.matches(S.option(S.string)),
     "initialBlockInterval": s.matches(S.option(S.int)),
     "backoffMultiplicative": s.matches(S.option(S.float)),
@@ -189,6 +198,7 @@ let publicConfigChainSchema = S.schema(s =>
     "blockLag": s.matches(S.option(S.int)),
     // EVM/Fuel source config (hypersync for EVM, hyperfuel for Fuel)
     "hypersync": s.matches(S.option(S.string)),
+    "hypersyncAddressFilterMode": s.matches(S.option(sourceAddressFilterModeSchema)),
     "rpcs": s.matches(S.option(S.array(rpcConfigSchema))),
     // SVM source config
     "rpc": s.matches(S.option(S.string)),
@@ -701,11 +711,18 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
             {
               url: rpcConfig["url"],
               sourceFor: parseRpcSourceFor(rpcConfig["for"]),
+              addressFilterMode: rpcConfig["addressFilterMode"]->Option.getOr(Exact),
               syncConfig,
               ws: rpcConfig["ws"],
             }
           })
-        EvmSourceConfig({hypersync: publicChainConfig["hypersync"], rpcs})
+        EvmSourceConfig({
+          hypersync: publicChainConfig["hypersync"],
+          hypersyncAddressFilterMode: publicChainConfig["hypersyncAddressFilterMode"]->Option.getOr(
+            Exact,
+          ),
+          rpcs,
+        })
       | Ecosystem.Fuel =>
         switch publicChainConfig["hypersync"] {
         | Some(hypersync) => FuelSourceConfig({hypersync: hypersync})

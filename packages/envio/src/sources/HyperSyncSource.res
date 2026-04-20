@@ -9,7 +9,14 @@ type selectionConfig = {
   nonOptionalTransactionFieldNames: array<string>,
 }
 
-let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
+let topicsOnlyUnsupportedMessage =
+  "HyperSync topics_only address filter mode does not support event filters derived from `chain.<Contract>.addresses`. Remove the address-based `where` filter or switch back to address_filter_mode: exact."
+
+let getSelectionConfig = (
+  selection: FetchState.selection,
+  ~chain,
+  ~addressFilterMode=Config.Exact,
+) => {
   let nonOptionalBlockFieldNames = Utils.Set.make()
   let nonOptionalTransactionFieldNames = Utils.Set.make()
   let capitalizedBlockFields = Utils.Set.make()
@@ -20,6 +27,15 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let dynamicWildcardEventFiltersByContract = Dict.make()
   let noAddressesTopicSelections = []
   let contractNames = Utils.Set.make()
+
+  if (
+    addressFilterMode === Config.TopicsOnly &&
+      selection.eventConfigs->Array.some(ec => ec.filterByAddresses)
+  ) {
+    throw(
+      Source.GetItemsError(UnsupportedSelection({message: topicsOnlyUnsupportedMessage})),
+    )
+  }
 
   selection.eventConfigs
   ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
@@ -51,7 +67,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     })
 
     let eventFilters = getEventFiltersOrThrow(chain)
-    if dependsOnAddresses {
+    if dependsOnAddresses && addressFilterMode === Config.Exact {
       let _ = contractNames->Utils.Set.add(contractName)
       switch eventFilters {
       | Static(topicSelections) =>
@@ -135,8 +151,8 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   }
 }
 
-let memoGetSelectionConfig = (~chain) =>
-  Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
+let memoGetSelectionConfig = (~chain, ~addressFilterMode) =>
+  Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain, ~addressFilterMode))
 
 type options = {
   chain: ChainMap.Chain.t,
@@ -147,8 +163,63 @@ type options = {
   clientMaxRetries: int,
   clientTimeoutMillis: int,
   lowercaseAddresses: bool,
+  addressFilterMode: Config.sourceAddressFilterMode,
   serializationFormat: HyperSyncClient.serializationFormat,
   enableQueryCaching: bool,
+}
+
+type sharedTopicsOnlyPage = {
+  pageUnsafe: HyperSync.logsQueryPage,
+  parsedEvents: array<Nullable.t<HyperSyncClient.Decoder.decodedEvent>>,
+  knownHeight: int,
+  lastBlockQueriedPromise: promise<ReorgDetection.blockDataWithTimestamp>,
+}
+
+let sharedTopicsOnlyCacheMaxSize = 20
+
+let makeTopicsOnlyCacheKey = (~fromBlock, ~toBlock, ~selection: FetchState.selection) => {
+  let selectionKey =
+    selection.eventConfigs
+    ->Array.map(ec => ec.contractName ++ ":" ++ ec.id)
+    ->Array.joinUnsafe(",")
+  `${selectionKey}|${fromBlock->Int.toString}|${toBlock->Option.getOr(-1)->Int.toString}`
+}
+
+let rememberSharedTopicsOnlyPage = (
+  ~cache,
+  ~cacheKeys,
+  ~key,
+  ~promise: promise<sharedTopicsOnlyPage>,
+) => {
+  cache->Dict.set(key, promise)
+  cacheKeys->Array.push(key)->ignore
+  while cacheKeys->Array.length > sharedTopicsOnlyCacheMaxSize {
+    switch cacheKeys->Array.shift {
+    | Some(cacheKey) => cache->Utils.Dict.deleteInPlace(cacheKey)
+    | None => ()
+    }
+  }
+  let _ = promise->Promise.catch(err => {
+    cache->Utils.Dict.deleteInPlace(key)
+    throw(err)
+  })
+  promise
+}
+
+let partitionAllowsEventAddress = (
+  ~selection: FetchState.selection,
+  ~addressesByContractName,
+  ~eventConfig: Internal.evmEventConfig,
+  ~address,
+) => {
+  if !selection.dependsOnAddresses {
+    true
+  } else {
+    switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(eventConfig.contractName) {
+    | Some(addresses) => addresses->Array.some(a => a === address)
+    | None => false
+    }
+  }
 }
 
 let make = (
@@ -161,13 +232,14 @@ let make = (
     clientMaxRetries,
     clientTimeoutMillis,
     lowercaseAddresses,
+    addressFilterMode,
     serializationFormat,
     enableQueryCaching,
   }: options,
 ): t => {
   let name = "HyperSync"
 
-  let getSelectionConfig = memoGetSelectionConfig(~chain)
+  let getSelectionConfig = memoGetSelectionConfig(~chain, ~addressFilterMode)
 
   let apiToken = switch apiToken {
   | Some(token) => token
@@ -188,6 +260,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   )
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
+  let sharedTopicsOnlyPages: dict<promise<sharedTopicsOnlyPage>> = Dict.make()
+  let sharedTopicsOnlyPageKeys = []
   let getHscDecoder = () => {
     switch hscDecoder.contents {
     | Some(decoder) => decoder
@@ -260,132 +334,149 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
-    //fetch batch
-    Prometheus.SourceRequestCount.increment(
-      ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~method="getLogs",
-    )
-    let pageUnsafe = try await HyperSync.GetLogs.query(
-      ~client,
-      ~fromBlock,
-      ~toBlock,
-      ~logSelections,
-      ~fieldSelection=selectionConfig.fieldSelection,
-      ~nonOptionalBlockFieldNames=selectionConfig.nonOptionalBlockFieldNames,
-      ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
-    ) catch {
-    | HyperSync.GetLogs.Error(error) =>
-      throw(
-        Source.GetItemsError(
-          Source.FailedGettingItems({
-            exn: %raw(`null`),
-            attemptedToBlock: toBlock->Option.getOr(knownHeight),
-            retry: switch error {
-            | WrongInstance =>
-              let backoffMillis = switch retry {
-              | 0 => 100
-              | _ => 500 * retry
-              }
-              WithBackoff({
-                message: `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                backoffMillis,
-              })
-            | UnexpectedMissingParams({missingParams}) =>
-              ImpossibleForTheQuery({
-                message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
-                    ", ",
-                  )}`,
-              })
-            },
-          }),
-        ),
+    let getSharedPage = async (~logSelections) => {
+      //fetch batch
+      Prometheus.SourceRequestCount.increment(
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~method="getLogs",
       )
-    | exn =>
-      throw(
-        Source.GetItemsError(
-          Source.FailedGettingItems({
-            exn,
-            attemptedToBlock: toBlock->Option.getOr(knownHeight),
-            retry: WithBackoff({
-              message: `Unexpected issue while fetching events from HyperSync client. Attempt a retry.`,
-              backoffMillis: switch retry {
-              | 0 => 500
-              | _ => 1000 * retry
+      let pageUnsafe = try await HyperSync.GetLogs.query(
+        ~client,
+        ~fromBlock,
+        ~toBlock,
+        ~logSelections,
+        ~fieldSelection=selectionConfig.fieldSelection,
+        ~nonOptionalBlockFieldNames=selectionConfig.nonOptionalBlockFieldNames,
+        ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
+      ) catch {
+      | HyperSync.GetLogs.Error(error) =>
+        throw(
+          Source.GetItemsError(
+            Source.FailedGettingItems({
+              exn: %raw(`null`),
+              attemptedToBlock: toBlock->Option.getOr(knownHeight),
+              retry: switch error {
+              | WrongInstance =>
+                let backoffMillis = switch retry {
+                | 0 => 100
+                | _ => 500 * retry
+                }
+                WithBackoff({
+                  message: `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+                  backoffMillis,
+                })
+              | UnexpectedMissingParams({missingParams}) =>
+                ImpossibleForTheQuery({
+                  message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
+                      ", ",
+                    )}`,
+                })
               },
             }),
-          }),
-        ),
-      )
-    }
+          ),
+        )
+      | exn =>
+        throw(
+          Source.GetItemsError(
+            Source.FailedGettingItems({
+              exn,
+              attemptedToBlock: toBlock->Option.getOr(knownHeight),
+              retry: WithBackoff({
+                message: `Unexpected issue while fetching events from HyperSync client. Attempt a retry.`,
+                backoffMillis: switch retry {
+                | 0 => 500
+                | _ => 1000 * retry
+                },
+              }),
+            }),
+          ),
+        )
+      }
 
-    let pageFetchTime = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+      //set height and next from block
+      let knownHeight = pageUnsafe.archiveHeight
 
-    //set height and next from block
-    let knownHeight = pageUnsafe.archiveHeight
+      //The heighest (biggest) blocknumber that was accounted for in
+      //Our query. Not necessarily the blocknumber of the last log returned
+      //In the query
+      let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-    //The heighest (biggest) blocknumber that was accounted for in
-    //Our query. Not necessarily the blocknumber of the last log returned
-    //In the query
-    let heighestBlockQueried = pageUnsafe.nextBlock - 1
-
-    let lastBlockQueriedPromise = switch pageUnsafe.rollbackGuard {
-    //In the case a rollbackGuard is returned (this only happens at the head for unconfirmed blocks)
-    //use these values
-    | Some({blockNumber, timestamp, hash}) =>
-      (
-        {
-          blockNumber,
-          blockTimestamp: timestamp,
-          blockHash: hash,
-        }: ReorgDetection.blockDataWithTimestamp
-      )->Promise.resolve
-    | None =>
-      //The optional block and timestamp of the last item returned by the query
-      //(Optional in the case that there are no logs returned in the query)
-      switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
-      | Some({block}) if block.number->Belt.Option.getUnsafe == heighestBlockQueried =>
-        //If the last log item in the current page is equal to the
-        //heighest block acounted for in the query. Simply return this
-        //value without making an extra query
-
+      let lastBlockQueriedPromise = switch pageUnsafe.rollbackGuard {
+      | Some({blockNumber, timestamp, hash}) =>
         (
           {
-            blockNumber: block.number->Belt.Option.getUnsafe,
-            blockTimestamp: block.timestamp->Belt.Option.getUnsafe,
-            blockHash: block.hash->Belt.Option.getUnsafe,
+            blockNumber,
+            blockTimestamp: timestamp,
+            blockHash: hash,
           }: ReorgDetection.blockDataWithTimestamp
         )->Promise.resolve
-      //If it does not match it means that there were no matching logs in the last
-      //block so we should fetch the block data
-      | Some(_)
       | None =>
-        //If there were no logs at all in the current page query then fetch the
-        //timestamp of the heighest block accounted for
-        HyperSync.queryBlockData(
-          ~client,
-          ~blockNumber=heighestBlockQueried,
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~logger,
-        )->Promise.thenResolve(res =>
-          switch res {
-          | Ok(Some(blockData)) => blockData
-          | Ok(None) =>
-            mkLogAndRaise(
-              Not_found,
-              ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
-            )
-          | Error(e) =>
-            HyperSync.queryErrorToMsq(e)
-            ->Obj.magic
-            ->mkLogAndRaise(
-              ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
-            )
-          }
+        switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
+        | Some({block}) if block.number->Belt.Option.getUnsafe == heighestBlockQueried =>
+          (
+            {
+              blockNumber: block.number->Belt.Option.getUnsafe,
+              blockTimestamp: block.timestamp->Belt.Option.getUnsafe,
+              blockHash: block.hash->Belt.Option.getUnsafe,
+            }: ReorgDetection.blockDataWithTimestamp
+          )->Promise.resolve
+        | Some(_)
+        | None =>
+          HyperSync.queryBlockData(
+            ~client,
+            ~blockNumber=heighestBlockQueried,
+            ~sourceName=name,
+            ~chainId=chain->ChainMap.Chain.toChainId,
+            ~logger,
+          )->Promise.thenResolve(res =>
+            switch res {
+            | Ok(Some(blockData)) => blockData
+            | Ok(None) =>
+              mkLogAndRaise(
+                Not_found,
+                ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
+              )
+            | Error(e) =>
+              HyperSync.queryErrorToMsq(e)
+              ->Obj.magic
+              ->mkLogAndRaise(
+                ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
+              )
+            }
+          )
+        }
+      }
+
+      let parsedEvents = switch await getHscDecoder().decodeEvents(pageUnsafe.events) {
+      | exception exn =>
+        exn->mkLogAndRaise(
+          ~msg="Failed to parse events using hypersync client, please double check your ABI.",
+        )
+      | parsedEvents => parsedEvents
+      }
+
+      {pageUnsafe, parsedEvents, knownHeight, lastBlockQueriedPromise}
+    }
+
+    let sharedPage = switch addressFilterMode {
+    | Config.Exact => getSharedPage(~logSelections)
+    | Config.TopicsOnly =>
+      let key = makeTopicsOnlyCacheKey(~fromBlock, ~toBlock, ~selection)
+      switch sharedTopicsOnlyPages->Utils.Dict.dangerouslyGetNonOption(key) {
+      | Some(page) => page
+      | None =>
+        rememberSharedTopicsOnlyPage(
+          ~cache=sharedTopicsOnlyPages,
+          ~cacheKeys=sharedTopicsOnlyPageKeys,
+          ~key,
+          ~promise=getSharedPage(~logSelections),
         )
       }
     }
+
+    let {pageUnsafe, parsedEvents, knownHeight, lastBlockQueriedPromise} = await sharedPage
+    let pageFetchTime = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let parsingTimeRef = Hrtime.makeTimer()
 
@@ -417,15 +508,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }
     }
 
-    //Parse page items into queue items
-    let parsedEvents = switch await getHscDecoder().decodeEvents(pageUnsafe.events) {
-    | exception exn =>
-      exn->mkLogAndRaise(
-        ~msg="Failed to parse events using hypersync client, please double check your ABI.",
-      )
-    | parsedEvents => parsedEvents
-    }
-
     pageUnsafe.items->Belt.Array.forEachWithIndex((index, item) => {
       let {block, log} = item
       let chainId = chain->ChainMap.Chain.toChainId
@@ -443,6 +525,15 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       let maybeDecodedEvent = parsedEvents->Array.getUnsafe(index)
 
       switch (maybeEventConfig, maybeDecodedEvent) {
+      | (Some(eventConfig), _)
+        if addressFilterMode === Config.TopicsOnly &&
+          !partitionAllowsEventAddress(
+            ~selection,
+            ~addressesByContractName,
+            ~eventConfig,
+            ~address=log.address,
+          ) =>
+        ()
       | (Some(eventConfig), Value(decoded)) =>
         parsedQueueItems
         ->Array.push(

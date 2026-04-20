@@ -1,7 +1,7 @@
 use super::{
     entity_parsing::IndexFieldDirection,
     field_types,
-    human_config::evm::For,
+    human_config::evm::{AddressFilterMode, For},
     system_config::{self, Abi, Ecosystem, EventKind, FuelEventKind, SystemConfig},
 };
 use crate::{config_parsing::chain_helpers::Network, persisted_state, utils::text::Capitalize};
@@ -140,6 +140,8 @@ struct RpcConfig {
     #[serde(rename = "for")]
     source_for: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    address_filter_mode: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     ws: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     initial_block_interval: Option<u32>,
@@ -172,6 +174,8 @@ struct ChainConfig {
     block_lag: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     hypersync: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hypersync_address_filter_mode: Option<&'static str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     rpcs: Vec<RpcConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -245,6 +249,13 @@ fn abi_type_to_components(
     }
 }
 
+fn address_filter_mode_to_str(mode: &AddressFilterMode) -> &'static str {
+    match mode {
+        AddressFilterMode::Exact => "exact",
+        AddressFilterMode::TopicsOnly => "topics_only",
+    }
+}
+
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct ContractEventItem {
@@ -292,44 +303,60 @@ impl SystemConfig {
             .map(|network| {
                 let chain_name = chain_id_to_name(network.id, &cfg.get_ecosystem());
 
-                let (hypersync, rpcs, rpc) = match &network.sync_source {
-                    system_config::DataSource::Evm { main, rpcs } => {
-                        let hypersync_url = match main {
-                            system_config::MainEvmDataSource::HyperSync {
-                                hypersync_endpoint_url,
-                            } => Some(hypersync_endpoint_url.clone()),
-                            system_config::MainEvmDataSource::Rpc(_) => None,
-                        };
-                        let rpc_configs: Vec<RpcConfig> = rpcs
-                            .iter()
-                            .map(|rpc| RpcConfig {
-                                url: rpc.url.clone(),
-                                source_for: match rpc.source_for {
-                                    Some(For::Sync) => "sync",
-                                    Some(For::Fallback) => "fallback",
-                                    Some(For::Live) => "live",
-                                    None => unreachable!(
+                let (hypersync, hypersync_address_filter_mode, rpcs, rpc) =
+                    match &network.sync_source {
+                        system_config::DataSource::Evm { main, rpcs } => {
+                            let (hypersync_url, hypersync_address_filter_mode) = match main {
+                                system_config::MainEvmDataSource::HyperSync {
+                                    hypersync_endpoint_url,
+                                    address_filter_mode,
+                                } => (
+                                    Some(hypersync_endpoint_url.clone()),
+                                    address_filter_mode.as_ref().map(address_filter_mode_to_str),
+                                ),
+                                system_config::MainEvmDataSource::Rpc(_) => (None, None),
+                            };
+                            let rpc_configs: Vec<RpcConfig> = rpcs
+                                .iter()
+                                .map(|rpc| RpcConfig {
+                                    url: rpc.url.clone(),
+                                    source_for: match rpc.source_for {
+                                        Some(For::Sync) => "sync",
+                                        Some(For::Fallback) => "fallback",
+                                        Some(For::Live) => "live",
+                                        None => unreachable!(
                                         "source_for should be resolved by from_evm_network_config"
                                     ),
-                                },
-                                ws: rpc.ws.clone(),
-                                initial_block_interval: rpc.initial_block_interval,
-                                backoff_multiplicative: rpc.backoff_multiplicative,
-                                acceleration_additive: rpc.acceleration_additive,
-                                interval_ceiling: rpc.interval_ceiling,
-                                backoff_millis: rpc.backoff_millis,
-                                fallback_stall_timeout: rpc.fallback_stall_timeout,
-                                query_timeout_millis: rpc.query_timeout_millis,
-                                polling_interval: rpc.polling_interval,
-                            })
-                            .collect();
-                        (hypersync_url, rpc_configs, None)
-                    }
-                    system_config::DataSource::Fuel {
-                        hypersync_endpoint_url,
-                    } => (Some(hypersync_endpoint_url.clone()), vec![], None),
-                    system_config::DataSource::Svm { rpc } => (None, vec![], Some(rpc.clone())),
-                };
+                                    },
+                                    address_filter_mode: rpc
+                                        .address_filter_mode
+                                        .as_ref()
+                                        .map(address_filter_mode_to_str),
+                                    ws: rpc.ws.clone(),
+                                    initial_block_interval: rpc.initial_block_interval,
+                                    backoff_multiplicative: rpc.backoff_multiplicative,
+                                    acceleration_additive: rpc.acceleration_additive,
+                                    interval_ceiling: rpc.interval_ceiling,
+                                    backoff_millis: rpc.backoff_millis,
+                                    fallback_stall_timeout: rpc.fallback_stall_timeout,
+                                    query_timeout_millis: rpc.query_timeout_millis,
+                                    polling_interval: rpc.polling_interval,
+                                })
+                                .collect();
+                            (
+                                hypersync_url,
+                                hypersync_address_filter_mode,
+                                rpc_configs,
+                                None,
+                            )
+                        }
+                        system_config::DataSource::Fuel {
+                            hypersync_endpoint_url,
+                        } => (Some(hypersync_endpoint_url.clone()), None, vec![], None),
+                        system_config::DataSource::Svm { rpc } => {
+                            (None, None, vec![], Some(rpc.clone()))
+                        }
+                    };
 
                 let chain_contracts: BTreeMap<String, ChainContractConfig> = network
                     .contracts
@@ -354,6 +381,7 @@ impl SystemConfig {
                         max_reorg_depth: network.max_reorg_depth,
                         block_lag: network.block_lag,
                         hypersync,
+                        hypersync_address_filter_mode,
                         rpcs,
                         rpc,
                         contracts: chain_contracts,

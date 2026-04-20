@@ -310,7 +310,23 @@ type selectionConfig = {
   getLogSelectionOrThrow: (~addressesByContractName: dict<array<Address.t>>) => logSelection,
 }
 
-let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
+let topicsOnlyUnsupportedMessage =
+  "RPC topics_only address filter mode does not support event filters derived from `chain.<Contract>.addresses`. Remove the address-based `where` filter or switch back to address_filter_mode: exact."
+
+let getSelectionConfig = (
+  selection: FetchState.selection,
+  ~chain,
+  ~addressFilterMode=Config.Exact,
+) => {
+  if (
+    addressFilterMode === Config.TopicsOnly &&
+      selection.eventConfigs->Array.some(ec => ec.filterByAddresses)
+  ) {
+    throw(
+      Source.GetItemsError(UnsupportedSelection({message: topicsOnlyUnsupportedMessage})),
+    )
+  }
+
   let staticTopicSelections = []
   let dynamicEventFilters = []
 
@@ -338,9 +354,13 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   | ([topicSelection], []) => {
       let topicQuery = topicSelection->Rpc.GetLogs.mapTopicQuery
       (~addressesByContractName) => {
-        addresses: switch addressesByContractName->FetchState.addressesByContractNameGetAll {
-        | [] => None
-        | addresses => Some(addresses)
+        addresses: switch addressFilterMode {
+        | Config.TopicsOnly => None
+        | Config.Exact =>
+          switch addressesByContractName->FetchState.addressesByContractNameGetAll {
+          | [] => None
+          | addresses => Some(addresses)
+          }
         },
         topicQuery,
       }
@@ -380,8 +400,8 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   }
 }
 
-let memoGetSelectionConfig = (~chain) =>
-  Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
+let memoGetSelectionConfig = (~chain, ~addressFilterMode) =>
+  Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain, ~addressFilterMode))
 
 // Type-erase a schema for storage in the field registry
 external toFieldSchema: S.t<'a> => S.t<JSON.t> = "%identity"
@@ -836,6 +856,7 @@ type options = {
   sourceFor: Source.sourceFor,
   syncConfig: Config.sourceSync,
   url: string,
+  addressFilterMode: Config.sourceAddressFilterMode,
   chain: ChainMap.Chain.t,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   allEventSignatures: array<string>,
@@ -843,11 +864,65 @@ type options = {
   ws?: string,
 }
 
+type sharedTopicsOnlyPage = {
+  logs: array<Rpc.GetLogs.log>,
+  parsedEvents: array<Nullable.t<HyperSyncClient.Decoder.decodedEvent>>,
+  latestFetchedBlockInfo: blockInfo,
+}
+
+let sharedTopicsOnlyCacheMaxSize = 20
+
+let makeTopicsOnlyCacheKey = (~fromBlock, ~toBlock, ~selection: FetchState.selection) => {
+  let selectionKey =
+    selection.eventConfigs
+    ->Array.map(ec => ec.contractName ++ ":" ++ ec.id)
+    ->Array.joinUnsafe(",")
+  `${selectionKey}|${fromBlock->Int.toString}|${toBlock->Int.toString}`
+}
+
+let rememberSharedTopicsOnlyPage = (
+  ~cache,
+  ~cacheKeys,
+  ~key,
+  ~promise: promise<sharedTopicsOnlyPage>,
+) => {
+  cache->Dict.set(key, promise)
+  cacheKeys->Array.push(key)->ignore
+  while cacheKeys->Array.length > sharedTopicsOnlyCacheMaxSize {
+    switch cacheKeys->Array.shift {
+    | Some(cacheKey) => cache->Utils.Dict.deleteInPlace(cacheKey)
+    | None => ()
+    }
+  }
+  let _ = promise->Promise.catch(err => {
+    cache->Utils.Dict.deleteInPlace(key)
+    throw(err)
+  })
+  promise
+}
+
+let partitionAllowsEventAddress = (
+  ~selection: FetchState.selection,
+  ~addressesByContractName,
+  ~eventConfig: Internal.evmEventConfig,
+  ~address,
+) => {
+  if !selection.dependsOnAddresses {
+    true
+  } else {
+    switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(eventConfig.contractName) {
+    | Some(addresses) => addresses->Array.some(a => a === address)
+    | None => false
+    }
+  }
+}
+
 let make = (
   {
     sourceFor,
     syncConfig,
     url,
+    addressFilterMode,
     chain,
     eventRouter,
     allEventSignatures,
@@ -865,9 +940,11 @@ let make = (
   }
   let name = `RPC (${urlHost})`
 
-  let getSelectionConfig = memoGetSelectionConfig(~chain)
+  let getSelectionConfig = memoGetSelectionConfig(~chain, ~addressFilterMode)
 
   let mutSuggestedBlockIntervals = Dict.make()
+  let sharedTopicsOnlyPages: dict<promise<sharedTopicsOnlyPage>> = Dict.make()
+  let sharedTopicsOnlyPageKeys = []
 
   let client = Rpc.makeClient(url)
 
@@ -1047,22 +1124,90 @@ let make = (
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
     let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
 
-    let {logs, latestFetchedBlockInfo} = await getNextPage(
-      ~fromBlock,
-      ~toBlock=suggestedToBlock,
-      ~addresses,
-      ~topicQuery,
-      ~loadBlock=blockNumber =>
-        blockLoader.contents
-        ->LazyLoader.get(blockNumber)
-        ->Promise.thenResolve(parseBlockInfo),
-      ~syncConfig,
-      ~client,
-      ~mutSuggestedBlockIntervals,
-      ~partitionId,
-      ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-    )
+    let sharedPage = switch addressFilterMode {
+    | Config.Exact =>
+      getNextPage(
+        ~fromBlock,
+        ~toBlock=suggestedToBlock,
+        ~addresses,
+        ~topicQuery,
+        ~loadBlock=blockNumber =>
+          blockLoader.contents
+          ->LazyLoader.get(blockNumber)
+          ->Promise.thenResolve(parseBlockInfo),
+        ~syncConfig,
+        ~client,
+        ~mutSuggestedBlockIntervals,
+        ~partitionId,
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+      )->Promise.then(async ({logs, latestFetchedBlockInfo}) => {
+        let parsedEvents = try await getHscDecoder().decodeEvents(
+          logs->Belt.Array.map(convertLogToHyperSyncEvent),
+        ) catch {
+        | exn =>
+          throw(
+            Source.GetItemsError(
+              FailedGettingItems({
+                exn,
+                attemptedToBlock: toBlock,
+                retry: ImpossibleForTheQuery({
+                  message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
+                }),
+              }),
+            ),
+          )
+        }
+        {logs, parsedEvents, latestFetchedBlockInfo}
+      })
+    | Config.TopicsOnly =>
+      let key = makeTopicsOnlyCacheKey(~fromBlock, ~toBlock=suggestedToBlock, ~selection)
+      switch sharedTopicsOnlyPages->Utils.Dict.dangerouslyGetNonOption(key) {
+      | Some(page) => page
+      | None =>
+        rememberSharedTopicsOnlyPage(
+          ~cache=sharedTopicsOnlyPages,
+          ~cacheKeys=sharedTopicsOnlyPageKeys,
+          ~key,
+          ~promise=getNextPage(
+            ~fromBlock,
+            ~toBlock=suggestedToBlock,
+            ~addresses=None,
+            ~topicQuery,
+            ~loadBlock=blockNumber =>
+              blockLoader.contents
+              ->LazyLoader.get(blockNumber)
+              ->Promise.thenResolve(parseBlockInfo),
+            ~syncConfig,
+            ~client,
+            ~mutSuggestedBlockIntervals,
+            ~partitionId,
+            ~sourceName=name,
+            ~chainId=chain->ChainMap.Chain.toChainId,
+          )->Promise.then(async ({logs, latestFetchedBlockInfo}) => {
+            let parsedEvents = try await getHscDecoder().decodeEvents(
+              logs->Belt.Array.map(convertLogToHyperSyncEvent),
+            ) catch {
+            | exn =>
+              throw(
+                Source.GetItemsError(
+                  FailedGettingItems({
+                    exn,
+                    attemptedToBlock: toBlock,
+                    retry: ImpossibleForTheQuery({
+                      message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
+                    }),
+                  }),
+                ),
+              )
+            }
+            {logs, parsedEvents, latestFetchedBlockInfo}
+          }),
+        )
+      }
+    }
+
+    let {logs, parsedEvents, latestFetchedBlockInfo} = await sharedPage
 
     let executedBlockInterval = suggestedToBlock - fromBlock + 1
 
@@ -1080,25 +1225,6 @@ let make = (
         Pervasives.min(
           executedBlockInterval + syncConfig.accelerationAdditive,
           syncConfig.intervalCeiling,
-        ),
-      )
-    }
-
-    // Convert RPC logs to HyperSync events
-    let hyperSyncEvents = logs->Belt.Array.map(convertLogToHyperSyncEvent)
-
-    // Decode using HyperSyncClient decoder
-    let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
-    | exn =>
-      throw(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn,
-            attemptedToBlock: toBlock,
-            retry: ImpossibleForTheQuery({
-              message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
-            }),
-          }),
         ),
       )
     }
@@ -1123,6 +1249,15 @@ let make = (
         ~blockNumber=log.blockNumber,
       ) {
       | None => None
+      | Some(eventConfig)
+        if addressFilterMode === Config.TopicsOnly &&
+          !partitionAllowsEventAddress(
+            ~selection,
+            ~addressesByContractName,
+            ~eventConfig,
+            ~address=routedAddress,
+          ) =>
+        None
       | Some(eventConfig) =>
         switch maybeDecodedEvent {
         | Value(decoded) =>

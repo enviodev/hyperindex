@@ -84,6 +84,31 @@ describe("HyperSyncSource - getSelectionConfig", () => {
     },
   )
 
+  Async.it("Topics_only omits upstream address filtering for normal events", async t => {
+    let selectionConfig = {
+      dependsOnAddresses: true,
+      eventConfigs: [(MockIndexer.evmEventConfig() :> Internal.eventConfig)],
+    }->HyperSyncSource.getSelectionConfig(~chain, ~addressFilterMode=Config.TopicsOnly)
+
+    t.expect(
+      selectionConfig.getLogSelectionOrThrow(
+        ~addressesByContractName=Dict.fromArray([("ERC20", [mockAddress0])]),
+      ),
+    ).toEqual([
+      {
+        addresses: [],
+        topicSelections: [
+          {
+            topic0: [MockIndexer.eventId->EvmTypes.Hex.fromStringUnsafe],
+            topic1: [],
+            topic2: [],
+            topic3: [],
+          },
+        ],
+      },
+    ])
+  })
+
   Async.it("Combines field selection from multiple events on different contracts", async t => {
     let selectionConfig = {
       dependsOnAddresses: true,
@@ -194,4 +219,22 @@ describe("HyperSyncSource - getSelectionConfig", () => {
       ])
     },
   )
+
+  it("Topics_only rejects address-derived event filters", t => {
+    try {
+      let _ = {
+        dependsOnAddresses: true,
+        eventConfigs: [
+          (MockIndexer.evmEventConfig(~filterByAddresses=true) :> Internal.eventConfig),
+        ],
+      }->HyperSyncSource.getSelectionConfig(~chain, ~addressFilterMode=Config.TopicsOnly)
+      JsError.throwWithMessage("Should have thrown")
+    } catch {
+    | Source.GetItemsError(UnsupportedSelection({message})) =>
+      t.expect(message).toBe(
+        "HyperSync topics_only address filter mode does not support event filters derived from `chain.<Contract>.addresses`. Remove the address-based `where` filter or switch back to address_filter_mode: exact.",
+      )
+    | _ => JsError.throwWithMessage("Should have thrown UnsupportedSelection")
+    }
+  })
 })

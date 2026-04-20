@@ -1,6 +1,7 @@
 type rpc = {
   url: string,
   sourceFor: Source.sourceFor,
+  addressFilterMode: Config.sourceAddressFilterMode,
   syncConfig?: Config.sourceSyncOptions,
   ws?: string,
 }
@@ -48,6 +49,7 @@ let makeSources = (
   ~chain,
   ~contracts: array<Internal.evmContractConfig>,
   ~hyperSync,
+  ~hyperSyncAddressFilterMode,
   ~allEventSignatures,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
@@ -68,18 +70,20 @@ let makeSources = (
         clientMaxRetries: Env.hyperSyncClientMaxRetries,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         lowercaseAddresses,
+        addressFilterMode: hyperSyncAddressFilterMode,
         serializationFormat: Env.hypersyncClientSerializationFormat,
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
       }),
     ]
   | _ => []
   }
-  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws}) => {
+  rpcs->Array.forEach(({?syncConfig, url, sourceFor, addressFilterMode, ?ws}) => {
     let source = RpcSource.make({
       chain,
       sourceFor,
       syncConfig: getSyncConfig(syncConfig->Option.getOr({})),
       url,
+      addressFilterMode,
       eventRouter,
       allEventSignatures,
       lowercaseAddresses,
