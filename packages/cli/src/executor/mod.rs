@@ -37,7 +37,16 @@ impl Command {
     }
 }
 
-pub async fn execute(command_line_args: CommandLineArgs) -> Result<Vec<Command>> {
+/// `envio_package_dir` is the absolute path of the running envio JS package
+/// when this executor is invoked via NAPI (the JS host resolves it from
+/// `import.meta.url`). It replaces the former `ENVIO_PACKAGE_DIR` env var
+/// and is used only to stamp the `envio` `file:{dir}` dep into generated
+/// / init project `package.json`s for dev builds. Pass `None` in tests or
+/// non-NAPI hosts — `get_envio_version` falls back to a filesystem walk.
+pub async fn execute(
+    command_line_args: CommandLineArgs,
+    envio_package_dir: Option<&str>,
+) -> Result<Vec<Command>> {
     let global_project_paths = command_line_args.project_paths;
     let parsed_project_paths = ParsedProjectPaths::try_from(global_project_paths.clone())
         .context("Failed parsing project paths")?;
@@ -46,15 +55,17 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<Vec<Command>>
 
     match command_line_args.command {
         CommandType::Init(init_args) => {
-            init::run_init_args(init_args, &global_project_paths).await?;
+            init::run_init_args(init_args, &global_project_paths, envio_package_dir).await?;
         }
 
         CommandType::Codegen => {
-            codegen::run_codegen(&parsed_project_paths).await?;
+            codegen::run_codegen(&parsed_project_paths, envio_package_dir).await?;
         }
 
         CommandType::Dev(dev_args) => {
-            commands.extend(dev::run_dev(parsed_project_paths, dev_args.restart).await?);
+            commands.extend(
+                dev::run_dev(parsed_project_paths, dev_args.restart, envio_package_dir).await?,
+            );
         }
 
         CommandType::Stop => {

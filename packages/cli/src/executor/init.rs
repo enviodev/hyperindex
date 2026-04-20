@@ -23,7 +23,11 @@ use anyhow::{anyhow, Context, Result};
 
 use std::path::Path;
 
-pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) -> Result<()> {
+pub async fn run_init_args(
+    init_args: InitArgs,
+    project_paths: &ProjectPaths,
+    envio_package_dir: Option<&str>,
+) -> Result<()> {
     let template_dirs = TemplateDirs::new();
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
@@ -242,7 +246,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         }
     }
 
-    let envio_version = get_envio_version()?;
+    let envio_version = get_envio_version(envio_package_dir)?;
 
     let extra_dependencies = match &init_config.ecosystem {
         Ecosystem::Evm {
@@ -278,7 +282,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
     let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
         .context("Failed parsing config")?;
 
-    commands::codegen::run_codegen(&config).await?;
+    commands::codegen::run_codegen(&config, envio_package_dir).await?;
 
     if init_config.language == Language::ReScript {
         let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;

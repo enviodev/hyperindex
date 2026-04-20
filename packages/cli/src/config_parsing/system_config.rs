@@ -385,30 +385,33 @@ fn is_valid_release_version_number(version: &str) -> bool {
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns the envio npm package specifier for codegen.
-/// Release builds (valid semver) → version string for npm.
-/// Dev builds → `file:` path to the local packages/envio directory.
-pub fn get_envio_version() -> Result<String> {
+/// - Release builds (valid semver `VERSION`) → that version, for npm.
+/// - Dev builds → `file:` path to the local `packages/envio` directory.
+///
+/// The caller may supply `envio_package_dir` (typically the NAPI host —
+/// `Core.res` resolves it from `import.meta.url`); when present and
+/// `VERSION` is not a release, it wins over the filesystem walk. This
+/// replaces the earlier `ENVIO_PACKAGE_DIR` env var, which was implicit
+/// global state and required `unsafe std::env::set_var` in Rust 2024.
+pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
     if is_valid_release_version_number(VERSION) {
         return Ok(VERSION.to_string());
     }
 
-    // When running as a NAPI addon, Core.res sets ENVIO_PACKAGE_DIR to
-    // the envio package directory (resolved from import.meta.url). This
-    // is the most reliable path — current_exe() points to Node, and
-    // current_dir() may be a temp dir (template tests run from /tmp/).
-    //
-    // Return relative to cwd (the project root) so the generated package
-    // resolves to the SAME envio instance as the parent — avoiding
-    // duplicate module instances that break shared registries
-    // (HandlerRegister, Prometheus metrics).
-    if let Ok(pkg_dir) = env::var("ENVIO_PACKAGE_DIR") {
-        let pkg = PathBuf::from(&pkg_dir);
+    // Caller-supplied path (NAPI host) — most reliable in a dev build.
+    // Format as `file:{dir}` so the generated `package.json` resolves to
+    // the SAME envio instance as the parent, avoiding duplicate module
+    // instances that break shared registries (HandlerRegister, Prometheus
+    // metrics).
+    if let Some(pkg_dir) = envio_package_dir {
+        let pkg = PathBuf::from(pkg_dir);
         if pkg.is_dir() {
             return Ok(format!("file:{}", pkg.to_string_lossy()));
         }
     }
 
-    // Fallback: walk up from binary / cwd to find the local envio package.
+    // Fallback for non-NAPI callers (cargo tests, standalone binary):
+    // walk up from current_exe() / current_dir() to find packages/envio.
     let candidates = [
         env::current_exe().and_then(|p| p.canonicalize()).ok(),
         env::current_dir().and_then(|p| p.canonicalize()).ok(),

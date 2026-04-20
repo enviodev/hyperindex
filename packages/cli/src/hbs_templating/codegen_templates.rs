@@ -1158,7 +1158,7 @@ impl ProjectTemplate {
         format!("{{ readonly params: {} }}", params_ts)
     }
 
-    pub fn from_config(cfg: &SystemConfig) -> Result<Self> {
+    pub fn from_config(cfg: &SystemConfig, envio_package_dir: Option<&str>) -> Result<Self> {
         let project_paths = &cfg.parsed_project_paths;
 
         // Compute all available fields for the ecosystem (EVM has all block/tx fields,
@@ -2269,7 +2269,7 @@ let allEntities: array<Internal.entityConfig> = makeLazy(() => getCachedConfig()
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
-            envio_version: get_envio_version()?,
+            envio_version: get_envio_version(envio_package_dir)?,
             indexer_code,
             envio_dts_code,
             //Used for the package.json reference to handlers in generated
@@ -2313,7 +2313,7 @@ mod test {
         let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");
 
-        super::ProjectTemplate::from_config(&config)
+        super::ProjectTemplate::from_config(&config, None)
             .expect("should be able to get project template")
     }
 

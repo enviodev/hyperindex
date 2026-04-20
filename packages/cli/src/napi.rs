@@ -5,19 +5,15 @@ use crate::{
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
 
-fn set_envio_package_dir(dir: &Option<String>) {
-    if let Some(d) = dir {
-        std::env::set_var("ENVIO_PACKAGE_DIR", d);
-    }
-}
-
 #[napi_derive::napi]
 pub fn get_config_json(
     config_path: Option<String>,
     directory: Option<String>,
-    envio_package_dir: Option<String>,
+    _envio_package_dir: Option<String>,
 ) -> napi::Result<String> {
-    set_envio_package_dir(&envio_package_dir);
+    // `_envio_package_dir` is accepted for NAPI signature compatibility but
+    // unused here — `get_config_json` doesn't need the envio JS package
+    // location. It's threaded through `run_cli` for `get_envio_version`.
     let project_root = directory.unwrap_or_else(|| ".".to_string());
     let config = config_path
         .or_else(|| std::env::var("ENVIO_CONFIG").ok())
@@ -66,8 +62,6 @@ pub async fn upsert_persisted_state(json: String) -> napi::Result<()> {
 /// future binary) could consume the same return value directly.
 #[napi_derive::napi]
 pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> napi::Result<String> {
-    set_envio_package_dir(&envio_package_dir);
-
     let mut full_args = vec!["envio".to_string()];
     full_args.extend(args);
 
@@ -89,7 +83,7 @@ pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> na
         .context("Failed parsing command line arguments")
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
-    let commands = crate::executor::execute(command_line_args)
+    let commands = crate::executor::execute(command_line_args, envio_package_dir.as_deref())
         .await
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 

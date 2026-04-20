@@ -9,7 +9,11 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 
-pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result<Vec<Command>> {
+pub async fn run_dev(
+    project_paths: ParsedProjectPaths,
+    restart: bool,
+    envio_package_dir: Option<&str>,
+) -> Result<Vec<Command>> {
     let config =
         SystemConfig::parse_from_project_files(&project_paths).context("Failed parsing config")?;
 
@@ -65,7 +69,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
 
         println!("Running codegen");
 
-        commands::codegen::run_codegen(&config)
+        commands::codegen::run_codegen(&config, envio_package_dir)
             .await
             .context("Failed running codegen")?;
     }
