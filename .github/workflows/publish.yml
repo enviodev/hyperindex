@@ -82,12 +82,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          # Restore execute permission (GitHub Actions artifacts don't preserve permissions)
-          if [ ! -f bin/envio ]; then
-            echo "ERROR: bin/envio not found in platform package"
+          if [ ! -f envio.node ]; then
+            echo "ERROR: envio.node not found in platform package"
             exit 1
           fi
-          chmod +x bin/envio
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));

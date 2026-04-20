@@ -46,6 +46,7 @@ const README_PATH = path.join(REPO_ROOT, "packages/cli/README.md");
 
 /** Files/dirs to copy from envio package into dist. */
 const PUBLISH_FILES = [
+  "bin.mjs",
   "evm.schema.json",
   "fuel.schema.json",
   "svm.schema.json",
@@ -54,9 +55,6 @@ const PUBLISH_FILES = [
   "index.js",
   "src",
 ];
-
-/** Files to copy into the platform packages (envio-{os}-{arch}). */
-const PLATFORM_PKG_FILES = ["bin/envio"] as const;
 
 // ── Core logic ──────────────────────────────────────────────────────
 
@@ -76,14 +74,6 @@ export function buildPackageJson(
   delete pkg.private;
   delete pkg.scripts;
 
-  // Strip envio.node from files — production installs get the addon via
-  // the platform package (envio-linux-x64), not a bundled file. CI tests
-  // inject envio.node post-install via prepare-envio-artifacts.
-  if (Array.isArray(pkg.files)) {
-    pkg.files = (pkg.files as string[]).filter((f) => f !== "envio.node");
-  }
-
-  // Keep bin pointing to bin.mjs (same path as dev, but production content)
   pkg.bin = "./bin.mjs";
 
   // Add optional platform-specific dependencies
@@ -164,11 +154,8 @@ export function build(opts: BuildOptions): void {
     compileRescript(envioDir);
   }
 
-  // 2. Copy publish files to dist (bin.mjs is now the same for dev and
-  //    production — it imports Core.res.mjs which resolves the NAPI addon)
+  // 2. Copy publish files to dist
   copyPublishFiles(envioDir, outDir);
-  // Copy bin.mjs from source (no longer replaced with a production variant)
-  fs.copyFileSync(path.join(envioDir, "bin.mjs"), path.join(outDir, "bin.mjs"));
   console.log(`Copied publish files to ${outDir}`);
 
   // 3. Write publish-ready package.json into dist
