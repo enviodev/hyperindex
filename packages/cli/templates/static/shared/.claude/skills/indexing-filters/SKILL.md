@@ -8,9 +8,9 @@ description: >-
 
 # Event Filters (`where`)
 
-The `where` handler option filters events by indexed parameters. Works with or without `wildcard: true`.
+The `where` handler option filters events by indexed parameters and restricts the per-event block range. Works with or without `wildcard: true`.
 
-The filter value is a `{ params: ... }` record. `params` can be a **single object** (AND-conjunction across indexed parameters) or an **array** of objects (OR across multiple AND-conjunctions). The `{params}` wrapper reserves room for future filter dimensions (block, transaction, …) as sibling fields.
+The filter value is a `{ params?, block? }` record. `params` can be a **single object** (AND-conjunction across indexed parameters) or an **array** of objects (OR across multiple AND-conjunctions). `block.number._gte` (or `block.height._gte` on Fuel) promotes to the event's **startBlock** and overrides the contract-level `start_block` from `config.yaml`.
 
 ## Single Object Form
 
@@ -106,12 +106,55 @@ indexer.onEvent(
 );
 ```
 
+## Per-Event `startBlock` via `block.number._gte`
+
+Use `where.block` as a sibling of `params` to restrict an event to blocks at or after a given number. Overrides the contract's `start_block` from `config.yaml` — useful for narrowing a single event without touching the whole contract.
+
+```ts
+indexer.onEvent(
+  {
+    contract: "ERC20",
+    event: "Transfer",
+    wildcard: true,
+    where: {
+      block: { number: { _gte: 18000000 } },
+      params: { from: ZERO_ADDRESS },
+    },
+  },
+  async ({ event, context }) => {
+    /* ... */
+  },
+);
+```
+
+Dynamic per-chain form:
+
+```ts
+indexer.onEvent(
+  {
+    contract: "ERC20",
+    event: "Transfer",
+    wildcard: true,
+    where: ({ chain }) => ({
+      block: { number: { _gte: chain.id === 1 ? 18000000 : 0 } },
+      params: [{ from: chain.ERC20.addresses }, { to: chain.ERC20.addresses }],
+    }),
+  },
+  async ({ event, context }) => {
+    /* ... */
+  },
+);
+```
+
+On Fuel, key the block range on `block.height` instead of `block.number`. SVM has no event handlers. Only `_gte` is accepted on event filters — for `_lte` or `_every` (stride), use `indexer.onBlock`. The `block` filter is only valid at the top level of `where`, not nested inside `params` array entries.
+
 ## Filter Semantics
 
 - Filter fields inside each `params` entry correspond to the event's **indexed parameters** only
 - Multiple entries in the `params` array → OR (match any)
 - Multiple fields in one entry → AND (match all)
 - Array value in a field → match any value in the array
+- `block.number._gte` (EVM) / `block.height._gte` (Fuel) → per-event startBlock, overrides contract `start_block`
 - `return false` → skip the chain entirely (no events processed for that chain)
 - `return true` → accept all events (no filtering, default topic0-only selection)
 

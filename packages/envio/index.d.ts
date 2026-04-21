@@ -563,12 +563,19 @@ export type EvmOnEventWhereArgs<ContractName extends string> = {
   readonly chain: EvmOnEventWhereChain<ContractName>;
 };
 
-/** A single EVM `where` filter condition. The `{params}` wrapper reserves room
- * for future filter dimensions (block, transaction, …) as sibling fields.
- * `params` accepts either a single AND-conjunction of indexed-parameter
- * narrowings, or an array of them (OR semantics). */
+/** A single EVM `where` filter condition. `params` accepts either a single
+ * AND-conjunction of indexed-parameter narrowings, or an array of them (OR
+ * semantics). `block.number._gte` promotes to the event's startBlock and
+ * overrides the contract-level `start_block` — use it to restrict per-event
+ * processing without touching `config.yaml`. Only `_gte` is supported on
+ * event filters; use `indexer.onBlock` for `_lte` / `_every`. */
 export type EvmOnEventWhereFilter<Params> = {
   readonly params?: Params | readonly Params[];
+  readonly block?: {
+    readonly number?: {
+      readonly _gte?: number;
+    };
+  };
 };
 
 /** The `where` option value of `indexer.onEvent` / `indexer.contractRegister`
@@ -589,8 +596,18 @@ export type EvmOnEventWhere<Params, ContractName extends string> =
 export type FuelOnEventWhereChain<ContractName extends string> = EvmOnEventWhereChain<ContractName>;
 /** Arguments passed to the Fuel dynamic `where` callback form. */
 export type FuelOnEventWhereArgs<ContractName extends string> = EvmOnEventWhereArgs<ContractName>;
-/** A single Fuel `where` filter condition. */
-export type FuelOnEventWhereFilter<Params> = EvmOnEventWhereFilter<Params>;
+/** A single Fuel `where` filter condition. Mirrors the EVM shape but keys the
+ * block range on `block.height` instead of `block.number`. `height._gte`
+ * promotes to the event's startBlock (overriding contract-level
+ * `start_block`). Only `_gte` is supported on event filters. */
+export type FuelOnEventWhereFilter<Params> = {
+  readonly params?: Params | readonly Params[];
+  readonly block?: {
+    readonly height?: {
+      readonly _gte?: number;
+    };
+  };
+};
 /** The `where` option value of `indexer.onEvent` / `indexer.contractRegister` in the Fuel ecosystem. */
 export type FuelOnEventWhere<Params, ContractName extends string> = EvmOnEventWhere<Params, ContractName>;
 

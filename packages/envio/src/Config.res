@@ -291,7 +291,7 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
   | "bigint" => (Table.BigInt({precision: ?prop["precision"]}), Utils.BigInt.schema->S.toUnknown)
   | "bigdecimal" => (
       Table.BigDecimal({
-        config: ?prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getOr(0))),
+        config: ?(prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getOr(0)))),
       }),
       BigDecimal.schema->S.toUnknown,
     )
@@ -480,6 +480,12 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
     )
   }
 
+  let ecosystem = switch ecosystemName {
+  | Ecosystem.Evm => Evm.ecosystem
+  | Ecosystem.Fuel => Fuel.ecosystem
+  | Ecosystem.Svm => Svm.ecosystem
+  }
+
   // Extract EVM-specific options with defaults
   let lowercaseAddresses = switch publicConfig["evm"] {
   | Some(evm) => evm["addressFormat"]->Option.getOr(Checksum) == Lowercase
@@ -584,6 +590,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
             ~contractRegister,
             ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
             ~probeChainId=chainId,
+            ~onEventBlockFilterSchema=ecosystem.onEventBlockFilterSchema,
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
             ~startBlock?,
@@ -741,12 +748,6 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
       (ChainMap.Chain.makeUnsafe(~chainId=chain.id), chain)
     })
     ->ChainMap.fromArrayUnsafe
-
-  let ecosystem = switch ecosystemName {
-  | Ecosystem.Evm => Evm.ecosystem
-  | Ecosystem.Fuel => Fuel.ecosystem
-  | Ecosystem.Svm => Svm.ecosystem
-  }
 
   // Parse enums and entities from JSON config
   let allEnums =
