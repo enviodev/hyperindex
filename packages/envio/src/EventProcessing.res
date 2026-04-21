@@ -371,7 +371,7 @@ let registerProcessEventBatchMetrics = (
     "write_time_elapsed": dbWriteDuration,
   })
 
-  Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration, ~dbWriteDuration)
+  Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration)
 }
 
 type logPartitionInfo = {

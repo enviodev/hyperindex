@@ -128,21 +128,9 @@ module ProcessingBatch = {
     "help": "Cumulative time spent executing event handlers during batch processing.",
   })
 
-  let writeTimeCounter = PromClient.Counter.makeCounter({
-    "name": "envio_storage_write_seconds",
-    "help": "Cumulative time spent writing batch data to storage.",
-  })
-
-  let writeCount = PromClient.Counter.makeCounter({
-    "name": "envio_storage_write_total",
-    "help": "Total number of batch writes to storage.",
-  })
-
-  let registerMetrics = (~loadDuration, ~handlerDuration, ~dbWriteDuration) => {
+  let registerMetrics = (~loadDuration, ~handlerDuration) => {
     loadTimeCounter->PromClient.Counter.incMany(loadDuration->(Utils.magic: float => int))
     handlerTimeCounter->PromClient.Counter.incMany(handlerDuration->(Utils.magic: float => int))
-    writeTimeCounter->PromClient.Counter.incMany(dbWriteDuration->(Utils.magic: float => int))
-    writeCount->PromClient.Counter.inc
   }
 }
 
@@ -749,36 +737,41 @@ module EffectQueueCount = {
 }
 
 module StorageLoad = {
-  let operationLabelsSchema = S.object(s => s.field("operation", S.string))
+  let loadLabelsSchema = S.schema(s =>
+    {
+      "operation": s.matches(S.string),
+      "storage": s.matches(S.string),
+    }
+  )
 
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_storage_load_seconds",
     ~help="Processing time taken to load data from storage.",
-    ~labelSchema=operationLabelsSchema,
+    ~labelSchema=loadLabelsSchema,
   )
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
     ~name="envio_storage_load_seconds_total",
     ~help="Cumulative time spent loading data from storage during the indexing process.",
-    ~labelSchema=operationLabelsSchema,
+    ~labelSchema=loadLabelsSchema,
   )
 
   let counter = SafeCounter.makeOrThrow(
     ~name="envio_storage_load_total",
     ~help="Cumulative number of successful storage load operations during the indexing process.",
-    ~labelSchema=operationLabelsSchema,
+    ~labelSchema=loadLabelsSchema,
   )
 
   let whereSizeCounter = SafeCounter.makeOrThrow(
     ~name="envio_storage_load_where_size",
     ~help="Cumulative number of filter conditions ('where' items) used in storage load operations during the indexing process.",
-    ~labelSchema=operationLabelsSchema,
+    ~labelSchema=loadLabelsSchema,
   )
 
   let sizeCounter = SafeCounter.makeOrThrow(
     ~name="envio_storage_load_size",
     ~help="Cumulative number of records loaded from storage during the indexing process.",
-    ~labelSchema=operationLabelsSchema,
+    ~labelSchema=loadLabelsSchema,
   )
 
   type operationRef = {
@@ -787,12 +780,15 @@ module StorageLoad = {
   }
   let operations = Dict.make()
 
-  let startOperation = (~operation) => {
-    switch operations->Utils.Dict.dangerouslyGetNonOption(operation) {
+  let makeKey = (~storage, ~operation) => storage ++ ":" ++ operation
+
+  let startOperation = (~storage, ~operation) => {
+    let key = makeKey(~storage, ~operation)
+    switch operations->Utils.Dict.dangerouslyGetNonOption(key) {
     | Some(operationRef) => operationRef.pendingCount = operationRef.pendingCount + 1
     | None =>
       operations->Dict.set(
-        operation,
+        key,
         (
           {
             pendingCount: 1,
@@ -804,43 +800,45 @@ module StorageLoad = {
     Hrtime.makeTimer()
   }
 
-  let endOperation = (timerRef, ~operation, ~whereSize, ~size) => {
-    let operationRef = operations->Dict.getUnsafe(operation)
+  let endOperation = (timerRef, ~storage, ~operation, ~whereSize, ~size) => {
+    let key = makeKey(~storage, ~operation)
+    let labels = {"operation": operation, "storage": storage}
+    let operationRef = operations->Dict.getUnsafe(key)
     operationRef.pendingCount = operationRef.pendingCount - 1
     if operationRef.pendingCount === 0 {
       timeCounter->SafeCounter.handleFloat(
-        ~labels={operation},
+        ~labels,
         ~value=operationRef.timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
       )
-      operations->Utils.Dict.deleteInPlace(operation)
+      operations->Utils.Dict.deleteInPlace(key)
     }
     sumTimeCounter->SafeCounter.handleFloat(
-      ~labels={operation},
+      ~labels,
       ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
     )
-    counter->SafeCounter.increment(~labels={operation})
-    whereSizeCounter->SafeCounter.handleInt(~labels={operation}, ~value=whereSize)
-    sizeCounter->SafeCounter.handleInt(~labels={operation}, ~value=size)
+    counter->SafeCounter.increment(~labels)
+    whereSizeCounter->SafeCounter.handleInt(~labels, ~value=whereSize)
+    sizeCounter->SafeCounter.handleInt(~labels, ~value=size)
   }
 }
 
-module SinkWrite = {
-  let sinkLabelsSchema = S.object(s => s.field("sink", S.string))
+module StorageWrite = {
+  let storageLabelsSchema = S.object(s => s.field("storage", S.string))
 
   let timeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_sink_write_seconds",
-    ~help="Processing time taken to write data to sink.",
-    ~labelSchema=sinkLabelsSchema,
+    ~name="envio_storage_write_seconds",
+    ~help="Cumulative time spent writing batch data to storage.",
+    ~labelSchema=storageLabelsSchema,
   )
 
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_sink_write_total",
-    ~help="Cumulative number of successful sink write operations during the indexing process.",
-    ~labelSchema=sinkLabelsSchema,
+    ~name="envio_storage_write_total",
+    ~help="Cumulative number of successful storage write operations during the indexing process.",
+    ~labelSchema=storageLabelsSchema,
   )
 
-  let increment = (~sinkName, ~timeSeconds) => {
-    timeCounter->SafeCounter.handleFloat(~labels={sinkName}, ~value=timeSeconds)
-    counter->SafeCounter.increment(~labels={sinkName})
+  let increment = (~storage, ~timeSeconds) => {
+    timeCounter->SafeCounter.handleFloat(~labels={storage}, ~value=timeSeconds)
+    counter->SafeCounter.increment(~labels={storage})
   }
 }

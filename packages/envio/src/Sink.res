@@ -30,7 +30,7 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
   let cache = Utils.WeakMap.make()
 
   {
-    name: "ClickHouse",
+    name: "clickhouse",
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
       ClickHouse.initialize(client, ~database, ~entities, ~enums)
     },
