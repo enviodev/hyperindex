@@ -178,6 +178,49 @@ describe("EventRouter", () => {
     },
   )
 
+  it(
+    "get falls back to wildcard when the address is indexed for a contract without a matching event",
+    t => {
+      // Covers the case where FetchState seeds indexingAddresses with an
+      // address for a contract that has no events (persisted for future config
+      // changes). A wildcard event at that address should still fire.
+      let indexedAddress = mockAddress1
+      let noEventsContractName = "UnknownContract"
+
+      let router = EventRouter.empty()
+
+      router->EventRouter.addOrThrow(
+        "test-event-tag",
+        "wildcard",
+        ~contractName="WildcardContract",
+        ~eventName="Event1",
+        ~chain=mockChain,
+        ~isWildcard=true,
+      )
+
+      let indexingAddresses: dict<FetchState.indexingAddress> = Dict.make()
+      indexingAddresses->Dict.set(
+        indexedAddress->Address.toString,
+        {
+          contractName: noEventsContractName,
+          address: indexedAddress,
+          registrationBlock: 5,
+          effectiveStartBlock: 5,
+        },
+      )
+
+      t.expect(
+        router->EventRouter.get(
+          ~tag="test-event-tag",
+          ~contractAddress=indexedAddress,
+          ~blockNumber=10,
+          ~indexingAddresses,
+        ),
+        ~message="Should fall back to the wildcard handler when the contract has no registered event for this tag",
+      ).toEqual(Some("wildcard"))
+    },
+  )
+
   it("fromEvmEventModsOrThrow works", t => {
     let item = MockConfig.getEvmEventConfig(~contractName="Gravatar", ~eventName="NewGravatar")
     let router = EventRouter.fromEvmEventModsOrThrow([item], ~chain=mockChain)
