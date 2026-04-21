@@ -21,7 +21,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       ~fromBlock as _,
       ~toBlock as _,
       ~addressesByContractName as _,
-      ~indexingContracts as _,
+      ~indexingAddresses as _,
       ~knownHeight as _,
       ~partitionId as _,
       ~selection as _,

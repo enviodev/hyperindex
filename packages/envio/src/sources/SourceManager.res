@@ -560,7 +560,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         ~fromBlock=query.fromBlock,
         ~toBlock,
         ~addressesByContractName=query.addressesByContractName,
-        ~indexingContracts=query.indexingContracts,
+        ~indexingAddresses=query.indexingAddresses,
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection,

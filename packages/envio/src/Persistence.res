@@ -22,7 +22,7 @@ type initialChainState = {
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  dynamicContracts: array<Internal.indexingContract>,
+  indexingAddresses: array<Internal.indexingAddress>,
   sourceBlockNumber: int,
 }
 

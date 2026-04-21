@@ -27,7 +27,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~eventConfigs,
-      ~contracts=[],
+      ~addresses=[],
       ~startBlock=0,
       ~targetBufferSize=5000,
       ~chainId=1,
@@ -74,7 +74,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             eventConfigs,
           },
           addressesByContractName: Dict.make(),
-          indexingContracts: fetchState.contents.indexingContracts,
+          indexingAddresses: fetchState.contents.indexingAddresses,
         }
 
         fetchState.contents->FetchState.startFetchingQueries(~queries=[query])

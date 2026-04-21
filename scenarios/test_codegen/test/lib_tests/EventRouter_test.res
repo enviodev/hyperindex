@@ -113,7 +113,7 @@ describe("EventRouter", () => {
         ~tag="test-event-tag",
         ~contractAddress=mockAddress1,
         ~blockNumber=0,
-        ~indexingContracts=Dict.make(),
+        ~indexingAddresses=Dict.make(),
       ),
       ~message=`We can return Some, but we want to always check that event is after contract startBlock`,
     ).toEqual(None)
@@ -145,14 +145,14 @@ describe("EventRouter", () => {
         ~isWildcard=false,
       )
 
-      let indexingContracts = Dict.make()
-      indexingContracts->Dict.set(
+      let indexingAddresses: dict<FetchState.indexingAddress> = Dict.make()
+      indexingAddresses->Dict.set(
         nonWildcardContractAddress->Address.toString,
         {
-          Internal.startBlock: 0,
           contractName: nonWildcardContractName,
           address: nonWildcardContractAddress,
-          registrationBlock: None,
+          registrationBlock: -1,
+          effectiveStartBlock: 0,
         },
       )
 
@@ -161,7 +161,7 @@ describe("EventRouter", () => {
           ~tag="test-event-tag",
           ~contractAddress=nonWildcardContractAddress,
           ~blockNumber=0,
-          ~indexingContracts,
+          ~indexingAddresses,
         ),
         ~message="Should return the non wildcard event",
       ).toEqual(Some("non-wildcard"))
@@ -171,7 +171,7 @@ describe("EventRouter", () => {
           ~tag="test-event-tag",
           ~contractAddress=wildcardContractAddress,
           ~blockNumber=0,
-          ~indexingContracts,
+          ~indexingAddresses,
         ),
         ~message="Should return the wildcard event",
       ).toEqual(Some("wildcard"))
