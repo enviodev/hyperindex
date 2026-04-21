@@ -553,7 +553,7 @@ let compareBufferItem = (a: Internal.item, b: Internal.item) => {
 // Some big number which should be bigger than any log index
 let blockItemLogIndex = 16777216
 
-let numAddresses = fetchState => fetchState.indexingAddresses->Dict.keysToArray->Array.length
+let numAddresses = fetchState => fetchState.indexingAddresses->Utils.Dict.size
 
 /*
 Update fetchState, merge registers and recompute derived values.
@@ -709,23 +709,20 @@ let warnDifferentContractType = (
 
 let addressesByContractNameCount = (addressesByContractName: dict<array<Address.t>>) => {
   let numAddresses = ref(0)
-  let contractNames = addressesByContractName->Dict.keysToArray
-  for idx in 0 to contractNames->Array.length - 1 {
-    let contractName = contractNames->Array.getUnsafe(idx)
-    numAddresses :=
-      numAddresses.contents + addressesByContractName->Dict.getUnsafe(contractName)->Array.length
-  }
+  addressesByContractName->Utils.Dict.forEach(addresses => {
+    numAddresses := numAddresses.contents + addresses->Array.length
+  })
   numAddresses.contents
 }
 
 let addressesByContractNameGetAll = (addressesByContractName: dict<array<Address.t>>) => {
-  let all = ref([])
-  let contractNames = addressesByContractName->Dict.keysToArray
-  for idx in 0 to contractNames->Array.length - 1 {
-    let contractName = contractNames->Array.getUnsafe(idx)
-    all := all.contents->Array.concat(addressesByContractName->Dict.getUnsafe(contractName))
-  }
-  all.contents
+  let all = []
+  addressesByContractName->Utils.Dict.forEach(addresses => {
+    for idx in 0 to addresses->Array.length - 1 {
+      all->Array.push(addresses->Array.getUnsafe(idx))->ignore
+    }
+  })
+  all
 }
 
 /**
@@ -1057,7 +1054,7 @@ let registerDynamicContracts = (
   | [] => fetchState
   | _ => {
       let newPartitions = []
-      let newIndexingContracts = indexingAddresses->Utils.Dict.shallowCopy
+      let newIndexingAddresses = indexingAddresses->Utils.Dict.shallowCopy
       let dynamicContractsRef = ref(fetchState.optimizedPartitions.dynamicContracts)
       let mutExistingPartitions = fetchState.optimizedPartitions.entities->Dict.valuesToArray
 
@@ -1138,7 +1135,7 @@ let registerDynamicContracts = (
         }
 
         let registeringContracts = registeringContractsByContract->Dict.getUnsafe(contractName)
-        let _ = Utils.Dict.mergeInPlace(newIndexingContracts, registeringContracts)
+        let _ = Utils.Dict.mergeInPlace(newIndexingAddresses, registeringContracts)
       }
 
       let optimizedPartitions = createPartitionsFromIndexingAddresses(
@@ -1153,7 +1150,7 @@ let registerDynamicContracts = (
         ~progressBlockNumber=0,
       )
 
-      fetchState->updateInternal(~optimizedPartitions, ~indexingAddresses=newIndexingContracts)
+      fetchState->updateInternal(~optimizedPartitions, ~indexingAddresses=newIndexingAddresses)
     }
   }
 }
@@ -1621,7 +1618,7 @@ let make = (
     )
   }
 
-  let numAddresses = indexingAddresses->Dict.keysToArray->Array.length
+  let numAddresses = indexingAddresses->Utils.Dict.size
   Prometheus.IndexingAddresses.set(~addressesCount=numAddresses, ~chainId)
   Prometheus.IndexingPartitions.set(
     ~partitionsCount=optimizedPartitions->OptimizedPartitions.count,
@@ -1763,7 +1760,7 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
           }
         })
 
-        if rollbackedAddressesByContractName->Dict.keysToArray->Array.length > 0 {
+        if !(rollbackedAddressesByContractName->Utils.Dict.isEmpty) {
           let id = nextKeptIdRef.contents->Int.toString
           nextKeptIdRef := nextKeptIdRef.contents + 1
           keptPartitions
