@@ -34,8 +34,13 @@ void _fuelNotEvm; void _evmNotFuel;
 // Inner-range invariant: only `_gte` is public; `_lte` and `_every`
 // would be caught by `S.strict` at runtime, but document the TS surface
 // too so handler authors see the same constraint at edit time.
+// Bidirectional equality check — `[never] extends ["_gte"]` is `true`
+// (never is the bottom type), so a one-way check would silently pass if
+// `_gte` were accidentally removed. `_ExactlyGte` requires the keyset
+// to be exactly `"_gte"`, rejecting both `never` and any wider union.
 type _FuelRangeKeys = keyof NonNullable<NonNullable<FuelOnEventWhereFilter<{}>["block"]>["height"]>;
 type _EvmRangeKeys = keyof NonNullable<NonNullable<EvmOnEventWhereFilter<{}>["block"]>["number"]>;
-const _fuelGteOnly: [_FuelRangeKeys] extends ["_gte"] ? true : false = true;
-const _evmGteOnly: [_EvmRangeKeys] extends ["_gte"] ? true : false = true;
+type _ExactlyGte<T> = [T] extends ["_gte"] ? (["_gte"] extends [T] ? true : false) : false;
+const _fuelGteOnly: _ExactlyGte<_FuelRangeKeys> = true;
+const _evmGteOnly: _ExactlyGte<_EvmRangeKeys> = true;
 void _fuelGteOnly; void _evmGteOnly;
