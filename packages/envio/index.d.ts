@@ -607,7 +607,9 @@ export type FuelOnEventWhereFilter<Params> = {
   };
 };
 /** The `where` option value of `indexer.onEvent` / `indexer.contractRegister` in the Fuel ecosystem. */
-export type FuelOnEventWhere<Params, ContractName extends string> = EvmOnEventWhere<Params, ContractName>;
+export type FuelOnEventWhere<Params, ContractName extends string> =
+  | FuelOnEventWhereFilter<Params>
+  | ((args: FuelOnEventWhereArgs<ContractName>) => FuelOnEventWhereFilter<Params> | boolean);
 
 /** Options for registering an EVM onEvent handler. Contract and event literal names are derived from the Event type.
  * The conditional `Event extends EventLike` distributes over union members so that each member's

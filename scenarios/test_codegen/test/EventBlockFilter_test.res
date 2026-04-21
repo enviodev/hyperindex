@@ -157,10 +157,11 @@ describe("parseEventFiltersOrThrow — Fuel block.height", () => {
     t.expect(startBlock).toEqual(Some(42))
   })
 
-  it("Fuel rejects `block.number` (must use height)", t => {
-    // The ecosystem schema key is `height`, so `number` is ignored at the
-    // outer level (surfaces as None) and the event runs with no startBlock
-    // override — the user opts into Fuel's shape via the TS type.
+  it("Fuel ignores `block.number` — typed API forbids it, runtime stays permissive", t => {
+    // `FuelOnEventWhereFilter` types out `block.number`, so typed users
+    // can't reach this path; the runtime still accepts the shape and
+    // surfaces `None` rather than throwing, which keeps untyped or JSON
+    // callers from seeing a cryptic schema error.
     let {startBlock} = parseFuel(~eventFilters=Some(%raw(`{block: {number: {_gte: 42}}}`)))
     t.expect(startBlock).toEqual(None)
   })
