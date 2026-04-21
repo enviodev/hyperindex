@@ -183,22 +183,23 @@ let fetchNext = async (
         ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
       )
       sourceManager->trackNewStatus(~newStatus=Querieng)
-      let _ = await queries
-      ->Array.map(q => {
-        let promise = q->executeQuery
-        let _ = promise->Promise.thenResolve(_ => {
-          sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-          Prometheus.IndexingConcurrency.set(
-            ~concurrency=sourceManager.fetchingPartitionsCount,
-            ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-          )
-          if sourceManager.fetchingPartitionsCount === 0 {
-            sourceManager->trackNewStatus(~newStatus=Idle)
-          }
+      let _ =
+        await queries
+        ->Array.map(q => {
+          let promise = q->executeQuery
+          let _ = promise->Promise.thenResolve(_ => {
+            sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
+            Prometheus.IndexingConcurrency.set(
+              ~concurrency=sourceManager.fetchingPartitionsCount,
+              ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+            )
+            if sourceManager.fetchingPartitionsCount === 0 {
+              sourceManager->trackNewStatus(~newStatus=Idle)
+            }
+          })
+          promise
         })
-        promise
-      })
-      ->Promise.all
+        ->Promise.all
     }
   }
 }
@@ -413,7 +414,8 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPo
   )
   if reducedPolling {
     logger->Logging.childTrace(
-      "Waiting for new blocks with reduced polling (60s). Chain is caught up, waiting for other chains to backfill.",
+      `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval / 1000)
+          ->Int.toString}s). Chain is caught up, waiting for other chains to backfill.`,
     )
   } else {
     logger->Logging.childTrace("Initiating check for new blocks.")
