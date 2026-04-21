@@ -7,7 +7,7 @@ settings:
 overrides:
   react-dom: 19.2.3
 
-pnpmfileChecksum: sha256-Iod6l7kXteQ0Yqia4QrXdGzEGzDFTT1iAihvYaoLsRM=
+pnpmfileChecksum: sha256-68GiYU4nGd1kYnAW+nvoKGsEuNkxbotxkJJ/6uzWq80=
 
 importers:
 
@@ -285,7 +285,7 @@ importers:
         specifier: 3.3.1
         version: 3.3.1
       envio:
-        specifier: file:/home/user/hyperindex/packages/envio
+        specifier: file:../../../packages/envio
         version: file:packages/envio(react-dom@19.2.3(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
       js-sdsl:
         specifier: 4.4.2
