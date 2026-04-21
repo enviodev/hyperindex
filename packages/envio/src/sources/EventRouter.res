@@ -41,7 +41,14 @@ module Group = {
       ) {
       | Some(indexingContract) =>
         if indexingContract.effectiveStartBlock <= blockNumber {
-          byContractName->Utils.Dict.dangerouslyGetNonOption(indexingContract.contractName)
+          switch byContractName->Utils.Dict.dangerouslyGetNonOption(indexingContract.contractName) {
+          // Fall back to the wildcard handler when the indexed contract has no
+          // matching event for this tag. This covers addresses registered for
+          // contracts without events (persisted for future config changes) as
+          // well as addresses whose contract has other events but not this one.
+          | None => wildcard
+          | Some(_) as event => event
+          }
         } else {
           None
         }

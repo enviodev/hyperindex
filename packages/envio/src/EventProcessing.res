@@ -28,26 +28,19 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
 let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   switch fields {
   | None => %raw(`{}`)
-  | Some(fields) => {
-      let keys = fields->Dict.keysToArray
-      let new = Dict.make()
-      for i in 0 to keys->Array.length - 1 {
-        let key = keys->Array.getUnsafe(i)
-        let value = fields->Dict.getUnsafe(key)
-        // Skip `undefined` values and convert bigint fields to string
-        // There are not fields with nested bigints, so this is safe
-        new->Dict.set(
-          key,
-          typeof(value) === #bigint
-            ? value
-              ->(Utils.magic: unknown => bigint)
-              ->BigInt.toString
-              ->(Utils.magic: string => unknown)
-            : value,
-        )
-      }
-      new->(Utils.magic: dict<unknown> => JSON.t)
-    }
+  | Some(fields) =>
+    // Convert bigint fields to string. There are no fields with nested
+    // bigints, so iterating only the top level is safe.
+    fields
+    ->Utils.Dict.mapValues(value =>
+      typeof(value) === #bigint
+        ? value
+          ->(Utils.magic: unknown => bigint)
+          ->BigInt.toString
+          ->(Utils.magic: string => unknown)
+        : value
+    )
+    ->(Utils.magic: dict<unknown> => JSON.t)
   }
 }
 
