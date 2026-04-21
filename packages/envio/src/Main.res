@@ -574,11 +574,7 @@ let start = async (
   // chains finish (keepProcessAlive) and whether the console API is exposed.
   // Set by `envio dev` via the ENVIO_DEV_MODE env var; `envio start` leaves
   // it unset so the process exits cleanly when indexing completes.
-  // Read at call time rather than via a module-level `Env.res` binding —
-  // Bin.res's `applyEnv` writes the var *after* modules have loaded, so a
-  // top-level binding would always snapshot the pre-applyEnv value (false).
-  let isDevelopmentMode =
-    !isTest && NodeJs.Process.process.env->Dict.get("ENVIO_DEV_MODE") === Some("true")
+  let isDevelopmentMode = !isTest && Envio.isDevMode()
 
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
