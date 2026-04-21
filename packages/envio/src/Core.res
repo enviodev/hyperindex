@@ -4,12 +4,11 @@
 //   1. Production: require("envio-{os}-{arch}") — platform-specific npm package
 //   2. Dev build:  find repo → cargo build --lib → load from target/debug/
 
+// NAPI returns `null | T` (never `undefined`) for Rust `Option<T>`, so the
+// tighter `Null.t` captures the exact boundary shape.
 type addon = {
-  getConfigJson: (~configPath: Nullable.t<string>, ~directory: Nullable.t<string>) => string,
-  runCli: (
-    ~args: array<string>,
-    ~envioPackageDir: Nullable.t<string>,
-  ) => promise<Nullable.t<string>>,
+  getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
+  runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
   upsertPersistedState: (~json: string) => promise<unit>,
 }
 
@@ -134,14 +133,14 @@ let getAddon = () =>
 let getConfigJson = (~configPath=?, ~directory=?) => {
   let addon = getAddon()
   addon.getConfigJson(
-    ~configPath=configPath->Nullable.fromOption,
-    ~directory=directory->Nullable.fromOption,
+    ~configPath=configPath->Null.fromOption,
+    ~directory=directory->Null.fromOption,
   )
 }
 
 let runCli = args => {
   let addon = getAddon()
-  addon.runCli(~args, ~envioPackageDir=Nullable.Value(envioPackageDir))
+  addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
 }
 
 let upsertPersistedState = json => {

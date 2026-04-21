@@ -52,7 +52,7 @@ let applyEnv = (env: dict<JSON.t>) =>
 
 let run = async args => {
   try {
-    switch (await Core.runCli(args))->Nullable.toOption {
+    switch (await Core.runCli(args))->Null.toOption {
     // Rust-only command (codegen / init / stop / docker / help / version /
     // scripts) — nothing for JS to do, exit cleanly.
     | None => ()
@@ -62,9 +62,6 @@ let run = async args => {
         Config.prime(config)
         processChdir(cwd)
         applyEnv(env)
-        // Metrics may have been registered during a prior `init()` in the
-        // same process (tests). Reset before the indexer re-registers them.
-        PromClient.defaultRegister->PromClient.clear
         await Main.start(~migrate?)
       | Migrate({reset, persistedState, config}) =>
         Config.prime(config)

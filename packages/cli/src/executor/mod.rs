@@ -96,27 +96,28 @@ pub async fn execute(
         }
 
         CommandType::Start(start_args) => {
-            //Add warnings to start command
+            // Warn early if the generated directory looks stale — `envio start`
+            // keeps running even in these cases, but the indexer will use
+            // whatever generated code is on disk.
             match PersistedStateExists::get_persisted_state_file(&parsed_project_paths) {
                 PersistedStateExists::Exists(ps)
                     if ps.envio_version != persisted_state::current_version() =>
                 {
-                    println!(
-                        "WARNING: Envio version '{}' is currently being used. It does not match \
-                         the version '{}' that was used to create generated directory previously. \
-                         Please consider rerunning envio codegen, or running the same version of \
-                         envio. ",
+                    eprintln!(
+                        "Warning: the generated directory was built with envio {}, but you're \
+                         running envio {}. Run `envio codegen` to regenerate it (or switch to the \
+                         matching envio version).",
+                        &ps.envio_version,
                         persisted_state::current_version(),
-                        &ps.envio_version
                     )
                 }
-                PersistedStateExists::NotExists => println!(
-                    "WARNING: Generated directory not detected. Consider running envio codegen \
-                     first"
+                PersistedStateExists::NotExists => eprintln!(
+                    "Warning: no generated files found. Run `envio codegen` first to generate the \
+                     indexer runtime.",
                 ),
-                PersistedStateExists::Corrupted => println!(
-                    "WARNING: Generated directory is corrupted. Consider running envio codegen \
-                     first"
+                PersistedStateExists::Corrupted => eprintln!(
+                    "Warning: the generated directory is in an invalid state. Run `envio codegen` \
+                     to regenerate it.",
                 ),
                 PersistedStateExists::Exists(_) => (),
             };
