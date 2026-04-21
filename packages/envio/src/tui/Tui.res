@@ -229,7 +229,7 @@ module App = {
           }
         }
       </Box>
-      {if Env.Db.devMode {
+      {if NodeJs.Process.process.env->Dict.get("ENVIO_DEV_MODE") === Some("true") {
         <Box flexDirection={Row}>
           <Text> {"Dev Console: "->React.string} </Text>
           <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
