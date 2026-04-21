@@ -166,19 +166,19 @@ describe("parseEventFiltersOrThrow — Fuel block.height", () => {
   })
 })
 
-// Compile-time check that the generated `onEventWhereCondition` type on a
+// Compile-time check that the generated `onEventWhereFilter` type on a
 // real codegen'd event module carries the `block` sibling of `params`.
 // Running this test as a value also verifies that the optional fields'
 // shape is preserved end-to-end — the ReScript record unwrapped to JSON
 // matches exactly what `LogSelection.parseEventFiltersOrThrow` expects.
-describe("Generated onEventWhereCondition — block field exists on EVM events", () => {
+describe("Generated onEventWhereFilter — block field exists on EVM events", () => {
   it("compiles a `Filter` with combined params + block.number._gte", t => {
     let fromFilter: Indexer.EventFiltersTest.Transfer.whereParams = {
       from: Indexer.SingleOrMultiple.single(
         "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
       ),
     }
-    let condition: Indexer.EventFiltersTest.Transfer.onEventWhereCondition = {
+    let condition: Indexer.EventFiltersTest.Transfer.onEventWhereFilter = {
       params: Indexer.SingleOrMultiple.single(fromFilter),
       block: {number: {_gte: 1000}},
     }
@@ -188,7 +188,7 @@ describe("Generated onEventWhereCondition — block field exists on EVM events",
     let {startBlock} = parseEvm(
       ~eventFilters=Some(
         condition->(
-          Utils.magic: Indexer.EventFiltersTest.Transfer.onEventWhereCondition => JSON.t
+          Utils.magic: Indexer.EventFiltersTest.Transfer.onEventWhereFilter => JSON.t
         ),
       ),
     )
@@ -196,13 +196,13 @@ describe("Generated onEventWhereCondition — block field exists on EVM events",
   })
 
   it("compiles a `Filter` with only block (no params)", t => {
-    let condition: Indexer.EventFiltersTest.Transfer.onEventWhereCondition = {
+    let condition: Indexer.EventFiltersTest.Transfer.onEventWhereFilter = {
       block: {number: {_gte: 2500}},
     }
     // Round-trip through the runtime parser to prove the record encodes to
     // the shape the parser understands — catches any drift between
     // codegen'd types and runtime expectations.
-    let {startBlock} = parseEvm(~eventFilters=Some(condition->(Utils.magic: Indexer.EventFiltersTest.Transfer.onEventWhereCondition => JSON.t)))
+    let {startBlock} = parseEvm(~eventFilters=Some(condition->(Utils.magic: Indexer.EventFiltersTest.Transfer.onEventWhereFilter => JSON.t)))
     t.expect(startBlock).toEqual(Some(2500))
   })
 })

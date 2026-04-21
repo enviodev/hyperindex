@@ -350,13 +350,13 @@ impl EventMod {
         let where_type_code = match self.event_filter_type.as_str() {
             "{}" => "type onEventWhere = Internal.noOnEventWhere".to_string(),
             _ => format!(
-                "type onEventWhereBlockNumber = {{@as(\"_gte\") _gte?: int}}\n\
-type onEventWhereBlock = {{@as(\"number\") number?: onEventWhereBlockNumber}}\n\
-type onEventWhereCondition = {{params?: SingleOrMultiple.t<whereParams>, block?: onEventWhereBlock}}\n\
+                "type onEventWhereBlockNumber = {{_gte?: int}}\n\
+type onEventWhereBlock = {{number?: onEventWhereBlockNumber}}\n\
+type onEventWhereFilter = {{params?: SingleOrMultiple.t<whereParams>, block?: onEventWhereBlock}}\n\
 type onEventWhereChainContract = {{/** Addresses of the {contract_capitalized} contract on this chain. */ addresses: array<Address.t>}}\n\
 type onEventWhereChain = {{/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, \\\"{contract_capitalized}\": onEventWhereChainContract}}\n\
 type onEventWhereArgs = {{chain: onEventWhereChain}}\n\
-@unboxed type onEventWhereResult = Filter(onEventWhereCondition) | @as(false) SkipAll | @as(true) KeepAll\n\
+@unboxed type onEventWhereResult = Filter(onEventWhereFilter) | @as(false) SkipAll | @as(true) KeepAll\n\
 type onEventWhere = onEventWhereArgs => onEventWhereResult",
                 contract_capitalized = self.contract_name.capitalized,
             ),
