@@ -290,14 +290,14 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
 })
 
 // End-to-end through FetchState: the per-event `startBlock` (derived from
-// `where.block.number._gte`) propagates to the partition's per-address
-// `effectiveStartBlock`, which is what the fetcher reads to gate
-// `getItemsOrThrow` calls for non-wildcard events. Mirrors the existing
-// dynamic-contract startBlock tests but exercises the static-address path
-// a `where`-filtered `onEvent` call takes.
-describe("FetchState — eventConfig.startBlock from where.block gates address start", () => {
-  let mockAddress =
-    Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+// `where.block.number._gte`) must drive the first query's `fromBlock` so
+// the fetcher doesn't over-fetch (asking for blocks before the filter)
+// or under-fetch (skipping past it). Observe the query the scheduler
+// would hand to the source, not the internal FetchState fields, so the
+// test survives any internal refactor as long as the fetcher contract
+// holds.
+describe("FetchState — where.block._gte drives the first query's fromBlock", () => {
+  let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
 
   let buildEvmTransfer = (~startBlock: option<int>) =>
     EventConfigBuilder.buildEvmEventConfig(
@@ -318,10 +318,9 @@ describe("FetchState — eventConfig.startBlock from where.block gates address s
       ~startBlock?,
     )
 
-  it("partition addressable entry's effectiveStartBlock reflects where.block._gte", t => {
-    let ec = buildEvmTransfer(~startBlock=None)
-    let fetchState = FetchState.make(
-      ~eventConfigs=[(ec :> Internal.eventConfig)],
+  let makeFetchState = (~contractStartBlock: option<int>) =>
+    FetchState.make(
+      ~eventConfigs=[(buildEvmTransfer(~startBlock=contractStartBlock) :> Internal.eventConfig)],
       ~addresses=[
         {
           Internal.address: mockAddress,
@@ -336,41 +335,34 @@ describe("FetchState — eventConfig.startBlock from where.block gates address s
       ~chainId=1,
       ~knownHeight=10000,
     )
-    let indexingAddress =
-      fetchState.indexingAddresses
-      ->Dict.get(mockAddress->Address.toString)
-      ->Option.getOrThrow
-    // `-1` registrationBlock + `contractStartBlock=Some(5000)` collapses
-    // to `effectiveStartBlock=5000`. The fetcher uses this as the floor
-    // for this address's event queries.
-    t.expect(indexingAddress.effectiveStartBlock).toEqual(5000)
+
+  // Pull the first query the scheduler would dispatch. `updateKnownHeight`
+  // is needed so `getNextQuery` sees a non-zero head; `concurrencyLimit` is
+  // generous to avoid `ReachedMaxConcurrency` masking the real result.
+  let firstQuery = (fetchState: FetchState.t) =>
+    switch fetchState
+    ->FetchState.updateKnownHeight(~knownHeight=10000)
+    ->FetchState.getNextQuery(~concurrencyLimit=10) {
+    | Ready([q]) => q
+    | Ready(qs) =>
+      JsError.throwWithMessage(
+        `Expected a single query, got ${qs->Array.length->Int.toString}`,
+      )
+    | ReachedMaxConcurrency => JsError.throwWithMessage("Unexpected ReachedMaxConcurrency")
+    | WaitingForNewBlock => JsError.throwWithMessage("Unexpected WaitingForNewBlock")
+    | NothingToQuery => JsError.throwWithMessage("Unexpected NothingToQuery")
+    }
+
+  it("first query fromBlock equals where.block._gte (no over- or under-fetching)", t => {
+    let q = firstQuery(makeFetchState(~contractStartBlock=None))
+    t.expect((q.fromBlock, q.toBlock)).toEqual((5000, None))
   })
 
-  it("where.block._gte overrides a smaller contract-level startBlock on the partition", t => {
+  it("where.block._gte overrides a smaller contract-level startBlock", t => {
     // Contract-level startBlock (from `config.yaml`) is 100; the where
-    // filter bumps it to 5000 — the partition sees the override, not the
-    // config value.
-    let ec = buildEvmTransfer(~startBlock=Some(100))
-    let fetchState = FetchState.make(
-      ~eventConfigs=[(ec :> Internal.eventConfig)],
-      ~addresses=[
-        {
-          Internal.address: mockAddress,
-          contractName: "ERC20",
-          registrationBlock: -1,
-        },
-      ],
-      ~startBlock=0,
-      ~endBlock=None,
-      ~maxAddrInPartition=3,
-      ~targetBufferSize=5000,
-      ~chainId=1,
-      ~knownHeight=10000,
-    )
-    let indexingAddress =
-      fetchState.indexingAddresses
-      ->Dict.get(mockAddress->Address.toString)
-      ->Option.getOrThrow
-    t.expect(indexingAddress.effectiveStartBlock).toEqual(5000)
+    // filter bumps it to 5000 — the first query must start at 5000, not
+    // 100, so we don't waste a fetch on blocks 100–4999.
+    let q = firstQuery(makeFetchState(~contractStartBlock=Some(100)))
+    t.expect(q.fromBlock).toEqual(5000)
   })
 })

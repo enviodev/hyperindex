@@ -596,10 +596,8 @@ export type EvmOnEventWhere<Params, ContractName extends string> =
 export type FuelOnEventWhereChain<ContractName extends string> = EvmOnEventWhereChain<ContractName>;
 /** Arguments passed to the Fuel dynamic `where` callback form. */
 export type FuelOnEventWhereArgs<ContractName extends string> = EvmOnEventWhereArgs<ContractName>;
-/** A single Fuel `where` filter condition. Mirrors the EVM shape but keys the
- * block range on `block.height` instead of `block.number`. `height._gte`
- * promotes to the event's startBlock (overriding contract-level
- * `start_block`). Only `_gte` is supported on event filters. */
+/** A single Fuel `where` filter condition. Keyed on `block.height` instead
+ * of `block.number`. */
 export type FuelOnEventWhereFilter<Params> = {
   readonly params?: Params | readonly Params[];
   readonly block?: {
