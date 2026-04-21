@@ -183,23 +183,22 @@ let fetchNext = async (
         ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
       )
       sourceManager->trackNewStatus(~newStatus=Querieng)
-      let _ =
-        await queries
-        ->Array.map(q => {
-          let promise = q->executeQuery
-          let _ = promise->Promise.thenResolve(_ => {
-            sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-            Prometheus.IndexingConcurrency.set(
-              ~concurrency=sourceManager.fetchingPartitionsCount,
-              ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-            )
-            if sourceManager.fetchingPartitionsCount === 0 {
-              sourceManager->trackNewStatus(~newStatus=Idle)
-            }
-          })
-          promise
+      let _ = await queries
+      ->Array.map(q => {
+        let promise = q->executeQuery
+        let _ = promise->Promise.thenResolve(_ => {
+          sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
+          Prometheus.IndexingConcurrency.set(
+            ~concurrency=sourceManager.fetchingPartitionsCount,
+            ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+          )
+          if sourceManager.fetchingPartitionsCount === 0 {
+            sourceManager->trackNewStatus(~newStatus=Idle)
+          }
         })
-        ->Promise.all
+        promise
+      })
+      ->Promise.all
     }
   }
 }
@@ -235,7 +234,7 @@ let getSourceNewHeight = async (
   ~isLive,
   ~status: ref<status>,
   ~logger,
-  ~reducedPolling=false,
+  ~reducedPolling,
 ) => {
   let source = sourceState.source
   let initialHeight = sourceState.knownHeight
@@ -403,7 +402,7 @@ let getNextSource = (sourceManager, ~isLive, ~excludedSources=?) => {
 }
 
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
-let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPolling=false) => {
+let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPolling) => {
   let {sourcesState} = sourceManager
 
   let logger = Logging.createChild(
@@ -427,7 +426,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPo
   // Use a much longer stall timeout when reduced polling is active
   // to avoid spurious stall warnings while waiting for other chains to backfill
   let stallTimeout = if reducedPolling {
-    sourceManager.reducedPollingInterval * 10
+    sourceManager.reducedPollingInterval * 2
   } else if isLive {
     sourceManager.newBlockStallTimeoutLive
   } else {
