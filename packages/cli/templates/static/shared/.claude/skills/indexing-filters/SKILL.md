@@ -110,7 +110,7 @@ indexer.onEvent(
 
 Use `where.block` as a sibling of `params` to restrict an event to blocks at or after a given number. Overrides the contract's `start_block` from `config.yaml` — useful for narrowing a single event without touching the whole contract.
 
-Branch by `chain.id` with a `switch` so the type system flags any unconfigured chain via the `default: never` exhaustiveness check:
+Use a `switch` on `chain.id` to pick the `startBlock` only, so the shared `params` filter isn't duplicated per chain. The `default: never` branch makes TypeScript flag any chain added to `config.yaml` but not handled here:
 
 ```ts
 indexer.onEvent(
@@ -119,17 +119,14 @@ indexer.onEvent(
     event: "Transfer",
     wildcard: true,
     where: ({ chain }) => {
+      let startBlock: number;
       switch (chain.id) {
         case 1:
-          return {
-            block: { number: { _gte: 18000000 } },
-            params: [{ from: chain.ERC20.addresses }, { to: chain.ERC20.addresses }],
-          };
+          startBlock = 18000000;
+          break;
         case 8453:
-          return {
-            block: { number: { _gte: 2000000 } },
-            params: [{ from: chain.ERC20.addresses }, { to: chain.ERC20.addresses }],
-          };
+          startBlock = 2000000;
+          break;
         default: {
           // Exhaustiveness check: TypeScript errors here if a new chain ID
           // is added to config.yaml but not handled above.
@@ -137,6 +134,10 @@ indexer.onEvent(
           return false;
         }
       }
+      return {
+        block: { number: { _gte: startBlock } },
+        params: [{ from: chain.ERC20.addresses }, { to: chain.ERC20.addresses }],
+      };
     },
   },
   async ({ event, context }) => {
