@@ -165,3 +165,212 @@ describe("parseEventFiltersOrThrow — Fuel block.height", () => {
     t.expect(startBlock).toEqual(None)
   })
 })
+
+// Compile-time check that the generated `onEventWhereCondition` type on a
+// real codegen'd event module carries the `block` sibling of `params`.
+// Running this test as a value also verifies that the optional fields'
+// shape is preserved end-to-end — the ReScript record unwrapped to JSON
+// matches exactly what `LogSelection.parseEventFiltersOrThrow` expects.
+describe("Generated onEventWhereCondition — block field exists on EVM events", () => {
+  it("compiles a `Filter` with combined params + block.number._gte", t => {
+    let fromFilter: Indexer.EventFiltersTest.Transfer.whereParams = {
+      from: Indexer.SingleOrMultiple.single(
+        "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+      ),
+    }
+    let condition: Indexer.EventFiltersTest.Transfer.onEventWhereCondition = {
+      params: Indexer.SingleOrMultiple.single(fromFilter),
+      block: {number: {_gte: 1000}},
+    }
+    // Round-trip the generated record through the runtime parser to prove
+    // the codegen'd shape decodes into the expected startBlock — the only
+    // guarantee that really matters downstream.
+    let {startBlock} = parseEvm(
+      ~eventFilters=Some(
+        condition->(
+          Utils.magic: Indexer.EventFiltersTest.Transfer.onEventWhereCondition => JSON.t
+        ),
+      ),
+    )
+    t.expect(startBlock).toEqual(Some(1000))
+  })
+
+  it("compiles a `Filter` with only block (no params)", t => {
+    let condition: Indexer.EventFiltersTest.Transfer.onEventWhereCondition = {
+      block: {number: {_gte: 2500}},
+    }
+    // Round-trip through the runtime parser to prove the record encodes to
+    // the shape the parser understands — catches any drift between
+    // codegen'd types and runtime expectations.
+    let {startBlock} = parseEvm(~eventFilters=Some(condition->(Utils.magic: Indexer.EventFiltersTest.Transfer.onEventWhereCondition => JSON.t)))
+    t.expect(startBlock).toEqual(Some(2500))
+  })
+})
+
+// Integration: the full `buildEvmEventConfig` path sees the `block` filter
+// and writes it to `eventConfig.startBlock`, overriding the contract-level
+// value. This is the seam that `FetchState` reads when partitioning —
+// unit-testing it here avoids a full-indexer bring-up while still proving
+// the override semantics.
+describe("EventConfigBuilder — where.block.number._gte overrides contract startBlock", () => {
+  let transferParams: array<EventConfigBuilder.eventParam> = [
+    {name: "from", abiType: "address", indexed: true},
+    {name: "to", abiType: "address", indexed: true},
+    {name: "value", abiType: "uint256", indexed: false},
+  ]
+
+  let build = (~eventFilters: option<JSON.t>, ~startBlock: option<int>=?) =>
+    EventConfigBuilder.buildEvmEventConfig(
+      ~contractName="ERC20",
+      ~eventName="Transfer",
+      ~sighash=transferSighash,
+      ~params=transferParams,
+      ~isWildcard=true,
+      ~handler=None,
+      ~contractRegister=None,
+      ~eventFilters,
+      ~probeChainId=1,
+      ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+      ~startBlock?,
+    )
+
+  it("promotes `where.block.number._gte` to eventConfig.startBlock", t => {
+    let ec = build(~eventFilters=Some(%raw(`{block: {number: {_gte: 1000}}}`)))
+    t.expect(ec.startBlock).toEqual(Some(1000))
+  })
+
+  it("overrides the contract-level startBlock when where.block is present", t => {
+    let ec = build(~eventFilters=Some(%raw(`{block: {number: {_gte: 1500}}}`)), ~startBlock=100)
+    t.expect(ec.startBlock).toEqual(Some(1500))
+  })
+
+  it("falls back to the contract-level startBlock when where.block is absent", t => {
+    let ec = build(
+      ~eventFilters=Some(%raw(`{params: {from: "0x0000000000000000000000000000000000000000"}}`)),
+      ~startBlock=100,
+    )
+    t.expect(ec.startBlock).toEqual(Some(100))
+  })
+
+  it("leaves startBlock as None when neither is provided", t => {
+    let ec = build(~eventFilters=None)
+    t.expect(ec.startBlock).toEqual(None)
+  })
+
+  it("dynamic where callback — per-chain startBlock wins over contract value", t => {
+    let whereFn = %raw(`({chain}) => ({block: {number: {_gte: chain.id === 137 ? 5000 : 250}}})`)
+    let chain137 = EventConfigBuilder.buildEvmEventConfig(
+      ~contractName="ERC20",
+      ~eventName="Transfer",
+      ~sighash=transferSighash,
+      ~params=transferParams,
+      ~isWildcard=true,
+      ~handler=None,
+      ~contractRegister=None,
+      ~eventFilters=Some(whereFn),
+      ~probeChainId=137,
+      ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+      ~startBlock=1,
+    )
+    let chain1 = EventConfigBuilder.buildEvmEventConfig(
+      ~contractName="ERC20",
+      ~eventName="Transfer",
+      ~sighash=transferSighash,
+      ~params=transferParams,
+      ~isWildcard=true,
+      ~handler=None,
+      ~contractRegister=None,
+      ~eventFilters=Some(whereFn),
+      ~probeChainId=1,
+      ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+      ~startBlock=1,
+    )
+    t.expect((chain137.startBlock, chain1.startBlock)).toEqual((Some(5000), Some(250)))
+  })
+})
+
+// End-to-end through FetchState: the per-event `startBlock` (derived from
+// `where.block.number._gte`) propagates to the partition's per-address
+// `effectiveStartBlock`, which is what the fetcher reads to gate
+// `getItemsOrThrow` calls for non-wildcard events. Mirrors the existing
+// dynamic-contract startBlock tests but exercises the static-address path
+// a `where`-filtered `onEvent` call takes.
+describe("FetchState — eventConfig.startBlock from where.block gates address start", () => {
+  let mockAddress =
+    Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+
+  let buildEvmTransfer = (~startBlock: option<int>) =>
+    EventConfigBuilder.buildEvmEventConfig(
+      ~contractName="ERC20",
+      ~eventName="Transfer",
+      ~sighash=transferSighash,
+      ~params=[
+        {name: "from", abiType: "address", indexed: true},
+        {name: "to", abiType: "address", indexed: true},
+        {name: "value", abiType: "uint256", indexed: false},
+      ],
+      ~isWildcard=false,
+      ~handler=None,
+      ~contractRegister=None,
+      ~eventFilters=Some(%raw(`{block: {number: {_gte: 5000}}}`)),
+      ~probeChainId=1,
+      ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+      ~startBlock?,
+    )
+
+  it("partition addressable entry's effectiveStartBlock reflects where.block._gte", t => {
+    let ec = buildEvmTransfer(~startBlock=None)
+    let fetchState = FetchState.make(
+      ~eventConfigs=[(ec :> Internal.eventConfig)],
+      ~addresses=[
+        {
+          Internal.address: mockAddress,
+          contractName: "ERC20",
+          registrationBlock: -1,
+        },
+      ],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=3,
+      ~targetBufferSize=5000,
+      ~chainId=1,
+      ~knownHeight=10000,
+    )
+    let indexingAddress =
+      fetchState.indexingAddresses
+      ->Dict.get(mockAddress->Address.toString)
+      ->Option.getOrThrow
+    // `-1` registrationBlock + `contractStartBlock=Some(5000)` collapses
+    // to `effectiveStartBlock=5000`. The fetcher uses this as the floor
+    // for this address's event queries.
+    t.expect(indexingAddress.effectiveStartBlock).toEqual(5000)
+  })
+
+  it("where.block._gte overrides a smaller contract-level startBlock on the partition", t => {
+    // Contract-level startBlock (from `config.yaml`) is 100; the where
+    // filter bumps it to 5000 — the partition sees the override, not the
+    // config value.
+    let ec = buildEvmTransfer(~startBlock=Some(100))
+    let fetchState = FetchState.make(
+      ~eventConfigs=[(ec :> Internal.eventConfig)],
+      ~addresses=[
+        {
+          Internal.address: mockAddress,
+          contractName: "ERC20",
+          registrationBlock: -1,
+        },
+      ],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=3,
+      ~targetBufferSize=5000,
+      ~chainId=1,
+      ~knownHeight=10000,
+    )
+    let indexingAddress =
+      fetchState.indexingAddresses
+      ->Dict.get(mockAddress->Address.toString)
+      ->Option.getOrThrow
+    t.expect(indexingAddress.effectiveStartBlock).toEqual(5000)
+  })
+})

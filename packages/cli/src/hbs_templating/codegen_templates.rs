@@ -336,6 +336,11 @@ impl EventMod {
         // filter shapes are expressed inside `params` itself via
         // `SingleOrMultiple` — there's no top-level `Multiple` constructor.
         //
+        // The `block` sibling carries the per-event startBlock override
+        // (`block.number._gte` → overrides contract `start_block`). Only
+        // `_gte` is valid; `_lte` / `_every` are rejected at registration
+        // time and aren't part of the generated type.
+        //
         // - Events with no indexed params (Fuel, or EVM events without indexed
         //   fields) get the `Internal.noOnEventWhere` stub so the option field
         //   exists but cannot be populated.
@@ -345,7 +350,9 @@ impl EventMod {
         let where_type_code = match self.event_filter_type.as_str() {
             "{}" => "type onEventWhere = Internal.noOnEventWhere".to_string(),
             _ => format!(
-                "type onEventWhereCondition = {{params?: SingleOrMultiple.t<whereParams>}}\n\
+                "type onEventWhereBlockNumber = {{@as(\"_gte\") _gte?: int}}\n\
+type onEventWhereBlock = {{@as(\"number\") number?: onEventWhereBlockNumber}}\n\
+type onEventWhereCondition = {{params?: SingleOrMultiple.t<whereParams>, block?: onEventWhereBlock}}\n\
 type onEventWhereChainContract = {{/** Addresses of the {contract_capitalized} contract on this chain. */ addresses: array<Address.t>}}\n\
 type onEventWhereChain = {{/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, \\\"{contract_capitalized}\": onEventWhereChainContract}}\n\
 type onEventWhereArgs = {{chain: onEventWhereChain}}\n\
