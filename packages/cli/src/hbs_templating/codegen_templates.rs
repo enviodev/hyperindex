@@ -1619,11 +1619,6 @@ type handlerContext = {{
         // Combine all parts into indexer_code — includes everything from the template
         let indexer_code = format!(
             r#"//*************
-//***ENTITIES**
-//*************
-type id = string
-
-//*************
 //**CONTRACTS**
 //*************
 

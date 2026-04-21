@@ -782,12 +782,6 @@ module BigInt = {
   let nativeSchema = S.bigint
 }
 
-// Top-level alias reachable from the hand-written TS declarations. The
-// `BigInt` module name gets escaped to `$$BigInt` in the compiled .res.mjs
-// because it shadows the JS builtin, so re-exporting under an unescaped
-// identifier keeps the `index.js` / `index.d.ts` imports simple.
-let bigIntSchema = BigInt.schema
-
 module Promise = {
   // Async-callback variant of `Promise.make`. The stdlib only ships the
   // sync variant, but we rely on the async one in a couple of places.

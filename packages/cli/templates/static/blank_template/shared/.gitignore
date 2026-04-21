@@ -29,7 +29,6 @@ benchmarks/
 artifacts
 generated
 logs
-*.res.js
 *.res.mjs
 build
 .env

@@ -1,40 +1,57 @@
 import * as Sury from "rescript-schema";
 import type { default as BigDecimalT } from "bignumber.js";
-import type {
-  Address,
-  Effect,
-  EffectCaller,
-  EffectContext,
-  Logger,
-} from "./src/Types.ts";
-export type {
-  Address,
-  Effect,
-  EffectCaller,
-  EffectContext,
-  Logger,
-} from "./src/Types.ts";
 
 declare const bigDecimalSchema: Sury.Schema<BigDecimalT>;
 declare const bigintSchema: Sury.Schema<bigint>;
 
-/** A block handed to an EVM block handler. Extra fields are opt-in via
- * `field_selection` in config.yaml. */
-export type BlockEvent = { readonly number: number };
+/** Ethereum address — a 20-byte hex string prefixed with `0x`. */
+export type Address = `0x${string}`;
 
-/** A block handed to a Fuel block handler. */
-export type FuelBlockEvent = { readonly height: number };
-
-/** Arguments passed to an SVM slot handler. */
-export type SvmOnBlockArgs<Context> = {
-  readonly slot: number;
-  readonly context: Context;
+/** Structured logger bound to an event or handler context. Messages are
+ * displayed in the console and the Envio Hosted Service. */
+export type Logger = {
+  readonly debug: (
+    message: string,
+    params?: Record<string, unknown> | Error
+  ) => void;
+  readonly info: (
+    message: string,
+    params?: Record<string, unknown> | Error
+  ) => void;
+  readonly warn: (
+    message: string,
+    params?: Record<string, unknown> | Error
+  ) => void;
+  readonly error: (
+    message: string,
+    params?: Record<string, unknown> | Error
+  ) => void;
 };
 
-/** Arguments passed to an EVM / Fuel block handler. */
-export type OnBlockArgs<Block, Context> = {
-  readonly block: Block;
-  readonly context: Context;
+/** Handle for an external-call effect created via {@link createEffect}.
+ * Effects provide automatic deduplication, error handling, and caching. */
+export declare abstract class Effect<I, O> {
+  protected opaque: I | O;
+}
+
+/** Calls an {@link Effect} with the given input and returns its output. */
+export type EffectCaller = <I, O>(
+  effect: Effect<I, O>,
+  // This is a hack to make the call complain on undefined
+  // when it's not needed, instead of extending the input type.
+  // Might be not needed if I misunderstand something in TS.
+  input: I extends undefined ? undefined : I
+) => Promise<O>;
+
+/** Context passed to an Effect's handler function. */
+export type EffectContext = {
+  /** Access the logger instance with the event as context. */
+  readonly log: Logger;
+  /** Call another Effect from inside this one. */
+  readonly effect: EffectCaller;
+  /** Whether to cache this call's result. Defaults to the effect's `cache`
+   * option; set to `false` to skip caching for this specific invocation. */
+  cache: boolean;
 };
 
 /** Rate-limit window for an {@link Effect}. Strings resolve to common
@@ -66,13 +83,6 @@ export type EffectOptions<Input, Output> = {
 export type EffectArgs<Input> = {
   readonly input: Input;
   readonly context: EffectContext;
-};
-
-/** Options for `indexer.onBlock` — see ecosystem-specific `EvmOnBlockOptions`,
- * `FuelOnBlockOptions`, `SvmOnSlotOptions` for the typed surface. */
-export type OnBlockOptions<Chain> = {
-  readonly name: string;
-  readonly where?: (args: { readonly chain: Chain }) => unknown;
 };
 
 export const TestHelpers: {
