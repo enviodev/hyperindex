@@ -211,6 +211,51 @@ describe("FetchState.make", () => {
     )
   })
 
+  it(
+    "Keeps addresses without a matching contract on fetchState so they can be picked up after config changes",
+    t => {
+      let fetchState = FetchState.make(
+        ~eventConfigs=[baseEventConfig],
+        ~addresses=[
+          makeConfigContract("Gravatar", mockAddress0),
+          // Address for a contract that currently has no events configured.
+          // Should still be tracked on fetchState and counted via numAddresses.
+          makeDynContractRegistration(
+            ~blockNumber=42,
+            ~contractAddress=mockAddress1,
+            ~contractName="NftFactory",
+          ),
+        ],
+        ~startBlock=0,
+        ~endBlock=None,
+        ~maxAddrInPartition=3,
+        ~targetBufferSize,
+        ~chainId,
+        ~knownHeight,
+      )
+
+      t.expect(
+        (
+          fetchState->FetchState.numAddresses,
+          fetchState.indexingAddresses
+          ->Dict.get(mockAddress1->Address.toString)
+          ->Option.map(ia => ia.contractName),
+          // No partition is created for the contract without events
+          fetchState.optimizedPartitions.entities
+          ->Dict.valuesToArray
+          ->Array.every(p =>
+            p.addressesByContractName
+            ->Utils.Dict.dangerouslyGetNonOption("NftFactory")
+            ->Option.isNone
+          ),
+        ),
+        ~message=`numAddresses counts both addresses,
+          the no-events address is tracked under its contract name,
+          and no partition is created for the contract without events`,
+      ).toEqual((2, Some("NftFactory"), true))
+    },
+  )
+
   it("Creates FetchState with static and dc addresses reaching the maxAddrInPartition limit", t => {
     let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
     let fetchState = FetchState.make(
@@ -805,6 +850,192 @@ describe("FetchState.registerDynamicContracts", () => {
       ~message="Should return fetchState without updating it",
     ).toBe(fetchState)
   })
+
+  it(
+    "Keeps dc for a contract with no events on the item (persisted to db) and tracks it on indexingAddresses without affecting partitions",
+    t => {
+      let fetchState = makeInitial()
+
+      let dc = makeDynContractRegistration(
+        ~blockNumber=10,
+        ~contractAddress=mockAddress1,
+        ~contractName="UnknownContract",
+      )
+      let item = dc->dcToItem
+
+      let updatedFetchState = fetchState->FetchState.registerDynamicContracts([item])
+
+      t.expect(
+        (
+          // dc not spliced out of the item - will be saved to db by setBatchDcs
+          item->Internal.getItemDcs,
+          // tracked on indexingAddresses so later conflicting registrations
+          // are detected, and so numAddresses reflects it
+          updatedFetchState.indexingAddresses
+          ->Dict.get(mockAddress1->Address.toString)
+          ->Option.map(ia => ia.contractName),
+          // partitions unchanged - no fetching for contracts without events
+          updatedFetchState.optimizedPartitions === fetchState.optimizedPartitions,
+          updatedFetchState.optimizedPartitions.entities,
+        ),
+        ~message=`dc stays on the item (persisted to db),
+          is added to indexingAddresses under its contract name,
+          and partitions are left untouched`,
+      ).toEqual((
+        Some([dc]),
+        Some("UnknownContract"),
+        true,
+        fetchState.optimizedPartitions.entities,
+      ))
+    },
+  )
+
+  it(
+    "Deduplicates a second registration for the same no-events address and warns on contract-name conflict",
+    t => {
+      let fetchState = makeInitial()
+
+      // Register mockAddress1 for a contract without events - should persist
+      // and land in indexingAddresses.
+      let dc1 = makeDynContractRegistration(
+        ~blockNumber=10,
+        ~contractAddress=mockAddress1,
+        ~contractName="UnknownContract",
+      )
+      let item1 = dc1->dcToItem
+      let afterFirst = fetchState->FetchState.registerDynamicContracts([item1])
+
+      // Register the SAME address for a DIFFERENT contract name that also has
+      // no events. This should be spliced out of the item (already tracked)
+      // and warn about the contract-name conflict.
+      let dc2 = makeDynContractRegistration(
+        ~blockNumber=11,
+        ~contractAddress=mockAddress1,
+        ~contractName="AnotherUnknownContract",
+      )
+      let item2 = dc2->dcToItem
+      let afterSecond = afterFirst->FetchState.registerDynamicContracts([item2])
+
+      // Register the same address a third time for the same "UnknownContract"
+      // - should dedup silently (no duplicate db write).
+      let dc3 = makeDynContractRegistration(
+        ~blockNumber=12,
+        ~contractAddress=mockAddress1,
+        ~contractName="UnknownContract",
+      )
+      let item3 = dc3->dcToItem
+      let afterThird = afterSecond->FetchState.registerDynamicContracts([item3])
+
+      t.expect(
+        (
+          item1->Internal.getItemDcs,
+          // Second dc spliced out - already tracked.
+          item2->Internal.getItemDcs,
+          // Third dc also spliced out - same contract name, already tracked.
+          item3->Internal.getItemDcs,
+          // First registration is the tracked one (first wins).
+          afterThird.indexingAddresses
+          ->Dict.get(mockAddress1->Address.toString)
+          ->Option.map(ia => ia.contractName),
+          // No new partition created across any of the registrations.
+          afterThird.optimizedPartitions.entities === fetchState.optimizedPartitions.entities,
+        ),
+        ~message=`first dc kept, subsequent same-address dcs spliced out,
+          fetchState still tracks the first contract name,
+          and partitions are never affected`,
+      ).toEqual((Some([dc1]), Some([]), Some([]), Some("UnknownContract"), true))
+    },
+  )
+
+  it(
+    "Registers a no-events address on indexingAddresses in the same batch as a has-events dc without affecting its partition",
+    t => {
+      let fetchState = makeInitial()
+
+      let noEventsDc = makeDynContractRegistration(
+        ~blockNumber=5,
+        ~contractAddress=mockAddress2,
+        ~contractName="UnknownContract",
+      )
+      let regularDc = makeDynContractRegistration(
+        ~blockNumber=5,
+        ~contractAddress=mockAddress1,
+        ~contractName="Gravatar",
+      )
+
+      let updatedFetchState =
+        fetchState->FetchState.registerDynamicContracts([
+          noEventsDc->dcToItem,
+          regularDc->dcToItem,
+        ])
+
+      t.expect(
+        (
+          updatedFetchState.indexingAddresses
+          ->Dict.get(mockAddress2->Address.toString)
+          ->Option.map(ia => ia.contractName),
+          updatedFetchState.indexingAddresses
+          ->Dict.get(mockAddress1->Address.toString)
+          ->Option.map(ia => ia.contractName),
+          // Only the Gravatar address lands in a partition.
+          updatedFetchState.optimizedPartitions.entities
+          ->Dict.valuesToArray
+          ->Array.some(p =>
+            p.addressesByContractName
+            ->Utils.Dict.dangerouslyGetNonOption("Gravatar")
+            ->Option.map(addrs => addrs->Array.includes(mockAddress1))
+            ->Option.getOr(false)
+          ),
+          updatedFetchState.optimizedPartitions.entities
+          ->Dict.valuesToArray
+          ->Array.every(p =>
+            p.addressesByContractName
+            ->Utils.Dict.dangerouslyGetNonOption("UnknownContract")
+            ->Option.isNone
+          ),
+        ),
+        ~message=`no-events dc tracked on indexingAddresses,
+          has-events dc creates a partition as usual,
+          and the no-events contract never enters any partition`,
+      ).toEqual((Some("UnknownContract"), Some("Gravatar"), true, true))
+    },
+  )
+
+  it(
+    "Warns and skips a no-events dc when the address is already registered under a different contract name",
+    t => {
+      // makeInitial puts mockAddress0 in indexingAddresses under contractName
+      // "Gravatar" (which has events). Now try to register the same address
+      // for a contract without events and a different name - should trigger
+      // warnDifferentContractType via the None-branch conflict path.
+      let fetchState = makeInitial()
+
+      let conflictingDc = makeDynContractRegistration(
+        ~blockNumber=10,
+        ~contractAddress=mockAddress0,
+        ~contractName="UnknownContract",
+      )
+      let item = conflictingDc->dcToItem
+
+      let updatedFetchState = fetchState->FetchState.registerDynamicContracts([item])
+
+      t.expect(
+        (
+          // dc spliced out - won't overwrite the existing Gravatar entry in db
+          item->Internal.getItemDcs,
+          // indexingAddresses still has the original contract name
+          updatedFetchState.indexingAddresses
+          ->Dict.get(mockAddress0->Address.toString)
+          ->Option.map(ia => ia.contractName),
+          // fetchState unchanged - nothing new registered
+          updatedFetchState === fetchState,
+        ),
+        ~message=`conflicting no-events dc is spliced out,
+          original Gravatar registration preserved,
+          and fetchState is unchanged`,
+      ).toEqual((Some([]), Some("Gravatar"), true))
+    },
+  )
 
   it("Correctly registers all valid contracts even when some are skipped in the middle", t => {
     let fetchState = makeInitial()

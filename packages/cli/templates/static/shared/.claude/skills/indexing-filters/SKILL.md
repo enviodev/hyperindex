@@ -146,7 +146,7 @@ indexer.onEvent(
 );
 ```
 
-On Fuel, key the block range on `block.height` instead of `block.number`. SVM has no event handlers. Only `_gte` is accepted on event filters — for `_lte` or `_every` (stride), use `indexer.onBlock`. The `block` filter is only valid at the top level of `where`, not nested inside `params` array entries.
+On Fuel, key the block range on `block.height` instead of `block.number`. SVM has no event handlers. Only `_gte` is accepted on event filters. The `block` filter is only valid at the top level of `where`, not nested inside `params` array entries.
 
 ## Filter Semantics
 
