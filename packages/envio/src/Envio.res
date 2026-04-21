@@ -2,12 +2,28 @@
 // Should be an entry point after we get rid of the generated project.
 // Don't forget to keep index.d.ts in sync with this file.
 
+// Ecosystem-scoped argument records for `indexer.onBlock` / `indexer.onSlot`
+// handlers. Mirror the TypeScript shapes in `packages/envio/index.d.ts`
+// (`EvmOnBlockHandlerArgs`, `FuelOnBlockHandlerArgs`, `SvmOnSlotHandlerArgs`).
+type evmOnBlockArgs<'context> = {
+  block: {number: int},
+  context: 'context,
+}
+
+type fuelOnBlockArgs<'context> = {
+  block: {height: int},
+  context: 'context,
+}
+
+type svmOnSlotArgs<'context> = {
+  slot: int,
+  context: 'context,
+}
+
 // Internal-only type for the `indexer.onBlock` (and SVM `onSlot`) `where`
 // callback argument. The canonical TypeScript shape lives in
 // `packages/envio/index.d.ts`; the ReScript declaration here is free to
-// diverge. Block handler argument records are emitted inline per ecosystem
-// by the CLI codegen (see `codegen_templates.rs`), so no aliases for them
-// are exposed here.
+// diverge.
 type onBlockWhereArgs<'chain> = {chain: 'chain}
 
 // `where` returns a value interpreted at runtime by `Main.res::onBlockHandlerFn`:
