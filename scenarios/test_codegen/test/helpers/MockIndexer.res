@@ -1,6 +1,6 @@
 type chainId = Indexer.chainId
 
-let config = Indexer.Generated.configWithoutRegistrations
+let config = Config.load()
 
 let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   config.userEntitiesByName
@@ -201,7 +201,7 @@ module Storage = {
   let toPersistence = (storageMock: t) => {
     {
       ...PgStorage.makePersistenceFromConfig(
-        ~config=Indexer.Generated.configWithoutRegistrations,
+        ~config=Config.load(),
         ~storage=storageMock.storage,
       ),
       storageStatus: Ready({
@@ -272,12 +272,12 @@ module Indexer = {
     | Some(_) => ()
     }
 
-    let registrations = await HandlerLoader.registerAllHandlers(
-      ~config=Indexer.Generated.configWithoutRegistrations,
+    let (postRegistrationConfig, registrations) = await HandlerLoader.registerAllHandlers(
+      ~config=Config.load(),
     )
 
     let config = {
-      let config = Indexer.Generated.makeGeneratedConfig()
+      let config = postRegistrationConfig
 
       let chainMap =
         chains

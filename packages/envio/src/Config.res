@@ -851,15 +851,32 @@ let getChain = (config, ~chainId) => {
 // `Main.dropSchema`, so those functions skip the NAPI `getConfigJson`
 // round-trip. Module-private — only Bin.res should set it.
 %%private(let primedJson: ref<option<JSON.t>> = ref(None))
-let prime = (json: JSON.t): unit => primedJson := Some(json)
+%%private(let cached: ref<option<t>> = ref(None))
+let prime = (json: JSON.t): unit => {
+  primedJson := Some(json)
+  cached := None
+}
+
+// Invalidate the memoized config. Used by `HandlerRegister.finishRegistration`
+// so the next `load()` reparses and picks up registered handlers.
+let reset = () => cached := None
 
 // Load the resolved indexer config. When `Bin.res` has primed a JSON payload
 // from the CLI command, parse from that; otherwise invoke the native NAPI
 // addon (Rust config parser, ENVIO_CONFIG-respecting). The NAPI path keeps
 // non-CLI callers (worker threads spawned via `TestIndexer`, direct imports
-// from test harnesses) working without a primed payload.
+// from test harnesses) working without a primed payload. Memoized — callers
+// that need a fresh parse after handler registration go through
+// `HandlerRegister.finishRegistration`.
 let load = () =>
-  switch primedJson.contents {
-  | Some(json) => json->fromPublic
-  | None => Core.getConfigJson()->JSON.parseOrThrow->fromPublic
+  switch cached.contents {
+  | Some(c) => c
+  | None => {
+      let c = switch primedJson.contents {
+      | Some(json) => json->fromPublic
+      | None => Core.getConfigJson()->JSON.parseOrThrow->fromPublic
+      }
+      cached := Some(c)
+      c
+    }
   }

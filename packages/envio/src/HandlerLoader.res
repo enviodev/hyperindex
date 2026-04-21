@@ -61,19 +61,24 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   }
 
   // Import handler files using absolute file:// URLs resolved from cwd
-  let _ = await handlerFiles
-  ->Array.map(file => {
-    Utils.importPath(toImportUrl(file))->Promise.catch(exn => {
-      let cause = exn->Utils.prettifyExn->Obj.magic
-      Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
-      JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
+  let _ =
+    await handlerFiles
+    ->Array.map(file => {
+      Utils.importPath(toImportUrl(file))->Promise.catch(exn => {
+        let cause = exn->Utils.prettifyExn->Obj.magic
+        Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
+        JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
+      })
     })
-  })
-  ->Promise.all
+    ->Promise.all
 }
 
-// Register all handlers - must be called BEFORE creating the final config
-// so that event registrations are captured in the config
+// Register all handlers and return `(configWithRegistrations, registrations)`.
+// The input `~config` is the pre-registration snapshot; the returned config
+// is the post-registration snapshot used downstream by `Main.start`. The
+// reset+reload dance lives here rather than in `HandlerRegister` to avoid
+// a `Config ↔ HandlerRegister` cycle — `Config.fromPublic` reads from
+// `HandlerRegister`, so `HandlerRegister` itself can't depend on `Config`.
 let registerAllHandlers = async (~config: Config.t) => {
   HandlerRegister.startRegistration(~ecosystem=config.ecosystem, ~multichain=config.multichain)
 
@@ -81,11 +86,14 @@ let registerAllHandlers = async (~config: Config.t) => {
   await autoLoadFromSrcHandlers(~handlers=config.handlers)
 
   // Load contract-specific handlers
-  let _ = await config.contractHandlers
-  ->Array.map(({name, handler}) => {
-    registerContractHandlers(~contractName=name, ~handler)
-  })
-  ->Promise.all
+  let _ =
+    await config.contractHandlers
+    ->Array.map(({name, handler}) => {
+      registerContractHandlers(~contractName=name, ~handler)
+    })
+    ->Promise.all
 
-  HandlerRegister.finishRegistration()
+  let registrations = HandlerRegister.finishRegistration()
+  Config.reset()
+  (Config.load(), registrations)
 }

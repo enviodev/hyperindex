@@ -99,20 +99,11 @@ let getInitialChainState = (~chainId: int): option<Persistence.initialChainState
   }
 }
 
-let getGlobalIndexer = (~config: Config.t): 'indexer => {
-  let indexer = Utils.Object.createNullObject()
-
-  indexer
-  ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: config.name})
-  ->Utils.Object.definePropertyWithValue(
-    "description",
-    {enumerable: true, value: config.description},
-  )
-  ->ignore
-
+// Build the chains object from config. Extracted so the exported indexer
+// value can call this lazily (on first `indexer.chains` access) rather than
+// eagerly at module load — importing `generated` must not trigger Config.load().
+let buildChainsObject = (~config: Config.t) => {
   let chainIds = []
-
-  // Build chains object with chain ID as string key
   let chains = Utils.Object.createNullObject()
   config.chainMap
   ->ChainMap.values
@@ -247,10 +238,61 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       ->ignore
     }
   })
+  (chains, chainIds)
+}
+
+let getGlobalIndexer = (): 'indexer => {
+  let indexer = Utils.Object.createNullObject()
+
+  // `indexer.chains` needs stable identity across repeated reads
+  // (`Indexer_test.res:51` asserts `toBe` on the same reference), so memoize
+  // the built chains object on first access. `Config.load()` is itself
+  // memoized, so downstream property reads on chains are cheap.
+  let chainsMemo: ref<option<(unknown, array<int>)>> = ref(None)
+  let getChainsMemo = () =>
+    switch chainsMemo.contents {
+    | Some(c) => c
+    | None => {
+        let (chains, chainIds) = buildChainsObject(~config=Config.load())
+        let memo = (chains->(Utils.magic: {..} => unknown), chainIds)
+        chainsMemo := Some(memo)
+        memo
+      }
+    }
+
   indexer
-  ->Utils.Object.definePropertyWithValue("chainIds", {enumerable: true, value: chainIds})
+  ->Utils.Object.defineProperty(
+    "name",
+    {enumerable: true, get: () => Config.load().name->(Utils.magic: string => unknown)},
+  )
+  ->Utils.Object.defineProperty(
+    "description",
+    {
+      enumerable: true,
+      get: () => Config.load().description->(Utils.magic: option<string> => unknown),
+    },
+  )
+  ->Utils.Object.defineProperty(
+    "chainIds",
+    {
+      enumerable: true,
+      get: () => {
+        let (_, chainIds) = getChainsMemo()
+        chainIds->(Utils.magic: array<int> => unknown)
+      },
+    },
+  )
+  ->Utils.Object.defineProperty(
+    "chains",
+    {
+      enumerable: true,
+      get: () => {
+        let (chains, _) = getChainsMemo()
+        chains
+      },
+    },
+  )
   ->ignore
-  indexer->Utils.Object.definePropertyWithValue("chains", {enumerable: true, value: chains})->ignore
 
   // Parse eventIdentity config to extract contractName, eventName, and options.
   // Supports two runtime formats:
@@ -321,29 +363,22 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     )
   }
 
-  // SVM exposes the block handler as `indexer.onSlot`; EVM/Fuel expose it as
-  // `indexer.onBlock`. The choice lives on the ecosystem record so adding a
-  // new ecosystem doesn't require editing this file. Used both as the
-  // attached property name and in error messages so the cited call-site
-  // matches what the user wrote.
-  let onBlockMethodName = config.ecosystem.onBlockMethodName
-
   // Two-stage parse: first the ecosystem-specific outer schema unwraps the
   // wrapper (`block.number` / `block.height` / `slot`) and surfaces the
   // inner chunk as raw `unknown`; then the shared `blockRangeSchema`
   // validates the `{_gte?, _lte?, _every?}` fields. Keeping the inner
   // validation in one place means typos and shape mismatches surface with
   // the same user-friendly error regardless of ecosystem.
-  let extractRange = (filter: unknown, ~name): blockRange =>
+  let extractRange = (filter: unknown, ~name, ~ecosystem: Ecosystem.t): blockRange =>
     try {
-      switch filter->S.parseOrThrow(config.ecosystem.onBlockFilterSchema) {
+      switch filter->S.parseOrThrow(ecosystem.onBlockFilterSchema) {
       | None => defaultBlockRange
       | Some(inner) => inner->S.parseOrThrow(blockRangeSchema)
       }
     } catch {
     | S.Raised(exn) =>
       JsError.throwWithMessage(
-        `\`indexer.${onBlockMethodName}("${name}")\` \`where\` returned an invalid filter: ${exn
+        `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` \`where\` returned an invalid filter: ${exn
           ->Utils.prettifyExn
           ->(Utils.magic: exn => string)}`,
       )
@@ -354,6 +389,8 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
   // math at `FetchState.res:619` stays untouched.
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
+    let config = Config.load()
+    let ecosystem = config.ecosystem
     let raw =
       rawOptions->(
         Utils.magic: 'a => {
@@ -362,7 +399,8 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
         }
       )
     let typedHandler = handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>)
-    let chainsDict = chains->(Utils.magic: {..} => dict<unknown>)
+    let (chains, _) = getChainsMemo()
+    let chainsDict = chains->(Utils.magic: unknown => dict<unknown>)
     let name = raw["name"]
     let logger = Logging.createChild(~params={"onBlock": name})
 
@@ -377,7 +415,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     | w if typeof(w) === #function => Some(raw["where"]->Option.getUnsafe)
     | w =>
       JsError.throwWithMessage(
-        `\`indexer.${onBlockMethodName}("${name}")\` expected \`where\` to be a function or omitted, but got ${(typeof(
+        `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` expected \`where\` to be a function or omitted, but got ${(typeof(
             w,
           ) :> string)}.`,
       )
@@ -405,13 +443,13 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       } else if result === %raw(`false`) {
         (false, defaultBlockRange)
       } else if typeof(result) === #object && !(result->Array.isArray) && result !== %raw(`null`) {
-        (true, extractRange(result, ~name))
+        (true, extractRange(result, ~name, ~ecosystem))
       } else {
         // Reject numbers, strings, functions, arrays, undefined, null —
         // anything that isn't bool or a plain object would silently
         // misregister.
         JsError.throwWithMessage(
-          `\`indexer.${onBlockMethodName}("${name}")\` \`where\` predicate returned an invalid value of type ${(typeof(
+          `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` \`where\` predicate returned an invalid value of type ${(typeof(
               result,
             ) :> string)}. Expected boolean or a filter object.`,
         )
@@ -436,18 +474,24 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     // and don't get confused looking for a "Block handler" they never wrote.
     if !matchedAny.contents {
       logger->Logging.childWarn(
-        `\`indexer.${onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
+        `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
       )
     }
   }
 
+  // Attach both `onBlock` (EVM/Fuel) and `onSlot` (SVM) unconditionally.
+  // The property name is ecosystem-dependent and we don't want to load
+  // config at `getGlobalIndexer()` call time; each invocation of the shared
+  // handler reads `ecosystem.onBlockMethodName` at call time so user-facing
+  // error messages still cite the name that matches their ecosystem.
   indexer
   ->Utils.Object.definePropertyWithValue("onEvent", {enumerable: true, value: onEventFn})
   ->Utils.Object.definePropertyWithValue(
     "contractRegister",
     {enumerable: true, value: contractRegisterFn},
   )
-  ->Utils.Object.definePropertyWithValue(onBlockMethodName, {enumerable: true, value: onBlockFn})
+  ->Utils.Object.definePropertyWithValue("onBlock", {enumerable: true, value: onBlockFn})
+  ->Utils.Object.definePropertyWithValue("onSlot", {enumerable: true, value: onBlockFn})
   ->ignore
 
   indexer->(Utils.magic: 'a => 'indexer)
@@ -597,7 +641,9 @@ let start = async (
   }
 
   // Register all handlers, then get the config with registrations
-  let registrations = await HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
+  let (_, registrations) = await HandlerLoader.registerAllHandlers(
+    ~config=configWithoutRegistrations,
+  )
   let config = Config.load()
   let config = if isTest {
     {...config, shouldRollbackOnReorg: false}
