@@ -1135,36 +1135,35 @@ let make = (
             entry->String.endsWith(".tsv")
           })
 
-          let _ =
-            await cacheFiles
-            ->Array.map(entry => {
-              let effectName = entry->String.slice(~start=0, ~end=-4)
-              let table = Internal.makeCacheTable(~effectName)
+          let _ = await cacheFiles
+          ->Array.map(entry => {
+            let effectName = entry->String.slice(~start=0, ~end=-4)
+            let table = Internal.makeCacheTable(~effectName)
 
-              sql
-              ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
-              ->Promise.then(() => {
-                let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
+            sql
+            ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
+            ->Promise.then(() => {
+              let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
 
-                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
+              let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
 
-                Promise.make(
-                  (resolve, reject) => {
-                    NodeJs.ChildProcess.execWithOptions(
-                      command,
-                      psqlExecOptions,
-                      (~error, ~stdout, ~stderr as _) => {
-                        switch error {
-                        | Value(error) => reject(error)
-                        | Null => resolve(stdout)
-                        }
-                      },
-                    )
-                  },
-                )
-              })
+              Promise.make(
+                (resolve, reject) => {
+                  NodeJs.ChildProcess.execWithOptions(
+                    command,
+                    psqlExecOptions,
+                    (~error, ~stdout, ~stderr as _) => {
+                      switch error {
+                      | Value(error) => reject(error)
+                      | Null => resolve(stdout)
+                      }
+                    },
+                  )
+                },
+              )
             })
-            ->Promise.all
+          })
+          ->Promise.all
 
           Logging.info("Successfully uploaded cache.")
         }
@@ -1178,8 +1177,9 @@ let make = (
       }
     }
 
-    let cacheTableInfo: array<schemaCacheTableInfo> =
-      await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema))
+    let cacheTableInfo: array<schemaCacheTableInfo> = await sql->Postgres.unsafe(
+      makeSchemaCacheTableInfoQuery(~pgSchema),
+    )
 
     if withUpload && cacheTableInfo->Utils.Array.notEmpty {
       // Integration with other tools like Hasura
@@ -1203,8 +1203,9 @@ let make = (
   }
 
   let initialize = async (~chainConfigs=[], ~entities=[], ~enums=[]): Persistence.initialState => {
-    let schemaTableNames: array<schemaTableName> =
-      await sql->Postgres.unsafe(makeSchemaTableNamesQuery(~pgSchema))
+    let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
+      makeSchemaTableNamesQuery(~pgSchema),
+    )
 
     // The initialization query will completely drop the schema and recreate it from scratch.
     // So we need to check if the schema is not used for anything else than envio.
@@ -1404,10 +1405,9 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     let {table, itemSchema} = effect.storageMeta
 
     if initialize {
-      let _ =
-        await sql->Postgres.unsafe(
-          makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
-        )
+      let _ = await sql->Postgres.unsafe(
+        makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
+      )
       // Integration with other tools like Hasura
       switch onNewTables {
       | Some(onNewTables) => await onNewTables(~tableNames=[table.tableName])
@@ -1421,9 +1421,9 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   let dumpEffectCache = async () => {
     try {
       let cacheTableInfo: array<schemaCacheTableInfo> =
-        (await sql
-        ->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))
-        ->Array.filter(i => i.count > 0)
+        (await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))->Array.filter(i =>
+          i.count > 0
+        )
 
       if cacheTableInfo->Utils.Array.notEmpty {
         // Create .envio/cache directory if it doesn't exist
@@ -1614,8 +1614,8 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         Some(
           sink.writeBatch(~batch, ~updatedEntities)
           ->Promise.thenResolve(_ => {
-            Prometheus.SinkWrite.increment(
-              ~sinkName=sink.name,
+            Prometheus.StorageWrite.increment(
+              ~storage=sink.name,
               ~timeSeconds=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
             )
             None
@@ -1627,6 +1627,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     | None => None
     }
 
+    let primaryTimerRef = Hrtime.makeTimer()
     await writeBatch(
       sql,
       ~batch,
@@ -1641,9 +1642,14 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~updatedEntities,
       ~sinkPromise,
     )
+    Prometheus.StorageWrite.increment(
+      ~storage="postgres",
+      ~timeSeconds=primaryTimerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+    )
   }
 
   {
+    name: "postgres",
     isInitialized,
     initialize,
     resumeInitialState,
