@@ -1183,7 +1183,7 @@ let registerDynamicContracts = (
         let _ = Utils.Dict.mergeInPlace(newIndexingAddresses, registeringContracts)
       }
       // Include no-events dcs so later batches detect conflicts against them.
-      let _ = Utils.Dict.mergeInPlace(newIndexingContracts, noEventsAddresses)
+      let _ = Utils.Dict.mergeInPlace(newIndexingAddresses, noEventsAddresses)
 
       let optimizedPartitions = createPartitionsFromIndexingAddresses(
         ~registeringContractsByContract,
