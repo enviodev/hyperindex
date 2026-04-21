@@ -547,19 +547,28 @@ describe("E2E tests", () => {
       [
         {
           value: "2",
-          labels: Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          labels: Dict.fromArray([
+            ("operation", "testEffectWithCache.effect"),
+            ("storage", "postgres"),
+          ]),
         },
       ],
       [
         {
           value: "1",
-          labels: Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          labels: Dict.fromArray([
+            ("operation", "testEffectWithCache.effect"),
+            ("storage", "postgres"),
+          ]),
         },
       ],
       [
         {
           value: "1",
-          labels: Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          labels: Dict.fromArray([
+            ("operation", "testEffectWithCache.effect"),
+            ("storage", "postgres"),
+          ]),
         },
       ],
     ))

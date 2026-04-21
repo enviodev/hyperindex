@@ -108,6 +108,7 @@ module Storage = {
         initializeResolveFns->Array.forEach(resolve => resolve(initialState))
       },
       storage: {
+        name: "mock",
         isInitialized: implement(#isInitialized, () => {
           isInitializedCalls->Array.push(true)->ignore
           Promise.make((resolve, _reject) => {
