@@ -206,7 +206,7 @@ describe("SourceManager source priority with Live sources", () => {
         ~newBlockStallTimeoutLive,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
 
       // Live is primary - should be called immediately
       t.expect(
@@ -244,7 +244,7 @@ describe("SourceManager source priority with Live sources", () => {
         ~newBlockStallTimeoutLive,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
 
       // Live doesn't find new block
       liveMock.resolveGetHeightOrThrow(100)
@@ -289,7 +289,7 @@ describe("SourceManager source priority with Live sources", () => {
       {
         // Switch to fallback via waitForNewBlock with isLive=true
 
-        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
+        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
         await Utils.delay(newBlockStallTimeoutLive)
         fallbackMock.resolveGetHeightOrThrow(101)
         t.expect(await p).toBe(101)
@@ -332,7 +332,7 @@ describe("SourceManager source priority with Live sources", () => {
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=0)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=0, ~reducedPolling=false)
 
       t.expect(
         syncMock.getHeightOrThrowCalls->Array.length,
@@ -1024,7 +1024,7 @@ describe("SourceManager wait for new blocks", () => {
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=0)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=0, ~reducedPolling=false)
 
       t.expect(getHeightOrThrowCalls->Array.length).toEqual(1)
       resolveGetHeightOrThrow(1)
@@ -1044,7 +1044,7 @@ describe("SourceManager wait for new blocks", () => {
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=0)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=0, ~reducedPolling=false)
 
       t.expect(mock0.getHeightOrThrowCalls->Array.length).toEqual(1)
       t.expect(mock1.getHeightOrThrowCalls->Array.length).toEqual(1)
@@ -1080,7 +1080,7 @@ describe("SourceManager wait for new blocks", () => {
       ~maxPartitionConcurrency=10,
     )
 
-    let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=0)
+    let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=0, ~reducedPolling=false)
 
     t.expect(
       syncMock.getHeightOrThrowCalls->Array.length,
@@ -1107,7 +1107,7 @@ describe("SourceManager wait for new blocks", () => {
       ~sources=[syncMock.source, liveMock.source],
       ~maxPartitionConcurrency=10,
     )
-    let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=0)
+    let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=0, ~reducedPolling=false)
 
     // With new priority logic: Live is Primary, Sync is Secondary when Live is present
     t.expect(
@@ -1141,7 +1141,7 @@ describe("SourceManager wait for new blocks", () => {
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
 
       let ((), ()) = await Promise.all2((
         (
@@ -1234,7 +1234,7 @@ describe("SourceManager wait for new blocks", () => {
         ),
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
 
       let ((), ()) = await Promise.all2((
         (
@@ -1369,7 +1369,7 @@ describe("SourceManager wait for new blocks", () => {
         ~stalledPollingInterval,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
 
       t.expect(sync.getHeightOrThrowCalls->Array.length).toEqual(1)
       t.expect(fallback.getHeightOrThrowCalls->Array.length).toEqual(0)
@@ -1441,7 +1441,7 @@ describe("SourceManager wait for new blocks", () => {
         ~message="Polling for fallback source should stop after successful response",
       ).toEqual(2)
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=101)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=101, ~reducedPolling=false)
 
       t.expect(
         sync.getHeightOrThrowCalls->Array.length,
@@ -1493,7 +1493,7 @@ describe("SourceManager wait for new blocks", () => {
         ~stalledPollingInterval,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
 
       t.expect(sync.getHeightOrThrowCalls->Array.length).toEqual(1)
       sync.resolveGetHeightOrThrow(100)
@@ -1528,6 +1528,53 @@ describe("SourceManager wait for new blocks", () => {
       sync.resolveGetHeightOrThrow(101)
 
       t.expect(await p, ~message="Returns the sync source response").toEqual(101)
+    },
+  )
+
+  Async.itWithOptions(
+    "Uses reducedPollingInterval instead of pollingInterval when reducedPolling is true",
+    {retry: 3},
+    async t => {
+      let pollingInterval = 1
+      let stalledPollingInterval = 1
+      let reducedPollingInterval = 10
+      let sync = MockIndexer.Source.make([#getHeightOrThrow], ~pollingInterval)
+
+      let sourceManager = SourceManager.make(
+        ~isLive=false,
+        ~sources=[sync.source],
+        ~maxPartitionConcurrency=10,
+        ~stalledPollingInterval,
+        ~reducedPollingInterval,
+      )
+
+      let p = sourceManager->SourceManager.waitForNewBlock(
+        ~isLive=false,
+        ~knownHeight=100,
+        ~reducedPolling=true,
+      )
+
+      t.expect(sync.getHeightOrThrowCalls->Array.length).toEqual(1)
+      // Return same height — no new block, triggers polling loop
+      sync.resolveGetHeightOrThrow(100)
+
+      // After pollingInterval (1ms) but before reducedPollingInterval (10ms),
+      // no new call should have been made
+      await Utils.delay(pollingInterval + 1)
+      t.expect(
+        sync.getHeightOrThrowCalls->Array.length,
+        ~message="Should NOT poll at normal pollingInterval when reducedPolling is true",
+      ).toEqual(1)
+
+      // After reducedPollingInterval, a new call should appear
+      await Utils.delay(reducedPollingInterval)
+      t.expect(
+        sync.getHeightOrThrowCalls->Array.length,
+        ~message="Should poll after reducedPollingInterval",
+      ).toEqual(2)
+
+      sync.resolveGetHeightOrThrow(101)
+      t.expect(await p).toEqual(101)
     },
   )
 })
@@ -1763,7 +1810,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       {
         // Switch active source to fallback via waitForNewBlock
 
-        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
         await Utils.delay(newBlockStallTimeout)
         fallbackMock.resolveGetHeightOrThrow(101)
         t.expect(await p).toBe(101)
@@ -1989,7 +2036,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       {
         // Switch activeSource to fallback via waitForNewBlock
 
-        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
+        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
         await Utils.delay(newBlockStallTimeoutLive)
         fallbackMock.resolveGetHeightOrThrow(101)
         t.expect(await p).toBe(101)
@@ -2232,7 +2279,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     {
       // Switch activeSource to syncMock1 via waitForNewBlock
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
       await Utils.delay(newBlockStallTimeout)
       syncMock1.resolveGetHeightOrThrow(101)
       t.expect(await p).toBe(101)
@@ -2744,7 +2791,7 @@ describe("SourceManager height subscription", () => {
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
 
       // First call to getHeightOrThrow
       t.expect(mock.getHeightOrThrowCalls->Array.length).toEqual(1)
@@ -2775,14 +2822,14 @@ describe("SourceManager height subscription", () => {
     )
 
     // First call - create subscription
-    let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
+    let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     mock.triggerHeightSubscription(105)
     t.expect(await p1).toEqual(105)
 
     // Second call - should use cached height immediately without calling getHeightOrThrow
-    let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101)
+    let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101, ~reducedPolling=false)
     t.expect(
       mock.getHeightOrThrowCalls->Array.length,
       ~message="Should not call getHeightOrThrow again since subscription exists",
@@ -2801,14 +2848,14 @@ describe("SourceManager height subscription", () => {
       )
 
       // First call - create subscription and set initial height
-      let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
+      let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
       mock.resolveGetHeightOrThrow(100)
       await Utils.delay(0)
       mock.triggerHeightSubscription(101)
       t.expect(await p1).toEqual(101)
 
       // Second call with higher knownHeight - should wait for next subscription event
-      let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101)
+      let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101, ~reducedPolling=false)
       t.expect(
         mock.getHeightOrThrowCalls->Array.length,
         ~message="Should not call getHeightOrThrow since subscription exists",
@@ -2832,7 +2879,7 @@ describe("SourceManager height subscription", () => {
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
 
       // Return same height - should trigger polling since no subscription available
       mock.resolveGetHeightOrThrow(100)
@@ -2861,14 +2908,14 @@ describe("SourceManager height subscription", () => {
       )
 
       // First call - create subscription
-      let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
+      let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
       mock.resolveGetHeightOrThrow(100)
       await Utils.delay(0)
       mock.triggerHeightSubscription(101)
       t.expect(await p1).toEqual(101)
 
       // Second call - subscription exists but won't deliver
-      let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101)
+      let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101, ~reducedPolling=false)
 
       // Wait for stallTimeout/2 to trigger REST polling fallback
       await Utils.delay(stallTimeout / 2 + 5)
@@ -2894,14 +2941,14 @@ describe("SourceManager height subscription", () => {
     )
 
     // First call - create subscription
-    let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
+    let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     mock.triggerHeightSubscription(101)
     t.expect(await p1).toEqual(101)
 
     // Second call with higher knownHeight
-    let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=105)
+    let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=105, ~reducedPolling=false)
 
     // Trigger with lower heights - should be ignored
     mock.triggerHeightSubscription(102)
