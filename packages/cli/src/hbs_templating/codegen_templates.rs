@@ -1269,15 +1269,15 @@ impl ProjectTemplate {
                 .collect::<Vec<_>>(),
         };
 
-        // Generate onBlock function with ecosystem-specific types
+        // Generate onBlock handler signature with ecosystem-specific types
+        // inlined. These types have no standalone aliases on the ReScript side
+        // — they mirror the TypeScript surface in `packages/envio/index.d.ts`
+        // (`EvmOnBlockHandlerArgs`, `FuelOnBlockHandlerArgs`,
+        // `SvmOnSlotHandlerArgs`), which also inline the same shapes.
         let on_block_handler_type = match cfg.get_ecosystem() {
-            Ecosystem::Evm => {
-                "Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>"
-            }
-            Ecosystem::Fuel => {
-                "Envio.onBlockArgs<Envio.fuelBlockEvent, handlerContext> => promise<unit>"
-            }
-            Ecosystem::Svm => "Envio.svmOnBlockArgs<handlerContext> => promise<unit>",
+            Ecosystem::Evm => "{block: {number: int}, context: handlerContext} => promise<unit>",
+            Ecosystem::Fuel => "{block: {height: int}, context: handlerContext} => promise<unit>",
+            Ecosystem::Svm => "{slot: int, context: handlerContext} => promise<unit>",
         };
 
         // Generate chainId polymorphic variant. The canonical TS shape

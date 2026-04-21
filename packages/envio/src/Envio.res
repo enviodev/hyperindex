@@ -2,20 +2,12 @@
 // Should be an entry point after we get rid of the generated project.
 // Don't forget to keep index.d.ts in sync with this file.
 
-type blockEvent = {number: int}
-
-type fuelBlockEvent = {height: int}
-
-type svmOnBlockArgs<'context> = {slot: int, context: 'context}
-
-type onBlockArgs<'block, 'context> = {
-  block: 'block,
-  context: 'context,
-}
-
-// Internal-only types for the `indexer.onBlock` (and SVM `onSlot`) plumbing.
-// The canonical TypeScript shape lives in `packages/envio/index.d.ts`; the
-// ReScript declarations here are free to diverge.
+// Internal-only type for the `indexer.onBlock` (and SVM `onSlot`) `where`
+// callback argument. The canonical TypeScript shape lives in
+// `packages/envio/index.d.ts`; the ReScript declaration here is free to
+// diverge. Block handler argument records are emitted inline per ecosystem
+// by the CLI codegen (see `codegen_templates.rs`), so no aliases for them
+// are exposed here.
 type onBlockWhereArgs<'chain> = {chain: 'chain}
 
 // `where` returns a value interpreted at runtime by `Main.res::onBlockHandlerFn`:

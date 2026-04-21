@@ -392,7 +392,7 @@ type indexer = {
   /** Register a Block Handler. Evaluates `where` once per configured chain at registration time. */
   onBlock: (
     Envio.onBlockOptions<indexerChain>,
-    Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
+    {block: {number: int}, context: handlerContext} => promise<unit>,
   ) => unit,
 }
 
