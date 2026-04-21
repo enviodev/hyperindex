@@ -15,6 +15,7 @@ let make: (
   ~newBlockStallTimeout: int=?,
   ~newBlockStallTimeoutLive: int=?,
   ~stalledPollingInterval: int=?,
+  ~reducedPollingInterval: int=?,
   ~recoveryTimeout: float=?,
   ~getHeightRetryInterval: (~retry: int) => int=?,
 ) => t
@@ -30,7 +31,7 @@ let fetchNext: (
   ~stateId: int,
 ) => promise<unit>
 
-let waitForNewBlock: (t, ~knownHeight: int, ~isLive: bool) => promise<int>
+let waitForNewBlock: (t, ~knownHeight: int, ~isLive: bool, ~reducedPolling: bool) => promise<int>
 
 let executeQuery: (
   t,

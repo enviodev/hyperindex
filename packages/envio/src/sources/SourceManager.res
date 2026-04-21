@@ -24,6 +24,7 @@ type t = {
   newBlockStallTimeout: int,
   newBlockStallTimeoutLive: int,
   stalledPollingInterval: int,
+  reducedPollingInterval: int,
   getHeightRetryInterval: (~retry: int) => int,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
@@ -73,6 +74,7 @@ let make = (
   ~newBlockStallTimeout=60_000,
   ~newBlockStallTimeoutLive=20_000,
   ~stalledPollingInterval=5_000,
+  ~reducedPollingInterval=60_000,
   ~recoveryTimeout=60_000.0,
   ~getHeightRetryInterval=makeGetHeightRetryInterval(
     ~initialRetryInterval=1000,
@@ -112,6 +114,7 @@ let make = (
     newBlockStallTimeout,
     newBlockStallTimeoutLive,
     stalledPollingInterval,
+    reducedPollingInterval,
     getHeightRetryInterval,
     recoveryTimeout,
     statusStart: Hrtime.makeTimer(),
@@ -232,6 +235,7 @@ let getSourceNewHeight = async (
   ~isLive,
   ~status: ref<status>,
   ~logger,
+  ~reducedPolling,
 ) => {
   let source = sourceState.source
   let initialHeight = sourceState.knownHeight
@@ -294,7 +298,9 @@ let getSourceNewHeight = async (
             sourceState.unsubscribe = Some(unsubscribe)
           | _ =>
             // Slowdown polling when the chain isn't progressing
-            let pollingInterval = if status.contents === Stalled {
+            let pollingInterval = if reducedPolling {
+              sourceManager.reducedPollingInterval
+            } else if status.contents === Stalled {
               sourceManager.stalledPollingInterval
             } else {
               source.pollingInterval
@@ -397,7 +403,7 @@ let getNextSource = (sourceManager, ~isLive, ~excludedSources=?) => {
 }
 
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
-let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
+let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPolling) => {
   let {sourcesState} = sourceManager
 
   let logger = Logging.createChild(
@@ -406,13 +412,24 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
       "knownHeight": knownHeight,
     },
   )
-  logger->Logging.childTrace("Initiating check for new blocks.")
+  if reducedPolling {
+    logger->Logging.childTrace(
+      `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval / 1000)
+          ->Int.toString}s). Chain is caught up, waiting for other chains to backfill.`,
+    )
+  } else {
+    logger->Logging.childTrace("Initiating check for new blocks.")
+  }
 
   let mainSources = sourceManager->getNextSources(~isLive)
 
   let status = ref(Active)
 
-  let stallTimeout = if isLive {
+  // Use a much longer stall timeout when reduced polling is active
+  // to avoid spurious stall warnings while waiting for other chains to backfill
+  let stallTimeout = if reducedPolling {
+    sourceManager.reducedPollingInterval * 2
+  } else if isLive {
     sourceManager.newBlockStallTimeoutLive
   } else {
     sourceManager.newBlockStallTimeout
@@ -430,6 +447,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
           ~isLive,
           ~status,
           ~logger,
+          ~reducedPolling,
         ),
       )
     })
@@ -479,6 +497,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
                 ~isLive,
                 ~status,
                 ~logger,
+                ~reducedPolling,
               ),
             )
           }),
