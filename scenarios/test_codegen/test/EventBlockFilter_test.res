@@ -245,6 +245,15 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
     t.expect(ec.startBlock).toEqual(Some(1500))
   })
 
+  // Guard against a regression to `max(contract, where)` semantics: the
+  // where-derived value must win even when it's LOWER than the config
+  // value, so users can widen an event below its contract's start_block
+  // without touching config.yaml.
+  it("overrides even when contract-level startBlock is larger than where.block", t => {
+    let ec = build(~eventFilters=Some(%raw(`{block: {number: {_gte: 1500}}}`)), ~startBlock=7000)
+    t.expect(ec.startBlock).toEqual(Some(1500))
+  })
+
   it("falls back to the contract-level startBlock when where.block is absent", t => {
     let ec = build(
       ~eventFilters=Some(%raw(`{params: {from: "0x0000000000000000000000000000000000000000"}}`)),
@@ -364,6 +373,15 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
     // filter bumps it to 5000 — the first query must start at 5000, not
     // 100, so we don't waste a fetch on blocks 100–4999.
     let q = firstQuery(makeFetchState(~contractStartBlock=Some(100)))
+    t.expect(q.fromBlock).toEqual(5000)
+  })
+
+  // Guard against a regression to `max(contract, where)` semantics: the
+  // where-derived value must win even when it's LOWER than the config
+  // value. A `max` implementation would start at 7000 and miss events
+  // on blocks 5000–6999 that the user explicitly opted into.
+  it("where.block._gte overrides a larger contract-level startBlock", t => {
+    let q = firstQuery(makeFetchState(~contractStartBlock=Some(7000)))
     t.expect(q.fromBlock).toEqual(5000)
   })
 })
