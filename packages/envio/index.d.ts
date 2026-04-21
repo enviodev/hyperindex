@@ -1,20 +1,79 @@
+import * as Sury from "rescript-schema";
+import type { default as BigDecimalT } from "bignumber.js";
+import type {
+  Address,
+  Effect,
+  EffectCaller,
+  EffectContext,
+  Logger,
+} from "./src/Types.ts";
 export type {
-  logger as Logger,
-  effect as Effect,
-  effectContext as EffectContext,
-  effectArgs as EffectArgs,
-  effectOptions as EffectOptions,
-  rateLimitDuration as RateLimitDuration,
-  rateLimit as RateLimit,
-  blockEvent as BlockEvent,
-  fuelBlockEvent as FuelBlockEvent,
-  svmOnBlockArgs as SvmOnBlockArgs,
-  onBlockArgs as OnBlockArgs,
-  onBlockOptions as OnBlockOptions,
-} from "./src/Envio.gen.ts";
-import type { logger as Logger } from "./src/Envio.gen.ts";
-import type { Address, EffectCaller } from "./src/Types.ts";
-export type { EffectCaller, Address } from "./src/Types.ts";
+  Address,
+  Effect,
+  EffectCaller,
+  EffectContext,
+  Logger,
+} from "./src/Types.ts";
+
+declare const bigDecimalSchema: Sury.Schema<BigDecimalT>;
+declare const bigintSchema: Sury.Schema<bigint>;
+
+/** A block handed to an EVM block handler. Extra fields are opt-in via
+ * `field_selection` in config.yaml. */
+export type BlockEvent = { readonly number: number };
+
+/** A block handed to a Fuel block handler. */
+export type FuelBlockEvent = { readonly height: number };
+
+/** Arguments passed to an SVM slot handler. */
+export type SvmOnBlockArgs<Context> = {
+  readonly slot: number;
+  readonly context: Context;
+};
+
+/** Arguments passed to an EVM / Fuel block handler. */
+export type OnBlockArgs<Block, Context> = {
+  readonly block: Block;
+  readonly context: Context;
+};
+
+/** Rate-limit window for an {@link Effect}. Strings resolve to common
+ * durations; a plain `number` is treated as milliseconds. */
+export type RateLimitDuration = "second" | "minute" | number;
+
+/** Rate-limit configuration for an {@link Effect}. `false` disables rate
+ * limiting; otherwise a `{calls, per}` pair caps invocations per duration. */
+export type RateLimit =
+  | false
+  | { readonly calls: number; readonly per: RateLimitDuration };
+
+/** Options accepted by {@link createEffect}. */
+export type EffectOptions<Input, Output> = {
+  /** The name of the effect. Used for logging and debugging. */
+  readonly name: string;
+  /** The input schema of the effect. */
+  readonly input: Sury.Schema<Input>;
+  /** The output schema of the effect. */
+  readonly output: Sury.Schema<Output>;
+  /** Rate limit for the effect. Set to `false` to disable or provide
+   * `{calls, per: "second" | "minute"}` to enable. */
+  readonly rateLimit: RateLimit;
+  /** Whether the effect should be cached. */
+  readonly cache?: boolean;
+};
+
+/** Arguments passed to the handler function of an {@link Effect}. */
+export type EffectArgs<Input> = {
+  readonly input: Input;
+  readonly context: EffectContext;
+};
+
+/** Options for `indexer.onBlock` — see ecosystem-specific `EvmOnBlockOptions`,
+ * `FuelOnBlockOptions`, `SvmOnSlotOptions` for the typed surface. */
+export type OnBlockOptions<Chain> = {
+  readonly name: string;
+  readonly where?: (args: { readonly chain: Chain }) => unknown;
+};
 
 export const TestHelpers: {
   Addresses: {
@@ -60,16 +119,6 @@ export type WhereOperator<T> = {
 export type GetWhereFilter<E> = {
   [K in keyof E]?: WhereOperator<E[K]>;
 };
-
-import type {
-  effect as Effect,
-  effectArgs as EffectArgs,
-  rateLimit as RateLimit,
-} from "./src/Envio.gen.ts";
-
-import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.gen.ts";
-import { bigIntSchema as bigintSchema } from "./src/Utils.gen.ts";
-import * as Sury from "rescript-schema";
 
 type UnknownToOutput<T> = T extends Sury.Schema<unknown>
   ? Sury.Output<T>

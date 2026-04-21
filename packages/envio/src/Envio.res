@@ -2,25 +2,20 @@
 // Should be an entry point after we get rid of the generated project.
 // Don't forget to keep index.d.ts in sync with this file.
 
-@genType
 type blockEvent = {number: int}
 
-@genType
 type fuelBlockEvent = {height: int}
 
-@genType
 type svmOnBlockArgs<'context> = {slot: int, context: 'context}
 
-@genType
 type onBlockArgs<'block, 'context> = {
   block: 'block,
   context: 'context,
 }
 
 // Internal-only types for the `indexer.onBlock` (and SVM `onSlot`) plumbing.
-// User-facing TypeScript declarations live in `packages/envio/index.d.ts` —
-// keep these out of `genType` so the canonical TS shape isn't shadowed by a
-// generated `unknown`-typed stub in `Envio.gen.ts`.
+// The canonical TypeScript shape lives in `packages/envio/index.d.ts`; the
+// ReScript declarations here are free to diverge.
 type onBlockWhereArgs<'chain> = {chain: 'chain}
 
 // `where` returns a value interpreted at runtime by `Main.res::onBlockHandlerFn`:
@@ -48,7 +43,6 @@ type whereOperator<'fieldType> = {
   _in?: array<'fieldType>,
 }
 
-@genType.import(("./Types.ts", "Logger"))
 type logger = {
   debug: 'params. (string, ~params: {..} as 'params=?) => unit,
   info: 'params. (string, ~params: {..} as 'params=?) => unit,
@@ -58,18 +52,16 @@ type logger = {
 }
 
 @@warning("-30") // Duplicated type names (input)
-@genType.import(("./Types.ts", "Effect"))
 type rec effect<'input, 'output>
-@genType @unboxed
+@unboxed
 and rateLimitDuration =
   | @as("second") Second
   | @as("minute") Minute
   | Milliseconds(int)
-@genType @unboxed
+@unboxed
 and rateLimit =
   | @as(false) Disable
   | Enable({calls: int, per: rateLimitDuration})
-@genType
 and effectOptions<'input, 'output> = {
   /** The name of the effect. Used for logging and debugging. */
   name: string,
@@ -82,13 +74,11 @@ and effectOptions<'input, 'output> = {
   /** Whether the effect should be cached. */
   cache?: bool,
 }
-@genType.import(("./Types.ts", "EffectContext"))
 and effectContext = {
   log: logger,
   effect: 'input 'output. (effect<'input, 'output>, 'input) => promise<'output>,
   mutable cache: bool,
 }
-@genType
 and effectArgs<'input> = {
   input: 'input,
   context: effectContext,

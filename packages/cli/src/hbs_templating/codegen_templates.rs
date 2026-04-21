@@ -1280,15 +1280,11 @@ impl ProjectTemplate {
             Ecosystem::Svm => "Envio.svmOnBlockArgs<handlerContext> => promise<unit>",
         };
 
-        // Generate chainId type with ecosystem-specific import from Types.ts
-        let chain_id_import_name = match cfg.get_ecosystem() {
-            Ecosystem::Evm => "EvmChainId",
-            Ecosystem::Fuel => "FuelChainId",
-            Ecosystem::Svm => "SvmChainId",
-        };
+        // Generate chainId polymorphic variant. The canonical TS shape
+        // (`EvmChainId`/`FuelChainId`/`SvmChainId`) lives in Types.ts; the
+        // ReScript side no longer bridges to it via genType.
         let chain_id_type = format!(
-            r#"@genType.import(("./Types.ts", "{chain_id_import_name}"))
-type chainId = [{}]"#,
+            "type chainId = [{}]",
             chain_id_cases
                 .iter()
                 .map(|chain_id_case| format!("#{}", chain_id_case))
@@ -1438,8 +1434,7 @@ switch chainId {{
             .join("\n");
 
         let handler_context_code = format!(
-            r#"@genType
-type handlerEntityOperations<'entity, 'getWhereFilter> = {{
+            r#"type handlerEntityOperations<'entity, 'getWhereFilter> = {{
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
@@ -1448,7 +1443,6 @@ type handlerEntityOperations<'entity, 'getWhereFilter> = {{
   deleteUnsafe: string => unit,
 }}
 
-@genType.import(("./Types.ts", "HandlerContext"))
 type handlerContext = {{
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
@@ -1516,7 +1510,7 @@ type handlerContext = {{
                     )
                 };
                 format!(
-                    "@genType\nmodule {} = {{\n{}\n\n{}{}\n}}",
+                    "module {} = {{\n{}\n\n{}{}\n}}",
                     contract.name.capitalized, module_header, events_code, event_identity,
                 )
             })
@@ -1627,7 +1621,6 @@ type handlerContext = {{
             r#"//*************
 //***ENTITIES**
 //*************
-@genType.as("Id")
 type id = string
 
 //*************
@@ -1643,7 +1636,6 @@ module Block = {{
 }}
 
 module SingleOrMultiple: {{
-  @genType.import(("./bindings/OpaqueTypes", "SingleOrMultiple"))
   type t<'a>
   let normalizeOrThrow: (t<'a>, ~nestedArrayDepth: int=?) => array<'a>
   let single: 'a => t<'a>
@@ -1710,7 +1702,6 @@ type contractRegisterChain = {{
 {contract_register_chain_fields}
 }}
 
-@genType
 type contractRegisterContext = {{
   log: Envio.logger,
   chain: contractRegisterChain,

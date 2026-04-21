@@ -782,11 +782,10 @@ module BigInt = {
   let nativeSchema = S.bigint
 }
 
-// Top-level alias for genType. The `BigInt` module name gets escaped to
-// `$$BigInt` in the compiled .res.mjs because it shadows the JS builtin,
-// which breaks `UtilsJS.BigInt.schema` references in genType output.
-// Re-exporting under an unescaped name keeps the .gen.ts wrapper happy.
-@genType
+// Top-level alias reachable from the hand-written TS declarations. The
+// `BigInt` module name gets escaped to `$$BigInt` in the compiled .res.mjs
+// because it shadows the JS builtin, so re-exporting under an unescaped
+// identifier keeps the `index.js` / `index.d.ts` imports simple.
 let bigIntSchema = BigInt.schema
 
 module Promise = {

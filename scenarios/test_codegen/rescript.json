@@ -16,15 +16,6 @@
     "module": "esmodule",
     "in-source": true
   },
-  "gentypeconfig": {
-    "language": "typescript",
-    "generatedFileExtension": ".gen.ts",
-    "moduleResolution": "node16",
-    "debug": {
-      "all": false,
-      "basic": false
-    }
-  },
   "jsx": {
     "version": 4
   },
