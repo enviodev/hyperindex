@@ -263,6 +263,7 @@ module Indexer = {
     ~enableRawEvents=false,
     ~reset=true,
     ~batchSize=?,
+    ~shouldRollbackOnReorg=true,
   ) => {
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
@@ -299,7 +300,7 @@ module Indexer = {
 
       {
         ...config,
-        shouldRollbackOnReorg: true,
+        shouldRollbackOnReorg,
         shouldSaveFullHistory: saveFullHistory,
         enableRawEvents,
         chainMap,
@@ -478,6 +479,7 @@ module Indexer = {
           ~saveFullHistory,
           ~reset=false,
           ~batchSize?,
+          ~shouldRollbackOnReorg,
         )
       },
       graphql: query => {
