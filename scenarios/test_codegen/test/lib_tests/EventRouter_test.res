@@ -113,7 +113,7 @@ describe("EventRouter", () => {
         ~tag="test-event-tag",
         ~contractAddress=mockAddress1,
         ~blockNumber=0,
-        ~indexingContracts=Dict.make(),
+        ~indexingAddresses=Dict.make(),
       ),
       ~message=`We can return Some, but we want to always check that event is after contract startBlock`,
     ).toEqual(None)
@@ -145,14 +145,14 @@ describe("EventRouter", () => {
         ~isWildcard=false,
       )
 
-      let indexingContracts = Dict.make()
-      indexingContracts->Dict.set(
+      let indexingAddresses: dict<FetchState.indexingAddress> = Dict.make()
+      indexingAddresses->Dict.set(
         nonWildcardContractAddress->Address.toString,
         {
-          Internal.startBlock: 0,
           contractName: nonWildcardContractName,
           address: nonWildcardContractAddress,
-          registrationBlock: None,
+          registrationBlock: -1,
+          effectiveStartBlock: 0,
         },
       )
 
@@ -161,7 +161,7 @@ describe("EventRouter", () => {
           ~tag="test-event-tag",
           ~contractAddress=nonWildcardContractAddress,
           ~blockNumber=0,
-          ~indexingContracts,
+          ~indexingAddresses,
         ),
         ~message="Should return the non wildcard event",
       ).toEqual(Some("non-wildcard"))
@@ -171,9 +171,52 @@ describe("EventRouter", () => {
           ~tag="test-event-tag",
           ~contractAddress=wildcardContractAddress,
           ~blockNumber=0,
-          ~indexingContracts,
+          ~indexingAddresses,
         ),
         ~message="Should return the wildcard event",
+      ).toEqual(Some("wildcard"))
+    },
+  )
+
+  it(
+    "get falls back to wildcard when the address is indexed for a contract without a matching event",
+    t => {
+      // Covers the case where FetchState seeds indexingAddresses with an
+      // address for a contract that has no events (persisted for future config
+      // changes). A wildcard event at that address should still fire.
+      let indexedAddress = mockAddress1
+      let noEventsContractName = "UnknownContract"
+
+      let router = EventRouter.empty()
+
+      router->EventRouter.addOrThrow(
+        "test-event-tag",
+        "wildcard",
+        ~contractName="WildcardContract",
+        ~eventName="Event1",
+        ~chain=mockChain,
+        ~isWildcard=true,
+      )
+
+      let indexingAddresses: dict<FetchState.indexingAddress> = Dict.make()
+      indexingAddresses->Dict.set(
+        indexedAddress->Address.toString,
+        {
+          contractName: noEventsContractName,
+          address: indexedAddress,
+          registrationBlock: 5,
+          effectiveStartBlock: 5,
+        },
+      )
+
+      t.expect(
+        router->EventRouter.get(
+          ~tag="test-event-tag",
+          ~contractAddress=indexedAddress,
+          ~blockNumber=10,
+          ~indexingAddresses,
+        ),
+        ~message="Should fall back to the wildcard handler when the contract has no registered event for this tag",
       ).toEqual(Some("wildcard"))
     },
   )

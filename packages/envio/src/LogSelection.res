@@ -172,7 +172,7 @@ let parseEventFiltersOrThrow = {
             // Reject non-empty objects without `params` — almost always a
             // typo (e.g. `parmas:`) or the legacy flat-filter shape
             // (`{from: ...}`). Empty `{}` is fine and means "match all".
-            if obj->Dict.keysToArray->Array.length > 0 {
+            if !(obj->Utils.Dict.isEmpty) {
               JsError.throwWithMessage(
                 "Invalid where configuration. Indexed parameter filters must be nested under `params`",
               )

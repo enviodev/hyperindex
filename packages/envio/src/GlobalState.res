@@ -552,7 +552,6 @@ let processPartitionQueryResponse = async (
   | _ =>
     await ChainFetcher.runContractRegistersOrThrow(
       ~itemsWithContractRegister,
-      ~chain,
       ~config=state.ctx.config,
     )
   }

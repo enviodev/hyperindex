@@ -22,7 +22,7 @@ type initialChainState = {
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  dynamicContracts: array<Internal.indexingContract>,
+  indexingAddresses: array<Internal.indexingAddress>,
   sourceBlockNumber: int,
 }
 
@@ -49,6 +49,8 @@ type updatedEntity = {
 }
 
 type storage = {
+  // Identifier used as the `storage` label on Prometheus metrics.
+  name: string,
   // Should return true if we already have persisted data
   // and we can skip initialization
   isInitialized: unit => promise<bool>,
@@ -258,47 +260,40 @@ let writeBatch = (
       ~allEntities=persistence.allEntities,
       ~updatedEntities,
       ~updatedEffectsCache={
-        inMemoryStore.effects
-        ->Dict.keysToArray
-        ->Belt.Array.keepMap(effectName => {
-          let inMemTable = inMemoryStore.effects->Dict.getUnsafe(effectName)
+        let acc = []
+        inMemoryStore.effects->Utils.Dict.forEach(inMemTable => {
           let {idsToStore, dict, effect, invalidationsCount} = inMemTable
           switch idsToStore {
-          | [] => None
-          | ids => {
-              let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
-              ids->Belt.Array.forEachWithIndex((index, id) => {
-                items->Array.setUnsafe(
-                  index,
-                  (
-                    {
-                      id,
-                      output: dict->Dict.getUnsafe(id),
-                    }: Internal.effectCacheItem
-                  ),
-                )
-              })
-              Some({
-                let effectName = effect.name
-                let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(
-                  effectName,
-                ) {
-                | Some(c) => c
-                | None => {
-                    let c = {effectName, count: 0}
-                    cache->Dict.set(effectName, c)
-                    c
-                  }
-                }
-                let shouldInitialize = effectCacheRecord.count === 0
-                effectCacheRecord.count =
-                  effectCacheRecord.count + items->Array.length - invalidationsCount
-                Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
-                {effect, items, shouldInitialize}
-              })
+          | [] => ()
+          | ids =>
+            let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+            ids->Belt.Array.forEachWithIndex((index, id) => {
+              items->Array.setUnsafe(
+                index,
+                (
+                  {
+                    id,
+                    output: dict->Dict.getUnsafe(id),
+                  }: Internal.effectCacheItem
+                ),
+              )
+            })
+            let effectName = effect.name
+            let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
+            | Some(c) => c
+            | None =>
+              let c = {effectName, count: 0}
+              cache->Dict.set(effectName, c)
+              c
             }
+            let shouldInitialize = effectCacheRecord.count === 0
+            effectCacheRecord.count =
+              effectCacheRecord.count + items->Array.length - invalidationsCount
+            Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
+            acc->Array.push({effect, items, shouldInitialize})->ignore
           }
         })
+        acc
       },
     )
   }
@@ -316,46 +311,45 @@ let prepareRollbackDiff = async (
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
 
-  let _ =
-    await persistence.allEntities
-    ->Belt.Array.map(async entityConfig => {
-      let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
+  let _ = await persistence.allEntities
+  ->Belt.Array.map(async entityConfig => {
+    let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
 
-      let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
-        ~entityConfig,
-        ~rollbackTargetCheckpointId,
+    let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+      ~entityConfig,
+      ~rollbackTargetCheckpointId,
+    )
+
+    // Process removed IDs
+    removedIdsResult->Array.forEach(data => {
+      deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
+      entityTable->InMemoryTable.Entity.set(
+        Delete({
+          entityId: data["id"],
+          checkpointId: rollbackDiffCheckpointId,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
       )
-
-      // Process removed IDs
-      removedIdsResult->Array.forEach(data => {
-        deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
-        entityTable->InMemoryTable.Entity.set(
-          Delete({
-            entityId: data["id"],
-            checkpointId: rollbackDiffCheckpointId,
-          }),
-          ~shouldSaveHistory=false,
-          ~containsRollbackDiffChange=true,
-        )
-      })
-
-      let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
-
-      // Process restored entities
-      restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
-        setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-        entityTable->InMemoryTable.Entity.set(
-          Set({
-            entityId: entity.id,
-            checkpointId: rollbackDiffCheckpointId,
-            entity,
-          }),
-          ~shouldSaveHistory=false,
-          ~containsRollbackDiffChange=true,
-        )
-      })
     })
-    ->Promise.all
+
+    let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
+
+    // Process restored entities
+    restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
+      setEntities->Utils.Dict.push(entityConfig.name, entity.id)
+      entityTable->InMemoryTable.Entity.set(
+        Set({
+          entityId: entity.id,
+          checkpointId: rollbackDiffCheckpointId,
+          entity,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
+      )
+    })
+  })
+  ->Promise.all
 
   {
     "inMemStore": inMemStore,

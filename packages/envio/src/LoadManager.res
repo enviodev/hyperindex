@@ -52,10 +52,7 @@ let schedule = async loadManager => {
 
     let inputsToLoad = []
     let currentInputKeys = []
-    calls
-    ->Dict.keysToArray
-    ->Array.forEach(inputKey => {
-      let call = calls->Dict.getUnsafe(inputKey)
+    calls->Utils.Dict.forEachWithKey((call, inputKey) => {
       if !call.isLoading {
         call.isLoading = true
         currentInputKeys->Array.push(inputKey)->ignore
@@ -96,7 +93,7 @@ let schedule = async loadManager => {
       // provided load function which
       // might have an outdated function context
       let latestGroup = groups->Dict.getUnsafe(key)
-      if latestGroup.calls->Dict.keysToArray->Utils.Array.isEmpty {
+      if latestGroup.calls->Utils.Dict.isEmpty {
         groups->Utils.Dict.deleteInPlace(key)
       }
     }

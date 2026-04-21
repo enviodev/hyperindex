@@ -32,16 +32,23 @@ module Group = {
     group: t<'a>,
     ~contractAddress,
     ~blockNumber,
-    ~indexingContracts: dict<Internal.indexingContract>,
+    ~indexingAddresses: dict<FetchState.indexingAddress>,
   ) =>
     switch group {
     | {wildcard, byContractName} =>
-      switch indexingContracts->Utils.Dict.dangerouslyGetNonOption(
+      switch indexingAddresses->Utils.Dict.dangerouslyGetNonOption(
         contractAddress->Address.toString,
       ) {
       | Some(indexingContract) =>
-        if indexingContract.startBlock <= blockNumber {
-          byContractName->Utils.Dict.dangerouslyGetNonOption(indexingContract.contractName)
+        if indexingContract.effectiveStartBlock <= blockNumber {
+          switch byContractName->Utils.Dict.dangerouslyGetNonOption(indexingContract.contractName) {
+          // Fall back to the wildcard handler when the indexed contract has no
+          // matching event for this tag. This covers addresses registered for
+          // contracts without events (persisted for future config changes) as
+          // well as addresses whose contract has other events but not this one.
+          | None => wildcard
+          | Some(_) as event => event
+          }
         } else {
           None
         }
@@ -82,10 +89,10 @@ let addOrThrow = (
   }
 }
 
-let get = (router: t<'a>, ~tag, ~contractAddress, ~blockNumber, ~indexingContracts) => {
+let get = (router: t<'a>, ~tag, ~contractAddress, ~blockNumber, ~indexingAddresses) => {
   switch router->Utils.Dict.dangerouslyGetNonOption(tag) {
   | None => None
-  | Some(group) => group->Group.get(~contractAddress, ~blockNumber, ~indexingContracts)
+  | Some(group) => group->Group.get(~contractAddress, ~blockNumber, ~indexingAddresses)
   }
 }
 
