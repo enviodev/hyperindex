@@ -1001,6 +1001,42 @@ describe("FetchState.registerDynamicContracts", () => {
     },
   )
 
+  it(
+    "Warns and skips a no-events dc when the address is already registered under a different contract name",
+    t => {
+      // makeInitial puts mockAddress0 in indexingAddresses under contractName
+      // "Gravatar" (which has events). Now try to register the same address
+      // for a contract without events and a different name - should trigger
+      // warnDifferentContractType via the None-branch conflict path.
+      let fetchState = makeInitial()
+
+      let conflictingDc = makeDynContractRegistration(
+        ~blockNumber=10,
+        ~contractAddress=mockAddress0,
+        ~contractName="UnknownContract",
+      )
+      let item = conflictingDc->dcToItem
+
+      let updatedFetchState = fetchState->FetchState.registerDynamicContracts([item])
+
+      t.expect(
+        (
+          // dc spliced out - won't overwrite the existing Gravatar entry in db
+          item->Internal.getItemDcs,
+          // indexingAddresses still has the original contract name
+          updatedFetchState.indexingAddresses
+          ->Dict.get(mockAddress0->Address.toString)
+          ->Option.map(ia => ia.contractName),
+          // fetchState unchanged - nothing new registered
+          updatedFetchState === fetchState,
+        ),
+        ~message=`conflicting no-events dc is spliced out,
+          original Gravatar registration preserved,
+          and fetchState is unchanged`,
+      ).toEqual((Some([]), Some("Gravatar"), true))
+    },
+  )
+
   it("Correctly registers all valid contracts even when some are skipped in the middle", t => {
     let fetchState = makeInitial()
 
