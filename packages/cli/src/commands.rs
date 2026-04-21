@@ -21,28 +21,65 @@ async fn execute_command_with_env(
     current_dir: &Path,
     extra_env: &[(String, String)],
 ) -> anyhow::Result<std::process::ExitStatus> {
-    tokio::process::Command::new(cmd)
+    // NAPI addon context: file-descriptor inheritance from the tokio async
+    // runtime to child processes doesn't reach the Node host's stdout/stderr
+    // cleanly — subprocess output silently disappears. Pipe explicitly and
+    // forward each byte through Rust's `print!`/`eprint!`, which do go to the
+    // host stdio. Loses the TTY signal (pnpm/rescript render without colors),
+    // but the compile progress and error text are visible again.
+    let mut child = tokio::process::Command::new(cmd)
         .args(&args)
         .envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .current_dir(current_dir)
-        .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-        .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-        //the child process
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .context(format!(
             "Failed to spawn command {} {} at {} as child process",
             cmd,
             args.join(" "),
             current_dir.to_str().unwrap_or("bad_path")
-        ))?
-        .wait()
-        .await
-        .context(format!(
-            "Failed to exit command {} {} at {} from child process",
-            cmd,
-            args.join(" "),
-            current_dir.to_str().unwrap_or("bad_path")
-        ))
+        ))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stdout_task = tokio::spawn(async move {
+        if let Some(mut s) = stdout {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = s.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                print!("{}", String::from_utf8_lossy(&buf[..n]));
+            }
+        }
+    });
+    let stderr_task = tokio::spawn(async move {
+        if let Some(mut s) = stderr {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = s.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                eprint!("{}", String::from_utf8_lossy(&buf[..n]));
+            }
+        }
+    });
+
+    let exit = child.wait().await.context(format!(
+        "Failed to exit command {} {} at {} from child process",
+        cmd,
+        args.join(" "),
+        current_dir.to_str().unwrap_or("bad_path")
+    ))?;
+    let _ = stdout_task.await;
+    let _ = stderr_task.await;
+    Ok(exit)
 }
 
 /// Like execute_command, but suppresses stdout and stderr
