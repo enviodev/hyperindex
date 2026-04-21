@@ -202,11 +202,10 @@ pub fn build_start_command(
         .to_string_lossy()
         .into_owned();
 
-    let mut env_map = serde_json::Map::new();
-    env_map.insert("ENVIO_CONFIG".to_string(), config_path.into());
-    for (k, v) in extra_env {
-        env_map.insert(k.clone(), v.clone().into());
-    }
+    let env: serde_json::Map<String, serde_json::Value> =
+        std::iter::once(("ENVIO_CONFIG".to_string(), config_path.into()))
+            .chain(extra_env.iter().map(|(k, v)| (k.clone(), v.clone().into())))
+            .collect();
 
     Ok(Command::Start {
         migrate,
@@ -215,7 +214,7 @@ pub fn build_start_command(
             .project_root
             .to_string_lossy()
             .into_owned(),
-        env: env_map,
+        env,
         config: public_config_value(config)?,
     })
 }
