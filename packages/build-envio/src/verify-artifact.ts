@@ -27,7 +27,7 @@ const REQUIRED_COMPILED = [
   "src/Envio.res.mjs",
   "src/Config.res.mjs",
   "src/Main.res.mjs",
-  "src/Migrations.res.mjs",
+  "src/Bin.res.mjs",
 ];
 
 function verify(dir: string): void {

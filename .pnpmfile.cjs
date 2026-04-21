@@ -10,7 +10,7 @@ const path = require("path");
 // `envio codegen` running pnpm install in scenarios/e2e_test) still see
 // the artifact and apply the same redirect. Otherwise the second install
 // reinstalls envio from packages/envio without rescript build artifacts,
-// dropping new files like src/Migrations.res.mjs.
+// dropping new files like src/Bin.res.mjs.
 const ARTIFACT_DIR = path.join(__dirname, ".envio-artifacts", "envio");
 const PLATFORM_ARTIFACT_DIR = path.join(__dirname, ".envio-artifacts", "envio-linux-x64");
 
