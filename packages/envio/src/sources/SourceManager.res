@@ -24,6 +24,7 @@ type t = {
   newBlockStallTimeout: int,
   newBlockStallTimeoutLive: int,
   stalledPollingInterval: int,
+  reducedPollingInterval: int,
   getHeightRetryInterval: (~retry: int) => int,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
@@ -73,6 +74,7 @@ let make = (
   ~newBlockStallTimeout=60_000,
   ~newBlockStallTimeoutLive=20_000,
   ~stalledPollingInterval=5_000,
+  ~reducedPollingInterval=60_000,
   ~recoveryTimeout=60_000.0,
   ~getHeightRetryInterval=makeGetHeightRetryInterval(
     ~initialRetryInterval=1000,
@@ -112,6 +114,7 @@ let make = (
     newBlockStallTimeout,
     newBlockStallTimeoutLive,
     stalledPollingInterval,
+    reducedPollingInterval,
     getHeightRetryInterval,
     recoveryTimeout,
     statusStart: Hrtime.makeTimer(),
@@ -296,7 +299,7 @@ let getSourceNewHeight = async (
           | _ =>
             // Slowdown polling when the chain isn't progressing
             let pollingInterval = if reducedPolling {
-              60_000
+              sourceManager.reducedPollingInterval
             } else if status.contents === Stalled {
               sourceManager.stalledPollingInterval
             } else {
@@ -424,7 +427,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPo
   // Use a much longer stall timeout when reduced polling is active
   // to avoid spurious stall warnings while waiting for other chains to backfill
   let stallTimeout = if reducedPolling {
-    10 * 60_000
+    sourceManager.reducedPollingInterval * 10
   } else if isLive {
     sourceManager.newBlockStallTimeoutLive
   } else {
