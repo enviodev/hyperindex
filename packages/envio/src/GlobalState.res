@@ -823,13 +823,15 @@ let checkAndFetchForChain = (
       let {fetchState} = chainFetcher
 
       // Reduce polling to 60s when this chain is caught up but waiting for other chains
-      let reducedPolling =
+      let reducedPolling = if state.ctx.config.shouldRollbackOnReorg {
+        !state.chainManager.isInReorgThreshold &&
+        fetchState->FetchState.isReadyToEnterReorgThreshold
+      } else {
         chainFetcher->ChainFetcher.isReady &&
-        // With reorg: once threshold is entered, all chains are live — no need to reduce
-        !(state.chainManager.isInReorgThreshold && state.ctx.config.shouldRollbackOnReorg) &&
-        state.chainManager.chainFetchers
-        ->ChainMap.values
-        ->Array.some(cf => !(cf->ChainFetcher.isReady))
+          state.chainManager.chainFetchers
+          ->ChainMap.values
+          ->Array.some(cf => !(cf->ChainFetcher.isReady))
+      }
 
       await chainFetcher.sourceManager->SourceManager.fetchNext(
         ~fetchState,
