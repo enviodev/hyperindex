@@ -553,7 +553,6 @@ let makeLazy: (unit => 'a, 'a) => 'a = %raw(`function (make, target) {
 }`)
 
 let configWithoutRegistrations: Config.t = makeLazy(getCachedConfig, %raw(`Object.create(null)`))
-let allEntities: array<Internal.entityConfig> = makeLazy(() => getCachedConfig().allEntities, %raw(`[]`))
 
 }
 

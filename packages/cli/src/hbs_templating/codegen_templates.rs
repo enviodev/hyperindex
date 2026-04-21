@@ -1809,10 +1809,10 @@ type testIndexer = {{
         //
         // The config is loaded lazily via `Config.load()` — either from the
         // primed CLI payload (no I/O) or via the `getConfigJson` NAPI call.
-        // Exposed values (`configWithoutRegistrations`, `allEntities`,
-        // `indexer`) are JS Proxies that defer the load until the first
-        // property read, so modules that import types from "generated" but
-        // never read config values don't pay the cost at module load time.
+        // Exposed values (`configWithoutRegistrations`, `indexer`) are JS
+        // Proxies that defer the load until the first property read, so
+        // modules that import types from "generated" but never read config
+        // values don't pay the cost at module load time.
         let generated_module = r#"module Generated = {
 let makeGeneratedConfig = () => Config.load()
 
@@ -1847,7 +1847,6 @@ let makeLazy: (unit => 'a, 'a) => 'a = %raw(`function (make, target) {
 }`)
 
 let configWithoutRegistrations: Config.t = makeLazy(getCachedConfig, %raw(`Object.create(null)`))
-let allEntities: array<Internal.entityConfig> = makeLazy(() => getCachedConfig().allEntities, %raw(`[]`))
 
 }"#;
 

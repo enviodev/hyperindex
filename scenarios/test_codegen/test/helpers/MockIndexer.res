@@ -22,7 +22,7 @@ module InMemoryStore = {
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=config.allEntities)
     entities->Array.forEach(((entityConfig, items)) => {
       items->Array.forEach(entity => {
         inMemoryStore->setEntity(~entityConfig, entity)

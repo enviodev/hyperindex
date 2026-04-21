@@ -39,7 +39,9 @@ describe("Chains State", () => {
       async t => {
         // This test verifies that the chain field is accessible
         // The actual integration test is in EventHandlers.res with the EmptyEvent handler
-        let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
+        let inMemoryStore = InMemoryStore.make(
+          ~entities=Indexer.Generated.configWithoutRegistrations.allEntities,
+        )
         let loadManager = LoadManager.make()
 
         let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
