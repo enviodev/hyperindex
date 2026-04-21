@@ -14,8 +14,7 @@ use crate::{
         field_types,
         human_config::HumanConfig,
         system_config::{
-            self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField,
-            SystemConfig,
+            self, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField, SystemConfig,
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
@@ -916,7 +915,6 @@ pub struct ProjectTemplate {
     is_fuel_ecosystem: bool,
     is_svm_ecosystem: bool,
 
-    envio_version: String,
     indexer_code: String,
     envio_dts_code: String,
     //Used for the package.json reference to handlers in generated
@@ -1158,7 +1156,7 @@ impl ProjectTemplate {
         format!("{{ readonly params: {} }}", params_ts)
     }
 
-    pub fn from_config(cfg: &SystemConfig, envio_package_dir: Option<&str>) -> Result<Self> {
+    pub fn from_config(cfg: &SystemConfig) -> Result<Self> {
         let project_paths = &cfg.parsed_project_paths;
 
         // Compute all available fields for the ecosystem (EVM has all block/tx fields,
@@ -2270,7 +2268,6 @@ let allEntities: array<Internal.entityConfig> = makeLazy(() => getCachedConfig()
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
-            envio_version: get_envio_version(envio_package_dir)?,
             indexer_code,
             envio_dts_code,
             //Used for the package.json reference to handlers in generated
@@ -2304,13 +2301,6 @@ mod test {
         format!("{}/test", env!("CARGO_MANIFEST_DIR"))
     }
 
-    // `packages/envio` relative to `packages/cli` (this crate's manifest dir).
-    // Used by tests so `get_envio_version` returns the expected `file:` path
-    // without touching the filesystem walk (which was removed).
-    fn envio_package_dir_for_tests() -> String {
-        format!("{}/../envio", env!("CARGO_MANIFEST_DIR"))
-    }
-
     fn get_project_template_helper(configs_file_name: &str) -> super::ProjectTemplate {
         let project_root = get_test_path_string_helper();
         let config = format!("configs/{}", configs_file_name);
@@ -2321,8 +2311,7 @@ mod test {
         let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");
 
-        let envio_pkg = envio_package_dir_for_tests();
-        super::ProjectTemplate::from_config(&config, Some(&envio_pkg))
+        super::ProjectTemplate::from_config(&config)
             .expect("should be able to get project template")
     }
 

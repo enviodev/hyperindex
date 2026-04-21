@@ -82,12 +82,12 @@ pub async fn execute(
         }
 
         CommandType::Codegen => {
-            codegen::run_codegen(&parsed_project_paths, envio_package_dir).await?;
+            codegen::run_codegen(&parsed_project_paths).await?;
             Ok(None)
         }
 
         CommandType::Dev(dev_args) => Ok(Some(
-            dev::run_dev(parsed_project_paths, dev_args.restart, envio_package_dir).await?,
+            dev::run_dev(parsed_project_paths, dev_args.restart).await?,
         )),
 
         CommandType::Stop => {

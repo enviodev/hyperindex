@@ -173,18 +173,12 @@ pub mod codegen {
         Ok(exit3)
     }
 
-    pub async fn run_codegen(
-        config: &SystemConfig,
-        envio_package_dir: Option<&str>,
-    ) -> anyhow::Result<()> {
+    pub async fn run_codegen(config: &SystemConfig) -> anyhow::Result<()> {
         let template_dirs = TemplateDirs::new();
         fs::create_dir_all(&config.parsed_project_paths.generated).await?;
 
-        let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(
-            config,
-            envio_package_dir,
-        )
-        .context("Failed creating project template")?;
+        let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(config)
+            .context("Failed creating project template")?;
 
         template_dirs
             .get_codegen_static_dir()?

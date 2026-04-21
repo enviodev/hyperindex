@@ -9,11 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 
-pub async fn run_dev(
-    project_paths: ParsedProjectPaths,
-    restart: bool,
-    envio_package_dir: Option<&str>,
-) -> Result<Command> {
+pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result<Command> {
     let config =
         SystemConfig::parse_from_project_files(&project_paths).context("Failed parsing config")?;
 
@@ -67,7 +63,7 @@ pub async fn run_dev(
             _ => (),
         };
 
-        commands::codegen::run_codegen(&config, envio_package_dir)
+        commands::codegen::run_codegen(&config)
             .await
             .context("Failed running codegen")?;
     }
