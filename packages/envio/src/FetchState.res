@@ -1086,7 +1086,7 @@ let registerDynamicContracts = (
   }
 
   let dcContractNamesToStore = registeringContractsByContract->Dict.keysToArray
-  let hasNoEventsUpdates = noEventsAddresses->Dict.keysToArray->Array.length > 0
+  let hasNoEventsUpdates = !(noEventsAddresses->Utils.Dict.isEmpty)
   switch (dcContractNamesToStore, hasNoEventsUpdates) {
   // Dont update anything when everything was filter out
   | ([], false) => fetchState
