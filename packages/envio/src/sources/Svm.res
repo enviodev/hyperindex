@@ -23,6 +23,9 @@ let ecosystem: Ecosystem.t = {
   // SVM filter shape: `{slot: {_gte?, _lte?, _every?}}`.
   // Inner range chunk parsed by `blockRangeSchema` in `Main.res`.
   onBlockFilterSchema: S.object(s => s.field("slot", S.option(S.unknown))),
+  // SVM has no event handlers, so there is no `onEvent` `where` value to
+  // parse. The schema is a no-op object that always surfaces `None`.
+  onEventBlockFilterSchema: S.object(_ => None),
 }
 
 module GetFinalizedSlot = {
