@@ -241,6 +241,15 @@ let buildChainsObject = (~config: Config.t) => {
   (chains, chainIds)
 }
 
+// Attach an enumerable property whose value is produced lazily on read.
+// Wraps `Utils.Object.defineProperty` + the `Utils.magic` erasure required
+// by the getter signature (`unknown`) so getter call sites stay terse.
+let defineValueGetter = (obj, name, get: unit => 'a) =>
+  obj->Utils.Object.defineProperty(
+    name,
+    {enumerable: true, get: () => get()->(Utils.magic: 'a => unknown)},
+  )
+
 let getGlobalIndexer = (): 'indexer => {
   let indexer = Utils.Object.createNullObject()
 
@@ -261,41 +270,16 @@ let getGlobalIndexer = (): 'indexer => {
     }
 
   indexer
-  ->Utils.Object.defineProperty(
-    "name",
-    {
-      enumerable: true,
-      get: () => Config.loadWithoutRegistrations().name->(Utils.magic: string => unknown),
-    },
-  )
-  ->Utils.Object.defineProperty(
-    "description",
-    {
-      enumerable: true,
-      get: () =>
-        Config.loadWithoutRegistrations().description->(Utils.magic: option<string> => unknown),
-    },
-  )
-  ->Utils.Object.defineProperty(
-    "chainIds",
-    {
-      enumerable: true,
-      get: () => {
-        let (_, chainIds) = getChainsMemo()
-        chainIds->(Utils.magic: array<int> => unknown)
-      },
-    },
-  )
-  ->Utils.Object.defineProperty(
-    "chains",
-    {
-      enumerable: true,
-      get: () => {
-        let (chains, _) = getChainsMemo()
-        chains
-      },
-    },
-  )
+  ->defineValueGetter("name", () => Config.loadWithoutRegistrations().name)
+  ->defineValueGetter("description", () => Config.loadWithoutRegistrations().description)
+  ->defineValueGetter("chainIds", () => {
+    let (_, chainIds) = getChainsMemo()
+    chainIds
+  })
+  ->defineValueGetter("chains", () => {
+    let (chains, _) = getChainsMemo()
+    chains
+  })
   ->ignore
 
   // Parse eventIdentity config to extract contractName, eventName, and options.
@@ -337,8 +321,23 @@ let getGlobalIndexer = (): 'indexer => {
     (contractName, eventName, eventOptions)
   }
 
+  // Reject `indexer.onEvent` / `indexer.contractRegister` on SVM at the
+  // call site so the user's stack trace points at their handler module,
+  // rather than throwing later during `HandlerLoader.applyRegistrations`.
+  let throwIfSvm = (~methodName) => {
+    let ecosystem = Config.loadWithoutRegistrations().ecosystem
+    switch ecosystem.name {
+    | Svm =>
+      JsError.throwWithMessage(
+        `\`indexer.${methodName}\` is not supported on SVM. Use \`indexer.${ecosystem.onBlockMethodName}\` for per-slot handlers.`,
+      )
+    | Evm | Fuel => ()
+    }
+  }
+
   // onEvent: delegates to HandlerRegister.setHandler
   let onEventFn = (identityConfig: 'a, handler: 'b) => {
+    throwIfSvm(~methodName="onEvent")
     let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
     HandlerRegister.setHandler(
       ~contractName,
@@ -354,6 +353,7 @@ let getGlobalIndexer = (): 'indexer => {
 
   // contractRegister: delegates to HandlerRegister.setContractRegister
   let contractRegisterFn = (identityConfig: 'a, handler: 'b) => {
+    throwIfSvm(~methodName="contractRegister")
     let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
     HandlerRegister.setContractRegister(
       ~contractName,

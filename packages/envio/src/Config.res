@@ -535,12 +535,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
 
   // Build event configs for a contract from JSON event items. Events are
   // built with an empty handler-registration state (isWildcard=false,
-  // handler/contractRegister=None, eventFilters=None). The built event
-  // records carry a `rebuildWithRegistration` closure; after handler
-  // modules register, callers walk the config and rebuild each event with
-  // its registered state. Keeping `Config` oblivious to `HandlerRegister`
-  // means `Config.loadWithoutRegistrations` is a pure function of the JSON
-  // and safe to memoize without invalidation.
+  // handler/contractRegister=None, eventFilters=None). Post-registration
+  // configs are produced by `HandlerLoader.applyRegistrations`, which folds
+  // the registered handler state into each event. Keeping `Config` oblivious
+  // to `HandlerRegister` means `Config.loadWithoutRegistrations` is a pure
+  // function of the JSON and safe to memoize without invalidation.
   let buildContractEvents = (~contractName, ~events: option<array<_>>, ~abi, ~chainId: int) => {
     switch events {
     | None => []
@@ -871,8 +870,13 @@ let prime = (json: JSON.t): unit => {
 // The `Config` module deliberately knows nothing about handler
 // registrations: the returned value is a pure function of the JSON, so
 // memoization is safe without invalidation. Post-registration configs are
-// produced by `HandlerLoader.registerAllHandlers` via
-// `Internal.{evm,fuel}EventConfig.rebuildWithRegistration`.
+// produced by `HandlerLoader.applyRegistrations`, which folds the
+// registered handler state into each event (via spread+override for
+// EVM/Fuel; SVM doesn't support per-event handlers).
+//
+// `prime` must be called before the first `loadWithoutRegistrations` read
+// if a primed JSON is going to be used; calling `prime` later invalidates
+// the memo so subsequent reads reparse.
 let loadWithoutRegistrations = () =>
   switch cached.contents {
   | Some(c) => c

@@ -456,7 +456,7 @@ let buildEvmEventConfig = (
     simulateParamsSchema: buildSimulateParamsSchema(params),
     getEventFiltersOrThrow,
     filterByAddresses,
-    dependsOnAddresses: !isWildcard || filterByAddresses,
+    dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
     convertHyperSyncEventArgs: buildHyperSyncDecoder(params),
     selectedBlockFields,
     selectedTransactionFields,
@@ -521,7 +521,7 @@ let buildFuelEventConfig = (
     paramsRawEventSchema: paramsSchema,
     simulateParamsSchema: paramsSchema,
     filterByAddresses: false,
-    dependsOnAddresses: !isWildcard,
+    dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
     kind: fuelKind,
   }
 }

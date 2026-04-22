@@ -81,8 +81,8 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 // `getEventFiltersOrThrow` / `filterByAddresses` — that's why
 // `evmEventConfig` retains `sighash` and `indexedParams`.
 //
-// `dependsOnAddresses` formula must stay in sync with
-// `EventConfigBuilder.buildEvmEventConfig` / `buildFuelEventConfig`.
+// `dependsOnAddresses` goes through `Internal.dependsOnAddresses` so the
+// formula stays in sync with `EventConfigBuilder.build{Evm,Fuel}EventConfig`.
 let applyRegistrations = (~config: Config.t): Config.t => {
   let newChainMap = config.chainMap->ChainMap.map(chain => {
     let newContracts = chain.contracts->Array.map(contract => {
@@ -109,7 +109,10 @@ let applyRegistrations = (~config: Config.t): Config.t => {
               isWildcard,
               handler,
               contractRegister,
-              dependsOnAddresses: !isWildcard,
+              dependsOnAddresses: Internal.dependsOnAddresses(
+                ~isWildcard,
+                ~filterByAddresses=false,
+              ),
             } :> Internal.eventConfig)
           | Evm =>
             let evmEv = ev->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
@@ -141,7 +144,7 @@ let applyRegistrations = (~config: Config.t): Config.t => {
               contractRegister,
               getEventFiltersOrThrow,
               filterByAddresses,
-              dependsOnAddresses: !isWildcard || filterByAddresses,
+              dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
             } :> Internal.eventConfig)
           | Svm =>
             JsError.throwWithMessage(`SVM does not support indexer.onEvent or indexer.contractRegister. Use indexer.onSlot for per-slot handlers.`)

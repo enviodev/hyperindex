@@ -407,6 +407,14 @@ type evmEventConfig = {
   sighash: string,
   indexedParams: array<eventParam>,
 }
+
+// Shared formula for `eventConfig.dependsOnAddresses`. Kept here so
+// `EventConfigBuilder.build{Evm,Fuel}EventConfig` and
+// `HandlerLoader.applyRegistrations` stay in sync when handler state flips
+// the value. Fuel events always have `filterByAddresses=false`, so callers
+// there simply pass it through as `false`.
+let dependsOnAddresses = (~isWildcard, ~filterByAddresses) => !isWildcard || filterByAddresses
+
 type evmContractConfig = {
   name: string,
   abi: EvmTypes.Abi.t,
