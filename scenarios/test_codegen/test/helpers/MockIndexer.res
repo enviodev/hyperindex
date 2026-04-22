@@ -778,12 +778,6 @@ module Source = {
                               JsError.throwWithMessage("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
                             selectedTransactionFields: Utils.Set.make(),
-                            rebuildWithRegistration: (
-                              ~isWildcard as _,
-                              ~handler as _,
-                              ~contractRegister as _,
-                              ~eventFilters as _,
-                            ) => JsError.throwWithMessage("Not implemented"),
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -940,11 +934,5 @@ let evmEventConfig = (
     convertHyperSyncEventArgs: _ => JsError.throwWithMessage("Not implemented"),
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
-    rebuildWithRegistration: (
-      ~isWildcard as _,
-      ~handler as _,
-      ~contractRegister as _,
-      ~eventFilters as _,
-    ) => JsError.throwWithMessage("Not implemented"),
   }
 }

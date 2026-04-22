@@ -352,17 +352,9 @@ type fuelEventKind =
   | Burn
   | Transfer
   | Call
-type rec fuelEventConfig = {
+type fuelEventConfig = {
   ...eventConfig,
   kind: fuelEventKind,
-  // Rebuild this event with a different handler registration state. Captures
-  // the original build inputs so callers (after handler modules register)
-  // can produce a new event config without knowing raw sighash/kind/abi.
-  rebuildWithRegistration: (
-    ~isWildcard: bool,
-    ~handler: option<handler>,
-    ~contractRegister: option<contractRegister>,
-  ) => fuelEventConfig,
 }
 type fuelContractConfig = {
   name: string,
@@ -385,21 +377,12 @@ type onEventWhereArgs<'chain> = {chain: 'chain}
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
 
-type rec evmEventConfig = {
+type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
   selectedTransactionFields: Utils.Set.t<evmTransactionField>,
-  // Rebuild this event with a different handler registration state. Captures
-  // the original build inputs so callers (after handler modules register)
-  // can produce a new event config without knowing raw params/sighash/etc.
-  rebuildWithRegistration: (
-    ~isWildcard: bool,
-    ~handler: option<handler>,
-    ~contractRegister: option<contractRegister>,
-    ~eventFilters: option<JSON.t>,
-  ) => evmEventConfig,
 }
 type evmContractConfig = {
   name: string,
