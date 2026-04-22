@@ -12,13 +12,6 @@
     "module": "esmodule",
     "in-source": true
   },
-  "gentypeconfig": {
-    "shims": {
-      "Js": "Js"
-    },
-    "generatedFileExtension": ".gen.ts",
-    "moduleResolution": "node16"
-  },
   "jsx": {
     "version": 4
   },

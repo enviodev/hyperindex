@@ -1,4 +1,3 @@
-@genType
 type rawEventsKey = {
   chainId: int,
   eventId: string,

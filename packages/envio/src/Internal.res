@@ -254,7 +254,6 @@ type evmTransactionInput = {
   authorizationList?: JSON.t,
 }
 
-@genType
 type genericEvent<'params, 'block, 'transaction> = {
   contractName: string,
   eventName: string,
@@ -270,35 +269,28 @@ type event = genericEvent<eventParams, eventBlock, eventTransaction>
 
 external fromGenericEvent: genericEvent<'a, 'b, 'c> => event = "%identity"
 
-@genType
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
 }
-@genType
 type genericLoader<'args, 'loaderReturn> = 'args => promise<'loaderReturn>
 
-@genType
 type genericContractRegisterArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
 }
-@genType.import(("./Types.ts", "GenericContractRegister"))
 type genericContractRegister<'args> = 'args => promise<unit>
 
 type contractRegisterContext
 type contractRegisterArgs = genericContractRegisterArgs<event, contractRegisterContext>
 type contractRegister = genericContractRegister<contractRegisterArgs>
 
-@genType
 type genericHandlerArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
 }
-@genType
 type genericHandler<'args> = 'args => promise<unit>
 
-@genType
 type entityHandlerContext<'entity> = {
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
@@ -327,7 +319,6 @@ type handlerArgs = {
 }
 type handler = genericHandler<handlerArgs>
 
-@genType
 type genericHandlerWithLoader<'loader, 'handler, 'where> = {
   loader: 'loader,
   handler: 'handler,
@@ -361,7 +352,6 @@ type fuelEventKind =
   | Burn
   | Transfer
   | Call
-@genType.opaque
 type fuelEventConfig = {
   ...eventConfig,
   kind: fuelEventKind,
@@ -387,7 +377,6 @@ type onEventWhereArgs<'chain> = {chain: 'chain}
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
 
-@genType.opaque
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
@@ -477,13 +466,11 @@ external getItemDcs: item => option<dcs> = "dcs"
 @set
 external setItemDcs: (item, dcs) => unit = "dcs"
 
-@genType
 type eventOptions<'where> = {
   wildcard?: bool,
   where?: 'where,
 }
 
-@genType
 type fuelSupplyParams = {
   subId: string,
   amount: bigint,
@@ -492,7 +479,6 @@ let fuelSupplyParamsSchema = S.schema(s => {
   subId: s.matches(S.string),
   amount: s.matches(Utils.BigInt.schema),
 })
-@genType
 type fuelTransferParams = {
   to: Address.t,
   assetId: string,
@@ -566,7 +552,6 @@ let makeCacheTable = (~effectName) => {
   )
 }
 
-@genType.import(("./Types.ts", "Invalid"))
 type noOnEventWhere
 
 type checkpointId = bigint
