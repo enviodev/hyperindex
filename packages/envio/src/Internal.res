@@ -326,6 +326,23 @@ type genericHandlerWithLoader<'loader, 'handler, 'where> = {
   where?: 'where,
 }
 
+// Recursive tuple/struct component metadata emitted by the CLI when an event
+// param (or any nested field) is a Solidity struct. `name` is always non-empty —
+// the CLI fills in `"0"`, `"1"`, ... for anonymous components in mixed-name
+// tuples — so the runtime can always rebuild a keyed object.
+type rec eventParamComponent = {
+  name: string,
+  abiType: string,
+  components?: array<eventParamComponent>,
+}
+
+type eventParam = {
+  name: string,
+  abiType: string,
+  indexed: bool,
+  components?: array<eventParamComponent>,
+}
+
 // This is private so it's not manually constructed internally
 // The idea is that it can only be coerced from fuel/evmEventConfig
 // and it can include their fields. We prevent manual creation,
@@ -383,6 +400,12 @@ type evmEventConfig = {
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
   selectedTransactionFields: Utils.Set.t<evmTransactionField>,
+  // Retained so `HandlerLoader.applyRegistrations` can re-run
+  // `LogSelection.parseEventFiltersOrThrow` after handler modules register
+  // with a `where:` filter. Only indexed params are kept — they're all the
+  // filter parser needs for topic-getter construction + key validation.
+  sighash: string,
+  indexedParams: array<eventParam>,
 }
 type evmContractConfig = {
   name: string,

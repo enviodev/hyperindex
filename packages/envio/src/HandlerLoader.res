@@ -74,19 +74,15 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 }
 
 // Produce a post-registration Config.t by walking the chainMap and folding
-// the just-registered handler state into each event. We intentionally do not
-// re-run `EventConfigBuilder.build{Evm,Fuel}EventConfig` — everything the new
-// event record needs is already a field on the existing event config, so a
-// spread with three overrides + a derived `dependsOnAddresses` suffices.
+// the just-registered handler state into each event. Fuel keeps all its
+// fields from build time and only overrides the three registration fields
+// (+ `dependsOnAddresses`). EVM also re-runs `parseEventFiltersOrThrow` with
+// the newly-registered `where:` JSON so per-event filters propagate into
+// `getEventFiltersOrThrow` / `filterByAddresses` — that's why
+// `evmEventConfig` retains `sighash` and `indexedParams`.
 //
 // `dependsOnAddresses` formula must stay in sync with
 // `EventConfigBuilder.buildEvmEventConfig` / `buildFuelEventConfig`.
-//
-// Known limitation: `indexer.onEvent({..., where: …})` filters are not
-// propagated into `getEventFiltersOrThrow` / `filterByAddresses` here — those
-// closures reflect the state captured at original build time (always no
-// filter, since `Config.fromPublic` now passes `eventFilters=None`). A
-// separate mechanism will need to re-apply user-registered filters.
 let applyRegistrations = (~config: Config.t): Config.t => {
   let newChainMap = config.chainMap->ChainMap.map(chain => {
     let newContracts = chain.contracts->Array.map(contract => {
@@ -117,13 +113,35 @@ let applyRegistrations = (~config: Config.t): Config.t => {
             } :> Internal.eventConfig)
           | Evm =>
             let evmEv = ev->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+            let eventFilters = HandlerRegister.getOnEventWhere(
+              ~contractName=ev.contractName,
+              ~eventName=ev.name,
+            )
+            let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(
+              ~eventFilters,
+              ~sighash=evmEv.sighash,
+              ~params=evmEv.indexedParams->Array.map(p => p.name),
+              ~contractName=ev.contractName,
+              ~probeChainId=chain.id,
+              ~topic1=?evmEv.indexedParams
+              ->Array.get(0)
+              ->Option.map(EventConfigBuilder.buildTopicGetter),
+              ~topic2=?evmEv.indexedParams
+              ->Array.get(1)
+              ->Option.map(EventConfigBuilder.buildTopicGetter),
+              ~topic3=?evmEv.indexedParams
+              ->Array.get(2)
+              ->Option.map(EventConfigBuilder.buildTopicGetter),
+            )
 
             ({
               ...evmEv,
               isWildcard,
               handler,
               contractRegister,
-              dependsOnAddresses: !isWildcard || evmEv.filterByAddresses,
+              getEventFiltersOrThrow,
+              filterByAddresses,
+              dependsOnAddresses: !isWildcard || filterByAddresses,
             } :> Internal.eventConfig)
           | Svm =>
             JsError.throwWithMessage(`SVM does not support indexer.onEvent or indexer.contractRegister. Use indexer.onSlot for per-slot handlers.`)
