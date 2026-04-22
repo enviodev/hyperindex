@@ -59,6 +59,7 @@ type logger = {
   errorWithExn: (string, exn) => unit,
 }
 
+@@warning("-30") // Duplicated type names (input)
 type rec effect<'input, 'output>
 @unboxed
 and rateLimitDuration =
@@ -90,6 +91,7 @@ and effectArgs<'input> = {
   input: 'input,
   context: effectContext,
 }
+@@warning("+30")
 
 let durationToMs = (duration: rateLimitDuration) =>
   switch duration {

@@ -1787,73 +1787,16 @@ type testIndexer = {{
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
 
-        // Append the Generated module (was in Indexer.res.hbs, now in Rust).
-        //
-        // The config is loaded lazily via `Config.load()` — either from the
-        // primed CLI payload (no I/O) or via the `getConfigJson` NAPI call.
-        // Exposed values (`configWithoutRegistrations`, `indexer`) are JS
-        // Proxies that defer the load until the first property read, so
-        // modules that import types from "generated" but never read config
-        // values don't pay the cost at module load time.
-        let generated_module = r#"module Generated = {
-let makeGeneratedConfig = () => Config.load()
-
-// Memoized loader. `envio config view` is invoked at most once per process;
-// subsequent callers get the same parsed Config.t.
-let getCachedConfig = {
-  let cache = ref(None)
-  () =>
-    switch cache.contents {
-    | Some(c) => c
-    | None => {
-        let c = makeGeneratedConfig()
-        cache := Some(c)
-        c
-      }
-    }
-}
-
-// Proxy factory: returns a value that lazy-initializes on first read and
-// delegates all property-access traps to the real underlying value.
-// `target` controls the shape seen by `Array.isArray` / `typeof`, so use
-// `[]` for array-like values and a null-prototype object for records.
-let makeLazy: (unit => 'a, 'a) => 'a = %raw(`function (make, target) {
-  let cache;
-  const get = () => (cache === undefined ? (cache = make()) : cache);
-  return new Proxy(target, {
-    get: (_t, prop) => get()[prop],
-    has: (_t, prop) => prop in get(),
-    ownKeys: () => Reflect.ownKeys(get()),
-    getOwnPropertyDescriptor: (_t, prop) => Object.getOwnPropertyDescriptor(get(), prop),
-  });
-}`)
-
-let configWithoutRegistrations: Config.t = makeLazy(getCachedConfig, %raw(`Object.create(null)`))
-
-}"#;
-
-        indexer_code = format!("{}\n\n{}", indexer_code, generated_module);
-
-        // Build the top-level `indexer` value as a lazy Proxy over the memoized
-        // `Main.getGlobalIndexer`. `createTestIndexer` is already a function so
-        // we just lazy-load the config inside its body.
+        // `Main.getGlobalIndexer` returns an object with getters that defer
+        // the `Config.loadWithoutRegistrations()` call until a property is
+        // actually read, so modules that import types from "generated" but
+        // never touch config values don't pay the parse cost at module
+        // load time. `createTestIndexer` is a thunk for the same reason.
         let generated_top_level_bindings = format!(
             "{}\n\n{}",
-            r#"let indexer: indexer = {
-  let cache = ref(None)
-  let getCachedIndexer = () =>
-    switch cache.contents {
-    | Some(i) => i
-    | None => {
-        let i = Main.getGlobalIndexer(~config=Generated.getCachedConfig())
-        cache := Some(i)
-        i
-      }
-    }
-  Generated.makeLazy(getCachedIndexer, %raw(`Object.create(null)`))
-}"#,
+            r#"let indexer: indexer = Main.getGlobalIndexer()"#,
             r#"let createTestIndexer: unit => testIndexer = (() => {
-  TestIndexer.makeCreateTestIndexer(~config=Generated.getCachedConfig(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
+  TestIndexer.makeCreateTestIndexer(~config=Config.loadWithoutRegistrations(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
 })->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
         );
 

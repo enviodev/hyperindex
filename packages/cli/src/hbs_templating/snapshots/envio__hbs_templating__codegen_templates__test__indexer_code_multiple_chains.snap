@@ -506,57 +506,8 @@ type testIndexer = {
 
 @get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
 
-module Generated = {
-let makeGeneratedConfig = () => Config.load()
-
-// Memoized loader. `envio config view` is invoked at most once per process;
-// subsequent callers get the same parsed Config.t.
-let getCachedConfig = {
-  let cache = ref(None)
-  () =>
-    switch cache.contents {
-    | Some(c) => c
-    | None => {
-        let c = makeGeneratedConfig()
-        cache := Some(c)
-        c
-      }
-    }
-}
-
-// Proxy factory: returns a value that lazy-initializes on first read and
-// delegates all property-access traps to the real underlying value.
-// `target` controls the shape seen by `Array.isArray` / `typeof`, so use
-// `[]` for array-like values and a null-prototype object for records.
-let makeLazy: (unit => 'a, 'a) => 'a = %raw(`function (make, target) {
-  let cache;
-  const get = () => (cache === undefined ? (cache = make()) : cache);
-  return new Proxy(target, {
-    get: (_t, prop) => get()[prop],
-    has: (_t, prop) => prop in get(),
-    ownKeys: () => Reflect.ownKeys(get()),
-    getOwnPropertyDescriptor: (_t, prop) => Object.getOwnPropertyDescriptor(get(), prop),
-  });
-}`)
-
-let configWithoutRegistrations: Config.t = makeLazy(getCachedConfig, %raw(`Object.create(null)`))
-
-}
-
-let indexer: indexer = {
-  let cache = ref(None)
-  let getCachedIndexer = () =>
-    switch cache.contents {
-    | Some(i) => i
-    | None => {
-        let i = Main.getGlobalIndexer(~config=Generated.getCachedConfig())
-        cache := Some(i)
-        i
-      }
-    }
-  Generated.makeLazy(getCachedIndexer, %raw(`Object.create(null)`))
-}
+let indexer: indexer = Main.getGlobalIndexer()
 
 let createTestIndexer: unit => testIndexer = (() => {
-  TestIndexer.makeCreateTestIndexer(~config=Generated.getCachedConfig(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
+  TestIndexer.makeCreateTestIndexer(~config=Config.loadWithoutRegistrations(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
 })->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))
