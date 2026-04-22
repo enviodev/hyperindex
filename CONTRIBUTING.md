@@ -58,8 +58,6 @@ alias lenvio="node <absolute repository path>/hyperindex/packages/envio/bin.mjs"
 
 > `lenvio` is like `local envio` 😁
 
-The Rust crate is now a NAPI library (no `cargo run` bin target). `bin.mjs` is the real CLI entry point and automatically runs `cargo build --lib` on first invocation, so you still get the latest Rust changes without manual recompiling.
-
 ## Project Structure Overview
 
 Envio is split into a Rust CLI and the generated indexer runtime.
