@@ -229,7 +229,7 @@ module App = {
           }
         }
       </Box>
-      {if Env.Db.devMode {
+      {if Envio.isDevMode() {
         <Box flexDirection={Row}>
           <Text> {"Dev Console: "->React.string} </Text>
           <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>

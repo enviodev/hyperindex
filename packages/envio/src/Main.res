@@ -574,7 +574,7 @@ let start = async (
   // chains finish (keepProcessAlive) and whether the console API is exposed.
   // Set by `envio dev` via the ENVIO_DEV_MODE env var; `envio start` leaves
   // it unset so the process exits cleanly when indexing completes.
-  let isDevelopmentMode = !isTest && Env.Db.devMode
+  let isDevelopmentMode = !isTest && Envio.isDevMode()
 
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).

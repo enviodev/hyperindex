@@ -181,6 +181,12 @@ type fuelSimulateItem = {
   transaction?: fuelTransactionInput,
 }
 
+// Read at call time, not as a module-level binding. `Bin.res::applyEnv`
+// populates `process.env.ENVIO_DEV_MODE` *after* the JS bundle has loaded,
+// so a top-level `envSafe->EnvSafe.get(...)` in Env.res would always
+// snapshot the pre-applyEnv value (undefined → false).
+let isDevMode = () => NodeJs.Process.process.env->Dict.get("ENVIO_DEV_MODE") === Some("true")
+
 module TestHelpers = {
   module Addresses = {
     let mockAddresses =
