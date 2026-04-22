@@ -61,16 +61,15 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   }
 
   // Import handler files using absolute file:// URLs resolved from cwd
-  let _ =
-    await handlerFiles
-    ->Array.map(file => {
-      Utils.importPath(toImportUrl(file))->Promise.catch(exn => {
-        let cause = exn->Utils.prettifyExn->Obj.magic
-        Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
-        JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
-      })
+  let _ = await handlerFiles
+  ->Array.map(file => {
+    Utils.importPath(toImportUrl(file))->Promise.catch(exn => {
+      let cause = exn->Utils.prettifyExn->Obj.magic
+      Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
+      JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
     })
-    ->Promise.all
+  })
+  ->Promise.all
 }
 
 // Produce a post-registration Config.t by walking the chainMap and folding
@@ -126,6 +125,7 @@ let applyRegistrations = (~config: Config.t): Config.t => {
               ~params=evmEv.indexedParams->Array.map(p => p.name),
               ~contractName=ev.contractName,
               ~probeChainId=chain.id,
+              ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
               ~topic1=?evmEv.indexedParams
               ->Array.get(0)
               ->Option.map(EventConfigBuilder.buildTopicGetter),
@@ -172,12 +172,11 @@ let registerAllHandlers = async (~config: Config.t) => {
   await autoLoadFromSrcHandlers(~handlers=config.handlers)
 
   // Load contract-specific handlers
-  let _ =
-    await config.contractHandlers
-    ->Array.map(({name, handler}) => {
-      registerContractHandlers(~contractName=name, ~handler)
-    })
-    ->Promise.all
+  let _ = await config.contractHandlers
+  ->Array.map(({name, handler}) => {
+    registerContractHandlers(~contractName=name, ~handler)
+  })
+  ->Promise.all
 
   let registrations = HandlerRegister.finishRegistration()
   (applyRegistrations(~config), registrations)
