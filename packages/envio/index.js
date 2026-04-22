@@ -10,6 +10,10 @@ import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.res.mjs";
 // Re-export everything from envioGen
 export * from "./src/Envio.res.mjs";
 
+// Runtime indexer values. Previously lived in generated/src/Indexer.res.mjs;
+// now centralized here so generated TypeScript only imports from "envio".
+export { indexer, createTestIndexer } from "./src/Api.res.mjs";
+
 // Important! Should match the index.d.ts file
 export const S = {
   string: Sury.string,
