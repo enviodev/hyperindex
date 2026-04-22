@@ -53,10 +53,12 @@ Alternatively you can add an alias in your shell config. This will allow you to 
 Go to your shell config file and add the following line:
 
 ```sh
-alias lenvio="cargo run --manifest-path <absolute repository path>/hyperindex/packages/cli/Cargo.toml --"
+alias lenvio="node <absolute repository path>/hyperindex/packages/envio/bin.mjs"
 ```
 
 > `lenvio` is like `local envio` 😁
+
+The Rust crate is now a NAPI library (no `cargo run` bin target). `bin.mjs` is the real CLI entry point and automatically runs `cargo build --lib` on first invocation, so you still get the latest Rust changes without manual recompiling.
 
 ## Project Structure Overview
 
