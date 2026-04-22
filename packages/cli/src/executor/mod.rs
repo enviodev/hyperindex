@@ -33,6 +33,13 @@ pub enum Command {
     /// Run the indexer. If `migrate` is `Some`, also run the migration as
     /// part of the same persistence initialization (single `init()` call).
     Start {
+        // `skip_serializing_if` omits the field on `None` so the JSON object
+        // has no `migrate` key. Bin.res decodes via `Utils.magic` into a
+        // ReScript record whose `option` field expects `undefined` for
+        // `None` — serializing as JSON `null` would break `Option.map`
+        // (it checks `!== undefined`, letting `null` fall through to the
+        // callback and crash on field access).
+        #[serde(skip_serializing_if = "Option::is_none")]
         migrate: Option<MigrateOpts>,
         cwd: String,
         env: serde_json::Map<String, serde_json::Value>,
