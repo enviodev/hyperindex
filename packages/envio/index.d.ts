@@ -1,6 +1,10 @@
 import * as Sury from "rescript-schema";
 import type { default as BigDecimalT } from "bignumber.js";
 
+// Runtime value stubs used by the `S.*` namespace declarations further down
+// so the exported `S.bigDecimal` / `S.bigint` consts pick up typed schemas.
+// The implementations live in `index.js`, sourced from `.res.mjs` compiled
+// output.
 declare const bigDecimalSchema: Sury.Schema<BigDecimalT>;
 declare const bigintSchema: Sury.Schema<bigint>;
 

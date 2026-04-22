@@ -1279,9 +1279,6 @@ impl ProjectTemplate {
             Ecosystem::Svm => "Envio.svmOnSlotArgs<handlerContext> => promise<unit>",
         };
 
-        // Generate chainId polymorphic variant. The canonical TS shape
-        // (`EvmChainId`/`FuelChainId`/`SvmChainId`) lives in Types.ts; the
-        // ReScript side no longer bridges to it via genType.
         let chain_id_type = format!(
             "type chainId = [{}]",
             chain_id_cases
