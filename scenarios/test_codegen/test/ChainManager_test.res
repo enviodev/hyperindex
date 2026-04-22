@@ -1,7 +1,7 @@
 open Vitest
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
-  let config = Config.load()
+  let config = Config.loadWithoutRegistrations()
   let allEvents = []
   let numberOfMockEventsCreated = ref(0)
 

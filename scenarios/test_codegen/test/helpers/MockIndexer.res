@@ -1,6 +1,6 @@
 type chainId = Indexer.chainId
 
-let config = Config.load()
+let config = Config.loadWithoutRegistrations()
 
 let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   config.userEntitiesByName
@@ -201,7 +201,7 @@ module Storage = {
   let toPersistence = (storageMock: t) => {
     {
       ...PgStorage.makePersistenceFromConfig(
-        ~config=Config.load(),
+        ~config=Config.loadWithoutRegistrations(),
         ~storage=storageMock.storage,
       ),
       storageStatus: Ready({
@@ -273,7 +273,7 @@ module Indexer = {
     }
 
     let (postRegistrationConfig, registrations) = await HandlerLoader.registerAllHandlers(
-      ~config=Config.load(),
+      ~config=Config.loadWithoutRegistrations(),
     )
 
     let config = {
@@ -778,6 +778,12 @@ module Source = {
                               JsError.throwWithMessage("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
                             selectedTransactionFields: Utils.Set.make(),
+                            rebuildWithRegistration: (
+                              ~isWildcard as _,
+                              ~handler as _,
+                              ~contractRegister as _,
+                              ~eventFilters as _,
+                            ) => JsError.throwWithMessage("Not implemented"),
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -934,5 +940,11 @@ let evmEventConfig = (
     convertHyperSyncEventArgs: _ => JsError.throwWithMessage("Not implemented"),
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
+    rebuildWithRegistration: (
+      ~isWildcard as _,
+      ~handler as _,
+      ~contractRegister as _,
+      ~eventFilters as _,
+    ) => JsError.throwWithMessage("Not implemented"),
   }
 }

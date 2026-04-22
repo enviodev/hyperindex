@@ -101,7 +101,7 @@ let getInitialChainState = (~chainId: int): option<Persistence.initialChainState
 
 // Build the chains object from config. Extracted so the exported indexer
 // value can call this lazily (on first `indexer.chains` access) rather than
-// eagerly at module load — importing `generated` must not trigger Config.load().
+// eagerly at module load — importing `generated` must not trigger Config.loadWithoutRegistrations().
 let buildChainsObject = (~config: Config.t) => {
   let chainIds = []
   let chains = Utils.Object.createNullObject()
@@ -246,14 +246,14 @@ let getGlobalIndexer = (): 'indexer => {
 
   // `indexer.chains` needs stable identity across repeated reads
   // (`Indexer_test.res:51` asserts `toBe` on the same reference), so memoize
-  // the built chains object on first access. `Config.load()` is itself
+  // the built chains object on first access. `Config.loadWithoutRegistrations()` is itself
   // memoized, so downstream property reads on chains are cheap.
   let chainsMemo: ref<option<(unknown, array<int>)>> = ref(None)
   let getChainsMemo = () =>
     switch chainsMemo.contents {
     | Some(c) => c
     | None => {
-        let (chains, chainIds) = buildChainsObject(~config=Config.load())
+        let (chains, chainIds) = buildChainsObject(~config=Config.loadWithoutRegistrations())
         let memo = (chains->(Utils.magic: {..} => unknown), chainIds)
         chainsMemo := Some(memo)
         memo
@@ -263,13 +263,17 @@ let getGlobalIndexer = (): 'indexer => {
   indexer
   ->Utils.Object.defineProperty(
     "name",
-    {enumerable: true, get: () => Config.load().name->(Utils.magic: string => unknown)},
+    {
+      enumerable: true,
+      get: () => Config.loadWithoutRegistrations().name->(Utils.magic: string => unknown),
+    },
   )
   ->Utils.Object.defineProperty(
     "description",
     {
       enumerable: true,
-      get: () => Config.load().description->(Utils.magic: option<string> => unknown),
+      get: () =>
+        Config.loadWithoutRegistrations().description->(Utils.magic: option<string> => unknown),
     },
   )
   ->Utils.Object.defineProperty(
@@ -389,7 +393,7 @@ let getGlobalIndexer = (): 'indexer => {
   // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
   // math at `FetchState.res:619` stays untouched.
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
-    let config = Config.load()
+    let config = Config.loadWithoutRegistrations()
     let ecosystem = config.ecosystem
     let raw =
       rawOptions->(
@@ -593,14 +597,14 @@ type mainArgs = Yargs.parsedArgs<args>
 type migrateOpts = {reset: bool, persistedState: JSON.t}
 
 let migrate = async (~reset, ~persistedState) => {
-  let config = Config.load()
+  let config = Config.loadWithoutRegistrations()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   await persistence->Persistence.init(~reset, ~chainConfigs=config.chainMap->ChainMap.values)
   await Core.upsertPersistedState(persistedState->JSON.stringify)
 }
 
 let dropSchema = async () => {
-  let config = Config.load()
+  let config = Config.loadWithoutRegistrations()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   await persistence.storage.reset()
 }
@@ -624,7 +628,7 @@ let start = async (
   // when handler files are loaded (they may access the indexer at module top level).
   // `migrate`, when provided, folds the DB setup into this single `init()` call
   // (no separate `db setup` → `start` double-init).
-  let configWithoutRegistrations = Config.load()
+  let configWithoutRegistrations = Config.loadWithoutRegistrations()
   let persistence = switch persistence {
   | Some(p) => p
   | None => PgStorage.makePersistenceFromConfig(~config=configWithoutRegistrations)
@@ -640,11 +644,13 @@ let start = async (
   | None => ()
   }
 
-  // Register all handlers, then get the config with registrations
-  let (_, registrations) = await HandlerLoader.registerAllHandlers(
+  // Register all handlers. The returned config has handler/contractRegister/
+  // eventFilters baked into each event config. Downstream code uses this
+  // enriched value; `Config.loadWithoutRegistrations` itself never sees
+  // registration state.
+  let (config, registrations) = await HandlerLoader.registerAllHandlers(
     ~config=configWithoutRegistrations,
   )
-  let config = Config.load()
   let config = if isTest {
     {...config, shouldRollbackOnReorg: false}
   } else {

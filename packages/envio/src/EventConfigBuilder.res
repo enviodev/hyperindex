@@ -420,7 +420,7 @@ let resolveFieldSelection = (
 
 // ============== Build complete EVM event config ==============
 
-let buildEvmEventConfig = (
+let rec buildEvmEventConfig = (
   ~contractName: string,
   ~eventName: string,
   ~sighash: string,
@@ -471,12 +471,28 @@ let buildEvmEventConfig = (
     convertHyperSyncEventArgs: buildHyperSyncDecoder(params),
     selectedBlockFields,
     selectedTransactionFields,
+    rebuildWithRegistration: (~isWildcard, ~handler, ~contractRegister, ~eventFilters) =>
+      buildEvmEventConfig(
+        ~contractName,
+        ~eventName,
+        ~sighash,
+        ~params,
+        ~isWildcard,
+        ~handler,
+        ~contractRegister,
+        ~eventFilters,
+        ~probeChainId,
+        ~blockFields?,
+        ~transactionFields?,
+        ~globalBlockFieldsSet,
+        ~globalTransactionFieldsSet,
+      ),
   }
 }
 
 // ============== Build Fuel event config ==============
 
-let buildFuelEventConfig = (
+let rec buildFuelEventConfig = (
   ~contractName: string,
   ~eventName: string,
   ~kind: string,
@@ -532,5 +548,16 @@ let buildFuelEventConfig = (
     filterByAddresses: false,
     dependsOnAddresses: !isWildcard,
     kind: fuelKind,
+    rebuildWithRegistration: (~isWildcard, ~handler, ~contractRegister) =>
+      buildFuelEventConfig(
+        ~contractName,
+        ~eventName,
+        ~kind,
+        ~sighash,
+        ~rawAbi,
+        ~isWildcard,
+        ~handler,
+        ~contractRegister,
+      ),
   }
 }

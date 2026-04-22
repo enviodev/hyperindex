@@ -2,7 +2,7 @@ open Vitest
 
 describe("Check that MockChainData works as expected", () => {
   let mockChainDataInit = MockChainData.make(
-    ~chainConfig=(Config.load()).chainMap->ChainMap.get(MockConfig.chain1337),
+    ~chainConfig=(Config.loadWithoutRegistrations()).chainMap->ChainMap.get(MockConfig.chain1337),
     ~maxBlocksReturned=3,
     ~blockTimestampInterval=25,
   )

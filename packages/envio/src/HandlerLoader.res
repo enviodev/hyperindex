@@ -74,11 +74,13 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 }
 
 // Register all handlers and return `(configWithRegistrations, registrations)`.
-// The input `~config` is the pre-registration snapshot; the returned config
-// is the post-registration snapshot used downstream by `Main.start`. The
-// reset+reload dance lives here rather than in `HandlerRegister` to avoid
-// a `Config ↔ HandlerRegister` cycle — `Config.fromPublic` reads from
-// `HandlerRegister`, so `HandlerRegister` itself can't depend on `Config`.
+// The input `~config` is the pre-registration snapshot (from
+// `Config.loadWithoutRegistrations`); the returned config applies
+// `HandlerRegister` state to each event via the
+// `rebuildWithRegistration` closure that `EventConfigBuilder` baked in
+// at build time. `Config` itself never reads `HandlerRegister` — the
+// knowledge of "post-registration config" lives here and flows to
+// downstream callers via the return value.
 let registerAllHandlers = async (~config: Config.t) => {
   HandlerRegister.startRegistration(~ecosystem=config.ecosystem, ~multichain=config.multichain)
 
@@ -94,6 +96,52 @@ let registerAllHandlers = async (~config: Config.t) => {
     ->Promise.all
 
   let registrations = HandlerRegister.finishRegistration()
-  Config.reset()
-  (Config.load(), registrations)
+
+  let newChainMap = config.chainMap->ChainMap.map(chain => {
+    let newContracts = chain.contracts->Array.map(contract => {
+      let newEvents = contract.events->Array.map(
+        event => {
+          let isWildcard = HandlerRegister.isWildcard(
+            ~contractName=event.contractName,
+            ~eventName=event.name,
+          )
+          let handler = HandlerRegister.getHandler(
+            ~contractName=event.contractName,
+            ~eventName=event.name,
+          )
+          let contractRegister = HandlerRegister.getContractRegister(
+            ~contractName=event.contractName,
+            ~eventName=event.name,
+          )
+          switch config.ecosystem.name {
+          | Fuel =>
+            let fuelEv = event->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig)
+
+            (fuelEv.rebuildWithRegistration(
+              ~isWildcard,
+              ~handler,
+              ~contractRegister,
+            ) :> Internal.eventConfig)
+          | Evm | Svm =>
+            let evmEv = event->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+            let eventFilters = HandlerRegister.getOnEventWhere(
+              ~contractName=event.contractName,
+              ~eventName=event.name,
+            )
+
+            (evmEv.rebuildWithRegistration(
+              ~isWildcard,
+              ~handler,
+              ~contractRegister,
+              ~eventFilters,
+            ) :> Internal.eventConfig)
+          }
+        },
+      )
+      {...contract, events: newEvents}
+    })
+    {...chain, contracts: newContracts}
+  })
+
+  ({...config, chainMap: newChainMap}, registrations)
 }
