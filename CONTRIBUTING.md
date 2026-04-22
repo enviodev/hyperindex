@@ -53,7 +53,7 @@ Alternatively you can add an alias in your shell config. This will allow you to 
 Go to your shell config file and add the following line:
 
 ```sh
-alias lenvio="cargo run --manifest-path <absolute repository path>/hyperindex/packages/cli/Cargo.toml --"
+alias lenvio="node <absolute repository path>/hyperindex/packages/envio/bin.mjs"
 ```
 
 > `lenvio` is like `local envio` 😁
