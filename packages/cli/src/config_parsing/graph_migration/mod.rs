@@ -317,7 +317,7 @@ pub async fn generate_config_from_subgraph_id(
                 .cloned()
             {
                 None => {
-                    println!("Data source not found");
+                    eprintln!("Warning: no data source found for contract '{contract}' — skipping");
                 }
                 Some(data_source) => {
                     // Fetching event names from config
@@ -374,7 +374,6 @@ pub async fn generate_config_from_subgraph_id(
                         let abi_ipfs_file_path = data_source_abi.file.value.clone();
                         let abi_file_path =
                             abi_dir_path.join(format!("{}.json", data_source_abi.name));
-                        println!("abi_ipfs_file_path: {}", abi_ipfs_file_path);
                         join_set.spawn(async move {
                             fetch_ipfs_file_and_write_to_system(
                                 abi_ipfs_file_path,

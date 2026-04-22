@@ -16,7 +16,7 @@ use std::{
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-#[derive(Serialize, Deserialize, Debug, FromRow)]
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
 pub struct PersistedState {
     pub envio_version: String,
     pub config_hash: HashString,

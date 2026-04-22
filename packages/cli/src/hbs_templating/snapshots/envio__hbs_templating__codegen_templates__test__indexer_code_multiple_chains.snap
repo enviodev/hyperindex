@@ -3,12 +3,6 @@ source: packages/cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.indexer_code
 ---
 //*************
-//***ENTITIES**
-//*************
-@genType.as("Id")
-type id = string
-
-//*************
 //**CONTRACTS**
 //*************
 
@@ -138,7 +132,6 @@ module Block = {
 }
 
 module SingleOrMultiple: {
-  @genType.import(("./bindings/OpaqueTypes", "SingleOrMultiple"))
   type t<'a>
   let normalizeOrThrow: (t<'a>, ~nestedArrayDepth: int=?) => array<'a>
   let single: 'a => t<'a>
@@ -203,7 +196,6 @@ module Entities = {
     | @as("EmptyEntity") EmptyEntity: name<EmptyEntity.t>
 }
 
-@genType
 type handlerEntityOperations<'entity, 'getWhereFilter> = {
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
@@ -213,7 +205,6 @@ type handlerEntityOperations<'entity, 'getWhereFilter> = {
   deleteUnsafe: string => unit,
 }
 
-@genType.import(("./Types.ts", "HandlerContext"))
 type handlerContext = {
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
@@ -222,7 +213,6 @@ type handlerContext = {
   \"EmptyEntity": handlerEntityOperations<Entities.EmptyEntity.t, Entities.EmptyEntity.getWhereFilter>,
 }
 
-@genType.import(("./Types.ts", "EvmChainId"))
 type chainId = [#1 | #2]
 
 type contractRegisterContract = { add: Address.t => unit }
@@ -233,13 +223,11 @@ type contractRegisterChain = {
   \"Contract2": contractRegisterContract,
 }
 
-@genType
 type contractRegisterContext = {
   log: Envio.logger,
   chain: contractRegisterChain,
 }
 
-@genType
 module Contract1 = {
 let contractName = "Contract1"
 
@@ -316,7 +304,6 @@ let contractName = "Contract1"
     | @as("UpdatedGravatar") UpdatedGravatar: eventIdentity<UpdatedGravatar.event, UpdatedGravatar.paramsConstructor, UpdatedGravatar.onEventWhere>
 }
 
-@genType
 module Contract2 = {
 let contractName = "Contract2"
 
@@ -473,7 +460,7 @@ type indexer = {
   /** Register a Block Handler. Evaluates `where` once per configured chain at registration time. */
   onBlock: (
     Envio.onBlockOptions<indexerChain>,
-    Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
+    Envio.evmOnBlockArgs<handlerContext> => promise<unit>,
   ) => unit,
 }
 
@@ -519,58 +506,8 @@ type testIndexer = {
 
 @get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
 
-module Generated = {
-let makeGeneratedConfig = () => Config.load()
-
-// Memoized loader. `envio config view` is invoked at most once per process;
-// subsequent callers get the same parsed Config.t.
-let getCachedConfig = {
-  let cache = ref(None)
-  () =>
-    switch cache.contents {
-    | Some(c) => c
-    | None => {
-        let c = makeGeneratedConfig()
-        cache := Some(c)
-        c
-      }
-    }
-}
-
-// Proxy factory: returns a value that lazy-initializes on first read and
-// delegates all property-access traps to the real underlying value.
-// `target` controls the shape seen by `Array.isArray` / `typeof`, so use
-// `[]` for array-like values and a null-prototype object for records.
-let makeLazy: (unit => 'a, 'a) => 'a = %raw(`function (make, target) {
-  let cache;
-  const get = () => (cache === undefined ? (cache = make()) : cache);
-  return new Proxy(target, {
-    get: (_t, prop) => get()[prop],
-    has: (_t, prop) => prop in get(),
-    ownKeys: () => Reflect.ownKeys(get()),
-    getOwnPropertyDescriptor: (_t, prop) => Object.getOwnPropertyDescriptor(get(), prop),
-  });
-}`)
-
-let configWithoutRegistrations: Config.t = makeLazy(getCachedConfig, %raw(`Object.create(null)`))
-let allEntities: array<Internal.entityConfig> = makeLazy(() => getCachedConfig().allEntities, %raw(`[]`))
-
-}
-
-let indexer: indexer = {
-  let cache = ref(None)
-  let getCachedIndexer = () =>
-    switch cache.contents {
-    | Some(i) => i
-    | None => {
-        let i = Main.getGlobalIndexer(~config=Generated.getCachedConfig())
-        cache := Some(i)
-        i
-      }
-    }
-  Generated.makeLazy(getCachedIndexer, %raw(`Object.create(null)`))
-}
+let indexer: indexer = Main.getGlobalIndexer()
 
 let createTestIndexer: unit => testIndexer = (() => {
-  TestIndexer.makeCreateTestIndexer(~config=Generated.getCachedConfig(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
+  TestIndexer.makeCreateTestIndexer(~config=Config.loadWithoutRegistrations(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
 })->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))

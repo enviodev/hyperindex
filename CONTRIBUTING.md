@@ -53,7 +53,7 @@ Alternatively you can add an alias in your shell config. This will allow you to 
 Go to your shell config file and add the following line:
 
 ```sh
-alias lenvio="cargo run --manifest-path <absolute repository path>/hyperindex/packages/cli/Cargo.toml --"
+alias lenvio="node <absolute repository path>/hyperindex/packages/envio/bin.mjs"
 ```
 
 > `lenvio` is like `local envio` 😁
@@ -101,21 +101,24 @@ All code below is generated into your project’s `generated/` folder or located
 
 Entry point:
 
-- `Index.res` – launched by `pnpm start`. Responsibilities:
+- `Bin.res` (in `packages/envio`) – launched by `envio` (the `bin.mjs` CLI). Responsibilities:
+  - Calls the Rust CLI via NAPI (`Core.runCli`) and decodes the single tagged `Command` it returns (`start` / `migrate` / `drop-schema`, or `null` for Rust-only work like `codegen`).
+  - For `start`: primes the config JSON (`Config.prime`), sets `cwd` + env vars, then calls `Main.start(~migrate?)`.
+  - For `migrate` / `drop-schema`: primes config and calls `Main.migrate` / `Main.dropSchema`.
+- `Main.start` (in `packages/envio`) is the indexer entry proper. Responsibilities:
   - Parses CLI flags (`--tui-off`, etc.).
   - Loads runtime configuration (`Config.res`).
   - Starts an Express server that serves `/metrics`, `/health`, and the Development Console endpoints.
-  - Intitializes the Persistence layer (Postgres + Hasura).
-  - Calls `RegisterHandlers.res` to wire in user-defined event handlers.
+  - Initializes the Persistence layer (Postgres + Hasura) — a single `init()` call that also handles `~reset` + `upsertPersistedState` when `~migrate` is provided.
+  - Loads user handler modules via `HandlerLoader.registerAllHandlers`.
   - Loads initial state (to resume from a previous run).
   - Spawns the `GlobalStateManager.res` which orchestrates fetch & process loops.
 
 Configuration layer:
 
-- `Config.res` – strongly typed runtime config. Values come from:
-  - Environment variables (`.env`).
-  - Constants injected by `RegisterHandlers.res` (derived from `config.yaml`).
-- Also sets up the Persistence adapter (Postgres + Hasura).
+- `Config.res` – strongly typed runtime config. Parsed from the JSON the Rust CLI embeds in the `Command` payload (primed via `Config.prime` in `Bin.res`), or, when called outside the CLI (worker threads, test harnesses), lazy-loaded via the `getConfigJson` NAPI call.
+- Handler registrations (`indexer.onEvent(...)`) land in `HandlerRegister.res` at module load time and are merged into `Config.t` on the next `Config.load()` (see `buildContractEvents`).
+- Environment variables (`.env`) feed `Env.res`, consumed by `PgStorage` / `ClickHouse` for connection settings.
 
 Persistence layer:
 
@@ -142,7 +145,7 @@ Event processing:
 Monitoring & health:
 
 - `Prometheus.res` – exports metrics.
-- Health endpoints served by `Index.res`.
+- Health endpoints served by `Main.start`.
 
 Quick dev tips:
 

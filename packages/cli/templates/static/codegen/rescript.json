@@ -7,17 +7,6 @@
       "subdirs": true
     }
   ],
-  "gentypeconfig": {
-    "shims": {
-      "Js": "Js"
-    },
-    "generatedFileExtension": ".gen.ts",
-    "moduleResolution": "node16",
-    "debug": {
-      "all": false,
-      "basic": false
-    }
-  },
   "package-specs": {
     "module": "esmodule",
     "in-source": true

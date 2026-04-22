@@ -1,4 +1,3 @@
-@genType.import(("./Types.ts", "Address"))
 type t
 
 let schema = S.string->S.setName("Address")->(Utils.magic: S.t<string> => S.t<t>)

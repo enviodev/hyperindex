@@ -454,7 +454,8 @@ let publicConfigSchema = S.schema(s =>
   }
 )
 
-let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
+let fromPublic = (publicConfigJson: JSON.t) => {
+  let maxAddrInPartition = Env.maxAddrInPartition
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
   | S.Raised(exn) =>
@@ -532,7 +533,13 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
   | None => ()
   }
 
-  // Build event configs for a contract from JSON event items
+  // Build event configs for a contract from JSON event items. Events are
+  // built with an empty handler-registration state (isWildcard=false,
+  // handler/contractRegister=None, eventFilters=None). Post-registration
+  // configs are produced by `HandlerLoader.applyRegistrations`, which folds
+  // the registered handler state into each event. Keeping `Config` oblivious
+  // to `HandlerRegister` means `Config.loadWithoutRegistrations` is a pure
+  // function of the JSON and safe to memoize without invalidation.
   let buildContractEvents = (~contractName, ~events: option<array<_>>, ~abi, ~chainId: int) => {
     switch events {
     | None => []
@@ -542,10 +549,6 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
         let sighash = eventItem["sighash"]
         let params = eventItem["params"]->Option.getOr([])
         let kind = eventItem["kind"]
-        // Get handler registration data
-        let isWildcard = HandlerRegister.isWildcard(~contractName, ~eventName)
-        let handler = HandlerRegister.getHandler(~contractName, ~eventName)
-        let contractRegister = HandlerRegister.getContractRegister(~contractName, ~eventName)
 
         switch ecosystemName {
         | Ecosystem.Fuel =>
@@ -557,9 +560,9 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
               ~kind=fuelKind,
               ~sighash,
               ~rawAbi=abi->(Utils.magic: EvmTypes.Abi.t => JSON.t),
-              ~isWildcard,
-              ~handler,
-              ~contractRegister,
+              ~isWildcard=false,
+              ~handler=None,
+              ~contractRegister=None,
             ) :> Internal.eventConfig)
           | None =>
             JsError.throwWithMessage(
@@ -572,10 +575,10 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
             ~eventName,
             ~sighash,
             ~params,
-            ~isWildcard,
-            ~handler,
-            ~contractRegister,
-            ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
+            ~isWildcard=false,
+            ~handler=None,
+            ~contractRegister=None,
+            ~eventFilters=None,
             ~probeChainId=chainId,
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
@@ -847,19 +850,42 @@ let getChain = (config, ~chainId) => {
 
 // When the CLI hands us a command, the Rust side already parsed the config
 // and embedded the resolved JSON in the payload. `Bin.res` calls `prime`
-// with that JSON so the indexer module (loaded via `dynamicImport`) and
-// the Migrations module skip the second NAPI `getConfigJson` round-trip.
-// Module-private — only Bin.res should set it.
+// with that JSON before dispatching to `Main.start` / `Main.migrate` /
+// `Main.dropSchema`, so those functions skip the NAPI `getConfigJson`
+// round-trip. Module-private — only Bin.res should set it.
 %%private(let primedJson: ref<option<JSON.t>> = ref(None))
-let prime = (json: JSON.t): unit => primedJson := Some(json)
+%%private(let cached: ref<option<t>> = ref(None))
+let prime = (json: JSON.t): unit => {
+  primedJson := Some(json)
+  cached := None
+}
 
-// Load the resolved indexer config. When `Bin.res` has primed a JSON payload
-// from the CLI command, parse from that; otherwise invoke the native NAPI
-// addon (Rust config parser, ENVIO_CONFIG-respecting). The NAPI path stays
-// available so indexers started outside the CLI (e.g. direct node invocation
-// of the generated index module) still work.
-let load = () =>
-  switch primedJson.contents {
-  | Some(json) => json->fromPublic
-  | None => Core.getConfigJson()->JSON.parseOrThrow->fromPublic
+// Load the base indexer config — no handler registrations applied. When
+// `Bin.res` has primed a JSON payload from the CLI command, parse from
+// that; otherwise invoke the native NAPI addon (Rust config parser,
+// ENVIO_CONFIG-respecting). The NAPI path keeps non-CLI callers (worker
+// threads spawned via `TestIndexer`, direct imports from test harnesses)
+// working without a primed payload.
+//
+// The `Config` module deliberately knows nothing about handler
+// registrations: the returned value is a pure function of the JSON, so
+// memoization is safe without invalidation. Post-registration configs are
+// produced by `HandlerLoader.applyRegistrations`, which folds the
+// registered handler state into each event (via spread+override for
+// EVM/Fuel; SVM doesn't support per-event handlers).
+//
+// `prime` must be called before the first `loadWithoutRegistrations` read
+// if a primed JSON is going to be used; calling `prime` later invalidates
+// the memo so subsequent reads reparse.
+let loadWithoutRegistrations = () =>
+  switch cached.contents {
+  | Some(c) => c
+  | None => {
+      let c = switch primedJson.contents {
+      | Some(json) => json->fromPublic
+      | None => Core.getConfigJson()->JSON.parseOrThrow->fromPublic
+      }
+      cached := Some(c)
+      c
+    }
   }

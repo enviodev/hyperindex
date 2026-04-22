@@ -6,10 +6,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 
-pub async fn run_codegen(
-    project_paths: &ParsedProjectPaths,
-    envio_package_dir: Option<&str>,
-) -> Result<()> {
+pub async fn run_codegen(project_paths: &ParsedProjectPaths) -> Result<()> {
     //Manage purging of gengerated folder
     match PersistedStateExists::get_persisted_state_file(project_paths) {
         PersistedStateExists::Exists(ps)
@@ -32,7 +29,7 @@ pub async fn run_codegen(
     let config =
         SystemConfig::parse_from_project_files(project_paths).context("Failed parsing config")?;
 
-    commands::codegen::run_codegen(&config, envio_package_dir).await?;
+    commands::codegen::run_codegen(&config).await?;
 
     Ok(())
 }

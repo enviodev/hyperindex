@@ -505,8 +505,6 @@ GROUP BY "${(#chain_id: field :> string)}";`
 }
 
 module RawEvents = {
-  // @genType Used for Test DB and internal tests
-  @genType
   type t = {
     @as("chain_id") chainId: int,
     @as("event_id") eventId: bigint,

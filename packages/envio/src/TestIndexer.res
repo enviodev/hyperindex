@@ -897,13 +897,7 @@ let initTestWorker = (~makeGeneratedConfig: unit => Config.t) => {
         config
       }
     }
-    Main.start(
-      ~makeGeneratedConfig,
-      ~persistence,
-      ~isTest=true,
-      ~patchConfig,
-      ~exitAfterFirstEventBlock,
-    )->ignore
+    Main.start(~persistence, ~isTest=true, ~patchConfig, ~exitAfterFirstEventBlock)->ignore
   | None =>
     Logging.error("TestIndexerWorker: No worker data provided")
     NodeJs.process->NodeJs.exitWithCode(Failure)

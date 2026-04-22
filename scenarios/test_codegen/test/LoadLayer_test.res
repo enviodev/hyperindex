@@ -3,7 +3,7 @@ open Vitest
 describe("LoadLayer", () => {
   Async.it("Trys to load non existing entity from db", async t => {
     let storageMock = MockIndexer.Storage.make([#loadByIdsOrThrow])
-    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=(Config.loadWithoutRegistrations()).allEntities)
     let loadManager = LoadManager.make()
 
     let getUser = entityId =>
@@ -31,7 +31,7 @@ describe("LoadLayer", () => {
   Async.it("Does two round trips to db when requesting non existing entity one by one", async t => {
     let storageMock = MockIndexer.Storage.make([#loadByIdsOrThrow])
     let loadManager = LoadManager.make()
-    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=(Config.loadWithoutRegistrations()).allEntities)
 
     let getUser = entityId =>
       LoadLayer.loadById(
@@ -66,7 +66,7 @@ describe("LoadLayer", () => {
     async t => {
       let storageMock = MockIndexer.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
-      let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
+      let inMemoryStore = InMemoryStore.make(~entities=(Config.loadWithoutRegistrations()).allEntities)
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,

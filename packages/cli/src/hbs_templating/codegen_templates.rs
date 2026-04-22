@@ -14,8 +14,7 @@ use crate::{
         field_types,
         human_config::HumanConfig,
         system_config::{
-            self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField,
-            SystemConfig,
+            self, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField, SystemConfig,
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
@@ -916,7 +915,6 @@ pub struct ProjectTemplate {
     is_fuel_ecosystem: bool,
     is_svm_ecosystem: bool,
 
-    envio_version: String,
     indexer_code: String,
     envio_dts_code: String,
     //Used for the package.json reference to handlers in generated
@@ -1158,7 +1156,7 @@ impl ProjectTemplate {
         format!("{{ readonly params: {} }}", params_ts)
     }
 
-    pub fn from_config(cfg: &SystemConfig, envio_package_dir: Option<&str>) -> Result<Self> {
+    pub fn from_config(cfg: &SystemConfig) -> Result<Self> {
         let project_paths = &cfg.parsed_project_paths;
 
         // Compute all available fields for the ecosystem (EVM has all block/tx fields,
@@ -1271,26 +1269,18 @@ impl ProjectTemplate {
                 .collect::<Vec<_>>(),
         };
 
-        // Generate onBlock function with ecosystem-specific types
+        // Generate onBlock handler signature with ecosystem-specific types.
+        // Mirror the TypeScript surface in `packages/envio/index.d.ts`
+        // (`EvmOnBlockHandlerArgs`, `FuelOnBlockHandlerArgs`,
+        // `SvmOnSlotHandlerArgs`).
         let on_block_handler_type = match cfg.get_ecosystem() {
-            Ecosystem::Evm => {
-                "Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>"
-            }
-            Ecosystem::Fuel => {
-                "Envio.onBlockArgs<Envio.fuelBlockEvent, handlerContext> => promise<unit>"
-            }
-            Ecosystem::Svm => "Envio.svmOnBlockArgs<handlerContext> => promise<unit>",
+            Ecosystem::Evm => "Envio.evmOnBlockArgs<handlerContext> => promise<unit>",
+            Ecosystem::Fuel => "Envio.fuelOnBlockArgs<handlerContext> => promise<unit>",
+            Ecosystem::Svm => "Envio.svmOnSlotArgs<handlerContext> => promise<unit>",
         };
 
-        // Generate chainId type with ecosystem-specific import from Types.ts
-        let chain_id_import_name = match cfg.get_ecosystem() {
-            Ecosystem::Evm => "EvmChainId",
-            Ecosystem::Fuel => "FuelChainId",
-            Ecosystem::Svm => "SvmChainId",
-        };
         let chain_id_type = format!(
-            r#"@genType.import(("./Types.ts", "{chain_id_import_name}"))
-type chainId = [{}]"#,
+            "type chainId = [{}]",
             chain_id_cases
                 .iter()
                 .map(|chain_id_case| format!("#{}", chain_id_case))
@@ -1440,8 +1430,7 @@ switch chainId {{
             .join("\n");
 
         let handler_context_code = format!(
-            r#"@genType
-type handlerEntityOperations<'entity, 'getWhereFilter> = {{
+            r#"type handlerEntityOperations<'entity, 'getWhereFilter> = {{
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
@@ -1450,7 +1439,6 @@ type handlerEntityOperations<'entity, 'getWhereFilter> = {{
   deleteUnsafe: string => unit,
 }}
 
-@genType.import(("./Types.ts", "HandlerContext"))
 type handlerContext = {{
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
@@ -1518,7 +1506,7 @@ type handlerContext = {{
                     )
                 };
                 format!(
-                    "@genType\nmodule {} = {{\n{}\n\n{}{}\n}}",
+                    "module {} = {{\n{}\n\n{}{}\n}}",
                     contract.name.capitalized, module_header, events_code, event_identity,
                 )
             })
@@ -1627,12 +1615,6 @@ type handlerContext = {{
         // Combine all parts into indexer_code — includes everything from the template
         let indexer_code = format!(
             r#"//*************
-//***ENTITIES**
-//*************
-@genType.as("Id")
-type id = string
-
-//*************
 //**CONTRACTS**
 //*************
 
@@ -1645,7 +1627,6 @@ module Block = {{
 }}
 
 module SingleOrMultiple: {{
-  @genType.import(("./bindings/OpaqueTypes", "SingleOrMultiple"))
   type t<'a>
   let normalizeOrThrow: (t<'a>, ~nestedArrayDepth: int=?) => array<'a>
   let single: 'a => t<'a>
@@ -1712,7 +1693,6 @@ type contractRegisterChain = {{
 {contract_register_chain_fields}
 }}
 
-@genType
 type contractRegisterContext = {{
   log: Envio.logger,
   chain: contractRegisterChain,
@@ -1807,74 +1787,16 @@ type testIndexer = {{
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
 
-        // Append the Generated module (was in Indexer.res.hbs, now in Rust).
-        //
-        // The config is loaded lazily via `Config.load()` — either from the
-        // primed CLI payload (no I/O) or via the `getConfigJson` NAPI call.
-        // Exposed values (`configWithoutRegistrations`, `allEntities`,
-        // `indexer`) are JS Proxies that defer the load until the first
-        // property read, so modules that import types from "generated" but
-        // never read config values don't pay the cost at module load time.
-        let generated_module = r#"module Generated = {
-let makeGeneratedConfig = () => Config.load()
-
-// Memoized loader. `envio config view` is invoked at most once per process;
-// subsequent callers get the same parsed Config.t.
-let getCachedConfig = {
-  let cache = ref(None)
-  () =>
-    switch cache.contents {
-    | Some(c) => c
-    | None => {
-        let c = makeGeneratedConfig()
-        cache := Some(c)
-        c
-      }
-    }
-}
-
-// Proxy factory: returns a value that lazy-initializes on first read and
-// delegates all property-access traps to the real underlying value.
-// `target` controls the shape seen by `Array.isArray` / `typeof`, so use
-// `[]` for array-like values and a null-prototype object for records.
-let makeLazy: (unit => 'a, 'a) => 'a = %raw(`function (make, target) {
-  let cache;
-  const get = () => (cache === undefined ? (cache = make()) : cache);
-  return new Proxy(target, {
-    get: (_t, prop) => get()[prop],
-    has: (_t, prop) => prop in get(),
-    ownKeys: () => Reflect.ownKeys(get()),
-    getOwnPropertyDescriptor: (_t, prop) => Object.getOwnPropertyDescriptor(get(), prop),
-  });
-}`)
-
-let configWithoutRegistrations: Config.t = makeLazy(getCachedConfig, %raw(`Object.create(null)`))
-let allEntities: array<Internal.entityConfig> = makeLazy(() => getCachedConfig().allEntities, %raw(`[]`))
-
-}"#;
-
-        indexer_code = format!("{}\n\n{}", indexer_code, generated_module);
-
-        // Build the top-level `indexer` value as a lazy Proxy over the memoized
-        // `Main.getGlobalIndexer`. `createTestIndexer` is already a function so
-        // we just lazy-load the config inside its body.
+        // `Main.getGlobalIndexer` returns an object with getters that defer
+        // the `Config.loadWithoutRegistrations()` call until a property is
+        // actually read, so modules that import types from "generated" but
+        // never touch config values don't pay the parse cost at module
+        // load time. `createTestIndexer` is a thunk for the same reason.
         let generated_top_level_bindings = format!(
             "{}\n\n{}",
-            r#"let indexer: indexer = {
-  let cache = ref(None)
-  let getCachedIndexer = () =>
-    switch cache.contents {
-    | Some(i) => i
-    | None => {
-        let i = Main.getGlobalIndexer(~config=Generated.getCachedConfig())
-        cache := Some(i)
-        i
-      }
-    }
-  Generated.makeLazy(getCachedIndexer, %raw(`Object.create(null)`))
-}"#,
+            r#"let indexer: indexer = Main.getGlobalIndexer()"#,
             r#"let createTestIndexer: unit => testIndexer = (() => {
-  TestIndexer.makeCreateTestIndexer(~config=Generated.getCachedConfig(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
+  TestIndexer.makeCreateTestIndexer(~config=Config.loadWithoutRegistrations(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
 })->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
         );
 
@@ -2270,7 +2192,6 @@ let allEntities: array<Internal.entityConfig> = makeLazy(() => getCachedConfig()
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
-            envio_version: get_envio_version(envio_package_dir)?,
             indexer_code,
             envio_dts_code,
             //Used for the package.json reference to handlers in generated
@@ -2304,13 +2225,6 @@ mod test {
         format!("{}/test", env!("CARGO_MANIFEST_DIR"))
     }
 
-    // `packages/envio` relative to `packages/cli` (this crate's manifest dir).
-    // Used by tests so `get_envio_version` returns the expected `file:` path
-    // without touching the filesystem walk (which was removed).
-    fn envio_package_dir_for_tests() -> String {
-        format!("{}/../envio", env!("CARGO_MANIFEST_DIR"))
-    }
-
     fn get_project_template_helper(configs_file_name: &str) -> super::ProjectTemplate {
         let project_root = get_test_path_string_helper();
         let config = format!("configs/{}", configs_file_name);
@@ -2321,8 +2235,7 @@ mod test {
         let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");
 
-        let envio_pkg = envio_package_dir_for_tests();
-        super::ProjectTemplate::from_config(&config, Some(&envio_pkg))
+        super::ProjectTemplate::from_config(&config)
             .expect("should be able to get project template")
     }
 

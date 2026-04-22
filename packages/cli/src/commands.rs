@@ -1,13 +1,6 @@
 use anyhow::Context;
 use std::path::Path;
 
-/// Convert a path to a JS-compatible string with forward slashes.
-/// PathBuf::display() emits platform-specific separators (backslashes on Windows)
-/// which break JS imports. This helper ensures forward slashes for JS paths.
-fn to_js_path(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
-}
-
 async fn execute_command(
     cmd: &str,
     args: Vec<&str>,
@@ -28,28 +21,65 @@ async fn execute_command_with_env(
     current_dir: &Path,
     extra_env: &[(String, String)],
 ) -> anyhow::Result<std::process::ExitStatus> {
-    tokio::process::Command::new(cmd)
+    // NAPI addon context: file-descriptor inheritance from the tokio async
+    // runtime to child processes doesn't reach the Node host's stdout/stderr
+    // cleanly — subprocess output silently disappears. Pipe explicitly and
+    // forward each byte through Rust's `print!`/`eprint!`, which do go to the
+    // host stdio. Loses the TTY signal (pnpm/rescript render without colors),
+    // but the compile progress and error text are visible again.
+    let mut child = tokio::process::Command::new(cmd)
         .args(&args)
         .envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .current_dir(current_dir)
-        .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-        .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-        //the child process
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .context(format!(
             "Failed to spawn command {} {} at {} as child process",
             cmd,
             args.join(" "),
             current_dir.to_str().unwrap_or("bad_path")
-        ))?
-        .wait()
-        .await
-        .context(format!(
-            "Failed to exit command {} {} at {} from child process",
-            cmd,
-            args.join(" "),
-            current_dir.to_str().unwrap_or("bad_path")
-        ))
+        ))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stdout_task = tokio::spawn(async move {
+        if let Some(mut s) = stdout {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = s.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                print!("{}", String::from_utf8_lossy(&buf[..n]));
+            }
+        }
+    });
+    let stderr_task = tokio::spawn(async move {
+        if let Some(mut s) = stderr {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = s.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                eprint!("{}", String::from_utf8_lossy(&buf[..n]));
+            }
+        }
+    });
+
+    let exit = child.wait().await.context(format!(
+        "Failed to exit command {} {} at {} from child process",
+        cmd,
+        args.join(" "),
+        current_dir.to_str().unwrap_or("bad_path")
+    ))?;
+    let _ = stdout_task.await;
+    let _ = stderr_task.await;
+    Ok(exit)
 }
 
 /// Like execute_command, but suppresses stdout and stderr
@@ -180,18 +210,12 @@ pub mod codegen {
         Ok(exit3)
     }
 
-    pub async fn run_codegen(
-        config: &SystemConfig,
-        envio_package_dir: Option<&str>,
-    ) -> anyhow::Result<()> {
+    pub async fn run_codegen(config: &SystemConfig) -> anyhow::Result<()> {
         let template_dirs = TemplateDirs::new();
         fs::create_dir_all(&config.parsed_project_paths.generated).await?;
 
-        let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(
-            config,
-            envio_package_dir,
-        )
-        .context("Failed creating project template")?;
+        let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(config)
+            .context("Failed creating project template")?;
 
         template_dirs
             .get_codegen_static_dir()?
@@ -207,97 +231,6 @@ pub mod codegen {
             .context("Failed running post codegen command sequence")?;
 
         Ok(())
-    }
-}
-
-pub mod start {
-    use super::to_js_path;
-    use crate::{config_parsing::system_config::SystemConfig, executor::Command};
-    use anyhow::anyhow;
-    use pathdiff::diff_paths;
-
-    pub async fn start_indexer(
-        config: &SystemConfig,
-        extra_env: &[(String, String)],
-    ) -> anyhow::Result<Command> {
-        let relative_generated = diff_paths(
-            &config.parsed_project_paths.generated,
-            &config.parsed_project_paths.project_root,
-        )
-        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
-
-        let index_path = format!("./{}/src/Index.res.mjs", to_js_path(&relative_generated));
-
-        let abs_index_path = config
-            .parsed_project_paths
-            .project_root
-            .join(&index_path)
-            .canonicalize()
-            .unwrap_or_else(|_| config.parsed_project_paths.project_root.join(&index_path));
-
-        let config_path = config
-            .parsed_project_paths
-            .config
-            .to_string_lossy()
-            .into_owned();
-
-        let env_map: serde_json::Map<String, serde_json::Value> =
-            std::iter::once(("ENVIO_CONFIG".to_string(), config_path.into()))
-                .chain(extra_env.iter().map(|(k, v)| (k.clone(), v.clone().into())))
-                .collect();
-
-        Ok(Command::new(
-            "start-indexer",
-            serde_json::json!({
-                "indexPath": to_js_path(&abs_index_path),
-                "cwd": config.parsed_project_paths.project_root.to_string_lossy(),
-                "env": env_map,
-                "config": config.to_public_config_json()?,
-            }),
-        ))
-    }
-}
-pub mod db_migrate {
-    use crate::{
-        config_parsing::system_config::SystemConfig, executor::Command,
-        persisted_state::PersistedState,
-    };
-
-    pub async fn run_up_migrations(
-        config: &SystemConfig,
-        persisted_state: &PersistedState,
-    ) -> anyhow::Result<Command> {
-        Ok(Command::new(
-            "migration-up",
-            serde_json::json!({
-                "reset": false,
-                "persistedState": persisted_state,
-                "config": config.to_public_config_json()?,
-            }),
-        ))
-    }
-
-    pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<Command> {
-        Ok(Command::new(
-            "migration-down",
-            serde_json::json!({
-                "config": config.to_public_config_json()?,
-            }),
-        ))
-    }
-
-    pub async fn run_db_setup(
-        config: &SystemConfig,
-        persisted_state: &PersistedState,
-    ) -> anyhow::Result<Command> {
-        Ok(Command::new(
-            "migration-up",
-            serde_json::json!({
-                "reset": true,
-                "persistedState": persisted_state,
-                "config": config.to_public_config_json()?,
-            }),
-        ))
     }
 }
 

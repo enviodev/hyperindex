@@ -39,17 +39,20 @@ pub async fn upsert_persisted_state(json: String) -> napi::Result<()> {
     Ok(())
 }
 
-/// Run the envio CLI. Returns a JSON-encoded array of `Command`s for JS to
-/// dispatch in order. An empty array means there's nothing left to do — JS
-/// drops out of its loop and the Node process exits naturally with code 0
-/// (covers both `--help`/`--version` and commands like `envio codegen` /
-/// `envio init` that finish entirely in Rust).
+/// Run the envio CLI. Returns a JSON-encoded `Command` for JS to dispatch, or
+/// `None` when there's nothing left for JS to do — the Node process exits
+/// naturally with code 0 (covers `--help`/`--version` and commands like
+/// `envio codegen` / `envio init` / `envio stop` / `local docker up|down`
+/// that finish entirely in Rust).
 ///
-/// The executor layer doesn't know about NAPI; it returns a `Vec<Command>`
-/// that this shim serializes for the JS host. A pure-Rust host (tests,
-/// future binary) could consume the same return value directly.
+/// The executor layer doesn't know about NAPI; it returns an
+/// `Option<Command>` that this shim serializes for the JS host. A pure-Rust
+/// host (tests, future binary) could consume the same return value directly.
 #[napi_derive::napi]
-pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> napi::Result<String> {
+pub async fn run_cli(
+    args: Vec<String>,
+    envio_package_dir: Option<String>,
+) -> napi::Result<Option<String>> {
     let mut full_args = vec!["envio".to_string()];
     full_args.extend(args);
 
@@ -59,10 +62,9 @@ pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> na
     {
         Ok(m) => m,
         Err(e) if !e.use_stderr() => {
-            // Help / version — clap writes to stdout; return an empty
-            // command list so JS exits cleanly.
+            // Help / version — clap writes to stdout; nothing for JS to do.
             print!("{e}");
-            return serialize_commands(&[]);
+            return Ok(None);
         }
         Err(e) => return Err(napi::Error::from_reason(format!("{e}"))),
     };
@@ -71,14 +73,14 @@ pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> na
         .context("Failed parsing command line arguments")
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
-    let commands = crate::executor::execute(command_line_args, envio_package_dir.as_deref())
+    let command = crate::executor::execute(command_line_args, envio_package_dir.as_deref())
         .await
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
-    serialize_commands(&commands)
-}
-
-fn serialize_commands(commands: &[crate::executor::Command]) -> napi::Result<String> {
-    serde_json::to_string(commands)
-        .map_err(|e| napi::Error::from_reason(format!("Failed serializing commands: {e}")))
+    match command {
+        None => Ok(None),
+        Some(cmd) => serde_json::to_string(&cmd)
+            .map(Some)
+            .map_err(|e| napi::Error::from_reason(format!("Failed serializing command: {e}"))),
+    }
 }

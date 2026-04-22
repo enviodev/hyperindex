@@ -1,7 +1,6 @@
 use crate::{
     clap_definitions::{JsonSchema, Script},
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
-    commands,
     config_parsing::{human_config, system_config::SystemConfig},
     docker_env,
     persisted_state::{self, PersistedState, PersistedStateExists},
@@ -22,20 +21,39 @@ use schemars::schema_for;
 /// Rust handles config parsing, codegen, docker, persisted state — everything
 /// that doesn't need JS. Work that must run in the JS event loop (migrations,
 /// indexer start — anything that loads `envio/src/*.res.mjs` modules) is
-/// returned as `Command`s. The CLI layer knows nothing about how the host
-/// dispatches them: the NAPI shim forwards them to JS, a test harness could
-/// run them inline, a future standalone binary could spawn a Node subprocess,
+/// returned as a `Command`. The CLI layer knows nothing about how the host
+/// dispatches it: the NAPI shim forwards it to JS, a test harness could
+/// run it inline, a future standalone binary could spawn a Node subprocess,
 /// etc.
 ///
-/// Wire format: `[name, data]` tuple — tuple structs serialize as JSON
-/// arrays by default.
+/// Wire format: serde-tagged JSON on the `kind` field.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct Command(pub String, pub serde_json::Value);
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Command {
+    /// Run the indexer. If `migrate` is `Some`, also run the migration as
+    /// part of the same persistence initialization (single `init()` call).
+    Start {
+        migrate: Option<MigrateOpts>,
+        cwd: String,
+        env: serde_json::Map<String, serde_json::Value>,
+        config: serde_json::Value,
+    },
+    /// Run migrations without starting the indexer (`local db up`, `local db setup`).
+    Migrate {
+        reset: bool,
+        #[serde(rename = "persistedState")]
+        persisted_state: PersistedState,
+        config: serde_json::Value,
+    },
+    /// Drop the schema (`local db down`).
+    DropSchema { config: serde_json::Value },
+}
 
-impl Command {
-    pub fn new(name: impl Into<String>, data: serde_json::Value) -> Self {
-        Self(name.into(), data)
-    }
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MigrateOpts {
+    pub reset: bool,
+    #[serde(rename = "persistedState")]
+    pub persisted_state: PersistedState,
 }
 
 /// `envio_package_dir` is the absolute path of the running envio JS package
@@ -45,57 +63,61 @@ impl Command {
 /// is fine for commands that don't call `get_envio_version` (e.g.
 /// `script` subcommands); init/codegen/dev/start on a dev build without
 /// it will error out of `get_envio_version`.
+///
+/// Returns `None` for commands that finish entirely in Rust (codegen, init,
+/// stop, docker up/down, help/version, scripts). The NAPI shim maps `None`
+/// to a JS `null`, signalling the JS host to exit cleanly.
 pub async fn execute(
     command_line_args: CommandLineArgs,
     envio_package_dir: Option<&str>,
-) -> Result<Vec<Command>> {
+) -> Result<Option<Command>> {
     let global_project_paths = command_line_args.project_paths;
     let parsed_project_paths = ParsedProjectPaths::try_from(global_project_paths.clone())
         .context("Failed parsing project paths")?;
 
-    let mut commands: Vec<Command> = Vec::new();
-
     match command_line_args.command {
         CommandType::Init(init_args) => {
             init::run_init_args(init_args, &global_project_paths, envio_package_dir).await?;
+            Ok(None)
         }
 
         CommandType::Codegen => {
-            codegen::run_codegen(&parsed_project_paths, envio_package_dir).await?;
+            codegen::run_codegen(&parsed_project_paths).await?;
+            Ok(None)
         }
 
-        CommandType::Dev(dev_args) => {
-            commands.extend(
-                dev::run_dev(parsed_project_paths, dev_args.restart, envio_package_dir).await?,
-            );
-        }
+        CommandType::Dev(dev_args) => Ok(Some(
+            dev::run_dev(parsed_project_paths, dev_args.restart).await?,
+        )),
 
         CommandType::Stop => {
             docker_env::down().await?;
+            Ok(None)
         }
 
         CommandType::Start(start_args) => {
-            //Add warnings to start command
+            // Warn early if the generated directory looks stale — `envio start`
+            // keeps running even in these cases, but the indexer will use
+            // whatever generated code is on disk.
             match PersistedStateExists::get_persisted_state_file(&parsed_project_paths) {
                 PersistedStateExists::Exists(ps)
                     if ps.envio_version != persisted_state::current_version() =>
                 {
-                    println!(
-                        "WARNING: Envio version '{}' is currently being used. It does not match \
-                         the version '{}' that was used to create generated directory previously. \
-                         Please consider rerunning envio codegen, or running the same version of \
-                         envio. ",
+                    eprintln!(
+                        "Warning: the generated directory was built with envio {}, but you're \
+                         running envio {}. Run `envio codegen` to regenerate it (or switch to the \
+                         matching envio version).",
+                        &ps.envio_version,
                         persisted_state::current_version(),
-                        &ps.envio_version
                     )
                 }
-                PersistedStateExists::NotExists => println!(
-                    "WARNING: Generated directory not detected. Consider running envio codegen \
-                     first"
+                PersistedStateExists::NotExists => eprintln!(
+                    "Warning: no generated files found. Run `envio codegen` first to generate the \
+                     indexer runtime.",
                 ),
-                PersistedStateExists::Corrupted => println!(
-                    "WARNING: Generated directory is corrupted. Consider running envio codegen \
-                     first"
+                PersistedStateExists::Corrupted => eprintln!(
+                    "Warning: the generated directory is in an invalid state. Run `envio codegen` \
+                     to regenerate it.",
                 ),
                 PersistedStateExists::Exists(_) => (),
             };
@@ -103,56 +125,104 @@ pub async fn execute(
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
 
-            if start_args.restart {
+            let migrate = if start_args.restart {
                 let persisted_state = PersistedState::get_current_state(&config)
                     .context("Failed constructing persisted state")?;
+                Some(MigrateOpts {
+                    reset: true,
+                    persisted_state,
+                })
+            } else {
+                None
+            };
 
-                commands.push(commands::db_migrate::run_db_setup(&config, &persisted_state).await?);
-            }
             // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).
-            commands.push(commands::start::start_indexer(&config, &[]).await?);
+            Ok(Some(build_start_command(&config, migrate, &[])?))
         }
 
         CommandType::Local(local_commands) => {
-            commands.extend(local::run_local(&local_commands, &parsed_project_paths).await?);
+            Ok(local::run_local(&local_commands, &parsed_project_paths).await?)
         }
 
         CommandType::Script(Script::PrintCliHelpMd) => {
             println!("{}", CommandLineArgs::generate_markdown_help());
+            Ok(None)
         }
-        CommandType::Script(Script::PrintConfigJsonSchema(json_schema)) => match json_schema {
-            JsonSchema::Evm => {
-                let schema = schema_for!(human_config::evm::HumanConfig);
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&schema)
-                        .context("Failed serializing evm json schema")?
-                );
-            }
-            JsonSchema::Fuel => {
-                let schema = schema_for!(human_config::fuel::HumanConfig);
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&schema)
-                        .context("Failed serializing fuel json schema")?
-                );
-            }
-            JsonSchema::Svm => {
-                let schema = schema_for!(human_config::svm::HumanConfig);
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&schema)
-                        .context("Failed serializing svm json schema")?
-                );
-            }
-        },
+        CommandType::Script(Script::PrintConfigJsonSchema(json_schema)) => {
+            match json_schema {
+                JsonSchema::Evm => {
+                    let schema = schema_for!(human_config::evm::HumanConfig);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&schema)
+                            .context("Failed serializing evm json schema")?
+                    );
+                }
+                JsonSchema::Fuel => {
+                    let schema = schema_for!(human_config::fuel::HumanConfig);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&schema)
+                            .context("Failed serializing fuel json schema")?
+                    );
+                }
+                JsonSchema::Svm => {
+                    let schema = schema_for!(human_config::svm::HumanConfig);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&schema)
+                            .context("Failed serializing svm json schema")?
+                    );
+                }
+            };
+            Ok(None)
+        }
         CommandType::Script(Script::PrintMissingNetworks) => {
             scripts::print_missing_networks::run()
                 .await
                 .context("Failed print missing networks script")?;
+            Ok(None)
         }
-    };
+    }
+}
 
-    Ok(commands)
+/// Build a `Start` command payload. The indexer's entry is `Main.start` in the
+/// envio runtime — Bin.res calls it directly, so Rust no longer computes an
+/// indexer module path. `ENVIO_CONFIG` is always present in `env`; callers may
+/// append extra env pairs (e.g. `ENVIO_DEV_MODE` for `envio dev`).
+pub fn build_start_command(
+    config: &SystemConfig,
+    migrate: Option<MigrateOpts>,
+    extra_env: &[(String, String)],
+) -> Result<Command> {
+    let config_path = config
+        .parsed_project_paths
+        .config
+        .to_string_lossy()
+        .into_owned();
+
+    let env: serde_json::Map<String, serde_json::Value> =
+        std::iter::once(("ENVIO_CONFIG".to_string(), config_path.into()))
+            .chain(extra_env.iter().map(|(k, v)| (k.clone(), v.clone().into())))
+            .collect();
+
+    Ok(Command::Start {
+        migrate,
+        cwd: config
+            .parsed_project_paths
+            .project_root
+            .to_string_lossy()
+            .into_owned(),
+        env,
+        config: public_config_value(config)?,
+    })
+}
+
+/// Parse the config JSON (a string) into a `serde_json::Value` so it
+/// serializes as a nested JSON object in the command payload. Bin.res then
+/// passes it to `Config.prime` without an extra `JSON.parse`.
+pub fn public_config_value(config: &SystemConfig) -> Result<serde_json::Value> {
+    serde_json::from_str(&config.to_public_config_json()?)
+        .context("Failed parsing public config JSON")
 }
