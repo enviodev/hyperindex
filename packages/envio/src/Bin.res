@@ -11,8 +11,13 @@ NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
 // Wire format mirrors the Rust `executor::Command` enum: a tagged JSON object
 // with a `kind` discriminator. `Bin.res` decodes once and dispatches to the
 // matching `Main.*` entry point — there's no per-step queue.
+// `migrate` is `Null.t` (not `option`) because Rust's serde encodes
+// `Option::None` as JSON `null`, and `Utils.magic` casts straight through.
+// ReScript's `option` expects `undefined` for `None`, so a `null` value
+// would wrongly pass `Option.map`'s `!== undefined` check. Callers
+// convert with `Null.toOption` at use time.
 type startCmd = {
-  migrate: option<Main.migrateOpts>,
+  migrate: Null.t<Main.migrateOpts>,
   cwd: string,
   env: dict<JSON.t>,
   config: JSON.t,
@@ -62,7 +67,7 @@ let run = async args => {
         Config.prime(config)
         processChdir(cwd)
         applyEnv(env)
-        await Main.start(~migrate?)
+        await Main.start(~migrate=?migrate->Null.toOption)
       | Migrate({reset, persistedState, config}) =>
         Config.prime(config)
         await Main.migrate(~reset, ~persistedState)
