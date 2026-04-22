@@ -64,6 +64,7 @@ indexer.onBlock(
 - No events or contract address required
 - The handler context has the same entity API as event handlers
 - If `where` returns `false` for every configured chain, a warning is logged at registration time
+- For per-event startBlock (not stride), use `indexer.onEvent` with `where.block.number._gte` (see `indexing-filters`). Event filters accept `_gte` only; `_lte`/`_every` are reserved for `onBlock`.
 
 ## Deep Documentation
 

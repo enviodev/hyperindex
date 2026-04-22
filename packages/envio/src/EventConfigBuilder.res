@@ -419,6 +419,7 @@ let buildEvmEventConfig = (
   ~contractRegister: option<Internal.contractRegister>,
   ~eventFilters: option<JSON.t>,
   ~probeChainId: int,
+  ~onEventBlockFilterSchema: S.t<option<unknown>>,
   ~blockFields: option<array<Internal.evmBlockField>>=?,
   ~transactionFields: option<array<Internal.evmTransactionField>>=?,
   ~startBlock: option<int>=?,
@@ -428,16 +429,30 @@ let buildEvmEventConfig = (
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
   let indexedParams = params->Array.filter(p => p.indexed)
 
-  let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(
+  let {
+    getEventFiltersOrThrow,
+    filterByAddresses,
+    startBlock: whereStartBlock,
+  } = LogSelection.parseEventFiltersOrThrow(
     ~eventFilters,
     ~sighash,
     ~params=indexedParams->Array.map(p => p.name),
     ~contractName,
     ~probeChainId,
+    ~onEventBlockFilterSchema,
     ~topic1=?indexedParams->Array.get(0)->Option.map(buildTopicGetter),
     ~topic2=?indexedParams->Array.get(1)->Option.map(buildTopicGetter),
     ~topic3=?indexedParams->Array.get(2)->Option.map(buildTopicGetter),
   )
+
+  // `where.block.number._gte` overrides the contract-level startBlock
+  // when present. The user opts into this explicitly in handler code so
+  // it should win over the `config.yaml` contract `start_block`; absent
+  // `where.block`, the caller's contract-level value passes through.
+  let resolvedStartBlock = switch whereStartBlock {
+  | Some(_) as sb => sb
+  | None => startBlock
+  }
 
   let (selectedBlockFields, selectedTransactionFields) = resolveFieldSelection(
     ~blockFields,
@@ -458,7 +473,7 @@ let buildEvmEventConfig = (
     getEventFiltersOrThrow,
     filterByAddresses,
     dependsOnAddresses: !isWildcard || filterByAddresses,
-    startBlock,
+    startBlock: resolvedStartBlock,
     convertHyperSyncEventArgs: buildHyperSyncDecoder(params),
     selectedBlockFields,
     selectedTransactionFields,

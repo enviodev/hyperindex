@@ -481,6 +481,12 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     )
   }
 
+  let ecosystem = switch ecosystemName {
+  | Ecosystem.Evm => Evm.ecosystem
+  | Ecosystem.Fuel => Fuel.ecosystem
+  | Ecosystem.Svm => Svm.ecosystem
+  }
+
   // Extract EVM-specific options with defaults
   let lowercaseAddresses = switch publicConfig["evm"] {
   | Some(evm) => evm["addressFormat"]->Option.getOr(Checksum) == Lowercase
@@ -581,6 +587,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~contractRegister=None,
             ~eventFilters=None,
             ~probeChainId=chainId,
+            ~onEventBlockFilterSchema=ecosystem.onEventBlockFilterSchema,
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
             ~startBlock?,
@@ -738,12 +745,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       (ChainMap.Chain.makeUnsafe(~chainId=chain.id), chain)
     })
     ->ChainMap.fromArrayUnsafe
-
-  let ecosystem = switch ecosystemName {
-  | Ecosystem.Evm => Evm.ecosystem
-  | Ecosystem.Fuel => Fuel.ecosystem
-  | Ecosystem.Svm => Svm.ecosystem
-  }
 
   // Parse enums and entities from JSON config
   let allEnums =

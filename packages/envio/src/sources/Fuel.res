@@ -25,4 +25,11 @@ let ecosystem: Ecosystem.t = {
   onBlockFilterSchema: S.object(s =>
     s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))))
   ),
+  // Fuel event filter shape: `{block: {height: {_gte?}}, params?, ...}`.
+  // Analogous to EVM, but keyed by `block.height` instead of
+  // `block.number`. See `Evm.res` for the rationale on the two-stage
+  // parse and the `_lte`/`_every` rejection.
+  onEventBlockFilterSchema: S.object(s =>
+    s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))))
+  ),
 }

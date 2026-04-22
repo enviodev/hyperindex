@@ -931,3 +931,69 @@ indexer.onBlock(
   { name: "test_onblock_skip_all", where: () => false },
   async () => {},
 );
+
+// Type-level regression guards for `where.block` on EVM. Declared as an
+// unreached function so `tsc --noEmit` checks the types without runtime
+// re-registering events. The `@ts-expect-error` assertions catch the
+// class of bug where `EvmOnEventWhere` might get wired through the wrong
+// filter shape (e.g. Fuel's `block.height`) — a regression would flip
+// the directive from "expected" to "unused", failing the build.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _typeCheckEvmWhereBlockShape() {
+  indexer.onEvent(
+    {
+      contract: "EventFiltersTest",
+      event: "Transfer",
+      wildcard: true,
+      where: { block: { number: { _gte: 1 } } },
+    },
+    async () => {},
+  );
+  indexer.onEvent(
+    {
+      contract: "EventFiltersTest",
+      event: "Transfer",
+      wildcard: true,
+      where: {
+        block: {
+          // @ts-expect-error EVM keys block by `number`, not `height`.
+          height: { _gte: 1 },
+        },
+      },
+    },
+    async () => {},
+  );
+  indexer.onEvent(
+    {
+      contract: "EventFiltersTest",
+      event: "Transfer",
+      wildcard: true,
+      where: {
+        block: {
+          number: {
+            // @ts-expect-error Only `_gte` is supported on event filters.
+            _lte: 1,
+          },
+        },
+      },
+    },
+    async () => {},
+  );
+  indexer.onEvent(
+    {
+      contract: "EventFiltersTest",
+      event: "Transfer",
+      wildcard: true,
+      where: {
+        block: {
+          number: {
+            // @ts-expect-error Only `_gte` is supported on event filters.
+            _every: 100,
+          },
+        },
+      },
+    },
+    async () => {},
+  );
+}
+

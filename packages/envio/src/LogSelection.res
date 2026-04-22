@@ -60,6 +60,63 @@ let make = (~addresses, ~topicSelections) => {
 type parsedEventFilters = {
   getEventFiltersOrThrow: ChainMap.Chain.t => Internal.eventFilters,
   filterByAddresses: bool,
+  // `_gte` from the top-level `block` filter of the user's `where`,
+  // resolved at build time (per-chain via the `probeChainId`). The
+  // caller uses this to override the per-event `startBlock` — a
+  // `where`-derived startBlock always wins over contract-level
+  // config, so users can widen or narrow individual event ranges
+  // without touching `config.yaml`.
+  startBlock: option<int>,
+}
+
+// Inner schema for the event `block` filter chunk: `{_gte?}`.
+// `S.strict` rejects `_lte` / `_every` — those are stride/range concepts
+// that only make sense for `onBlock` handlers, not event filters. Typos
+// like `_gt` surface through the same strict-schema error path.
+type eventBlockRange = {_gte: option<int>}
+let eventBlockRangeSchema: S.t<eventBlockRange> = S.object(s => {
+  _gte: s.field("_gte", S.option(S.int)),
+})->S.strict
+
+// Extract the per-event `startBlock` from a `where` result (or static
+// value). Two-stage parse mirroring `onBlock`: the ecosystem schema
+// strips the outer `block.number` / `block.height` wrapper, then
+// `eventBlockRangeSchema` validates `{_gte?}` strictly — `_lte` and
+// `_every` are rejected with a user-friendly message pointing users
+// at `onBlock` for stride/endBlock semantics.
+//
+// Returns `None` for boolean `where` results, missing `block`, and
+// `block.number: {}` (no `_gte`). Wraps schema errors with the
+// contract/event context so the call-site is obvious in the log.
+let extractStartBlock = (
+  where: JSON.t,
+  ~onEventBlockFilterSchema: S.t<option<unknown>>,
+  ~contractName: string,
+): option<int> => {
+  // `where` may be a bool at runtime even though the static type is
+  // `JSON.t` — the user callbacks can return `true`/`false` to keep/skip
+  // a chain, and the value reaches here unwrapped. Detect with
+  // `typeof` instead of an identity-equal check so ReScript doesn't
+  // constant-fold the comparison away for the `JSON.t` nominal type.
+  if typeof(where) === #boolean {
+    None
+  } else {
+    try {
+      switch where->S.parseOrThrow(onEventBlockFilterSchema) {
+      | None => None
+      | Some(inner) => (inner->S.parseOrThrow(eventBlockRangeSchema))._gte
+      }
+    } catch {
+    | S.Raised(exn) =>
+      JsError.throwWithMessage(
+        `Invalid where configuration for ${contractName}. \`block\` filter is invalid: ${exn
+          ->Utils.prettifyExn
+          ->(
+            Utils.magic: exn => string
+          )}. Only \`_gte\` is supported on event filters — use \`indexer.onBlock\` for \`_lte\` or \`_every\`.`,
+      )
+    }
+  }
 }
 
 // Build the runtime `chain` argument passed into a `where` callback.
@@ -104,11 +161,13 @@ let parseEventFiltersOrThrow = {
     ~params,
     ~contractName: string,
     ~probeChainId: int,
+    ~onEventBlockFilterSchema: S.t<option<unknown>>,
     ~topic1=noopGetter,
     ~topic2=noopGetter,
     ~topic3=noopGetter,
   ): parsedEventFilters => {
     let filterByAddresses = ref(false)
+    let startBlock = ref(None)
     let topic0 = [sighash->EvmTypes.Hex.fromStringUnsafe]
     let default = {
       Internal.topic0,
@@ -143,6 +202,12 @@ let parseEventFiltersOrThrow = {
       }
     }
 
+    // Known top-level `where` keys. `block` is a sibling of `params` — its
+    // `_gte` promotes to the event's `startBlock` (extracted separately
+    // by `extractStartBlock`). Unknown keys are rejected to catch typos
+    // like `parmas` or `blocks` at registration time.
+    let acceptedWhereKeys = ["params", "block"]
+
     // Parse a `where` value (or the result of calling the dynamic callback)
     // into a list of topic selections.
     //
@@ -152,6 +217,8 @@ let parseEventFiltersOrThrow = {
     // - `{}` (or `{params: undefined}`) → no narrowing
     // - `{params: {...}}` → single AND-conjunction
     // - `{params: [{...}, {...}]}` → OR of multiple AND-conjunctions
+    // - `{block: {number: {_gte: N}}}` → no topic narrowing; startBlock only
+    // - `{params: ..., block: ...}` → combined
     //
     // The runtime accepts both the function form (the only form ReScript
     // exposes) and a top-level static object form (TypeScript convenience).
@@ -161,40 +228,42 @@ let parseEventFiltersOrThrow = {
       } else if where === Obj.magic(false) {
         []
       } else {
-        // A `where` condition is shaped as `{params?: ..., ...}` where
-        // `params` carries the indexed-parameter filter record. Future
-        // filter dimensions (block, transaction, …) can slot in as sibling
-        // fields alongside `params`.
+        // A `where` condition is shaped as `{params?: ..., block?: ...}`.
+        // `params` carries the indexed-parameter filter record; `block`
+        // carries the per-event block-range filter handled by
+        // `extractStartBlock`.
         switch where {
-        | Object(obj) =>
-          switch obj->Dict.get("params") {
-          | None =>
-            // Reject non-empty objects without `params` — almost always a
-            // typo (e.g. `parmas:`) or the legacy flat-filter shape
-            // (`{from: ...}`). Empty `{}` is fine and means "match all".
-            if !(obj->Utils.Dict.isEmpty) {
-              JsError.throwWithMessage(
-                "Invalid where configuration. Indexed parameter filters must be nested under `params`",
-              )
-            } else {
-              [default]
-            }
-          | Some(Object(p)) => [paramsRecordToTopicSelection(p)]
-          | Some(Array([])) => [default]
-          | Some(Array(arr)) =>
-            arr->Array.map(item =>
-              switch item {
-              | Object(p) => paramsRecordToTopicSelection(p)
-              | _ =>
+        | Object(obj) => {
+            // Catch typos (e.g. `parmas:`) and the legacy flat-filter
+            // shape (`{from: ...}`) by rejecting any unknown sibling.
+            obj
+            ->Dict.keysToArray
+            ->Array.forEach(key => {
+              if acceptedWhereKeys->Array.includes(key)->not {
                 JsError.throwWithMessage(
-                  "Invalid where configuration. Each entry in `params` must be an object",
+                  `Invalid where configuration. Unknown field "${key}". Indexed parameter filters must be nested under \`params\` and block-range filters under \`block\``,
                 )
               }
-            )
-          | Some(_) =>
-            JsError.throwWithMessage(
-              "Invalid where configuration. Expected `params` to be an object or an array of objects",
-            )
+            })
+            switch obj->Dict.get("params") {
+            | None => [default]
+            | Some(Object(p)) => [paramsRecordToTopicSelection(p)]
+            | Some(Array([])) => [default]
+            | Some(Array(arr)) =>
+              arr->Array.map(item =>
+                switch item {
+                | Object(p) => paramsRecordToTopicSelection(p)
+                | _ =>
+                  JsError.throwWithMessage(
+                    "Invalid where configuration. Each entry in `params` must be an object",
+                  )
+                }
+              )
+            | Some(_) =>
+              JsError.throwWithMessage(
+                "Invalid where configuration. Expected `params` to be an object or an array of objects",
+              )
+            }
           }
         | _ => JsError.throwWithMessage("Invalid where configuration. Expected an object")
         }
@@ -216,7 +285,12 @@ let parseEventFiltersOrThrow = {
         // they take for this chain. Event configs are built per-chain, so
         // each chain gets a `filterByAddresses` verdict that matches its
         // own callback behaviour.
-        try {
+        //
+        // The probe result is also reused to extract the per-event
+        // `startBlock` (from `where.block`) for this chain — a second
+        // invocation would risk observing different state for callbacks
+        // that close over mutable references.
+        let probedResult = try {
           let chain = makeDetectionChainArg(
             ~contractName,
             ~chainId=probeChainId,
@@ -225,9 +299,14 @@ let parseEventFiltersOrThrow = {
               []
             },
           )
-          let _ = fn({chain: chain->Obj.magic})
+          Some(fn({chain: chain->Obj.magic}))
         } catch {
-        | _ => ()
+        | _ => None
+        }
+        switch probedResult {
+        | Some(result) =>
+          startBlock := extractStartBlock(~onEventBlockFilterSchema, ~contractName, result)
+        | None => ()
         }
         if filterByAddresses.contents {
           chain => Internal.Dynamic(
@@ -259,6 +338,7 @@ let parseEventFiltersOrThrow = {
           }
         }
       } else {
+        startBlock := extractStartBlock(~onEventBlockFilterSchema, ~contractName, eventFilters)
         let static: Internal.eventFilters = Static(eventFilters->parse)
         _ => static
       }
@@ -267,6 +347,7 @@ let parseEventFiltersOrThrow = {
     {
       getEventFiltersOrThrow,
       filterByAddresses: filterByAddresses.contents,
+      startBlock: startBlock.contents,
     }
   }
 }
