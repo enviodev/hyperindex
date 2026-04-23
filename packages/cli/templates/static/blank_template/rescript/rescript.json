@@ -1,6 +1,5 @@
 {
   "name": "EnvioIndexer",
-  "version": "0.1.0",
   "sources": [
     {
       "dir": "src",
@@ -15,5 +14,5 @@
     "version": 4
   },
   "suffix": ".res.mjs",
-  "bs-dependencies": ["envio", "rescript-schema"]
+  "dependencies": ["envio", "rescript-schema"]
 }

@@ -4,9 +4,9 @@
   "type": "module",
   "scripts": {
   {{#if is_rescript}}
-    "clean": "rescript-legacy clean",
-    "build": "rescript-legacy",
-    "watch": "rescript-legacy -w",
+    "clean": "rescript clean",
+    "build": "rescript",
+    "watch": "rescript watch",
   {{/if}}
     "codegen": "envio codegen",
     "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
