@@ -663,7 +663,16 @@ module Map = {
 }
 
 module Proxy = {
-  type traps<'a> = {get?: (~target: 'a, ~prop: unknown) => unknown}
+  type propertyDescriptor = {
+    value: unknown,
+    enumerable: bool,
+    configurable: bool,
+  }
+  type traps<'a> = {
+    get?: (~target: 'a, ~prop: unknown) => unknown,
+    ownKeys?: (~target: 'a) => array<string>,
+    getOwnPropertyDescriptor?: (~target: 'a, ~prop: unknown) => option<propertyDescriptor>,
+  }
 
   @new
   external make: ('a, traps<'a>) => 'a = "Proxy"

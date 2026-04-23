@@ -1367,8 +1367,13 @@ type indexerChains = {{
             indexer_chains_fields
         );
 
-        let indexer_type = format!(
-            r#"/** Metadata and configuration for the indexer. */
+        // Ecosystem-specific indexer surface. EVM/Fuel expose event + block
+        // handlers; SVM has no event handlers and uses `onSlot` instead of
+        // `onBlock`. Mirrors the TS typings in `packages/envio/index.d.ts`
+        // and the ecosystem-specific key set in `Main.getGlobalIndexer`.
+        let indexer_type = match cfg.get_ecosystem() {
+            Ecosystem::Evm | Ecosystem::Fuel => format!(
+                r#"/** Metadata and configuration for the indexer. */
 type indexer = {{
   /** The name of the indexer from config.yaml. */
   name: string,
@@ -1394,7 +1399,26 @@ type indexer = {{
     {on_block_handler_type},
   ) => unit,
 }}"#
-        );
+            ),
+            Ecosystem::Svm => format!(
+                r#"/** Metadata and configuration for the indexer. */
+type indexer = {{
+  /** The name of the indexer from config.yaml. */
+  name: string,
+  /** The description of the indexer from config.yaml. */
+  description: option<string>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
+  /** Register a Slot Handler. Evaluates `where` once per configured chain at registration time. */
+  onSlot: (
+    Envio.onBlockOptions<indexerChain>,
+    {on_block_handler_type},
+  ) => unit,
+}}"#
+            ),
+        };
 
         // Generate getChainById function
         let get_chain_by_id_cases = chain_configs
