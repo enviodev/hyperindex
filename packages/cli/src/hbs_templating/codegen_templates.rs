@@ -1794,10 +1794,6 @@ type testIndexer = {{
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
 
-        // `indexer` and `createTestIndexer` are defined in the envio
-        // package (`Api.res` → re-exported by `index.js`). Binding them via
-        // `@module("envio") external` here lets generated ReScript keep its
-        // narrow project-bound types without duplicating the runtime.
         let generated_top_level_bindings =
             r#"@module("envio") external indexer: indexer = "indexer"
 

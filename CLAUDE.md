@@ -1,6 +1,13 @@
-- Never delete comments that are still relevant to the code. When refactoring, move or update them to match the new code, but preserve their intent.
 - Use `pnpm` over `npm`/`npx`.
 - Always use single assert to check the whole value instead of multiple asserts for every field.
+
+## Comments
+
+- Default to writing no comments. A comment earns its place only when it explains something the code itself cannot show.
+- Write a comment when it captures: a non-obvious constraint, a subtle invariant, a workaround for a specific bug, or behavior that would surprise a reader.
+- Don't write a comment that restates what the code already says — module purpose, what a function does, which callers use a value, history of a refactor, or pointers to where something is "now defined".
+- Never narrate the refactor itself ("previously lived in X", "centralized here", "now imports from Y"). That belongs in the commit message, not the code.
+- When refactoring, keep comments that still explain non-obvious behavior; drop or rewrite comments that described the old shape.
 
 ## Plan Mode
 

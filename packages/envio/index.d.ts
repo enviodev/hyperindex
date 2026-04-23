@@ -1494,12 +1494,6 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
 
 // ============== Runtime values ==============
 
-// Runtime indexer object. The concrete shape is resolved per-project by the
-// generated package's `index.d.ts`, which re-declares these values with
-// `IndexerFromConfig<IndexerConfigTypes>` / `TestIndexerFromConfig<...>`
-// bound to the project's chains, contracts, and entities. Direct imports
-// from the `envio` package see `never` — the runtime surface is only useful
-// once the project's types are in scope, so this steers callers to the
-// `generated` re-export instead of silently handing them an untyped value.
+// `never` steers callers to the project-typed `generated` re-export.
 export declare const indexer: never;
 export declare const createTestIndexer: () => never;

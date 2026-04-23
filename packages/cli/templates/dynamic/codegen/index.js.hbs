@@ -4,8 +4,4 @@
 
 export { default as BigDecimal } from "bignumber.js";
 
-// Runtime indexer values live in the envio package. Generated TypeScript no
-// longer pulls them from `./src/Indexer.res.mjs`, which keeps this file free
-// of ReScript dependencies. Generated ReScript re-binds these via
-// `@module("envio") external` in `src/Indexer.res`.
 export { indexer, createTestIndexer } from "envio";
