@@ -1491,3 +1491,9 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
     ConfigEntities<Config>[K]
   >;
 };
+
+// ============== Runtime values ==============
+
+// `never` steers callers to the project-typed `generated` re-export.
+export declare const indexer: never;
+export declare const createTestIndexer: () => never;

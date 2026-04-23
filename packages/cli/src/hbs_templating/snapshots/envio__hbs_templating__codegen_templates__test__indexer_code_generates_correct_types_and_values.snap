@@ -437,8 +437,6 @@ type testIndexer = {
 
 @get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
 
-let indexer: indexer = Main.getGlobalIndexer()
+@module("envio") external indexer: indexer = "indexer"
 
-let createTestIndexer: unit => testIndexer = (() => {
-  TestIndexer.makeCreateTestIndexer(~config=Config.loadWithoutRegistrations(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
-})->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))
+@module("envio") external createTestIndexer: unit => testIndexer = "createTestIndexer"

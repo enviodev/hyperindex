@@ -1794,18 +1794,11 @@ type testIndexer = {{
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
 
-        // `Main.getGlobalIndexer` returns an object with getters that defer
-        // the `Config.loadWithoutRegistrations()` call until a property is
-        // actually read, so modules that import types from "generated" but
-        // never touch config values don't pay the parse cost at module
-        // load time. `createTestIndexer` is a thunk for the same reason.
-        let generated_top_level_bindings = format!(
-            "{}\n\n{}",
-            r#"let indexer: indexer = Main.getGlobalIndexer()"#,
-            r#"let createTestIndexer: unit => testIndexer = (() => {
-  TestIndexer.makeCreateTestIndexer(~config=Config.loadWithoutRegistrations(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
-})->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
-        );
+        let generated_top_level_bindings =
+            r#"@module("envio") external indexer: indexer = "indexer"
+
+@module("envio") external createTestIndexer: unit => testIndexer = "createTestIndexer""#
+                .to_string();
 
         indexer_code = format!("{}\n\n{}", indexer_code, generated_top_level_bindings);
 
