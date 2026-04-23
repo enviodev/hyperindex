@@ -31,7 +31,7 @@ let callRequire: ({..}, string) => addon = %raw(`(req, id) => req(id)`)
 let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
 
 // Runs `cargo build` on every invocation (like `cargo run`).
-let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
+let loadDevAddon: ({..}, string) => Null.t<addon> = %raw(`function(req, envioDir) {
   var cp = Nodechild_process;
   var path = Nodepath;
   var fs = Nodefs;
@@ -71,8 +71,25 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
     } catch (e) { return null; }
 
     if (!ver || !ver.startsWith("file:")) return null;
-    repoRoot = path.resolve(path.resolve(ver.replace("file:", "")), "..", "..");
-    if (!fs.existsSync(path.join(repoRoot, "packages", "cli", "Cargo.toml"))) return null;
+    // pnpm suffixes the version with peer-dep annotations like
+    // "file:/path(react-dom@19.2.5)(typescript@5.9.3)". Cutting at the
+    // first paren recovers the raw file path.
+    var filePath = ver.replace("file:", "");
+    var parenIdx = filePath.indexOf("(");
+    if (parenIdx !== -1) filePath = filePath.slice(0, parenIdx);
+    // Walk up from the linked envio package to find the hyperindex repo.
+    // A fixed ../.. shortcut breaks when pnpm nests the package under
+    // .pnpm/<hash>/node_modules/envio in another project's store.
+    var verDir = path.resolve(filePath);
+    for (var j = 0; j < 10; j++) {
+      verDir = path.dirname(verDir);
+      if (verDir === path.dirname(verDir)) break;
+      if (fs.existsSync(path.join(verDir, "packages", "cli", "Cargo.toml"))) {
+        repoRoot = verDir;
+        break;
+      }
+    }
+    if (!repoRoot) return null;
   }
 
   var cliDir = path.join(repoRoot, "packages", "cli");
@@ -107,7 +124,7 @@ let loadAddon = () => {
   } catch {
   | _ =>
     // 2. Dev build (cargo build on every run)
-    switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
+    switch loadDevAddon(req, envioPackageDir)->Null.toOption {
     | Some(addon) => addon
     | None =>
       JsError.throwWithMessage(`Couldn't load the envio native addon. Install the envio npm package.`)

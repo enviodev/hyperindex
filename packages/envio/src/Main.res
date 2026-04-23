@@ -604,6 +604,67 @@ let dropSchema = async () => {
   await persistence.storage.reset()
 }
 
+// The same contract may appear across chains in config.yaml, so we dedupe by
+// contract name to produce one log line per contract instead of one per chain.
+let logTrackedConfig = (~config: Config.t, ~registrations: HandlerRegister.registrations) => {
+  // `enableRawEvents` bypasses the handler-registration gate in ChainFetcher,
+  // so every configured event gets fetched regardless of handler presence.
+  let includeAllEvents = config.enableRawEvents
+  let contractEvents: dict<array<string>> = Dict.make()
+  config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(chain => {
+    chain.contracts->Array.forEach(contract => {
+      let existing =
+        contractEvents
+        ->Utils.Dict.dangerouslyGetNonOption(contract.name)
+        ->Option.getOr([])
+      contract.events->Array.forEach(
+        ev => {
+          let isTracked =
+            includeAllEvents || ev.handler->Option.isSome || ev.contractRegister->Option.isSome
+          if isTracked && !(existing->Array.includes(ev.name)) {
+            existing->Array.push(ev.name)
+          }
+        },
+      )
+      contractEvents->Dict.set(contract.name, existing)
+    })
+  })
+
+  let contractLines =
+    contractEvents
+    ->Dict.toArray
+    ->Array.filter(((_, events)) => events->Array.length > 0)
+    ->Array.map(((name, events)) => `  ${name}: ${events->Array.joinUnsafe(", ")}`)
+
+  let blockHandlerNames =
+    registrations.onBlockByChainId
+    ->Dict.valuesToArray
+    ->Array.reduce([], (acc, arr) => {
+      arr->Array.forEach(cfg => {
+        if !(acc->Array.includes(cfg.name)) {
+          acc->Array.push(cfg.name)
+        }
+      })
+      acc
+    })
+
+  let sections = []
+  if contractLines->Array.length > 0 {
+    sections->Array.push(`Events:\n${contractLines->Array.joinUnsafe("\n")}`)
+  }
+  if blockHandlerNames->Array.length > 0 {
+    sections->Array.push(`Block handlers: ${blockHandlerNames->Array.joinUnsafe(", ")}`)
+  }
+
+  let body = switch sections {
+  | [] => "No handlers registered."
+  | _ => sections->Array.joinUnsafe("\n")
+  }
+  Logging.info(`Starting indexer. Tracking:\n${body}`)
+}
+
 let start = async (
   ~persistence: option<Persistence.t>=?,
   ~migrate: option<migrateOpts>=?,
@@ -666,6 +727,8 @@ let start = async (
   Prometheus.RollbackEnabled.set(~enabled=ctx.config.shouldRollbackOnReorg)
 
   if !isTest {
+    logTrackedConfig(~config=ctx.config, ~registrations=ctx.registrations)
+
     startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
       switch globalGsManagerRef.contents {
       | None => Initializing({})

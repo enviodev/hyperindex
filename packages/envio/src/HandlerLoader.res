@@ -37,7 +37,7 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
   }
 }
 
-let autoLoadFromSrcHandlers = async (~handlers: string) => {
+let autoLoadFromSrcHandlers = async (~handlers: string, ~hasContractHandlers: bool) => {
   // Relative to cwd (project root)
   let srcPattern = `./${handlers}/**/*.{js,mjs,ts}`
   let handlerFiles = try {
@@ -57,6 +57,14 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
       `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern}. Before continuing, check that you're using Node.js >=22 version. Error: ${exn
         ->Utils.prettifyExn
         ->Obj.magic}`,
+    )
+  }
+
+  // When auto-load is the sole source of handlers and the directory matches
+  // nothing, every event silently skips indexing — surface the misconfiguration.
+  if handlerFiles->Array.length === 0 && !hasContractHandlers {
+    Logging.warn(
+      `No handler files found under \`${handlers}/\`. Add a handler file (e.g. \`${handlers}/MyContract.ts\`) or set the \`handlers\` path in your config to the directory that contains them.`,
     )
   }
 
@@ -158,8 +166,10 @@ let applyRegistrations = (~config: Config.t): Config.t => {
 let registerAllHandlers = async (~config: Config.t) => {
   HandlerRegister.startRegistration(~ecosystem=config.ecosystem, ~multichain=config.multichain)
 
-  // Auto-load all .js files from src/handlers directory
-  await autoLoadFromSrcHandlers(~handlers=config.handlers)
+  let hasContractHandlers =
+    config.contractHandlers->Array.some(({handler}) => handler->Option.isSome)
+
+  await autoLoadFromSrcHandlers(~handlers=config.handlers, ~hasContractHandlers)
 
   // Load contract-specific handlers
   let _ = await config.contractHandlers
