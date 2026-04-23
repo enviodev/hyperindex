@@ -1,6 +1,105 @@
 use anyhow::Context;
 use std::path::Path;
 
+/// Spawns `cmd` with piped stdio forwarded to the host `print!`/`eprint!`.
+/// Loses the TTY signal (so package managers render without colors) but
+/// works inside the NAPI addon, where tokio-spawned child processes can't
+/// inherit fds cleanly — their output would otherwise disappear.
+async fn execute_command(
+    cmd: &str,
+    args: Vec<&str>,
+    current_dir: &Path,
+) -> anyhow::Result<std::process::ExitStatus> {
+    let mut child = tokio::process::Command::new(cmd)
+        .args(&args)
+        .current_dir(current_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context(format!(
+            "Failed to spawn command {} {} at {} as child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stdout_task = tokio::spawn(async move {
+        if let Some(mut s) = stdout {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = s.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                print!("{}", String::from_utf8_lossy(&buf[..n]));
+            }
+        }
+    });
+    let stderr_task = tokio::spawn(async move {
+        if let Some(mut s) = stderr {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = s.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                eprint!("{}", String::from_utf8_lossy(&buf[..n]));
+            }
+        }
+    });
+
+    let exit = child.wait().await.context(format!(
+        "Failed to exit command {} {} at {} from child process",
+        cmd,
+        args.join(" "),
+        current_dir.to_str().unwrap_or("bad_path")
+    ))?;
+    let _ = stdout_task.await;
+    let _ = stderr_task.await;
+    Ok(exit)
+}
+
+/// `install` + `run build` wrappers for a user-selected package manager.
+///
+/// `run` prepends the literal `run` token so `npm run <script>` works;
+/// pnpm/yarn/bun tolerate the extra `run`.
+pub mod pm {
+    use super::execute_command;
+    use crate::cli_args::init_config::PackageManager;
+    use anyhow::{anyhow, Result};
+    use std::path::Path;
+
+    pub async fn install(pm: PackageManager, cwd: &Path) -> Result<()> {
+        let exit = execute_command(pm.cmd(), vec!["install"], cwd).await?;
+        if !exit.success() {
+            return Err(anyhow!(
+                "{} install exited with code {}",
+                pm.cmd(),
+                exit.code().unwrap_or(-1),
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn run_script(pm: PackageManager, script: &str, cwd: &Path) -> Result<()> {
+        let exit = execute_command(pm.cmd(), vec!["run", script], cwd).await?;
+        if !exit.success() {
+            return Err(anyhow!(
+                "{} run {} exited with code {}",
+                pm.cmd(),
+                script,
+                exit.code().unwrap_or(-1),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Spawns `cmd` silently (stdout/stderr/stdin nulled).
 async fn execute_command_silent(
     cmd: &str,

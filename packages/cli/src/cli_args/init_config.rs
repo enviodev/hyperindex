@@ -371,6 +371,52 @@ pub enum Language {
     ReScript,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    ValueEnum,
+    Serialize,
+    Deserialize,
+    EnumIter,
+    EnumString,
+    PartialEq,
+    Eq,
+    Display,
+)]
+pub enum PackageManager {
+    #[clap(name = "pnpm")]
+    #[strum(serialize = "pnpm")]
+    Pnpm,
+    #[clap(name = "npm")]
+    #[strum(serialize = "npm")]
+    Npm,
+    #[clap(name = "yarn")]
+    #[strum(serialize = "yarn")]
+    Yarn,
+    #[clap(name = "bun")]
+    #[strum(serialize = "bun")]
+    Bun,
+}
+
+impl Default for PackageManager {
+    fn default() -> Self {
+        PackageManager::Pnpm
+    }
+}
+
+impl PackageManager {
+    /// Shell command used for `install` and `run <script>` invocations.
+    pub fn cmd(&self) -> &'static str {
+        match self {
+            PackageManager::Pnpm => "pnpm",
+            PackageManager::Npm => "npm",
+            PackageManager::Yarn => "yarn",
+            PackageManager::Bun => "bun",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct InitConfig {
     pub name: String,
@@ -378,4 +424,5 @@ pub struct InitConfig {
     pub ecosystem: Ecosystem,
     pub language: Language,
     pub api_token: Option<String>,
+    pub package_manager: PackageManager,
 }

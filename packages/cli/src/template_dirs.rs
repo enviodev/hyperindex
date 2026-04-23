@@ -198,12 +198,6 @@ impl<'a> TemplateDirs<'a> {
         self.get_codegen_dir(TemplateType::Dynamic)
     }
 
-    ///Gets the templates/dynamic/codegen_rescript directory — rendered into
-    ///the user's project root when a rescript.json is present.
-    pub fn get_codegen_rescript_dynamic_dir(&self) -> Result<RelativeDir<'a>> {
-        self.get_dynamic_dir("codegen_rescript")
-    }
-
     ///Gets the templates/static/shared directory
     pub fn get_shared_static_dir(&self) -> Result<RelativeDir<'a>> {
         let template_dir = self

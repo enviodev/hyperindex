@@ -935,12 +935,10 @@ impl ProjectTemplate {
         hbs.generate_hbs_templates()?;
 
         if self.is_rescript {
-            let rescript_dir = template_dirs
-                .get_codegen_rescript_dynamic_dir()
-                .context("Failed getting dynamic codegen_rescript dir")?;
-            let hbs =
-                HandleBarsDirGenerator::new(&rescript_dir, &self, &project_paths.project_root);
-            hbs.generate_hbs_templates()?;
+            let src_dir = project_paths.project_root.join("src");
+            std::fs::create_dir_all(&src_dir).context("Failed to create user src directory")?;
+            std::fs::write(src_dir.join("Indexer.res"), &self.indexer_code)
+                .context("Failed writing Indexer.res to user src directory")?;
         }
 
         Ok(())

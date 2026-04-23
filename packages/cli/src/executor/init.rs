@@ -284,6 +284,19 @@ pub async fn run_init_args(
 
     commands::codegen::run_codegen(&config).await?;
 
+    let pm = init_config.package_manager;
+    println!("Installing dependencies with {}...", pm);
+    commands::pm::install(pm, &parsed_project_paths.project_root)
+        .await
+        .context("Failed installing project dependencies")?;
+
+    if init_config.language == Language::ReScript {
+        println!("Building ReScript sources...");
+        commands::pm::run_script(pm, "build", &parsed_project_paths.project_root)
+            .await
+            .context("Failed running ReScript build after init")?;
+    }
+
     // Initialize git repository (non-fatal if it fails)
     match commands::git::init(&parsed_project_paths.project_root).await {
         Ok(true) => println!("Initialized a new git repository."),

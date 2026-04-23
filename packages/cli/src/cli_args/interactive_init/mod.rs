@@ -335,11 +335,14 @@ pub async fn prompt_missing_init_args(
     }
     .context("Prompting for API Token")?;
 
+    let package_manager = init_args.package_manager.unwrap_or_default();
+
     Ok(InitConfig {
         name,
         directory,
         ecosystem,
         language,
         api_token,
+        package_manager,
     })
 }
