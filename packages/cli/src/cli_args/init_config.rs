@@ -399,12 +399,6 @@ pub enum PackageManager {
     Bun,
 }
 
-impl Default for PackageManager {
-    fn default() -> Self {
-        PackageManager::Pnpm
-    }
-}
-
 impl PackageManager {
     /// Shell command used for `install` and `run <script>` invocations.
     pub fn cmd(&self) -> &'static str {
@@ -413,6 +407,24 @@ impl PackageManager {
             PackageManager::Npm => "npm",
             PackageManager::Yarn => "yarn",
             PackageManager::Bun => "bun",
+        }
+    }
+
+    /// Default when `--package-manager` isn't given: `pnpm` if it's on the
+    /// PATH, otherwise `npm`. Node.js ships with `npm`, so it's always
+    /// available as the last-resort fallback.
+    pub fn resolve_default() -> Self {
+        let pnpm_available = std::process::Command::new("pnpm")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if pnpm_available {
+            PackageManager::Pnpm
+        } else {
+            PackageManager::Npm
         }
     }
 }
