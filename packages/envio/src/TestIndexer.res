@@ -849,7 +849,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
   }
 }
 
-let initTestWorker = (~makeGeneratedConfig: unit => Config.t) => {
+let initTestWorker = () => {
   if NodeJs.WorkerThreads.isMainThread {
     JsError.throwWithMessage("initTestWorker must be called from a worker thread")
   }
@@ -889,7 +889,7 @@ let initTestWorker = (~makeGeneratedConfig: unit => Config.t) => {
     // Create proxy storage that communicates with main thread
     let proxy = TestIndexerProxyStorage.make(~parentPort, ~initialState)
     let storage = TestIndexerProxyStorage.makeStorage(proxy)
-    let config = makeGeneratedConfig()
+    let config = Config.loadWithoutRegistrations()
     let persistence = Persistence.make(
       ~userEntities=config.userEntities,
       ~allEnums=config.allEnums,
