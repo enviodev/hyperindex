@@ -434,6 +434,9 @@ pub struct SystemConfig {
     pub human_config: HumanConfig,
     pub lowercase_addresses: bool,
     pub handlers: Option<String>,
+    // Project uses ReScript when a rescript.json sits at the project root —
+    // file existence is the source of truth; no explicit flag in config.yaml.
+    pub is_rescript: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -608,6 +611,11 @@ impl SystemConfig {
             }
         };
 
+        let is_rescript = final_project_paths
+            .project_root
+            .join("rescript.json")
+            .exists();
+
         match human_config {
             HumanConfig::Evm(ref evm_config) => {
                 // TODO: Add similar validation for Fuel
@@ -776,6 +784,7 @@ impl SystemConfig {
                     ),
                     handlers: base_config.handlers.clone(),
                     human_config,
+                    is_rescript,
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
@@ -918,6 +927,7 @@ impl SystemConfig {
                     lowercase_addresses: false,
                     handlers: base_config.handlers.clone(),
                     human_config,
+                    is_rescript,
                 })
             }
             HumanConfig::Svm(ref svm_config) => {
@@ -960,6 +970,7 @@ impl SystemConfig {
                     lowercase_addresses: false,
                     handlers: None,
                     human_config,
+                    is_rescript,
                 })
             }
         }

@@ -18,5 +18,5 @@
     "module": "esmodule",
     "in-source": true
   },
-  "bs-dependencies": ["generated", "envio", "rescript-schema"]
+  "bs-dependencies": ["envio", "rescript-schema"]
 }

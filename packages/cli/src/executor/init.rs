@@ -19,7 +19,7 @@ use crate::{
     template_dirs::TemplateDirs,
     utils::file_system,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 use std::path::Path;
 
@@ -283,13 +283,6 @@ pub async fn run_init_args(
         .context("Failed parsing config")?;
 
     commands::codegen::run_codegen(&config).await?;
-
-    if init_config.language == Language::ReScript {
-        let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;
-        if !res_build_exit.success() {
-            return Err(anyhow!("Failed to build rescript"))?;
-        }
-    }
 
     // Initialize git repository (non-fatal if it fails)
     match commands::git::init(&parsed_project_paths.project_root).await {

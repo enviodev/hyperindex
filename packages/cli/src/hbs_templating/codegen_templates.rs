@@ -1,7 +1,6 @@
 use std::{
     collections::BTreeSet,
     fmt::{Display, Write},
-    path::PathBuf,
     vec,
 };
 
@@ -18,10 +17,7 @@ use crate::{
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
-    project_paths::{
-        path_utils::{add_leading_relative_dot, add_trailing_relative_dot},
-        ParsedProjectPaths,
-    },
+    project_paths::{path_utils::add_leading_relative_dot, ParsedProjectPaths},
     template_dirs::TemplateDirs,
     type_schema::{RecordField, SchemaMode, TypeExpr, TypeIdent},
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
@@ -654,14 +650,13 @@ impl ContractTemplate {
                     contract.name
                 ))?;
 
+                // Indexer.res lives at <project_root>/src/Indexer.res, so `../`
+                // from the compiled .mjs reaches the project root.
+                // Escape back-ticks just in case: the abi path is inside a
+                // template literal.
                 format!(
-                    "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
-                   relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}",
-                    // Use the config.yaml-relative path (NOT the absolute
-                    // path_buf) so the generated import resolves correctly
-                    // when Path.relativePathToRootFromGenerated prefixes it.
-                    // If we decide to inline the abi, instead of using require
-                    // we need to remember that abi might contain ` and we should escape it
+                    "let abi = FuelSDK.transpileAbi((await \
+                     Utils.importPathWithJson(`../{}`))[\"default\"])\n{}\n{}",
                     abi.path_relative_to_root,
                     all_abi_type_declarations,
                     all_abi_type_declarations.to_rescript_schema(&SchemaMode::ForDb)
@@ -921,11 +916,10 @@ pub struct ProjectTemplate {
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
     is_svm_ecosystem: bool,
+    is_rescript: bool,
 
     indexer_code: String,
     envio_dts_code: String,
-    //Used for the package.json reference to handlers in generated
-    relative_path_to_root_from_generated: String,
     relative_path_to_generated_from_root: String,
 }
 
@@ -939,6 +933,15 @@ impl ProjectTemplate {
         let hbs =
             HandleBarsDirGenerator::new(&dynamic_codegen_dir, &self, &project_paths.generated);
         hbs.generate_hbs_templates()?;
+
+        if self.is_rescript {
+            let rescript_dir = template_dirs
+                .get_codegen_rescript_dynamic_dir()
+                .context("Failed getting dynamic codegen_rescript dir")?;
+            let hbs =
+                HandleBarsDirGenerator::new(&rescript_dir, &self, &project_paths.project_root);
+            hbs.generate_hbs_templates()?;
+        }
 
         Ok(())
     }
@@ -1229,23 +1232,6 @@ impl ProjectTemplate {
 
         //Take the absolute paths of  project root and generated, diff them to get
         //relative path from generated to root and add a trailing dot. So in a default project, if your
-        //generated folder is at ./generated. Then this should output ../.
-        //OR say for instance its at artifacts/generated. This should output ../../.
-        //Generated path on construction has to be inside the root directory
-        //Used for the package.json reference to handlers in generated
-        let diff_from_current = |path: &PathBuf, base: &PathBuf| -> Result<String> {
-            Ok(add_trailing_relative_dot(
-                diff_paths(path, base)
-                    .ok_or_else(|| anyhow!("Failed to diffing paths {:?} and {:?}", path, base))?,
-            )
-            .to_str()
-            .ok_or_else(|| anyhow!("Failed converting path to str"))?
-            .to_string())
-        };
-        let relative_path_to_root_from_generated =
-            diff_from_current(&project_paths.project_root, &project_paths.generated)
-                .context("Failed to get relative path from output directory to project root")?;
-
         let relative_path_to_generated_from_root = add_leading_relative_dot(
             diff_paths(&project_paths.generated, &project_paths.project_root).ok_or_else(|| {
                 anyhow!("Failed to diff paths for relative_path_to_generated_from_root")
@@ -1624,6 +1610,8 @@ type handlerContext = {{
             r#"//*************
 //**CONTRACTS**
 //*************
+
+open RescriptSchema
 
 module Transaction = {{
   type t = {transaction_module_type}
@@ -2192,10 +2180,9 @@ type testIndexer = {{
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
+            is_rescript: cfg.is_rescript,
             indexer_code,
             envio_dts_code,
-            //Used for the package.json reference to handlers in generated
-            relative_path_to_root_from_generated,
             relative_path_to_generated_from_root,
         })
     }
@@ -2282,10 +2269,6 @@ mod test {
         let project_template = get_project_template_helper("fuel-config.yaml");
 
         assert_eq!(
-            project_template.relative_path_to_root_from_generated,
-            "../.".to_string()
-        );
-        assert_eq!(
           project_template.relative_path_to_generated_from_root,
           "./generated".to_string(),
           "relative_path_to_generated_from_root should start with ./ for Node.js module resolution"
@@ -2323,11 +2306,6 @@ mod test {
         let expected_chain_configs = vec![chain_config_1];
 
         let project_template = get_project_template_helper("config1.yaml");
-
-        assert_eq!(
-            project_template.relative_path_to_root_from_generated,
-            "../.".to_string()
-        );
 
         assert_eq!(
             expected_chain_configs[0].network_config,

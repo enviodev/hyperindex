@@ -2,9 +2,10 @@
  * Isolated Dependency E2E Test
  *
  * Copies the scenario and packages/envio into a temp directory outside
- * the pnpm workspace, runs full codegen + install, then re-installs with
- * both pnpm and npm. Starts `envio dev` to verify the indexer runs and
- * produces data, proving all runtime dependencies are correctly declared.
+ * the pnpm workspace, runs codegen, then re-installs with each package
+ * manager. Starts `envio dev` to verify the indexer runs and produces
+ * data, proving all runtime dependencies are correctly declared on the
+ * user's root package.json (generated/ no longer carries deps).
  *
  * This catches undeclared dependencies that work inside the pnpm workspace
  * (due to hoisting) but break for end users who `npm install envio`.
@@ -25,15 +26,6 @@ import path from "path";
 import os from "os";
 
 const SCENARIO_DIR = path.join(config.scenariosDir, "e2e_test");
-
-/** Replace the envio dependency version in a package.json file */
-function patchEnvioDep(pkgJsonPath: string, version: string) {
-  const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
-  if (pkg.dependencies?.envio) {
-    pkg.dependencies.envio = version;
-  }
-  fs.writeFileSync(pkgJsonPath, JSON.stringify(pkg, null, 2));
-}
 
 interface PmConfig {
   pm: string;
@@ -85,7 +77,8 @@ describe("Isolated dependency e2e", () => {
       path.join(baseProjectDir, "package.json")
     );
 
-    // 2. Run envio codegen — generates code, pnpm-installs, builds rescript.
+    // 2. Run envio codegen — generates code into generated/. No deps or
+     //    rescript config land in generated/, so nothing to install there.
     //    Root package.json's "file:../../packages/envio" resolves to tmpRoot/packages/envio.
     const codegenResult = await runCommand(config.envioCommand, [...config.envioArgs, "codegen"], {
       cwd: baseProjectDir,
@@ -97,21 +90,12 @@ describe("Isolated dependency e2e", () => {
       `codegen failed: ${codegenResult.stderr}`
     ).toBe(0);
 
-    // 3. Codegen writes an absolute binary-relative path for envio in
-    //    generated/package.json; rewrite it to the same relative scheme.
-    patchEnvioDep(
-      path.join(baseProjectDir, "generated", "package.json"),
-      "file:../../../packages/envio"
-    );
-
-    // 4. Remove node_modules and lockfiles so each PM test starts clean
-    for (const dir of [baseProjectDir, path.join(baseProjectDir, "generated")]) {
-      const nm = path.join(dir, "node_modules");
-      if (fs.existsSync(nm)) fs.rmSync(nm, { recursive: true, force: true });
-      for (const name of ["pnpm-lock.yaml", "package-lock.json"]) {
-        const p = path.join(dir, name);
-        if (fs.existsSync(p)) fs.unlinkSync(p);
-      }
+    // 3. Remove root node_modules and lockfile so each PM test starts clean.
+    const nm = path.join(baseProjectDir, "node_modules");
+    if (fs.existsSync(nm)) fs.rmSync(nm, { recursive: true, force: true });
+    for (const name of ["pnpm-lock.yaml", "package-lock.json"]) {
+      const p = path.join(baseProjectDir, name);
+      if (fs.existsSync(p)) fs.unlinkSync(p);
     }
   }, 180_000);
 
@@ -166,16 +150,6 @@ describe("Isolated dependency e2e", () => {
         filter: (source: string) => path.basename(source) !== "node_modules",
       });
 
-      // Install in generated/ first, then project root (same order as codegen)
-      const genInstall = await runCommand(pm, installArgs, {
-        cwd: path.join(projectDir, "generated"),
-        timeout: config.timeouts.install,
-      });
-      if (genInstall.exitCode !== 0) {
-        console.error(`[${pm}] generated/ install failed:`, genInstall.stderr);
-      }
-      expect(genInstall.exitCode).toBe(0);
-
       const rootInstall = await runCommand(pm, installArgs, {
         cwd: projectDir,
         timeout: config.timeouts.install,
@@ -185,25 +159,8 @@ describe("Isolated dependency e2e", () => {
       }
       expect(rootInstall.exitCode).toBe(0);
 
-      // ReScript deps (rescript-envsafe, rescript-schema, etc.) ship only .res
-      // source — rescript build compiles them to .res.mjs. In a real flow, codegen
-      // handles this, but we skip codegen (persisted state matches), so build manually.
-      const rescriptBuild = await runCommand(
-        "npx",
-        ["rescript", "build"],
-        {
-          cwd: path.join(projectDir, "generated"),
-          timeout: 120_000,
-        }
-      );
-      if (rescriptBuild.exitCode !== 0) {
-        console.error(`[${pm}] rescript build failed:`, rescriptBuild.stderr);
-      }
-      expect(rescriptBuild.exitCode).toBe(0);
-
-      // envio dev: persisted state matches → skips codegen (and its pnpm install) →
-      // starts docker → runs migrations → starts indexer.
-      // Our isolated node_modules are preserved.
+      // envio dev: persisted state matches → skips codegen → starts docker →
+      // runs migrations → starts indexer. Root node_modules are preserved.
       indexerProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
         cwd: projectDir,
         env: {
