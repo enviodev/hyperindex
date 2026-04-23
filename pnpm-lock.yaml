@@ -29,7 +29,7 @@ importers:
         version: 22.19.7
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(typescript@5.9.3)
+        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3)
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
@@ -117,9 +117,6 @@ importers:
       react:
         specifier: 19.2.0
         version: 19.2.0
-      rescript:
-        specifier: 12.2.0
-        version: 12.2.0
       rescript-schema:
         specifier: 9.5.1
         version: 9.5.1(rescript@12.2.0)
@@ -132,12 +129,16 @@ importers:
       yargs:
         specifier: 17.7.2
         version: 17.7.2
+    devDependencies:
+      rescript:
+        specifier: 12.2.0
+        version: 12.2.0
 
   scenarios/e2e_test:
     dependencies:
       envio:
         specifier: file:../../packages/envio
-        version: link:../../packages/envio
+        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3)
     devDependencies:
       '@types/node':
         specifier: ^24.10.1
@@ -157,7 +158,7 @@ importers:
     dependencies:
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(typescript@5.9.3)
+        version: link:../../packages/envio
       rescript:
         specifier: 12.2.0
         version: 12.2.0
@@ -195,7 +196,7 @@ importers:
         version: 12.2.0
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(typescript@5.9.3)
+        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3)
       rescript:
         specifier: 12.2.0
         version: 12.2.0
@@ -210,7 +211,7 @@ importers:
     dependencies:
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(typescript@5.9.3)
+        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3)
       rescript:
         specifier: 12.2.0
         version: 12.2.0
@@ -239,7 +240,7 @@ importers:
         version: 9.3.1
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(typescript@5.9.3)
+        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3)
       helpers:
         specifier: workspace:*
         version: link:../helpers
@@ -4210,7 +4211,7 @@ snapshots:
     dependencies:
       once: 1.4.0
 
-  envio@file:packages/envio(react-dom@19.2.3(react@19.2.3))(typescript@5.9.3):
+  envio@file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3):
     dependencies:
       '@clickhouse/client': 1.17.0
       '@elastic/ecs-pino-format': 1.4.0
@@ -4237,7 +4238,6 @@ snapshots:
       postgres: 3.4.8
       prom-client: 15.1.3
       react: 19.2.0
-      rescript: 12.2.0
       rescript-schema: 9.5.1(rescript@12.2.0)
       tsx: 4.21.0
       viem: 2.46.2(typescript@5.9.3)
@@ -4247,6 +4247,7 @@ snapshots:
       - bufferutil
       - react-devtools-core
       - react-dom
+      - rescript
       - supports-color
       - typescript
       - utf-8-validate

@@ -73,6 +73,7 @@ export function buildPackageJson(
   pkg.version = version;
   delete pkg.private;
   delete pkg.scripts;
+  delete pkg.devDependencies;
 
   pkg.bin = "./bin.mjs";
 
