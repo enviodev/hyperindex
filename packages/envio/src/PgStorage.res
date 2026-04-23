@@ -1686,15 +1686,18 @@ let makeStorageFromEnv = (
       // Postgres storage. Required env vars are validated here only when
       // the user opts in via `storage.clickhouse: true` in config.yaml.
       if config.storage.clickhouse {
+        let host = Env.ClickHouse.host()
+        let username = Env.ClickHouse.username()
+        let password = Env.ClickHouse.password()
         let missing = []
         let checkEnv = (opt, name) =>
           switch opt {
           | Some(_) => ()
           | None => missing->Array.push(name)->ignore
           }
-        Env.ClickHouse.host->checkEnv("ENVIO_CLICKHOUSE_HOST")
-        Env.ClickHouse.username->checkEnv("ENVIO_CLICKHOUSE_USERNAME")
-        Env.ClickHouse.password->checkEnv("ENVIO_CLICKHOUSE_PASSWORD")
+        host->checkEnv("ENVIO_CLICKHOUSE_HOST")
+        username->checkEnv("ENVIO_CLICKHOUSE_USERNAME")
+        password->checkEnv("ENVIO_CLICKHOUSE_PASSWORD")
         if missing->Array.length > 0 {
           JsError.throwWithMessage(
             `ClickHouse storage is enabled but required env vars are not set: ${missing->Array.joinUnsafe(
@@ -1704,10 +1707,10 @@ let makeStorageFromEnv = (
         }
         Some(
           Sink.makeClickHouse(
-            ~host=Env.ClickHouse.host->Option.getUnsafe,
-            ~database=Env.ClickHouse.database,
-            ~username=Env.ClickHouse.username->Option.getUnsafe,
-            ~password=Env.ClickHouse.password->Option.getUnsafe,
+            ~host=host->Option.getUnsafe,
+            ~database=Env.ClickHouse.database(),
+            ~username=username->Option.getUnsafe,
+            ~password=password->Option.getUnsafe,
           ),
         )
       } else {
