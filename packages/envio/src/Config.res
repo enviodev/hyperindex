@@ -19,7 +19,7 @@ type contract = {
   eventSignatures: array<string>,
 }
 
-// Source config parsed from `envio config view` - sources are created lazily in ChainFetcher
+// Sources are instantiated lazily in ChainFetcher from this config.
 type evmRpcConfig = {
   url: string,
   sourceFor: Source.sourceFor,
@@ -152,7 +152,6 @@ module EnvioAddresses = {
   }->Internal.fromGenericEntityConfig
 }
 
-// Types for parsing source config from the JSON emitted by `envio config view`
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("live") Live
 
 let rpcSourceForSchema = S.enum([Sync, Fallback, Live])
@@ -852,11 +851,9 @@ let getChain = (config, ~chainId) => {
       )
 }
 
-// When the CLI hands us a command, the Rust side already parsed the config
-// and embedded the resolved JSON in the payload. `Bin.res` calls `prime`
-// with that JSON before dispatching to `Main.start` / `Main.migrate` /
-// `Main.dropSchema`, so those functions skip the NAPI `getConfigJson`
-// round-trip. Module-private — only Bin.res should set it.
+// A CLI command payload already contains the resolved JSON; priming lets
+// downstream callers skip the NAPI `getConfigJson` round-trip. Calling
+// `prime` again invalidates the memo.
 %%private(let primedJson: ref<option<JSON.t>> = ref(None))
 %%private(let cached: ref<option<t>> = ref(None))
 let prime = (json: JSON.t): unit => {
@@ -864,23 +861,10 @@ let prime = (json: JSON.t): unit => {
   cached := None
 }
 
-// Load the base indexer config — no handler registrations applied. When
-// `Bin.res` has primed a JSON payload from the CLI command, parse from
-// that; otherwise invoke the native NAPI addon (Rust config parser,
-// ENVIO_CONFIG-respecting). The NAPI path keeps non-CLI callers (worker
-// threads spawned via `TestIndexer`, direct imports from test harnesses)
-// working without a primed payload.
-//
-// The `Config` module deliberately knows nothing about handler
-// registrations: the returned value is a pure function of the JSON, so
-// memoization is safe without invalidation. Post-registration configs are
-// produced by `HandlerLoader.applyRegistrations`, which folds the
-// registered handler state into each event (via spread+override for
-// EVM/Fuel; SVM doesn't support per-event handlers).
-//
-// `prime` must be called before the first `loadWithoutRegistrations` read
-// if a primed JSON is going to be used; calling `prime` later invalidates
-// the memo so subsequent reads reparse.
+// The returned value is a pure function of the JSON — no handler
+// registrations are applied here. Post-registration configs come from
+// `HandlerLoader.applyRegistrations`. That purity is what lets this
+// memoize without invalidation.
 let loadWithoutRegistrations = () =>
   switch cached.contents {
   | Some(c) => c

@@ -26,8 +26,7 @@ pub fn get_config_json(
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
 }
 
-/// Upsert persisted state to the database.
-/// Called from JS after migrations have run (tables exist).
+/// Requires the migration tables to already exist.
 #[napi_derive::napi]
 pub async fn upsert_persisted_state(json: String) -> napi::Result<()> {
     let state: crate::persisted_state::PersistedState = serde_json::from_str(&json)
@@ -39,15 +38,9 @@ pub async fn upsert_persisted_state(json: String) -> napi::Result<()> {
     Ok(())
 }
 
-/// Run the envio CLI. Returns a JSON-encoded `Command` for JS to dispatch, or
-/// `None` when there's nothing left for JS to do — the Node process exits
-/// naturally with code 0 (covers `--help`/`--version` and commands like
-/// `envio codegen` / `envio init` / `envio stop` / `local docker up|down`
-/// that finish entirely in Rust).
-///
-/// The executor layer doesn't know about NAPI; it returns an
-/// `Option<Command>` that this shim serializes for the JS host. A pure-Rust
-/// host (tests, future binary) could consume the same return value directly.
+/// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when
+/// Rust has handled the command end-to-end (help/version, codegen, init,
+/// stop, docker up/down). The Node process then exits with code 0.
 #[napi_derive::napi]
 pub async fn run_cli(
     args: Vec<String>,
