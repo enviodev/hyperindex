@@ -1,5 +1,6 @@
 import * as Sury from "rescript-schema";
 import type { default as BigDecimalT } from "bignumber.js";
+export { default as BigDecimal } from "bignumber.js";
 
 // Runtime value stubs used by the `S.*` namespace declarations further down
 // so the exported `S.bigDecimal` / `S.bigint` consts pick up typed schemas.
@@ -1491,3 +1492,9 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
     ConfigEntities<Config>[K]
   >;
 };
+
+// ============== Runtime values ==============
+
+// `never` steers callers to the project-typed `generated` re-export.
+export declare const indexer: never;
+export declare const createTestIndexer: () => never;

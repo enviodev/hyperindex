@@ -17,36 +17,30 @@ use anyhow::{Context, Result};
 use schemars::schema_for;
 
 /// A deferred work item the executor asks its host to run after Rust returns.
-///
-/// Rust handles config parsing, codegen, docker, persisted state — everything
-/// that doesn't need JS. Work that must run in the JS event loop (migrations,
-/// indexer start — anything that loads `envio/src/*.res.mjs` modules) is
-/// returned as a `Command`. The CLI layer knows nothing about how the host
-/// dispatches it: the NAPI shim forwards it to JS, a test harness could
-/// run it inline, a future standalone binary could spawn a Node subprocess,
-/// etc.
+/// Anything that must run in the JS event loop — migrations, indexer start,
+/// anything that loads `envio/src/*.res.mjs` — is encoded as a `Command`.
 ///
 /// Wire format: serde-tagged JSON on the `kind` field.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Command {
-    /// Run the indexer. If `migrate` is `Some`, also run the migration as
-    /// part of the same persistence initialization (single `init()` call).
+    /// `migrate: Some` folds the migration into the same `init()` call as
+    /// the indexer startup.
     Start {
         migrate: Option<MigrateOpts>,
         cwd: String,
         env: serde_json::Map<String, serde_json::Value>,
         config: serde_json::Value,
     },
-    /// Run migrations without starting the indexer (`local db up`, `local db setup`).
     Migrate {
         reset: bool,
         #[serde(rename = "persistedState")]
         persisted_state: PersistedState,
         config: serde_json::Value,
     },
-    /// Drop the schema (`local db down`).
-    DropSchema { config: serde_json::Value },
+    DropSchema {
+        config: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -56,17 +50,14 @@ pub struct MigrateOpts {
     pub persisted_state: PersistedState,
 }
 
-/// `envio_package_dir` is the absolute path of the running envio JS package
-/// when this executor is invoked via NAPI (the JS host resolves it from
-/// `import.meta.url`). Used only to stamp the `envio` `file:{dir}` dep
-/// into generated / init project `package.json`s for dev builds. `None`
-/// is fine for commands that don't call `get_envio_version` (e.g.
-/// `script` subcommands); init/codegen/dev/start on a dev build without
-/// it will error out of `get_envio_version`.
+/// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
+/// (to stamp the `envio` `file:{dir}` dep into generated / init
+/// `package.json`s). Commands that don't call it — `script` subcommands —
+/// may pass `None`; init/codegen/dev/start on a dev build without it will
+/// error out of `get_envio_version`.
 ///
-/// Returns `None` for commands that finish entirely in Rust (codegen, init,
-/// stop, docker up/down, help/version, scripts). The NAPI shim maps `None`
-/// to a JS `null`, signalling the JS host to exit cleanly.
+/// Returns `None` for commands that finish entirely in Rust. The NAPI shim
+/// forwards that to JS as `null` so the host exits cleanly.
 pub async fn execute(
     command_line_args: CommandLineArgs,
     envio_package_dir: Option<&str>,
@@ -187,9 +178,7 @@ pub async fn execute(
     }
 }
 
-/// Build a `Start` command payload. The indexer's entry is `Main.start` in the
-/// envio runtime — Bin.res calls it directly, so Rust no longer computes an
-/// indexer module path. `ENVIO_CONFIG` is always present in `env`; callers may
+/// `ENVIO_CONFIG` is always present in the returned `env`; callers may
 /// append extra env pairs (e.g. `ENVIO_DEV_MODE` for `envio dev`).
 pub fn build_start_command(
     config: &SystemConfig,
@@ -219,9 +208,8 @@ pub fn build_start_command(
     })
 }
 
-/// Parse the config JSON (a string) into a `serde_json::Value` so it
-/// serializes as a nested JSON object in the command payload. Bin.res then
-/// passes it to `Config.prime` without an extra `JSON.parse`.
+/// Returns a `Value` (not a string) so the serde payload embeds the config
+/// as a nested JSON object — the JS side then skips the extra `JSON.parse`.
 pub fn public_config_value(config: &SystemConfig) -> Result<serde_json::Value> {
     serde_json::from_str(&config.to_public_config_json()?)
         .context("Failed parsing public config JSON")

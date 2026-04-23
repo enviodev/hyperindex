@@ -74,6 +74,10 @@ Initialize an indexer with one of the initialization options
 
   Possible values: `typescript`, `rescript`
 
+* `--package-manager <PACKAGE_MANAGER>` — The package manager used for `install` and post-init build steps (default: pnpm)
+
+  Possible values: `pnpm`, `npm`, `yarn`, `bun`
+
 * `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file
 
 
@@ -248,7 +252,7 @@ Development commands for starting, stopping, and restarting the indexer with aut
 
 ###### **Options:**
 
-* `-r`, `--restart` — Force restart: clear the database and re-index from scratch. Dev mode restarts automatically on config/schema changes, use this flag when you need a restart without making changes
+* `-r`, `--restart` — Force restart: clear the database and re-index from scratch. Required when config/schema/ABI changes are incompatible with the existing indexer state
 
 
 

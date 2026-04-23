@@ -19,7 +19,7 @@ use crate::{
     template_dirs::TemplateDirs,
     utils::file_system,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 use std::path::Path;
 
@@ -284,11 +284,17 @@ pub async fn run_init_args(
 
     commands::codegen::run_codegen(&config).await?;
 
+    let pm = init_config.package_manager;
+    println!("Installing dependencies with {}...", pm);
+    commands::pm::install(pm, &parsed_project_paths.project_root)
+        .await
+        .context("Failed installing project dependencies")?;
+
     if init_config.language == Language::ReScript {
-        let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;
-        if !res_build_exit.success() {
-            return Err(anyhow!("Failed to build rescript"))?;
-        }
+        println!("Building ReScript sources...");
+        commands::pm::run_script(pm, "build", &parsed_project_paths.project_root)
+            .await
+            .context("Failed running ReScript build after init")?;
     }
 
     // Initialize git repository (non-fatal if it fails)

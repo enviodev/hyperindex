@@ -99,9 +99,8 @@ let getInitialChainState = (~chainId: int): option<Persistence.initialChainState
   }
 }
 
-// Build the chains object from config. Extracted so the exported indexer
-// value can call this lazily (on first `indexer.chains` access) rather than
-// eagerly at module load — importing `generated` must not trigger Config.loadWithoutRegistrations().
+// Importing `generated` must not trigger `Config.loadWithoutRegistrations()`,
+// so the exported indexer calls this lazily on first `indexer.chains` access.
 let buildChainsObject = (~config: Config.t) => {
   let chainIds = []
   let chains = Utils.Object.createNullObject()
@@ -435,19 +434,32 @@ let getGlobalIndexer = (): 'indexer => {
   // — the Proxy mirrors it at runtime so `Object.keys(indexer)` reflects the
   // actually-callable methods and typos surface via the unknown-prop throw
   // rather than silent `undefined` returns.
-  let ecosystem = Config.loadWithoutRegistrations().ecosystem
-  let keys = switch ecosystem.name {
-  | Evm | Fuel => [
-      "name",
-      "description",
-      "chainIds",
-      "chains",
-      "onEvent",
-      "contractRegister",
-      "onBlock",
-    ]
-  | Svm => ["name", "description", "chainIds", "chains", "onSlot"]
-  }
+  //
+  // `Api.res` calls `getGlobalIndexer()` at envio-package load, so the keys
+  // array is memoized lazily: an early `createEffect` / `S` import that
+  // never touches the indexer must not trigger a config parse. The memo is
+  // safe because `Config.loadWithoutRegistrations` is itself pure.
+  let keysMemo: ref<option<array<string>>> = ref(None)
+  let getKeys = () =>
+    switch keysMemo.contents {
+    | Some(k) => k
+    | None => {
+        let keys = switch Config.loadWithoutRegistrations().ecosystem.name {
+        | Evm | Fuel => [
+            "name",
+            "description",
+            "chainIds",
+            "chains",
+            "onEvent",
+            "contractRegister",
+            "onBlock",
+          ]
+        | Svm => ["name", "description", "chainIds", "chains", "onSlot"]
+        }
+        keysMemo := Some(keys)
+        keys
+      }
+    }
 
   let get = (~prop: string) =>
     switch prop {
@@ -467,7 +479,7 @@ let getGlobalIndexer = (): 'indexer => {
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
     | _ =>
       JsError.throwWithMessage(
-        `Field \`${prop}\` does not exist on \`indexer\`. Available fields: ${keys->Array.join(
+        `Field \`${prop}\` does not exist on \`indexer\`. Available fields: ${getKeys()->Array.join(
             ", ",
           )}.`,
       )
@@ -484,9 +496,12 @@ let getGlobalIndexer = (): 'indexer => {
       } else {
         target->(Utils.magic: {..} => dict<unknown>)->Dict.getUnsafe(prop->Utils.magic)
       },
-    ownKeys: (~target as _) => keys,
+    ownKeys: (~target as _) => getKeys(),
     getOwnPropertyDescriptor: (~target as _, ~prop) =>
-      if typeof(prop) === #string && keys->Array.includes(prop->(Utils.magic: unknown => string)) {
+      if (
+        typeof(prop) === #string &&
+          getKeys()->Array.includes(prop->(Utils.magic: unknown => string))
+      ) {
         Some({
           value: get(~prop=prop->(Utils.magic: unknown => string)),
           enumerable: true,
@@ -625,8 +640,7 @@ let start = async (
 
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
-  // `migrate`, when provided, folds the DB setup into this single `init()` call
-  // (no separate `db setup` → `start` double-init).
+  // `migrate`, when provided, folds the DB setup into the same `init()` call.
   let configWithoutRegistrations = Config.loadWithoutRegistrations()
   let persistence = switch persistence {
   | Some(p) => p
@@ -643,10 +657,9 @@ let start = async (
   | None => ()
   }
 
-  // Register all handlers. The returned config has handler/contractRegister/
-  // eventFilters baked into each event config. Downstream code uses this
-  // enriched value; `Config.loadWithoutRegistrations` itself never sees
-  // registration state.
+  // `Config.loadWithoutRegistrations` never sees registration state; handler,
+  // contractRegister, and eventFilters are baked into each event config only
+  // by the returned value here.
   let (config, registrations) = await HandlerLoader.registerAllHandlers(
     ~config=configWithoutRegistrations,
   )

@@ -72,15 +72,10 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   ->Promise.all
 }
 
-// Produce a post-registration Config.t by walking the chainMap and folding
-// the just-registered handler state into each event. Fuel keeps all its
-// fields from build time and only overrides the three registration fields
-// (+ `dependsOnAddresses`). EVM also re-runs `parseEventFiltersOrThrow` with
-// the newly-registered `where:` JSON so per-event filters propagate into
-// `getEventFiltersOrThrow` / `filterByAddresses` — that's why
-// `evmEventConfig` retains `sighash` and `indexedParams`.
-//
-// `dependsOnAddresses` goes through `Internal.dependsOnAddresses` so the
+// EVM re-runs `parseEventFiltersOrThrow` with the registered `where:` JSON so
+// per-event filters propagate into `getEventFiltersOrThrow` / `filterByAddresses`
+// — which is why `evmEventConfig` has to retain `sighash` and `indexedParams`.
+// `dependsOnAddresses` is routed through `Internal.dependsOnAddresses` so the
 // formula stays in sync with `EventConfigBuilder.build{Evm,Fuel}EventConfig`.
 let applyRegistrations = (~config: Config.t): Config.t => {
   let newChainMap = config.chainMap->ChainMap.map(chain => {
@@ -158,13 +153,8 @@ let applyRegistrations = (~config: Config.t): Config.t => {
   {...config, chainMap: newChainMap}
 }
 
-// Register all handlers and return `(configWithRegistrations, registrations)`.
-// The input `~config` is the pre-registration snapshot (from
-// `Config.loadWithoutRegistrations`); the returned config applies
-// `HandlerRegister` state to each event via `applyRegistrations` above.
-// `Config` itself never reads `HandlerRegister` — the knowledge of
-// "post-registration config" lives here and flows to downstream callers via
-// the return value.
+// `Config` never reads `HandlerRegister`. The only way to get a config that
+// reflects registration state is through the returned value here.
 let registerAllHandlers = async (~config: Config.t) => {
   HandlerRegister.startRegistration(~ecosystem=config.ecosystem, ~multichain=config.multichain)
 

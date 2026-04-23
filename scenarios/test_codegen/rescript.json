@@ -21,7 +21,6 @@
   },
   "bs-dependencies": [
     "@rescript/react",
-    "generated",
     "rescript-schema",
     "helpers",
     "envio"

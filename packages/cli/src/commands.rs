@@ -1,35 +1,17 @@
 use anyhow::Context;
 use std::path::Path;
 
+/// Spawns `cmd` with piped stdio forwarded to the host `print!`/`eprint!`.
+/// Loses the TTY signal (so package managers render without colors) but
+/// works inside the NAPI addon, where tokio-spawned child processes can't
+/// inherit fds cleanly — their output would otherwise disappear.
 async fn execute_command(
     cmd: &str,
     args: Vec<&str>,
     current_dir: &Path,
 ) -> anyhow::Result<std::process::ExitStatus> {
-    execute_command_with_env(cmd, args, current_dir, &[]).await
-}
-
-/// Like execute_command, but lets the caller inject extra env vars into the
-/// child process without clobbering the inherited environment. Used by the
-/// dev flow to forward credentials for containers we just booted.
-///
-/// Precedence: `extra_env` values override identically-named vars inherited
-/// from the parent process (including those loaded from `.env`).
-async fn execute_command_with_env(
-    cmd: &str,
-    args: Vec<&str>,
-    current_dir: &Path,
-    extra_env: &[(String, String)],
-) -> anyhow::Result<std::process::ExitStatus> {
-    // NAPI addon context: file-descriptor inheritance from the tokio async
-    // runtime to child processes doesn't reach the Node host's stdout/stderr
-    // cleanly — subprocess output silently disappears. Pipe explicitly and
-    // forward each byte through Rust's `print!`/`eprint!`, which do go to the
-    // host stdio. Loses the TTY signal (pnpm/rescript render without colors),
-    // but the compile progress and error text are visible again.
     let mut child = tokio::process::Command::new(cmd)
         .args(&args)
-        .envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .current_dir(current_dir)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -82,7 +64,43 @@ async fn execute_command_with_env(
     Ok(exit)
 }
 
-/// Like execute_command, but suppresses stdout and stderr
+/// `install` + `run build` wrappers for a user-selected package manager.
+///
+/// `run` prepends the literal `run` token so `npm run <script>` works;
+/// pnpm/yarn/bun tolerate the extra `run`.
+pub mod pm {
+    use super::execute_command;
+    use crate::cli_args::init_config::PackageManager;
+    use anyhow::{anyhow, Result};
+    use std::path::Path;
+
+    pub async fn install(pm: PackageManager, cwd: &Path) -> Result<()> {
+        let exit = execute_command(pm.cmd(), vec!["install"], cwd).await?;
+        if !exit.success() {
+            return Err(anyhow!(
+                "{} install exited with code {}",
+                pm.cmd(),
+                exit.code().unwrap_or(-1),
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn run_script(pm: PackageManager, script: &str, cwd: &Path) -> Result<()> {
+        let exit = execute_command(pm.cmd(), vec!["run", script], cwd).await?;
+        if !exit.success() {
+            return Err(anyhow!(
+                "{} run {} exited with code {}",
+                pm.cmd(),
+                script,
+                exit.code().unwrap_or(-1),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Spawns `cmd` silently (stdout/stderr/stdin nulled).
 async fn execute_command_silent(
     cmd: &str,
     args: Vec<&str>,
@@ -112,26 +130,13 @@ async fn execute_command_silent(
         ))
 }
 
-pub mod rescript {
-    use super::execute_command;
-    use anyhow::Result;
-    use std::path::Path;
-
-    pub async fn build(path: &Path) -> Result<std::process::ExitStatus> {
-        let args = vec!["rescript-legacy"];
-        execute_command("pnpm", args, path).await
-    }
-}
-
 pub mod codegen {
-    use super::{execute_command, rescript};
     use crate::{
         config_parsing::system_config::SystemConfig, hbs_templating, template_dirs::TemplateDirs,
     };
     use anyhow::{self, Context, Result};
     use std::path::Path;
 
-    use crate::project_paths::ParsedProjectPaths;
     use tokio::fs;
 
     pub async fn remove_files_except_git(directory: &Path) -> Result<()> {
@@ -154,62 +159,6 @@ pub mod codegen {
         Ok(())
     }
 
-    pub async fn check_and_install_pnpm(current_dir: &Path) -> Result<()> {
-        // Check if pnpm is already installed
-        let check_pnpm = execute_command("pnpm", vec!["--version"], current_dir).await;
-
-        // If pnpm is not installed, run the installation command
-        match check_pnpm {
-            Ok(status) if status.success() => {
-                println!("Package pnpm is already installed. Continuing...");
-            }
-            _ => {
-                println!("Package pnpm is not installed. Installing now...");
-                let args = vec!["install", "--global", "pnpm"];
-                execute_command("npm", args, current_dir).await?;
-            }
-        }
-        Ok(())
-    }
-
-    async fn pnpm_install(project_paths: &ParsedProjectPaths) -> Result<std::process::ExitStatus> {
-        println!("Checking for pnpm package...");
-        check_and_install_pnpm(&project_paths.generated).await?;
-
-        execute_command(
-            "pnpm",
-            vec!["install", "--no-lockfile", "--prefer-offline"],
-            &project_paths.generated,
-        )
-        .await?;
-        execute_command(
-            "pnpm",
-            vec!["install", "--no-frozen-lockfile", "--prefer-offline"],
-            &project_paths.project_root,
-        )
-        .await
-    }
-
-    async fn run_post_codegen_command_sequence(
-        project_paths: &ParsedProjectPaths,
-    ) -> anyhow::Result<std::process::ExitStatus> {
-        println!("Installing packages... ");
-        let exit1 = pnpm_install(project_paths).await?;
-        if !exit1.success() {
-            return Ok(exit1);
-        }
-
-        println!("Generating HyperIndex code...");
-        let exit3 = rescript::build(&project_paths.generated)
-            .await
-            .context("Failed running rescript build")?;
-        if !exit3.success() {
-            return Ok(exit3);
-        }
-
-        Ok(exit3)
-    }
-
     pub async fn run_codegen(config: &SystemConfig) -> anyhow::Result<()> {
         let template_dirs = TemplateDirs::new();
         fs::create_dir_all(&config.parsed_project_paths.generated).await?;
@@ -225,10 +174,6 @@ pub mod codegen {
         template
             .generate_templates(&config.parsed_project_paths)
             .context("Failed generating dynamic codegen files")?;
-
-        run_post_codegen_command_sequence(&config.parsed_project_paths)
-            .await
-            .context("Failed running post codegen command sequence")?;
 
         Ok(())
     }
