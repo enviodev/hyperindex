@@ -5,10 +5,18 @@ let make = (exn, ~logger=Logging.getLogger(), ~msg=?) => {
 }
 
 let log = (self: t) => {
-  switch self {
-  | {exn, msg: Some(msg), logger} => logger->Logging.childErrorWithExn(exn->Utils.prettifyExn, msg)
-  | {exn, msg: None, logger} => logger->Logging.childError(exn->Utils.prettifyExn)
+  // Log as a single-line string so pino-pretty doesn't render the
+  // `err: { type, message, stack, ... }` block beneath the message.
+  let exnMessage = switch self.exn->JsExn.anyToExnInternal {
+  | JsExn(e) => e->JsExn.message->Option.getOr("")
+  | _ => ""
   }
+  let finalMsg = switch (self.msg, exnMessage) {
+  | (Some(msg), "") => msg
+  | (None, "") => "Unknown error"
+  | (_, exnMsg) => exnMsg
+  }
+  self.logger->Logging.childError(finalMsg)
 }
 
 let raiseExn = (self: t) => {
