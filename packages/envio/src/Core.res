@@ -1,10 +1,8 @@
-// Bindings to the native envio NAPI addon.
-//
 // Resolution order:
 //   1. Production: require("envio-{os}-{arch}") — platform-specific npm package
 //   2. Dev build:  find repo → cargo build --lib → load from target/debug/
 
-// NAPI returns `null | T` (never `undefined`) for Rust `Option<T>`, so the
+// NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
@@ -23,8 +21,8 @@ external execSyncRaw: (string, {..}) => string = "execSync"
 @val external processPlatform: string = "process.platform"
 @val external processArch: string = "process.arch"
 
-// No-ops keep the `node:fs` / `node:child_process` imports alive for the
-// %raw loadDevAddon block, which references them as Nodefs / Nodechild_process.
+// Keeps `node:fs` / `node:child_process` imports alive for the %raw
+// loadDevAddon block, which references them as Nodefs / Nodechild_process.
 let _keepFs = existsSync
 let _keepCp = execSyncRaw
 
@@ -32,8 +30,7 @@ let callRequire: ({..}, string) => addon = %raw(`(req, id) => req(id)`)
 
 let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
 
-// Local dev: find repo root, cargo build, load from target/debug/.
-// Runs cargo build on every invocation (like cargo run).
+// Runs `cargo build` on every invocation (like `cargo run`).
 let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   var cp = Nodechild_process;
   var path = Nodepath;
