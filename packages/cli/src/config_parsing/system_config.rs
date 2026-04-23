@@ -450,7 +450,14 @@ impl Storage {
         let (postgres, clickhouse) = match config {
             // Default: only Postgres enabled
             None => (true, false),
-            Some(s) => (s.postgres.unwrap_or(true), s.clickhouse.unwrap_or(false)),
+            Some(s) => {
+                let clickhouse = s.clickhouse.unwrap_or(false);
+                // When clickhouse is enabled, postgres must be set explicitly
+                // so that the validation below catches a clickhouse-only config
+                // instead of silently defaulting postgres to true.
+                let postgres = s.postgres.unwrap_or(!clickhouse);
+                (postgres, clickhouse)
+            }
         };
         if clickhouse && !postgres {
             return Err(anyhow!(
@@ -2547,6 +2554,19 @@ mod test {
         // ClickHouse without Postgres -> user-friendly error
         let err = super::Storage::resolve(Some(&StorageConfig {
             postgres: Some(false),
+            clickhouse: Some(true),
+        }))
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("ClickHouse is not supported as a single storage yet"),
+            "Unexpected error: {err}"
+        );
+
+        // ClickHouse enabled with Postgres omitted -> same error; user must
+        // opt in to Postgres explicitly rather than relying on the default.
+        let err = super::Storage::resolve(Some(&StorageConfig {
+            postgres: None,
             clickhouse: Some(true),
         }))
         .unwrap_err();
