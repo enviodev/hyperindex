@@ -7,7 +7,7 @@ pub mod validation;
 
 use super::{
     clap_definitions::{self, InitArgs, ProjectPaths},
-    init_config::{InitConfig, Language},
+    init_config::{self, InitConfig, Language},
 };
 use crate::{
     clap_definitions::InitFlow,
@@ -335,11 +335,16 @@ pub async fn prompt_missing_init_args(
     }
     .context("Prompting for API Token")?;
 
+    let package_manager = init_args
+        .package_manager
+        .unwrap_or_else(init_config::PackageManager::resolve_default);
+
     Ok(InitConfig {
         name,
         directory,
         ecosystem,
         language,
         api_token,
+        package_manager,
     })
 }

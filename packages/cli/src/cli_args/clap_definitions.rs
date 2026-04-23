@@ -142,6 +142,11 @@ pub struct InitArgs {
     #[clap(value_enum)]
     pub language: Option<init_config::Language>,
 
+    ///The package manager used for `install` and post-init build steps (default: pnpm)
+    #[arg(global = true, long = "package-manager")]
+    #[clap(value_enum)]
+    pub package_manager: Option<init_config::PackageManager>,
+
     ///The hypersync API key to be initialized in your templates .env file
     #[arg(global = true, long)]
     pub api_token: Option<String>,

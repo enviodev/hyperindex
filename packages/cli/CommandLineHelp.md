@@ -74,6 +74,10 @@ Initialize an indexer with one of the initialization options
 
   Possible values: `typescript`, `rescript`
 
+* `--package-manager <PACKAGE_MANAGER>` — The package manager used for `install` and post-init build steps (default: pnpm)
+
+  Possible values: `pnpm`, `npm`, `yarn`, `bun`
+
 * `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file
 
 

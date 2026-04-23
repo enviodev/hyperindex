@@ -24,6 +24,7 @@
     "tsx": "4.21.0",
     "vitest": "4.0.18",
     "rescript": "12.2.0",
+    "@rescript/runtime": "12.2.0",
     "rescript-schema": "9.5.1"
   },
   "dependencies": {

@@ -1,7 +1,6 @@
 use std::path::{Component, PathBuf};
 
 use anyhow::anyhow;
-use itertools::Itertools;
 
 use super::ParsedProjectPaths;
 
@@ -89,13 +88,6 @@ pub fn add_leading_relative_dot(path: PathBuf) -> PathBuf {
     }
 }
 
-/// Add /. to the end of a path if its not already ending in /.
-pub fn add_trailing_relative_dot(path: PathBuf) -> PathBuf {
-    //Note components doesn't pick up on trailing CurDir, so always add it on and return
-    let components = [path.components().collect_vec(), vec![Component::CurDir]].concat();
-    PathBuf::from_iter(components)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,11 +131,5 @@ mod tests {
         leading_test_dot_dot: "..", "..",
         leading_test_generated:  "generated", "./generated",
         leading_test_dot_slash_generated:  "./generated", "./generated",
-    );
-
-    test_path_function!(add_trailing_relative_dot;
-        trailing_generated: "generated", "generated/.",
-        trailing_test_dot_dot_slash_dot: "../.", "../.",
-        trailing_test_dot_slash_dir_slash_dot: "./dir/.", "./dir/.",
     );
 }
