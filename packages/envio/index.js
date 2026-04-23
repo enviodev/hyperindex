@@ -9,6 +9,7 @@ import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.res.mjs";
 
 export * from "./src/Envio.res.mjs";
 export { indexer, createTestIndexer } from "./src/Api.res.mjs";
+export { default as BigDecimal } from "bignumber.js";
 
 // Important! Should match the index.d.ts file
 export const S = {
