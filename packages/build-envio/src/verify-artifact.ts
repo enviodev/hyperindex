@@ -71,6 +71,11 @@ function verify(dir: string): void {
       if (pkg.bin !== "./bin.mjs") errors.push(`package.json bin is "${pkg.bin}", expected "./bin.mjs"`);
       if (!pkg.optionalDependencies) errors.push("package.json missing optionalDependencies");
       if (!pkg.dependencies) errors.push("package.json missing dependencies");
+      if (pkg.devDependencies) errors.push("package.json still has devDependencies");
+      const deps = pkg.dependencies as Record<string, unknown> | undefined;
+      if (deps && "rescript" in deps) {
+        errors.push("package.json dependencies must not include 'rescript' (compiler is build-time only)");
+      }
     }
   }
 
