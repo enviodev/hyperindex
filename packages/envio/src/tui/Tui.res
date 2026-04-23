@@ -237,7 +237,7 @@ module App = {
       } else {
         React.null
       }}
-      {switch (state.ctx.config.storage.clickhouse, Env.ClickHouse.host) {
+      {switch (state.ctx.config.storage.clickhouse, Env.ClickHouse.host()) {
       | (true, Some(host)) =>
         <Box flexDirection={Row}>
           <Text> {"ClickHouse: "->React.string} </Text>
