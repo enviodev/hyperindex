@@ -99,9 +99,8 @@ let getInitialChainState = (~chainId: int): option<Persistence.initialChainState
   }
 }
 
-// Build the chains object from config. Extracted so the exported indexer
-// value can call this lazily (on first `indexer.chains` access) rather than
-// eagerly at module load — importing `generated` must not trigger Config.loadWithoutRegistrations().
+// Importing `generated` must not trigger `Config.loadWithoutRegistrations()`,
+// so the exported indexer calls this lazily on first `indexer.chains` access.
 let buildChainsObject = (~config: Config.t) => {
   let chainIds = []
   let chains = Utils.Object.createNullObject()
@@ -241,9 +240,7 @@ let buildChainsObject = (~config: Config.t) => {
   (chains, chainIds)
 }
 
-// Attach an enumerable property whose value is produced lazily on read.
-// Wraps `Utils.Object.defineProperty` + the `Utils.magic` erasure required
-// by the getter signature (`unknown`) so getter call sites stay terse.
+// The `Utils.magic` erasure is what the getter signature (`unknown`) demands.
 let defineValueGetter = (obj, name, get: unit => 'a) =>
   obj->Utils.Object.defineProperty(
     name,
@@ -483,11 +480,9 @@ let getGlobalIndexer = (): 'indexer => {
     }
   }
 
-  // Attach both `onBlock` (EVM/Fuel) and `onSlot` (SVM) unconditionally.
-  // The property name is ecosystem-dependent and we don't want to load
-  // config at `getGlobalIndexer()` call time; each invocation of the shared
-  // handler reads `ecosystem.onBlockMethodName` at call time so user-facing
-  // error messages still cite the name that matches their ecosystem.
+  // Attach `onBlock` and `onSlot` unconditionally so `getGlobalIndexer()`
+  // needn't load config; the handler reads `ecosystem.onBlockMethodName` at
+  // call time so error messages cite the ecosystem-appropriate name.
   indexer
   ->Utils.Object.definePropertyWithValue("onEvent", {enumerable: true, value: onEventFn})
   ->Utils.Object.definePropertyWithValue(
@@ -626,8 +621,7 @@ let start = async (
 
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
-  // `migrate`, when provided, folds the DB setup into this single `init()` call
-  // (no separate `db setup` → `start` double-init).
+  // `migrate`, when provided, folds the DB setup into the same `init()` call.
   let configWithoutRegistrations = Config.loadWithoutRegistrations()
   let persistence = switch persistence {
   | Some(p) => p
@@ -644,10 +638,9 @@ let start = async (
   | None => ()
   }
 
-  // Register all handlers. The returned config has handler/contractRegister/
-  // eventFilters baked into each event config. Downstream code uses this
-  // enriched value; `Config.loadWithoutRegistrations` itself never sees
-  // registration state.
+  // `Config.loadWithoutRegistrations` never sees registration state; handler,
+  // contractRegister, and eventFilters are baked into each event config only
+  // by the returned value here.
   let (config, registrations) = await HandlerLoader.registerAllHandlers(
     ~config=configWithoutRegistrations,
   )

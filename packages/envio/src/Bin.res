@@ -8,14 +8,12 @@ NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
   NodeJs.process->NodeJs.exitWithCode(Failure)
 })
 
-// Wire format mirrors the Rust `executor::Command` enum: a tagged JSON object
-// with a `kind` discriminator. `Bin.res` decodes once and dispatches to the
-// matching `Main.*` entry point — there's no per-step queue.
-// `migrate` is `Null.t` (not `option`) because Rust's serde encodes
-// `Option::None` as JSON `null`, and `Utils.magic` casts straight through.
-// ReScript's `option` expects `undefined` for `None`, so a `null` value
-// would wrongly pass `Option.map`'s `!== undefined` check. Callers
-// convert with `Null.toOption` at use time.
+// Wire format mirrors the Rust `executor::Command` enum — a tagged JSON
+// object with a `kind` discriminator.
+// `migrate` is `Null.t`, not `option`: Rust serde encodes `None` as JSON
+// `null`, but ReScript's `option` expects `undefined`, so a `null` value
+// wrongly passes `Option.map`'s `!== undefined` check. Callers convert via
+// `Null.toOption` at use time.
 type startCmd = {
   migrate: Null.t<Main.migrateOpts>,
   cwd: string,
