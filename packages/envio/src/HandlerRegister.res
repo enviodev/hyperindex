@@ -98,6 +98,19 @@ let isPendingRegistration = () => {
   }
 }
 
+// Early guard called from `indexer.onEvent` / `.contractRegister` / `.onBlock` /
+// `.onSlot` so the user sees a method-specific error at the call site, instead
+// of hitting the generic `withRegistration` throw deep inside `setHandler` etc.
+let throwIfFinishedRegistration = (~methodName) => {
+  switch activeRegistration.contents {
+  | Some({finished: true}) =>
+    JsError.throwWithMessage(
+      `Cannot call \`indexer.${methodName}\` after the indexer has started. Make sure all handlers are registered at the top level of your handler module.`,
+    )
+  | _ => ()
+  }
+}
+
 let registerOnBlock = (
   ~name,
   ~chainId,

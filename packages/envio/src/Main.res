@@ -240,45 +240,7 @@ let buildChainsObject = (~config: Config.t) => {
   (chains, chainIds)
 }
 
-// The `Utils.magic` erasure is what the getter signature (`unknown`) demands.
-let defineValueGetter = (obj, name, get: unit => 'a) =>
-  obj->Utils.Object.defineProperty(
-    name,
-    {enumerable: true, get: () => get()->(Utils.magic: 'a => unknown)},
-  )
-
 let getGlobalIndexer = (): 'indexer => {
-  let indexer = Utils.Object.createNullObject()
-
-  // `indexer.chains` needs stable identity across repeated reads
-  // (`Indexer_test.res:51` asserts `toBe` on the same reference), so memoize
-  // the built chains object on first access. `Config.loadWithoutRegistrations()` is itself
-  // memoized, so downstream property reads on chains are cheap.
-  let chainsMemo: ref<option<(unknown, array<int>)>> = ref(None)
-  let getChainsMemo = () =>
-    switch chainsMemo.contents {
-    | Some(c) => c
-    | None => {
-        let (chains, chainIds) = buildChainsObject(~config=Config.loadWithoutRegistrations())
-        let memo = (chains->(Utils.magic: {..} => unknown), chainIds)
-        chainsMemo := Some(memo)
-        memo
-      }
-    }
-
-  indexer
-  ->defineValueGetter("name", () => Config.loadWithoutRegistrations().name)
-  ->defineValueGetter("description", () => Config.loadWithoutRegistrations().description)
-  ->defineValueGetter("chainIds", () => {
-    let (_, chainIds) = getChainsMemo()
-    chainIds
-  })
-  ->defineValueGetter("chains", () => {
-    let (chains, _) = getChainsMemo()
-    chains
-  })
-  ->ignore
-
   // Parse eventIdentity config to extract contractName, eventName, and options.
   // Supports two runtime formats:
   // - From TypeScript: { contract: "X", event: "Y", wildcard?, where? }
@@ -318,23 +280,9 @@ let getGlobalIndexer = (): 'indexer => {
     (contractName, eventName, eventOptions)
   }
 
-  // Reject `indexer.onEvent` / `indexer.contractRegister` on SVM at the
-  // call site so the user's stack trace points at their handler module,
-  // rather than throwing later during `HandlerLoader.applyRegistrations`.
-  let throwIfSvm = (~methodName) => {
-    let ecosystem = Config.loadWithoutRegistrations().ecosystem
-    switch ecosystem.name {
-    | Svm =>
-      JsError.throwWithMessage(
-        `\`indexer.${methodName}\` is not supported on SVM. Use \`indexer.${ecosystem.onBlockMethodName}\` for per-slot handlers.`,
-      )
-    | Evm | Fuel => ()
-    }
-  }
-
   // onEvent: delegates to HandlerRegister.setHandler
   let onEventFn = (identityConfig: 'a, handler: 'b) => {
-    throwIfSvm(~methodName="onEvent")
+    HandlerRegister.throwIfFinishedRegistration(~methodName="onEvent")
     let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
     HandlerRegister.setHandler(
       ~contractName,
@@ -350,7 +298,7 @@ let getGlobalIndexer = (): 'indexer => {
 
   // contractRegister: delegates to HandlerRegister.setContractRegister
   let contractRegisterFn = (identityConfig: 'a, handler: 'b) => {
-    throwIfSvm(~methodName="contractRegister")
+    HandlerRegister.throwIfFinishedRegistration(~methodName="contractRegister")
     let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
     HandlerRegister.setContractRegister(
       ~contractName,
@@ -390,6 +338,7 @@ let getGlobalIndexer = (): 'indexer => {
   // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
   // math at `FetchState.res:619` stays untouched.
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
+    HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
     let config = Config.loadWithoutRegistrations()
     let ecosystem = config.ecosystem
     let raw =
@@ -400,8 +349,8 @@ let getGlobalIndexer = (): 'indexer => {
         }
       )
     let typedHandler = handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>)
-    let (chains, _) = getChainsMemo()
-    let chainsDict = chains->(Utils.magic: unknown => dict<unknown>)
+    let (chains, _) = buildChainsObject(~config)
+    let chainsDict = chains->(Utils.magic: {..} => dict<unknown>)
     let name = raw["name"]
     let logger = Logging.createChild(~params={"onBlock": name})
 
@@ -480,20 +429,90 @@ let getGlobalIndexer = (): 'indexer => {
     }
   }
 
-  // Attach `onBlock` and `onSlot` unconditionally so `getGlobalIndexer()`
-  // needn't load config; the handler reads `ecosystem.onBlockMethodName` at
-  // call time so error messages cite the ecosystem-appropriate name.
-  indexer
-  ->Utils.Object.definePropertyWithValue("onEvent", {enumerable: true, value: onEventFn})
-  ->Utils.Object.definePropertyWithValue(
-    "contractRegister",
-    {enumerable: true, value: contractRegisterFn},
-  )
-  ->Utils.Object.definePropertyWithValue("onBlock", {enumerable: true, value: onBlockFn})
-  ->Utils.Object.definePropertyWithValue("onSlot", {enumerable: true, value: onBlockFn})
-  ->ignore
+  // Ecosystem-specific surface: EVM/Fuel expose event + block handlers; SVM
+  // exposes slot handlers only. The TS `.d.ts` already models this separation
+  // — the Proxy mirrors it at runtime so `Object.keys(indexer)` reflects the
+  // actually-callable methods and typos surface via the unknown-prop throw
+  // rather than silent `undefined` returns.
+  //
+  // `Api.res` calls `getGlobalIndexer()` at envio-package load, so the keys
+  // array is memoized lazily: an early `createEffect` / `S` import that
+  // never touches the indexer must not trigger a config parse. The memo is
+  // safe because `Config.loadWithoutRegistrations` is itself pure.
+  let keysMemo: ref<option<array<string>>> = ref(None)
+  let getKeys = () =>
+    switch keysMemo.contents {
+    | Some(k) => k
+    | None => {
+        let keys = switch Config.loadWithoutRegistrations().ecosystem.name {
+        | Evm | Fuel => [
+            "name",
+            "description",
+            "chainIds",
+            "chains",
+            "onEvent",
+            "contractRegister",
+            "onBlock",
+          ]
+        | Svm => ["name", "description", "chainIds", "chains", "onSlot"]
+        }
+        keysMemo := Some(keys)
+        keys
+      }
+    }
 
-  indexer->(Utils.magic: 'a => 'indexer)
+  let get = (~prop: string) =>
+    switch prop {
+    | "name" => Config.loadWithoutRegistrations().name->(Utils.magic: string => unknown)
+    | "description" =>
+      Config.loadWithoutRegistrations().description->(Utils.magic: option<string> => unknown)
+    | "chainIds" => {
+        let (_, chainIds) = buildChainsObject(~config=Config.loadWithoutRegistrations())
+        chainIds->(Utils.magic: array<int> => unknown)
+      }
+    | "chains" => {
+        let (chains, _) = buildChainsObject(~config=Config.loadWithoutRegistrations())
+        chains->(Utils.magic: {..} => unknown)
+      }
+    | "onEvent" => onEventFn->Utils.magic
+    | "contractRegister" => contractRegisterFn->Utils.magic
+    | "onBlock" | "onSlot" => onBlockFn->Utils.magic
+    | _ =>
+      JsError.throwWithMessage(
+        `Field \`${prop}\` does not exist on \`indexer\`. Available fields: ${getKeys()->Array.join(
+            ", ",
+          )}.`,
+      )
+    }
+
+  let traps: Utils.Proxy.traps<{..}> = {
+    // Engine internals (`Symbol.toStringTag`, `Symbol.toPrimitive`, inspect
+    // hooks, etc.) read symbol-keyed properties — fall through to the
+    // underlying null-proto target so stringification / inspection of the
+    // indexer value stays well-behaved instead of throwing.
+    get: (~target, ~prop) =>
+      if typeof(prop) === #string {
+        get(~prop=prop->(Utils.magic: unknown => string))
+      } else {
+        target->(Utils.magic: {..} => dict<unknown>)->Dict.getUnsafe(prop->Utils.magic)
+      },
+    ownKeys: (~target as _) => getKeys(),
+    getOwnPropertyDescriptor: (~target as _, ~prop) =>
+      if (
+        typeof(prop) === #string &&
+          getKeys()->Array.includes(prop->(Utils.magic: unknown => string))
+      ) {
+        Some({
+          value: get(~prop=prop->(Utils.magic: unknown => string)),
+          enumerable: true,
+          configurable: true,
+        })
+      } else {
+        None
+      },
+  }
+
+  Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
 let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
