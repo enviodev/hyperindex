@@ -1699,7 +1699,7 @@ let makeStorageFromEnv = (
           JsError.throwWithMessage(
             `ClickHouse storage is enabled but required env vars are not set: ${missing->Array.joinUnsafe(
                 ", ",
-              )}. Please set them or disable clickhouse in the \`storage\` config.`,
+              )}. Please set them, disable clickhouse in the \`storage\` config, or run \`envio dev\` for a pre-configured local ClickHouse.`,
           )
         }
         Some(

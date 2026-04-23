@@ -943,7 +943,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
         message,
         ~message="Should throw a helpful error naming every missing env var at once",
       ).toBe(
-        "ClickHouse storage is enabled but required env vars are not set: ENVIO_CLICKHOUSE_HOST, ENVIO_CLICKHOUSE_USERNAME, ENVIO_CLICKHOUSE_PASSWORD. Please set them or disable clickhouse in the `storage` config.",
+        "ClickHouse storage is enabled but required env vars are not set: ENVIO_CLICKHOUSE_HOST, ENVIO_CLICKHOUSE_USERNAME, ENVIO_CLICKHOUSE_PASSWORD. Please set them, disable clickhouse in the `storage` config, or run `envio dev` for a pre-configured local ClickHouse.",
       )
     },
   )
