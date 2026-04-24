@@ -24,10 +24,9 @@ type activeRegistration = {
 // it from `node_modules/envio` — shares one registry. Without this, each copy
 // keeps its own dict and `applyRegistrations` reads empty state.
 //
-// Version-gated: the record shapes below evolve between envio majors, so
-// sharing unversioned slots would corrupt state across incompatible
-// versions. On mismatch we throw with a deduplication hint instead of
-// silently mixing shapes.
+// Version-gated: the record shapes below can evolve between envio versions,
+// so the guard uses strict full-version equality. On mismatch we throw with
+// a deduplication hint instead of silently mixing shapes across builds.
 type registryShape = {
   version: string,
   eventRegistrations: dict<eventRegistration>,
