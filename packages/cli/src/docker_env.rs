@@ -695,8 +695,22 @@ async fn probe_pg_auth(
         .password(password)
         .database(database);
     use sqlx::Connection;
-    opts.connect().await?.close().await?;
-    Ok(())
+    // Bound the probe: a stalled or misbehaving DB accepts TCP and then
+    // hangs during SCRAM, which would block `envio dev` indefinitely (sqlx
+    // sets no default connect timeout outside of pool usage). ClickHouse's
+    // probe_client already has a 2s HTTP timeout; 5s for PG accommodates
+    // slow-network external DBs without making preflight feel unresponsive.
+    match tokio::time::timeout(Duration::from_secs(5), opts.connect()).await {
+        Ok(Ok(mut conn)) => {
+            conn.close().await?;
+            Ok(())
+        }
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("connect to {host}:{port} timed out after 5s"),
+        ))),
+    }
 }
 
 /// Authenticated ClickHouse probe. Runs `SELECT 1` over HTTP with basic auth.
