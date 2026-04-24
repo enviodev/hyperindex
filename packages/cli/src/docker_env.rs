@@ -22,7 +22,8 @@ const POSTGRES_IMAGE: &str = "postgres:18.3";
 const HASURA_IMAGE: &str = "hasura/graphql-engine:v2.43.0";
 const CLICKHOUSE_IMAGE: &str = "clickhouse/clickhouse-server:26.2.15.4";
 const CONFIG_HASH_LABEL: &str = "dev.envio.config-hash";
-const PROJECT_LABEL: &str = "dev.envio.project";
+const PROJECT_PATH_LABEL: &str = "dev.envio.project-path";
+const PROJECT_NAME_LABEL: &str = "dev.envio.project-name";
 const SOCKET_TIMEOUT: u64 = 120;
 
 const PG_CONTAINER: &str = "envio-postgres";
@@ -556,13 +557,24 @@ fn make_networking_config(net: &str) -> NetworkingConfig {
     }
 }
 
-fn make_labels(config_hash: &str, project_root: &Path) -> HashMap<String, String> {
+fn make_labels(
+    config_hash: &str,
+    project_root: &Path,
+    indexer_name: &str,
+) -> HashMap<String, String> {
     let mut labels = HashMap::new();
     labels.insert(CONFIG_HASH_LABEL.to_string(), config_hash.to_string());
-    labels.insert(
-        PROJECT_LABEL.to_string(),
-        project_root.display().to_string(),
-    );
+    // Canonicalize so the label identifies the project on disk, not the
+    // shell invocation. Without this, `envio dev` from `~/projects/foo`
+    // labels the container "." and a second project also running from
+    // its own root produces the same label — drift errors can't
+    // disambiguate. Falls back to the raw path if canonicalize fails
+    // (shouldn't happen for a live run, but don't make the label an error).
+    let path = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    labels.insert(PROJECT_PATH_LABEL.to_string(), path.display().to_string());
+    labels.insert(PROJECT_NAME_LABEL.to_string(), indexer_name.to_string());
     labels
 }
 
@@ -632,7 +644,8 @@ async fn start_container(docker: &Docker, name: &str, host_port: u16) -> anyhow:
 /// Snapshot of a managed container that doesn't match the current config.
 /// Carries enough context for the caller to render a service-specific error.
 struct DriftInfo {
-    project: Option<String>,
+    project_name: Option<String>,
+    project_path: Option<String>,
     env: HashMap<String, String>,
 }
 
@@ -647,7 +660,8 @@ async fn detect_drift(docker: &Docker, name: &str, expected_hash: &str) -> Optio
     if labels.get(CONFIG_HASH_LABEL).map(String::as_str) == Some(expected_hash) {
         return None;
     }
-    let project = labels.get(PROJECT_LABEL).cloned();
+    let project_name = labels.get(PROJECT_NAME_LABEL).cloned();
+    let project_path = labels.get(PROJECT_PATH_LABEL).cloned();
     let env = cfg
         .env
         .unwrap_or_default()
@@ -657,7 +671,11 @@ async fn detect_drift(docker: &Docker, name: &str, expected_hash: &str) -> Optio
             Some((k.to_string(), v.to_string()))
         })
         .collect();
-    Some(DriftInfo { project, env })
+    Some(DriftInfo {
+        project_name,
+        project_path,
+        env,
+    })
 }
 
 /// Authenticated Postgres probe. `Ok(())` means the creds work against the
@@ -716,13 +734,16 @@ fn diff_field(label: &str, want: &str, found: Option<&String>) -> String {
     }
 }
 
-/// Describe the existing container's owning project, if the label is
-/// present. Containers created before the label existed will have None —
-/// the caller prints a generic "another session" line in that case.
+/// Describe the existing container's owning project. Name is the human
+/// handle from config.yaml ("erc20-indexer"); path is the absolute disk
+/// location. Both labels may be absent on containers created before they
+/// were introduced — degrade gracefully so the error is still usable.
 fn owner_line(drift: &DriftInfo) -> String {
-    match &drift.project {
-        Some(p) => format!("  Owned by project: {p}\n"),
-        None => "  Owned by: unknown (container predates the project label)\n".to_string(),
+    match (&drift.project_name, &drift.project_path) {
+        (Some(name), Some(path)) => format!("  Owned by: {name} ({path})\n"),
+        (Some(name), None) => format!("  Owned by: {name}\n"),
+        (None, Some(path)) => format!("  Owned by: {path}\n"),
+        (None, None) => "  Owned by: unknown (container predates the project labels)\n".to_string(),
     }
 }
 
@@ -1017,6 +1038,10 @@ async fn ensure_container(
 #[derive(Debug, Clone, Copy)]
 pub struct UpOptions<'a> {
     pub project_root: &'a Path,
+    /// The `name` field from config.yaml. Stored on managed containers so
+    /// drift errors can name the owning indexer in human terms ("Owned by
+    /// erc20-indexer") on top of the absolute path.
+    pub indexer_name: &'a str,
     pub clickhouse: bool,
 }
 
@@ -1299,7 +1324,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
         let pg_body = ContainerCreateBody {
             image: Some(POSTGRES_IMAGE.to_string()),
-            labels: Some(make_labels(&pg_hash, opts.project_root)),
+            labels: Some(make_labels(&pg_hash, opts.project_root, opts.indexer_name)),
             env: Some(vec![
                 format!("POSTGRES_PASSWORD={}", env.pg_password),
                 format!("POSTGRES_USER={}", env.pg_user),
@@ -1368,7 +1393,11 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
         let hasura_body = ContainerCreateBody {
             image: Some(HASURA_IMAGE.to_string()),
-            labels: Some(make_labels(&hasura_hash, opts.project_root)),
+            labels: Some(make_labels(
+                &hasura_hash,
+                opts.project_root,
+                opts.indexer_name,
+            )),
             user: Some("1001:1001".to_string()),
             env: Some(vec![
                 format!("HASURA_GRAPHQL_DATABASE_URL={db_url}"),
@@ -1445,7 +1474,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
         let ch_body = ContainerCreateBody {
             image: Some(CLICKHOUSE_IMAGE.to_string()),
-            labels: Some(make_labels(&ch_hash, opts.project_root)),
+            labels: Some(make_labels(&ch_hash, opts.project_root, opts.indexer_name)),
             env: Some(vec![
                 format!("CLICKHOUSE_USER={}", env.ch_user),
                 format!("CLICKHOUSE_PASSWORD={}", env.ch_password),
@@ -1829,29 +1858,69 @@ mod tests {
 
     #[test]
     fn up_options_copies_values() {
-        // Smoke test that UpOptions threads both fields and is Copy so
+        // Smoke test that UpOptions threads all fields and is Copy so
         // callers don't need to clone before passing in.
         let root = Path::new("/tmp/project");
         let a = UpOptions {
             project_root: root,
+            indexer_name: "my-indexer",
             clickhouse: true,
         };
         let b = a;
         assert_eq!(
-            (a.project_root, a.clickhouse, b.project_root, b.clickhouse),
-            (root, true, root, true)
+            (
+                a.project_root,
+                a.indexer_name,
+                a.clickhouse,
+                b.project_root,
+                b.indexer_name,
+                b.clickhouse
+            ),
+            (root, "my-indexer", true, root, "my-indexer", true)
         );
     }
 
     #[test]
-    fn labels_record_config_hash_and_project_path() {
-        let labels = make_labels("abc123", Path::new("/tmp/my-project"));
+    fn labels_record_config_hash_path_and_name() {
+        // Path doesn't exist → canonicalize falls back to the raw input, so
+        // the label reads exactly what was passed. Good enough for the shape
+        // assertion; canonicalization itself has a separate test below.
+        let labels = make_labels(
+            "abc123",
+            Path::new("/nonexistent/path/for-test"),
+            "erc20-indexer",
+        );
         assert_eq!(
             (
                 labels.get(CONFIG_HASH_LABEL).map(String::as_str),
-                labels.get(PROJECT_LABEL).map(String::as_str),
+                labels.get(PROJECT_PATH_LABEL).map(String::as_str),
+                labels.get(PROJECT_NAME_LABEL).map(String::as_str),
             ),
-            (Some("abc123"), Some("/tmp/my-project"))
+            (
+                Some("abc123"),
+                Some("/nonexistent/path/for-test"),
+                Some("erc20-indexer"),
+            )
+        );
+    }
+
+    #[test]
+    fn labels_canonicalize_project_path() {
+        // Invocation-independent label: `envio dev` from within a project
+        // with relative path "." must produce the same absolute path as
+        // `envio dev -d /abs/path`. Otherwise two projects both end up
+        // labeled "." and drift errors can't disambiguate them.
+        let dir = tempdir::TempDir::new("envio-labels-test").expect("tempdir");
+        let abs = dir.path().canonicalize().expect("canonicalize tempdir");
+        // Enter the dir so "." resolves to it.
+        let prev = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(&abs).expect("chdir");
+        let labels_dot = make_labels("h", Path::new("."), "x");
+        std::env::set_current_dir(prev).expect("restore cwd");
+        let labels_abs = make_labels("h", &abs, "x");
+        assert_eq!(
+            labels_dot.get(PROJECT_PATH_LABEL),
+            labels_abs.get(PROJECT_PATH_LABEL)
         );
     }
 
@@ -1861,7 +1930,8 @@ mod tests {
         env.insert("CLICKHOUSE_DB".to_string(), ch_db.to_string());
         env.insert("CLICKHOUSE_PASSWORD".to_string(), ch_password.to_string());
         DriftInfo {
-            project: Some("/path/to/other-project".to_string()),
+            project_name: Some("other-indexer".to_string()),
+            project_path: Some("/path/to/other-project".to_string()),
             env,
         }
     }
@@ -1911,18 +1981,57 @@ mod tests {
 
     #[test]
     fn ch_drift_error_handles_missing_project_label() {
-        // Containers created before the label existed have no project. The
-        // error still works — it just can't name the owning project.
+        // Containers created before the labels existed have neither name
+        // nor path. The error still works — it just can't name the owner.
         let env = default_env();
         let url = ClickHouseUrl::parse("http://localhost:8123").unwrap();
         let drift = DriftInfo {
-            project: None,
+            project_name: None,
+            project_path: None,
             env: HashMap::new(),
         };
         let msg = format_ch_drift(&env, &url, &drift);
         assert!(
-            msg.contains("unknown (container predates the project label)"),
+            msg.contains("unknown (container predates the project labels)"),
             "missing-project case should say so, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn owner_line_renders_name_and_path() {
+        // Both labels present → name first, path in parens. This is the
+        // primary case for containers created by current builds.
+        let drift = DriftInfo {
+            project_name: Some("erc20-indexer".to_string()),
+            project_path: Some("/home/dmitry/projects/erc20".to_string()),
+            env: HashMap::new(),
+        };
+        assert_eq!(
+            owner_line(&drift),
+            "  Owned by: erc20-indexer (/home/dmitry/projects/erc20)\n"
+        );
+    }
+
+    #[test]
+    fn owner_line_handles_partial_labels() {
+        // One label missing (old container + partial upgrade) → render
+        // whichever is present without an empty paren or "None" artifact.
+        let name_only = DriftInfo {
+            project_name: Some("foo".to_string()),
+            project_path: None,
+            env: HashMap::new(),
+        };
+        let path_only = DriftInfo {
+            project_name: None,
+            project_path: Some("/bar".to_string()),
+            env: HashMap::new(),
+        };
+        assert_eq!(
+            (owner_line(&name_only), owner_line(&path_only)),
+            (
+                "  Owned by: foo\n".to_string(),
+                "  Owned by: /bar\n".to_string()
+            )
         );
     }
 
@@ -1934,12 +2043,14 @@ mod tests {
         ex.insert("POSTGRES_DB".to_string(), "other-db".to_string());
         ex.insert("POSTGRES_PASSWORD".to_string(), "other-pw".to_string());
         let drift = DriftInfo {
-            project: Some("/home/alice/other".to_string()),
+            project_name: Some("alice-indexer".to_string()),
+            project_path: Some("/home/alice/other".to_string()),
             env: ex,
         };
         let msg = format_pg_drift(&env, 5433, &drift);
         let checks = [
             msg.contains("envio-postgres"),
+            msg.contains("alice-indexer"),
             msg.contains("/home/alice/other"),
             msg.contains("ENVIO_PG_DATABASE"),
             msg.contains("\"envio-dev\""),
@@ -1950,7 +2061,7 @@ mod tests {
             !msg.contains("other-pw"),
             !msg.contains(&env.pg_password),
         ];
-        assert_eq!(checks, [true; 10]);
+        assert_eq!(checks, [true; 11]);
     }
 
     #[test]
@@ -2030,7 +2141,8 @@ mod tests {
             admin_secret.to_string(),
         );
         DriftInfo {
-            project: Some("/home/alice/indexer".to_string()),
+            project_name: Some("alice-indexer".to_string()),
+            project_path: Some("/home/alice/indexer".to_string()),
             env,
         }
     }
