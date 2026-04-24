@@ -10,7 +10,13 @@ let empty = {
   eventOptions: None,
 }
 
-let eventRegistrations: dict<eventRegistration> = Dict.make()
+// Stashed on `globalThis` so a duplicate envio module instance — e.g. when the
+// CLI's `bin.mjs` resolves envio from one path but the user's handlers resolve
+// it from `node_modules/envio` — shares one registry. Without this, each copy
+// keeps its own dict and `applyRegistrations` reads empty state.
+let eventRegistrations: dict<
+  eventRegistration,
+> = %raw(`globalThis.__envioHandlerRegistrations ??= {}`)
 
 let getKey = (~contractName, ~eventName) => contractName ++ "." ++ eventName
 
@@ -34,7 +40,9 @@ type activeRegistration = {
   mutable finished: bool,
 }
 
-let activeRegistration = ref(None)
+let activeRegistration: ref<
+  option<activeRegistration>,
+> = %raw(`globalThis.__envioActiveRegistration ??= { contents: undefined }`)
 
 // Might happen for tests when the handler file
 // is imported by a non-envio process (eg mocha)
@@ -43,7 +51,9 @@ let activeRegistration = ref(None)
 // Theoretically we could keep preRegistration without an explicit start
 // but I want it to be this way, so for the actual indexer run
 // an error is thrown with the exact stack trace where the handler was registered.
-let preRegistered = []
+let preRegistered: array<
+  activeRegistration => unit,
+> = %raw(`globalThis.__envioPreRegistered ??= []`)
 
 let withRegistration = (fn: activeRegistration => unit) => {
   switch activeRegistration.contents {

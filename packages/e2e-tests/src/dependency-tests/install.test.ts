@@ -107,14 +107,6 @@ describe("Isolated dependency e2e", () => {
 
   describe.each(PACKAGE_MANAGERS)("$pm", ({ pm, installArgs }: PmConfig) => {
     let projectDir: string;
-    // Invoke envio via the project's installed binary so bin.mjs and the
-    // user's handlers load the same envio module instance. Using
-    // config.envioCommand (the e2e-tests envio) would produce two separate
-    // copies of envio in the same process — HandlerRegister.setHandler
-    // writes to one dict, applyRegistrations reads the other, and handlers
-    // appear unregistered.
-    let projectEnvioCommand: string;
-    let projectEnvioArgs: string[];
     let indexerProcess: ChildProcess | null = null;
     let graphql: GraphQLClient;
 
@@ -167,12 +159,9 @@ describe("Isolated dependency e2e", () => {
       }
       expect(rootInstall.exitCode).toBe(0);
 
-      projectEnvioCommand = "node";
-      projectEnvioArgs = [path.join(projectDir, "node_modules", "envio", "bin.mjs")];
-
       // envio dev: persisted state matches → skips codegen → starts docker →
       // runs migrations → starts indexer. Root node_modules are preserved.
-      indexerProcess = startBackground(projectEnvioCommand, [...projectEnvioArgs, "dev"], {
+      indexerProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
         cwd: projectDir,
         env: {
           TUI_OFF: "true",
@@ -207,7 +196,7 @@ describe("Isolated dependency e2e", () => {
       }
       await killProcessOnPort(config.indexerPort);
       // docker compose down -v (removes containers + volumes for clean next run)
-      await runCommand(projectEnvioCommand, [...projectEnvioArgs, "stop"], {
+      await runCommand(config.envioCommand, [...config.envioArgs, "stop"], {
         cwd: projectDir,
         timeout: 30_000,
       }).catch(() => {});
