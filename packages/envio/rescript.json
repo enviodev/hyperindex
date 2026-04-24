@@ -15,8 +15,8 @@
   "jsx": {
     "version": 4
   },
-  "bs-dependencies": ["rescript-schema", "@rescript/react"],
-  "bsc-flags": ["-open RescriptSchema"],
+  "dependencies": ["rescript-schema", "@rescript/react"],
+  "compiler-flags": ["-open RescriptSchema"],
   "warnings": {
     "error": "+3"
   }

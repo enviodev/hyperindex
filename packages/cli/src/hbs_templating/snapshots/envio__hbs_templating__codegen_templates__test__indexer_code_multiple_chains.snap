@@ -6,8 +6,6 @@ expression: project_template.indexer_code
 //**CONTRACTS**
 //*************
 
-open RescriptSchema
-
 module Transaction = {
   type t = {
     @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - transactionIndex")
