@@ -18,7 +18,7 @@ If tests aren't sufficient to catch a runtime issue, also run:
 pnpm dev
 ```
 
-(TUI auto-disables under agents/CI; pass `TUI_OFF=false` to force it on.)
+(TUI auto-disables under agents/CI; set `ENVIO_TUI=true` to force it on.)
 
 **Why this is critical:**
 - TypeScript compilation (`tsc --noEmit`) only catches syntax and type errors

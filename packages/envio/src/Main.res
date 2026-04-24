@@ -631,13 +631,13 @@ let start = async (
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
-  let explicitTuiOff = switch mainArgs.tuiOff {
-  | Some(_) as v => v
-  | None => Env.tuiOffEnvVar
+  let explicitTui = switch mainArgs.tuiOff {
+  | Some(off) => Some(!off)
+  | None => Env.tuiEnvVar
   }
-  let shouldUseTui = switch (isTest, explicitTuiOff) {
+  let shouldUseTui = switch (isTest, explicitTui) {
   | (true, _) => false
-  | (_, Some(tuiOff)) => !tuiOff
+  | (_, Some(tui)) => tui
   | (_, None) => !Envio.isNonInteractive()
   }
   // isDevelopmentMode controls whether the indexer stays alive after all

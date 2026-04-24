@@ -189,10 +189,10 @@ let isDevMode = () => NodeJs.Process.process.env->Dict.get("ENVIO_DEV_MODE") ===
 // stdout, CI, and coding agents. `CLAUDECODE` is set by Claude Code; `CI` is the
 // de-facto convention across CI providers; `TERM=dumb` is set by editors/tools
 // that emulate a terminal without ANSI support.
+@val external stdoutIsTty: option<bool> = "process.stdout.isTTY"
 let isNonInteractive = () => {
-  let stdoutIsTty: bool = %raw(`process.stdout.isTTY === true`)
   let env = NodeJs.Process.process.env
-  !stdoutIsTty ||
+  stdoutIsTty !== Some(true) ||
   env->Dict.get("CLAUDECODE")->Option.isSome ||
   env->Dict.get("CI")->Option.isSome ||
   env->Dict.get("TERM") === Some("dumb")
