@@ -304,22 +304,17 @@ pub async fn run_init_args(
         Err(e) => eprintln!("Warning: Failed to initialize git repository: {}", e),
     }
 
-    let dir_name = parsed_project_paths
-        .project_root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_else(|| parsed_project_paths.project_root.to_str().unwrap_or(""));
-    let in_subdir = parsed_project_paths.project_root != Path::new(".");
+    if parsed_project_paths.project_root != Path::new(".") {
+        std::env::set_current_dir(&parsed_project_paths.project_root)
+            .context("Failed entering the project directory")?;
+    }
 
     println!();
-    println!("Your indexer is ready! Next steps:");
+    println!("Your indexer is ready! Pick how you'd like to run it:");
     println!();
-    if in_subdir {
-        println!("  cd {}", dir_name);
-    }
-    println!("  {} dev     # run locally", pm.cmd());
-    println!("  {} test    # run the tests", pm.cmd());
-    println!("  {} start   # run in production", pm.cmd());
+    println!("  1. {} dev     # run locally", pm.cmd());
+    println!("  2. {} test    # run the tests", pm.cmd());
+    println!("  3. {} start   # run in production", pm.cmd());
 
     Ok(())
 }
