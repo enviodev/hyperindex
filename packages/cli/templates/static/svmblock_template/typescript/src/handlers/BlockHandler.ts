@@ -56,7 +56,7 @@ const getBlockEffect = createEffect(
       throw new Error(parsedData.error);
     }
     return parsedData.result ?? null;
-  }
+  },
 );
 
 indexer.onSlot({ name: "BlockTracker" }, async ({ slot, context }) => {
