@@ -1,6 +1,5 @@
 {
   "name": "gravatar",
-  "version": "0.1.0",
   "sources": [
     {
       "dir": "src",
@@ -19,11 +18,10 @@
   "jsx": {
     "version": 4
   },
-  "bs-dependencies": [
-    "@rescript/react",
+  "dependencies": [
     "rescript-schema",
     "helpers",
     "envio"
   ],
-  "bsc-flags": ["-open RescriptSchema"]
+  "compiler-flags": ["-open RescriptSchema"]
 }
