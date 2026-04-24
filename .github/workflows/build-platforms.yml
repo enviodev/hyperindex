@@ -17,10 +17,11 @@ jobs:
     strategy:
       matrix:
         job:
-          - { os: "ubuntu-22.04", target: "x86_64-unknown-linux-gnu", arch: "x64", svm_target_platform: "linux-amd64", name: "linux-x64" }
-          - { os: "ubuntu-22.04", target: "aarch64-unknown-linux-gnu", arch: "arm64", svm_target_platform: "linux-aarch64", name: "linux-arm64" }
-          - { os: "macos-latest", target: "x86_64-apple-darwin", arch: "x64", svm_target_platform: "macosx-amd64", name: "darwin-x64" }
-          - { os: "macos-latest", target: "aarch64-apple-darwin", arch: "arm64", svm_target_platform: "macosx-aarch64", name: "darwin-arm64" }
+          - { os: "ubuntu-22.04", target: "x86_64-unknown-linux-gnu", platform: "linux", arch: "x64", libc: "glibc", svm_target_platform: "linux-amd64", name: "linux-x64" }
+          - { os: "ubuntu-22.04", target: "x86_64-unknown-linux-musl", platform: "linux", arch: "x64", libc: "musl", svm_target_platform: "linux-amd64", name: "linux-x64-musl" }
+          - { os: "ubuntu-22.04", target: "aarch64-unknown-linux-gnu", platform: "linux", arch: "arm64", libc: "glibc", svm_target_platform: "linux-aarch64", name: "linux-arm64" }
+          - { os: "macos-latest", target: "x86_64-apple-darwin", platform: "darwin", arch: "x64", svm_target_platform: "macosx-amd64", name: "darwin-x64" }
+          - { os: "macos-latest", target: "aarch64-apple-darwin", platform: "darwin", arch: "arm64", svm_target_platform: "macosx-aarch64", name: "darwin-arm64" }
 
     steps:
       - name: Checkout sources
@@ -52,6 +53,15 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
+      # musl defaults to crt-static, which makes cargo silently drop the
+      # cdylib crate type. Disable crt-static so the NAPI .so is produced
+      # and dlopen-able by Node on Alpine/musl hosts.
+      - name: Linux musl setup
+        if: ${{ matrix.job.libc == 'musl' }}
+        run: |
+          sudo apt-get install -y musl-tools
+          echo "RUSTFLAGS=-C target-feature=-crt-static" >> $GITHUB_ENV
+
       - name: Build NAPI addon
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
@@ -67,18 +77,21 @@ jobs:
         env:
           TARGET: ${{ matrix.job.target }}
           NAME: ${{ matrix.job.name }}
+          PLATFORM: ${{ matrix.job.platform }}
+          ARCH: ${{ matrix.job.arch }}
+          LIBC: ${{ matrix.job.libc }}
           VERSION: ${{ inputs.version }}
         run: |
-          node_os=$(echo "${NAME}" | cut -d '-' -f1)
-          node_arch=$(echo "${NAME}" | cut -d '-' -f2)
-          node_pkg="packages/cli/npm/envio-${node_os}-${node_arch}"
+          node_pkg="packages/cli/npm/envio-${NAME}"
+          libc_flag=""
+          if [ -n "${LIBC}" ]; then libc_flag="--libc ${LIBC}"; fi
           node packages/build-envio/build-platform-package.ts \
-            --version "${VERSION}" --platform "${node_os}" --arch "${node_arch}" --out "${node_pkg}"
+            --version "${VERSION}" --platform "${PLATFORM}" --arch "${ARCH}" ${libc_flag} --out "${node_pkg}"
           # Copy the platform-specific cdylib as envio.node (matches package.json main)
-          case "${node_os}" in
+          case "${PLATFORM}" in
             linux)  lib_name="libenvio.so" ;;
             darwin) lib_name="libenvio.dylib" ;;
-            *) echo "Unsupported OS: ${node_os}"; exit 1 ;;
+            *) echo "Unsupported OS: ${PLATFORM}"; exit 1 ;;
           esac
           cp "target/${TARGET}/release/${lib_name}" "${node_pkg}/envio.node"
 

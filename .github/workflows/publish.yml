@@ -62,7 +62,7 @@ jobs:
     needs: [prepare, build-platforms]
     strategy:
       matrix:
-        pkg: [envio-linux-x64, envio-linux-arm64, envio-darwin-x64, envio-darwin-arm64]
+        pkg: [envio-linux-x64, envio-linux-x64-musl, envio-linux-arm64, envio-darwin-x64, envio-darwin-arm64]
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v6

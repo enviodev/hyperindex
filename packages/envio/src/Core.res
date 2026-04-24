@@ -97,9 +97,23 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   return req(nodePath);
 }`)
 
+// Returns "musl" when running on an Alpine-style (musl libc) Linux and "gnu"
+// on glibc Linux. `process.report.header.glibcVersionRuntime` is only populated
+// when Node was dynamically linked against glibc. Non-linux hosts return None.
+let detectLinuxLibc: unit => option<string> = %raw(`function() {
+  if (process.platform !== "linux") return undefined;
+  try {
+    var header = process.report.getReport().header;
+    return header.glibcVersionRuntime ? "gnu" : "musl";
+  } catch (e) { return undefined; }
+}`)
+
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
-  let platformPkg = `envio-${processPlatform}-${processArch}`
+  let platformPkg = switch (processPlatform, detectLinuxLibc()) {
+  | ("linux", Some("musl")) => `envio-linux-${processArch}-musl`
+  | _ => `envio-${processPlatform}-${processArch}`
+  }
 
   // 1. Platform package (production + CI via .pnpmfile.cjs redirect)
   try {
