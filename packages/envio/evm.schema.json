@@ -153,16 +153,42 @@
         }
       },
       "additionalProperties": false,
-      "not": {
-        "properties": {
-          "postgres": {
-            "const": false
+      "allOf": [
+        {
+          "not": {
+            "properties": {
+              "postgres": {
+                "const": false
+              }
+            },
+            "required": [
+              "postgres"
+            ]
           }
         },
-        "required": [
-          "postgres"
-        ]
-      }
+        {
+          "if": {
+            "properties": {
+              "clickhouse": {
+                "const": true
+              }
+            },
+            "required": [
+              "clickhouse"
+            ]
+          },
+          "then": {
+            "properties": {
+              "postgres": {
+                "const": true
+              }
+            },
+            "required": [
+              "postgres"
+            ]
+          }
+        }
+      ]
     },
     "EcosystemTag": {
       "type": "string",

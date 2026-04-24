@@ -2,13 +2,14 @@ use crate::{
     commands,
     config_parsing::system_config::SystemConfig,
     docker_env,
+    executor::{build_start_command, Command, MigrateOpts},
     persisted_state::{self, PersistedState, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
 };
 use anyhow::{anyhow, Context, Result};
 
-pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result<()> {
+pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result<Command> {
     let config =
         SystemConfig::parse_from_project_files(&project_paths).context("Failed parsing config")?;
 
@@ -26,21 +27,23 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
     };
 
     let print_changes_detected = |changes_detected: Vec<persisted_state::StateField>| {
-        println!(
-            "Changes to {} detected",
-            //Changes will "Config" or "Schema" etc.
-            changes_detected
-                .iter()
-                .map(|f| f.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        // `changes_detected` items render as "Config" / "Schema" / etc.
+        let fields = changes_detected
+            .iter()
+            .map(|f| f.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("Detected changes in {fields} — regenerating");
     };
 
     if should_run_codegen {
         match persisted_state_file {
-            PersistedStateExists::NotExists => println!("No generated files detected"),
-            PersistedStateExists::Corrupted => println!("Persisted state is invalid"),
+            PersistedStateExists::NotExists => {
+                println!("No generated files found — running codegen")
+            }
+            PersistedStateExists::Corrupted => {
+                println!("Generated directory is in an invalid state — regenerating")
+            }
             PersistedStateExists::Exists(_) => print_changes_detected(changes_detected),
         }
 
@@ -49,20 +52,16 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
                 if ps.envio_version != persisted_state::current_version() =>
             {
                 println!(
-                    "Envio version '{}' does not match the previous version '{}' used in the \
-                     generated directory",
+                    "Envio version changed ({} → {}) — regenerating from a clean directory",
+                    &ps.envio_version,
                     persisted_state::current_version(),
-                    &ps.envio_version
                 );
-                println!("Purging generated directory",);
                 commands::codegen::remove_files_except_git(&config.parsed_project_paths.generated)
                     .await
                     .context("Failed purging generated")?;
             }
             _ => (),
         };
-
-        println!("Running codegen");
 
         commands::codegen::run_codegen(&config)
             .await
@@ -98,45 +97,55 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
         )
     };
 
-    let (should_run_db_migrations, changes_detected) = match &persisted_state_db {
-        None => (true, vec![]),
-        Some(PersistedStateExists::Exists(persisted_state)) =>
-        //In the case where the persisted state exists, compare it to current state
-        //determine whether to run migrations and which changes have occured to
-        //cause that.
-        {
-            let (should_run_db_migrations, changes_detected) =
-                current_state.should_run_db_migrations(persisted_state);
-
-            (should_run_db_migrations, changes_detected)
+    // When the DB already has indexer state for this project, refuse to silently
+    // wipe it — the user must explicitly opt in with `envio dev -r`.
+    if let Some(PersistedStateExists::Exists(persisted_state)) = &persisted_state_db {
+        let (_, changes_detected) = current_state.should_run_db_migrations(persisted_state);
+        if !changes_detected.is_empty() {
+            let fields = changes_detected
+                .iter()
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(anyhow!(
+                "Incompatible change detected in {fields}. Reverse the changes to continue \
+                 indexing with the existing state, or run `envio dev -r` to clear the database \
+                 and re-index from scratch."
+            ));
         }
-        //Otherwise we should run db migrations
-        Some(PersistedStateExists::NotExists) | Some(PersistedStateExists::Corrupted) => {
-            (true, vec![])
-        }
-    };
-
-    if should_run_db_migrations {
-        match persisted_state_db {
-            None => println!("Restarting indexing from scratch"),
-            Some(PersistedStateExists::NotExists) => {
-                println!("Db Migrations have not been run")
-            }
-            Some(PersistedStateExists::Corrupted) => println!("Invalid DB persisted state"),
-            Some(PersistedStateExists::Exists(_)) => print_changes_detected(changes_detected),
-        }
-        println!("Running db migrations");
-
-        commands::db_migrate::run_db_setup(&config, &current_state)
-            .await
-            .context("Failed running db setup command")?;
     }
 
-    println!("Starting indexer");
+    let needs_migration = match &persisted_state_db {
+        None => {
+            println!("Resetting the database for a fresh indexer run");
+            true
+        }
+        Some(PersistedStateExists::NotExists) => {
+            println!("No existing database schema found — creating one");
+            true
+        }
+        Some(PersistedStateExists::Corrupted) => {
+            println!("Could not read the previous indexer state from the database — resetting");
+            true
+        }
+        // `Exists` with a diff returned above; this arm means no diff, so the
+        // existing indexer state is reused and no migrations are needed.
+        Some(PersistedStateExists::Exists(_)) => false,
+    };
 
-    commands::start::start_indexer(&config, &up_result.indexer_env)
-        .await
-        .context("Failed running start on the indexer")?;
+    let migrate = if needs_migration {
+        Some(MigrateOpts {
+            // `envio dev` always does a full reset when migrations are needed
+            // (matches prior behavior of `run_db_setup`).
+            reset: true,
+            persisted_state: current_state,
+        })
+    } else {
+        None
+    };
 
-    Ok(())
+    let mut indexer_env = up_result.indexer_env.clone();
+    indexer_env.push(("ENVIO_DEV_MODE".to_string(), "true".to_string()));
+
+    build_start_command(&config, migrate, &indexer_env).context("Failed building start command")
 }

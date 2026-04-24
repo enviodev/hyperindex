@@ -9,6 +9,7 @@ mod evm;
 pub mod executor;
 mod fuel;
 mod hbs_templating;
+mod napi;
 mod persisted_state;
 mod project_paths;
 pub mod scripts;

@@ -229,11 +229,15 @@ module App = {
           }
         }
       </Box>
-      <Box flexDirection={Row}>
-        <Text> {"Dev Console: "->React.string} </Text>
-        <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
-      </Box>
-      {switch (state.ctx.config.storage.clickhouse, Env.ClickHouse.host) {
+      {if Envio.isDevMode() {
+        <Box flexDirection={Row}>
+          <Text> {"Dev Console: "->React.string} </Text>
+          <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
+        </Box>
+      } else {
+        React.null
+      }}
+      {switch (state.ctx.config.storage.clickhouse, Env.ClickHouse.host()) {
       | (true, Some(host)) =>
         <Box flexDirection={Row}>
           <Text> {"ClickHouse: "->React.string} </Text>

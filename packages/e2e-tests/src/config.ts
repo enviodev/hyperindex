@@ -4,6 +4,7 @@
 
 import path from "path";
 import fs from "fs";
+import { createRequire } from "node:module";
 
 import { fileURLToPath } from "url";
 
@@ -34,37 +35,41 @@ loadEnvFile(path.join(rootDir, ".env"));
 
 /**
  * Resolve the envio command and base args.
- * Priority: ENVIO_BIN → cargo build → node bin.mjs (published artifact).
+ * Priority: ENVIO_BIN → installed bin.mjs via require.resolve.
+ *
+ * We resolve the *installed* envio's bin.mjs (via createRequire) rather
+ * than the source checkout's, because in CI the source checkout has
+ * uncompiled .res files — only the artifact installed into node_modules
+ * has the compiled .res.mjs output that Core.res.mjs imports.
+ *
+ * We use `node <absolute-path>` instead of `pnpm exec envio` because
+ * template tests run from temp directories with no node_modules.
+ *
+ * e2e-tests declares envio as a devDependency so createRequire resolves
+ * to the installed package (CI artifact or workspace link).
  */
 function resolveEnvio(): { command: string; args: string[] } {
   if (process.env.ENVIO_BIN) {
     return { command: process.env.ENVIO_BIN, args: [] };
   }
 
-  for (const profile of ["release", "debug"]) {
-    const bin = path.join(rootDir, `target/${profile}/envio`);
-    if (fs.existsSync(bin)) {
-      return { command: bin, args: [] };
+  const req = createRequire(import.meta.url);
+  try {
+    const pkgJsonPath = req.resolve("envio/package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
+    const binRel = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.envio;
+    if (binRel) {
+      const binAbs = path.resolve(path.dirname(pkgJsonPath), binRel);
+      if (fs.existsSync(binAbs)) {
+        return { command: "node", args: [binAbs] };
+      }
     }
-  }
-
-  // In CI the pre-built platform binary lives in .envio-artifacts/
-  const artifactBin = path.join(rootDir, ".envio-artifacts/envio-linux-x64/bin/envio");
-  if (fs.existsSync(artifactBin)) {
-    return { command: artifactBin, args: [] };
-  }
-
-  // Fall back to running bin.mjs via node (production shim that
-  // resolves the platform binary via require.resolve).
-  const binMjs = path.join(rootDir, "packages/envio/bin.mjs");
-  if (fs.existsSync(binMjs)) {
-    return { command: "node", args: [binMjs] };
-  }
+  } catch {}
 
   throw new Error(
-    "envio binary not found. Either:\n" +
+    "envio not found. Either:\n" +
       "  - Set ENVIO_BIN env var\n" +
-      "  - Run `cargo build` in packages/cli first"
+      "  - Run `pnpm install` to install the envio package"
   );
 }
 

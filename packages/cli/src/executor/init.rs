@@ -19,11 +19,15 @@ use crate::{
     template_dirs::TemplateDirs,
     utils::file_system,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 use std::path::Path;
 
-pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) -> Result<()> {
+pub async fn run_init_args(
+    init_args: InitArgs,
+    project_paths: &ProjectPaths,
+    envio_package_dir: Option<&str>,
+) -> Result<()> {
     let template_dirs = TemplateDirs::new();
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
@@ -242,7 +246,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         }
     }
 
-    let envio_version = get_envio_version()?;
+    let envio_version = get_envio_version(envio_package_dir)?;
 
     let extra_dependencies = match &init_config.ecosystem {
         Ecosystem::Evm {
@@ -280,11 +284,17 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
 
     commands::codegen::run_codegen(&config).await?;
 
+    let pm = init_config.package_manager;
+    println!("Installing dependencies with {}...", pm);
+    commands::pm::install(pm, &parsed_project_paths.project_root)
+        .await
+        .context("Failed installing project dependencies")?;
+
     if init_config.language == Language::ReScript {
-        let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;
-        if !res_build_exit.success() {
-            return Err(anyhow!("Failed to build rescript"))?;
-        }
+        println!("Building ReScript sources...");
+        commands::pm::run_script(pm, "build", &parsed_project_paths.project_root)
+            .await
+            .context("Failed running ReScript build after init")?;
     }
 
     // Initialize git repository (non-fatal if it fails)
@@ -294,15 +304,32 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         Err(e) => eprintln!("Warning: Failed to initialize git repository: {}", e),
     }
 
-    // If the project directory is not the current directory, print a message for user to cd into it
-    if parsed_project_paths.project_root != Path::new(".") {
-        let dir_name = parsed_project_paths
-            .project_root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_else(|| parsed_project_paths.project_root.to_str().unwrap_or(""));
-        println!("Run `cd {}` to enter the project directory.", dir_name);
+    let dir_name = parsed_project_paths
+        .project_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_else(|| parsed_project_paths.project_root.to_str().unwrap_or(""));
+    let in_subdir = parsed_project_paths.project_root != Path::new(".");
+
+    if in_subdir {
+        println!("Entering project directory `{}`...", dir_name);
     }
+    println!("Running tests to verify your indexer...");
+    match commands::pm::run_script(pm, "test", &parsed_project_paths.project_root).await {
+        Ok(()) => println!("Tests passed. Your indexer is ready to go!"),
+        Err(e) => eprintln!(
+            "Tests didn't complete successfully ({}). You can re-run them later with `{} test`.",
+            e,
+            pm.cmd()
+        ),
+    }
+
+    println!();
+    println!("Next steps:");
+    if in_subdir {
+        println!("  cd {}", dir_name);
+    }
+    println!("  {} dev   # start the indexer", pm.cmd());
 
     Ok(())
 }

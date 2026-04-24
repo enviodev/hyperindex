@@ -1,4 +1,3 @@
-@genType.import(("bignumber.js", "default"))
 type rec t = {
   toString: unit => string,
   toFixed: int => string,
@@ -47,7 +46,6 @@ let one = fromInt(1)
 @send external decimalPlaces: (t, int) => t = "decimalPlaces"
 
 // Serialization
-@genType
 let schema =
   S.string
   ->S.setName("BigDecimal")

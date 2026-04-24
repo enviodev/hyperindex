@@ -918,12 +918,12 @@ GROUP BY "chain_id";`
 })
 
 describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
-  // Exercises the requireEnv path in makeStorageFromEnv that's only taken
+  // Exercises the validation path in makeStorageFromEnv that's only taken
   // when `storage.clickhouse: true` in config.yaml. The test suite does not
   // set any ENVIO_CLICKHOUSE_* vars, so this should throw a user-friendly
-  // error pointing at the first missing one (ENVIO_CLICKHOUSE_HOST).
+  // error listing every missing required env var in a single message.
   Async.it(
-    "Throws when storage.clickhouse=true but ENVIO_CLICKHOUSE_HOST is missing",
+    "Throws listing all missing ENVIO_CLICKHOUSE_* env vars when storage.clickhouse=true",
     async t => {
       let config = {
         ...MockIndexer.config,
@@ -941,8 +941,10 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
       }
       t.expect(
         message,
-        ~message="Should throw a helpful error naming the missing env var",
-      ).toMatch(%re(`/ClickHouse storage is enabled.*ENVIO_CLICKHOUSE_HOST/`))
+        ~message="Should throw a helpful error naming every missing env var at once",
+      ).toBe(
+        "ClickHouse storage is enabled but required env vars are not set: ENVIO_CLICKHOUSE_HOST, ENVIO_CLICKHOUSE_USERNAME, ENVIO_CLICKHOUSE_PASSWORD. Please set them, disable clickhouse in the `storage` config, or run `envio dev` for a pre-configured local ClickHouse.",
+      )
     },
   )
 
@@ -956,6 +958,42 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
       // Just ensure construction succeeds without touching ClickHouse env vars.
       let _ = PgStorage.makeStorageFromEnv(~config)
       t.expect(true, ~message="Expected no throw when clickhouse is disabled").toBe(true)
+    },
+  )
+
+  // `envio dev` applies ENVIO_CLICKHOUSE_* vars via Bin.applyEnv, which runs
+  // AFTER Env.res has been imported. If Env.ClickHouse cached reads at module
+  // load, those late writes would be invisible and validation would still
+  // throw. This test simulates that timing by writing the vars to process.env
+  // right before calling makeStorageFromEnv.
+  Async.it(
+    "Picks up ENVIO_CLICKHOUSE_* vars set after Env.res has been loaded",
+    async t => {
+      let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
+      let unsetEnvVar: string => unit = %raw(`(k) => { delete process.env[k]; }`)
+      setEnvVar("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123")
+      setEnvVar("ENVIO_CLICKHOUSE_USERNAME", "default")
+      setEnvVar("ENVIO_CLICKHOUSE_PASSWORD", "testing")
+      setEnvVar("ENVIO_CLICKHOUSE_DATABASE", "envio_sink")
+      let config = {
+        ...MockIndexer.config,
+        storage: ({postgres: true, clickhouse: true}: Config.storage),
+      }
+      let result = try {
+        let _ = PgStorage.makeStorageFromEnv(~config)
+        Ok()
+      } catch {
+      | JsExn(e) => Error(e->JsExn.message->Option.getOr(""))
+      | _ => Error("non-JsExn")
+      }
+      unsetEnvVar("ENVIO_CLICKHOUSE_HOST")
+      unsetEnvVar("ENVIO_CLICKHOUSE_USERNAME")
+      unsetEnvVar("ENVIO_CLICKHOUSE_PASSWORD")
+      unsetEnvVar("ENVIO_CLICKHOUSE_DATABASE")
+      t.expect(
+        result,
+        ~message="Should read ClickHouse env vars lazily so envio dev's late injection works",
+      ).toEqual(Ok())
     },
   )
 })

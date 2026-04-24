@@ -2,25 +2,28 @@
 // Should be an entry point after we get rid of the generated project.
 // Don't forget to keep index.d.ts in sync with this file.
 
-@genType
-type blockEvent = {number: int}
-
-@genType
-type fuelBlockEvent = {height: int}
-
-@genType
-type svmOnBlockArgs<'context> = {slot: int, context: 'context}
-
-@genType
-type onBlockArgs<'block, 'context> = {
-  block: 'block,
+// Ecosystem-scoped argument records for `indexer.onBlock` / `indexer.onSlot`
+// handlers. Mirror the TypeScript shapes in `packages/envio/index.d.ts`
+// (`EvmOnBlockHandlerArgs`, `FuelOnBlockHandlerArgs`, `SvmOnSlotHandlerArgs`).
+type evmOnBlockArgs<'context> = {
+  block: {number: int},
   context: 'context,
 }
 
-// Internal-only types for the `indexer.onBlock` (and SVM `onSlot`) plumbing.
-// User-facing TypeScript declarations live in `packages/envio/index.d.ts` —
-// keep these out of `genType` so the canonical TS shape isn't shadowed by a
-// generated `unknown`-typed stub in `Envio.gen.ts`.
+type fuelOnBlockArgs<'context> = {
+  block: {height: int},
+  context: 'context,
+}
+
+type svmOnSlotArgs<'context> = {
+  slot: int,
+  context: 'context,
+}
+
+// Internal-only type for the `indexer.onBlock` (and SVM `onSlot`) `where`
+// callback argument. The canonical TypeScript shape lives in
+// `packages/envio/index.d.ts`; the ReScript declaration here is free to
+// diverge.
 type onBlockWhereArgs<'chain> = {chain: 'chain}
 
 // `where` returns a value interpreted at runtime by `Main.res::onBlockHandlerFn`:
@@ -48,7 +51,6 @@ type whereOperator<'fieldType> = {
   _in?: array<'fieldType>,
 }
 
-@genType.import(("./Types.ts", "Logger"))
 type logger = {
   debug: 'params. (string, ~params: {..} as 'params=?) => unit,
   info: 'params. (string, ~params: {..} as 'params=?) => unit,
@@ -58,18 +60,16 @@ type logger = {
 }
 
 @@warning("-30") // Duplicated type names (input)
-@genType.import(("./Types.ts", "Effect"))
 type rec effect<'input, 'output>
-@genType @unboxed
+@unboxed
 and rateLimitDuration =
   | @as("second") Second
   | @as("minute") Minute
   | Milliseconds(int)
-@genType @unboxed
+@unboxed
 and rateLimit =
   | @as(false) Disable
   | Enable({calls: int, per: rateLimitDuration})
-@genType
 and effectOptions<'input, 'output> = {
   /** The name of the effect. Used for logging and debugging. */
   name: string,
@@ -82,13 +82,11 @@ and effectOptions<'input, 'output> = {
   /** Whether the effect should be cached. */
   cache?: bool,
 }
-@genType.import(("./Types.ts", "EffectContext"))
 and effectContext = {
   log: logger,
   effect: 'input 'output. (effect<'input, 'output>, 'input) => promise<'output>,
   mutable cache: bool,
 }
-@genType
 and effectArgs<'input> = {
   input: 'input,
   context: effectContext,
@@ -180,6 +178,12 @@ type fuelSimulateItem = {
   block?: fuelBlockInput,
   transaction?: fuelTransactionInput,
 }
+
+// Read at call time, not as a module-level binding. `Bin.res::applyEnv`
+// populates `process.env.ENVIO_DEV_MODE` *after* the JS bundle has loaded,
+// so a top-level `envSafe->EnvSafe.get(...)` in Env.res would always
+// snapshot the pre-applyEnv value (undefined → false).
+let isDevMode = () => NodeJs.Process.process.env->Dict.get("ENVIO_DEV_MODE") === Some("true")
 
 module TestHelpers = {
   module Addresses = {

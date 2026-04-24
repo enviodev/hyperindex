@@ -35,8 +35,8 @@ pub struct ProjectPaths {
     #[arg(global = true, short, long, default_value_t=String::from(DEFAULT_GENERATED_PATH))]
     pub output_directory: String,
 
-    ///The file in the project containing config.
-    #[arg(global = true, long, default_value_t=String::from(DEFAULT_CONFIG_PATH))]
+    ///The file in the project containing the configuration. It can also be set via the `ENVIO_CONFIG` environment variable.
+    #[arg(global = true, long, env = "ENVIO_CONFIG", default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
 }
 
@@ -87,7 +87,7 @@ pub enum JsonSchema {
 
 #[derive(Debug, Args)]
 pub struct DevArgs {
-    ///Force restart: clear the database and re-index from scratch. Dev mode restarts automatically on config/schema changes, use this flag when you need a restart without making changes
+    ///Force restart: clear the database and re-index from scratch. Required when config/schema/ABI changes are incompatible with the existing indexer state.
     #[arg(short = 'r', long, action)]
     pub restart: bool,
 }
@@ -141,6 +141,11 @@ pub struct InitArgs {
     #[arg(global = true, short = 'l', long = "language")]
     #[clap(value_enum)]
     pub language: Option<init_config::Language>,
+
+    ///The package manager used for `install` and post-init build steps (default: pnpm)
+    #[arg(global = true, long = "package-manager")]
+    #[clap(value_enum)]
+    pub package_manager: Option<init_config::PackageManager>,
 
     ///The hypersync API key to be initialized in your templates .env file
     #[arg(global = true, long)]

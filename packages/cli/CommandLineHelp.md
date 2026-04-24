@@ -48,7 +48,7 @@ This document contains the help content for the `envio` command-line program.
 * `-o`, `--output-directory <OUTPUT_DIRECTORY>` — The directory for generated code output. We recommend configuring this using the `output` field in your config.yaml instead
 
   Default value: `generated`
-* `--config <CONFIG>` — The file in the project containing config
+* `--config <CONFIG>` — The file in the project containing the configuration. It can also be set via the `ENVIO_CONFIG` environment variable
 
   Default value: `config.yaml`
 
@@ -73,6 +73,10 @@ Initialize an indexer with one of the initialization options
 * `-l`, `--language <LANGUAGE>` — The language used to write handlers
 
   Possible values: `typescript`, `rescript`
+
+* `--package-manager <PACKAGE_MANAGER>` — The package manager used for `install` and post-init build steps (default: pnpm)
+
+  Possible values: `pnpm`, `npm`, `yarn`, `bun`
 
 * `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file
 
@@ -248,7 +252,7 @@ Development commands for starting, stopping, and restarting the indexer with aut
 
 ###### **Options:**
 
-* `-r`, `--restart` — Force restart: clear the database and re-index from scratch. Dev mode restarts automatically on config/schema changes, use this flag when you need a restart without making changes
+* `-r`, `--restart` — Force restart: clear the database and re-index from scratch. Required when config/schema/ABI changes are incompatible with the existing indexer state
 
 
 

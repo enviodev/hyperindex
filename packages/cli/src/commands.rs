@@ -1,58 +1,114 @@
 use anyhow::Context;
+use std::io::IsTerminal;
 use std::path::Path;
 
-/// Convert a path to a JS-compatible string with forward slashes.
-/// PathBuf::display() emits platform-specific separators (backslashes on Windows)
-/// which break JS imports. This helper ensures forward slashes for JS paths.
-fn to_js_path(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
-}
-
+/// Spawns `cmd` with piped stdio forwarded to the host `print!`/`eprint!`.
+/// The pipe hides the TTY from the child, so we forward the host's TTY state
+/// via `FORCE_COLOR`/`CLICOLOR_FORCE` so package managers still render colors.
 async fn execute_command(
     cmd: &str,
     args: Vec<&str>,
     current_dir: &Path,
 ) -> anyhow::Result<std::process::ExitStatus> {
-    execute_command_with_env(cmd, args, current_dir, &[]).await
-}
-
-/// Like execute_command, but lets the caller inject extra env vars into the
-/// child process without clobbering the inherited environment. Used by the
-/// dev flow to forward credentials for containers we just booted.
-///
-/// Precedence: `extra_env` values override identically-named vars inherited
-/// from the parent process (including those loaded from `.env`).
-async fn execute_command_with_env(
-    cmd: &str,
-    args: Vec<&str>,
-    current_dir: &Path,
-    extra_env: &[(String, String)],
-) -> anyhow::Result<std::process::ExitStatus> {
-    tokio::process::Command::new(cmd)
+    let mut command = tokio::process::Command::new(cmd);
+    command
         .args(&args)
-        .envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .current_dir(current_dir)
-        .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-        .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-        //the child process
-        .spawn()
-        .context(format!(
-            "Failed to spawn command {} {} at {} as child process",
-            cmd,
-            args.join(" "),
-            current_dir.to_str().unwrap_or("bad_path")
-        ))?
-        .wait()
-        .await
-        .context(format!(
-            "Failed to exit command {} {} at {} from child process",
-            cmd,
-            args.join(" "),
-            current_dir.to_str().unwrap_or("bad_path")
-        ))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+
+    if std::io::stdout().is_terminal() {
+        command
+            .env("FORCE_COLOR", "1")
+            .env("CLICOLOR_FORCE", "1")
+            .env("npm_config_color", "always");
+    }
+
+    let mut child = command.spawn().context(format!(
+        "Failed to spawn command {} {} at {} as child process",
+        cmd,
+        args.join(" "),
+        current_dir.to_str().unwrap_or("bad_path")
+    ))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stdout_task = tokio::spawn(async move {
+        if let Some(mut s) = stdout {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = s.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                print!("{}", String::from_utf8_lossy(&buf[..n]));
+            }
+        }
+    });
+    let stderr_task = tokio::spawn(async move {
+        if let Some(mut s) = stderr {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = s.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                eprint!("{}", String::from_utf8_lossy(&buf[..n]));
+            }
+        }
+    });
+
+    let exit = child.wait().await.context(format!(
+        "Failed to exit command {} {} at {} from child process",
+        cmd,
+        args.join(" "),
+        current_dir.to_str().unwrap_or("bad_path")
+    ))?;
+    let _ = stdout_task.await;
+    let _ = stderr_task.await;
+    Ok(exit)
 }
 
-/// Like execute_command, but suppresses stdout and stderr
+/// `install` + `run build` wrappers for a user-selected package manager.
+///
+/// `run` prepends the literal `run` token so `npm run <script>` works;
+/// pnpm/yarn/bun tolerate the extra `run`.
+pub mod pm {
+    use super::execute_command;
+    use crate::cli_args::init_config::PackageManager;
+    use anyhow::{anyhow, Result};
+    use std::path::Path;
+
+    pub async fn install(pm: PackageManager, cwd: &Path) -> Result<()> {
+        let exit = execute_command(pm.cmd(), vec!["install"], cwd).await?;
+        if !exit.success() {
+            return Err(anyhow!(
+                "{} install exited with code {}",
+                pm.cmd(),
+                exit.code().unwrap_or(-1),
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn run_script(pm: PackageManager, script: &str, cwd: &Path) -> Result<()> {
+        let exit = execute_command(pm.cmd(), vec!["run", script], cwd).await?;
+        if !exit.success() {
+            return Err(anyhow!(
+                "{} run {} exited with code {}",
+                pm.cmd(),
+                script,
+                exit.code().unwrap_or(-1),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Spawns `cmd` silently (stdout/stderr/stdin nulled).
 async fn execute_command_silent(
     cmd: &str,
     args: Vec<&str>,
@@ -82,26 +138,13 @@ async fn execute_command_silent(
         ))
 }
 
-pub mod rescript {
-    use super::execute_command;
-    use anyhow::Result;
-    use std::path::Path;
-
-    pub async fn build(path: &Path) -> Result<std::process::ExitStatus> {
-        let args = vec!["rescript-legacy"];
-        execute_command("pnpm", args, path).await
-    }
-}
-
 pub mod codegen {
-    use super::{execute_command, rescript};
     use crate::{
         config_parsing::system_config::SystemConfig, hbs_templating, template_dirs::TemplateDirs,
     };
     use anyhow::{self, Context, Result};
     use std::path::Path;
 
-    use crate::project_paths::ParsedProjectPaths;
     use tokio::fs;
 
     pub async fn remove_files_except_git(directory: &Path) -> Result<()> {
@@ -124,62 +167,6 @@ pub mod codegen {
         Ok(())
     }
 
-    pub async fn check_and_install_pnpm(current_dir: &Path) -> Result<()> {
-        // Check if pnpm is already installed
-        let check_pnpm = execute_command("pnpm", vec!["--version"], current_dir).await;
-
-        // If pnpm is not installed, run the installation command
-        match check_pnpm {
-            Ok(status) if status.success() => {
-                println!("Package pnpm is already installed. Continuing...");
-            }
-            _ => {
-                println!("Package pnpm is not installed. Installing now...");
-                let args = vec!["install", "--global", "pnpm"];
-                execute_command("npm", args, current_dir).await?;
-            }
-        }
-        Ok(())
-    }
-
-    async fn pnpm_install(project_paths: &ParsedProjectPaths) -> Result<std::process::ExitStatus> {
-        println!("Checking for pnpm package...");
-        check_and_install_pnpm(&project_paths.generated).await?;
-
-        execute_command(
-            "pnpm",
-            vec!["install", "--no-lockfile", "--prefer-offline"],
-            &project_paths.generated,
-        )
-        .await?;
-        execute_command(
-            "pnpm",
-            vec!["install", "--no-frozen-lockfile", "--prefer-offline"],
-            &project_paths.project_root,
-        )
-        .await
-    }
-
-    async fn run_post_codegen_command_sequence(
-        project_paths: &ParsedProjectPaths,
-    ) -> anyhow::Result<std::process::ExitStatus> {
-        println!("Installing packages... ");
-        let exit1 = pnpm_install(project_paths).await?;
-        if !exit1.success() {
-            return Ok(exit1);
-        }
-
-        println!("Generating HyperIndex code...");
-        let exit3 = rescript::build(&project_paths.generated)
-            .await
-            .context("Failed running rescript build")?;
-        if !exit3.success() {
-            return Ok(exit3);
-        }
-
-        Ok(exit3)
-    }
-
     pub async fn run_codegen(config: &SystemConfig) -> anyhow::Result<()> {
         let template_dirs = TemplateDirs::new();
         fs::create_dir_all(&config.parsed_project_paths.generated).await?;
@@ -196,130 +183,6 @@ pub mod codegen {
             .generate_templates(&config.parsed_project_paths)
             .context("Failed generating dynamic codegen files")?;
 
-        run_post_codegen_command_sequence(&config.parsed_project_paths)
-            .await
-            .context("Failed running post codegen command sequence")?;
-
-        Ok(())
-    }
-}
-
-pub mod start {
-    use super::{execute_command_with_env, to_js_path};
-    use crate::config_parsing::system_config::SystemConfig;
-    use anyhow::anyhow;
-    use pathdiff::diff_paths;
-
-    pub async fn start_indexer(
-        config: &SystemConfig,
-        extra_env: &[(String, String)],
-    ) -> anyhow::Result<()> {
-        // Compute the relative path from project root to generated directory
-        let relative_generated = diff_paths(
-            &config.parsed_project_paths.generated,
-            &config.parsed_project_paths.project_root,
-        )
-        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
-
-        let index_path = format!("./{}/src/Index.res.mjs", to_js_path(&relative_generated));
-
-        let cmd = "node";
-        let args = vec!["--no-warnings", &index_path];
-
-        // Run from project root to ensure proper cwd for handlers
-        let exit = execute_command_with_env(
-            cmd,
-            args,
-            &config.parsed_project_paths.project_root,
-            extra_env,
-        )
-        .await?;
-
-        if !exit.success() {
-            return Err(anyhow!(
-                "Indexer crashed. For more details see the error logs above the TUI. Can't find \
-                 them? Restart the indexer with the 'TUI_OFF=true envio start' command."
-            ));
-        }
-        println!(
-            "\nIndexer has successfully finished processing all events on all chains. Exiting \
-             process."
-        );
-        Ok(())
-    }
-}
-pub mod db_migrate {
-    use anyhow::{anyhow, Context};
-
-    use std::process::ExitStatus;
-
-    use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
-
-    async fn execute_migration(script: &str, config: &SystemConfig) -> anyhow::Result<ExitStatus> {
-        let config_json = config
-            .to_public_config_json()
-            .context("Failed to serialize config to JSON")?;
-        let current_dir = &config.parsed_project_paths.project_root;
-        tokio::process::Command::new("node")
-            .args(["-e", script])
-            .env("ENVIO_CONFIG", &config_json)
-            .current_dir(current_dir)
-            .stdin(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .context("Failed to spawn node process for migration")?
-            .wait()
-            .await
-            .context("Failed to wait for migration process")
-    }
-
-    pub async fn run_up_migrations(
-        config: &SystemConfig,
-        persisted_state: &PersistedState,
-    ) -> anyhow::Result<()> {
-        let exit = execute_migration(
-            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true))",
-            config,
-        )
-        .await?;
-
-        if !exit.success() {
-            return Err(anyhow!("Failed to run db migrations"));
-        }
-
-        persisted_state
-            .upsert_to_db()
-            .await
-            .context("Failed to upsert persisted state table")?;
-        Ok(())
-    }
-
-    pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<ExitStatus> {
-        execute_migration(
-            "import('envio/src/Migrations.res.mjs').then(m => m.runDownMigrations(true))",
-            config,
-        )
-        .await
-    }
-
-    pub async fn run_db_setup(
-        config: &SystemConfig,
-        persisted_state: &PersistedState,
-    ) -> anyhow::Result<()> {
-        let exit = execute_migration(
-            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true, true))",
-            config,
-        )
-        .await?;
-
-        if !exit.success() {
-            return Err(anyhow!("Failed to run db migrations"));
-        }
-
-        persisted_state
-            .upsert_to_db()
-            .await
-            .context("Failed to upsert persisted state table")?;
         Ok(())
     }
 }

@@ -48,12 +48,17 @@ describe("Indexer.indexer", () => {
   })
 
   it("chains by name are not enumerable, but should be accessible by name", t => {
-    t.expect(Indexer.indexer.chains.\"1").toBe(Indexer.indexer.chains.ethereumMainnet)
-    t.expect(Indexer.indexer.chains.\"100").toBe(Indexer.indexer.chains.gnosis)
-    t.expect(Indexer.indexer.chains.\"137").toBe(Indexer.indexer.chains.polygon)
+    // Bind `chains` once: the indexer exposes a Proxy and each `.chains`
+    // access rebuilds a fresh chains object, so cross-read identity isn't
+    // stable. Within one read the id-keyed and name-keyed lookups resolve
+    // to the same inner chain object, which is what this test verifies.
+    let chains = Indexer.indexer.chains
+    t.expect(chains.\"1").toBe(chains.ethereumMainnet)
+    t.expect(chains.\"100").toBe(chains.gnosis)
+    t.expect(chains.\"137").toBe(chains.polygon)
   })
 
   it("getChainById returns correct chain", t => {
-    t.expect(Indexer.getChainById(Indexer.indexer, #1337)).toBe(Indexer.indexer.chains.\"1337")
+    t.expect(Indexer.getChainById(Indexer.indexer, #1337)).toEqual(Indexer.indexer.chains.\"1337")
   })
 })

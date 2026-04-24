@@ -5,11 +5,6 @@ on:
   # secrets. Fork PRs are gated by the `fork-ci` environment which
   # requires manual approval from a reviewer before jobs proceed.
   # Same-repo PRs use the `internal` environment (no restrictions).
-  #
-  # Security: the workflow file is always taken from the default branch
-  # (enforced since Dec 2025), so forks cannot modify the environment
-  # gate. All jobs check out github.event.pull_request.head.sha —
-  # pinned at event creation, so a push after approval cannot swap code.
   pull_request_target:
   push:
     branches:
@@ -54,8 +49,11 @@ jobs:
 
   # ── Build ───────────────────────────────────────────────────────────
 
-  # Build envio CLI binary for linux-x64 and wrap it in a platform npm package
-  build-linux-package:
+  # Build envio NAPI addon + wrap it as envio-linux-x64, and build the base
+  # envio npm package (ReScript compilation). Fused so we pay for toolchain
+  # setup + checkout once — the addon build dominates total time, and the
+  # envio package build has no Rust dependency.
+  build-envio-package:
     runs-on: ubuntu-22.04
     timeout-minutes: 9
     needs: authorize
@@ -65,52 +63,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Install toolchain
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
 
       - uses: ./.github/actions/cargo-cache
-        with:
-          cache-suffix: x86_64-unknown-linux-musl
-
-      - name: Install musl-tools
-        run: sudo apt-get install -y musl-tools
-
-      - name: Build envio CLI
-        env:
-          SVM_TARGET_PLATFORM: linux-amd64
-        run: cargo build --release --bins --target x86_64-unknown-linux-musl
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Build platform npm package
-        run: |
-          node packages/build-envio/build-platform-package.ts \
-            --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
-          mkdir -p envio-linux-x64/bin
-          cp target/x86_64-unknown-linux-musl/release/envio envio-linux-x64/bin/
-          chmod +x envio-linux-x64/bin/envio
-
-      - name: Upload linux-x64 platform npm package
-        uses: actions/upload-artifact@v7
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: envio-linux-x64
-
-  # Build envio base npm package (ReScript compilation, package.json rewrite)
-  build-envio-package:
-    runs-on: ubuntu-latest
-    timeout-minutes: 9
-    needs: authorize
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: pnpm/action-setup@v5
         with:
@@ -123,14 +79,32 @@ jobs:
           node-version: 24
           cache: "pnpm"
 
+      - name: Build envio NAPI addon
+        env:
+          SVM_TARGET_PLATFORM: linux-amd64
+        run: cargo build --release --lib
+
       - name: Install dependencies
         run: pnpm install
+
+      - name: Build linux-x64 platform npm package
+        run: |
+          node packages/build-envio/build-platform-package.ts \
+            --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
+          mkdir -p envio-linux-x64
+          cp target/release/libenvio.so envio-linux-x64/envio.node
 
       - name: Build envio package
         run: node packages/build-envio/src/build-artifact.ts --version 0.0.1-dev --out envio-dist
 
-      - name: Verify artifact
+      - name: Verify envio artifact
         run: node packages/build-envio/src/verify-artifact.ts envio-dist
+
+      - name: Upload linux-x64 platform npm package
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: envio-linux-x64
 
       - name: Upload envio npm package artifact
         uses: actions/upload-artifact@v7
@@ -187,7 +161,7 @@ jobs:
   # Template tests - verify envio templates can be initialized and built
   template-tests:
     runs-on: ubuntu-latest
-    needs: [build-linux-package, build-envio-package]
+    needs: build-envio-package
     timeout-minutes: 9
 
     steps:
@@ -204,7 +178,7 @@ jobs:
   # Requires DB services (postgres + hasura)
   scenarios-test:
     runs-on: ubuntu-latest
-    needs: [build-linux-package, build-envio-package]
+    needs: build-envio-package
     timeout-minutes: 9
 
     services:
@@ -252,6 +226,10 @@ jobs:
       - name: test_codegen
         working-directory: scenarios/test_codegen
         run: |
+          # scenarios/test_codegen has its own pnpm-workspace.yaml, so the root
+          # .pnpmfile.cjs isn't picked up when codegen triggers nested `pnpm install`.
+          # Symlink (not copy) so __dirname still resolves to the repo root.
+          ln -sf ../../.pnpmfile.cjs .pnpmfile.cjs
           pnpm exec envio codegen
           pnpm test
 
@@ -278,7 +256,7 @@ jobs:
   # E2E test - runs envio dev with a real indexer scenario
   e2e-test:
     runs-on: ubuntu-latest
-    needs: [build-linux-package, build-envio-package]
+    needs: build-envio-package
     timeout-minutes: 9
 
     services:

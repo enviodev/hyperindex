@@ -1,20 +1,94 @@
-export type {
-  logger as Logger,
-  effect as Effect,
-  effectContext as EffectContext,
-  effectArgs as EffectArgs,
-  effectOptions as EffectOptions,
-  rateLimitDuration as RateLimitDuration,
-  rateLimit as RateLimit,
-  blockEvent as BlockEvent,
-  fuelBlockEvent as FuelBlockEvent,
-  svmOnBlockArgs as SvmOnBlockArgs,
-  onBlockArgs as OnBlockArgs,
-  onBlockOptions as OnBlockOptions,
-} from "./src/Envio.gen.ts";
-import type { logger as Logger } from "./src/Envio.gen.ts";
-import type { Address, EffectCaller } from "./src/Types.ts";
-export type { EffectCaller, Address } from "./src/Types.ts";
+import * as Sury from "rescript-schema";
+import type { default as BigDecimalT } from "bignumber.js";
+export { default as BigDecimal } from "bignumber.js";
+
+// Runtime value stubs used by the `S.*` namespace declarations further down
+// so the exported `S.bigDecimal` / `S.bigint` consts pick up typed schemas.
+// The implementations live in `index.js`, sourced from `.res.mjs` compiled
+// output.
+declare const bigDecimalSchema: Sury.Schema<BigDecimalT>;
+declare const bigintSchema: Sury.Schema<bigint>;
+
+/** Ethereum address — a 20-byte hex string prefixed with `0x`. */
+export type Address = `0x${string}`;
+
+/** Structured logger bound to an event or handler context. Messages are
+ * displayed in the console and the Envio Hosted Service. */
+export type Logger = {
+  readonly debug: (
+    message: string,
+    params?: Record<string, unknown> | Error
+  ) => void;
+  readonly info: (
+    message: string,
+    params?: Record<string, unknown> | Error
+  ) => void;
+  readonly warn: (
+    message: string,
+    params?: Record<string, unknown> | Error
+  ) => void;
+  readonly error: (
+    message: string,
+    params?: Record<string, unknown> | Error
+  ) => void;
+};
+
+/** Handle for an external-call effect created via {@link createEffect}.
+ * Effects provide automatic deduplication, error handling, and caching. */
+export declare abstract class Effect<I, O> {
+  protected opaque: I | O;
+}
+
+/** Calls an {@link Effect} with the given input and returns its output. */
+export type EffectCaller = <I, O>(
+  effect: Effect<I, O>,
+  // This is a hack to make the call complain on undefined
+  // when it's not needed, instead of extending the input type.
+  // Might be not needed if I misunderstand something in TS.
+  input: I extends undefined ? undefined : I
+) => Promise<O>;
+
+/** Context passed to an Effect's handler function. */
+export type EffectContext = {
+  /** Access the logger instance with the event as context. */
+  readonly log: Logger;
+  /** Call another Effect from inside this one. */
+  readonly effect: EffectCaller;
+  /** Whether to cache this call's result. Defaults to the effect's `cache`
+   * option; set to `false` to skip caching for this specific invocation. */
+  cache: boolean;
+};
+
+/** Rate-limit window for an {@link Effect}. Strings resolve to common
+ * durations; a plain `number` is treated as milliseconds. */
+export type RateLimitDuration = "second" | "minute" | number;
+
+/** Rate-limit configuration for an {@link Effect}. `false` disables rate
+ * limiting; otherwise a `{calls, per}` pair caps invocations per duration. */
+export type RateLimit =
+  | false
+  | { readonly calls: number; readonly per: RateLimitDuration };
+
+/** Options accepted by {@link createEffect}. */
+export type EffectOptions<Input, Output> = {
+  /** The name of the effect. Used for logging and debugging. */
+  readonly name: string;
+  /** The input schema of the effect. */
+  readonly input: Sury.Schema<Input>;
+  /** The output schema of the effect. */
+  readonly output: Sury.Schema<Output>;
+  /** Rate limit for the effect. Set to `false` to disable or provide
+   * `{calls, per: "second" | "minute"}` to enable. */
+  readonly rateLimit: RateLimit;
+  /** Whether the effect should be cached. */
+  readonly cache?: boolean;
+};
+
+/** Arguments passed to the handler function of an {@link Effect}. */
+export type EffectArgs<Input> = {
+  readonly input: Input;
+  readonly context: EffectContext;
+};
 
 export const TestHelpers: {
   Addresses: {
@@ -60,16 +134,6 @@ export type WhereOperator<T> = {
 export type GetWhereFilter<E> = {
   [K in keyof E]?: WhereOperator<E[K]>;
 };
-
-import type {
-  effect as Effect,
-  effectArgs as EffectArgs,
-  rateLimit as RateLimit,
-} from "./src/Envio.gen.ts";
-
-import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.gen.ts";
-import { bigIntSchema as bigintSchema } from "./src/Utils.gen.ts";
-import * as Sury from "rescript-schema";
 
 type UnknownToOutput<T> = T extends Sury.Schema<unknown>
   ? Sury.Output<T>
@@ -209,9 +273,11 @@ export declare namespace S {
 export interface Global {}
 
 /**
- * Shape of the indexer configuration.
- * Will be used internally for defineConfig.
- * Currently should match the internal.config.json structure.
+ * Shape of the indexer configuration used internally for defineConfig.
+ * This models only the subset of fields defineConfig consumes; the JSON
+ * emitted by `envio config view` is a superset (enums, entities, per-chain
+ * sources, event metadata, EVM global field selections, and other
+ * serializer-only fields are intentionally omitted here).
  */
 type IndexerConfig = {
   /** The indexer name. */
@@ -1426,3 +1492,9 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
     ConfigEntities<Config>[K]
   >;
 };
+
+// ============== Runtime values ==============
+
+// `never` steers callers to the project-typed `generated` re-export.
+export declare const indexer: never;
+export declare const createTestIndexer: () => never;

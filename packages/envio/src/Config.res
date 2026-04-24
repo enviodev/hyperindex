@@ -19,7 +19,7 @@ type contract = {
   eventSignatures: array<string>,
 }
 
-// Source config parsed from internal.config.json - sources are created lazily in ChainFetcher
+// Sources are instantiated lazily in ChainFetcher from this config.
 type evmRpcConfig = {
   url: string,
   sourceFor: Source.sourceFor,
@@ -152,7 +152,6 @@ module EnvioAddresses = {
   }->Internal.fromGenericEntityConfig
 }
 
-// Types for parsing source config from internal.config.json
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("live") Live
 
 let rpcSourceForSchema = S.enum([Sync, Fallback, Live])
@@ -454,12 +453,13 @@ let publicConfigSchema = S.schema(s =>
   }
 )
 
-let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
+let fromPublic = (publicConfigJson: JSON.t) => {
+  let maxAddrInPartition = Env.maxAddrInPartition
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
   | S.Raised(exn) =>
     JsError.throwWithMessage(
-      `Invalid internal.config.ts: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`,
+      `Invalid indexer config: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`,
     )
   }
 
@@ -554,10 +554,6 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
         let sighash = eventItem["sighash"]
         let params = eventItem["params"]->Option.getOr([])
         let kind = eventItem["kind"]
-        // Get handler registration data
-        let isWildcard = HandlerRegister.isWildcard(~contractName, ~eventName)
-        let handler = HandlerRegister.getHandler(~contractName, ~eventName)
-        let contractRegister = HandlerRegister.getContractRegister(~contractName, ~eventName)
 
         switch ecosystemName {
         | Ecosystem.Fuel =>
@@ -569,9 +565,9 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
               ~kind=fuelKind,
               ~sighash,
               ~rawAbi=abi->(Utils.magic: EvmTypes.Abi.t => JSON.t),
-              ~isWildcard,
-              ~handler,
-              ~contractRegister,
+              ~isWildcard=false,
+              ~handler=None,
+              ~contractRegister=None,
               ~startBlock?,
             ) :> Internal.eventConfig)
           | None =>
@@ -585,10 +581,10 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
             ~eventName,
             ~sighash,
             ~params,
-            ~isWildcard,
-            ~handler,
-            ~contractRegister,
-            ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
+            ~isWildcard=false,
+            ~handler=None,
+            ~contractRegister=None,
+            ~eventFilters=None,
             ~probeChainId=chainId,
             ~onEventBlockFilterSchema=ecosystem.onEventBlockFilterSchema,
             ~blockFields=?eventItem["blockFields"],
@@ -855,11 +851,29 @@ let getChain = (config, ~chainId) => {
       )
 }
 
-@val external envioConfigEnv: option<string> = "process.env.ENVIO_CONFIG"
-
-let fromEnv = () => {
-  switch envioConfigEnv {
-  | Some(configStr) => configStr->JSON.parseOrThrow->fromPublic
-  | None => JsError.throwWithMessage("ENVIO_CONFIG environment variable is not set")
-  }
+// A CLI command payload already contains the resolved JSON; priming lets
+// downstream callers skip the NAPI `getConfigJson` round-trip. Calling
+// `prime` again invalidates the memo.
+%%private(let primedJson: ref<option<JSON.t>> = ref(None))
+%%private(let cached: ref<option<t>> = ref(None))
+let prime = (json: JSON.t): unit => {
+  primedJson := Some(json)
+  cached := None
 }
+
+// The returned value is a pure function of the JSON — no handler
+// registrations are applied here. Post-registration configs come from
+// `HandlerLoader.applyRegistrations`. That purity is what lets this
+// memoize without invalidation.
+let loadWithoutRegistrations = () =>
+  switch cached.contents {
+  | Some(c) => c
+  | None => {
+      let c = switch primedJson.contents {
+      | Some(json) => json->fromPublic
+      | None => Core.getConfigJson()->JSON.parseOrThrow->fromPublic
+      }
+      cached := Some(c)
+      c
+    }
+  }

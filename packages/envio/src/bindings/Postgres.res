@@ -1,6 +1,3 @@
-// Only needed for some old tests
-// Remove @genType in the future
-@genType.import(("postgres", "Sql"))
 type sql
 
 type undefinedTransform = | @as(undefined) Undefined | @as(null) Null

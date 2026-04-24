@@ -1181,10 +1181,23 @@ pub async fn down() -> anyhow::Result<()> {
         Ok(())
     }
 
+    // 404 = network already gone (e.g. `up()` short-circuited when all
+    // services were reachable externally, so `ensure_network` never ran).
+    // Treat it as success — mirrors the 409 tolerance in `ensure_network`.
+    async fn remove_network_tolerant(docker: &Docker, name: &str) -> anyhow::Result<()> {
+        match docker.remove_network(name).await {
+            Ok(_) => Ok(()),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => Ok(()),
+            Err(e) => Err(e).with_context(|| format!("Failed to remove network {name}")),
+        }
+    }
+
     let (pg_vol_res, ch_vol_res, net_res) = tokio::join!(
         remove_volume_if_exists(&docker, VOLUME, pg_vol_exists),
         remove_volume_if_exists(&docker, CH_VOLUME, ch_vol_exists),
-        docker.remove_network(NETWORK),
+        remove_network_tolerant(&docker, NETWORK),
     );
 
     let mut failed = false;
@@ -1197,7 +1210,7 @@ pub async fn down() -> anyhow::Result<()> {
         failed = true;
     }
     if let Err(e) = net_res {
-        eprintln!("Failed to remove network {NETWORK}: {e}");
+        eprintln!("{e:#}");
         failed = true;
     }
 

@@ -663,7 +663,16 @@ module Map = {
 }
 
 module Proxy = {
-  type traps<'a> = {get?: (~target: 'a, ~prop: unknown) => unknown}
+  type propertyDescriptor = {
+    value: unknown,
+    enumerable: bool,
+    configurable: bool,
+  }
+  type traps<'a> = {
+    get?: (~target: 'a, ~prop: unknown) => unknown,
+    ownKeys?: (~target: 'a) => array<string>,
+    getOwnPropertyDescriptor?: (~target: 'a, ~prop: unknown) => option<propertyDescriptor>,
+  }
 
   @new
   external make: ('a, traps<'a>) => 'a = "Proxy"
@@ -781,13 +790,6 @@ module BigInt = {
 
   let nativeSchema = S.bigint
 }
-
-// Top-level alias for genType. The `BigInt` module name gets escaped to
-// `$$BigInt` in the compiled .res.mjs because it shadows the JS builtin,
-// which breaks `UtilsJS.BigInt.schema` references in genType output.
-// Re-exporting under an unescaped name keeps the .gen.ts wrapper happy.
-@genType
-let bigIntSchema = BigInt.schema
 
 module Promise = {
   // Async-callback variant of `Promise.make`. The stdlib only ships the

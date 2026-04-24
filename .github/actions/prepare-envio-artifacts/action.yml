@@ -27,10 +27,6 @@ runs:
         name: npm-pkg-envio-linux-x64
         path: .envio-artifacts/envio-linux-x64
 
-    - name: Make binary executable
-      shell: bash
-      run: chmod +x .envio-artifacts/envio-linux-x64/bin/envio
-
     - name: Install dependencies
       shell: bash
       run: pnpm install --no-frozen-lockfile

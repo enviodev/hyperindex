@@ -1,6 +1,6 @@
 type chainId = Indexer.chainId
 
-let config = Indexer.Generated.configWithoutRegistrations
+let config = Config.loadWithoutRegistrations()
 
 let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   config.userEntitiesByName
@@ -22,7 +22,7 @@ module InMemoryStore = {
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=config.allEntities)
     entities->Array.forEach(((entityConfig, items)) => {
       items->Array.forEach(entity => {
         inMemoryStore->setEntity(~entityConfig, entity)
@@ -202,7 +202,7 @@ module Storage = {
   let toPersistence = (storageMock: t) => {
     {
       ...PgStorage.makePersistenceFromConfig(
-        ~config=Indexer.Generated.configWithoutRegistrations,
+        ~config=Config.loadWithoutRegistrations(),
         ~storage=storageMock.storage,
       ),
       storageStatus: Ready({
@@ -274,12 +274,12 @@ module Indexer = {
     | Some(_) => ()
     }
 
-    let registrations = await HandlerLoader.registerAllHandlers(
-      ~config=Indexer.Generated.configWithoutRegistrations,
+    let (postRegistrationConfig, registrations) = await HandlerLoader.registerAllHandlers(
+      ~config=Config.loadWithoutRegistrations(),
     )
 
     let config = {
-      let config = Indexer.Generated.makeGeneratedConfig()
+      let config = postRegistrationConfig
 
       let chainMap =
         chains
@@ -782,6 +782,8 @@ module Source = {
                               JsError.throwWithMessage("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
                             selectedTransactionFields: Utils.Set.make(),
+                            sighash: "",
+                            indexedParams: [],
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -940,5 +942,7 @@ let evmEventConfig = (
     convertHyperSyncEventArgs: _ => JsError.throwWithMessage("Not implemented"),
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
+    sighash: id,
+    indexedParams: [],
   }
 }

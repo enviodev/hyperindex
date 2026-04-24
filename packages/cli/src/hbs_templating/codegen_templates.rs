@@ -1,7 +1,6 @@
 use std::{
     collections::BTreeSet,
     fmt::{Display, Write},
-    path::PathBuf,
     vec,
 };
 
@@ -14,15 +13,11 @@ use crate::{
         field_types,
         human_config::HumanConfig,
         system_config::{
-            self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField,
-            SystemConfig,
+            self, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField, SystemConfig,
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
-    project_paths::{
-        path_utils::{add_leading_relative_dot, add_trailing_relative_dot},
-        ParsedProjectPaths,
-    },
+    project_paths::{path_utils::add_leading_relative_dot, ParsedProjectPaths},
     template_dirs::TemplateDirs,
     type_schema::{RecordField, SchemaMode, TypeExpr, TypeIdent},
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
@@ -655,14 +650,13 @@ impl ContractTemplate {
                     contract.name
                 ))?;
 
+                // Indexer.res lives at <project_root>/src/Indexer.res, so `../`
+                // from the compiled .mjs reaches the project root.
+                // Escape back-ticks just in case: the abi path is inside a
+                // template literal.
                 format!(
-                    "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
-                   relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}",
-                    // Use the config.yaml-relative path (NOT the absolute
-                    // path_buf) so the generated import resolves correctly
-                    // when Path.relativePathToRootFromGenerated prefixes it.
-                    // If we decide to inline the abi, instead of using require
-                    // we need to remember that abi might contain ` and we should escape it
+                    "let abi = FuelSDK.transpileAbi((await \
+                     Utils.importPathWithJson(`../{}`))[\"default\"])\n{}\n{}",
                     abi.path_relative_to_root,
                     all_abi_type_declarations,
                     all_abi_type_declarations.to_rescript_schema(&SchemaMode::ForDb)
@@ -922,13 +916,10 @@ pub struct ProjectTemplate {
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
     is_svm_ecosystem: bool,
+    is_rescript: bool,
 
-    envio_version: String,
     indexer_code: String,
-    internal_config_json_code: String,
     envio_dts_code: String,
-    //Used for the package.json reference to handlers in generated
-    relative_path_to_root_from_generated: String,
     relative_path_to_generated_from_root: String,
 }
 
@@ -942,6 +933,13 @@ impl ProjectTemplate {
         let hbs =
             HandleBarsDirGenerator::new(&dynamic_codegen_dir, &self, &project_paths.generated);
         hbs.generate_hbs_templates()?;
+
+        if self.is_rescript {
+            let src_dir = project_paths.project_root.join("src");
+            std::fs::create_dir_all(&src_dir).context("Failed to create user src directory")?;
+            std::fs::write(src_dir.join("Indexer.res"), &self.indexer_code)
+                .context("Failed writing Indexer.res to user src directory")?;
+        }
 
         Ok(())
     }
@@ -1232,23 +1230,6 @@ impl ProjectTemplate {
 
         //Take the absolute paths of  project root and generated, diff them to get
         //relative path from generated to root and add a trailing dot. So in a default project, if your
-        //generated folder is at ./generated. Then this should output ../.
-        //OR say for instance its at artifacts/generated. This should output ../../.
-        //Generated path on construction has to be inside the root directory
-        //Used for the package.json reference to handlers in generated
-        let diff_from_current = |path: &PathBuf, base: &PathBuf| -> Result<String> {
-            Ok(add_trailing_relative_dot(
-                diff_paths(path, base)
-                    .ok_or_else(|| anyhow!("Failed to diffing paths {:?} and {:?}", path, base))?,
-            )
-            .to_str()
-            .ok_or_else(|| anyhow!("Failed converting path to str"))?
-            .to_string())
-        };
-        let relative_path_to_root_from_generated =
-            diff_from_current(&project_paths.project_root, &project_paths.generated)
-                .context("Failed to get relative path from output directory to project root")?;
-
         let relative_path_to_generated_from_root = add_leading_relative_dot(
             diff_paths(&project_paths.generated, &project_paths.project_root).ok_or_else(|| {
                 anyhow!("Failed to diff paths for relative_path_to_generated_from_root")
@@ -1279,26 +1260,18 @@ impl ProjectTemplate {
                 .collect::<Vec<_>>(),
         };
 
-        // Generate onBlock function with ecosystem-specific types
+        // Generate onBlock handler signature with ecosystem-specific types.
+        // Mirror the TypeScript surface in `packages/envio/index.d.ts`
+        // (`EvmOnBlockHandlerArgs`, `FuelOnBlockHandlerArgs`,
+        // `SvmOnSlotHandlerArgs`).
         let on_block_handler_type = match cfg.get_ecosystem() {
-            Ecosystem::Evm => {
-                "Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>"
-            }
-            Ecosystem::Fuel => {
-                "Envio.onBlockArgs<Envio.fuelBlockEvent, handlerContext> => promise<unit>"
-            }
-            Ecosystem::Svm => "Envio.svmOnBlockArgs<handlerContext> => promise<unit>",
+            Ecosystem::Evm => "Envio.evmOnBlockArgs<handlerContext> => promise<unit>",
+            Ecosystem::Fuel => "Envio.fuelOnBlockArgs<handlerContext> => promise<unit>",
+            Ecosystem::Svm => "Envio.svmOnSlotArgs<handlerContext> => promise<unit>",
         };
 
-        // Generate chainId type with ecosystem-specific import from Types.ts
-        let chain_id_import_name = match cfg.get_ecosystem() {
-            Ecosystem::Evm => "EvmChainId",
-            Ecosystem::Fuel => "FuelChainId",
-            Ecosystem::Svm => "SvmChainId",
-        };
         let chain_id_type = format!(
-            r#"@genType.import(("./Types.ts", "{chain_id_import_name}"))
-type chainId = [{}]"#,
+            "type chainId = [{}]",
             chain_id_cases
                 .iter()
                 .map(|chain_id_case| format!("#{}", chain_id_case))
@@ -1378,8 +1351,13 @@ type indexerChains = {{
             indexer_chains_fields
         );
 
-        let indexer_type = format!(
-            r#"/** Metadata and configuration for the indexer. */
+        // Ecosystem-specific indexer surface. EVM/Fuel expose event + block
+        // handlers; SVM has no event handlers and uses `onSlot` instead of
+        // `onBlock`. Mirrors the TS typings in `packages/envio/index.d.ts`
+        // and the ecosystem-specific key set in `Main.getGlobalIndexer`.
+        let indexer_type = match cfg.get_ecosystem() {
+            Ecosystem::Evm | Ecosystem::Fuel => format!(
+                r#"/** Metadata and configuration for the indexer. */
 type indexer = {{
   /** The name of the indexer from config.yaml. */
   name: string,
@@ -1405,7 +1383,26 @@ type indexer = {{
     {on_block_handler_type},
   ) => unit,
 }}"#
-        );
+            ),
+            Ecosystem::Svm => format!(
+                r#"/** Metadata and configuration for the indexer. */
+type indexer = {{
+  /** The name of the indexer from config.yaml. */
+  name: string,
+  /** The description of the indexer from config.yaml. */
+  description: option<string>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
+  /** Register a Slot Handler. Evaluates `where` once per configured chain at registration time. */
+  onSlot: (
+    Envio.onBlockOptions<indexerChain>,
+    {on_block_handler_type},
+  ) => unit,
+}}"#
+            ),
+        };
 
         // Generate getChainById function
         let get_chain_by_id_cases = chain_configs
@@ -1448,8 +1445,7 @@ switch chainId {{
             .join("\n");
 
         let handler_context_code = format!(
-            r#"@genType
-type handlerEntityOperations<'entity, 'getWhereFilter> = {{
+            r#"type handlerEntityOperations<'entity, 'getWhereFilter> = {{
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
@@ -1458,7 +1454,6 @@ type handlerEntityOperations<'entity, 'getWhereFilter> = {{
   deleteUnsafe: string => unit,
 }}
 
-@genType.import(("./Types.ts", "HandlerContext"))
 type handlerContext = {{
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
@@ -1526,7 +1521,7 @@ type handlerContext = {{
                     )
                 };
                 format!(
-                    "@genType\nmodule {} = {{\n{}\n\n{}{}\n}}",
+                    "module {} = {{\n{}\n\n{}{}\n}}",
                     contract.name.capitalized, module_header, events_code, event_identity,
                 )
             })
@@ -1634,17 +1629,11 @@ type handlerContext = {{
 
         // Combine all parts into indexer_code — includes everything from the template
         let indexer_code = format!(
-            r#"@@directive("import internalConfigJson from '../internal.config.json' with {{ type: 'json' }}")
-
-//*************
-//***ENTITIES**
-//*************
-@genType.as("Id")
-type id = string
-
-//*************
+            r#"//*************
 //**CONTRACTS**
 //*************
+
+open RescriptSchema
 
 module Transaction = {{
   type t = {transaction_module_type}
@@ -1655,7 +1644,6 @@ module Block = {{
 }}
 
 module SingleOrMultiple: {{
-  @genType.import(("./bindings/OpaqueTypes", "SingleOrMultiple"))
   type t<'a>
   let normalizeOrThrow: (t<'a>, ~nestedArrayDepth: int=?) => array<'a>
   let single: 'a => t<'a>
@@ -1722,7 +1710,6 @@ type contractRegisterChain = {{
 {contract_register_chain_fields}
 }}
 
-@genType
 type contractRegisterContext = {{
   log: Envio.logger,
   chain: contractRegisterChain,
@@ -1817,25 +1804,11 @@ type testIndexer = {{
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
 
-        // Append the Generated module (was in Indexer.res.hbs, now in Rust)
-        let generated_module = r#"module Generated = {
-let makeGeneratedConfig = () => {
-  Config.fromPublic(%raw(`internalConfigJson`))
-}
+        let generated_top_level_bindings =
+            r#"@module("envio") external indexer: indexer = "indexer"
 
-// Config without handler registration - used by tests, migrations, etc.
-let configWithoutRegistrations = makeGeneratedConfig()
-let allEntities = configWithoutRegistrations.allEntities
-
-}"#;
-
-        indexer_code = format!("{}\n\n{}", indexer_code, generated_module);
-
-        let generated_top_level_bindings = format!(
-            "{}\n\n{}",
-            r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#,
-            r#"let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
-        );
+@module("envio") external createTestIndexer: unit => testIndexer = "createTestIndexer""#
+                .to_string();
 
         indexer_code = format!("{}\n\n{}", indexer_code, generated_top_level_bindings);
 
@@ -1858,8 +1831,6 @@ let allEntities = configWithoutRegistrations.allEntities
                 }
             }
         };
-
-        let internal_config_json_code = cfg.to_public_config_json()?;
 
         // Generate envio.d.ts content (type declarations only)
         // Always export all ecosystem types, even when empty
@@ -2231,12 +2202,9 @@ let allEntities = configWithoutRegistrations.allEntities
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
-            envio_version: get_envio_version()?,
+            is_rescript: cfg.is_rescript,
             indexer_code,
-            internal_config_json_code,
             envio_dts_code,
-            //Used for the package.json reference to handlers in generated
-            relative_path_to_root_from_generated,
             relative_path_to_generated_from_root,
         })
     }
@@ -2280,6 +2248,21 @@ mod test {
             .expect("should be able to get project template")
     }
 
+    fn get_internal_config_json_helper(configs_file_name: &str) -> String {
+        let project_root = get_test_path_string_helper();
+        let config = format!("configs/{}", configs_file_name);
+        let generated = "generated/";
+        let project_paths =
+            ParsedProjectPaths::new(&project_root, generated, &config).expect("Parsed paths");
+
+        let config = SystemConfig::parse_from_project_files(&project_paths)
+            .expect("Deserialized yml config should be parseable");
+
+        config
+            .to_public_config_json()
+            .expect("should be able to serialize public config JSON")
+    }
+
     #[test]
     fn chain_configs_parsed_case_fuel() {
         let address1 =
@@ -2307,10 +2290,6 @@ mod test {
 
         let project_template = get_project_template_helper("fuel-config.yaml");
 
-        assert_eq!(
-            project_template.relative_path_to_root_from_generated,
-            "../.".to_string()
-        );
         assert_eq!(
           project_template.relative_path_to_generated_from_root,
           "./generated".to_string(),
@@ -2349,11 +2328,6 @@ mod test {
         let expected_chain_configs = vec![chain_config_1];
 
         let project_template = get_project_template_helper("config1.yaml");
-
-        assert_eq!(
-            project_template.relative_path_to_root_from_generated,
-            "../.".to_string()
-        );
 
         assert_eq!(
             expected_chain_configs[0].network_config,
@@ -2672,22 +2646,22 @@ mod test {
 
     #[test]
     fn internal_config_json_code_generated_for_evm() {
-        let project_template = get_project_template_helper("config1.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config1.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
     fn internal_config_json_code_generated_for_fuel() {
-        let project_template = get_project_template_helper("fuel-config.yaml");
         // Note: Fuel defaults to rollback_on_reorg: false in system_config.rs,
         // which differs from the runtime default of true, so it's included
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("fuel-config.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
     fn internal_config_json_code_with_all_options() {
-        let project_template = get_project_template_helper("config-with-all-options.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config-with-all-options.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
@@ -2706,15 +2680,15 @@ mod test {
     fn internal_config_json_code_with_no_contracts() {
         // config4.yaml has empty contracts array - tests that comma is properly
         // placed before addressFormat when contracts section is omitted
-        let project_template = get_project_template_helper("config4.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config4.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
     fn internal_config_json_code_with_multiple_contracts() {
         // config2.yaml has two contracts - tests comma separation between contracts
-        let project_template = get_project_template_helper("config2.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config2.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
@@ -2732,7 +2706,7 @@ mod test {
 
     #[test]
     fn internal_config_json_code_with_lowercase_contract_name() {
-        let project_template = get_project_template_helper("lowercase-contract-name.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("lowercase-contract-name.yaml");
+        insta::assert_snapshot!(json);
     }
 }

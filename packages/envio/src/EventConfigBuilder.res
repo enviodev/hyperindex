@@ -1,19 +1,8 @@
-// Recursive tuple/struct component metadata emitted by the CLI when an event
-// param (or any nested field) is a Solidity struct. `name` is always non-empty —
-// the CLI fills in `"0"`, `"1"`, ... for anonymous components in mixed-name
-// tuples — so the runtime can always rebuild a keyed object.
-type rec eventParamComponent = {
-  name: string,
-  abiType: string,
-  components?: array<eventParamComponent>,
-}
-
-type eventParam = {
-  name: string,
-  abiType: string,
-  indexed: bool,
-  components?: array<eventParamComponent>,
-}
+// Types moved to `Internal` so `Internal.evmEventConfig` can retain
+// `indexedParams: array<eventParam>` for post-registration filter rebuild.
+// Re-exported here as aliases for existing call sites.
+type eventParamComponent = Internal.eventParamComponent
+type eventParam = Internal.eventParam
 
 let eventParamComponentSchema = S.recursive(self =>
   S.object((s): eventParamComponent => {
@@ -488,6 +477,8 @@ let buildEvmEventConfig = (
     convertHyperSyncEventArgs: buildHyperSyncDecoder(params),
     selectedBlockFields,
     selectedTransactionFields,
+    sighash,
+    indexedParams,
   }
 }
 

@@ -123,11 +123,22 @@ module Db = {
 
 // Required env vars are validated lazily in PgStorage when the user
 // opts into ClickHouse via `storage.clickhouse: true` in config.yaml.
+//
+// Reads run at call time instead of module load. `envio dev` injects these
+// vars into `process.env` after booting its ClickHouse container, and that
+// happens strictly after this module has already been evaluated — caching
+// at module load would lock in `None` and defeat the injection.
 module ClickHouse = {
-  let host = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_HOST", S.option(S.string))
-  let database = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_DATABASE", S.option(S.string))
-  let username = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_USERNAME", S.option(S.string))
-  let password = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_PASSWORD", S.option(S.string))
+  %%private(
+    let read: string => option<string> = %raw(`(k) => {
+      const v = process.env[k];
+      return v === undefined || v === "" ? undefined : v;
+    }`)
+  )
+  let host = () => read("ENVIO_CLICKHOUSE_HOST")
+  let database = () => read("ENVIO_CLICKHOUSE_DATABASE")
+  let username = () => read("ENVIO_CLICKHOUSE_USERNAME")
+  let password = () => read("ENVIO_CLICKHOUSE_PASSWORD")
 }
 
 module Hasura = {

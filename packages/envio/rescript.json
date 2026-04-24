@@ -12,16 +12,12 @@
     "module": "esmodule",
     "in-source": true
   },
-  "gentypeconfig": {
-    "shims": {
-      "Js": "Js"
-    },
-    "generatedFileExtension": ".gen.ts",
-    "moduleResolution": "node16"
-  },
   "jsx": {
     "version": 4
   },
-  "bs-dependencies": ["rescript-schema", "@rescript/react", "rescript-envsafe"],
-  "bsc-flags": ["-open RescriptSchema"]
+  "bs-dependencies": ["rescript-schema", "@rescript/react"],
+  "bsc-flags": ["-open RescriptSchema"],
+  "warnings": {
+    "error": "+3"
+  }
 }
