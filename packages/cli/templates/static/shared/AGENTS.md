@@ -15,7 +15,7 @@ Blockchain event indexer built with [Envio HyperIndex](https://docs.envio.dev). 
 ```bash
 pnpm codegen          # Regenerate types from schema.graphql + config.yaml
 pnpm tsc --noEmit     # Type-check without emitting
-TUI_OFF=true pnpm dev # Run indexer (TUI_OFF for CI/AI-friendly output)
+pnpm dev             # Run indexer (TUI auto-disables for CI/AI/non-TTY output)
 pnpm test             # Run tests (Vitest)
 ```
 
@@ -25,7 +25,7 @@ pnpm test             # Run tests (Vitest)
 2. Run `pnpm codegen` (required after any schema/config change)
 3. Edit handlers in `src/handlers/`
 4. Run `pnpm tsc --noEmit` to type-check
-5. Run `TUI_OFF=true pnpm dev` to verify at runtime
+5. Run `pnpm dev` to verify at runtime (TUI auto-disables under agents/CI)
 
 ## Key Rules
 

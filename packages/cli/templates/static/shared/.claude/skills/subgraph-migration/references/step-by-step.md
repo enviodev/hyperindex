@@ -15,8 +15,10 @@ Use the TDD flow: write a failing test, implement, verify the test passes.
 If tests aren't sufficient to catch a runtime issue, also run:
 
 ```bash
-TUI_OFF=true pnpm dev
+pnpm dev
 ```
+
+(TUI auto-disables under agents/CI; pass `TUI_OFF=false` to force it on.)
 
 **Why this is critical:**
 - TypeScript compilation (`tsc --noEmit`) only catches syntax and type errors
@@ -25,7 +27,7 @@ TUI_OFF=true pnpm dev
 
 **Runtime Testing Checklist:**
 - [ ] After every code change, run `pnpm test`
-- [ ] If needed, run `TUI_OFF=true pnpm dev` for ~30 seconds
+- [ ] If needed, run `pnpm dev` for ~30 seconds
 - [ ] Watch the output for any error messages or warnings
 - [ ] Stop the background process after confirming it runs without errors
 - [ ] Only proceed to the next step after confirming tests pass

@@ -22,7 +22,7 @@ let serverPort =
     ~fallback=envSafe->EnvSafe.get("METRICS_PORT", S.int->S.port, ~fallback=9898),
   )
 
-let tuiOffEnvVar = envSafe->EnvSafe.get("TUI_OFF", S.bool, ~fallback=false)
+let tuiOffEnvVar = envSafe->EnvSafe.get("TUI_OFF", S.option(S.bool))
 
 let logLevelSchema = S.enum([
   #trace,

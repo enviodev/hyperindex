@@ -631,7 +631,15 @@ let start = async (
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
-  let shouldUseTui = !isTest && !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
+  let explicitTuiOff = switch mainArgs.tuiOff {
+  | Some(_) as v => v
+  | None => Env.tuiOffEnvVar
+  }
+  let shouldUseTui = switch (isTest, explicitTuiOff) {
+  | (true, _) => false
+  | (_, Some(tuiOff)) => !tuiOff
+  | (_, None) => !Envio.isNonInteractive()
+  }
   // isDevelopmentMode controls whether the indexer stays alive after all
   // chains finish (keepProcessAlive) and whether the console API is exposed.
   // Set by `envio dev` via the ENVIO_DEV_MODE env var; `envio start` leaves

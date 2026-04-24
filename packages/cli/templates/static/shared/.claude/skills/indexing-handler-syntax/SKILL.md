@@ -16,7 +16,7 @@ This is an ESM project (`"type": "module"` in package.json). Top-level `await` i
 
 1. After any change to `schema.graphql` or `config.yaml` → run `pnpm codegen`
 2. After any change to TypeScript files → run `pnpm tsc --noEmit`
-3. Once compilation succeeds → run `TUI_OFF=true pnpm dev` to catch runtime errors
+3. Once compilation succeeds → run `pnpm dev` to catch runtime errors (TUI auto-disables under agents)
 
 ## Handler Registration
 
