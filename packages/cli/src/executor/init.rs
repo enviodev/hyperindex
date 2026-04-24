@@ -312,9 +312,15 @@ pub async fn run_init_args(
     let is_nested_dir = parsed_project_paths.project_root != Path::new(".");
 
     if is_nested_dir {
-        println!("Entering project directory `{}`...", dir_name);
+        println!();
+        println!("Step 1/2: Entering project directory `{}`", dir_name);
     }
-    println!("Running tests to verify your indexer setup...");
+
+    println!();
+    println!(
+        "Step {}: Running tests to verify your indexer setup",
+        if is_nested_dir { "2/2" } else { "1/1" }
+    );
     let tests_passed =
         match commands::pm::run_script(pm, "test", &parsed_project_paths.project_root).await {
             Ok(()) => {
