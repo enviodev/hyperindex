@@ -28,38 +28,39 @@ type activeRegistration = {
 // sharing unversioned slots would corrupt state across incompatible
 // versions. On mismatch we throw with a deduplication hint instead of
 // silently mixing shapes.
+@val external globalThis: {..} = "globalThis"
+
+type registryShape = {
+  version: string,
+  eventRegistrations: dict<eventRegistration>,
+  activeRegistration: ref<option<activeRegistration>>,
+  preRegistered: array<activeRegistration => unit>,
+}
+
 %%private(
-  let registry: {
-    "eventRegistrations": dict<eventRegistration>,
-    "activeRegistration": ref<option<activeRegistration>>,
-    "preRegistered": array<activeRegistration => unit>,
-  } = {
-    let initRegistry: string => _ = %raw(`function(version) {
-      const existing = globalThis.__envioRegistry;
-      if (existing) {
-        if (existing.version !== version) {
-          throw new Error(
-            "Multiple incompatible envio versions loaded in the same process: " +
-            existing.version + " and " + version +
-            ". Deduplicate the 'envio' dependency in your project."
-          );
-        }
-        return existing;
-      }
-      const fresh = {
+  let registry: registryShape = {
+    let version = Utils.EnvioPackage.value.version
+    let existing: Nullable.t<registryShape> = globalThis["__envioRegistry"]
+    switch existing->Nullable.toOption {
+    | Some(existing) if existing.version === version => existing
+    | Some(existing) =>
+      JsError.throwWithMessage(
+        `Multiple incompatible envio versions loaded in the same process: ${existing.version} and ${version}. Deduplicate the 'envio' dependency in your project.`,
+      )
+    | None =>
+      let fresh = {
         version,
-        eventRegistrations: {},
-        activeRegistration: { contents: undefined },
+        eventRegistrations: Dict.make(),
+        activeRegistration: ref(None),
         preRegistered: [],
-      };
-      globalThis.__envioRegistry = fresh;
-      return fresh;
-    }`)
-    initRegistry(Utils.EnvioPackage.value.version)
+      }
+      globalThis["__envioRegistry"] = fresh
+      fresh
+    }
   }
 )
 
-let eventRegistrations = registry["eventRegistrations"]
+let eventRegistrations = registry.eventRegistrations
 
 let getKey = (~contractName, ~eventName) => contractName ++ "." ++ eventName
 
@@ -74,7 +75,7 @@ let set = (~contractName, ~eventName, registration) => {
   eventRegistrations->Dict.set(getKey(~contractName, ~eventName), registration)
 }
 
-let activeRegistration = registry["activeRegistration"]
+let activeRegistration = registry.activeRegistration
 
 // Might happen for tests when the handler file
 // is imported by a non-envio process (eg mocha)
@@ -83,7 +84,7 @@ let activeRegistration = registry["activeRegistration"]
 // Theoretically we could keep preRegistration without an explicit start
 // but I want it to be this way, so for the actual indexer run
 // an error is thrown with the exact stack trace where the handler was registered.
-let preRegistered = registry["preRegistered"]
+let preRegistered = registry.preRegistered
 
 let withRegistration = (fn: activeRegistration => unit) => {
   switch activeRegistration.contents {
