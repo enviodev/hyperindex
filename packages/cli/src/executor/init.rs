@@ -312,8 +312,11 @@ pub async fn run_init_args(
     println!();
     println!("Your indexer is ready! Pick how you'd like to run it:");
     println!();
-    println!("  1. {} dev     # run locally", pm.cmd());
-    println!("  2. {} test    # run the tests", pm.cmd());
+    println!(
+        "  1. {} test    # run the tests (recommended for AI)",
+        pm.cmd()
+    );
+    println!("  2. {} dev     # run locally", pm.cmd());
     println!("  3. {} start   # run in production", pm.cmd());
 
     Ok(())
