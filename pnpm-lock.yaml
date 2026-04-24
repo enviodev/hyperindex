@@ -29,7 +29,7 @@ importers:
         version: 22.19.7
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3)
+        version: link:../envio
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
@@ -71,7 +71,7 @@ importers:
         version: 0.96.1
       '@rescript/react':
         specifier: 0.14.1
-        version: 0.14.1(react-dom@19.2.3(react@19.2.0))(react@19.2.0)
+        version: 0.14.1(react-dom@19.2.3(react@19.2.5))(react@19.2.5)
       '@rescript/runtime':
         specifier: 12.2.0
         version: 12.2.0
@@ -92,13 +92,13 @@ importers:
         version: 4.19.2
       ink:
         specifier: 6.8.0
-        version: 6.8.0(react@19.2.0)
+        version: 6.8.0(react@19.2.5)
       ink-big-text:
         specifier: 2.0.0
-        version: 2.0.0(ink@6.8.0(react@19.2.0))(react@19.2.0)
+        version: 2.0.0(ink@6.8.0(react@19.2.5))(react@19.2.5)
       ink-spinner:
         specifier: 5.0.0
-        version: 5.0.0(ink@6.8.0(react@19.2.0))(react@19.2.0)
+        version: 5.0.0(ink@6.8.0(react@19.2.5))(react@19.2.5)
       js-sdsl:
         specifier: 4.4.2
         version: 4.4.2
@@ -115,8 +115,8 @@ importers:
         specifier: 15.1.3
         version: 15.1.3
       react:
-        specifier: 19.2.0
-        version: 19.2.0
+        specifier: 19.2.5
+        version: 19.2.5
       rescript-schema:
         specifier: 9.5.1
         version: 9.5.1(rescript@12.2.0)
@@ -138,7 +138,7 @@ importers:
     dependencies:
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3)
+        version: link:../../packages/envio
     devDependencies:
       '@types/node':
         specifier: ^24.10.1
@@ -190,13 +190,13 @@ importers:
     dependencies:
       '@rescript/react':
         specifier: 0.14.1
-        version: 0.14.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        version: 0.14.1(react-dom@19.2.3(react@19.2.5))(react@19.2.5)
       '@rescript/runtime':
         specifier: 12.2.0
         version: 12.2.0
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3)
+        version: link:../../packages/envio
       rescript:
         specifier: 12.2.0
         version: 12.2.0
@@ -211,7 +211,7 @@ importers:
     dependencies:
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3)
+        version: link:../../packages/envio
       rescript:
         specifier: 12.2.0
         version: 12.2.0
@@ -240,7 +240,7 @@ importers:
         version: 9.3.1
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3)
+        version: link:../../packages/envio
       helpers:
         specifier: workspace:*
         version: link:../helpers
@@ -1526,11 +1526,6 @@ packages:
   end-of-stream@1.4.5:
     resolution: {integrity: sha512-ooEGc6HP26xXq/N+GCGOT0JKCLDGrq2bQUZrQ7gyrJiZANJ/8YDTxTpQBXGMn+WbIQXNVpyWymm7KYVICQnyOg==}
 
-  envio@file:packages/envio:
-    resolution: {directory: packages/envio, type: directory}
-    engines: {node: '>=22.0.0'}
-    hasBin: true
-
   environment@1.1.0:
     resolution: {integrity: sha512-xUtoPkMggbz0MPyPiIWr1Kp4aeWJjDZ6SMvURhimjdZgsRuDplF5/s9hcgGhyXMhs+6vpnuoiZ2kFiu3FMnS8Q==}
     engines: {node: '>=18'}
@@ -2412,12 +2407,8 @@ packages:
     peerDependencies:
       react: ^19.2.0
 
-  react@19.2.0:
-    resolution: {integrity: sha512-tmbWg6W31tQLeB5cdIBOicJDJRR2KzXsV7uSK9iNfLWQ5bIZfxuPEHp7M8wiHyHnn0DD1i7w3Zmin0FtkrwoCQ==}
-    engines: {node: '>=0.10.0'}
-
-  react@19.2.3:
-    resolution: {integrity: sha512-Ku/hhYbVjOQnXDZFv2+RibmLFGwFdeeKHFcOTlrt7xplBnya5OGn/hIRDsqDiSUcfORsDC7MPxwork8jBwsIWA==}
+  react@19.2.5:
+    resolution: {integrity: sha512-llUJLzz1zTUBrskt2pwZgLq59AemifIftw4aB7JxOqf1HY2FDaGDxgwpAPVzHU1kdWabH7FauP4i1oEeer2WCA==}
     engines: {node: '>=0.10.0'}
 
   real-require@0.2.0:
@@ -3605,20 +3596,10 @@ snapshots:
   '@rescript/linux-x64@12.2.0':
     optional: true
 
-  '@rescript/react@0.14.1(react-dom@19.2.3(react@19.2.0))(react@19.2.0)':
+  '@rescript/react@0.14.1(react-dom@19.2.3(react@19.2.5))(react@19.2.5)':
     dependencies:
-      react: 19.2.0
-      react-dom: 19.2.3(react@19.2.0)
-
-  '@rescript/react@0.14.1(react-dom@19.2.3(react@19.2.3))(react@19.2.0)':
-    dependencies:
-      react: 19.2.0
-      react-dom: 19.2.3(react@19.2.3)
-
-  '@rescript/react@0.14.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
-    dependencies:
-      react: 19.2.3
-      react-dom: 19.2.3(react@19.2.3)
+      react: 19.2.5
+      react-dom: 19.2.3(react@19.2.5)
 
   '@rescript/runtime@12.2.0': {}
 
@@ -4211,48 +4192,6 @@ snapshots:
     dependencies:
       once: 1.4.0
 
-  envio@file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3):
-    dependencies:
-      '@clickhouse/client': 1.17.0
-      '@elastic/ecs-pino-format': 1.4.0
-      '@envio-dev/hyperfuel-client': 1.2.2
-      '@envio-dev/hypersync-client': 1.3.0
-      '@fuel-ts/crypto': 0.96.1
-      '@fuel-ts/errors': 0.96.1
-      '@fuel-ts/hasher': 0.96.1
-      '@fuel-ts/math': 0.96.1
-      '@fuel-ts/utils': 0.96.1
-      '@rescript/react': 0.14.1(react-dom@19.2.3(react@19.2.3))(react@19.2.0)
-      '@rescript/runtime': 12.2.0
-      bignumber.js: 9.3.1
-      date-fns: 3.3.1
-      dotenv: 16.4.5
-      eventsource: 4.1.0
-      express: 4.19.2
-      ink: 6.8.0(react@19.2.0)
-      ink-big-text: 2.0.0(ink@6.8.0(react@19.2.0))(react@19.2.0)
-      ink-spinner: 5.0.0(ink@6.8.0(react@19.2.0))(react@19.2.0)
-      js-sdsl: 4.4.2
-      pino: 10.3.1
-      pino-pretty: 13.1.3
-      postgres: 3.4.8
-      prom-client: 15.1.3
-      react: 19.2.0
-      rescript-schema: 9.5.1(rescript@12.2.0)
-      tsx: 4.21.0
-      viem: 2.46.2(typescript@5.9.3)
-      yargs: 17.7.2
-    transitivePeerDependencies:
-      - '@types/react'
-      - bufferutil
-      - react-devtools-core
-      - react-dom
-      - rescript
-      - supports-color
-      - typescript
-      - utf-8-validate
-      - zod
-
   environment@1.1.0: {}
 
   error-ex@1.3.4:
@@ -4577,20 +4516,20 @@ snapshots:
 
   inherits@2.0.4: {}
 
-  ink-big-text@2.0.0(ink@6.8.0(react@19.2.0))(react@19.2.0):
+  ink-big-text@2.0.0(ink@6.8.0(react@19.2.5))(react@19.2.5):
     dependencies:
       cfonts: 3.3.1
-      ink: 6.8.0(react@19.2.0)
+      ink: 6.8.0(react@19.2.5)
       prop-types: 15.8.1
-      react: 19.2.0
+      react: 19.2.5
 
-  ink-spinner@5.0.0(ink@6.8.0(react@19.2.0))(react@19.2.0):
+  ink-spinner@5.0.0(ink@6.8.0(react@19.2.5))(react@19.2.5):
     dependencies:
       cli-spinners: 2.9.2
-      ink: 6.8.0(react@19.2.0)
-      react: 19.2.0
+      ink: 6.8.0(react@19.2.5)
+      react: 19.2.5
 
-  ink@6.8.0(react@19.2.0):
+  ink@6.8.0(react@19.2.5):
     dependencies:
       '@alcalzone/ansi-tokenize': 0.2.5
       ansi-escapes: 7.3.0
@@ -4605,8 +4544,8 @@ snapshots:
       indent-string: 5.0.0
       is-in-ci: 2.0.0
       patch-console: 2.0.0
-      react: 19.2.0
-      react-reconciler: 0.33.0(react@19.2.0)
+      react: 19.2.5
+      react-reconciler: 0.33.0(react@19.2.5)
       scheduler: 0.27.0
       signal-exit: 3.0.7
       slice-ansi: 8.0.0
@@ -5386,28 +5325,21 @@ snapshots:
       iconv-lite: 0.4.24
       unpipe: 1.0.0
 
-  react-dom@19.2.3(react@19.2.0):
+  react-dom@19.2.3(react@19.2.5):
     dependencies:
-      react: 19.2.0
-      scheduler: 0.27.0
-
-  react-dom@19.2.3(react@19.2.3):
-    dependencies:
-      react: 19.2.3
+      react: 19.2.5
       scheduler: 0.27.0
 
   react-is@16.13.1: {}
 
   react-is@17.0.2: {}
 
-  react-reconciler@0.33.0(react@19.2.0):
+  react-reconciler@0.33.0(react@19.2.5):
     dependencies:
-      react: 19.2.0
+      react: 19.2.5
       scheduler: 0.27.0
 
-  react@19.2.0: {}
-
-  react@19.2.3: {}
+  react@19.2.5: {}
 
   real-require@0.2.0: {}
 
