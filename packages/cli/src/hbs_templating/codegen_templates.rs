@@ -19,7 +19,7 @@ use crate::{
     persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{path_utils::add_leading_relative_dot, ParsedProjectPaths},
     template_dirs::TemplateDirs,
-    type_schema::{RecordField, SchemaMode, TypeExpr, TypeIdent},
+    type_schema::{RecordField, TypeExpr, TypeIdent},
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{anyhow, Context, Result};
@@ -194,7 +194,6 @@ impl CompositeIndexFieldTemplate {
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub type_code: String,
-    pub schema_code: String,
     pub get_where_filter_code: String,
     pub postgres_fields: Vec<field_types::Field>,
     pub composite_indices: Vec<Vec<CompositeIndexFieldTemplate>>,
@@ -236,9 +235,7 @@ impl EntityRecordTypeTemplate {
                 entity.name
             ))?;
 
-        let type_expr = TypeExpr::Record(record_fields);
-        let type_code = type_expr.to_string();
-        let schema_code = type_expr.to_rescript_schema(&"t".to_string(), &SchemaMode::ForDb);
+        let type_code = TypeExpr::Record(record_fields).to_string();
 
         let postgres_fields = entity
             .get_fields()
@@ -292,7 +289,6 @@ impl EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
             postgres_fields,
             type_code,
-            schema_code,
             get_where_filter_code,
             derived_fields,
             composite_indices,
@@ -656,10 +652,8 @@ impl ContractTemplate {
                 // template literal.
                 format!(
                     "let abi = FuelSDK.transpileAbi((await \
-                     Utils.importPathWithJson(`../{}`))[\"default\"])\n{}\n{}",
-                    abi.path_relative_to_root,
-                    all_abi_type_declarations,
-                    all_abi_type_declarations.to_rescript_schema(&SchemaMode::ForDb)
+                     Utils.importPathWithJson(`../{}`))[\"default\"])\n{}",
+                    abi.path_relative_to_root, all_abi_type_declarations,
                 )
             }
         };
@@ -847,7 +841,6 @@ impl FieldSelection {
             block_field_templates.push(SelectedFieldTemplate {
                 name: name.clone(),
                 res_name,
-                default_value_rescript: field.data_type.get_default_value_rescript(),
                 ts_type: field.data_type.to_ts_type_string(),
                 res_type: field.data_type.to_string(),
             });
@@ -865,7 +858,6 @@ impl FieldSelection {
             transaction_field_templates.push(SelectedFieldTemplate {
                 name: name.clone(),
                 res_name,
-                default_value_rescript: field.data_type.get_default_value_rescript(),
                 ts_type: field.data_type.to_ts_type_string(),
                 res_type: field.data_type.to_string(),
             });
@@ -901,7 +893,6 @@ struct SelectedFieldTemplate {
     res_name: String,
     res_type: String,
     ts_type: String,
-    default_value_rescript: String,
 }
 
 #[derive(Serialize)]
@@ -1632,8 +1623,6 @@ type handlerContext = {{
             r#"//*************
 //**CONTRACTS**
 //*************
-
-open RescriptSchema
 
 module Transaction = {{
   type t = {transaction_module_type}
