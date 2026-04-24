@@ -28,8 +28,6 @@ type activeRegistration = {
 // sharing unversioned slots would corrupt state across incompatible
 // versions. On mismatch we throw with a deduplication hint instead of
 // silently mixing shapes.
-@val external globalThis: {..} = "globalThis"
-
 type registryShape = {
   version: string,
   eventRegistrations: dict<eventRegistration>,
@@ -37,11 +35,16 @@ type registryShape = {
   preRegistered: array<activeRegistration => unit>,
 }
 
+// Record type with `mutable` so assignment typechecks; ReScript keeps the
+// field name verbatim in the generated JS so the globalThis slot is
+// `__envioRegistry`.
+type globalThis = {mutable __envioRegistry: Nullable.t<registryShape>}
+@val external globalThis: globalThis = "globalThis"
+
 %%private(
   let registry: registryShape = {
     let version = Utils.EnvioPackage.value.version
-    let existing: Nullable.t<registryShape> = globalThis["__envioRegistry"]
-    switch existing->Nullable.toOption {
+    switch globalThis.__envioRegistry->Nullable.toOption {
     | Some(existing) if existing.version === version => existing
     | Some(existing) =>
       JsError.throwWithMessage(
@@ -54,7 +57,7 @@ type registryShape = {
         activeRegistration: ref(None),
         preRegistered: [],
       }
-      globalThis["__envioRegistry"] = fresh
+      globalThis.__envioRegistry = Nullable.make(fresh)
       fresh
     }
   }
