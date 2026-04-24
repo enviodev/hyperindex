@@ -158,7 +158,7 @@ importers:
     dependencies:
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.3))(rescript@12.2.0)(typescript@5.9.3)
+        version: link:../../packages/envio
       rescript:
         specifier: 12.2.0
         version: 12.2.0
@@ -273,6 +273,8 @@ importers:
       generated:
         specifier: ./generated
         version: link:generated
+
+  scenarios/test_codegen/generated: {}
 
 packages:
 

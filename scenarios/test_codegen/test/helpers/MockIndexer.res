@@ -174,6 +174,8 @@ module Storage = {
           })
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
+        readEnvioInfo: () => JsError.throwWithMessage("Not implemented"),
+        writeEnvioInfo: (~config as _) => JsError.throwWithMessage("Not implemented"),
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
         pruneStaleCheckpoints: (~safeCheckpointId as _) =>
           JsError.throwWithMessage("Not implemented"),

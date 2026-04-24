@@ -282,25 +282,41 @@ WHERE "id" = $1;`
   }
 }
 
-module PersistedState = {
-  type t = {
-    id: int,
-    envio_version: string,
-    config_hash: string,
-    schema_hash: string,
-    abi_files_hash: string,
-  }
+module EnvioInfo = {
+  // Single-row table: id is always 1.
+  let rowId = 1
 
   let table = mkTable(
-    "persisted_state",
+    "envio_info",
     ~fields=[
-      mkField("id", Serial, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField("envio_version", String, ~fieldSchema=S.string),
-      mkField("config_hash", String, ~fieldSchema=S.string),
-      mkField("schema_hash", String, ~fieldSchema=S.string),
-      mkField("abi_files_hash", String, ~fieldSchema=S.string),
+      mkField("id", Int32, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField("config", Json, ~fieldSchema=S.json(~validate=false)),
     ],
   )
+
+  let makeSelectQuery = (~pgSchema) =>
+    `SELECT "config" FROM "${pgSchema}"."${table.tableName}" WHERE "id" = ${rowId->Int.toString};`
+
+  let makeUpsertQuery = (~pgSchema) =>
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "config")
+VALUES (${rowId->Int.toString}, $1::jsonb)
+ON CONFLICT ("id") DO UPDATE SET "config" = EXCLUDED."config";`
+
+  let read = (sql, ~pgSchema): promise<option<JSON.t>> => {
+    sql
+    ->Postgres.unsafe(makeSelectQuery(~pgSchema))
+    ->(Utils.magic: promise<array<unknown>> => promise<array<{"config": JSON.t}>>)
+    ->Promise.thenResolve(rows => rows->Belt.Array.get(0)->Belt.Option.map(row => row["config"]))
+  }
+
+  let upsert = (sql, ~pgSchema, ~config: JSON.t) => {
+    sql
+    ->Postgres.preparedUnsafe(
+      makeUpsertQuery(~pgSchema),
+      [config->JSON.stringify]->(Utils.magic: array<string> => unknown),
+    )
+    ->Utils.Promise.ignoreValue
+  }
 }
 
 module Checkpoints = {

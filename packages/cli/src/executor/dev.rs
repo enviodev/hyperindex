@@ -85,64 +85,11 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
         }
     }
 
-    //Get the persisted state from the db.
-    //Skip the read entirely when restarting — we don't use the result.
-    let persisted_state_db = if restart {
-        None
-    } else {
-        Some(
-            PersistedStateExists::read_from_db()
-                .await
-                .context("Failed to read persisted state from the DB")?,
-        )
-    };
-
-    // When the DB already has indexer state for this project, refuse to silently
-    // wipe it — the user must explicitly opt in with `envio dev -r`.
-    if let Some(PersistedStateExists::Exists(persisted_state)) = &persisted_state_db {
-        let (_, changes_detected) = current_state.should_run_db_migrations(persisted_state);
-        if !changes_detected.is_empty() {
-            let fields = changes_detected
-                .iter()
-                .map(|f| f.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(anyhow!(
-                "Incompatible change detected in {fields}. Reverse the changes to continue \
-                 indexing with the existing state, or run `envio dev -r` to clear the database \
-                 and re-index from scratch."
-            ));
-        }
-    }
-
-    let needs_migration = match &persisted_state_db {
-        None => {
-            println!("Resetting the database for a fresh indexer run");
-            true
-        }
-        Some(PersistedStateExists::NotExists) => {
-            println!("No existing database schema found — creating one");
-            true
-        }
-        Some(PersistedStateExists::Corrupted) => {
-            println!("Could not read the previous indexer state from the database — resetting");
-            true
-        }
-        // `Exists` with a diff returned above; this arm means no diff, so the
-        // existing indexer state is reused and no migrations are needed.
-        Some(PersistedStateExists::Exists(_)) => false,
-    };
-
-    let migrate = if needs_migration {
-        Some(MigrateOpts {
-            // `envio dev` always does a full reset when migrations are needed
-            // (matches prior behavior of `run_db_setup`).
-            reset: true,
-            persisted_state: current_state,
-        })
-    } else {
-        None
-    };
+    // DB compatibility and migration decisions now live in ReScript — we always
+    // send a migrate opts, and the runtime reads `envio_info`, compares against
+    // the current config, and either reuses the existing schema, initializes a
+    // fresh one, or errors out on incompatible changes.
+    let migrate = Some(MigrateOpts { reset: restart });
 
     let mut indexer_env = up_result.indexer_env.clone();
     indexer_env.push(("ENVIO_DEV_MODE".to_string(), "true".to_string()));

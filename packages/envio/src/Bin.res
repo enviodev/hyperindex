@@ -20,7 +20,7 @@ type startCmd = {
   env: dict<JSON.t>,
   config: JSON.t,
 }
-type migrateCmd = {reset: bool, persistedState: JSON.t, config: JSON.t}
+type migrateCmd = {reset: bool, config: JSON.t}
 type dropSchemaCmd = {config: JSON.t}
 
 type command =
@@ -66,9 +66,9 @@ let run = async args => {
         processChdir(cwd)
         applyEnv(env)
         await Main.start(~migrate=?migrate->Null.toOption)
-      | Migrate({reset, persistedState, config}) =>
+      | Migrate({reset, config}) =>
         Config.prime(config)
-        await Main.migrate(~reset, ~persistedState)
+        await Main.migrate(~reset)
       | DropSchema({config}) =>
         Config.prime(config)
         await Main.dropSchema()

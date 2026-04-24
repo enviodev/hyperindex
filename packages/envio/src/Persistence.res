@@ -80,6 +80,12 @@ type storage = {
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,
+  // Read the persisted public config JSON written on the last successful
+  // initialization. `None` means the table row has never been written yet.
+  readEnvioInfo: unit => promise<option<JSON.t>>,
+  // Upsert the public config JSON used for compatibility checks on restart.
+  // Callers are expected to strip sensitive fields (e.g. RPC urls) first.
+  writeEnvioInfo: (~config: JSON.t) => promise<unit>,
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints

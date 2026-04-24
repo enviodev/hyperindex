@@ -185,7 +185,7 @@ let makeInitializeTransaction = (
 ) => {
   let generalTables = [
     InternalTable.Chains.table,
-    InternalTable.PersistedState.table,
+    InternalTable.EnvioInfo.table,
     InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
   ]
@@ -1648,6 +1648,9 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     )
   }
 
+  let readEnvioInfo = () => InternalTable.EnvioInfo.read(sql, ~pgSchema)
+  let writeEnvioInfo = (~config) => InternalTable.EnvioInfo.upsert(sql, ~pgSchema, ~config)
+
   {
     name: "postgres",
     isInitialized,
@@ -1657,6 +1660,8 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     loadByIdsOrThrow,
     dumpEffectCache,
     reset,
+    readEnvioInfo,
+    writeEnvioInfo,
     setChainMeta,
     pruneStaleCheckpoints,
     pruneStaleEntityHistory,

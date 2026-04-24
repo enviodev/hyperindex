@@ -861,6 +861,49 @@ let prime = (json: JSON.t): unit => {
   cached := None
 }
 
+let getPublicConfigJson = () =>
+  switch primedJson.contents {
+  | Some(json) => json
+  | None => Core.getConfigJson()->JSON.parseOrThrow
+  }
+
+// RPC urls (and fallback/ws/svm `rpc`) can carry secrets, so drop them
+// before the config is written to `envio_info`. Works on a deep clone
+// so the caller's JSON is not mutated.
+let stripSensitiveData = (json: JSON.t): JSON.t => {
+  let cloned = json->JSON.stringify->JSON.parseOrThrow
+  let stripChains = (ecosystem: option<JSON.t>) => {
+    switch ecosystem->Option.flatMap(JSON.Decode.object) {
+    | Some(ecosystemDict) =>
+      switch ecosystemDict->Dict.get("chains")->Option.flatMap(JSON.Decode.object) {
+      | Some(chains) =>
+        chains
+        ->Dict.valuesToArray
+        ->Array.forEach(chainJson => {
+          switch chainJson->JSON.Decode.object {
+          | Some(chain) => {
+              chain->Utils.Dict.deleteInPlace("rpcs")
+              chain->Utils.Dict.deleteInPlace("rpc")
+            }
+          | None => ()
+          }
+        })
+      | None => ()
+      }
+    | None => ()
+    }
+  }
+  switch cloned->JSON.Decode.object {
+  | Some(obj) => {
+      stripChains(obj->Dict.get("evm"))
+      stripChains(obj->Dict.get("fuel"))
+      stripChains(obj->Dict.get("svm"))
+    }
+  | None => ()
+  }
+  cloned
+}
+
 // The returned value is a pure function of the JSON — no handler
 // registrations are applied here. Post-registration configs come from
 // `HandlerLoader.applyRegistrations`. That purity is what lets this

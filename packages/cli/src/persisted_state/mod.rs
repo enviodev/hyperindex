@@ -1,4 +1,3 @@
-mod db;
 mod hash_string;
 
 use crate::{
@@ -8,15 +7,13 @@ use crate::{
 use anyhow::Context;
 use hash_string::HashString;
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use std::{
     fmt::{self, Display},
     path::PathBuf,
 };
-use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PersistedState {
     pub envio_version: String,
     pub config_hash: HashString,
@@ -109,18 +106,6 @@ impl PersistedState {
 
         let non_matching_fields =
             self.get_non_matching_fields(persisted_state_file, codegen_affecting_fields);
-
-        (!non_matching_fields.is_empty(), non_matching_fields)
-    }
-
-    ///Compares the current state and a persisted state on the db, returning a boolean of whether
-    ///migrations should be run and a vector of the changed fields that make the rerun necessary
-    pub fn should_run_db_migrations(&self, persisted_state_db: &Self) -> (bool, Vec<StateField>) {
-        //Check if any changes to the state and report which fields. All should invoke a migration
-        let codegen_affecting_fields: Vec<_> = StateField::iter().collect();
-
-        let non_matching_fields =
-            self.get_non_matching_fields(persisted_state_db, codegen_affecting_fields);
 
         (!non_matching_fields.is_empty(), non_matching_fields)
     }
@@ -225,60 +210,6 @@ mod test {
 
         assert!(
             !should_run_codegen,
-            "should run codegen should be false since nothing changed"
-        );
-    }
-
-    #[test]
-    fn should_run_db_migrations() {
-        let persisted_db: PersistedState = serde_json::from_value(json!({
-            "envio_version": "0.0.1",
-            "config_hash": "<HASH_STRING>",
-            "schema_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>",
-        }))
-        .unwrap();
-
-        let current_state: PersistedState = serde_json::from_value(json!({
-            "envio_version": "0.0.1",
-            "config_hash": "<HASH_STRING>",
-            "schema_hash": "<CHANGED_HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>",
-        }))
-        .unwrap();
-
-        let (should_run_db_migrations, _changed_fields) =
-            current_state.should_run_db_migrations(&persisted_db);
-
-        assert!(
-            should_run_db_migrations,
-            "should run codegen should be true due since a change occurred"
-        );
-    }
-
-    #[test]
-    fn should_not_run_db_migrations() {
-        let persisted_db: PersistedState = serde_json::from_value(json!({
-            "envio_version": "0.0.1",
-            "config_hash": "<HASH_STRING>",
-            "schema_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>",
-        }))
-        .unwrap();
-
-        let current_state: PersistedState = serde_json::from_value(json!({
-            "envio_version": "0.0.1",
-            "config_hash": "<HASH_STRING>",
-            "schema_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>",
-        }))
-        .unwrap();
-
-        let (should_run_db_migrations, _changed_fields) =
-            current_state.should_run_db_migrations(&persisted_db);
-
-        assert!(
-            !should_run_db_migrations,
             "should run codegen should be false since nothing changed"
         );
     }

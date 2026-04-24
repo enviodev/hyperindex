@@ -182,6 +182,8 @@ let makeStorage = (proxy: t): Persistence.storage => {
   },
   dumpEffectCache: async () => (),
   reset: async () => (),
+  readEnvioInfo: async () => None,
+  writeEnvioInfo: async (~config as _) => (),
   setChainMeta: async _ => Obj.magic(),
   pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
   pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>

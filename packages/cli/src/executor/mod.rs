@@ -3,7 +3,7 @@ use crate::{
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     config_parsing::{human_config, system_config::SystemConfig},
     docker_env,
-    persisted_state::{self, PersistedState, PersistedStateExists},
+    persisted_state::{self, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     scripts,
 };
@@ -34,8 +34,6 @@ pub enum Command {
     },
     Migrate {
         reset: bool,
-        #[serde(rename = "persistedState")]
-        persisted_state: PersistedState,
         config: serde_json::Value,
     },
     DropSchema {
@@ -46,8 +44,6 @@ pub enum Command {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MigrateOpts {
     pub reset: bool,
-    #[serde(rename = "persistedState")]
-    pub persisted_state: PersistedState,
 }
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
@@ -117,12 +113,7 @@ pub async fn execute(
                 .context("Failed parsing config")?;
 
             let migrate = if start_args.restart {
-                let persisted_state = PersistedState::get_current_state(&config)
-                    .context("Failed constructing persisted state")?;
-                Some(MigrateOpts {
-                    reset: true,
-                    persisted_state,
-                })
+                Some(MigrateOpts { reset: true })
             } else {
                 None
             };
