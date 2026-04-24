@@ -303,6 +303,17 @@ impl EnvConfig {
         h.update(&self.pg_password);
         h.update(&self.pg_user);
         h.update(&self.pg_database);
+        // HASURA_GRAPHQL_DATABASE_URL embeds the PG host + port, so toggling
+        // ENVIO_PG_HOST (external ↔ managed) or changing the port changes
+        // the container's baked-in DSN. Without these in the hash, drift
+        // isn't detected and Hasura silently keeps pointing at the old DB.
+        h.update(if self.pg_is_external() {
+            "ext"
+        } else {
+            "local"
+        });
+        h.update(self.pg_host_str());
+        h.update(&self.pg_port);
         h.update(&self.hasura_port);
         h.update(&self.hasura_enable_console);
         h.update(&self.hasura_admin_secret);
@@ -767,13 +778,39 @@ fn format_pg_drift(env: &EnvConfig, port: u16, drift: &DriftInfo) -> String {
     )
 }
 
+/// Parse the user/database out of a `postgres://…` URL. Password and host
+/// are intentionally dropped: password is never displayed, and host changes
+/// don't carry actionable meaning in a drift message (the user controls
+/// that via ENVIO_PG_HOST which lives outside the container).
+fn parse_pg_url_user_db(url: &str) -> Option<(String, String)> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let user = parsed.username().to_string();
+    let db = parsed.path().trim_start_matches('/').to_string();
+    if user.is_empty() && db.is_empty() {
+        return None;
+    }
+    Some((user, db))
+}
+
 fn format_hasura_drift(env: &EnvConfig, port: u16, drift: &DriftInfo) -> String {
     let mut diff = String::new();
-    diff.push_str(&diff_field(
-        "HASURA_EXTERNAL_PORT",
-        &env.hasura_port,
-        drift.env.get("PORT"),
-    ));
+
+    // Hasura's PG creds live inside HASURA_GRAPHQL_DATABASE_URL rather than
+    // as individual env vars, so parse user/db out of the URL for display.
+    // Password differences are never echoed — flagged with a single note.
+    if let Some(url) = drift.env.get("HASURA_GRAPHQL_DATABASE_URL") {
+        if let Some((u_user, u_db)) = parse_pg_url_user_db(url) {
+            diff.push_str(&diff_field("ENVIO_PG_USER", &env.pg_user, Some(&u_user)));
+            diff.push_str(&diff_field(
+                "ENVIO_PG_DATABASE",
+                &env.pg_database,
+                Some(&u_db),
+            ));
+            if !url.contains(&format!(":{}@", env.pg_password)) {
+                diff.push_str("    ENVIO_PG_PASSWORD: differs from existing container\n");
+            }
+        }
+    }
     diff.push_str(&diff_field(
         "HASURA_GRAPHQL_ENABLE_CONSOLE",
         &env.hasura_enable_console,
@@ -785,7 +822,10 @@ fn format_hasura_drift(env: &EnvConfig, port: u16, drift: &DriftInfo) -> String 
     };
     diff.push_str(&secret_note);
     if diff.is_empty() {
-        diff.push_str("    (database URL or other field)\n");
+        // Port binding (HASURA_EXTERNAL_PORT) changes don't show up in the
+        // container's env vars, so we can't enumerate them — the config hash
+        // still catches the drift, we just can't point at a specific field.
+        diff.push_str("    (port binding or other configuration field)\n");
     }
 
     format!(
@@ -1954,5 +1994,106 @@ mod tests {
             !foreign.contains("ENVIO_CLICKHOUSE_HOST is set"),
         ];
         assert_eq!((external_checks, foreign_checks), ([true; 4], [true; 3]));
+    }
+
+    #[test]
+    fn hasura_hash_changes_on_pg_external_toggle_and_port() {
+        // HASURA_GRAPHQL_DATABASE_URL embeds the PG host and port, so both
+        // flipping ENVIO_PG_HOST on/off and changing ENVIO_PG_PORT must
+        // force a Hasura recreate. These used to silently slip past the
+        // drift check, leaving Hasura pointed at the wrong DB.
+        let base = default_env();
+        let toggled = EnvConfig {
+            pg_host: Some("localhost".into()),
+            ..default_env()
+        };
+        let reported = EnvConfig {
+            pg_port: "5434".into(),
+            ..default_env()
+        };
+        assert_ne!(base.hasura_config_hash(), toggled.hasura_config_hash());
+        assert_ne!(base.hasura_config_hash(), reported.hasura_config_hash());
+    }
+
+    fn hasura_drift_fixture(database_url: &str, admin_secret: &str) -> DriftInfo {
+        let mut env = HashMap::new();
+        env.insert(
+            "HASURA_GRAPHQL_DATABASE_URL".to_string(),
+            database_url.to_string(),
+        );
+        env.insert(
+            "HASURA_GRAPHQL_ENABLE_CONSOLE".to_string(),
+            "true".to_string(),
+        );
+        env.insert(
+            "HASURA_GRAPHQL_ADMIN_SECRET".to_string(),
+            admin_secret.to_string(),
+        );
+        DriftInfo {
+            project: Some("/home/alice/indexer".to_string()),
+            env,
+        }
+    }
+
+    #[test]
+    fn hasura_drift_error_surfaces_embedded_pg_creds() {
+        // Previously this formatter compared HASURA_EXTERNAL_PORT (host
+        // binding) against the container's PORT env var (hardcoded 8080),
+        // so every diff said "8080 (existing: 8080)". Now the PG creds
+        // baked into DATABASE_URL are what get diffed.
+        let env = default_env();
+        let drift = hasura_drift_fixture(
+            "postgres://postgres:old-pw@envio-postgres:5432/old-db",
+            "testing",
+        );
+        let msg = format_hasura_drift(&env, 8080, &drift);
+        let checks = [
+            msg.contains("envio-hasura"),
+            msg.contains("/home/alice/indexer"),
+            msg.contains("ENVIO_PG_DATABASE"),
+            msg.contains("\"envio-dev\""),
+            msg.contains("\"old-db\""),
+            msg.contains("ENVIO_PG_PASSWORD: differs"),
+            !msg.contains("HASURA_EXTERNAL_PORT"),
+            !msg.contains("old-pw"),
+            !msg.contains(&env.pg_password),
+            msg.contains("docker rm -f envio-hasura"),
+        ];
+        assert_eq!(checks, [true; 10]);
+    }
+
+    #[test]
+    fn hasura_drift_error_flags_admin_secret_without_echoing() {
+        let env = default_env();
+        let drift = hasura_drift_fixture(
+            "postgres://postgres:testing@envio-postgres:5432/envio-dev",
+            "different-secret",
+        );
+        let msg = format_hasura_drift(&env, 8080, &drift);
+        let checks = [
+            msg.contains("HASURA_GRAPHQL_ADMIN_SECRET: differs"),
+            !msg.contains("different-secret"),
+            !msg.contains(&env.hasura_admin_secret),
+            // PG creds match, so no PG password note.
+            !msg.contains("ENVIO_PG_PASSWORD: differs"),
+        ];
+        assert_eq!(checks, [true; 4]);
+    }
+
+    #[test]
+    fn hasura_drift_error_falls_back_when_only_port_binding_drifted() {
+        // HASURA_EXTERNAL_PORT changes don't appear in the container env —
+        // they live in port bindings. The formatter can't enumerate the
+        // specific field; assert we at least don't claim something bogus.
+        let env = default_env();
+        let drift = hasura_drift_fixture(
+            "postgres://postgres:testing@envio-postgres:5432/envio-dev",
+            "testing",
+        );
+        let msg = format_hasura_drift(&env, 8080, &drift);
+        assert!(
+            msg.contains("port binding or other configuration field"),
+            "no-visible-diff case should use the fallback, got: {msg}"
+        );
     }
 }
