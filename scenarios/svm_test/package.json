@@ -18,7 +18,6 @@
   },
   "dependencies": {
     "envio": "file:../../packages/envio",
-    "rescript-schema": "9.5.1",
     "rescript": "12.2.0"
   },
   "optionalDependencies": {

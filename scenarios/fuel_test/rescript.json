@@ -18,5 +18,5 @@
     "module": "esmodule",
     "in-source": true
   },
-  "dependencies": ["envio", "rescript-schema"]
+  "dependencies": ["envio"]
 }

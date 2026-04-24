@@ -656,10 +656,8 @@ impl ContractTemplate {
                 // template literal.
                 format!(
                     "let abi = FuelSDK.transpileAbi((await \
-                     Utils.importPathWithJson(`../{}`))[\"default\"])\n{}\n{}",
-                    abi.path_relative_to_root,
-                    all_abi_type_declarations,
-                    all_abi_type_declarations.to_rescript_schema(&SchemaMode::ForDb)
+                     Utils.importPathWithJson(`../{}`))[\"default\"])\n{}",
+                    abi.path_relative_to_root, all_abi_type_declarations,
                 )
             }
         };
@@ -1632,8 +1630,6 @@ type handlerContext = {{
             r#"//*************
 //**CONTRACTS**
 //*************
-
-open RescriptSchema
 
 module Transaction = {{
   type t = {transaction_module_type}

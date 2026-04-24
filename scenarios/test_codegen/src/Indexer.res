@@ -2,8 +2,6 @@
 //**CONTRACTS**
 //*************
 
-open RescriptSchema
-
 module Transaction = {
   type t = {
     transactionIndex: int,

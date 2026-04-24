@@ -14,5 +14,5 @@
     "version": 4
   },
   "suffix": ".res.mjs",
-  "dependencies": ["envio", "rescript-schema"]
+  "dependencies": ["envio"]
 }
