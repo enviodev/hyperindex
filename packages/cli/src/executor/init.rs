@@ -311,25 +311,15 @@ pub async fn run_init_args(
         .unwrap_or_else(|| parsed_project_paths.project_root.to_str().unwrap_or(""));
     let in_subdir = parsed_project_paths.project_root != Path::new(".");
 
-    if in_subdir {
-        println!("Entering project directory `{}`...", dir_name);
-    }
-    println!("Running tests to verify your indexer...");
-    match commands::pm::run_script(pm, "test", &parsed_project_paths.project_root).await {
-        Ok(()) => println!("Tests passed. Your indexer is ready to go!"),
-        Err(e) => eprintln!(
-            "Tests didn't complete successfully ({}). You can re-run them later with `{} test`.",
-            e,
-            pm.cmd()
-        ),
-    }
-
     println!();
-    println!("Next steps:");
+    println!("Your indexer is ready! Next steps:");
+    println!();
     if in_subdir {
         println!("  cd {}", dir_name);
     }
-    println!("  {} dev   # start the indexer", pm.cmd());
+    println!("  {} dev     # run locally", pm.cmd());
+    println!("  {} test    # run the tests", pm.cmd());
+    println!("  {} start   # run in production", pm.cmd());
 
     Ok(())
 }
