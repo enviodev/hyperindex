@@ -841,7 +841,6 @@ impl FieldSelection {
             block_field_templates.push(SelectedFieldTemplate {
                 name: name.clone(),
                 res_name,
-                default_value_rescript: field.data_type.get_default_value_rescript(),
                 ts_type: field.data_type.to_ts_type_string(),
                 res_type: field.data_type.to_string(),
             });
@@ -859,7 +858,6 @@ impl FieldSelection {
             transaction_field_templates.push(SelectedFieldTemplate {
                 name: name.clone(),
                 res_name,
-                default_value_rescript: field.data_type.get_default_value_rescript(),
                 ts_type: field.data_type.to_ts_type_string(),
                 res_type: field.data_type.to_string(),
             });
@@ -895,7 +893,6 @@ struct SelectedFieldTemplate {
     res_name: String,
     res_type: String,
     ts_type: String,
-    default_value_rescript: String,
 }
 
 #[derive(Serialize)]
