@@ -291,43 +291,59 @@ impl EnvConfig {
     /// excluded: when external, no container is created; when local, the
     /// host is always the hardcoded default and can't vary.
     fn pg_config_hash(&self) -> String {
-        let mut h = Sha256::new();
-        h.update(&self.pg_port);
-        h.update(&self.pg_password);
-        h.update(&self.pg_user);
-        h.update(&self.pg_database);
-        format!("{:x}", h.finalize())
+        hash_fields([
+            self.pg_port.as_str(),
+            self.pg_password.as_str(),
+            self.pg_user.as_str(),
+            self.pg_database.as_str(),
+        ])
     }
 
     fn hasura_config_hash(&self) -> String {
-        let mut h = Sha256::new();
-        h.update(&self.pg_password);
-        h.update(&self.pg_user);
-        h.update(&self.pg_database);
         // HASURA_GRAPHQL_DATABASE_URL embeds the PG host + port, so toggling
         // ENVIO_PG_HOST (external ↔ managed) or changing the port changes
         // the container's baked-in DSN. Without these in the hash, drift
         // isn't detected and Hasura silently keeps pointing at the old DB.
-        h.update(if self.pg_is_external() {
-            "ext"
-        } else {
-            "local"
-        });
-        h.update(self.pg_host_str());
-        h.update(&self.pg_port);
-        h.update(&self.hasura_port);
-        h.update(&self.hasura_enable_console);
-        h.update(&self.hasura_admin_secret);
-        format!("{:x}", h.finalize())
+        hash_fields([
+            self.pg_password.as_str(),
+            self.pg_user.as_str(),
+            self.pg_database.as_str(),
+            if self.pg_is_external() {
+                "ext"
+            } else {
+                "local"
+            },
+            self.pg_host_str(),
+            self.pg_port.as_str(),
+            self.hasura_port.as_str(),
+            self.hasura_enable_console.as_str(),
+            self.hasura_admin_secret.as_str(),
+        ])
     }
 
     fn ch_config_hash(&self) -> String {
-        let mut h = Sha256::new();
-        h.update(&self.ch_user);
-        h.update(&self.ch_password);
-        h.update(&self.ch_database);
-        format!("{:x}", h.finalize())
+        hash_fields([
+            self.ch_user.as_str(),
+            self.ch_password.as_str(),
+            self.ch_database.as_str(),
+        ])
     }
+}
+
+/// Hash a sequence of fields with an unambiguous delimiter between each so
+/// that `["foo", "barbaz"]` and `["foobar", "baz"]` produce different
+/// digests. Uses ASCII unit-separator (0x1F) which can't appear in
+/// environment variable values or our local discriminator strings.
+fn hash_fields<'a, I>(fields: I) -> String
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut h = Sha256::new();
+    for field in fields {
+        h.update(field.as_bytes());
+        h.update([0x1Fu8]);
+    }
+    format!("{:x}", h.finalize())
 }
 
 /// Maximum time allowed for pulling a single image before we give up.
@@ -817,14 +833,19 @@ fn format_pg_drift(env: &EnvConfig, port: u16, drift: &DriftInfo) -> String {
 /// are intentionally dropped: password is never displayed, and host changes
 /// don't carry actionable meaning in a drift message (the user controls
 /// that via ENVIO_PG_HOST which lives outside the container).
-fn parse_pg_url_user_db(url: &str) -> Option<(String, String)> {
+/// Returns (user, password-if-present, database). Password is `Some("")` when
+/// the URL has a `:` separator with empty value (`user:@host`) and `None` when
+/// the URL has no password section (`user@host`) — distinguishing the two
+/// matters because empty != absent for the drift-display heuristic.
+fn parse_pg_url_user_pw_db(url: &str) -> Option<(String, Option<String>, String)> {
     let parsed = reqwest::Url::parse(url).ok()?;
     let user = parsed.username().to_string();
+    let pw = parsed.password().map(|s| s.to_string());
     let db = parsed.path().trim_start_matches('/').to_string();
     if user.is_empty() && db.is_empty() {
         return None;
     }
-    Some((user, db))
+    Some((user, pw, db))
 }
 
 fn format_hasura_drift(env: &EnvConfig, port: u16, drift: &DriftInfo) -> String {
@@ -834,14 +855,20 @@ fn format_hasura_drift(env: &EnvConfig, port: u16, drift: &DriftInfo) -> String 
     // as individual env vars, so parse user/db out of the URL for display.
     // Password differences are never echoed — flagged with a single note.
     if let Some(url) = drift.env.get("HASURA_GRAPHQL_DATABASE_URL") {
-        if let Some((u_user, u_db)) = parse_pg_url_user_db(url) {
+        if let Some((u_user, u_pw, u_db)) = parse_pg_url_user_pw_db(url) {
             diff.push_str(&diff_field("ENVIO_PG_USER", &env.pg_user, Some(&u_user)));
             diff.push_str(&diff_field(
                 "ENVIO_PG_DATABASE",
                 &env.pg_database,
                 Some(&u_db),
             ));
-            if !url.contains(&format!(":{}@", env.pg_password)) {
+            // Compare via the parsed password rather than substring-matching
+            // the whole URL: an empty pg_password would otherwise look for
+            // ":@" and falsely flag on URLs with no password section. The
+            // url crate normalizes `user:@host` to `password() = None`, so
+            // we treat `None` and `Some("")` as equivalent (both mean "no
+            // password set") to avoid false positives from that quirk.
+            if u_pw.as_deref().unwrap_or("") != env.pg_password.as_str() {
                 diff.push_str("    ENVIO_PG_PASSWORD: differs from existing container\n");
             }
         }
@@ -1833,6 +1860,26 @@ mod tests {
     }
 
     #[test]
+    fn config_hash_distinguishes_field_boundaries() {
+        // Without a delimiter between fields, ("secre", "talice") and
+        // ("secret", "alice") would both feed "secretalice" into the
+        // digest stream and collide. pg_config_hash hashes password
+        // immediately before user, so move a suffix between them to
+        // construct that collision shape and assert it doesn't collapse.
+        let base = EnvConfig {
+            pg_password: "secre".into(),
+            pg_user: "talice".into(),
+            ..default_env()
+        };
+        let shifted = EnvConfig {
+            pg_password: "secret".into(),
+            pg_user: "alice".into(),
+            ..default_env()
+        };
+        assert_ne!(base.pg_config_hash(), shifted.pg_config_hash());
+    }
+
+    #[test]
     fn ch_hash_independent_from_pg() {
         // Changing a PG field must not change the ClickHouse hash.
         let env2 = EnvConfig {
@@ -2432,5 +2479,54 @@ mod tests {
             msg.contains("port binding or other configuration field"),
             "no-visible-diff case should use the fallback, got: {msg}"
         );
+    }
+
+    #[test]
+    fn hasura_drift_error_empty_password_does_not_falsely_flag() {
+        // Regression: when env.pg_password is empty, the previous
+        // substring check looked for ":@" inside the URL — which the url
+        // crate normalizes away (user:@host → password()=None) — so
+        // matching configs were reported as drifted. Both URL forms below
+        // ("user:@host" normalized to no-password, and explicit "user@host")
+        // should now compare as equal to an empty configured password.
+        let env = EnvConfig {
+            pg_password: String::new(),
+            ..default_env()
+        };
+        let normalized = hasura_drift_fixture(
+            "postgres://postgres:@envio-postgres:5432/envio-dev",
+            "testing",
+        );
+        let absent = hasura_drift_fixture(
+            "postgres://postgres@envio-postgres:5432/envio-dev",
+            "testing",
+        );
+        let msg_normalized = format_hasura_drift(&env, 8080, &normalized);
+        let msg_absent = format_hasura_drift(&env, 8080, &absent);
+        assert_eq!(
+            (
+                msg_normalized.contains("ENVIO_PG_PASSWORD: differs"),
+                msg_absent.contains("ENVIO_PG_PASSWORD: differs"),
+            ),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn hasura_drift_error_nonempty_password_mismatch_is_flagged() {
+        // The contrapositive: a real password mismatch must still be
+        // reported, never echoing either value.
+        let env = default_env(); // pg_password = "testing"
+        let drift = hasura_drift_fixture(
+            "postgres://postgres:other-pw@envio-postgres:5432/envio-dev",
+            "testing",
+        );
+        let msg = format_hasura_drift(&env, 8080, &drift);
+        let checks = [
+            msg.contains("ENVIO_PG_PASSWORD: differs"),
+            !msg.contains("other-pw"),
+            !msg.contains(&env.pg_password),
+        ];
+        assert_eq!(checks, [true; 3]);
     }
 }
