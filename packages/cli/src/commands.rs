@@ -1,29 +1,37 @@
 use anyhow::Context;
+use std::io::IsTerminal;
 use std::path::Path;
 
 /// Spawns `cmd` with piped stdio forwarded to the host `print!`/`eprint!`.
-/// Loses the TTY signal (so package managers render without colors) but
-/// works inside the NAPI addon, where tokio-spawned child processes can't
-/// inherit fds cleanly — their output would otherwise disappear.
+/// The pipe hides the TTY from the child, so we forward the host's TTY state
+/// via `FORCE_COLOR`/`CLICOLOR_FORCE` so package managers still render colors.
 async fn execute_command(
     cmd: &str,
     args: Vec<&str>,
     current_dir: &Path,
 ) -> anyhow::Result<std::process::ExitStatus> {
-    let mut child = tokio::process::Command::new(cmd)
+    let mut command = tokio::process::Command::new(cmd);
+    command
         .args(&args)
         .current_dir(current_dir)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .context(format!(
-            "Failed to spawn command {} {} at {} as child process",
-            cmd,
-            args.join(" "),
-            current_dir.to_str().unwrap_or("bad_path")
-        ))?;
+        .kill_on_drop(true);
+
+    if std::io::stdout().is_terminal() {
+        command
+            .env("FORCE_COLOR", "1")
+            .env("CLICOLOR_FORCE", "1")
+            .env("npm_config_color", "always");
+    }
+
+    let mut child = command.spawn().context(format!(
+        "Failed to spawn command {} {} at {} as child process",
+        cmd,
+        args.join(" "),
+        current_dir.to_str().unwrap_or("bad_path")
+    ))?;
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
