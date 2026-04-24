@@ -76,7 +76,14 @@ let run = async args => {
     }
   } catch {
   | exn =>
-    exn->ErrorHandling.make(~msg="Failed at initialization")->ErrorHandling.log
+    // Log just the exception's own message — wrapping it in "Failed at
+    // initialization" and pino's err serializer buries the real cause under
+    // a nested `err: { type, message, stack, ... }` block.
+    let message = switch exn->JsExn.anyToExnInternal {
+    | JsExn(e) => e->JsExn.message->Option.getOr("Failed at initialization")
+    | _ => "Failed at initialization"
+    }
+    Logging.error(message)
     NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }
