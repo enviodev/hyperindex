@@ -108,9 +108,10 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(anyhow!(
-                "Incompatible change detected in {fields}. Reverse the changes to continue \
-                 indexing with the existing state, or run `envio dev -r` to clear the database \
-                 and re-index from scratch."
+                "Incompatible change detected in {fields}. To continue:\n\
+                 \n  \
+                 1. Revert the change    # keep indexing with the existing state\n  \
+                 2. envio dev -r         # clear the database and re-index from scratch"
             ));
         }
     }
