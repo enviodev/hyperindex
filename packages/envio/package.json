@@ -12,7 +12,7 @@
     "url": "git+https://github.com/enviodev/hyperindex.git"
   },
   "scripts": {
-    "watch": "rescript-legacy -w"
+    "watch": "rescript watch"
   },
   "author": "envio contributors <about@envio.dev>",
   "license": "GPL-3.0",
@@ -67,7 +67,7 @@
     "dotenv": "16.4.5",
     "date-fns": "3.3.1",
     "@rescript/react": "0.14.1",
-    "react": "19.2.0",
+    "react": "19.2.5",
     "ink": "6.8.0",
     "ink-big-text": "2.0.0",
     "ink-spinner": "5.0.0",
