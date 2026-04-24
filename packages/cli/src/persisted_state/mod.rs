@@ -1,18 +1,12 @@
 mod db;
 mod hash_string;
 
-use crate::{
-    config_parsing::system_config::{self, SystemConfig},
-    project_paths::ParsedProjectPaths,
-};
+use crate::config_parsing::system_config::{self, SystemConfig};
 use anyhow::Context;
 use hash_string::HashString;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use std::{
-    fmt::{self, Display},
-    path::PathBuf,
-};
+use std::fmt::{self, Display};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
@@ -23,7 +17,6 @@ pub struct PersistedState {
     pub schema_hash: HashString,
     pub abi_files_hash: HashString,
 }
-const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
 
 pub fn current_version() -> &'static str {
     system_config::VERSION
@@ -36,11 +29,6 @@ pub enum StateField {
     Config,
     Schema,
     AbiFiles,
-}
-
-///Gets the path to the persisted file in generated folder
-fn get_generated_file_path(project_paths: &ParsedProjectPaths) -> PathBuf {
-    project_paths.generated.join(PERSISTED_STATE_FILE_NAME)
 }
 
 impl PersistedState {
@@ -92,27 +80,6 @@ impl PersistedState {
         })
     }
 
-    ///Compares the current state and a persisted state file, returning a boolean of whether
-    ///codegen should be run and a vector of the changed fields that make the rerun necessary
-    pub fn should_run_codegen(&self, persisted_state_file: &Self) -> (bool, Vec<StateField>) {
-        let codegen_affecting_fields = vec![
-            //If the config has changed, this could affect values in generated code
-            StateField::Config,
-            //If abi files have changed it could affect event types
-            StateField::AbiFiles,
-            //If schema has changed this will affect generated entity types
-            StateField::Schema,
-            //If the version envio changes, this could infer differences that need to be re-code
-            //generated
-            StateField::EnvioVersion,
-        ];
-
-        let non_matching_fields =
-            self.get_non_matching_fields(persisted_state_file, codegen_affecting_fields);
-
-        (!non_matching_fields.is_empty(), non_matching_fields)
-    }
-
     ///Compares the current state and a persisted state on the db, returning a boolean of whether
     ///migrations should be run and a vector of the changed fields that make the rerun necessary
     pub fn should_run_db_migrations(&self, persisted_state_db: &Self) -> (bool, Vec<StateField>) {
@@ -133,40 +100,10 @@ pub enum PersistedStateExists {
     Corrupted,
 }
 
-impl PersistedStateExists {
-    ///Gets the PersistedState stored in a file in the generated code
-    ///If the file does not exist it results in None
-    ///And if it fails to deserialize persisted state then it means that the file
-    ///is corrupted OR it uses a previous version of persisted state that can't deserialize
-    pub fn get_persisted_state_file(project_paths: &ParsedProjectPaths) -> Self {
-        let file_path = get_generated_file_path(project_paths);
-        match std::fs::read_to_string(file_path) {
-            Err(_) => Self::NotExists,
-            Ok(file_str) => {
-                //If it fails to deserialize, it could be an old or corrupted
-                //representation of PersistedState. In either of these cases we
-                //need to re-codegen so we can just treat it as an option type
-                match serde_json::from_str(&file_str) {
-                    Err(_) => Self::Corrupted,
-                    Ok(state) => Self::Exists(state),
-                }
-            }
-        }
-    }
-}
-
 impl Display for PersistedState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let json_string = serde_json::to_string(self).map_err(|_| fmt::Error)?;
         write!(f, "{}", json_string)
-    }
-}
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PersistedStateJsonString(String);
-
-impl From<PersistedState> for PersistedStateJsonString {
-    fn from(val: PersistedState) -> Self {
-        Self(val.to_string())
     }
 }
 
@@ -174,60 +111,6 @@ impl From<PersistedState> for PersistedStateJsonString {
 mod test {
     use super::PersistedState;
     use serde_json::json;
-
-    #[test]
-    fn should_run_codegen() {
-        let persisted_file: PersistedState = serde_json::from_value(json!({
-            "envio_version": "0.0.1",
-            "config_hash": "<HASH_STRING>",
-            "schema_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>",
-        }))
-        .unwrap();
-
-        let current_state: PersistedState = serde_json::from_value(json!({
-            "envio_version": "0.0.1",
-            "config_hash": "<CHANGED_HASH_STRING>",
-            "schema_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>",
-        }))
-        .unwrap();
-
-        let (should_run_codegen, _changed_fields) =
-            current_state.should_run_codegen(&persisted_file);
-
-        assert!(
-            should_run_codegen,
-            "should run codegen should be true since config hash changed"
-        );
-    }
-
-    #[test]
-    fn should_not_run_codegen() {
-        let persisted_file: PersistedState = serde_json::from_value(json!({
-            "envio_version": "0.0.1",
-            "config_hash": "<HASH_STRING>",
-            "schema_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>",
-        }))
-        .unwrap();
-
-        let current_state: PersistedState = serde_json::from_value(json!({
-            "envio_version": "0.0.1",
-            "config_hash": "<HASH_STRING>",
-            "schema_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>",
-        }))
-        .unwrap();
-
-        let (should_run_codegen, _changed_fields) =
-            current_state.should_run_codegen(&persisted_file);
-
-        assert!(
-            !should_run_codegen,
-            "should run codegen should be false since nothing changed"
-        );
-    }
 
     #[test]
     fn should_run_db_migrations() {

@@ -1,5 +1,5 @@
 import { describe, it } from "vitest";
-import { createTestIndexer } from "generated";
+import { createTestIndexer } from "envio";
 import { TestHelpers } from "envio";
 
 const { Addresses } = TestHelpers;

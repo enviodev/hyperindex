@@ -15,7 +15,7 @@ HyperIndex uses Vitest with `createTestIndexer()` from `generated`. The simplest
 
 ```ts
 import { describe, it } from "vitest";
-import { createTestIndexer } from "generated";
+import { createTestIndexer } from "envio";
 
 describe("Indexer Testing", () => {
   it("Should process first two blocks with events", async (t) => {

@@ -32,7 +32,7 @@ use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 type ContractNameKey = String;
@@ -585,38 +585,7 @@ impl SystemConfig {
         let base_config = human_config.get_base_config();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
 
-        // Create a new ParsedProjectPaths that uses the output field from config if specified
-        let final_project_paths = {
-            match base_config.output.as_ref() {
-                Some(output) => {
-                    // If output is specified, create a new ParsedProjectPaths with the custom output path
-                    // The output path is relative to the config file location
-                    let config_dir = project_paths.config.parent().ok_or_else(|| {
-                        anyhow!("Unexpected config file should have a parent directory")
-                    })?;
-
-                    let output_relative_path = PathBuf::from(output);
-                    if let Some(Component::ParentDir) =
-                        output_relative_path.components().peekable().peek()
-                    {
-                        anyhow::bail!("Output folder must be in project directory");
-                    }
-
-                    let output_joined = config_dir.join(output_relative_path);
-                    let output_normalized = path_utils::normalize_path(output_joined);
-
-                    ParsedProjectPaths {
-                        project_root: project_paths.project_root.clone(),
-                        config: project_paths.config.clone(),
-                        generated: output_normalized,
-                    }
-                }
-                None => {
-                    // If no output is specified, use the default ParsedProjectPaths
-                    project_paths.clone()
-                }
-            }
-        };
+        let final_project_paths = project_paths.clone();
 
         let is_rescript = final_project_paths
             .project_root
@@ -1976,7 +1945,7 @@ mod test {
     use super::SystemConfig;
     use crate::{
         config_parsing::{
-            human_config::{evm::HumanConfig as EvmConfig, BaseConfig},
+            human_config::evm::HumanConfig as EvmConfig,
             system_config::{DataSource, Event, MainEvmDataSource},
         },
         project_paths::ParsedProjectPaths,
@@ -2004,8 +1973,7 @@ mod test {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_root = test_dir.as_str();
         let config_dir = "configs/config1.yaml";
-        let generated = "generated/";
-        let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
+        let project_paths = ParsedProjectPaths::new(project_root, config_dir)
             .expect("Failed creating parsed_paths");
 
         let config =
@@ -2092,8 +2060,7 @@ mod test {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_root = test_dir.as_str();
         let config_dir = "configs/nested-abi.yaml";
-        let generated = "generated/";
-        let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
+        let project_paths = ParsedProjectPaths::new(project_root, config_dir)
             .expect("Failed creating parsed_paths");
 
         let config =
@@ -2408,108 +2375,6 @@ mod test {
         for vn in invalid_version_numbers {
             assert!(!super::is_valid_release_version_number(vn));
         }
-    }
-
-    #[test]
-    fn test_output_configuration() {
-        use crate::config_parsing::human_config::{
-            evm::{Chain as EvmChain, HumanConfig as EvmConfig},
-            HumanConfig,
-        };
-        use crate::project_paths::ParsedProjectPaths;
-
-        // Test with default output (no output field specified)
-        let evm_config = EvmConfig {
-            base: BaseConfig {
-                name: "Test Project".to_string(),
-                description: None,
-                schema: None,
-                output: None,
-                handlers: None,
-                full_batch_size: None,
-                storage: None,
-            },
-            ecosystem: None,
-            contracts: None,
-            chains: vec![EvmChain {
-                id: 1,
-                hypersync_config: None,
-                rpc: None,
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: None,
-                block_lag: None,
-                contracts: None,
-            }],
-            rollback_on_reorg: None,
-            save_full_history: None,
-            field_selection: None,
-            raw_events: None,
-            address_format: None,
-        };
-
-        let project_paths = ParsedProjectPaths::new(".", "generated", "config.yaml").unwrap();
-        let schema = crate::config_parsing::entity_parsing::Schema {
-            entities: std::collections::HashMap::new(),
-            enums: std::collections::HashMap::new(),
-        };
-
-        let system_config = SystemConfig::from_human_config(
-            HumanConfig::Evm(evm_config),
-            schema.clone(),
-            &project_paths,
-        )
-        .unwrap();
-
-        // Should use the default generated path
-        assert_eq!(
-            system_config.parsed_project_paths.generated,
-            project_paths.generated
-        );
-
-        // Test with custom output path
-        let evm_config_with_output = EvmConfig {
-            base: BaseConfig {
-                name: "Test Project".to_string(),
-                description: None,
-                schema: None,
-                output: Some("custom/output".to_string()),
-                handlers: None,
-                full_batch_size: None,
-                storage: None,
-            },
-            ecosystem: None,
-            contracts: None,
-            chains: vec![EvmChain {
-                id: 1,
-                hypersync_config: None,
-                rpc: None,
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: None,
-                block_lag: None,
-                contracts: None,
-            }],
-            rollback_on_reorg: None,
-            save_full_history: None,
-            field_selection: None,
-            raw_events: None,
-            address_format: None,
-        };
-
-        let system_config_with_output = SystemConfig::from_human_config(
-            HumanConfig::Evm(evm_config_with_output),
-            schema,
-            &project_paths,
-        )
-        .unwrap();
-
-        // Should use the custom output path relative to config location
-        let expected_custom_path = std::path::PathBuf::from("custom/output");
-        assert_eq!(
-            system_config_with_output.parsed_project_paths.generated,
-            expected_custom_path
-        );
     }
 
     #[test]

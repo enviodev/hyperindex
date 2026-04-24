@@ -139,50 +139,86 @@ async fn execute_command_silent(
 }
 
 pub mod codegen {
-    use crate::{
-        config_parsing::system_config::SystemConfig, hbs_templating, template_dirs::TemplateDirs,
-    };
-    use anyhow::{self, Context, Result};
-    use std::path::Path;
-
-    use tokio::fs;
-
-    pub async fn remove_files_except_git(directory: &Path) -> Result<()> {
-        let mut entries = fs::read_dir(directory).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let file_type = entry.file_type().await?;
-            let path = entry.path();
-
-            if path.ends_with(".git") {
-                continue;
-            }
-
-            if file_type.is_dir() {
-                fs::remove_dir_all(&path).await?;
-            } else {
-                fs::remove_file(&path).await?;
-            }
-        }
-
-        Ok(())
-    }
+    use crate::{config_parsing::system_config::SystemConfig, hbs_templating};
+    use anyhow::{self, bail, Context};
+    use std::path::{Path, PathBuf};
 
     pub async fn run_codegen(config: &SystemConfig) -> anyhow::Result<()> {
-        let template_dirs = TemplateDirs::new();
-        fs::create_dir_all(&config.parsed_project_paths.generated).await?;
+        // The legacy `generated/` package no longer exists. If user code still
+        // imports from it, codegen would silently produce a project that fails
+        // at runtime — bail with a migration hint instead.
+        check_no_stale_generated_imports(&config.parsed_project_paths.project_root)
+            .context("Found leftover imports from the removed `generated` package")?;
 
         let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(config)
             .context("Failed creating project template")?;
 
-        template_dirs
-            .get_codegen_static_dir()?
-            .extract(&config.parsed_project_paths.generated)
-            .context("Failed extracting static codegen files")?;
-
         template
             .generate_templates(&config.parsed_project_paths)
-            .context("Failed generating dynamic codegen files")?;
+            .context("Failed generating codegen files")?;
 
+        Ok(())
+    }
+
+    fn check_no_stale_generated_imports(project_root: &Path) -> anyhow::Result<()> {
+        let mut offenders: Vec<PathBuf> = Vec::new();
+        for sub in ["src", "test"] {
+            let dir = project_root.join(sub);
+            if dir.exists() {
+                scan_for_stale_generated_imports(&dir, &mut offenders)?;
+            }
+        }
+        if offenders.is_empty() {
+            return Ok(());
+        }
+        let list = offenders
+            .iter()
+            .map(|p| format!("  - {}", p.display()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        bail!(
+            "Found `from \"generated\"` imports in:\n{list}\n\nReplace with `from \"envio\"` — \
+             the project-bound types are now augmented onto the `envio` module via \
+             `envio-env.d.ts`. The legacy `generated/` directory is no longer produced."
+        );
+    }
+
+    fn scan_for_stale_generated_imports(
+        dir: &Path,
+        offenders: &mut Vec<PathBuf>,
+    ) -> anyhow::Result<()> {
+        for entry in
+            std::fs::read_dir(dir).with_context(|| format!("Failed reading {}", dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                // Skip vendored / build / cache trees.
+                if matches!(
+                    name.as_ref(),
+                    "node_modules" | ".envio" | "build" | "dist" | "lib" | ".git"
+                ) {
+                    continue;
+                }
+                scan_for_stale_generated_imports(&path, offenders)?;
+            } else if file_type.is_file()
+                && matches!(
+                    path.extension().and_then(|e| e.to_str()),
+                    Some("ts" | "tsx" | "mts" | "cts" | "js" | "mjs" | "cjs")
+                )
+            {
+                let content = match std::fs::read_to_string(&path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                if content.contains("from \"generated\"") || content.contains("from 'generated'") {
+                    offenders.push(path);
+                }
+            }
+        }
         Ok(())
     }
 }

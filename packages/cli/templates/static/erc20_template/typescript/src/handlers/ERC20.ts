@@ -1,4 +1,4 @@
-import { indexer, type Account, type Approval } from "generated";
+import { indexer, type Account, type Approval } from "envio";
 
 indexer.onEvent({ contract: "ERC20", event: "Approval" }, async ({ event, context }) => {
   //  getting the owner Account entity

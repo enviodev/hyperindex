@@ -1,7 +1,7 @@
 /*
  * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
-import { indexer, type UniswapV3Pool_Swap } from "generated";
+import { indexer, type UniswapV3Pool_Swap } from "envio";
 
 // Handle Swap events emitted by the registered Uniswap V3 pools
 indexer.onEvent({ contract: "UniswapV3Pool", event: "Swap" }, async ({ event, context }) => {

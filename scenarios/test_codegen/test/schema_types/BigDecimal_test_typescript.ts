@@ -1,5 +1,5 @@
 import { expect, describe, it } from 'vitest';
-import { BigDecimal } from 'generated';
+import { BigDecimal } from "envio";
 
 describe('BigDecimal', () => {
   it('should create BigDecimal from BigInt', () => {

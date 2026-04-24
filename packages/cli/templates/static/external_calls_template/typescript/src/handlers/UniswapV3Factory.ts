@@ -1,5 +1,5 @@
 import { createEffect, S } from "envio";
-import { indexer } from "generated";
+import { indexer } from "envio";
 import { createPublicClient, http, parseAbi } from "viem";
 import { arbitrum, mainnet } from "viem/chains";
 

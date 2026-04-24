@@ -18,7 +18,7 @@ import {
   type EvmOnEventContext,
   type EvmContractRegisterContext,
   type EvmOnEventWhere,
-} from "generated";
+} from "envio";
 import {
   type Address,
   type EvmOnBlockWhereResult,
@@ -26,7 +26,7 @@ import {
   type EvmOnBlockOptions,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
-import { createTestIndexer } from "generated";
+import { createTestIndexer } from "envio";
 
 describe("Use Envio test framework to test event handlers", () => {
   it("Indexer types and value", () => {

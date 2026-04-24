@@ -22,13 +22,6 @@
         "null"
       ]
     },
-    "output": {
-      "description": "Path where the generated directory will be placed. By default it's 'generated' relative to the current working directory. If set, it'll be a path relative to the config file location.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "handlers": {
       "description": "Optional relative path to handlers directory for auto-loading. Defaults to 'src/handlers' if not specified.",
       "type": [

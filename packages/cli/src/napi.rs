@@ -17,7 +17,7 @@ pub fn get_config_json(
     // Error messages intentionally omit absolute paths (cwd / resolved config
     // path) — the JS caller already knows its cwd and what it passed in, and
     // we don't want to leak filesystem layout into logs shipped off-host.
-    let project_paths = ParsedProjectPaths::new(&project_root, "generated", &config)
+    let project_paths = ParsedProjectPaths::new(&project_root, &config)
         .map_err(|e| napi::Error::from_reason(format!("Failed parsing project paths: {e}")))?;
     let system_config = SystemConfig::parse_from_project_files(&project_paths)
         .map_err(|e| napi::Error::from_reason(format!("Config parse error: {e}")))?;

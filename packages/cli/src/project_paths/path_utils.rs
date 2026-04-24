@@ -74,20 +74,6 @@ pub fn normalize_path(path: PathBuf) -> PathBuf {
     normalized_path_buf
 }
 
-/// Add ./ to a path if its not already represented as a relative path
-/// Panics if window "prefix" is used
-pub fn add_leading_relative_dot(path: PathBuf) -> PathBuf {
-    match path.components().next() {
-        Some(component) => match component {
-            Component::ParentDir | Component::CurDir => path,
-            Component::Normal(_) => PathBuf::from(".").join(path),
-            Component::RootDir => path,
-            Component::Prefix(_) => unreachable!("Windows Prefix path component unreachable"),
-        },
-        None => PathBuf::from("."),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,11 +111,4 @@ mod tests {
         let unnormalized_path = PathBuf::from("/../my_file.js");
         normalize_path(unnormalized_path);
     }
-
-    test_path_function!(add_leading_relative_dot;
-        leading_test_dot_dot_slash_dot: "../.", "../.",
-        leading_test_dot_dot: "..", "..",
-        leading_test_generated:  "generated", "./generated",
-        leading_test_dot_slash_generated:  "./generated", "./generated",
-    );
 }

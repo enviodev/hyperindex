@@ -21,9 +21,6 @@
     "rescript-schema": "9.5.1",
     "rescript": "12.2.0"
   },
-  "optionalDependencies": {
-    "generated": "./generated"
-  },
   "engines": {
     "node": ">=22.0.0"
   }

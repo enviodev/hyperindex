@@ -16,5 +16,5 @@
     "noEmit": true,
     "lib": ["es2022"]
   },
-  "include": ["src", "generated"]
+  "include": ["src", "envio-env.d.ts"]
 }

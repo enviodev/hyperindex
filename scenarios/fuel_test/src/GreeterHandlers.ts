@@ -1,4 +1,4 @@
-import { indexer, type User } from "generated";
+import { indexer, type User } from "envio";
 
 // Type-level regression guards for `where.block` on Fuel. Declared as an
 // unreached function so `tsc --noEmit` checks the types without runtime

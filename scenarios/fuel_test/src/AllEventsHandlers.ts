@@ -2,7 +2,7 @@
  * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
 import { S } from "envio";
-import { indexer } from "generated";
+import { indexer } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 type RemoveReadonly<T> = T extends {}

@@ -1,4 +1,4 @@
-use crate::constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH};
+use crate::constants::project_paths::DEFAULT_CONFIG_PATH;
 
 use clap::{Args, Parser, Subcommand};
 use clap_markdown::MarkdownOptions;
@@ -30,10 +30,6 @@ pub struct ProjectPaths {
     ///The directory of the project. Defaults to current dir ("./")
     #[arg(global = true, short, long)]
     pub directory: Option<String>,
-
-    ///The directory for generated code output. We recommend configuring this using the `output` field in your config.yaml instead
-    #[arg(global = true, short, long, default_value_t=String::from(DEFAULT_GENERATED_PATH))]
-    pub output_directory: String,
 
     ///The file in the project containing the configuration. It can also be set via the `ENVIO_CONFIG` environment variable.
     #[arg(global = true, long, env = "ENVIO_CONFIG", default_value_t=String::from(DEFAULT_CONFIG_PATH))]

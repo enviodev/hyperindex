@@ -1,7 +1,7 @@
 /*
  * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
-import { indexer } from "generated";
+import { indexer } from "envio";
 
 // Register the newly created pool so HyperIndex listens to its events
 indexer.contractRegister({ contract: "UniswapV3Factory", event: "PoolCreated" }, async ({ event, context }) => {

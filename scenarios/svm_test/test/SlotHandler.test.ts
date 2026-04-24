@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTestIndexer, indexer } from "generated";
+import { createTestIndexer, indexer } from "envio";
 
 // Minimum coverage for the SVM `indexer.onSlot` API. We rely on the typed
 // `indexer` shape from `generated` to assert:

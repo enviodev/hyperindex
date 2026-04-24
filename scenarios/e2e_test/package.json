@@ -16,9 +16,6 @@
   "dependencies": {
     "envio": "file:../../packages/envio"
   },
-  "optionalDependencies": {
-    "generated": "./generated"
-  },
   "engines": {
     "node": ">=22.0.0"
   }

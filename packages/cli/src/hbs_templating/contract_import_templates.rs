@@ -966,9 +966,7 @@ mod test {
 
         let project_root = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let config = format!("configs/{}", configs_file_name);
-        let generated = "generated/";
-        let project_paths =
-            ParsedProjectPaths::new(&project_root, generated, &config).expect("Parsed paths");
+        let project_paths = ParsedProjectPaths::new(&project_root, &config).expect("Parsed paths");
 
         let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");

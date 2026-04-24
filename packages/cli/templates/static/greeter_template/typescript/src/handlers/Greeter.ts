@@ -1,4 +1,4 @@
-import { indexer, type User } from "generated";
+import { indexer, type User } from "envio";
 
 // Handler for the NewGreeting event
 indexer.onEvent({ contract: "Greeter", event: "NewGreeting" }, async ({ event, context }) => {

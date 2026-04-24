@@ -32,6 +32,5 @@ build
 *.res.js
 *.res.mjs
 *.bs.js
-generated
 .env
 .pnpm-store

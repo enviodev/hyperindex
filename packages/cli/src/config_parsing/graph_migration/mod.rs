@@ -264,7 +264,6 @@ pub async fn generate_config_from_subgraph_id(
             name: manifest.data_sources[0].name.clone(),
             description: manifest.description,
             schema: None,
-            output: None,
             handlers: None,
             full_batch_size: None,
             storage: None,

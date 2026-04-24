@@ -23,11 +23,11 @@ pnpm test              # Run tests
 
 ```typescript
 // WRONG — Pair is a contract handler, not a type
-import { Pair, Token } from "generated";
+import { Pair, Token } from "envio";
 const p: Pair = { ... };
 
 // CORRECT — use Entities type map (only needed if name collides with a contract)
-import type { Entities } from "generated";
+import type { Entities } from "envio";
 const p: Entities["Pair"] = { ... };
 ```
 
@@ -79,7 +79,7 @@ const pair: Entities["Pair"] = {
 import { BigDecimal } from "bignumber.js";
 
 // CORRECT — import from generated
-import { BigDecimal } from "generated";
+import { BigDecimal } from "envio";
 ```
 
 ### Issue 5: Hardcoded Values Instead of Constants
@@ -196,7 +196,7 @@ const mints = await context.Mint.getWhere({ transaction_id: { _eq: transactionId
 
 ```typescript
 // BEFORE — multiple issues
-import { Pair, Token } from "generated";
+import { Pair, Token } from "envio";
 import { BigDecimal } from "bignumber.js";
 
 const pair: Pair = {
@@ -205,8 +205,8 @@ const pair: Pair = {
 };
 
 // AFTER — all issues fixed
-import type { Entities } from "generated";
-import { BigDecimal } from "generated";
+import type { Entities } from "envio";
+import { BigDecimal } from "envio";
 
 const pair: Entities["Pair"] = {
   token0_id: token0.id,      // Correct field name

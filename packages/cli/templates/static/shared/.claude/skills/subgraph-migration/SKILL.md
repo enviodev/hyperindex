@@ -53,7 +53,7 @@ See [references/step-by-step.md](references/step-by-step.md) for the full runtim
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { createTestIndexer } from "generated";
+import { createTestIndexer } from "envio";
 
 describe("Migration Verification", () => {
   it("Should match subgraph data for Factory.PairCreated", async () => {
@@ -179,7 +179,7 @@ const mints = await context.Mint.getWhere({ transaction_id: { _eq: transactionId
 ### BigDecimal Precision
 
 ```ts
-import { BigDecimal } from "generated";
+import { BigDecimal } from "envio";
 // NOT: import { BigDecimal } from "bignumber.js";
 
 export const ZERO_BD = new BigDecimal(0);
@@ -213,9 +213,9 @@ Note: `context.Entity.set()` is synchronous — no await needed.
 
 ### Entity Type Imports
 ```ts
-// WRONG:  import { Pair } from "generated";  // Pair is a contract handler, not a type
+// WRONG:  import { Pair } from "envio";  // Pair is a contract handler, not a type
 // CORRECT (when name collides with contract):
-import type { Entities } from "generated";
+import type { Entities } from "envio";
 const p: Entities["Pair"] = { ... };
 ```
 

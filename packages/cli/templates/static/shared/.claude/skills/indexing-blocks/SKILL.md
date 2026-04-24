@@ -17,7 +17,7 @@ Branch by `chain.id` with a `switch` so the type system flags any
 unconfigured chain via the `default: never` exhaustiveness check:
 
 ```ts
-import { indexer } from "generated";
+import { indexer } from "envio";
 
 indexer.onBlock(
   {

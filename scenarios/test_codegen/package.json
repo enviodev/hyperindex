@@ -35,9 +35,6 @@
     "viem": "2.46.2",
     "envio": "file:../../packages/envio"
   },
-  "optionalDependencies": {
-    "generated": "./generated"
-  },
   "engines": {
     "node": ">=22.0.0"
   }

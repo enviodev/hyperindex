@@ -2,7 +2,17 @@ pub const DEFAULT_CONFIRMED_BLOCK_THRESHOLD: i32 = 200;
 
 pub mod project_paths {
     pub const DEFAULT_PROJECT_ROOT_PATH: &str = ".";
-    pub const DEFAULT_GENERATED_PATH: &str = "generated";
+    /// Project-root-relative directory holding ephemeral codegen output
+    /// (`types.d.ts`, build artifacts, cache). The user-facing
+    /// `envio-env.d.ts` glue file lives at the project root, not here.
+    pub const ENVIO_DIR: &str = ".envio";
+    /// User-facing TypeScript glue file generated at the project root.
+    /// References `<project>/.envio/types.d.ts` so the augmented `envio`
+    /// module surface is visible to user code without a "generated" package.
+    pub const ENVIO_ENV_DTS_FILE: &str = "envio-env.d.ts";
+    /// Codegen-emitted module-augmentation file under `.envio/`. Always
+    /// regenerated; git-ignored via `.envio/.gitignore`.
+    pub const ENVIO_TYPES_FILE: &str = "types.d.ts";
     pub const DEFAULT_CONFIG_PATH: &str = "config.yaml";
     pub const DEFAULT_SCHEMA_PATH: &str = "schema.graphql";
 }

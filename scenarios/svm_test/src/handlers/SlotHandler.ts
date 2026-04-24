@@ -1,4 +1,4 @@
-import { indexer } from "generated";
+import { indexer } from "envio";
 
 // Minimum exercise of `indexer.onSlot` on SVM. The `{slot: {_every: 5}}`
 // filter hits the SVM-specific decoder branch in `Main.res::extractRange`.

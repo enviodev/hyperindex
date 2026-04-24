@@ -3,7 +3,7 @@ use crate::{
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     config_parsing::{human_config, system_config::SystemConfig},
     docker_env,
-    persisted_state::{self, PersistedState, PersistedStateExists},
+    persisted_state::PersistedState,
     project_paths::ParsedProjectPaths,
     scripts,
 };
@@ -87,31 +87,14 @@ pub async fn execute(
         }
 
         CommandType::Start(start_args) => {
-            // Warn early if the generated directory looks stale — `envio start`
-            // keeps running even in these cases, but the indexer will use
-            // whatever generated code is on disk.
-            match PersistedStateExists::get_persisted_state_file(&parsed_project_paths) {
-                PersistedStateExists::Exists(ps)
-                    if ps.envio_version != persisted_state::current_version() =>
-                {
-                    eprintln!(
-                        "Warning: the generated directory was built with envio {}, but you're \
-                         running envio {}. Run `envio codegen` to regenerate it (or switch to the \
-                         matching envio version).",
-                        &ps.envio_version,
-                        persisted_state::current_version(),
-                    )
-                }
-                PersistedStateExists::NotExists => eprintln!(
-                    "Warning: no generated files found. Run `envio codegen` first to generate the \
-                     indexer runtime.",
-                ),
-                PersistedStateExists::Corrupted => eprintln!(
-                    "Warning: the generated directory is in an invalid state. Run `envio codegen` \
-                     to regenerate it.",
-                ),
-                PersistedStateExists::Exists(_) => (),
-            };
+            // Warn early if the codegen output is missing — `envio start` keeps
+            // running, but the indexer will use whatever's on disk.
+            if !parsed_project_paths.envio_types_dts().exists() {
+                eprintln!(
+                    "Warning: no codegen output found at {}. Run `envio codegen` first.",
+                    parsed_project_paths.envio_types_dts().display(),
+                );
+            }
 
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;

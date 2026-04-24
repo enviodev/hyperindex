@@ -130,7 +130,6 @@ mod test {
 
         let system_cfg = SystemConfig::parse_from_project_files(&ParsedProjectPaths::new(
             &root,
-            "generated",
             "config1.yaml",
         )?)
         .context("system_cfg")?;

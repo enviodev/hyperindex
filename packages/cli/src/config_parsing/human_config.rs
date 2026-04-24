@@ -71,13 +71,6 @@ pub struct BaseConfig {
     pub schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Path where the generated directory will be placed. By default it's \
-                       'generated' relative to the current working directory. If set, it'll \
-                       be a path relative to the config file location."
-    )]
-    pub output: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(
         description = "Optional relative path to handlers directory for auto-loading. Defaults \
                    to 'src/handlers' if not specified."
     )]
@@ -1084,7 +1077,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 name: "Fuel indexer".to_string(),
                 description: None,
                 schema: None,
-                output: None,
                 handlers: None,
                 full_batch_size: None,
                 storage: None,
@@ -1136,7 +1128,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 name: "Fuel indexer".to_string(),
                 description: None,
                 schema: None,
-                output: None,
                 handlers: None,
                 full_batch_size: None,
                 storage: None,
