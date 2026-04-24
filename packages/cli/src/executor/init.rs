@@ -304,15 +304,32 @@ pub async fn run_init_args(
         Err(e) => eprintln!("Warning: Failed to initialize git repository: {}", e),
     }
 
-    // If the project directory is not the current directory, print a message for user to cd into it
-    if parsed_project_paths.project_root != Path::new(".") {
-        let dir_name = parsed_project_paths
-            .project_root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_else(|| parsed_project_paths.project_root.to_str().unwrap_or(""));
-        println!("Run `cd {}` to enter the project directory.", dir_name);
+    let dir_name = parsed_project_paths
+        .project_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_else(|| parsed_project_paths.project_root.to_str().unwrap_or(""));
+    let in_subdir = parsed_project_paths.project_root != Path::new(".");
+
+    if in_subdir {
+        println!("Entering project directory `{}`...", dir_name);
     }
+    println!("Running tests to verify your indexer...");
+    match commands::pm::run_script(pm, "test", &parsed_project_paths.project_root).await {
+        Ok(()) => println!("Tests passed. Your indexer is ready to go!"),
+        Err(e) => eprintln!(
+            "Tests didn't complete successfully ({}). You can re-run them later with `{} test`.",
+            e,
+            pm.cmd()
+        ),
+    }
+
+    println!();
+    println!("Next steps:");
+    if in_subdir {
+        println!("  cd {}", dir_name);
+    }
+    println!("  {} dev   # start the indexer", pm.cmd());
 
     Ok(())
 }
