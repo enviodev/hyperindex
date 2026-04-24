@@ -701,7 +701,7 @@ async fn probe_pg_auth(
     // probe_client already has a 2s HTTP timeout; 5s for PG accommodates
     // slow-network external DBs without making preflight feel unresponsive.
     match tokio::time::timeout(Duration::from_secs(5), opts.connect()).await {
-        Ok(Ok(mut conn)) => {
+        Ok(Ok(conn)) => {
             conn.close().await?;
             Ok(())
         }
