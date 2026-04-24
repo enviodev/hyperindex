@@ -730,6 +730,27 @@ async fn probe_pg_auth(
 }
 
 /// Authenticated ClickHouse probe. Runs `SELECT 1` over HTTP with basic auth.
+/// ClickHouse probe outcome. The variant carries the cause directly so the
+/// classifier can branch on shape rather than scraping a formatted string —
+/// renaming the `Display` format below can no longer silently break
+/// `classify_ch_failure`.
+enum ChProbeError {
+    /// Server replied with a non-2xx status (auth/permissions/protocol).
+    Http { status: u16, body: String },
+    /// reqwest transport error before/after the response (timeout, refused,
+    /// DNS, TLS handshake, etc.).
+    Transport(String),
+}
+
+impl std::fmt::Display for ChProbeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Http { status, body } => write!(f, "HTTP {status}: {}", body.trim()),
+            Self::Transport(s) => f.write_str(s),
+        }
+    }
+}
+
 async fn probe_ch_auth(
     client: &reqwest::Client,
     scheme: &str,
@@ -737,20 +758,20 @@ async fn probe_ch_auth(
     port: u16,
     user: &str,
     password: &str,
-) -> Result<(), String> {
+) -> Result<(), ChProbeError> {
     let url = format!("{scheme}://{host}:{port}/?query=SELECT+1");
     let resp = client
         .get(&url)
         .basic_auth(user, Some(password))
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| ChProbeError::Transport(e.to_string()))?;
     if resp.status().is_success() {
         return Ok(());
     }
-    let status = resp.status();
+    let status = resp.status().as_u16();
     let body = resp.text().await.unwrap_or_default();
-    Err(format!("HTTP {status}: {}", body.trim()))
+    Err(ChProbeError::Http { status, body })
 }
 
 /// Compare two strings for display. Returns a "want → found" fragment when
@@ -990,14 +1011,12 @@ fn classify_pg_failure(err: &sqlx::Error) -> ProbeFailureKind {
     }
 }
 
-fn classify_ch_failure(err: &str) -> ProbeFailureKind {
-    // probe_ch_auth returns "HTTP <status>: <body>" only when the server
-    // actually responded; anything else is a stringified reqwest transport
-    // error (timeout, connection refused, DNS, TLS).
-    if err.starts_with("HTTP ") {
-        ProbeFailureKind::Auth
-    } else {
-        ProbeFailureKind::Connection
+fn classify_ch_failure(err: &ChProbeError) -> ProbeFailureKind {
+    match err {
+        // Server responded → auth/permissions/protocol issue.
+        ChProbeError::Http { .. } => ProbeFailureKind::Auth,
+        // Transport-level: timeout, refused, DNS, TLS handshake.
+        ChProbeError::Transport(_) => ProbeFailureKind::Connection,
     }
 }
 
@@ -1352,7 +1371,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
                 let kind = classify_ch_failure(&e);
                 anyhow::bail!(
                     "{}",
-                    format_ch_failure_error(&env, url, ch_external, kind, &e)
+                    format_ch_failure_error(&env, url, ch_external, kind, &e.to_string())
                 );
             }
         }
@@ -2312,16 +2331,31 @@ mod tests {
     }
 
     #[test]
-    fn classify_ch_failure_uses_http_prefix() {
-        // probe_ch_auth's "HTTP <status>: ..." format means the server
-        // responded; any other string is a reqwest transport error.
+    fn classify_ch_failure_distinguishes_http_from_transport() {
+        // The classifier matches on the typed enum, so renaming the Display
+        // format below can't silently break the auth/connection split.
+        let http = ChProbeError::Http {
+            status: 516,
+            body: "auth failed".to_string(),
+        };
+        let transport = ChProbeError::Transport("error sending request".to_string());
         assert_eq!(
-            (
-                classify_ch_failure("HTTP 516: auth failed"),
-                classify_ch_failure("error sending request for url (http://…)"),
-            ),
+            (classify_ch_failure(&http), classify_ch_failure(&transport)),
             (ProbeFailureKind::Auth, ProbeFailureKind::Connection)
         );
+    }
+
+    #[test]
+    fn ch_probe_error_display_preserves_http_format() {
+        // The "HTTP <status>: <body>" format ends up in the user-facing
+        // error message, so guard against accidental drift in the Display
+        // impl. (The classifier no longer depends on this string, but the
+        // formatter does pass it through verbatim.)
+        let err = ChProbeError::Http {
+            status: 516,
+            body: "  auth failed  \n".to_string(),
+        };
+        assert_eq!(err.to_string(), "HTTP 516: auth failed");
     }
 
     #[test]
