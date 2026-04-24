@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "res:clean": "rescript-legacy clean",
-    "res:build": "rescript-legacy",
-    "res:watch": "rescript-legacy -w",
+    "res:clean": "rescript clean",
+    "res:build": "rescript",
+    "res:watch": "rescript watch",
     "codegen": "envio codegen",
     "dev": "envio dev",
-    "test": "rescript-legacy && tsc --noEmit && vitest run",
+    "test": "rescript && tsc --noEmit && vitest run",
     "start": "envio start"
   },
   "devDependencies": {
@@ -18,7 +18,6 @@
   },
   "dependencies": {
     "envio": "file:../../packages/envio",
-    "rescript-schema": "9.5.1",
     "rescript": "12.2.0"
   },
   "optionalDependencies": {
