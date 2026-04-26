@@ -100,12 +100,15 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
 
-  // Try the platform package; on Linux fall through to the musl variant.
-  // npm's `libc` field installs only the matching one, so the wrong name
-  // throws MODULE_NOT_FOUND immediately and the next candidate wins.
-  let candidates = switch processPlatform {
-  | "linux" => [`envio-linux-${processArch}`, `envio-linux-${processArch}-musl`]
-  | _ => [`envio-${processPlatform}-${processArch}`]
+  // npm's `libc` field installs only the matching package on Linux, so the
+  // wrong name throws MODULE_NOT_FOUND immediately and the next candidate
+  // wins. An empty list means the host isn't a publish target.
+  let candidates = switch (processPlatform, processArch) {
+  | ("linux", "x64") => [`envio-linux-x64`, `envio-linux-x64-musl`]
+  | ("linux", "arm64") => [`envio-linux-arm64`]
+  | ("darwin", "x64") => [`envio-darwin-x64`]
+  | ("darwin", "arm64") => [`envio-darwin-arm64`]
+  | _ => []
   }
 
   let rec tryRequire = i =>
@@ -124,7 +127,13 @@ let loadAddon = () => {
     switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
     | Some(addon) => addon
     | None =>
-      JsError.throwWithMessage(`Couldn't load the envio native addon. Install the envio npm package.`)
+      let host = `${processPlatform}-${processArch}`
+      let msg = if candidates->Array.length === 0 {
+        `envio doesn't support ${host}. Supported: linux-x64 (glibc/musl), linux-arm64, darwin-x64, darwin-arm64.`
+      } else {
+        `Couldn't load the envio native addon for ${host}. Reinstall envio (ensure optional dependencies aren't skipped).`
+      }
+      JsError.throwWithMessage(msg)
     }
   }
 }
