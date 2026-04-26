@@ -97,30 +97,30 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   return req(nodePath);
 }`)
 
-// Returns "musl" when running on an Alpine-style (musl libc) Linux and "gnu"
-// on glibc Linux. `process.report.header.glibcVersionRuntime` is only populated
-// when Node was dynamically linked against glibc. Non-linux hosts return None.
-let detectLinuxLibc: unit => option<string> = %raw(`function() {
-  if (process.platform !== "linux") return undefined;
-  try {
-    var header = process.report.getReport().header;
-    return header.glibcVersionRuntime ? "gnu" : "musl";
-  } catch (e) { return undefined; }
-}`)
-
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
-  let platformPkg = switch (processPlatform, detectLinuxLibc()) {
-  | ("linux", Some("musl")) => `envio-linux-${processArch}-musl`
-  | _ => `envio-${processPlatform}-${processArch}`
+
+  // Try the platform package; on Linux fall through to the musl variant.
+  // npm's `libc` field installs only the matching one, so the wrong name
+  // throws MODULE_NOT_FOUND immediately and the next candidate wins.
+  let candidates = switch processPlatform {
+  | "linux" => [`envio-linux-${processArch}`, `envio-linux-${processArch}-musl`]
+  | _ => [`envio-${processPlatform}-${processArch}`]
   }
 
-  // 1. Platform package (production + CI via .pnpmfile.cjs redirect)
-  try {
-    callRequire(req, platformPkg)
-  } catch {
-  | _ =>
-    // 2. Dev build (cargo build on every run)
+  let rec tryRequire = i =>
+    switch candidates[i] {
+    | None => None
+    | Some(pkg) =>
+      try Some(callRequire(req, pkg)) catch {
+      | _ => tryRequire(i + 1)
+      }
+    }
+
+  switch tryRequire(0) {
+  | Some(addon) => addon
+  | None =>
+    // Dev build fallback (cargo build on every run)
     switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
     | Some(addon) => addon
     | None =>
