@@ -14,11 +14,17 @@ jobs:
   build-platform-package:
     name: Build ${{ matrix.job.name }}
     runs-on: ${{ matrix.job.os }}
+    # TODO: remove `allow_failure` and `continue-on-error` from the musl
+    # entry once envio-linux-x64-musl has shipped at least one successful
+    # release. Until then, a musl build hiccup must not block the rest of
+    # the publish.
+    continue-on-error: ${{ matrix.job.allow_failure || false }}
     strategy:
+      fail-fast: false
       matrix:
         job:
           - { os: "ubuntu-22.04", target: "x86_64-unknown-linux-gnu", platform: "linux", arch: "x64", libc: "glibc", svm_target_platform: "linux-amd64", name: "linux-x64" }
-          - { os: "ubuntu-22.04", target: "x86_64-unknown-linux-musl", platform: "linux", arch: "x64", libc: "musl", svm_target_platform: "linux-amd64", name: "linux-x64-musl" }
+          - { os: "ubuntu-22.04", target: "x86_64-unknown-linux-musl", platform: "linux", arch: "x64", libc: "musl", svm_target_platform: "linux-amd64", name: "linux-x64-musl", allow_failure: true }
           - { os: "ubuntu-22.04", target: "aarch64-unknown-linux-gnu", platform: "linux", arch: "arm64", libc: "glibc", svm_target_platform: "linux-aarch64", name: "linux-arm64" }
           - { os: "macos-latest", target: "x86_64-apple-darwin", platform: "darwin", arch: "x64", svm_target_platform: "macosx-amd64", name: "darwin-x64" }
           - { os: "macos-latest", target: "aarch64-apple-darwin", platform: "darwin", arch: "arm64", svm_target_platform: "macosx-aarch64", name: "darwin-arm64" }

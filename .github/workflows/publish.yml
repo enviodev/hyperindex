@@ -56,13 +56,25 @@ jobs:
     with:
       version: ${{ needs.prepare.outputs.version }}
 
-  # Publish all 4 platform packages to npm
+  # Publish all platform packages to npm
   publish-platform-packages:
     runs-on: ubuntu-latest
     needs: [prepare, build-platforms]
+    # TODO: remove `allow_failure` from the musl entry (and this
+    # `continue-on-error` line) once envio-linux-x64-musl has shipped at
+    # least one successful release. Until then, a musl publish hiccup
+    # must not block the glibc/darwin packages.
+    continue-on-error: ${{ matrix.allow_failure || false }}
     strategy:
+      fail-fast: false
       matrix:
-        pkg: [envio-linux-x64, envio-linux-x64-musl, envio-linux-arm64, envio-darwin-x64, envio-darwin-arm64]
+        include:
+          - pkg: envio-linux-x64
+          - pkg: envio-linux-x64-musl
+            allow_failure: true
+          - pkg: envio-linux-arm64
+          - pkg: envio-darwin-x64
+          - pkg: envio-darwin-arm64
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v6
