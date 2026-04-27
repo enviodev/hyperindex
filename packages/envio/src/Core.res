@@ -97,6 +97,10 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   return req(nodePath);
 }`)
 
+// Native `throw` so we can re-raise a caught JS error preserving its stack,
+// `code`, and any other fields a diagnostic might rely on.
+let rethrow: JsExn.t => 'a = %raw(`function(e) { throw e }`)
+
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
 
@@ -111,12 +115,21 @@ let loadAddon = () => {
   | _ => []
   }
 
+  // Only swallow MODULE_NOT_FOUND (the optional package isn't installed on
+  // this host). Any other failure — corrupt .node, ABI mismatch, dlopen
+  // error — is a real load failure and must surface.
   let rec tryRequire = i =>
     switch candidates[i] {
     | None => None
     | Some(pkg) =>
       try Some(callRequire(req, pkg)) catch {
-      | _ => tryRequire(i + 1)
+      | exn =>
+        switch exn->JsExn.anyToExnInternal {
+        | JsExn(e) if (e->(Utils.magic: JsExn.t => {..}))["code"] === "MODULE_NOT_FOUND" =>
+          tryRequire(i + 1)
+        | JsExn(e) => rethrow(e)
+        | _ => throw(exn)
+        }
       }
     }
 
