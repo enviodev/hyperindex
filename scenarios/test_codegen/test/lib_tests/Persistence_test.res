@@ -154,3 +154,57 @@ Although it should load effect caches metadata.`,
     await p
   })
 })
+
+// Regression test: short-lived CLI commands (`db-migrate setup`, `db-migrate
+// down`) must close the storage after their work completes. Skipping this leaves
+// the postgres.js pool open, which keeps Node's event loop alive forever and
+// the command appears to hang.
+describe("Test Main short-lived command shutdown", () => {
+  Async.it("Main.dropSchema closes storage after reset", async t => {
+    let storageMock = MockIndexer.Storage.make([#reset, #close])
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+
+    await Main.dropSchema(~persistence)
+
+    t.expect(
+      (storageMock.resetCalls.contents, storageMock.closeCalls.contents),
+      ~message=`dropSchema should reset and then close the storage exactly once each`,
+    ).toEqual((1, 1))
+  })
+
+  Async.it("Main.migrate closes storage after init and persisted-state upsert", async t => {
+    let storageMock = MockIndexer.Storage.make([#isInitialized, #initialize, #close])
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+
+    let upsertCalls = ref(0)
+    let p = Main.migrate(
+      ~reset=true,
+      ~persistedState=JSON.Encode.null,
+      ~persistence,
+      ~upsertPersistedState=_ => {
+        upsertCalls := upsertCalls.contents + 1
+        Promise.resolve()
+      },
+    )
+
+    storageMock.resolveIsInitialized(false)
+    let _ = await Promise.resolve()
+    storageMock.resolveInitialize({
+      cleanRun: true,
+      chains: [],
+      cache: Dict.make(),
+      reorgCheckpoints: [],
+      checkpointId: 0n,
+    })
+    await p
+
+    t.expect(
+      (
+        storageMock.initializeCalls->Array.length,
+        upsertCalls.contents,
+        storageMock.closeCalls.contents,
+      ),
+      ~message=`migrate should initialize, upsert persisted state, then close the storage`,
+    ).toEqual((1, 1, 1))
+  })
+})

@@ -610,17 +610,30 @@ type mainArgs = Yargs.parsedArgs<args>
 
 type migrateOpts = {reset: bool, persistedState: JSON.t}
 
-let migrate = async (~reset, ~persistedState) => {
+let migrate = async (
+  ~reset,
+  ~persistedState,
+  ~persistence: option<Persistence.t>=?,
+  ~upsertPersistedState=Core.upsertPersistedState,
+) => {
   let config = Config.loadWithoutRegistrations()
-  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let persistence = switch persistence {
+  | Some(p) => p
+  | None => PgStorage.makePersistenceFromConfig(~config)
+  }
   await persistence->Persistence.init(~reset, ~chainConfigs=config.chainMap->ChainMap.values)
-  await Core.upsertPersistedState(persistedState->JSON.stringify)
+  await upsertPersistedState(persistedState->JSON.stringify)
+  await persistence.storage.close()
 }
 
-let dropSchema = async () => {
+let dropSchema = async (~persistence: option<Persistence.t>=?) => {
   let config = Config.loadWithoutRegistrations()
-  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let persistence = switch persistence {
+  | Some(p) => p
+  | None => PgStorage.makePersistenceFromConfig(~config)
+  }
   await persistence.storage.reset()
+  await persistence.storage.close()
 }
 
 let start = async (

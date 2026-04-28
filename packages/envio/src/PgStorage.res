@@ -1648,6 +1648,8 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     )
   }
 
+  let close = () => sql->Postgres.endSql
+
   {
     name: "postgres",
     isInitialized,
@@ -1664,6 +1666,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     getRollbackProgressDiff,
     getRollbackData,
     writeBatch: writeBatchMethod,
+    close,
   }
 }
 
