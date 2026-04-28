@@ -40,8 +40,6 @@ module Storage = {
     | #dumpEffectCache
     | #loadByIdsOrThrow
     | #loadByFieldOrThrow
-    | #reset
-    | #close
   ]
 
   type t = {
@@ -63,8 +61,6 @@ module Storage = {
       "operator": Persistence.operator,
     }>,
     dumpEffectCacheCalls: ref<int>,
-    resetCalls: ref<int>,
-    closeCalls: ref<int>,
     storage: Persistence.storage,
   }
 
@@ -92,8 +88,6 @@ module Storage = {
     let loadByIdsOrThrowCalls = []
     let loadByFieldOrThrowCalls = []
     let dumpEffectCacheCalls = ref(0)
-    let resetCalls = ref(0)
-    let closeCalls = ref(0)
     let resumeInitialStateCalls = []
     let resumeInitialStateResolveFns = []
 
@@ -103,8 +97,6 @@ module Storage = {
       loadByIdsOrThrowCalls,
       loadByFieldOrThrowCalls,
       dumpEffectCacheCalls,
-      resetCalls,
-      closeCalls,
       resumeInitialStateCalls,
       resolveLoadInitialState: (initialState: Persistence.initialState) => {
         resumeInitialStateResolveFns->Array.forEach(resolve => resolve(initialState))
@@ -181,10 +173,7 @@ module Storage = {
             Promise.resolve([])
           })
         },
-        reset: implement(#reset, () => {
-          resetCalls := resetCalls.contents + 1
-          Promise.resolve()
-        }),
+        reset: () => JsError.throwWithMessage("Not implemented"),
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
         pruneStaleCheckpoints: (~safeCheckpointId as _) =>
           JsError.throwWithMessage("Not implemented"),
@@ -206,10 +195,7 @@ module Storage = {
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
         ) => JsError.throwWithMessage("Not implemented"),
-        close: implement(#close, () => {
-          closeCalls := closeCalls.contents + 1
-          Promise.resolve()
-        }),
+        close: () => Promise.resolve(),
       },
     }
   }
