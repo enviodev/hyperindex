@@ -22,6 +22,12 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/create-envio:
+    dependencies:
+      envio:
+        specifier: file:../../packages/envio
+        version: link:../envio
+
   packages/e2e-tests:
     devDependencies:
       '@types/node':

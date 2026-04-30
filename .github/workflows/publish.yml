@@ -135,3 +135,39 @@ jobs:
           "
           echo "Publishing envio@${VERSION} with tag ${NPM_TAG}"
           npm publish --access public --tag "$NPM_TAG"
+
+  # Publish create-envio (powers `npm init envio` / `npm create envio`).
+  # Depends on publish-envio-package so the matching envio version is
+  # already on the registry by the time create-envio resolves it.
+  publish-create-envio:
+    runs-on: ubuntu-latest
+    needs: [prepare, publish-envio-package]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Patch version and publish
+        working-directory: ./packages/create-envio
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));
+            pkg.version = process.env.VERSION;
+            delete pkg.private;
+            if (pkg.dependencies && pkg.dependencies.envio) {
+              pkg.dependencies.envio = process.env.VERSION;
+            }
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          echo "Publishing create-envio@${VERSION} with tag ${NPM_TAG}"
+          npm publish --access public --tag "$NPM_TAG"
