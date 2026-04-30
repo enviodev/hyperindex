@@ -250,6 +250,13 @@ jobs:
         if: failure() && github.event_name == 'push'
         with:
           severity: error
+          description: |
+            - **Repository:** [${{ github.repository }}](${{ github.server_url }}/${{ github.repository }})
+            - **Workflow:** [${{ github.workflow }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            - **Event:** ${{ github.event_name }}
+            - **Branch:** ${{ github.ref_name }}
+            - **Commit:** [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            - **Triggering Actor:** ${{ github.triggering_actor }}
           details: "Tests Failed on main!"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
 
@@ -332,5 +339,12 @@ jobs:
         if: failure() && github.event_name == 'push'
         with:
           severity: error
+          description: |
+            - **Repository:** [${{ github.repository }}](${{ github.server_url }}/${{ github.repository }})
+            - **Workflow:** [${{ github.workflow }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            - **Event:** ${{ github.event_name }}
+            - **Branch:** ${{ github.ref_name }}
+            - **Commit:** [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            - **Triggering Actor:** ${{ github.triggering_actor }}
           details: "E2E Tests Failed on main!"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
