@@ -912,10 +912,7 @@ let loadWithoutRegistrations = () =>
   switch cached.contents {
   | Some(c) => c
   | None => {
-      let c = switch primedJson.contents {
-      | Some(json) => json->fromPublic
-      | None => Core.getConfigJson()->JSON.parseOrThrow->fromPublic
-      }
+      let c = getPublicConfigJson()->fromPublic
       cached := Some(c)
       c
     }
