@@ -12,6 +12,7 @@ use bollard::{Docker, API_DEFAULT_VERSION};
 use dotenvy::{EnvLoader, EnvMap, EnvSequence};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
+use sqlx::ConnectOptions;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::net::TcpStream;
@@ -21,6 +22,8 @@ const POSTGRES_IMAGE: &str = "postgres:18.3";
 const HASURA_IMAGE: &str = "hasura/graphql-engine:v2.43.0";
 const CLICKHOUSE_IMAGE: &str = "clickhouse/clickhouse-server:26.2.15.4";
 const CONFIG_HASH_LABEL: &str = "dev.envio.config-hash";
+const PROJECT_PATH_LABEL: &str = "dev.envio.project-path";
+const PROJECT_NAME_LABEL: &str = "dev.envio.project-name";
 const SOCKET_TIMEOUT: u64 = 120;
 
 const PG_CONTAINER: &str = "envio-postgres";
@@ -288,32 +291,59 @@ impl EnvConfig {
     /// excluded: when external, no container is created; when local, the
     /// host is always the hardcoded default and can't vary.
     fn pg_config_hash(&self) -> String {
-        let mut h = Sha256::new();
-        h.update(&self.pg_port);
-        h.update(&self.pg_password);
-        h.update(&self.pg_user);
-        h.update(&self.pg_database);
-        format!("{:x}", h.finalize())
+        hash_fields([
+            self.pg_port.as_str(),
+            self.pg_password.as_str(),
+            self.pg_user.as_str(),
+            self.pg_database.as_str(),
+        ])
     }
 
     fn hasura_config_hash(&self) -> String {
-        let mut h = Sha256::new();
-        h.update(&self.pg_password);
-        h.update(&self.pg_user);
-        h.update(&self.pg_database);
-        h.update(&self.hasura_port);
-        h.update(&self.hasura_enable_console);
-        h.update(&self.hasura_admin_secret);
-        format!("{:x}", h.finalize())
+        // HASURA_GRAPHQL_DATABASE_URL embeds the PG host + port, so toggling
+        // ENVIO_PG_HOST (external ↔ managed) or changing the port changes
+        // the container's baked-in DSN. Without these in the hash, drift
+        // isn't detected and Hasura silently keeps pointing at the old DB.
+        hash_fields([
+            self.pg_password.as_str(),
+            self.pg_user.as_str(),
+            self.pg_database.as_str(),
+            if self.pg_is_external() {
+                "ext"
+            } else {
+                "local"
+            },
+            self.pg_host_str(),
+            self.pg_port.as_str(),
+            self.hasura_port.as_str(),
+            self.hasura_enable_console.as_str(),
+            self.hasura_admin_secret.as_str(),
+        ])
     }
 
     fn ch_config_hash(&self) -> String {
-        let mut h = Sha256::new();
-        h.update(&self.ch_user);
-        h.update(&self.ch_password);
-        h.update(&self.ch_database);
-        format!("{:x}", h.finalize())
+        hash_fields([
+            self.ch_user.as_str(),
+            self.ch_password.as_str(),
+            self.ch_database.as_str(),
+        ])
     }
+}
+
+/// Hash a sequence of fields with an unambiguous delimiter between each so
+/// that `["foo", "barbaz"]` and `["foobar", "baz"]` produce different
+/// digests. Uses ASCII unit-separator (0x1F) which can't appear in
+/// environment variable values or our local discriminator strings.
+fn hash_fields<'a, I>(fields: I) -> String
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut h = Sha256::new();
+    for field in fields {
+        h.update(field.as_bytes());
+        h.update([0x1Fu8]);
+    }
+    format!("{:x}", h.finalize())
 }
 
 /// Maximum time allowed for pulling a single image before we give up.
@@ -456,17 +486,6 @@ async fn ensure_volume(docker: &Docker, name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Returns the config-hash label from a running container, if it exists.
-async fn get_container_config_hash(docker: &Docker, name: &str) -> Option<String> {
-    docker
-        .inspect_container(name, None)
-        .await
-        .ok()
-        .and_then(|info| info.config)
-        .and_then(|cfg| cfg.labels)
-        .and_then(|labels| labels.get(CONFIG_HASH_LABEL).cloned())
-}
-
 /// Returns true if container exists and is running.
 async fn is_container_running(docker: &Docker, name: &str) -> bool {
     match docker.inspect_container(name, None).await {
@@ -554,9 +573,24 @@ fn make_networking_config(net: &str) -> NetworkingConfig {
     }
 }
 
-fn make_labels(config_hash: &str) -> HashMap<String, String> {
+fn make_labels(
+    config_hash: &str,
+    project_root: &Path,
+    indexer_name: &str,
+) -> HashMap<String, String> {
     let mut labels = HashMap::new();
     labels.insert(CONFIG_HASH_LABEL.to_string(), config_hash.to_string());
+    // Canonicalize so the label identifies the project on disk, not the
+    // shell invocation. Without this, `envio dev` from `~/projects/foo`
+    // labels the container "." and a second project also running from
+    // its own root produces the same label — drift errors can't
+    // disambiguate. Falls back to the raw path if canonicalize fails
+    // (shouldn't happen for a live run, but don't make the label an error).
+    let path = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    labels.insert(PROJECT_PATH_LABEL.to_string(), path.display().to_string());
+    labels.insert(PROJECT_NAME_LABEL.to_string(), indexer_name.to_string());
     labels
 }
 
@@ -623,29 +657,511 @@ async fn start_container(docker: &Docker, name: &str, host_port: u16) -> anyhow:
     Ok(())
 }
 
-/// Ensure a container is running with the expected config. Returns true if a
-/// fresh container was created, false if an existing one was reused.
+/// Snapshot of a managed container that doesn't match the current config.
+/// Carries enough context for the caller to render a service-specific error.
+struct DriftInfo {
+    project_name: Option<String>,
+    project_path: Option<String>,
+    env: HashMap<String, String>,
+}
+
+/// Inspect a named container and diff its stored config-hash against the
+/// expected one. `Some(info)` means the caller must halt: the container was
+/// built with different settings and silently recreating it would destroy
+/// data the user (or another project) may still want.
+async fn detect_drift(docker: &Docker, name: &str, expected_hash: &str) -> Option<DriftInfo> {
+    let info = docker.inspect_container(name, None).await.ok()?;
+    let cfg = info.config?;
+    let labels = cfg.labels.unwrap_or_default();
+    if labels.get(CONFIG_HASH_LABEL).map(String::as_str) == Some(expected_hash) {
+        return None;
+    }
+    let project_name = labels.get(PROJECT_NAME_LABEL).cloned();
+    let project_path = labels.get(PROJECT_PATH_LABEL).cloned();
+    let env = cfg
+        .env
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|s| {
+            let (k, v) = s.split_once('=')?;
+            Some((k.to_string(), v.to_string()))
+        })
+        .collect();
+    Some(DriftInfo {
+        project_name,
+        project_path,
+        env,
+    })
+}
+
+/// Authenticated Postgres probe. `Ok(())` means the creds work against the
+/// database at `host:port`; any other return is an auth / connection failure
+/// suitable for display to the user.
+async fn probe_pg_auth(
+    host: &str,
+    port: u16,
+    user: &str,
+    password: &str,
+    database: &str,
+) -> Result<(), sqlx::Error> {
+    let opts = sqlx::postgres::PgConnectOptions::new()
+        .host(host)
+        .port(port)
+        .username(user)
+        .password(password)
+        .database(database);
+    use sqlx::Connection;
+    // Bound the probe: a stalled or misbehaving DB accepts TCP and then
+    // hangs during SCRAM, which would block `envio dev` indefinitely (sqlx
+    // sets no default connect timeout outside of pool usage). ClickHouse's
+    // probe_client already has a 2s HTTP timeout; 5s for PG accommodates
+    // slow-network external DBs without making preflight feel unresponsive.
+    match tokio::time::timeout(Duration::from_secs(5), opts.connect()).await {
+        Ok(Ok(conn)) => {
+            conn.close().await?;
+            Ok(())
+        }
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("connect to {host}:{port} timed out after 5s"),
+        ))),
+    }
+}
+
+/// Authenticated ClickHouse probe. Runs `SELECT 1` over HTTP with basic auth.
+/// ClickHouse probe outcome. The variant carries the cause directly so the
+/// classifier can branch on shape rather than scraping a formatted string —
+/// renaming the `Display` format below can no longer silently break
+/// `classify_ch_failure`.
+enum ChProbeError {
+    /// Server replied with a non-2xx status (auth/permissions/protocol).
+    Http { status: u16, body: String },
+    /// reqwest transport error before/after the response (timeout, refused,
+    /// DNS, TLS handshake, etc.).
+    Transport(String),
+}
+
+impl std::fmt::Display for ChProbeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Http { status, body } => write!(f, "HTTP {status}: {}", body.trim()),
+            Self::Transport(s) => f.write_str(s),
+        }
+    }
+}
+
+async fn probe_ch_auth(
+    client: &reqwest::Client,
+    scheme: &str,
+    host: &str,
+    port: u16,
+    user: &str,
+    password: &str,
+) -> Result<(), ChProbeError> {
+    let url = format!("{scheme}://{host}:{port}/?query=SELECT+1");
+    let resp = client
+        .get(&url)
+        .basic_auth(user, Some(password))
+        .send()
+        .await
+        .map_err(|e| ChProbeError::Transport(e.to_string()))?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    Err(ChProbeError::Http { status, body })
+}
+
+/// Compare two strings for display. Returns a "want → found" fragment when
+/// they differ, or an empty string when they match. Used by the drift error
+/// formatters so matching values stay out of the way and differences pop.
+fn diff_field(label: &str, want: &str, found: Option<&String>) -> String {
+    match found {
+        Some(v) if v == want => String::new(),
+        Some(v) => format!("    {label}: {want:?} (existing: {v:?})\n"),
+        None => format!("    {label}: {want:?} (existing: <unset>)\n"),
+    }
+}
+
+/// Describe the existing container's owning project. Name is the human
+/// handle from config.yaml ("erc20-indexer"); path is the absolute disk
+/// location. Both labels may be absent on containers created before they
+/// were introduced — degrade gracefully so the error is still usable.
+fn owner_line(drift: &DriftInfo) -> String {
+    match (&drift.project_name, &drift.project_path) {
+        (Some(name), Some(path)) => format!("  Owned by: {name} ({path})\n"),
+        (Some(name), None) => format!("  Owned by: {name}\n"),
+        (None, Some(path)) => format!("  Owned by: {path}\n"),
+        (None, None) => "  Owned by: unknown (container predates the project labels)\n".to_string(),
+    }
+}
+
+fn format_pg_drift(env: &EnvConfig, port: u16, drift: &DriftInfo) -> String {
+    let mut diff = String::new();
+    diff.push_str(&diff_field(
+        "ENVIO_PG_USER",
+        &env.pg_user,
+        drift.env.get("POSTGRES_USER"),
+    ));
+    diff.push_str(&diff_field(
+        "ENVIO_PG_DATABASE",
+        &env.pg_database,
+        drift.env.get("POSTGRES_DB"),
+    ));
+    // Password is never echoed back; we only note whether it differs.
+    let pw_note = match drift.env.get("POSTGRES_PASSWORD") {
+        Some(v) if v == &env.pg_password => String::new(),
+        _ => "    ENVIO_PG_PASSWORD: differs from existing container\n".to_string(),
+    };
+    diff.push_str(&pw_note);
+    if diff.is_empty() {
+        diff.push_str("    (port or other field)\n");
+    }
+
+    format!(
+        "Docker container {PG_CONTAINER} is already running but was created with a \
+         different configuration.\n\
+         \n\
+         {owner}  Differences:\n\
+         {diff}\
+         \n\
+         The CLI won't silently recreate it — the data volume \"{VOLUME}\" is shared \
+         across every project that uses envio-managed Postgres, and recreating would \
+         drop tables the other project may still need.\n\
+         \n\
+         Choose one:\n\
+         \n\
+         1. Align this project's .env to match the running container, then re-run \
+         `envio dev`.\n\
+         \n\
+         2. Stop the owning project's indexer and remove the container + data:\n\
+               docker rm -f {PG_CONTAINER}\n\
+               docker volume rm {VOLUME}\n\
+            Then re-run `envio dev`. (Any other project using this container will \
+         lose its data.)\n\
+         \n\
+         3. From the owning project, run `envio stop` to tear the stack down \
+         cleanly, then re-run `envio dev` from this project.\n\
+         \n\
+         (Postgres is configured on port {port}.)",
+        owner = owner_line(drift)
+    )
+}
+
+/// Parse the user/database out of a `postgres://…` URL. Password and host
+/// are intentionally dropped: password is never displayed, and host changes
+/// don't carry actionable meaning in a drift message (the user controls
+/// that via ENVIO_PG_HOST which lives outside the container).
+/// Returns (user, password-if-present, database). Password is `Some("")` when
+/// the URL has a `:` separator with empty value (`user:@host`) and `None` when
+/// the URL has no password section (`user@host`) — distinguishing the two
+/// matters because empty != absent for the drift-display heuristic.
+fn parse_pg_url_user_pw_db(url: &str) -> Option<(String, Option<String>, String)> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let user = parsed.username().to_string();
+    let pw = parsed.password().map(|s| s.to_string());
+    let db = parsed.path().trim_start_matches('/').to_string();
+    if user.is_empty() && db.is_empty() {
+        return None;
+    }
+    Some((user, pw, db))
+}
+
+fn format_hasura_drift(env: &EnvConfig, port: u16, drift: &DriftInfo) -> String {
+    let mut diff = String::new();
+
+    // Hasura's PG creds live inside HASURA_GRAPHQL_DATABASE_URL rather than
+    // as individual env vars, so parse user/db out of the URL for display.
+    // Password differences are never echoed — flagged with a single note.
+    if let Some(url) = drift.env.get("HASURA_GRAPHQL_DATABASE_URL") {
+        if let Some((u_user, u_pw, u_db)) = parse_pg_url_user_pw_db(url) {
+            diff.push_str(&diff_field("ENVIO_PG_USER", &env.pg_user, Some(&u_user)));
+            diff.push_str(&diff_field(
+                "ENVIO_PG_DATABASE",
+                &env.pg_database,
+                Some(&u_db),
+            ));
+            // Compare via the parsed password rather than substring-matching
+            // the whole URL: an empty pg_password would otherwise look for
+            // ":@" and falsely flag on URLs with no password section. The
+            // url crate normalizes `user:@host` to `password() = None`, so
+            // we treat `None` and `Some("")` as equivalent (both mean "no
+            // password set") to avoid false positives from that quirk.
+            if u_pw.as_deref().unwrap_or("") != env.pg_password.as_str() {
+                diff.push_str("    ENVIO_PG_PASSWORD: differs from existing container\n");
+            }
+        }
+    }
+    diff.push_str(&diff_field(
+        "HASURA_GRAPHQL_ENABLE_CONSOLE",
+        &env.hasura_enable_console,
+        drift.env.get("HASURA_GRAPHQL_ENABLE_CONSOLE"),
+    ));
+    let secret_note = match drift.env.get("HASURA_GRAPHQL_ADMIN_SECRET") {
+        Some(v) if v == &env.hasura_admin_secret => String::new(),
+        _ => "    HASURA_GRAPHQL_ADMIN_SECRET: differs from existing container\n".to_string(),
+    };
+    diff.push_str(&secret_note);
+    if diff.is_empty() {
+        // Port binding (HASURA_EXTERNAL_PORT) changes don't show up in the
+        // container's env vars, so we can't enumerate them — the config hash
+        // still catches the drift, we just can't point at a specific field.
+        diff.push_str("    (port binding or other configuration field)\n");
+    }
+
+    format!(
+        "Docker container {HASURA_CONTAINER} is already running but was created with \
+         a different configuration.\n\
+         \n\
+         {owner}  Differences:\n\
+         {diff}\
+         \n\
+         Choose one:\n\
+         \n\
+         1. Align this project's .env to match the running container, then re-run \
+         `envio dev`.\n\
+         \n\
+         2. Remove the container (Hasura has no data volume — state lives in \
+         Postgres):\n\
+               docker rm -f {HASURA_CONTAINER}\n\
+            Then re-run `envio dev`.\n\
+         \n\
+         3. From the owning project, run `envio stop`, then re-run `envio dev` here.\n\
+         \n\
+         (Hasura is configured on port {port}.)",
+        owner = owner_line(drift)
+    )
+}
+
+fn format_ch_drift(env: &EnvConfig, url: &ClickHouseUrl, drift: &DriftInfo) -> String {
+    let mut diff = String::new();
+    diff.push_str(&diff_field(
+        "ENVIO_CLICKHOUSE_USERNAME",
+        &env.ch_user,
+        drift.env.get("CLICKHOUSE_USER"),
+    ));
+    diff.push_str(&diff_field(
+        "ENVIO_CLICKHOUSE_DATABASE",
+        &env.ch_database,
+        drift.env.get("CLICKHOUSE_DB"),
+    ));
+    let pw_note = match drift.env.get("CLICKHOUSE_PASSWORD") {
+        Some(v) if v == &env.ch_password => String::new(),
+        _ => "    ENVIO_CLICKHOUSE_PASSWORD: differs from existing container\n".to_string(),
+    };
+    diff.push_str(&pw_note);
+    if diff.is_empty() {
+        diff.push_str("    (port or other field)\n");
+    }
+
+    format!(
+        "Docker container {CH_CONTAINER} is already running but was created with a \
+         different configuration.\n\
+         \n\
+         {owner}  Differences:\n\
+         {diff}\
+         \n\
+         The CLI won't silently recreate it — the data volume \"{CH_VOLUME}\" is \
+         shared across every project that uses envio-managed ClickHouse, and \
+         recreating would drop the other project's tables.\n\
+         \n\
+         Choose one:\n\
+         \n\
+         1. Align this project's .env to match the running container, then re-run \
+         `envio dev`.\n\
+         \n\
+         2. Remove the container and its data:\n\
+               docker rm -f {CH_CONTAINER}\n\
+               docker volume rm {CH_VOLUME}\n\
+            Then re-run `envio dev`. (Any other project using this container will \
+         lose its data.)\n\
+         \n\
+         3. From the owning project, run `envio stop`, then re-run `envio dev` here.\n\
+         \n\
+         (ClickHouse is configured on port {}.)",
+        url.port,
+        owner = owner_line(drift)
+    )
+}
+
+/// Why a probe failed. The two probes (`probe_pg_auth`, `probe_ch_auth`)
+/// can fail for credential reasons (server replied "no") or for transport
+/// reasons (timeout, connection refused, TLS, DNS). Classifying lets the
+/// formatter point the user at the right remediation rather than always
+/// suggesting credential fixes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProbeFailureKind {
+    /// Server replied with an auth/permissions/database error.
+    Auth,
+    /// Couldn't reach or complete the handshake (timeout, refused, TLS, DNS).
+    Connection,
+}
+
+fn classify_pg_failure(err: &sqlx::Error) -> ProbeFailureKind {
+    match err {
+        // Server replied → auth/db level (bad password, missing role, missing db).
+        sqlx::Error::Database(_) => ProbeFailureKind::Auth,
+        // Transport-level: TCP refused, SCRAM stalled (our 5s timeout), TLS handshake.
+        sqlx::Error::Io(_) | sqlx::Error::Tls(_) => ProbeFailureKind::Connection,
+        // Unknown variant — default to Auth so the user at least sees the
+        // existing detailed creds checklist; the raw error is also printed.
+        _ => ProbeFailureKind::Auth,
+    }
+}
+
+fn classify_ch_failure(err: &ChProbeError) -> ProbeFailureKind {
+    match err {
+        // Server responded → auth/permissions/protocol issue.
+        ChProbeError::Http { .. } => ProbeFailureKind::Auth,
+        // Transport-level: timeout, refused, DNS, TLS handshake.
+        ChProbeError::Transport(_) => ProbeFailureKind::Connection,
+    }
+}
+
+fn format_pg_failure_error(
+    env: &EnvConfig,
+    port: u16,
+    external: bool,
+    kind: ProbeFailureKind,
+    err: &str,
+) -> String {
+    let source = if external {
+        "ENVIO_PG_HOST is set"
+    } else {
+        "something is already listening on the default Postgres port and it isn't an envio-managed container"
+    };
+    let (verb, ext_fix) = match (kind, external) {
+        (ProbeFailureKind::Auth, true) => (
+            "but authentication failed",
+            "  - Verify ENVIO_PG_USER / ENVIO_PG_PASSWORD / ENVIO_PG_DATABASE match \
+             the database you pointed ENVIO_PG_HOST at.\n  \
+             - Unset ENVIO_PG_HOST to let the CLI start a local Docker container \
+             instead.\n",
+        ),
+        (ProbeFailureKind::Auth, false) => (
+            "but authentication failed",
+            "  - Update ENVIO_PG_USER / ENVIO_PG_PASSWORD / ENVIO_PG_DATABASE in \
+             .env to match the running database.\n  \
+             - Or stop the other process on this port and re-run so envio can start \
+             its own container.\n",
+        ),
+        (ProbeFailureKind::Connection, true) => (
+            "but the connection failed (timeout or transport error)",
+            "  - Verify the host is reachable and the port is open (firewall, VPN, \
+             security group).\n  \
+             - Check that the server isn't overloaded or stalled — the probe times \
+             out after 5s.\n  \
+             - Confirm the URL scheme matches what the server expects (TLS vs. plain).\n  \
+             - Unset ENVIO_PG_HOST to let the CLI start a local Docker container \
+             instead.\n",
+        ),
+        (ProbeFailureKind::Connection, false) => (
+            "but the connection failed (timeout or transport error)",
+            "  - The other process holding the port may be stalled or unresponsive — \
+             stop it and re-run so envio can start its own container.\n  \
+             - Check `lsof -ti :PORT` to identify what's listening.\n",
+        ),
+    };
+    format!(
+        "Connected to Postgres at {host}:{port} ({source}), {verb}.\n\
+         \n\
+         Configured:\n\
+             ENVIO_PG_USER={user}\n\
+             ENVIO_PG_DATABASE={db}\n\
+             (password hidden)\n\
+         \n\
+         Error: {err}\n\
+         \n\
+         Fix:\n{ext_fix}",
+        host = env.pg_host_str(),
+        user = env.pg_user,
+        db = env.pg_database,
+    )
+}
+
+fn format_ch_failure_error(
+    env: &EnvConfig,
+    url: &ClickHouseUrl,
+    external: bool,
+    kind: ProbeFailureKind,
+    err: &str,
+) -> String {
+    let source = if external {
+        "ENVIO_CLICKHOUSE_HOST is set"
+    } else {
+        "something is already listening on the default ClickHouse port and it isn't an envio-managed container"
+    };
+    let (verb, ext_fix) = match (kind, external) {
+        (ProbeFailureKind::Auth, true) => (
+            "but authentication failed",
+            "  - Verify ENVIO_CLICKHOUSE_USERNAME / ENVIO_CLICKHOUSE_PASSWORD / \
+             ENVIO_CLICKHOUSE_DATABASE match the server you pointed \
+             ENVIO_CLICKHOUSE_HOST at.\n  \
+             - Unset ENVIO_CLICKHOUSE_HOST to let the CLI start a local Docker \
+             container instead.\n",
+        ),
+        (ProbeFailureKind::Auth, false) => (
+            "but authentication failed",
+            "  - Update ENVIO_CLICKHOUSE_USERNAME / ENVIO_CLICKHOUSE_PASSWORD / \
+             ENVIO_CLICKHOUSE_DATABASE in .env to match the running server.\n  \
+             - Or stop the other process on this port and re-run so envio can start \
+             its own container.\n",
+        ),
+        (ProbeFailureKind::Connection, true) => (
+            "but the connection failed (timeout or transport error)",
+            "  - Verify the host is reachable and the port is open (firewall, VPN, \
+             security group).\n  \
+             - Check that the server isn't overloaded — the probe times out after 2s.\n  \
+             - Confirm the URL scheme matches what the server expects (https vs. http).\n  \
+             - Unset ENVIO_CLICKHOUSE_HOST to let the CLI start a local Docker \
+             container instead.\n",
+        ),
+        (ProbeFailureKind::Connection, false) => (
+            "but the connection failed (timeout or transport error)",
+            "  - The other process holding the port may be stalled — stop it and \
+             re-run so envio can start its own container.\n  \
+             - Check `lsof -ti :PORT` to identify what's listening.\n",
+        ),
+    };
+    format!(
+        "Connected to ClickHouse at {scheme}://{host}:{port} ({source}), {verb}.\n\
+         \n\
+         Configured:\n\
+             ENVIO_CLICKHOUSE_USERNAME={user}\n\
+             ENVIO_CLICKHOUSE_DATABASE={db}\n\
+             (password hidden)\n\
+         \n\
+         Error: {err}\n\
+         \n\
+         Fix:\n{ext_fix}",
+        scheme = url.scheme,
+        host = url.host,
+        port = url.port,
+        user = env.ch_user,
+        db = env.ch_database,
+    )
+}
+
+/// Ensure a managed container is created and running. Assumes the caller has
+/// already run `detect_drift` — drift-handling is intentionally not inside
+/// this function because the right remediation is service-specific and
+/// silently stopping a container the user may still need is too destructive
+/// to do without their confirmation.
 async fn ensure_container(
     docker: &Docker,
     name: &str,
-    config_hash: &str,
     host_port: u16,
     create_body: ContainerCreateBody,
 ) -> anyhow::Result<bool> {
     if container_exists(docker, name).await {
-        let existing_hash = get_container_config_hash(docker, name).await;
-        let drift = existing_hash.as_deref() != Some(config_hash);
-
-        if drift {
-            println!("Configuration changed for {name}, recreating...");
-            stop_and_remove(docker, name).await;
-        } else if is_container_running(docker, name).await {
-            return Ok(false);
-        } else {
-            start_container(docker, name, host_port).await?;
-            println!("Started {name}");
+        if is_container_running(docker, name).await {
             return Ok(false);
         }
+        start_container(docker, name, host_port).await?;
+        println!("Started {name}");
+        return Ok(false);
     }
 
     let options = CreateContainerOptionsBuilder::new().name(name).build();
@@ -671,6 +1187,10 @@ async fn ensure_container(
 #[derive(Debug, Clone, Copy)]
 pub struct UpOptions<'a> {
     pub project_root: &'a Path,
+    /// The `name` field from config.yaml. Stored on managed containers so
+    /// drift errors can name the owning indexer in human terms ("Owned by
+    /// erc20-indexer") on top of the absolute path.
+    pub indexer_name: &'a str,
     pub clickhouse: bool,
 }
 
@@ -765,6 +1285,98 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         }
     }
 
+    let pg_hash = env.pg_config_hash();
+    let hasura_hash = env.hasura_config_hash();
+    let ch_hash = env.ch_config_hash();
+
+    // Connect to Docker eagerly if the project might want us to touch any
+    // container. We need the handle for the drift preflight below *before*
+    // we know whether the pipelines will run, and the cost of a connect
+    // probe is negligible compared to the clarity it unlocks.
+    let might_manage = !pg_external || env.hasura_enabled || (opts.clickhouse && !ch_external);
+    let docker: Option<Docker> = if might_manage {
+        Some(connect_docker().await?)
+    } else {
+        None
+    };
+
+    // A service is "ours" when we'd normally manage it AND a container by
+    // our well-known name already exists. Ownership decides the preflight
+    // path: ours → drift check; not-ours-but-alive → auth probe.
+    let (pg_ours, hasura_ours, ch_ours) = match docker.as_ref() {
+        Some(d) => tokio::join!(
+            async { !pg_external && container_exists(d, PG_CONTAINER).await },
+            async { env.hasura_enabled && container_exists(d, HASURA_CONTAINER).await },
+            async { opts.clickhouse && !ch_external && container_exists(d, CH_CONTAINER).await },
+        ),
+        None => (false, false, false),
+    };
+
+    // Drift preflight — halt with an actionable error before any pipeline
+    // touches the container. Never auto-recreate: the data volume is shared
+    // across projects and silently dropping another project's data is too
+    // destructive to do without the user's confirmation.
+    if let Some(d) = docker.as_ref() {
+        if pg_ours {
+            if let Some(drift) = detect_drift(d, PG_CONTAINER, &pg_hash).await {
+                anyhow::bail!("{}", format_pg_drift(&env, pg_host_port, &drift));
+            }
+        }
+        if hasura_ours {
+            if let Some(drift) = detect_drift(d, HASURA_CONTAINER, &hasura_hash).await {
+                anyhow::bail!("{}", format_hasura_drift(&env, hasura_host_port, &drift));
+            }
+        }
+        if ch_ours {
+            if let Some(drift) = detect_drift(d, CH_CONTAINER, &ch_hash).await {
+                let url = ch_url_ref.expect("ch_ours implies ch_url_ref is Some");
+                anyhow::bail!("{}", format_ch_drift(&env, url, &drift));
+            }
+        }
+    }
+
+    // Auth preflight for services we won't manage: external (ENVIO_*_HOST
+    // set) or foreign (port is taken but the listener isn't our container).
+    // Catches the "service is up but creds don't match" case that used to
+    // surface only once the indexer subprocess failed to connect.
+    if pg_alive && (pg_external || !pg_ours) {
+        if let Err(e) = probe_pg_auth(
+            pg_probe_host,
+            pg_host_port,
+            &env.pg_user,
+            &env.pg_password,
+            &env.pg_database,
+        )
+        .await
+        {
+            let kind = classify_pg_failure(&e);
+            anyhow::bail!(
+                "{}",
+                format_pg_failure_error(&env, pg_host_port, pg_external, kind, &e.to_string())
+            );
+        }
+    }
+    if let Some(url) = ch_url_ref {
+        if ch_alive && (ch_external || !ch_ours) {
+            if let Err(e) = probe_ch_auth(
+                &probe_client,
+                &url.scheme,
+                &url.host,
+                url.port,
+                &env.ch_user,
+                &env.ch_password,
+            )
+            .await
+            {
+                let kind = classify_ch_failure(&e);
+                anyhow::bail!(
+                    "{}",
+                    format_ch_failure_error(&env, url, ch_external, kind, &e.to_string())
+                );
+            }
+        }
+    }
+
     let need_pg = !pg_external && !pg_alive;
     let need_hasura = env.hasura_enabled && !hasura_alive;
     let need_ch = opts.clickhouse && !ch_external && !ch_alive;
@@ -830,11 +1442,9 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         });
     }
 
-    // We need Docker for at least one container.
-    let docker = connect_docker().await?;
-    let pg_hash = env.pg_config_hash();
-    let hasura_hash = env.hasura_config_hash();
-    let ch_hash = env.ch_config_hash();
+    // At least one pipeline will run, and the preflight above already
+    // opened a Docker handle (might_manage is true whenever any need_* is).
+    let docker = docker.expect("need_* implies might_manage which implies Docker is connected");
 
     // Run full pipelines for each container in parallel:
     // pull image → create infra → ensure container.
@@ -868,7 +1478,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
         let pg_body = ContainerCreateBody {
             image: Some(POSTGRES_IMAGE.to_string()),
-            labels: Some(make_labels(&pg_hash)),
+            labels: Some(make_labels(&pg_hash, opts.project_root, opts.indexer_name)),
             env: Some(vec![
                 format!("POSTGRES_PASSWORD={}", env.pg_password),
                 format!("POSTGRES_USER={}", env.pg_user),
@@ -892,7 +1502,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             ..Default::default()
         };
 
-        ensure_container(&docker, PG_CONTAINER, &pg_hash, pg_host_port, pg_body).await?;
+        ensure_container(&docker, PG_CONTAINER, pg_host_port, pg_body).await?;
         Ok(())
     };
 
@@ -937,7 +1547,11 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
         let hasura_body = ContainerCreateBody {
             image: Some(HASURA_IMAGE.to_string()),
-            labels: Some(make_labels(&hasura_hash)),
+            labels: Some(make_labels(
+                &hasura_hash,
+                opts.project_root,
+                opts.indexer_name,
+            )),
             user: Some("1001:1001".to_string()),
             env: Some(vec![
                 format!("HASURA_GRAPHQL_DATABASE_URL={db_url}"),
@@ -978,14 +1592,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             ..Default::default()
         };
 
-        ensure_container(
-            &docker,
-            HASURA_CONTAINER,
-            &hasura_hash,
-            hasura_host_port,
-            hasura_body,
-        )
-        .await?;
+        ensure_container(&docker, HASURA_CONTAINER, hasura_host_port, hasura_body).await?;
         Ok(())
     };
 
@@ -1021,7 +1628,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
         let ch_body = ContainerCreateBody {
             image: Some(CLICKHOUSE_IMAGE.to_string()),
-            labels: Some(make_labels(&ch_hash)),
+            labels: Some(make_labels(&ch_hash, opts.project_root, opts.indexer_name)),
             env: Some(vec![
                 format!("CLICKHOUSE_USER={}", env.ch_user),
                 format!("CLICKHOUSE_PASSWORD={}", env.ch_password),
@@ -1045,7 +1652,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             ..Default::default()
         };
 
-        ensure_container(&docker, CH_CONTAINER, &ch_hash, url.port, ch_body).await?;
+        ensure_container(&docker, CH_CONTAINER, url.port, ch_body).await?;
         Ok(())
     };
 
@@ -1272,6 +1879,26 @@ mod tests {
     }
 
     #[test]
+    fn config_hash_distinguishes_field_boundaries() {
+        // Without a delimiter between fields, ("secre", "talice") and
+        // ("secret", "alice") would both feed "secretalice" into the
+        // digest stream and collide. pg_config_hash hashes password
+        // immediately before user, so move a suffix between them to
+        // construct that collision shape and assert it doesn't collapse.
+        let base = EnvConfig {
+            pg_password: "secre".into(),
+            pg_user: "talice".into(),
+            ..default_env()
+        };
+        let shifted = EnvConfig {
+            pg_password: "secret".into(),
+            pg_user: "alice".into(),
+            ..default_env()
+        };
+        assert_ne!(base.pg_config_hash(), shifted.pg_config_hash());
+    }
+
+    #[test]
     fn ch_hash_independent_from_pg() {
         // Changing a PG field must not change the ClickHouse hash.
         let env2 = EnvConfig {
@@ -1405,17 +2032,535 @@ mod tests {
 
     #[test]
     fn up_options_copies_values() {
-        // Smoke test that UpOptions threads both fields and is Copy so
+        // Smoke test that UpOptions threads all fields and is Copy so
         // callers don't need to clone before passing in.
         let root = Path::new("/tmp/project");
         let a = UpOptions {
             project_root: root,
+            indexer_name: "my-indexer",
             clickhouse: true,
         };
         let b = a;
         assert_eq!(
-            (a.project_root, a.clickhouse, b.project_root, b.clickhouse),
-            (root, true, root, true)
+            (
+                a.project_root,
+                a.indexer_name,
+                a.clickhouse,
+                b.project_root,
+                b.indexer_name,
+                b.clickhouse
+            ),
+            (root, "my-indexer", true, root, "my-indexer", true)
         );
+    }
+
+    #[test]
+    fn labels_record_config_hash_path_and_name() {
+        // Path doesn't exist → canonicalize falls back to the raw input, so
+        // the label reads exactly what was passed. Good enough for the shape
+        // assertion; canonicalization itself has a separate test below.
+        let labels = make_labels(
+            "abc123",
+            Path::new("/nonexistent/path/for-test"),
+            "erc20-indexer",
+        );
+        assert_eq!(
+            (
+                labels.get(CONFIG_HASH_LABEL).map(String::as_str),
+                labels.get(PROJECT_PATH_LABEL).map(String::as_str),
+                labels.get(PROJECT_NAME_LABEL).map(String::as_str),
+            ),
+            (
+                Some("abc123"),
+                Some("/nonexistent/path/for-test"),
+                Some("erc20-indexer"),
+            )
+        );
+    }
+
+    #[test]
+    fn labels_canonicalize_project_path() {
+        // Invocation-independent label: equivalent path forms must collapse
+        // to the same project-path label. Otherwise two projects both end
+        // up labeled identically (e.g. ".") and drift errors can't
+        // disambiguate them. The non-canonical form here is `<dir>/.` which
+        // canonicalize() must normalize to `<dir>`.
+        //
+        // Avoid std::env::set_current_dir: it's process-global and would
+        // race with parallel tests reading or opening relative paths.
+        let dir = tempdir::TempDir::new("envio-labels-test").expect("tempdir");
+        let canonical = dir.path().canonicalize().expect("canonicalize tempdir");
+        let with_dot = dir.path().join(".");
+        let labels_dot = make_labels("h", &with_dot, "x");
+        let labels_abs = make_labels("h", &canonical, "x");
+        assert_eq!(
+            (
+                labels_dot.get(PROJECT_PATH_LABEL).map(String::as_str),
+                labels_abs.get(PROJECT_PATH_LABEL).map(String::as_str),
+            ),
+            (
+                Some(canonical.display().to_string().as_str()),
+                Some(canonical.display().to_string().as_str()),
+            )
+        );
+    }
+
+    fn ch_drift_fixture(ch_user: &str, ch_db: &str, ch_password: &str) -> DriftInfo {
+        let mut env = HashMap::new();
+        env.insert("CLICKHOUSE_USER".to_string(), ch_user.to_string());
+        env.insert("CLICKHOUSE_DB".to_string(), ch_db.to_string());
+        env.insert("CLICKHOUSE_PASSWORD".to_string(), ch_password.to_string());
+        DriftInfo {
+            project_name: Some("other-indexer".to_string()),
+            project_path: Some("/path/to/other-project".to_string()),
+            env,
+        }
+    }
+
+    #[test]
+    fn ch_drift_error_is_actionable() {
+        // Password mismatch → the error must point at password (without echoing
+        // either value), name both projects (so the user sees whose data is at
+        // stake), and include the docker rm command.
+        let env = default_env();
+        let url = ClickHouseUrl::parse("http://localhost:8123").unwrap();
+        let drift = ch_drift_fixture("default", "envio_sink", "old-password");
+        let msg = format_ch_drift(&env, &url, &drift);
+        let checks = [
+            msg.contains("envio-clickhouse"),
+            msg.contains("/path/to/other-project"),
+            msg.contains("ENVIO_CLICKHOUSE_PASSWORD: differs"),
+            msg.contains("docker rm -f envio-clickhouse"),
+            msg.contains("docker volume rm envio-clickhouse-data"),
+            msg.contains("envio stop"),
+            !msg.contains(&env.ch_password),
+            !msg.contains("old-password"),
+        ];
+        assert_eq!(checks, [true; 8]);
+    }
+
+    #[test]
+    fn ch_drift_error_shows_user_and_database_diffs() {
+        // Username / database are not secrets, so both the wanted and existing
+        // values are shown side-by-side for easy alignment.
+        let env = default_env();
+        let url = ClickHouseUrl::parse("http://localhost:8123").unwrap();
+        let drift = ch_drift_fixture("analytics", "other_db", "testing");
+        let msg = format_ch_drift(&env, &url, &drift);
+        let checks = [
+            msg.contains("ENVIO_CLICKHOUSE_USERNAME"),
+            msg.contains("\"default\""),
+            msg.contains("\"analytics\""),
+            msg.contains("ENVIO_CLICKHOUSE_DATABASE"),
+            msg.contains("\"envio_sink\""),
+            msg.contains("\"other_db\""),
+            // Password matches, so no password note.
+            !msg.contains("ENVIO_CLICKHOUSE_PASSWORD: differs"),
+        ];
+        assert_eq!(checks, [true; 7]);
+    }
+
+    #[test]
+    fn ch_drift_error_handles_missing_project_label() {
+        // Containers created before the labels existed have neither name
+        // nor path. The error still works — it just can't name the owner.
+        let env = default_env();
+        let url = ClickHouseUrl::parse("http://localhost:8123").unwrap();
+        let drift = DriftInfo {
+            project_name: None,
+            project_path: None,
+            env: HashMap::new(),
+        };
+        let msg = format_ch_drift(&env, &url, &drift);
+        assert!(
+            msg.contains("unknown (container predates the project labels)"),
+            "missing-project case should say so, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn owner_line_renders_name_and_path() {
+        // Both labels present → name first, path in parens. This is the
+        // primary case for containers created by current builds.
+        let drift = DriftInfo {
+            project_name: Some("erc20-indexer".to_string()),
+            project_path: Some("/home/dmitry/projects/erc20".to_string()),
+            env: HashMap::new(),
+        };
+        assert_eq!(
+            owner_line(&drift),
+            "  Owned by: erc20-indexer (/home/dmitry/projects/erc20)\n"
+        );
+    }
+
+    #[test]
+    fn owner_line_handles_partial_labels() {
+        // One label missing (old container + partial upgrade) → render
+        // whichever is present without an empty paren or "None" artifact.
+        let name_only = DriftInfo {
+            project_name: Some("foo".to_string()),
+            project_path: None,
+            env: HashMap::new(),
+        };
+        let path_only = DriftInfo {
+            project_name: None,
+            project_path: Some("/bar".to_string()),
+            env: HashMap::new(),
+        };
+        assert_eq!(
+            (owner_line(&name_only), owner_line(&path_only)),
+            (
+                "  Owned by: foo\n".to_string(),
+                "  Owned by: /bar\n".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn pg_drift_error_is_actionable() {
+        let env = default_env();
+        let mut ex = HashMap::new();
+        ex.insert("POSTGRES_USER".to_string(), "postgres".to_string());
+        ex.insert("POSTGRES_DB".to_string(), "other-db".to_string());
+        ex.insert("POSTGRES_PASSWORD".to_string(), "other-pw".to_string());
+        let drift = DriftInfo {
+            project_name: Some("alice-indexer".to_string()),
+            project_path: Some("/home/alice/other".to_string()),
+            env: ex,
+        };
+        let msg = format_pg_drift(&env, 5433, &drift);
+        let checks = [
+            msg.contains("envio-postgres"),
+            msg.contains("alice-indexer"),
+            msg.contains("/home/alice/other"),
+            msg.contains("ENVIO_PG_DATABASE"),
+            msg.contains("\"envio-dev\""),
+            msg.contains("\"other-db\""),
+            msg.contains("ENVIO_PG_PASSWORD: differs"),
+            msg.contains("docker rm -f envio-postgres"),
+            msg.contains("docker volume rm envio-postgres-data"),
+            !msg.contains("other-pw"),
+            !msg.contains(&env.pg_password),
+        ];
+        assert_eq!(checks, [true; 11]);
+    }
+
+    #[test]
+    fn pg_failure_error_external_vs_foreign_paths_differ_for_auth() {
+        let env = default_env();
+        let external = format_pg_failure_error(
+            &env,
+            5433,
+            true,
+            ProbeFailureKind::Auth,
+            "password authentication failed",
+        );
+        let foreign = format_pg_failure_error(
+            &env,
+            5433,
+            false,
+            ProbeFailureKind::Auth,
+            "password authentication failed",
+        );
+
+        let external_checks = [
+            external.contains("ENVIO_PG_HOST is set"),
+            external.contains("Unset ENVIO_PG_HOST"),
+            external.contains("authentication failed"),
+            external.contains("(password hidden)"),
+            !external.contains(&env.pg_password),
+        ];
+        let foreign_checks = [
+            foreign.contains("something is already listening"),
+            foreign.contains("match the running database"),
+            foreign.contains("authentication failed"),
+            !foreign.contains("ENVIO_PG_HOST is set"),
+        ];
+        assert_eq!((external_checks, foreign_checks), ([true; 5], [true; 4]));
+    }
+
+    #[test]
+    fn pg_failure_error_connection_kind_does_not_blame_credentials() {
+        // A timeout or transport failure must *not* tell the user to check
+        // their credentials — those are almost certainly fine. Previously
+        // this code path always said "authentication failed".
+        let env = default_env();
+        let msg = format_pg_failure_error(
+            &env,
+            5433,
+            true,
+            ProbeFailureKind::Connection,
+            "connect to localhost:5433 timed out after 5s",
+        );
+        let checks = [
+            msg.contains("the connection failed"),
+            msg.contains("timeout or transport error"),
+            msg.contains("timed out after 5s"),
+            msg.contains("firewall"),
+            msg.contains("Unset ENVIO_PG_HOST"),
+            !msg.contains("Verify ENVIO_PG_USER / ENVIO_PG_PASSWORD"),
+            !msg.contains("Update ENVIO_PG_USER / ENVIO_PG_PASSWORD"),
+            !msg.contains(&env.pg_password),
+        ];
+        assert_eq!(checks, [true; 8]);
+    }
+
+    #[test]
+    fn classify_pg_failure_maps_io_to_connection_and_db_to_auth() {
+        // Io covers our 5s timeout mapping plus TCP refused / broken pipe.
+        // Anything we don't recognize defaults to Auth so the user still
+        // gets the detailed creds checklist alongside the raw error.
+        let timeout = sqlx::Error::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "boom"));
+        let refused = sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "nope",
+        ));
+        let unknown = sqlx::Error::RowNotFound;
+        assert_eq!(
+            (
+                classify_pg_failure(&timeout),
+                classify_pg_failure(&refused),
+                classify_pg_failure(&unknown),
+            ),
+            (
+                ProbeFailureKind::Connection,
+                ProbeFailureKind::Connection,
+                ProbeFailureKind::Auth,
+            )
+        );
+    }
+
+    #[test]
+    fn classify_ch_failure_distinguishes_http_from_transport() {
+        // The classifier matches on the typed enum, so renaming the Display
+        // format below can't silently break the auth/connection split.
+        let http = ChProbeError::Http {
+            status: 516,
+            body: "auth failed".to_string(),
+        };
+        let transport = ChProbeError::Transport("error sending request".to_string());
+        assert_eq!(
+            (classify_ch_failure(&http), classify_ch_failure(&transport)),
+            (ProbeFailureKind::Auth, ProbeFailureKind::Connection)
+        );
+    }
+
+    #[test]
+    fn ch_probe_error_display_preserves_http_format() {
+        // The "HTTP <status>: <body>" format ends up in the user-facing
+        // error message, so guard against accidental drift in the Display
+        // impl. (The classifier no longer depends on this string, but the
+        // formatter does pass it through verbatim.)
+        let err = ChProbeError::Http {
+            status: 516,
+            body: "  auth failed  \n".to_string(),
+        };
+        assert_eq!(err.to_string(), "HTTP 516: auth failed");
+    }
+
+    #[test]
+    fn ch_failure_error_external_vs_foreign_paths_differ_for_auth() {
+        let env = default_env();
+        let url = ClickHouseUrl::parse("http://localhost:8123").unwrap();
+        let external = format_ch_failure_error(
+            &env,
+            &url,
+            true,
+            ProbeFailureKind::Auth,
+            "HTTP 516: auth failed",
+        );
+        let foreign = format_ch_failure_error(
+            &env,
+            &url,
+            false,
+            ProbeFailureKind::Auth,
+            "HTTP 516: auth failed",
+        );
+
+        let external_checks = [
+            external.contains("ENVIO_CLICKHOUSE_HOST is set"),
+            external.contains("Unset ENVIO_CLICKHOUSE_HOST"),
+            external.contains("HTTP 516"),
+            !external.contains(&env.ch_password),
+        ];
+        let foreign_checks = [
+            foreign.contains("something is already listening"),
+            foreign.contains("match the running server"),
+            !foreign.contains("ENVIO_CLICKHOUSE_HOST is set"),
+        ];
+        assert_eq!((external_checks, foreign_checks), ([true; 4], [true; 3]));
+    }
+
+    #[test]
+    fn ch_failure_error_connection_kind_suggests_network_not_credentials() {
+        let env = default_env();
+        let url = ClickHouseUrl::parse("http://localhost:8123").unwrap();
+        let msg = format_ch_failure_error(
+            &env,
+            &url,
+            true,
+            ProbeFailureKind::Connection,
+            "error sending request for url: timed out",
+        );
+        let checks = [
+            msg.contains("the connection failed"),
+            msg.contains("timed out"),
+            msg.contains("firewall"),
+            !msg.contains("Verify ENVIO_CLICKHOUSE_USERNAME"),
+            !msg.contains("Update ENVIO_CLICKHOUSE_USERNAME"),
+            !msg.contains(&env.ch_password),
+        ];
+        assert_eq!(checks, [true; 6]);
+    }
+
+    #[test]
+    fn hasura_hash_changes_on_pg_external_toggle_and_port() {
+        // HASURA_GRAPHQL_DATABASE_URL embeds the PG host and port, so both
+        // flipping ENVIO_PG_HOST on/off and changing ENVIO_PG_PORT must
+        // force a Hasura recreate. These used to silently slip past the
+        // drift check, leaving Hasura pointed at the wrong DB.
+        let base = default_env();
+        let toggled = EnvConfig {
+            pg_host: Some("localhost".into()),
+            ..default_env()
+        };
+        let reported = EnvConfig {
+            pg_port: "5434".into(),
+            ..default_env()
+        };
+        assert_ne!(base.hasura_config_hash(), toggled.hasura_config_hash());
+        assert_ne!(base.hasura_config_hash(), reported.hasura_config_hash());
+    }
+
+    fn hasura_drift_fixture(database_url: &str, admin_secret: &str) -> DriftInfo {
+        let mut env = HashMap::new();
+        env.insert(
+            "HASURA_GRAPHQL_DATABASE_URL".to_string(),
+            database_url.to_string(),
+        );
+        env.insert(
+            "HASURA_GRAPHQL_ENABLE_CONSOLE".to_string(),
+            "true".to_string(),
+        );
+        env.insert(
+            "HASURA_GRAPHQL_ADMIN_SECRET".to_string(),
+            admin_secret.to_string(),
+        );
+        DriftInfo {
+            project_name: Some("alice-indexer".to_string()),
+            project_path: Some("/home/alice/indexer".to_string()),
+            env,
+        }
+    }
+
+    #[test]
+    fn hasura_drift_error_surfaces_embedded_pg_creds() {
+        // Previously this formatter compared HASURA_EXTERNAL_PORT (host
+        // binding) against the container's PORT env var (hardcoded 8080),
+        // so every diff said "8080 (existing: 8080)". Now the PG creds
+        // baked into DATABASE_URL are what get diffed.
+        let env = default_env();
+        let drift = hasura_drift_fixture(
+            "postgres://postgres:old-pw@envio-postgres:5432/old-db",
+            "testing",
+        );
+        let msg = format_hasura_drift(&env, 8080, &drift);
+        let checks = [
+            msg.contains("envio-hasura"),
+            msg.contains("/home/alice/indexer"),
+            msg.contains("ENVIO_PG_DATABASE"),
+            msg.contains("\"envio-dev\""),
+            msg.contains("\"old-db\""),
+            msg.contains("ENVIO_PG_PASSWORD: differs"),
+            !msg.contains("HASURA_EXTERNAL_PORT"),
+            !msg.contains("old-pw"),
+            !msg.contains(&env.pg_password),
+            msg.contains("docker rm -f envio-hasura"),
+        ];
+        assert_eq!(checks, [true; 10]);
+    }
+
+    #[test]
+    fn hasura_drift_error_flags_admin_secret_without_echoing() {
+        let env = default_env();
+        let drift = hasura_drift_fixture(
+            "postgres://postgres:testing@envio-postgres:5432/envio-dev",
+            "different-secret",
+        );
+        let msg = format_hasura_drift(&env, 8080, &drift);
+        let checks = [
+            msg.contains("HASURA_GRAPHQL_ADMIN_SECRET: differs"),
+            !msg.contains("different-secret"),
+            !msg.contains(&env.hasura_admin_secret),
+            // PG creds match, so no PG password note.
+            !msg.contains("ENVIO_PG_PASSWORD: differs"),
+        ];
+        assert_eq!(checks, [true; 4]);
+    }
+
+    #[test]
+    fn hasura_drift_error_falls_back_when_only_port_binding_drifted() {
+        // HASURA_EXTERNAL_PORT changes don't appear in the container env —
+        // they live in port bindings. The formatter can't enumerate the
+        // specific field; assert we at least don't claim something bogus.
+        let env = default_env();
+        let drift = hasura_drift_fixture(
+            "postgres://postgres:testing@envio-postgres:5432/envio-dev",
+            "testing",
+        );
+        let msg = format_hasura_drift(&env, 8080, &drift);
+        assert!(
+            msg.contains("port binding or other configuration field"),
+            "no-visible-diff case should use the fallback, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn hasura_drift_error_empty_password_does_not_falsely_flag() {
+        // Regression: when env.pg_password is empty, the previous
+        // substring check looked for ":@" inside the URL — which the url
+        // crate normalizes away (user:@host → password()=None) — so
+        // matching configs were reported as drifted. Both URL forms below
+        // ("user:@host" normalized to no-password, and explicit "user@host")
+        // should now compare as equal to an empty configured password.
+        let env = EnvConfig {
+            pg_password: String::new(),
+            ..default_env()
+        };
+        let normalized = hasura_drift_fixture(
+            "postgres://postgres:@envio-postgres:5432/envio-dev",
+            "testing",
+        );
+        let absent = hasura_drift_fixture(
+            "postgres://postgres@envio-postgres:5432/envio-dev",
+            "testing",
+        );
+        let msg_normalized = format_hasura_drift(&env, 8080, &normalized);
+        let msg_absent = format_hasura_drift(&env, 8080, &absent);
+        assert_eq!(
+            (
+                msg_normalized.contains("ENVIO_PG_PASSWORD: differs"),
+                msg_absent.contains("ENVIO_PG_PASSWORD: differs"),
+            ),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn hasura_drift_error_nonempty_password_mismatch_is_flagged() {
+        // The contrapositive: a real password mismatch must still be
+        // reported, never echoing either value.
+        let env = default_env(); // pg_password = "testing"
+        let drift = hasura_drift_fixture(
+            "postgres://postgres:other-pw@envio-postgres:5432/envio-dev",
+            "testing",
+        );
+        let msg = format_hasura_drift(&env, 8080, &drift);
+        let checks = [
+            msg.contains("ENVIO_PG_PASSWORD: differs"),
+            !msg.contains("other-pw"),
+            !msg.contains(&env.pg_password),
+        ];
+        assert_eq!(checks, [true; 3]);
     }
 }
