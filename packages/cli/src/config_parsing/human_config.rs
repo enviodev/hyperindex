@@ -1036,6 +1036,36 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         );
     }
 
+    // libyaml resolves unquoted `0x…` as an int tag. A 20-byte address overflows
+    // u64, deserializes through f64 with ~107 low bits zeroed, and the broken
+    // address is silently passed downstream — every event for that contract
+    // gets dropped at query time. The ERC20 template ships an unquoted address,
+    // so this path is the user-facing one. Both single-scalar and list shapes
+    // must round-trip the address verbatim.
+    #[test]
+    fn deserialize_unquoted_hex_address_yaml() {
+        let single = "address: 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n";
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            address: NormalizedList<String>,
+        }
+        let de: Wrap = serde_yaml::from_str(single).unwrap();
+        assert_eq!(
+            Vec::<String>::from(de.address),
+            vec!["0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string()]
+        );
+
+        let list = "address:\n  - 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n  - 0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74\n";
+        let de: Wrap = serde_yaml::from_str(list).unwrap();
+        assert_eq!(
+            Vec::<String>::from(de.address),
+            vec![
+                "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string(),
+                "0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74".to_string(),
+            ]
+        );
+    }
+
     #[test]
     fn deserializes_factory_contract_config() {
         let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
