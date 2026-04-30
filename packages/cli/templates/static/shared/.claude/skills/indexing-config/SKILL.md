@@ -124,6 +124,12 @@ Works in any string value in config. Set via `.env` file or shell environment.
 
 **IMPORTANT:** All environment variables MUST use the `ENVIO_` prefix (e.g., `ENVIO_RPC_URL`, not `RPC_URL`). The hosted service requires the `ENVIO_` prefix — variables without it will not be available at runtime.
 
+## Runtime Environment Variables
+
+Set on the indexer process (not interpolated into config.yaml):
+
+- `ENVIO_TUI` — `true` forces the terminal UI on, `false` forces it off. Unset (default) auto-disables under agents, CI, and non-TTY stdout, so plain `pnpm dev` produces line-buffered output suitable for log capture without manual intervention.
+
 ## YAML Validation
 
 Add at top of file for IDE schema validation:
