@@ -16,7 +16,6 @@ use crate::{
             self, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField, SystemConfig,
         },
     },
-    persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{path_utils::add_leading_relative_dot, ParsedProjectPaths},
     template_dirs::TemplateDirs,
     type_schema::{RecordField, TypeExpr, TypeIdent},
@@ -902,7 +901,6 @@ pub struct ProjectTemplate {
     entities: Vec<EntityRecordTypeTemplate>,
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
-    persisted_state: PersistedStateJsonString,
     has_multiple_events: bool,
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
@@ -1210,9 +1208,6 @@ impl ProjectTemplate {
             .collect::<Result<_>>()
             .context("Failed generating chain configs template")?;
 
-        let persisted_state = PersistedState::get_current_state(cfg)
-            .context("Failed creating default persisted state")?
-            .into();
         let total_number_of_events: usize = codegen_contracts
             .iter()
             .map(|contract| contract.codegen_events.len())
@@ -2186,7 +2181,6 @@ type testIndexer = {{
             entities,
             gql_enums,
             chain_configs,
-            persisted_state,
             has_multiple_events,
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,

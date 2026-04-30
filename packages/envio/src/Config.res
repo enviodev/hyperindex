@@ -868,40 +868,84 @@ let getPublicConfigJson = () =>
   }
 
 // RPC urls (and fallback/ws/svm `rpc`) can carry secrets, so drop them
-// before the config is written to `envio_info`. Works on a deep clone
-// so the caller's JSON is not mutated.
+// before the config is written to `envio_info`. Walks a deep clone so the
+// caller's JSON is not mutated.
 let stripSensitiveData = (json: JSON.t): JSON.t => {
   let cloned = json->JSON.stringify->JSON.parseOrThrow
-  let stripChains = (ecosystem: option<JSON.t>) => {
-    switch ecosystem->Option.flatMap(JSON.Decode.object) {
-    | Some(ecosystemDict) =>
-      switch ecosystemDict->Dict.get("chains")->Option.flatMap(JSON.Decode.object) {
-      | Some(chains) =>
+  let stripChains = (ecosystem: option<JSON.t>) =>
+    switch ecosystem {
+    | Some(Object(ecosystemDict)) =>
+      switch ecosystemDict->Dict.get("chains") {
+      | Some(Object(chains)) =>
         chains
         ->Dict.valuesToArray
-        ->Array.forEach(chainJson => {
-          switch chainJson->JSON.Decode.object {
-          | Some(chain) => {
+        ->Array.forEach(chainJson =>
+          switch chainJson {
+          | Object(chain) => {
               chain->Utils.Dict.deleteInPlace("rpcs")
               chain->Utils.Dict.deleteInPlace("rpc")
             }
-          | None => ()
+          | _ => ()
           }
-        })
-      | None => ()
+        )
+      | _ => ()
       }
-    | None => ()
+    | _ => ()
     }
-  }
-  switch cloned->JSON.Decode.object {
-  | Some(obj) => {
+  switch cloned {
+  | Object(obj) => {
       stripChains(obj->Dict.get("evm"))
       stripChains(obj->Dict.get("fuel"))
       stripChains(obj->Dict.get("svm"))
     }
-  | None => ()
+  | _ => ()
   }
   cloned
+}
+
+// Recursively sort object keys so two structurally-equal JSONs serialize to
+// the same string. Postgres `jsonb` does not preserve key order, so we can't
+// just compare raw `JSON.stringify` output of stored vs current config.
+let rec canonicalJson = (json: JSON.t): JSON.t =>
+  switch json {
+  | Object(d) => {
+      let sorted = Dict.make()
+      d
+      ->Dict.keysToArray
+      ->Array.toSorted(String.compare)
+      ->Array.forEach(k => sorted->Dict.set(k, d->Dict.getUnsafe(k)->canonicalJson))
+      Object(sorted)
+    }
+  | Array(arr) => Array(arr->Array.map(canonicalJson))
+  | _ => json
+  }
+
+// Top-level keys whose values differ between `stored` and `current` (sorted).
+// A key present on only one side is reported. Nested changes still surface
+// as the enclosing top-level key, so the message stays compact.
+let topLevelDiffKeys = (~stored: JSON.t, ~current: JSON.t): array<string> => {
+  let storedObj = switch stored {
+  | Object(d) => d
+  | _ => Dict.make()
+  }
+  let currentObj = switch current {
+  | Object(d) => d
+  | _ => Dict.make()
+  }
+  let allKeys = Utils.Set.fromArray(
+    Array.concat(storedObj->Dict.keysToArray, currentObj->Dict.keysToArray),
+  )
+  allKeys
+  ->Utils.Set.toArray
+  ->Array.filter(k =>
+    switch (storedObj->Dict.get(k), currentObj->Dict.get(k)) {
+    | (None, None) => false
+    | (None, Some(_)) | (Some(_), None) => true
+    | (Some(sv), Some(cv)) =>
+      JSON.stringify(canonicalJson(sv)) !== JSON.stringify(canonicalJson(cv))
+    }
+  )
+  ->Array.toSorted(String.compare)
 }
 
 // The returned value is a pure function of the JSON — no handler

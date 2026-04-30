@@ -3,7 +3,6 @@ use crate::{
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     config_parsing::{human_config, system_config::SystemConfig},
     docker_env,
-    persisted_state::{self, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     scripts,
 };
@@ -83,32 +82,6 @@ pub async fn execute(
         }
 
         CommandType::Start(start_args) => {
-            // Warn early if the generated directory looks stale — `envio start`
-            // keeps running even in these cases, but the indexer will use
-            // whatever generated code is on disk.
-            match PersistedStateExists::get_persisted_state_file(&parsed_project_paths) {
-                PersistedStateExists::Exists(ps)
-                    if ps.envio_version != persisted_state::current_version() =>
-                {
-                    eprintln!(
-                        "Warning: the generated directory was built with envio {}, but you're \
-                         running envio {}. Run `envio codegen` to regenerate it (or switch to the \
-                         matching envio version).",
-                        &ps.envio_version,
-                        persisted_state::current_version(),
-                    )
-                }
-                PersistedStateExists::NotExists => eprintln!(
-                    "Warning: no generated files found. Run `envio codegen` first to generate the \
-                     indexer runtime.",
-                ),
-                PersistedStateExists::Corrupted => eprintln!(
-                    "Warning: the generated directory is in an invalid state. Run `envio codegen` \
-                     to regenerate it.",
-                ),
-                PersistedStateExists::Exists(_) => (),
-            };
-
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
 
