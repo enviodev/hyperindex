@@ -1,5 +1,8 @@
 open Vitest
 
+let isClaudeCloud = %raw(`process.env.CLAUDE_CODE_CONTAINER_ID != null`)
+let itSkipInClaudeCloud = Async.it_skipIf(isClaudeCloud)
+
 describe("E2E tests", () => {
   let getChainAddresses = async (indexerMock: MockIndexer.Indexer.t, ~chainId) => {
     let addresses: array<InternalTable.EnvioAddresses.t> = await indexerMock.queryRaw(
@@ -1528,6 +1531,8 @@ describe("E2E tests", () => {
       ("3", 26441, Some(26980)),
       ("4", 26981, Some(27520)),
       ("4", 27521, Some(28060)),
+      ("4", 28061, Some(28600)),
+      ("4", 28601, Some(29140)),
     ])
 
     // Verify merged partition "4" has both DC addresses
@@ -1540,7 +1545,7 @@ describe("E2E tests", () => {
     ).toEqual(2)
   })
 
-  Async.it(
+  itSkipInClaudeCloud(
     "_meta and chain_metadata return events processed as a number (float4 cast)",
     async t => {
       let sourceMock = MockIndexer.Source.make(

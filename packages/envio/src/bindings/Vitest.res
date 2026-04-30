@@ -114,6 +114,9 @@ module Async = {
   @module("vitest") @scope("it")
   external it_skip: (string, testContext => promise<unit>) => unit = "skip"
 
+  @module("vitest") @scope("it")
+  external it_skipIf: bool => (string, testContext => promise<unit>) => unit = "skipIf"
+
   @module("vitest")
   external test: (string, testContext => promise<unit>) => unit = "test"
 
