@@ -89,6 +89,16 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       );
     }
 
+    const metricsResult = await runCommand(
+      config.envioCommand,
+      [...config.envioArgs, "metrics"],
+      { cwd: PROJECT_DIR, timeout: 10_000 }
+    );
+    expect({
+      exitCode: metricsResult.exitCode,
+      hasEnvioMetric: metricsResult.stdout.includes("envio_progress_ready"),
+    }).toEqual({ exitCode: 0, hasEnvioMetric: true });
+
     // Kill so envio dev doesn't tear down docker before tests query it.
     indexerProcess.kill("SIGKILL");
     indexerProcess = null;
