@@ -615,12 +615,14 @@ let migrate = async (~reset, ~persistedState) => {
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   await persistence->Persistence.init(~reset, ~chainConfigs=config.chainMap->ChainMap.values)
   await Core.upsertPersistedState(persistedState->JSON.stringify)
+  await persistence.storage.close()
 }
 
 let dropSchema = async () => {
   let config = Config.loadWithoutRegistrations()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   await persistence.storage.reset()
+  await persistence.storage.close()
 }
 
 let start = async (

@@ -77,9 +77,12 @@ export function buildPackageJson(
 
   pkg.bin = "./bin.mjs";
 
-  // Add optional platform-specific dependencies
+  // Add optional platform-specific dependencies. npm/pnpm use the `libc`
+  // field in each platform package's package.json to skip the wrong flavor
+  // on Linux (glibc vs musl).
   pkg.optionalDependencies = {
     "envio-linux-x64": platformPkgVersion,
+    "envio-linux-x64-musl": platformPkgVersion,
     "envio-linux-arm64": platformPkgVersion,
     "envio-darwin-x64": platformPkgVersion,
     "envio-darwin-arm64": platformPkgVersion,
