@@ -115,7 +115,12 @@ module Storage = {
             isInitializedResolveFns->Array.push(resolve)->ignore
           })
         }),
-        initialize: implement(#initialize, (~chainConfigs=[], ~entities=[], ~enums=[]) => {
+        initialize: implement(#initialize, (
+          ~chainConfigs=[],
+          ~entities=[],
+          ~enums=[],
+          ~envioInfo as _,
+        ) => {
           initializeCalls
           ->Array.push({
             "entities": entities,
@@ -127,7 +132,7 @@ module Storage = {
             initializeResolveFns->Array.push(resolve)->ignore
           })
         }),
-        resumeInitialState: implement(#resumeInitialState, () => {
+        resumeInitialState: implement(#resumeInitialState, (~envioInfo as _) => {
           resumeInitialStateCalls->Array.push(true)->ignore
           Promise.make((resolve, _reject) => {
             resumeInitialStateResolveFns->Array.push(resolve)->ignore
@@ -174,8 +179,6 @@ module Storage = {
           })
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
-        readEnvioInfo: () => JsError.throwWithMessage("Not implemented"),
-        writeEnvioInfo: (~config as _) => JsError.throwWithMessage("Not implemented"),
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
         pruneStaleCheckpoints: (~safeCheckpointId as _) =>
           JsError.throwWithMessage("Not implemented"),
@@ -337,7 +340,11 @@ module Indexer = {
 
     let gsManagerRef = ref(None)
 
-    await persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values, ~reset)
+    await persistence->Persistence.init(
+      ~chainConfigs=config.chainMap->ChainMap.values,
+      ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~reset,
+    )
 
     let chainManager = ChainManager.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,

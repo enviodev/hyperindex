@@ -1202,7 +1202,12 @@ let make = (
     cache
   }
 
-  let initialize = async (~chainConfigs=[], ~entities=[], ~enums=[]): Persistence.initialState => {
+  let initialize = async (
+    ~chainConfigs=[],
+    ~entities=[],
+    ~enums=[],
+    ~envioInfo,
+  ): Persistence.initialState => {
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
     )
@@ -1243,11 +1248,14 @@ let make = (
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
       ~isHasuraEnabled,
     )
-    // Execute all queries within a single transaction for integrity
-    let _ = await sql->Postgres.beginSql(sql => {
+    // Execute all queries within a single transaction for integrity.
+    // The envio_info row is written in the same transaction so a successful
+    // initialize is atomic — no schema can come up without the matching row.
+    let _ = await sql->Postgres.beginSql(async sql => {
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
-      Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
+      let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
+      await InternalTable.EnvioInfo.upsert(sql, ~pgSchema, ~config=envioInfo)
     })
 
     // Populate config addresses into envio_addresses with registration_block/log = -1
@@ -1480,7 +1488,26 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     }
   }
 
-  let resumeInitialState = async (): Persistence.initialState => {
+  let resumeInitialState = async (~envioInfo): Persistence.initialState => {
+    // Refuse to resume against a schema whose persisted config doesn't match
+    // the current one. We only check on resume — a fresh `initialize` writes
+    // the row in the same transaction, so there's nothing to compare against.
+    switch await InternalTable.EnvioInfo.read(sql, ~pgSchema) {
+    | None =>
+      // Schema is initialized but envio_info is empty — first run after this
+      // change shipped, or upsert from initialize was rolled back. Backfill.
+      await InternalTable.EnvioInfo.upsert(sql, ~pgSchema, ~config=envioInfo)
+    | Some(stored) =>
+      let changedKeys = Config.topLevelDiffKeys(~stored, ~current=envioInfo)
+      if changedKeys->Array.length > 0 {
+        JsError.throwWithMessage(
+          `Incompatible config change detected in: ${changedKeys->Array.joinUnsafe(
+              ", ",
+            )}. Reverse the changes to continue indexing with the existing state, or run \`envio dev -r\` to clear the database and re-index from scratch.`,
+        )
+      }
+    }
+
     let (cache, chains, checkpointIdResult, reorgCheckpoints) = await Promise.all4((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
@@ -1648,9 +1675,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     )
   }
 
-  let readEnvioInfo = () => InternalTable.EnvioInfo.read(sql, ~pgSchema)
-  let writeEnvioInfo = (~config) => InternalTable.EnvioInfo.upsert(sql, ~pgSchema, ~config)
-
   {
     name: "postgres",
     isInitialized,
@@ -1660,8 +1684,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     loadByIdsOrThrow,
     dumpEffectCache,
     reset,
-    readEnvioInfo,
-    writeEnvioInfo,
     setChainMeta,
     pruneStaleCheckpoints,
     pruneStaleEntityHistory,

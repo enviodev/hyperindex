@@ -610,36 +610,18 @@ type mainArgs = Yargs.parsedArgs<args>
 
 type migrateOpts = {reset: bool}
 
-// On a fresh schema we write the current (RPC-stripped) config; on a resume
-// we compare against the stored one and refuse to start on a mismatch,
-// listing the top-level config keys whose values differ.
-let syncEnvioInfo = async (~persistence: Persistence.t) => {
-  let storage = persistence.storage
-  let currentStripped = Config.getPublicConfigJson()->Config.stripSensitiveData
-  let initialState = persistence->Persistence.getInitializedState
-  if initialState.cleanRun {
-    await storage.writeEnvioInfo(~config=currentStripped)
-  } else {
-    switch await storage.readEnvioInfo() {
-    | None => await storage.writeEnvioInfo(~config=currentStripped)
-    | Some(stored) =>
-      let changedKeys = Config.topLevelDiffKeys(~stored, ~current=currentStripped)
-      if changedKeys->Array.length > 0 {
-        JsError.throwWithMessage(
-          `Incompatible config change detected in: ${changedKeys->Array.joinUnsafe(
-              ", ",
-            )}. Reverse the changes to continue indexing with the existing state, or run \`envio dev -r\` to clear the database and re-index from scratch.`,
-        )
-      }
-    }
-  }
-}
+// The RPC-stripped public config that the storage layer persists in
+// `envio_info` (on initialize) and validates against (on resume).
+let getEnvioInfo = () => Config.getPublicConfigJson()->Config.stripSensitiveData
 
 let migrate = async (~reset) => {
   let config = Config.loadWithoutRegistrations()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
-  await persistence->Persistence.init(~reset, ~chainConfigs=config.chainMap->ChainMap.values)
-  await syncEnvioInfo(~persistence)
+  await persistence->Persistence.init(
+    ~reset,
+    ~chainConfigs=config.chainMap->ChainMap.values,
+    ~envioInfo=getEnvioInfo(),
+  )
 }
 
 let dropSchema = async () => {
@@ -676,11 +658,8 @@ let start = async (
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
+    ~envioInfo=getEnvioInfo(),
   )
-  switch migrate {
-  | Some(_) => await syncEnvioInfo(~persistence)
-  | None => ()
-  }
 
   // `Config.loadWithoutRegistrations` never sees registration state; handler,
   // contractRegister, and eventFilters are baked into each event config only

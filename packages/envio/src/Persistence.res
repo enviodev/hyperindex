@@ -55,13 +55,18 @@ type storage = {
   // and we can skip initialization
   isInitialized: unit => promise<bool>,
   // Should initialize the storage so we can start interacting with it
-  // Eg create connection, schema, tables, etc.
+  // Eg create connection, schema, tables, etc. `envioInfo` is the
+  // RPC-stripped public config, persisted as part of the same transaction
+  // so a fresh schema always carries a matching `envio_info` row.
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
+    ~envioInfo: JSON.t,
   ) => promise<initialState>,
-  resumeInitialState: unit => promise<initialState>,
+  // On resume the storage compares the existing `envio_info` row against
+  // the current (RPC-stripped) config and refuses to resume on mismatch.
+  resumeInitialState: (~envioInfo: JSON.t) => promise<initialState>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
     ~ids: array<string>,
@@ -80,12 +85,6 @@ type storage = {
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,
-  // Read the persisted public config JSON written on the last successful
-  // initialization. `None` means the table row has never been written yet.
-  readEnvioInfo: unit => promise<option<JSON.t>>,
-  // Upsert the public config JSON used for compatibility checks on restart.
-  // Callers are expected to strip sensitive fields (e.g. RPC urls) first.
-  writeEnvioInfo: (~config: JSON.t) => promise<unit>,
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
@@ -163,7 +162,7 @@ let make = (
 }
 
 let init = {
-  async (persistence, ~chainConfigs, ~reset=false) => {
+  async (persistence, ~chainConfigs, ~envioInfo, ~reset=false) => {
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -185,6 +184,7 @@ let init = {
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,
             ~chainConfigs,
+            ~envioInfo,
           )
           Logging.info(`The indexer storage is ready. Starting indexing!`)
           persistence.storageStatus = Ready(initialState)
@@ -197,7 +197,7 @@ let init = {
           }
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
-          let initialState = await persistence.storage.resumeInitialState()
+          let initialState = await persistence.storage.resumeInitialState(~envioInfo)
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

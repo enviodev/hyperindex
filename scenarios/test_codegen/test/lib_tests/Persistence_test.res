@@ -24,7 +24,7 @@ describe("Test Persistence layer init", () => {
     ).toEqual([])
     t.expect(storageMock.initializeCalls, ~message=`Storage should not be initialized`).toEqual([])
 
-    let p = persistence->Persistence.init(~chainConfigs=[])
+    let p = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
 
     t.expect(
       storageMock.isInitializedCalls,
@@ -84,7 +84,7 @@ describe("Test Persistence layer init", () => {
     // Can resolve the promise now
     await p
 
-    await persistence->Persistence.init(~chainConfigs=[])
+    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -94,7 +94,7 @@ describe("Test Persistence layer init", () => {
       ~message=`Calling init the second time shouldn't do anything`,
     ).toEqual((1, 1, 0))
 
-    let _p2 = persistence->Persistence.init(~reset=true, ~chainConfigs=[])
+    let _p2 = persistence->Persistence.init(~reset=true, ~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -119,10 +119,10 @@ describe("Test Persistence layer init", () => {
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
-    let p = persistence->Persistence.init(~chainConfigs=[])
+    let p = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
     // Additional calls to init should not do anything
-    let _ = persistence->Persistence.init(~chainConfigs=[])
-    let _ = persistence->Persistence.init(~chainConfigs=[])
+    let _ = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
+    let _ = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
 
     storageMock.resolveIsInitialized(true)
     let _ = await Promise.resolve()

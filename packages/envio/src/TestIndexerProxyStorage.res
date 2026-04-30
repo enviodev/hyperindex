@@ -107,12 +107,12 @@ let sendRequest = (proxy: t, ~payload: workerPayload): promise<JSON.t> => {
 let makeStorage = (proxy: t): Persistence.storage => {
   name: "test-proxy",
   isInitialized: async () => true,
-  initialize: async (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?) => {
+  initialize: async (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?, ~envioInfo as _) => {
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called. Use resumeInitialState instead.",
     )
   },
-  resumeInitialState: async () => proxy.initialState,
+  resumeInitialState: async (~envioInfo as _) => proxy.initialState,
   loadByIdsOrThrow: async (~ids, ~table: Table.table, ~rowsSchema) => {
     let response = await proxy->sendRequest(~payload=LoadByIds({tableName: table.tableName, ids}))
     response->S.parseOrThrow(rowsSchema)
@@ -182,8 +182,6 @@ let makeStorage = (proxy: t): Persistence.storage => {
   },
   dumpEffectCache: async () => (),
   reset: async () => (),
-  readEnvioInfo: async () => None,
-  writeEnvioInfo: async (~config as _) => (),
   setChainMeta: async _ => Obj.magic(),
   pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
   pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
