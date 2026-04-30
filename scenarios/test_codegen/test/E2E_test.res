@@ -1542,7 +1542,7 @@ describe("E2E tests", () => {
     ).toEqual(2)
   })
 
-  TestEnv.itSkipInClaudeCloud(
+  Async.itSkipInClaudeCloud(
     "_meta and chain_metadata return events processed as a number (float4 cast)",
     async t => {
       let sourceMock = MockIndexer.Source.make(

@@ -133,6 +133,9 @@ importers:
       rescript:
         specifier: 12.2.0
         version: 12.2.0
+      vitest:
+        specifier: 4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.10.9)(jsdom@16.7.0)(tsx@4.21.0)
 
   scenarios/e2e_test:
     dependencies:
@@ -273,6 +276,8 @@ importers:
       generated:
         specifier: ./generated
         version: link:generated
+
+  scenarios/test_codegen/generated: {}
 
 packages:
 
