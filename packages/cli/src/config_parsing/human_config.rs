@@ -33,17 +33,18 @@ impl JsonSchema for Addresses {
         "Addresses".into()
     }
 
-    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
-        // Must stay a pure string. Editors backed by yaml-language-server use
-        // this schema to decide how to format/save scalars; previously the
-        // schema also allowed `integer`, which let YAML 1.1 hex resolution
-        // treat unquoted `0x…` addresses as numbers. Saving the file then
-        // round-tripped them through a 64-bit float and silently truncated
-        // the bottom ~107 bits — the indexer then queried HyperSync for a
-        // contract that doesn't exist on chain and skipped every event.
+    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
+        // Must accept `integer` in addition to `string`. yaml-language-server
+        // resolves unquoted `0x…` scalars as YAML 1.1 hex integers, and a
+        // string-only schema produces a spurious "Incorrect type" diagnostic
+        // for every config that enters the address unquoted. The integer
+        // branch silences that. The runtime catches the truncation pattern
+        // that some editor formatters introduce — see Address parsing.
         let t_schema = json_schema!({
-          "type": "string",
-          "pattern": "^0x[0-9a-fA-F]+$",
+          "anyOf": [
+            { "type": "string", "pattern": "^0x[0-9a-fA-F]+$" },
+            usize::json_schema(gen),
+          ]
         });
         json_schema!({
           "anyOf": [
@@ -1071,26 +1072,24 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         );
     }
 
-    // Editors backed by yaml-language-server use the JSON schema to decide
-    // how to (re)format scalars on save. If the schema permits `integer`,
-    // unquoted hex addresses get round-tripped through f64 by the formatter
-    // and saved back truncated. Lock the schema to string-only so the editor
-    // never tries to coerce.
+    // The string variant must carry a hex pattern. yaml-language-server and
+    // Prettier use this to decide how to format scalars on save; without it,
+    // unquoted `0x…` got round-tripped through f64 and silently truncated.
+    // The integer variant has to stay too — yaml-language-server resolves
+    // unquoted hex as YAML 1.1 ints, and a string-only schema produces a
+    // false-positive "Incorrect type" diagnostic in the IDE. The runtime
+    // catches the truncation pattern that misbehaving formatters can still
+    // introduce.
     #[test]
-    fn addresses_schema_is_string_only() {
+    fn addresses_schema_constrains_string_with_hex_pattern() {
         use crate::config_parsing::human_config::Addresses;
         use schemars::{JsonSchema, SchemaGenerator};
         let mut gen = SchemaGenerator::default();
         let schema = <Addresses as JsonSchema>::json_schema(&mut gen);
         let json = serde_json::to_string(&schema).unwrap();
         assert!(
-            !json.contains("integer") && !json.contains("number"),
-            "Addresses schema must not allow numeric types — yaml-language-server \
-             would let editors silently truncate unquoted hex addresses on save. Got: {json}"
-        );
-        assert!(
-            json.contains("\"type\":\"string\""),
-            "Addresses schema must declare string. Got: {json}"
+            json.contains("\"pattern\":\"^0x[0-9a-fA-F]+$\""),
+            "Addresses string variant must restrict to hex via pattern. Got: {json}"
         );
     }
 

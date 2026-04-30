@@ -358,14 +358,32 @@
     "Addresses": {
       "anyOf": [
         {
-          "type": "string",
-          "pattern": "^0x[0-9a-fA-F]+$"
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]+$"
+            },
+            {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          ]
         },
         {
           "type": "array",
           "items": {
-            "type": "string",
-            "pattern": "^0x[0-9a-fA-F]+$"
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]+$"
+              },
+              {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0
+              }
+            ]
           }
         }
       ]
