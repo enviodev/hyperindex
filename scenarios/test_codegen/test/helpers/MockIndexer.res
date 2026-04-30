@@ -366,6 +366,12 @@ module Indexer = {
           while before >= (gsManager->GlobalStateManager.getState).processedBatches {
             await Utils.delay(1)
           }
+          // Skip an extra microtask for indexer to fire follow-up actions
+          // (e.g. the NextQuery dispatch that schedules the next
+          // getItemsOrThrow call). Without this, callers that immediately
+          // call resolveGetItemsOrThrow can race the dispatch and observe
+          // an empty calls array.
+          await Utils.delay(0)
           resolve()
         })
       },
