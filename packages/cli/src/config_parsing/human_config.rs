@@ -211,12 +211,16 @@ pub struct ConfigDiscriminant {
 // save round-trip the value through Number — silently truncating the bottom
 // ~107 bits and breaking every event query for that address. Wrap any `0x…`
 // scalar in double quotes so the editor sees a string regardless of YAML
-// version. Only acts on values that appear after `: ` or `- ` in column 0+.
+// version. Anchored to YAML scalar contexts: identifier-shaped key followed
+// by `:`, or a list-item dash at any indentation.
 pub(crate) fn force_quote_hex_scalars(yaml: String) -> String {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        regex::Regex::new(r"(?m)((?::|^[ \t]*-)[ \t]+)(0x[0-9a-fA-F]+)([ \t]*(?:#|$))").unwrap()
+        regex::Regex::new(
+            r"(?m)((?:[A-Za-z_][\w-]*:|^[ \t]*-)[ \t]+)(0x[0-9a-fA-F]+)([ \t]*(?:#|$))",
+        )
+        .unwrap()
     });
     re.replace_all(&yaml, "$1\"$2\"$3").into_owned()
 }
@@ -1057,12 +1061,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         );
     }
 
-    // libyaml resolves unquoted `0x…` as an int tag. A 20-byte address overflows
-    // u64, deserializes through f64 with ~107 low bits zeroed, and the broken
-    // address is silently passed downstream — every event for that contract
-    // gets dropped at query time. The ERC20 template ships an unquoted address,
-    // so this path is the user-facing one. Both single-scalar and list shapes
-    // must round-trip the address verbatim.
     // `envio init` writes the YAML emitted here to disk. Hex addresses must
     // come out quoted — otherwise yaml-language-server / Prettier will treat
     // them as YAML 1.1 hex integers and silently truncate them through f64
@@ -1091,7 +1089,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     }
 
     #[test]
-    fn human_config_display_emits_quoted_addresses() {
+    fn evm_human_config_display_emits_quoted_addresses() {
         // Round-trips an EvmConfig with an unquoted-style address through
         // the Display impl that init writes to disk.
         let yaml = "name: t\nschema: ./s.graphql\ncontracts:\n  - name: C\n    handler: ./h.js\n    events:\n      - event: E\nchains:\n  - id: 1\n    rpc:\n      url: https://x\n    start_block: 0\n    contracts:\n      - name: C\n        address: \"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\"\n";
@@ -1103,6 +1101,24 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         );
     }
 
+    #[test]
+    fn fuel_human_config_display_emits_quoted_addresses() {
+        // Fuel addresses are 32-byte hex starting with 0x, so the same
+        // truncation hazard applies and the same Display path must quote them.
+        let yaml = "name: t\necosystem: fuel\nchains:\n  - id: 0\n    start_block: 0\n    contracts:\n      - name: Greeter\n        address: \"0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b\"\n        abi_file_path: abis/greeter-abi.json\n        events:\n          - name: NewGreeting\n";
+        let cfg: super::fuel::HumanConfig = serde_yaml::from_str(yaml).unwrap();
+        let out = cfg.to_string();
+        assert!(
+            out.contains("\"0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b\""),
+            "Fuel init-written YAML must keep the address quoted. Got:\n{out}"
+        );
+    }
+
+    // libyaml resolves unquoted `0x…` as an int tag. A 20-byte address overflows
+    // u64, but serde_yaml still hands the raw scalar text to the String visitor
+    // without precision loss. Lock that contract — any future migration to a
+    // YAML library that coerces through f64 here would silently break every
+    // event query for the address.
     #[test]
     fn deserialize_unquoted_hex_address_yaml() {
         let single = "address: 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n";
