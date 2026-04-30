@@ -6,7 +6,7 @@ By submitting a Pull Request or making any contribution to this project, you aut
 
 - [Installation](#installation)
 - [Project Structure Overview](#project-structure-overview)
-- [Generated Indexer Runtime Architecture](#generated-indexer-runtime-architecture)
+- [Indexer Runtime Architecture](#indexer-runtime-architecture)
 - [Update CLI Generated Docs](#update-cli-generated-docs)
 - [Create templates](#create-templates)
 - [Configure the files according to your project](#configure-the-files-according-to-your-project)
@@ -60,7 +60,9 @@ alias lenvio="node <absolute repository path>/hyperindex/packages/envio/bin.mjs"
 
 ## Project Structure Overview
 
-Envio is split into a Rust CLI and the generated indexer runtime.
+Envio is split into a Rust CLI, a shared runtime library (`packages/envio`),
+and a thin per-project codegen output (`<project>/.envio/types.d.ts` plus the
+committed `envio-env.d.ts` glue file at the project root).
 
 Top-level folders:
 
@@ -70,22 +72,29 @@ Top-level folders:
   - `src/config_parsing/` – configuration loading pipeline:
     - `human_config.rs` → reads user `config.yaml`.
     - `system_config.rs` → converts user config into the internal representation.
-  - `src/hbs_templating/codegen_templates.rs` – prepares data for Handlebars and writes the `generated/` directory.
-  - `templates/` – code scaffold used during generation (`dynamic/` for Handlebars, `static/` for raw files).
+  - `src/hbs_templating/codegen_templates.rs` – emits `<project>/.envio/types.d.ts`,
+    `<project>/envio-env.d.ts`, and (for ReScript projects) `<project>/src/Indexer.res`.
+  - `templates/` – code scaffold used during `envio init` / contract import
+    (`dynamic/` for Handlebars, `static/` for raw files).
 
 Main CLI commands:
 
 1. `init` – interactive project scaffolding (`src/executor/init.rs`, `src/cli_args/interactive_init/`).
-2. `codegen` – parses config, builds the internal model, then calls templates to create the `generated/` indexer runtime.
-3. `start` – runs the already generated runtime code.
+2. `codegen` – parses config and writes `<project>/.envio/types.d.ts` (augments
+   the `envio` module with project-bound types), `<project>/envio-env.d.ts`
+   (committed reference glue), and `src/Indexer.res` for ReScript projects.
+3. `start` – runs the already-generated runtime code.
 4. `dev` – detects changes; if anything changed it runs `codegen` and then `start`, otherwise just `start`.
 
-Generated indexer runtime locations:
+Codegen output layout:
 
-1. Library-ified code: `packages/envio` (ReScript/TypeScript). Use `pnpm rescript-w` for live recompilation; no `pnpm codegen` needed.
-2. Static scaffold: `packages/cli/templates/static/codegen` and dynamic templates in `packages/cli/templates/dynamic/codegen` (requires `pnpm codegen` after edits).
-3. Scenario & regression tests: `scenarios/` (e.g. `scenarios/test_codegen`). Run `pnpm codegen` then `pnpm test`. (You don't need to run `pnpm codegen` when changing librariefied code).
-4. Quick-iteration trick when working with static code a lot: open `scenarios/test_codegen/generated`, run `pnpm rescript -w`, adjust files, then copy changes back into templates.
+1. Shared library: `packages/envio` (ReScript/TypeScript). Use `pnpm rescript -w`
+   for live recompilation; no `pnpm codegen` needed for library edits.
+2. Per-project codegen output: `<project>/.envio/types.d.ts` (git-ignored,
+   regenerated every run) plus `<project>/envio-env.d.ts` (committed, stable).
+3. Scenario & regression tests: `scenarios/` (e.g. `scenarios/test_codegen`).
+   Run `pnpm codegen` then `pnpm test`. (You don't need to run `pnpm codegen`
+   when changing library code.)
 
 Navigation cheat-sheet (useful for code search / AI):
 
@@ -95,9 +104,11 @@ Navigation cheat-sheet (useful for code search / AI):
 - EVM helpers: `packages/cli/src/evm/`
 - Fuel helpers: `packages/cli/src/fuel/`
 
-## Generated Indexer Runtime Architecture
+## Indexer Runtime Architecture
 
-All code below is generated into your project’s `generated/` folder or located in the reusable library components in `packages/envio`.
+All runtime code lives in the reusable library at `packages/envio`. User
+projects pull in project-specific types via the augmented `envio` module
+(`<project>/.envio/types.d.ts` + `<project>/envio-env.d.ts`).
 
 Entry point:
 
@@ -150,7 +161,7 @@ Monitoring & health:
 Quick dev tips:
 
 - Library code under `packages/envio` → hot-recompile with `pnpm rescript -w`.
-- Changes inside generated require rerunning `pnpm codegen` (unless you are in the quick-iteration workflow described above).
+- Changes that affect emitted types (`packages/cli/src/hbs_templating/codegen_templates.rs`, schema, config) require rerunning `pnpm codegen` in the consuming scenario.
 
 ### Case study: per-address `startBlock`
 
@@ -162,7 +173,7 @@ Need to expose a `startBlock` setting for every contract address in `config.yaml
 4.  Regenerate JSON-schemas for docs & validation: `make update-schemas`.
 5.  Mirror the new field in `system_config.rs`; convert it to an internal type that is easier for templates (e.g., `IndexingContract { address, start_block, abi, events }`).
 6.  Pass the enriched contract structs into `hbs_templating/codegen_templates.rs`.
-7.  Update the Handlebars context used by `templates/dynamic/codegen/src/RegisterHandlers.res.hbs` so the generated `RegisterHandlers.res` forwards `startBlock`.
+7.  Update the codegen output in `hbs_templating/codegen_templates.rs` (the `Indexer.res` builder for ReScript projects, the `.envio/types.d.ts` augmentation block for TypeScript) so per-address `startBlock` flows into the runtime.
 8.  Add the field to `Config.res`.
 9.  Compress the two previous arrays passed to `FetchState.res` `make` function (static vs dynamic contracts) into a single `array<IndexingContract>` that already contains `startBlock`.
 10. Inside `FetchState.res` in `make` function create the initial block-partitions from the `startBlock` of each contract.

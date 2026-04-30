@@ -24,7 +24,7 @@ Use this checklist to verify migration completeness before final sign-off.
 ## Handlers
 - [ ] Entity IDs prefixed with `chainId` (`${event.chainId}-${id}`)
 - [ ] All external calls use Effect API (`createEffect` + `context.effect()`)
-- [ ] BigDecimal precision maintained (import from `generated`)
+- [ ] BigDecimal precision maintained (import from `envio`)
 - [ ] Field names match generated types (`_id` suffix for relations)
 - [ ] `context.Entity.get()` calls use `await`
 - [ ] `context.Entity.set()` calls do NOT use `await`

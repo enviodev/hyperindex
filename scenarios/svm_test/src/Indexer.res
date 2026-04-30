@@ -1,0 +1,203 @@
+//*************
+//**CONTRACTS**
+//*************
+
+open RescriptSchema
+
+module Transaction = {
+  type t = {id: string}
+}
+
+module Block = {
+  type t = {number: int, timestamp: int, hash: string, id: string, height: int, time: int}
+}
+
+module SingleOrMultiple: {
+  type t<'a>
+  let normalizeOrThrow: (t<'a>, ~nestedArrayDepth: int=?) => array<'a>
+  let single: 'a => t<'a>
+  let multiple: array<'a> => t<'a>
+} = {
+  type t<'a> = JSON.t
+
+  external single: 'a => t<'a> = "%identity"
+  external multiple: array<'a> => t<'a> = "%identity"
+  external castMultiple: t<'a> => array<'a> = "%identity"
+  external castSingle: t<'a> => 'a = "%identity"
+
+  exception AmbiguousEmptyNestedArray
+
+  let rec isMultiple = (t: t<'a>, ~nestedArrayDepth): bool =>
+    if !Array.isArray(t) {
+      false
+    } else {
+      let arr = t->(Utils.magic: t<'a> => array<t<'a>>)
+      if nestedArrayDepth == 0 {
+        true
+      } else if arr->Array.length == 0 {
+        AmbiguousEmptyNestedArray->ErrorHandling.mkLogAndRaise(
+          ~msg="The given empty array could be interpreted as a flat array (value) or nested array. Since it's ambiguous,
+          please pass in a nested empty array if the intention is to provide an empty array as a value",
+        )
+      } else {
+        arr->Utils.Array.firstUnsafe->isMultiple(~nestedArrayDepth=nestedArrayDepth - 1)
+      }
+    }
+
+  let normalizeOrThrow = (t: t<'a>, ~nestedArrayDepth=0): array<'a> => {
+    if t->isMultiple(~nestedArrayDepth) {
+      t->castMultiple
+    } else {
+      [t->castSingle]
+    }
+  }
+}
+
+/** Options for onEvent / contractRegister. */
+type onEventOptions<'eventIdentity, 'where> = {
+  event: 'eventIdentity,
+  wildcard?: bool,
+  where?: 'where,
+}
+
+module Enums = {
+
+}
+
+module Entities = {
+  type id = string
+
+  module SlotPing = {
+    type t = {id: id, slot: int}
+
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("slot") slot?: Envio.whereOperator<int>}
+  }
+
+  type rec name<'entity> =
+    | @as("SlotPing") SlotPing: name<SlotPing.t>
+}
+
+type handlerEntityOperations<'entity, 'getWhereFilter> = {
+  get: string => promise<option<'entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: string => unit,
+}
+
+type handlerContext = {
+  log: Envio.logger,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
+  isPreload: bool,
+  chain: Internal.chainInfo,
+  \"SlotPing": handlerEntityOperations<Entities.SlotPing.t, Entities.SlotPing.getWhereFilter>,
+}
+
+type chainId = [#0]
+
+type contractRegisterContract = { add: Address.t => unit }
+
+type contractRegisterChain = {
+  id: chainId,
+
+}
+
+type contractRegisterContext = {
+  log: Envio.logger,
+  chain: contractRegisterChain,
+}
+
+
+
+/** Contract configuration with name and ABI. */
+type indexerContract = {
+  /** The contract name. */
+  name: string,
+  /** The contract ABI. */
+  abi: unknown,
+  /** The contract addresses. */
+  addresses: array<Address.t>,
+}
+
+/** Per-chain configuration for the indexer. */
+type indexerChain = {
+  /** The chain ID. */
+  id: chainId,
+  /** The chain name. */
+  name: string,
+  /** The block number to start indexing from. */
+  startBlock: int,
+  /** The block number to stop indexing at (if specified). */
+  endBlock: option<int>,
+  /** Whether the chain has completed initial sync and is processing live events. */
+  isLive: bool,
+}
+
+/** Strongly-typed record of chain configurations keyed by chain ID. */
+type indexerChains = {
+  \"0": indexerChain,
+}
+
+type eventIdentity<'event, 'paramsConstructor, 'where>
+
+/** Metadata and configuration for the indexer. */
+type indexer = {
+  /** The name of the indexer from config.yaml. */
+  name: string,
+  /** The description of the indexer from config.yaml. */
+  description: option<string>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
+  /** Register a Slot Handler. Evaluates `where` once per configured chain at registration time. */
+  onSlot: (
+    Envio.onBlockOptions<indexerChain>,
+    Envio.svmOnSlotArgs<handlerContext> => promise<unit>,
+  ) => unit,
+}
+
+/** Get chain configuration by chain ID with exhaustive pattern matching. */
+let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
+switch chainId {
+  | #0 => indexer.chains.\"0"
+}
+}
+
+type testIndexerProcessConfigChains = {
+  \"0"?: TestIndexer.chainConfig,
+}
+
+type testIndexerProcessConfig = {
+  chains: testIndexerProcessConfigChains,
+}
+
+/** Entity operations for direct access outside handlers. */
+type testIndexerEntityOperations<'entity> = {
+  /** Get an entity by ID. */
+  get: string => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
+}
+
+/** Test indexer type with process method, entity access, and chain info. */
+type testIndexer = {
+  /** Process blocks for the specified chains and return progress with changes. */
+  process: testIndexerProcessConfig => promise<TestIndexer.processResult>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
+  \"SlotPing": testIndexerEntityOperations<Entities.SlotPing.t>,
+}
+
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
+
+@module("envio") external indexer: indexer = "indexer"
+
+@module("envio") external createTestIndexer: unit => testIndexer = "createTestIndexer"

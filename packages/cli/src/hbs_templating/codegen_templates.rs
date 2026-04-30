@@ -901,19 +901,11 @@ struct SelectedFieldTemplate {
     default_value_rescript: String,
 }
 
-#[derive(Serialize)]
 pub struct ProjectTemplate {
-    project_name: String,
-    codegen_contracts: Vec<ContractTemplate>,
-    entities: Vec<EntityRecordTypeTemplate>,
-    gql_enums: Vec<GraphQlEnumTypeTemplate>,
+    /// Inspected by chain-config snapshot tests; not consumed by the
+    /// production codegen pipeline directly.
     chain_configs: Vec<NetworkConfigTemplate>,
-    has_multiple_events: bool,
-    is_evm_ecosystem: bool,
-    is_fuel_ecosystem: bool,
-    is_svm_ecosystem: bool,
     is_rescript: bool,
-
     indexer_code: String,
     envio_types_dts: String,
 }
@@ -958,8 +950,11 @@ impl ProjectTemplate {
         if self.is_rescript {
             let src_dir = project_paths.project_root.join("src");
             std::fs::create_dir_all(&src_dir).context("Failed to create user src directory")?;
-            std::fs::write(src_dir.join("Indexer.res"), &self.indexer_code)
-                .context("Failed writing Indexer.res to user src directory")?;
+            std::fs::write(
+                src_dir.join("Indexer.res"),
+                format!("{}\n", self.indexer_code),
+            )
+            .context("Failed writing Indexer.res to user src directory")?;
         }
 
         Ok(())
@@ -1237,12 +1232,6 @@ impl ProjectTemplate {
             .map(|network| NetworkConfigTemplate::from_config_network(network, cfg))
             .collect::<Result<_>>()
             .context("Failed generating chain configs template")?;
-
-        let total_number_of_events: usize = codegen_contracts
-            .iter()
-            .map(|contract| contract.codegen_events.len())
-            .sum();
-        let has_multiple_events = total_number_of_events > 1;
 
         let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
 
@@ -2203,15 +2192,7 @@ type testIndexer = {{
             .collect();
 
         Ok(ProjectTemplate {
-            project_name: cfg.name.clone(),
-            codegen_contracts,
-            entities,
-            gql_enums,
             chain_configs,
-            has_multiple_events,
-            is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
-            is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
-            is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             is_rescript: cfg.is_rescript,
             indexer_code,
             envio_types_dts: Self::wrap_envio_module_augmentation(

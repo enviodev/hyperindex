@@ -31,7 +31,7 @@ import type { Entities } from "envio";
 const p: Entities["Pair"] = { ... };
 ```
 
-If there's no collision (entity name differs from contract name), you can import the type directly from `"generated"`.
+If there's no collision (entity name differs from contract name), you can import the type directly from `"envio"`.
 
 ### Issue 2: BigDecimal vs bigint Type Mismatches
 
@@ -78,7 +78,7 @@ const pair: Entities["Pair"] = {
 // WRONG
 import { BigDecimal } from "bignumber.js";
 
-// CORRECT — import from generated
+// CORRECT — import from envio
 import { BigDecimal } from "envio";
 ```
 
@@ -179,10 +179,10 @@ const mints = await context.Mint.getWhere({ transaction_id: { _eq: transactionId
 
 ## 12 Common Fixes to Apply Automatically
 
-1. **Fix entity type imports** — Use `Entities["Name"]` from `"generated"` for entity types
+1. **Fix entity type imports** — Use `Entities["Name"]` from `"envio"` for entity types
 2. **Fix type mismatches** — Match entity field types exactly (BigDecimal vs bigint)
 3. **Fix field names** — Use exact field names from generated types (`_id` suffix)
-4. **Fix BigDecimal imports** — Import from `"generated"` not `"bignumber.js"`
+4. **Fix BigDecimal imports** — Import from `"envio"` not `"bignumber.js"`
 5. **Fix entity type annotations** — Use `Entities["Pair"]` when name collides with contract handler
 6. **Fix transaction field access** — Add `field_selection` in config.yaml
 7. **Fix hardcoded values** — Use constants from original subgraph

@@ -1,10 +1,9 @@
 ---
 source: packages/cli/src/hbs_templating/contract_import_templates.rs
-assertion_line: 1120
 expression: content
 ---
 import { describe, it } from "vitest";
-import { createTestIndexer } from "generated";
+import { createTestIndexer } from "envio";
 
 describe("Indexer smoke test", () => {
   it("processes the first block with events on chain 0", async (t) => {

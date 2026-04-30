@@ -152,7 +152,7 @@ impl Contract {
         content.push_str(" */\n");
 
         // Import the indexer instance
-        content.push_str("import { indexer } from \"generated\";\n");
+        content.push_str("import { indexer } from \"envio\";\n");
 
         // Import type statement for entity types
         if !self.imported_events.is_empty() {
@@ -160,7 +160,7 @@ impl Contract {
             for event in &self.imported_events {
                 content.push_str(&format!("  {}_{},\n", self.name.capitalized, event.name));
             }
-            content.push_str("} from \"generated\";\n");
+            content.push_str("} from \"envio\";\n");
         }
 
         // Handler registrations using indexer.onEvent
@@ -270,10 +270,10 @@ impl Contract {
         // Imports
         content.push_str("import { describe, it } from \"vitest\";\n");
         if is_fuel {
-            content.push_str("import { createTestIndexer } from \"generated\";\n");
+            content.push_str("import { createTestIndexer } from \"envio\";\n");
         } else {
             content.push_str(&format!(
-                "import {{ createTestIndexer, type {} }} from \"generated\";\n",
+                "import {{ createTestIndexer, type {} }} from \"envio\";\n",
                 entity_name
             ));
             if has_address_param {
