@@ -1,8 +1,5 @@
 open Vitest
 
-let isClaudeCloud = %raw(`process.env.CLAUDE_CODE_CONTAINER_ID != null`)
-let itSkipInClaudeCloud = Async.it_skipIf(isClaudeCloud)
-
 describe("E2E tests", () => {
   let getChainAddresses = async (indexerMock: MockIndexer.Indexer.t, ~chainId) => {
     let addresses: array<InternalTable.EnvioAddresses.t> = await indexerMock.queryRaw(
@@ -1545,7 +1542,7 @@ describe("E2E tests", () => {
     ).toEqual(2)
   })
 
-  itSkipInClaudeCloud(
+  TestEnv.itSkipInClaudeCloud(
     "_meta and chain_metadata return events processed as a number (float4 cast)",
     async t => {
       let sourceMock = MockIndexer.Source.make(
