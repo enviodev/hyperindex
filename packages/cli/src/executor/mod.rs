@@ -85,6 +85,11 @@ pub async fn execute(
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
 
+            // Always regenerate so the runtime never boots against a stale
+            // `generated/` (e.g. after an `envio` package upgrade). Mirrors
+            // `envio dev`; the JS side handles DB compat via `envio_info`.
+            codegen::purge_and_run(&config).await?;
+
             let migrate = if start_args.restart {
                 Some(MigrateOpts { reset: true })
             } else {

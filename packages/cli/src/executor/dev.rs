@@ -1,8 +1,7 @@
 use crate::{
-    commands,
     config_parsing::system_config::SystemConfig,
     docker_env,
-    executor::{build_start_command, Command, MigrateOpts},
+    executor::{build_start_command, codegen, Command, MigrateOpts},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
 };
@@ -15,12 +14,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
     // Always regenerate from a clean directory — the JS runtime now does the
     // config-vs-DB compatibility check, so there's no separate file-based
     // codegen-staleness gate to maintain.
-    commands::codegen::remove_files_except_git(&config.parsed_project_paths.generated)
-        .await
-        .context("Failed purging generated")?;
-    commands::codegen::run_codegen(&config)
-        .await
-        .context("Failed running codegen")?;
+    codegen::purge_and_run(&config).await?;
 
     let up_result = docker_env::up(docker_env::UpOptions {
         project_root: &config.parsed_project_paths.project_root,
