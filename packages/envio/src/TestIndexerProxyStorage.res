@@ -112,7 +112,9 @@ let makeStorage = (proxy: t): Persistence.storage => {
       "TestIndexer: initialize should not be called. Use resumeInitialState instead.",
     )
   },
-  resumeInitialState: async (~envioInfo as _) => proxy.initialState,
+  resumeInitialState: async () => proxy.initialState,
+  readEnvioInfo: async () => None,
+  writeEnvioInfo: async (~envioInfo as _) => (),
   loadByIdsOrThrow: async (~ids, ~table: Table.table, ~rowsSchema) => {
     let response = await proxy->sendRequest(~payload=LoadByIds({tableName: table.tableName, ids}))
     response->S.parseOrThrow(rowsSchema)

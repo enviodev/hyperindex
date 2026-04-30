@@ -1255,7 +1255,7 @@ let make = (
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
       let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
-      await InternalTable.EnvioInfo.upsert(sql, ~pgSchema, ~config=envioInfo)
+      await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
     })
 
     // Populate config addresses into envio_addresses with registration_block/log = -1
@@ -1488,26 +1488,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     }
   }
 
-  let resumeInitialState = async (~envioInfo): Persistence.initialState => {
-    // Refuse to resume against a schema whose persisted config doesn't match
-    // the current one. We only check on resume — a fresh `initialize` writes
-    // the row in the same transaction, so there's nothing to compare against.
-    switch await InternalTable.EnvioInfo.read(sql, ~pgSchema) {
-    | None =>
-      // Schema is initialized but envio_info is empty — first run after this
-      // change shipped, or upsert from initialize was rolled back. Backfill.
-      await InternalTable.EnvioInfo.upsert(sql, ~pgSchema, ~config=envioInfo)
-    | Some(stored) =>
-      let changedKeys = Config.topLevelDiffKeys(~stored, ~current=envioInfo)
-      if changedKeys->Array.length > 0 {
-        JsError.throwWithMessage(
-          `Incompatible config change detected in: ${changedKeys->Array.joinUnsafe(
-              ", ",
-            )}. Reverse the changes to continue indexing with the existing state, or run \`envio dev -r\` to clear the database and re-index from scratch.`,
-        )
-      }
-    }
-
+  let resumeInitialState = async (): Persistence.initialState => {
     let (cache, chains, checkpointIdResult, reorgCheckpoints) = await Promise.all4((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
@@ -1675,11 +1656,16 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     )
   }
 
+  let readEnvioInfo = () => InternalTable.EnvioInfo.read(sql, ~pgSchema)
+  let writeEnvioInfo = (~envioInfo) => InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
+
   {
     name: "postgres",
     isInitialized,
     initialize,
     resumeInitialState,
+    readEnvioInfo,
+    writeEnvioInfo,
     loadByFieldOrThrow,
     loadByIdsOrThrow,
     dumpEffectCache,

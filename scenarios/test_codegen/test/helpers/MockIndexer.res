@@ -132,7 +132,7 @@ module Storage = {
             initializeResolveFns->Array.push(resolve)->ignore
           })
         }),
-        resumeInitialState: implement(#resumeInitialState, (~envioInfo as _) => {
+        resumeInitialState: implement(#resumeInitialState, () => {
           resumeInitialStateCalls->Array.push(true)->ignore
           Promise.make((resolve, _reject) => {
             resumeInitialStateResolveFns->Array.push(resolve)->ignore
@@ -179,6 +179,8 @@ module Storage = {
           })
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
+        readEnvioInfo: () => Promise.resolve(None),
+        writeEnvioInfo: (~envioInfo as _) => Promise.resolve(),
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
         pruneStaleCheckpoints: (~safeCheckpointId as _) =>
           JsError.throwWithMessage("Not implemented"),

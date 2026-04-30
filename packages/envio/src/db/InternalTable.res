@@ -297,16 +297,18 @@ module EnvioInfo = {
     ->Promise.thenResolve(rows => rows->Belt.Array.get(0)->Belt.Option.map(row => row["config"]))
   }
 
-  // Caller is expected to wrap this in a transaction when atomicity matters
-  // (e.g. when paired with schema initialization). Standalone callers that
-  // just want to refresh the singleton after the schema already exists can
-  // call it directly and accept a millisecond-wide gap of zero rows.
-  let upsert = async (sql, ~pgSchema, ~config: JSON.t) => {
-    let _ = await sql->Postgres.unsafe(`DELETE FROM "${pgSchema}"."${table.tableName}";`)
-    let _ = await sql->Postgres.preparedUnsafe(
+  // Plain INSERT: callers (storage initialize on a fresh schema, or the
+  // resume-time backfill after read returned None) only call `write` when
+  // the table is verifiably empty, so there's no need to DELETE first or
+  // pay for upsert semantics. The table has no primary key by design
+  // (single-column singleton), so ON CONFLICT isn't an option anyway.
+  let write = (sql, ~pgSchema, ~envioInfo: JSON.t) => {
+    sql
+    ->Postgres.preparedUnsafe(
       `INSERT INTO "${pgSchema}"."${table.tableName}" ("config") VALUES ($1::jsonb);`,
-      [config->JSON.stringify]->(Utils.magic: array<string> => unknown),
+      [envioInfo->JSON.stringify]->(Utils.magic: array<string> => unknown),
     )
+    ->Utils.Promise.ignoreValue
   }
 }
 

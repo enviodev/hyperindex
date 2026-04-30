@@ -55,18 +55,23 @@ type storage = {
   // and we can skip initialization
   isInitialized: unit => promise<bool>,
   // Should initialize the storage so we can start interacting with it
-  // Eg create connection, schema, tables, etc. `envioInfo` is the
-  // RPC-stripped public config, persisted as part of the same transaction
-  // so a fresh schema always carries a matching `envio_info` row.
+  // Eg create connection, schema, tables, etc. `envioInfo` is opaque JSON
+  // persisted as part of the same transaction so a fresh schema always
+  // carries a matching row — storage doesn't interpret it.
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
-  // On resume the storage compares the existing `envio_info` row against
-  // the current (RPC-stripped) config and refuses to resume on mismatch.
-  resumeInitialState: (~envioInfo: JSON.t) => promise<initialState>,
+  resumeInitialState: unit => promise<initialState>,
+  // Read the persisted envio_info JSON (None if the schema pre-dates this
+  // change or the row was wiped). Storage treats it as opaque — the caller
+  // (typically Persistence.init) is responsible for compat checks.
+  readEnvioInfo: unit => promise<option<JSON.t>>,
+  // Write the persisted envio_info JSON. Used by Persistence.init to
+  // backfill the row on resume when readEnvioInfo returned None.
+  writeEnvioInfo: (~envioInfo: JSON.t) => promise<unit>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
     ~ids: array<string>,
@@ -197,7 +202,27 @@ let init = {
           }
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
-          let initialState = await persistence.storage.resumeInitialState(~envioInfo)
+          // Compat check happens before resumeInitialState's full state load
+          // so we fail fast on incompatible configs without paying for the
+          // checkpoint/cache reads.
+          switch await persistence.storage.readEnvioInfo() {
+          | None =>
+            // Schema exists but envio_info doesn't — pre-existing schema
+            // upgraded to this code, or the row was manually wiped. Backfill
+            // from the current config; nothing to compare against.
+            Logging.info(`No envio_info row found — persisting current config without compat check.`)
+            await persistence.storage.writeEnvioInfo(~envioInfo)
+          | Some(stored) =>
+            let changedKeys = Config.topLevelDiffKeys(~stored, ~current=envioInfo)
+            if changedKeys->Array.length > 0 {
+              JsError.throwWithMessage(
+                `Incompatible config change detected in: ${changedKeys->Array.joinUnsafe(
+                    ", ",
+                  )}. Either revert these changes to keep indexing from the existing checkpoint, or pass --restart (\`envio dev -r\` / \`envio start -r\`) to wipe the database and re-index from scratch.`,
+              )
+            }
+          }
+          let initialState = await persistence.storage.resumeInitialState()
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

@@ -125,7 +125,13 @@ describe("Test Persistence layer init", () => {
     let _ = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
 
     storageMock.resolveIsInitialized(true)
-    let _ = await Promise.resolve()
+    // init goes through readEnvioInfo + writeEnvioInfo (backfill arm — the
+    // mock returns None) before reaching resumeInitialState. Drain enough
+    // microtasks for resumeInitialState to register its resolver before we
+    // try to resolve it.
+    for _ in 1 to 5 {
+      await Promise.resolve()
+    }
 
     let initialState: Persistence.initialState = {
       cleanRun: false,
@@ -135,7 +141,7 @@ describe("Test Persistence layer init", () => {
       checkpointId: 0n,
     }
     storageMock.resolveLoadInitialState(initialState)
-    let _ = await Promise.resolve()
+    await p
 
     t.expect(persistence.storageStatus, ~message=`Storage status should be ready`).toEqual(
       Persistence.Ready(initialState),
@@ -149,8 +155,5 @@ describe("Test Persistence layer init", () => {
       ~message=`Storage should be already initialized without additional initialize calls.
 Although it should load effect caches metadata.`,
     ).toEqual((1, 0, 1))
-
-    // Can resolve the promise now
-    await p
   })
 })
