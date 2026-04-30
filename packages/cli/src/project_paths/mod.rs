@@ -25,7 +25,13 @@ impl ParsedProjectPaths {
         let envio_dir = path_utils::normalize_path(project_root.join(ENVIO_DIR));
 
         let config_relative_path = PathBuf::from(config);
-        if let Some(Component::ParentDir) = config_relative_path.components().peekable().peek() {
+        // Reject absolute paths and any `..` component anywhere in the path —
+        // `foo/../../config.yaml` would otherwise resolve outside `project_root`.
+        if config_relative_path.is_absolute()
+            || config_relative_path
+                .components()
+                .any(|c| matches!(c, Component::ParentDir))
+        {
             return Err(anyhow!("Config path must be in project directory"));
         }
 

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { createTestIndexer, indexer } from "envio";
 
-// Minimum coverage for the SVM `indexer.onSlot` API. We rely on the typed
-// `indexer` shape from `generated` to assert:
+// Minimum coverage for the SVM `indexer.onSlot` API. The typed `indexer` shape
+// (from `envio`) lets us assert:
 //   1. `indexer.onSlot` is the registered method on SVM (the access itself
 //      type-checks; calling out the runtime function shape catches a wiring
 //      regression in `Main.res`).

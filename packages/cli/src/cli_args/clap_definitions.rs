@@ -41,7 +41,7 @@ pub enum CommandType {
     ///Initialize an indexer with one of the initialization options
     Init(InitArgs),
 
-    /// Development commands for starting, stopping, and restarting the indexer with automatic codegen for any changed files
+    /// Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching.
     Dev(DevArgs),
 
     /// Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
@@ -55,7 +55,7 @@ pub enum CommandType {
     #[command(subcommand)]
     Local(LocalCommandTypes),
 
-    ///Start the indexer without any automatic codegen
+    ///Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`.
     Start(StartArgs),
 
     #[clap(hide = true)]

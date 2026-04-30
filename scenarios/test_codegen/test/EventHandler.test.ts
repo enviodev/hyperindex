@@ -160,13 +160,13 @@ describe("Use Envio test framework to test event handlers", () => {
     expectType<
       TypeEqual<
         FuelChainId,
-        "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
+        "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'envio codegen'"
       >
     >(true);
     expectType<
       TypeEqual<
         SvmChainId,
-        "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
+        "SvmChainId is not available. Configure SVM chains in config.yaml and run 'envio codegen'"
       >
     >(true);
 
@@ -1526,7 +1526,7 @@ describe("Use Envio test framework to test event handlers", () => {
     expectType<
       TypeEqual<
         FuelEvent,
-        "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
+        "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'envio codegen'"
       >
     >(true);
   });

@@ -265,8 +265,8 @@ export declare namespace S {
  *
  * Do not augment manually. If a project-bound type like {@link Indexer},
  * {@link Entities}, or {@link EvmChainName} resolves to an error string,
- * run `pnpm envio codegen` (or `pnpm codegen`) to regenerate
- * `.envio/types.d.ts`.
+ * run `envio codegen` (or your package manager's `codegen` script, e.g.
+ * `pnpm codegen`) to regenerate `.envio/types.d.ts`.
  */
 export interface Global {}
 
@@ -276,9 +276,12 @@ type GlobalConfig = Global extends { config: infer C extends IndexerConfigTypes 
   : {};
 
 /** Error-message string returned by project-bound aliases when codegen has
- *  not run yet. Resolves to `string` so handler signatures stay assignable. */
+ *  not run yet. Resolves to `string` so handler signatures stay assignable.
+ *  Wording is package-manager-neutral — `envio init` lets users pick pnpm,
+ *  npm, yarn, or bun, so the hint refers to the codegen invocation rather
+ *  than a specific PM. */
 type NotConfigured<TName extends string, THint extends string> =
-  `${TName} is not available. ${THint} in config.yaml and run 'pnpm envio codegen'`;
+  `${TName} is not available. ${THint} in config.yaml and run 'envio codegen'`;
 
 type IsEmptyObject<T> = keyof T extends never ? true : false;
 
@@ -735,11 +738,20 @@ export type FuelOnEvent<
   [K in C]: FuelContracts<Config>[K][E & keyof FuelContracts<Config>[K]];
 }[C];
 
-/** Options for registering a Fuel onEvent handler. */
+/** Options for registering a Fuel onEvent handler. Mirrors `EvmOnEventOptions`
+ * but binds the `where` filter to `FuelOnEventWhere` so block ranges read
+ * `block.height` (Fuel) instead of `block.number` (EVM). */
 export type FuelOnEventOptions<
   Event extends EventLike = _ProjectFuelEvent,
   Params = {},
-> = EvmOnEventOptions<Event, Params>;
+> = Event extends EventLike
+  ? {
+      readonly contract: Event["contractName"];
+      readonly event: Event["eventName"];
+      readonly wildcard?: boolean;
+      readonly where?: FuelOnEventWhere<Params, Event["contractName"] & string>;
+    }
+  : never;
 
 /** Handler function for a Fuel onEvent registration. */
 export type FuelOnEventHandler<
@@ -747,11 +759,12 @@ export type FuelOnEventHandler<
   Context = FuelOnEventContext,
 > = EvmOnEventHandler<Event, Context>;
 
-/** Options for registering a Fuel contractRegister handler. */
+/** Options for registering a Fuel contractRegister handler. Same shape as
+ * `FuelOnEventOptions` so the `where` filter uses `block.height`. */
 export type FuelContractRegisterOptions<
   Event extends EventLike = _ProjectFuelEvent,
   Params = {},
-> = EvmOnEventOptions<Event, Params>;
+> = FuelOnEventOptions<Event, Params>;
 
 /** Handler function for a Fuel contractRegister registration. */
 export type FuelContractRegisterHandler<
@@ -1542,8 +1555,16 @@ export type EnumName = keyof EnumsT & string;
 /** Lookup an enum value type by name. */
 export type Enum<TName extends EnumName> = EnumsT[TName];
 
-/** Generic handler context shared by all event handlers. */
-export type HandlerContext = EvmOnEventContext;
+/** Handler context resolved against the configured ecosystem.
+ *  - EVM-only project → `EvmOnEventContext`.
+ *  - Fuel-only project → `FuelOnEventContext`.
+ *  - SVM-only project → `SvmOnSlotContext`.
+ *  Falls back to `EvmOnEventContext` when nothing is configured yet. */
+export type HandlerContext =
+  IsEmptyObject<EvmChainsT> extends false ? EvmOnEventContext :
+  IsEmptyObject<FuelChainsT> extends false ? FuelOnEventContext :
+  IsEmptyObject<SvmChainsT> extends false ? SvmOnSlotContext :
+  EvmOnEventContext;
 
 // ============== Runtime values ==============
 

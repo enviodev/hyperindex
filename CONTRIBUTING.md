@@ -84,7 +84,7 @@ Main CLI commands:
    the `envio` module with project-bound types), `<project>/envio-env.d.ts`
    (committed reference glue), and `src/Indexer.res` for ReScript projects.
 3. `start` – runs the already-generated runtime code.
-4. `dev` – detects changes; if anything changed it runs `codegen` and then `start`, otherwise just `start`.
+4. `dev` – runs `codegen` unconditionally and then `start`. Same applies to `start` itself, which now invokes codegen before launching the indexer.
 
 Codegen output layout:
 
