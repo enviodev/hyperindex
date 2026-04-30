@@ -1,6 +1,7 @@
 use crate::{
     clap_definitions::{JsonSchema, Script},
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
+    commands,
     config_parsing::{human_config, system_config::SystemConfig},
     docker_env,
     persisted_state::PersistedState,
@@ -87,17 +88,12 @@ pub async fn execute(
         }
 
         CommandType::Start(start_args) => {
-            // Warn early if the codegen output is missing — `envio start` keeps
-            // running, but the indexer will use whatever's on disk.
-            if !parsed_project_paths.envio_types_dts().exists() {
-                eprintln!(
-                    "Warning: no codegen output found at {}. Run `envio codegen` first.",
-                    parsed_project_paths.envio_types_dts().display(),
-                );
-            }
-
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
+
+            commands::codegen::run_codegen(&config)
+                .await
+                .context("Failed running codegen")?;
 
             let migrate = if start_args.restart {
                 let persisted_state = PersistedState::get_current_state(&config)

@@ -274,8 +274,8 @@ type GlobalConfig = Global extends { config: infer C extends IndexerConfigTypes 
 
 /** Error-message string returned by project-bound aliases when codegen has
  *  not run yet. Resolves to `string` so handler signatures stay assignable. */
-type NotConfigured<TName extends string> =
-  `${TName} is not available. Configure config.yaml / schema.graphql and run 'pnpm envio codegen'.`;
+type NotConfigured<TName extends string, THint extends string> =
+  `${TName} is not available. ${THint} in config.yaml and run 'pnpm envio codegen'`;
 
 type IsEmptyObject<T> = keyof T extends never ? true : false;
 
@@ -944,19 +944,11 @@ export type SvmOnSlotOptions<Config extends IndexerConfigTypes = GlobalConfig> =
 
 // ============== Indexer Types ==============
 
-// Helper: Check if ecosystem is configured in a given config
+// Helper: Check if an ecosystem is configured. Single-ecosystem indexers only
+// — see `SingleEcosystemChains` for how the result is consumed.
 type HasEvm<Config> = "evm" extends keyof Config ? true : false;
 type HasFuel<Config> = "fuel" extends keyof Config ? true : false;
 type HasSvm<Config> = "svm" extends keyof Config ? true : false;
-
-// Count ecosystems using tuple length
-type BoolToNum<B extends boolean> = B extends true ? 1 : 0;
-type EcosystemTuple<Config> = [
-  ...([BoolToNum<HasEvm<Config>>] extends [1] ? [1] : []),
-  ...([BoolToNum<HasFuel<Config>>] extends [1] ? [1] : []),
-  ...([BoolToNum<HasSvm<Config>>] extends [1] ? [1] : [])
-];
-type EcosystemCount<Config> = EcosystemTuple<Config>["length"];
 
 // EVM ecosystem type — includes chains plus handler registration methods.
 // NOTE: options use inline { contract: C; event: E } shape for TypeScript inference.
@@ -1156,8 +1148,10 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
       : never
     : never;
 
-// Single ecosystem chains (flattened at root level). Includes handler methods
-// since, for single-ecosystem indexers, they live at root alongside `chains`.
+// Single-ecosystem chains live at the root of the indexer object alongside
+// the handler-registration methods. Multi-ecosystem indexers aren't
+// supported by the runtime, so there's no nested `evm` / `fuel` / `svm`
+// namespace variant.
 type SingleEcosystemChains<Config extends IndexerConfigTypes = GlobalConfig> =
   HasEvm<Config> extends true
     ? EvmEcosystem<Config>
@@ -1167,43 +1161,14 @@ type SingleEcosystemChains<Config extends IndexerConfigTypes = GlobalConfig> =
     ? SvmEcosystem<Config>
     : {};
 
-// Multi-ecosystem chains (namespaced by ecosystem). Each ecosystem branch
-// includes its handler registration methods — mirrors the runtime object
-// built in `Main.res`.
-type MultiEcosystemChains<Config extends IndexerConfigTypes = GlobalConfig> =
-  (HasEvm<Config> extends true
-    ? {
-        /** EVM ecosystem configuration. */
-        readonly evm: EvmEcosystem<Config>;
-      }
-    : {}) &
-    (HasFuel<Config> extends true
-      ? {
-          /** Fuel ecosystem configuration. */
-          readonly fuel: FuelEcosystem<Config>;
-        }
-      : {}) &
-    (HasSvm<Config> extends true
-      ? {
-          /** SVM ecosystem configuration. */
-          readonly svm: SvmEcosystem<Config>;
-        }
-      : {});
-
-/**
- * Indexer type resolved from config, adapting chain properties based on configured ecosystems.
- * - Single ecosystem: chains are at the root level.
- * - Multiple ecosystems: chains are namespaced by ecosystem (evm, fuel, svm).
- */
+/** Indexer type resolved from config. */
 export type IndexerFromConfig<Config extends IndexerConfigTypes = GlobalConfig> = Prettify<
   {
     /** The indexer name from config.yaml. */
     readonly name: string;
     /** The indexer description from config.yaml. */
     readonly description: string | undefined;
-  } & (EcosystemCount<Config> extends 1
-    ? SingleEcosystemChains<Config>
-    : MultiEcosystemChains<Config>)
+  } & SingleEcosystemChains<Config>
 >;
 
 // ============== Test Indexer Types ==============
@@ -1465,7 +1430,7 @@ type SvmTestEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
       : never
     : never;
 
-// Test-side single/multi chain selectors, parallel to the real ones.
+// Test-side single-ecosystem chain selector — parallel to SingleEcosystemChains.
 type SingleEcosystemTestChains<Config extends IndexerConfigTypes = GlobalConfig> =
   HasEvm<Config> extends true
     ? EvmTestEcosystem<Config>
@@ -1474,26 +1439,6 @@ type SingleEcosystemTestChains<Config extends IndexerConfigTypes = GlobalConfig>
     : HasSvm<Config> extends true
     ? SvmTestEcosystem<Config>
     : {};
-
-type MultiEcosystemTestChains<Config extends IndexerConfigTypes = GlobalConfig> =
-  (HasEvm<Config> extends true
-    ? {
-        /** EVM ecosystem configuration. */
-        readonly evm: EvmTestEcosystem<Config>;
-      }
-    : {}) &
-    (HasFuel<Config> extends true
-      ? {
-          /** Fuel ecosystem configuration. */
-          readonly fuel: FuelTestEcosystem<Config>;
-        }
-      : {}) &
-    (HasSvm<Config> extends true
-      ? {
-          /** SVM ecosystem configuration. */
-          readonly svm: SvmTestEcosystem<Config>;
-        }
-      : {});
 
 /**
  * Test indexer type resolved from config.
@@ -1507,9 +1452,7 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes = GlobalConf
     /** Changes happened during the processing. */
     readonly changes: readonly EntityChange<Config>[];
   }>;
-} & (EcosystemCount<Config> extends 1
-  ? SingleEcosystemTestChains<Config>
-  : MultiEcosystemTestChains<Config>) & {
+} & SingleEcosystemTestChains<Config> & {
   /** Entity operations for direct manipulation outside of handlers. */
   readonly [K in keyof ConfigEntities<Config>]: TestIndexerEntityOperations<
     ConfigEntities<Config>[K]
@@ -1530,29 +1473,29 @@ type EntitiesT      = GlobalConfig extends { entities: infer X extends Record<st
 type EnumsT         = GlobalConfig extends { enums: infer X extends Record<string, any> } ? X : {};
 
 /** Union of all configured EVM chain names. */
-export type EvmChainName     = IsEmptyObject<EvmChainsT>     extends true ? "EvmChainName is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"        : keyof EvmChainsT     & string;
+export type EvmChainName     = IsEmptyObject<EvmChainsT>     extends true ? NotConfigured<"EvmChainName",     "Configure EVM chains">      : keyof EvmChainsT     & string;
 /** Union of all configured EVM contract names. */
-export type EvmContractName  = IsEmptyObject<EvmContractsT>  extends true ? "EvmContractName is not available. Configure EVM contracts in config.yaml and run 'pnpm envio codegen'" : keyof EvmContractsT  & string;
+export type EvmContractName  = IsEmptyObject<EvmContractsT>  extends true ? NotConfigured<"EvmContractName",  "Configure EVM contracts">   : keyof EvmContractsT  & string;
 /** Union of all configured Fuel chain names. */
-export type FuelChainName    = IsEmptyObject<FuelChainsT>    extends true ? "FuelChainName is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"      : keyof FuelChainsT    & string;
+export type FuelChainName    = IsEmptyObject<FuelChainsT>    extends true ? NotConfigured<"FuelChainName",    "Configure Fuel chains">     : keyof FuelChainsT    & string;
 /** Union of all configured Fuel contract names. */
-export type FuelContractName = IsEmptyObject<FuelContractsT> extends true ? "FuelContractName is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'" : keyof FuelContractsT & string;
+export type FuelContractName = IsEmptyObject<FuelContractsT> extends true ? NotConfigured<"FuelContractName", "Configure Fuel contracts">  : keyof FuelContractsT & string;
 /** Union of all configured SVM chain names. */
-export type SvmChainName     = IsEmptyObject<SvmChainsT>     extends true ? "SvmChainName is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"        : keyof SvmChainsT     & string;
+export type SvmChainName     = IsEmptyObject<SvmChainsT>     extends true ? NotConfigured<"SvmChainName",     "Configure SVM chains">      : keyof SvmChainsT     & string;
 
 /** Union of all configured EVM chain IDs. */
-export type EvmChainId  = IsEmptyObject<EvmChainsT>  extends true ? "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"  : EvmChainsT [keyof EvmChainsT ]["id"];
+export type EvmChainId  = IsEmptyObject<EvmChainsT>  extends true ? NotConfigured<"EvmChainId",  "Configure EVM chains">  : EvmChainsT [keyof EvmChainsT ]["id"];
 /** Union of all configured Fuel chain IDs. */
-export type FuelChainId = IsEmptyObject<FuelChainsT> extends true ? "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'" : FuelChainsT[keyof FuelChainsT]["id"];
+export type FuelChainId = IsEmptyObject<FuelChainsT> extends true ? NotConfigured<"FuelChainId", "Configure Fuel chains"> : FuelChainsT[keyof FuelChainsT]["id"];
 /** Union of all configured SVM chain IDs. */
-export type SvmChainId  = IsEmptyObject<SvmChainsT>  extends true ? "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"  : SvmChainsT [keyof SvmChainsT ]["id"];
+export type SvmChainId  = IsEmptyObject<SvmChainsT>  extends true ? NotConfigured<"SvmChainId",  "Configure SVM chains">  : SvmChainsT [keyof SvmChainsT ]["id"];
 
 /** Union of all configured chain IDs across ecosystems. */
 export type ChainId =
   IsEmptyObject<EvmChainsT> extends false ? EvmChainsT[keyof EvmChainsT]["id"] :
   IsEmptyObject<FuelChainsT> extends false ? FuelChainsT[keyof FuelChainsT]["id"] :
   IsEmptyObject<SvmChainsT> extends false ? SvmChainsT[keyof SvmChainsT]["id"] :
-  "ChainId is not available. Configure chains in config.yaml and run 'pnpm envio codegen'";
+  NotConfigured<"ChainId", "Configure chains">;
 
 /** Lookup an EVM event type by contract and event name. Without generics,
  *  resolves to the discriminated union of every EVM event in the project. */
@@ -1560,7 +1503,7 @@ export type EvmEvent<
   TContractName extends keyof EvmContractsT = keyof EvmContractsT,
   TEventName extends string = string,
 > = IsEmptyObject<EvmContractsT> extends true
-  ? "EvmEvent is not available. Configure EVM contracts in config.yaml and run 'pnpm envio codegen'"
+  ? NotConfigured<"EvmEvent", "Configure EVM contracts">
   : {
       [C in TContractName]: EvmContractsT[C][TEventName & keyof EvmContractsT[C]];
     }[TContractName];
@@ -1571,7 +1514,7 @@ export type FuelEvent<
   TContractName extends keyof FuelContractsT = keyof FuelContractsT,
   TEventName extends string = string,
 > = IsEmptyObject<FuelContractsT> extends true
-  ? "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
+  ? NotConfigured<"FuelEvent", "Configure Fuel contracts">
   : {
       [C in TContractName]: FuelContractsT[C][TEventName & keyof FuelContractsT[C]];
     }[TContractName];
