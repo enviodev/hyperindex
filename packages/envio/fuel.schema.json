@@ -360,8 +360,7 @@
         {
           "anyOf": [
             {
-              "type": "string",
-              "pattern": "^0x[0-9a-fA-F]+$"
+              "type": "string"
             },
             {
               "type": "integer",
@@ -375,8 +374,7 @@
           "items": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^0x[0-9a-fA-F]+$"
+                "type": "string"
               },
               {
                 "type": "integer",

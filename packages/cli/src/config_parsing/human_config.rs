@@ -34,15 +34,9 @@ impl JsonSchema for Addresses {
     }
 
     fn json_schema(gen: &mut SchemaGenerator) -> Schema {
-        // Must accept `integer` in addition to `string`. yaml-language-server
-        // resolves unquoted `0x…` scalars as YAML 1.1 hex integers, and a
-        // string-only schema produces a spurious "Incorrect type" diagnostic
-        // for every config that enters the address unquoted. The integer
-        // branch silences that. The runtime catches the truncation pattern
-        // that some editor formatters introduce — see Address parsing.
         let t_schema = json_schema!({
           "anyOf": [
-            { "type": "string", "pattern": "^0x[0-9a-fA-F]+$" },
+            String::json_schema(gen),
             usize::json_schema(gen),
           ]
         });
@@ -212,6 +206,21 @@ pub struct ConfigDiscriminant {
     pub ecosystem: Option<String>,
 }
 
+// serde_yaml emits hex addresses as plain (unquoted) scalars. yaml-language-server
+// and Prettier's YAML plugin then resolve them as YAML 1.1 hex integers and on
+// save round-trip the value through Number — silently truncating the bottom
+// ~107 bits and breaking every event query for that address. Wrap any `0x…`
+// scalar in double quotes so the editor sees a string regardless of YAML
+// version. Only acts on values that appear after `: ` or `- ` in column 0+.
+pub(crate) fn force_quote_hex_scalars(yaml: String) -> String {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"(?m)((?::|^[ \t]*-)[ \t]+)(0x[0-9a-fA-F]+)([ \t]*(?:#|$))").unwrap()
+    });
+    re.replace_all(&yaml, "$1\"$2\"$3").into_owned()
+}
+
 #[derive(Debug)]
 pub enum HumanConfig {
     Evm(evm::HumanConfig),
@@ -326,10 +335,12 @@ pub mod evm {
 
     impl Display for HumanConfig {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let yaml = super::force_quote_hex_scalars(
+                serde_yaml::to_string(self).expect("Failed to serialize config"),
+            );
             write!(
                 f,
-                "# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{}",
-                serde_yaml::to_string(self).expect("Failed to serialize config")
+                "# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{yaml}",
             )
         }
     }
@@ -698,10 +709,12 @@ pub mod fuel {
 
     impl Display for HumanConfig {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let yaml = super::force_quote_hex_scalars(
+                serde_yaml::to_string(self).expect("Failed to serialize config"),
+            );
             write!(
                 f,
-                "# yaml-language-server: $schema=./node_modules/envio/fuel.schema.json\n{}",
-                serde_yaml::to_string(self).expect("Failed to serialize config")
+                "# yaml-language-server: $schema=./node_modules/envio/fuel.schema.json\n{yaml}",
             )
         }
     }
@@ -853,10 +866,12 @@ pub mod svm {
 
     impl Display for HumanConfig {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let yaml = super::force_quote_hex_scalars(
+                serde_yaml::to_string(self).expect("Failed to serialize config"),
+            );
             write!(
                 f,
-                "# yaml-language-server: $schema=./node_modules/envio/svm.schema.json\n{}",
-                serde_yaml::to_string(self).expect("Failed to serialize config")
+                "# yaml-language-server: $schema=./node_modules/envio/svm.schema.json\n{yaml}",
             )
         }
     }
@@ -1048,6 +1063,46 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     // gets dropped at query time. The ERC20 template ships an unquoted address,
     // so this path is the user-facing one. Both single-scalar and list shapes
     // must round-trip the address verbatim.
+    // `envio init` writes the YAML emitted here to disk. Hex addresses must
+    // come out quoted — otherwise yaml-language-server / Prettier will treat
+    // them as YAML 1.1 hex integers and silently truncate them through f64
+    // on the user's first save.
+    #[test]
+    fn force_quote_hex_scalars_quotes_addresses() {
+        let unquoted = "address:\n- 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n\
+                        single: 0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74\n";
+        let out = super::force_quote_hex_scalars(unquoted.to_string());
+        assert!(
+            out.contains("\"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\"")
+                && out.contains("\"0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74\""),
+            "Both list and single hex scalars must be quoted. Got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn force_quote_hex_scalars_leaves_quoted_addresses_alone() {
+        let already_quoted =
+            "address: \"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\"\n".to_string();
+        let out = super::force_quote_hex_scalars(already_quoted.clone());
+        assert_eq!(
+            out, already_quoted,
+            "Quoted addresses must not get nested quotes"
+        );
+    }
+
+    #[test]
+    fn human_config_display_emits_quoted_addresses() {
+        // Round-trips an EvmConfig with an unquoted-style address through
+        // the Display impl that init writes to disk.
+        let yaml = "name: t\nschema: ./s.graphql\ncontracts:\n  - name: C\n    handler: ./h.js\n    events:\n      - event: E\nchains:\n  - id: 1\n    rpc:\n      url: https://x\n    start_block: 0\n    contracts:\n      - name: C\n        address: \"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\"\n";
+        let cfg: super::evm::HumanConfig = serde_yaml::from_str(yaml).unwrap();
+        let out = cfg.to_string();
+        assert!(
+            out.contains("\"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\""),
+            "init-written YAML must keep the address quoted. Got:\n{out}"
+        );
+    }
+
     #[test]
     fn deserialize_unquoted_hex_address_yaml() {
         let single = "address: 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n";
@@ -1069,27 +1124,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string(),
                 "0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74".to_string(),
             ]
-        );
-    }
-
-    // The string variant must carry a hex pattern. yaml-language-server and
-    // Prettier use this to decide how to format scalars on save; without it,
-    // unquoted `0x…` got round-tripped through f64 and silently truncated.
-    // The integer variant has to stay too — yaml-language-server resolves
-    // unquoted hex as YAML 1.1 ints, and a string-only schema produces a
-    // false-positive "Incorrect type" diagnostic in the IDE. The runtime
-    // catches the truncation pattern that misbehaving formatters can still
-    // introduce.
-    #[test]
-    fn addresses_schema_constrains_string_with_hex_pattern() {
-        use crate::config_parsing::human_config::Addresses;
-        use schemars::{JsonSchema, SchemaGenerator};
-        let mut gen = SchemaGenerator::default();
-        let schema = <Addresses as JsonSchema>::json_schema(&mut gen);
-        let json = serde_json::to_string(&schema).unwrap();
-        assert!(
-            json.contains("\"pattern\":\"^0x[0-9a-fA-F]+$\""),
-            "Addresses string variant must restrict to hex via pattern. Got: {json}"
         );
     }
 
