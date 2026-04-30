@@ -77,9 +77,12 @@ export function buildPackageJson(
 
   pkg.bin = "./bin.mjs";
 
-  // Add optional platform-specific dependencies
+  // Add optional platform-specific dependencies. npm/pnpm use the `libc`
+  // field in each platform package's package.json to skip the wrong flavor
+  // on Linux (glibc vs musl).
   pkg.optionalDependencies = {
     "envio-linux-x64": platformPkgVersion,
+    "envio-linux-x64-musl": platformPkgVersion,
     "envio-linux-arm64": platformPkgVersion,
     "envio-darwin-x64": platformPkgVersion,
     "envio-darwin-arm64": platformPkgVersion,
@@ -93,9 +96,9 @@ export function buildPackageJson(
  */
 export function compileRescript(envioDir: string): void {
   console.log("Compiling ReScript...");
-  // Use the rescript-legacy binary directly to avoid pnpm workspace detection issues.
+  // Use the rescript binary directly to avoid pnpm workspace detection issues.
   // With pnpm's default isolated layout, the bin is in envio's own node_modules.
-  execSync("./node_modules/.bin/rescript-legacy", {
+  execSync("./node_modules/.bin/rescript", {
     cwd: envioDir,
     stdio: "inherit",
   });

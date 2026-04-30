@@ -2,8 +2,6 @@
 //**CONTRACTS**
 //*************
 
-open RescriptSchema
-
 module Transaction = {
   type t = {
     id: string,
@@ -147,69 +145,6 @@ type rec type0 = (type27, type22)
  and type27 = bigint
  and type28 = int
 @@warning("+30")
-let type5Schema = (_tSchema: S.t<'t>, _eSchema: S.t<'e>) => S.union([S.object((s): type5<'t, 'e> =>
-{
-  s.tag("case", "Ok")
-  Ok({payload: s.field("payload", _tSchema)})
-}), S.object((s): type5<'t, 'e> =>
-{
-  s.tag("case", "Err")
-  Err({payload: s.field("payload", _eSchema)})
-})])
-let type8Schema = Utils.BigInt.schema
-let type14Schema = S.unknown
-let type17Schema = S.string
-let type19Schema = (_tSchema: S.t<'t>) => S.array(_tSchema)
-let type20Schema = S.literal(%raw(`null`))->S.shape(_ => ())
-let type21Schema = S.string
-let type22Schema = S.bool
-let type23Schema = S.string
-let type24Schema = S.int
-let type25Schema = Utils.BigInt.schema
-let type26Schema = S.int
-let type27Schema = Utils.BigInt.schema
-let type28Schema = S.int
-let type0Schema = S.tuple(s => (s.item(0, type27Schema), s.item(1, type22Schema)))
-let type1Schema = S.array(type28Schema)
-let type4Schema = (_tSchema: S.t<'t>) => S.union([S.object((s): type4<'t> =>
-{
-  s.tag("case", "None")
-  None({payload: s.field("payload", type20Schema)})
-}), S.object((s): type4<'t> =>
-{
-  s.tag("case", "Some")
-  Some({payload: s.field("payload", _tSchema)})
-})])
-let type9Schema = S.object((s): type9 => {f1: s.field("f1", type26Schema)})
-let type10Schema = S.object((s): type10 => {f1: s.field("f1", type26Schema), f2: s.field("f2", type4Schema(type26Schema))})
-let type11Schema = S.object((s): type11 => {reason: s.field("reason", type26Schema)})
-let type12Schema = S.object((s): type12 => {tags: s.field("tags", type4Schema(type19Schema(type17Schema)))})
-let type13Schema = S.object((s): type13 => {bits: s.field("bits", type21Schema)})
-let type15Schema = S.object((s): type15 => {ptr: s.field("ptr", type8Schema), cap: s.field("cap", type27Schema)})
-let type16Schema = S.object((s): type16 => {bits: s.field("bits", type21Schema)})
-let type18Schema = (_tSchema: S.t<'t>) => S.object((s): type18<'t> => {ptr: s.field("ptr", type8Schema), cap: s.field("cap", type27Schema)})
-let type2Schema = S.union([S.object((s): type2 =>
-{
-  s.tag("case", "Pending")
-  Pending({payload: s.field("payload", type20Schema)})
-}), S.object((s): type2 =>
-{
-  s.tag("case", "Completed")
-  Completed({payload: s.field("payload", type26Schema)})
-}), S.object((s): type2 =>
-{
-  s.tag("case", "Failed")
-  Failed({payload: s.field("payload", type11Schema)})
-})])
-let type3Schema = S.union([S.object((s): type3 =>
-{
-  s.tag("case", "Address")
-  Address({payload: s.field("payload", type13Schema)})
-}), S.object((s): type3 =>
-{
-  s.tag("case", "ContractId")
-  ContractId({payload: s.field("payload", type16Schema)})
-})])
 let contractName = "AllEvents"
 
   module UnitLog = {
@@ -1069,31 +1004,6 @@ type rec type0 = string
  and type8 = unit
  and type9 = string
 @@warning("+30")
-let type0Schema = S.string
-let type7Schema = S.object((s): type7 => {bits: s.field("bits", type0Schema)})
-let type8Schema = S.literal(%raw(`null`))->S.shape(_ => ())
-let type9Schema = S.string
-let type1Schema = S.union([S.object((s): type1 =>
-{
-  s.tag("case", "InvalidContractSender")
-  InvalidContractSender({payload: s.field("payload", type8Schema)})
-}), S.object((s): type1 =>
-{
-  s.tag("case", "ToThrow")
-  ToThrow({payload: s.field("payload", type8Schema)})
-})])
-let type2Schema = (_tSchema: S.t<'t>) => S.union([S.object((s): type2<'t> =>
-{
-  s.tag("case", "None")
-  None({payload: s.field("payload", type8Schema)})
-}), S.object((s): type2<'t> =>
-{
-  s.tag("case", "Some")
-  Some({payload: s.field("payload", _tSchema)})
-})])
-let type4Schema = S.object((s): type4 => {user: s.field("user", type7Schema)})
-let type5Schema = S.object((s): type5 => {value: s.field("value", type9Schema)})
-let type6Schema = S.object((s): type6 => {user: s.field("user", type7Schema), greeting: s.field("greeting", type5Schema)})
 let contractName = "Greeter"
 
   module NewGreeting = {

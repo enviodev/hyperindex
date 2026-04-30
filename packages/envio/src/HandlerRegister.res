@@ -10,7 +10,59 @@ let empty = {
   eventOptions: None,
 }
 
-let eventRegistrations: dict<eventRegistration> = Dict.make()
+type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
+
+type activeRegistration = {
+  ecosystem: Ecosystem.t,
+  multichain: Internal.multichain,
+  registrations: registrations,
+  mutable finished: bool,
+}
+
+// Stashed on `globalThis` so a duplicate envio module instance — e.g. when the
+// CLI's `bin.mjs` resolves envio from one path but the user's handlers resolve
+// it from `node_modules/envio` — shares one registry. Without this, each copy
+// keeps its own dict and `applyRegistrations` reads empty state.
+//
+// Version-gated: the record shapes below can evolve between envio versions,
+// so the guard uses strict full-version equality. On mismatch we throw with
+// a deduplication hint instead of silently mixing shapes across builds.
+type registryShape = {
+  version: string,
+  eventRegistrations: dict<eventRegistration>,
+  activeRegistration: ref<option<activeRegistration>>,
+  preRegistered: array<activeRegistration => unit>,
+}
+
+// Record type with `mutable` so assignment typechecks; ReScript keeps the
+// field name verbatim in the generated JS so the globalThis slot is
+// `__envioRegistry`.
+type globalThis = {mutable __envioRegistry: Nullable.t<registryShape>}
+@val external globalThis: globalThis = "globalThis"
+
+%%private(
+  let registry: registryShape = {
+    let version = Utils.EnvioPackage.value.version
+    switch globalThis.__envioRegistry->Nullable.toOption {
+    | Some(existing) if existing.version === version => existing
+    | Some(existing) =>
+      JsError.throwWithMessage(
+        `Multiple incompatible envio versions loaded in the same process: ${existing.version} and ${version}. Deduplicate the 'envio' dependency in your project.`,
+      )
+    | None =>
+      let fresh = {
+        version,
+        eventRegistrations: Dict.make(),
+        activeRegistration: ref(None),
+        preRegistered: [],
+      }
+      globalThis.__envioRegistry = Nullable.make(fresh)
+      fresh
+    }
+  }
+)
+
+let eventRegistrations = registry.eventRegistrations
 
 let getKey = (~contractName, ~eventName) => contractName ++ "." ++ eventName
 
@@ -25,16 +77,7 @@ let set = (~contractName, ~eventName, registration) => {
   eventRegistrations->Dict.set(getKey(~contractName, ~eventName), registration)
 }
 
-type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
-
-type activeRegistration = {
-  ecosystem: Ecosystem.t,
-  multichain: Internal.multichain,
-  registrations: registrations,
-  mutable finished: bool,
-}
-
-let activeRegistration = ref(None)
+let activeRegistration = registry.activeRegistration
 
 // Might happen for tests when the handler file
 // is imported by a non-envio process (eg mocha)
@@ -43,7 +86,7 @@ let activeRegistration = ref(None)
 // Theoretically we could keep preRegistration without an explicit start
 // but I want it to be this way, so for the actual indexer run
 // an error is thrown with the exact stack trace where the handler was registered.
-let preRegistered = []
+let preRegistered = registry.preRegistered
 
 let withRegistration = (fn: activeRegistration => unit) => {
   switch activeRegistration.contents {

@@ -195,6 +195,7 @@ module Storage = {
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
         ) => JsError.throwWithMessage("Not implemented"),
+        close: () => Promise.resolve(),
       },
     }
   }

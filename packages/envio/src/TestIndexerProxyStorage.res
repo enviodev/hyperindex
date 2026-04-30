@@ -201,4 +201,5 @@ let makeStorage = (proxy: t): Persistence.storage => {
       "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
     )
   },
+  close: async () => (),
 }

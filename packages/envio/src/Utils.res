@@ -787,8 +787,6 @@ module BigInt = {
         },
       serializer: bigint => bigint->BigInt.toString,
     })
-
-  let nativeSchema = S.bigint
 }
 
 module Promise = {

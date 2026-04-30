@@ -4,9 +4,9 @@
   "type": "module",
   "namespace": "Helpers",
   "scripts": {
-    "build": "rescript-legacy",
-    "clean": "rescript-legacy clean",
-    "watch": "rescript-legacy -w"
+    "build": "rescript",
+    "clean": "rescript clean",
+    "watch": "rescript watch"
   },
   "keywords": [
     "rescript"

@@ -22,6 +22,7 @@
     "noEmit": true,
 
     /* Code doesn't run in the DOM: */
-    "lib": ["es2022"]
+    "lib": ["es2022"],
+    "types": ["node"]
   }
 }

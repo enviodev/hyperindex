@@ -10,7 +10,6 @@ See `AGENTS.md` for full project context, commands, and workflow.
 - Use Effect API (`createEffect` + `context.effect()`) for ALL external calls
 - Schema uses entity references (`collection: NftCollection!`); handlers use `_id` suffix (`collection_id: value`); never add `_id` to schema field names
 - Use pnpm, not npm
-- Run `TUI_OFF=true pnpm dev` for AI-friendly indexer output
 - **All environment variables MUST use the `ENVIO_` prefix** (e.g., `ENVIO_RPC_URL`, `ENVIO_API_KEY`). The hosted service only exposes variables with this prefix at runtime.
 
 ## Skills

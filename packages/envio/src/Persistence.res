@@ -121,6 +121,9 @@ type storage = {
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
   ) => promise<unit>,
+  // Release any long-lived resources (e.g. the postgres connection pool) so
+  // short-lived CLI commands like `db-migrate setup` can exit cleanly.
+  close: unit => promise<unit>,
 }
 
 type storageStatus =
