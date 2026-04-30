@@ -107,11 +107,15 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
                 .map(|f| f.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
+            let revert_action = format!("Undo your {fields} changes");
+            let restart_action = "envio dev -r";
+            let width = revert_action.len().max(restart_action.len());
             return Err(anyhow!(
-                "Incompatible change detected in {fields}. To continue:\n\
+                "Your changes to {fields} are incompatible with the existing indexer data. \
+                 Pick one:\n\
                  \n  \
-                 1. Revert the change    # keep indexing with the existing state\n  \
-                 2. envio dev -r         # clear the database and re-index from scratch"
+                 1. {revert_action:<width$}    # resume indexing where it left off\n  \
+                 2. {restart_action:<width$}    # wipe the database and re-index from scratch"
             ));
         }
     }
