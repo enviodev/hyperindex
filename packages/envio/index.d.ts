@@ -259,11 +259,14 @@ export declare namespace S {
 // ============== Indexer Config (Module Augmentation) ==============
 
 /**
- * Augmentation surface used by `.envio/types.d.ts` to teach this package
- * about the chains, contracts, event payloads, entities, and enums of the
- * current project. Until augmented, project-bound aliases like {@link Indexer},
- * {@link Entities}, and {@link EvmChainName} resolve to error-message strings
- * that prompt the user to run `envio codegen`.
+ * Internal augmentation surface populated by `.envio/types.d.ts` (via
+ * codegen) so the project-bound aliases below resolve to concrete chain /
+ * contract / entity / enum types.
+ *
+ * Do not augment manually. If a project-bound type like {@link Indexer},
+ * {@link Entities}, or {@link EvmChainName} resolves to an error string,
+ * run `pnpm envio codegen` (or `pnpm codegen`) to regenerate
+ * `.envio/types.d.ts`.
  */
 export interface Global {}
 
