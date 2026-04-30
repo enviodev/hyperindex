@@ -8,6 +8,11 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
 jobs:
   # Determine npm tag from release tag name:
   #   v1.2.3, v1.2.3-alpha.1, v1.2.3-rc.1 → next
@@ -79,7 +84,6 @@ jobs:
       - name: Patch version and publish
         working-directory: ./pkg
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           if [ ! -f envio.node ]; then
@@ -117,7 +121,6 @@ jobs:
       - name: Patch version and publish
         working-directory: ./pkg
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
           NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
         run: |
