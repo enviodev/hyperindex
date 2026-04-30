@@ -33,12 +33,17 @@ impl JsonSchema for Addresses {
         "Addresses".into()
     }
 
-    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        // Must stay a pure string. Editors backed by yaml-language-server use
+        // this schema to decide how to format/save scalars; previously the
+        // schema also allowed `integer`, which let YAML 1.1 hex resolution
+        // treat unquoted `0x…` addresses as numbers. Saving the file then
+        // round-tripped them through a 64-bit float and silently truncated
+        // the bottom ~107 bits — the indexer then queried HyperSync for a
+        // contract that doesn't exist on chain and skipped every event.
         let t_schema = json_schema!({
-          "anyOf": [
-            String::json_schema(gen),
-            usize::json_schema(gen),
-          ]
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]+$",
         });
         json_schema!({
           "anyOf": [
@@ -1063,6 +1068,29 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string(),
                 "0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74".to_string(),
             ]
+        );
+    }
+
+    // Editors backed by yaml-language-server use the JSON schema to decide
+    // how to (re)format scalars on save. If the schema permits `integer`,
+    // unquoted hex addresses get round-tripped through f64 by the formatter
+    // and saved back truncated. Lock the schema to string-only so the editor
+    // never tries to coerce.
+    #[test]
+    fn addresses_schema_is_string_only() {
+        use crate::config_parsing::human_config::Addresses;
+        use schemars::{JsonSchema, SchemaGenerator};
+        let mut gen = SchemaGenerator::default();
+        let schema = <Addresses as JsonSchema>::json_schema(&mut gen);
+        let json = serde_json::to_string(&schema).unwrap();
+        assert!(
+            !json.contains("integer") && !json.contains("number"),
+            "Addresses schema must not allow numeric types — yaml-language-server \
+             would let editors silently truncate unquoted hex addresses on save. Got: {json}"
+        );
+        assert!(
+            json.contains("\"type\":\"string\""),
+            "Addresses schema must declare string. Got: {json}"
         );
     }
 
