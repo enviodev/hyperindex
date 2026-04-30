@@ -164,7 +164,7 @@ describe("Isolated dependency e2e", () => {
       indexerProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
         cwd: projectDir,
         env: {
-          TUI_OFF: "true",
+          ENVIO_TUI: "false",
           ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
           // e2e_test config.yaml declares `storage.clickhouse: true`, so
           // PgStorage validates these env vars at indexer start.
