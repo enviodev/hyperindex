@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=../../../envio/evm.schema.json
+# Mirrors the ERC20 template's unquoted hex address style. Regression
+# guard for events being silently skipped when a 20-byte address loses
+# precision somewhere in the YAML → SystemConfig → public JSON pipeline.
+name: unquoted-hex-address
+schema: ../schemas/schema.graphql
+description: Unquoted address regression
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Contract1
+        abi_file_path: ../abis/Contract1.json
+        handler: ./src/EventHandler.js
+        address: 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984
+        events:
+          - event: "NewGravatar"
+          - event: "UpdatedGravatar"
