@@ -3,6 +3,11 @@
 external magic: 'a => 'b = "%identity"
 @val external floatToInt: float => int = "Math.trunc"
 
+// Force a function to compile to a regular `function` instead of an arrow,
+// so `this` binds to the call-site receiver (needed for prototype getters,
+// methods, etc).
+external toMethod: 'a => 'a = "%unsafe_to_method"
+
 @val external importPath: string => promise<unknown> = "import"
 
 @val
