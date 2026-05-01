@@ -561,7 +561,10 @@ impl TypeIdent {
                 format!("{{ {} }}", inner)
             }
             Self::SchemaEnum(enum_name) => {
-                format!("Enums[\"{}\"]", &enum_name.original)
+                // Reference the file-level lookup table emitted by
+                // codegen_templates.rs::wrap_envio_module_augmentation. Must
+                // stay in sync with the `_Prj` prefix used there.
+                format!("_PrjEnums[\"{}\"]", &enum_name.original)
             }
             Self::GenericParam(name) => name.clone(),
             Self::TypeApplication {
@@ -1047,7 +1050,7 @@ mod tests {
         };
         assert_eq!(
             TypeIdent::SchemaEnum(enum_name).to_ts_type_string(),
-            "Enums[\"MyEnum\"]"
+            "_PrjEnums[\"MyEnum\"]"
         );
     }
 

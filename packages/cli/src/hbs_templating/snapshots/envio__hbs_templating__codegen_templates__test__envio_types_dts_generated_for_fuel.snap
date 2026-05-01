@@ -9,91 +9,89 @@ expression: project_template.envio_types_dts
 
 import type { Address, BigDecimal, SingleOrMultiple } from "envio";
 
-declare module "envio" {
-  namespace _Project {
-    export type EvmChains = {};
-    export type EvmChainId = "EvmChainId is not available. Configure EVM chains in config.yaml and run 'envio codegen'";
-    export type EvmContracts = {};
-    export type EvmEventFilters = {};
-    export type FuelChains = {
-      "0": { id: 0 };
+type _PrjEvmChains = {};
+type _PrjEvmChainId = "EvmChainId is not available. Configure EVM chains in config.yaml and run 'envio codegen'";
+type _PrjEvmContracts = {};
+type _PrjEvmEventFilters = {};
+type _PrjFuelChains = {
+  "0": { id: 0 };
+};
+type _PrjFuelChainId = _PrjFuelChains[keyof _PrjFuelChains]["id"];
+type _PrjFuelBlock = { id: string; height: number; time: number };
+type _PrjFuelTransaction = { id: string };
+type _PrjFuelContracts = {
+  "Greeter": {
+    "NewGreeting": {
+      /** The name of the event. */
+      readonly eventName: "NewGreeting";
+      /** The name of the contract that emitted this event. */
+      readonly contractName: "Greeter";
+      /** The unique identifier of the blockchain network where this event occurred. */
+      readonly chainId: _PrjFuelChainId;
+      /** The parameters or arguments associated with this event. */
+      readonly params: FuelTypes.Greeter.type6;
+      /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
+      readonly block: _PrjFuelBlock;
+      /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
+      readonly transaction: _PrjFuelTransaction;
+      /** The index of this event's log within the block. */
+      readonly logIndex: number;
+      /** The address of the contract that emitted this event. */
+      readonly srcAddress: Address;
     };
-    export type FuelChainId = FuelChains[keyof FuelChains]["id"];
-    type FuelBlock = { id: string; height: number; time: number };
-    type FuelTransaction = { id: string };
-    export type FuelContracts = {
-      "Greeter": {
-        "NewGreeting": {
-          /** The name of the event. */
-          readonly eventName: "NewGreeting";
-          /** The name of the contract that emitted this event. */
-          readonly contractName: "Greeter";
-          /** The unique identifier of the blockchain network where this event occurred. */
-          readonly chainId: FuelChainId;
-          /** The parameters or arguments associated with this event. */
-          readonly params: FuelTypes.Greeter.type6;
-          /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
-          readonly block: FuelBlock;
-          /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
-          readonly transaction: FuelTransaction;
-          /** The index of this event's log within the block. */
-          readonly logIndex: number;
-          /** The address of the contract that emitted this event. */
-          readonly srcAddress: Address;
-        };
-        "ClearGreeting": {
-          /** The name of the event. */
-          readonly eventName: "ClearGreeting";
-          /** The name of the contract that emitted this event. */
-          readonly contractName: "Greeter";
-          /** The unique identifier of the blockchain network where this event occurred. */
-          readonly chainId: FuelChainId;
-          /** The parameters or arguments associated with this event. */
-          readonly params: FuelTypes.Greeter.type4;
-          /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
-          readonly block: FuelBlock;
-          /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
-          readonly transaction: FuelTransaction;
-          /** The index of this event's log within the block. */
-          readonly logIndex: number;
-          /** The address of the contract that emitted this event. */
-          readonly srcAddress: Address;
-        };
-      };
+    "ClearGreeting": {
+      /** The name of the event. */
+      readonly eventName: "ClearGreeting";
+      /** The name of the contract that emitted this event. */
+      readonly contractName: "Greeter";
+      /** The unique identifier of the blockchain network where this event occurred. */
+      readonly chainId: _PrjFuelChainId;
+      /** The parameters or arguments associated with this event. */
+      readonly params: FuelTypes.Greeter.type4;
+      /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
+      readonly block: _PrjFuelBlock;
+      /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
+      readonly transaction: _PrjFuelTransaction;
+      /** The index of this event's log within the block. */
+      readonly logIndex: number;
+      /** The address of the contract that emitted this event. */
+      readonly srcAddress: Address;
     };
-    export type FuelEventFilters = {};
-    declare namespace FuelTypes {
-      namespace Greeter {
-        type type0 = string;
-        type type1 = { case: "InvalidContractSender"; payload: FuelTypes.Greeter.type8 } | { case: "ToThrow"; payload: FuelTypes.Greeter.type8 };
-        type type2<t> = { case: "None"; payload: FuelTypes.Greeter.type8 } | { case: "Some"; payload: t };
-        type type4 = { readonly user: FuelTypes.Greeter.type7 };
-        type type5 = { readonly value: FuelTypes.Greeter.type9 };
-        type type6 = { readonly user: FuelTypes.Greeter.type7; readonly greeting: FuelTypes.Greeter.type5 };
-        type type7 = { readonly bits: FuelTypes.Greeter.type0 };
-        type type8 = undefined;
-        type type9 = string;
-      }
-    }
-    export type SvmChains = {};
-    export type SvmChainId = "SvmChainId is not available. Configure SVM chains in config.yaml and run 'envio codegen'";
-    export type Enums = {};
-    export type Entities = {
-      "EmptyEntity": {
-        readonly "id": string;
-        readonly "emptyField": string;
-      };
-    };
+  };
+};
+type _PrjFuelEventFilters = {};
+declare namespace _PrjFuelTypes {
+  namespace Greeter {
+    type type0 = string;
+    type type1 = { case: "InvalidContractSender"; payload: _PrjFuelTypes.Greeter.type8 } | { case: "ToThrow"; payload: _PrjFuelTypes.Greeter.type8 };
+    type type2<t> = { case: "None"; payload: _PrjFuelTypes.Greeter.type8 } | { case: "Some"; payload: t };
+    type type4 = { readonly user: _PrjFuelTypes.Greeter.type7 };
+    type type5 = { readonly value: _PrjFuelTypes.Greeter.type9 };
+    type type6 = { readonly user: _PrjFuelTypes.Greeter.type7; readonly greeting: _PrjFuelTypes.Greeter.type5 };
+    type type7 = { readonly bits: _PrjFuelTypes.Greeter.type0 };
+    type type8 = undefined;
+    type type9 = string;
   }
+}
+type _PrjSvmChains = {};
+type _PrjSvmChainId = "SvmChainId is not available. Configure SVM chains in config.yaml and run 'envio codegen'";
+type _PrjEnums = {};
+type _PrjEntities = {
+  "EmptyEntity": {
+    readonly "id": string;
+    readonly "emptyField": string;
+  };
+};
 
+declare module "envio" {
   interface Global {
     config: {
-      fuel: { chains: _Project.FuelChains; contracts: _Project.FuelContracts; eventFilters: _Project.FuelEventFilters };
-      entities: _Project.Entities;
-      enums: _Project.Enums;
+      fuel: { chains: _PrjFuelChains; contracts: _PrjFuelContracts; eventFilters: _PrjFuelEventFilters };
+      entities: _PrjEntities;
+      enums: _PrjEnums;
     };
   }
 
-  export type EmptyEntity = _Project.Entities["EmptyEntity"];
+  export type EmptyEntity = _PrjEntities["EmptyEntity"];
 
 }

@@ -1852,17 +1852,17 @@ type testIndexer = {{
                 vec![]
             };
             parts.push(if evm_chains_entries.is_empty() {
-                "export type EvmChains = {};".to_string()
+                "type _PrjEvmChains = {};".to_string()
             } else {
                 format!(
-                    "export type EvmChains = {{\n{}\n}};",
+                    "type _PrjEvmChains = {{\n{}\n}};",
                     evm_chains_entries.join("\n")
                 )
             });
             parts.push(if evm_chains_entries.is_empty() {
-                "export type EvmChainId = \"EvmChainId is not available. Configure EVM chains in config.yaml and run 'envio codegen'\";".to_string()
+                "type _PrjEvmChainId = \"EvmChainId is not available. Configure EVM chains in config.yaml and run 'envio codegen'\";".to_string()
             } else {
-                "export type EvmChainId = EvmChains[keyof EvmChains][\"id\"];".to_string()
+                "type _PrjEvmChainId = _PrjEvmChains[keyof _PrjEvmChains][\"id\"];".to_string()
             });
 
             // Generate global EvmBlock/EvmTransaction types (not exported, used by events without custom field_selection)
@@ -1875,7 +1875,7 @@ type testIndexer = {{
                         "global",
                         "  ",
                     );
-                    parts.push(format!("type EvmBlock = {};", evm_block_type));
+                    parts.push(format!("type _PrjEvmBlock = {};", evm_block_type));
                     let evm_tx_type = Self::generate_ts_all_fields_record(
                         &global_field_selection.transaction_fields,
                         &all_fs.transaction_fields,
@@ -1883,7 +1883,7 @@ type testIndexer = {{
                         "global",
                         "  ",
                     );
-                    parts.push(format!("type EvmTransaction = {};", evm_tx_type));
+                    parts.push(format!("type _PrjEvmTransaction = {};", evm_tx_type));
                 }
             }
 
@@ -1905,9 +1905,9 @@ type testIndexer = {{
                                     name,
                                     event,
                                     &all_fields,
-                                    "EvmChainId",
-                                    "EvmBlock",
-                                    "EvmTransaction",
+                                    "_PrjEvmChainId",
+                                    "_PrjEvmBlock",
+                                    "_PrjEvmTransaction",
                                 )
                             })
                             .collect();
@@ -1918,10 +1918,10 @@ type testIndexer = {{
                 vec![]
             };
             parts.push(if evm_contracts_entries.is_empty() {
-                "export type EvmContracts = {};".to_string()
+                "type _PrjEvmContracts = {};".to_string()
             } else {
                 format!(
-                    "export type EvmContracts = {{\n{}\n}};",
+                    "type _PrjEvmContracts = {{\n{}\n}};",
                     evm_contracts_entries.join("\n")
                 )
             });
@@ -1951,10 +1951,10 @@ type testIndexer = {{
                 vec![]
             };
             parts.push(if evm_event_filters_entries.is_empty() {
-                "export type EvmEventFilters = {};".to_string()
+                "type _PrjEvmEventFilters = {};".to_string()
             } else {
                 format!(
-                    "export type EvmEventFilters = {{\n{}\n}};",
+                    "type _PrjEvmEventFilters = {{\n{}\n}};",
                     evm_event_filters_entries.join("\n")
                 )
             });
@@ -1976,17 +1976,17 @@ type testIndexer = {{
                 vec![]
             };
             parts.push(if fuel_chains_entries.is_empty() {
-                "export type FuelChains = {};".to_string()
+                "type _PrjFuelChains = {};".to_string()
             } else {
                 format!(
-                    "export type FuelChains = {{\n{}\n}};",
+                    "type _PrjFuelChains = {{\n{}\n}};",
                     fuel_chains_entries.join("\n")
                 )
             });
             parts.push(if fuel_chains_entries.is_empty() {
-                "export type FuelChainId = \"FuelChainId is not available. Configure Fuel chains in config.yaml and run 'envio codegen'\";".to_string()
+                "type _PrjFuelChainId = \"FuelChainId is not available. Configure Fuel chains in config.yaml and run 'envio codegen'\";".to_string()
             } else {
-                "export type FuelChainId = FuelChains[keyof FuelChains][\"id\"];".to_string()
+                "type _PrjFuelChainId = _PrjFuelChains[keyof _PrjFuelChains][\"id\"];".to_string()
             });
 
             // Generate FuelBlock/FuelTransaction types (not exported)
@@ -1997,9 +1997,9 @@ type testIndexer = {{
                     transaction_fields: fuel_fs_for_types.transaction_fields.clone(),
                 });
                 // Fuel has all fields selected by default — no deprecated fields
-                parts.push(format!("type FuelBlock = {};", fuel_all.ts_block_type));
+                parts.push(format!("type _PrjFuelBlock = {};", fuel_all.ts_block_type));
                 parts.push(format!(
-                    "type FuelTransaction = {};",
+                    "type _PrjFuelTransaction = {};",
                     fuel_all.ts_transaction_type
                 ));
             }
@@ -2023,9 +2023,9 @@ type testIndexer = {{
                                     name,
                                     event,
                                     &aggregated,
-                                    "FuelChainId",
-                                    "FuelBlock",
-                                    "FuelTransaction",
+                                    "_PrjFuelChainId",
+                                    "_PrjFuelBlock",
+                                    "_PrjFuelTransaction",
                                 )
                             })
                             .collect();
@@ -2036,10 +2036,10 @@ type testIndexer = {{
                 vec![]
             };
             parts.push(if fuel_contracts_entries.is_empty() {
-                "export type FuelContracts = {};".to_string()
+                "type _PrjFuelContracts = {};".to_string()
             } else {
                 format!(
-                    "export type FuelContracts = {{\n{}\n}};",
+                    "type _PrjFuelContracts = {{\n{}\n}};",
                     fuel_contracts_entries.join("\n")
                 )
             });
@@ -2047,7 +2047,7 @@ type testIndexer = {{
             // Fuel events have no indexed-param filters — emit an empty
             // FuelEventFilters sibling so the `EvmEventFilters<Config>`
             // lookup helpers in index.d.ts can resolve cleanly.
-            parts.push("export type FuelEventFilters = {};".to_string());
+            parts.push("type _PrjFuelEventFilters = {};".to_string());
 
             // Generate FuelTypes namespace — type declarations with generics support
             let fuel_types_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
@@ -2055,7 +2055,7 @@ type testIndexer = {{
                     .iter()
                     .filter_map(|(name, contract)| {
                         if let system_config::Abi::Fuel(fuel_abi) = &contract.abi {
-                            let ns = format!("FuelTypes.{}", name);
+                            let ns = format!("_PrjFuelTypes.{}", name);
                             let type_entries: Vec<String> = fuel_abi
                                 .to_type_decl_multi()
                                 .ok()?
@@ -2081,10 +2081,10 @@ type testIndexer = {{
                 vec![]
             };
             parts.push(if fuel_types_entries.is_empty() {
-                "declare namespace FuelTypes {}".to_string()
+                "declare namespace _PrjFuelTypes {}".to_string()
             } else {
                 format!(
-                    "declare namespace FuelTypes {{\n{}\n}}",
+                    "declare namespace _PrjFuelTypes {{\n{}\n}}",
                     fuel_types_entries.join("\n")
                 )
             });
@@ -2106,17 +2106,17 @@ type testIndexer = {{
                 vec![]
             };
             parts.push(if svm_chains_entries.is_empty() {
-                "export type SvmChains = {};".to_string()
+                "type _PrjSvmChains = {};".to_string()
             } else {
                 format!(
-                    "export type SvmChains = {{\n{}\n}};",
+                    "type _PrjSvmChains = {{\n{}\n}};",
                     svm_chains_entries.join("\n")
                 )
             });
             parts.push(if svm_chains_entries.is_empty() {
-                "export type SvmChainId = \"SvmChainId is not available. Configure SVM chains in config.yaml and run 'envio codegen'\";".to_string()
+                "type _PrjSvmChainId = \"SvmChainId is not available. Configure SVM chains in config.yaml and run 'envio codegen'\";".to_string()
             } else {
-                "export type SvmChainId = SvmChains[keyof SvmChains][\"id\"];".to_string()
+                "type _PrjSvmChainId = _PrjSvmChains[keyof _PrjSvmChains][\"id\"];".to_string()
             });
 
             // Generate Enums type with all enum types as fields
@@ -2136,9 +2136,9 @@ type testIndexer = {{
                 })
                 .collect();
             parts.push(if enum_entries.is_empty() {
-                "export type Enums = {};".to_string()
+                "type _PrjEnums = {};".to_string()
             } else {
-                format!("export type Enums = {{\n{}\n}};", enum_entries.join("\n"))
+                format!("type _PrjEnums = {{\n{}\n}};", enum_entries.join("\n"))
             });
 
             // Generate Entities type with all entity types as fields
@@ -2175,12 +2175,9 @@ type testIndexer = {{
                 })
                 .collect();
             parts.push(if entity_entries.is_empty() {
-                "export type Entities = {};".to_string()
+                "type _PrjEntities = {};".to_string()
             } else {
-                format!(
-                    "export type Entities = {{\n{}\n}};",
-                    entity_entries.join("\n")
-                )
+                format!("type _PrjEntities = {{\n{}\n}};", entity_entries.join("\n"))
             });
 
             parts.join("\n")
@@ -2188,13 +2185,13 @@ type testIndexer = {{
 
         // Each pair is `(alias_name, lookup_key)`. The alias name is the
         // user-facing `export type X = ...` LHS; the lookup key is the
-        // property name on the `_Project.Entities` / `_Project.Enums`
-        // record. Entities use capitalized for both (the table is built
-        // with capitalized keys at line ~2172). Enums must use `original`
-        // for the lookup because the table is built with original keys
-        // (line ~2133), but we keep capitalized as the alias name so users
-        // get a PascalCase `export type AccountType = …` regardless of
-        // their schema casing.
+        // property name on the file-level `_PrjEntities` / `_PrjEnums` table.
+        // Entities use capitalized for both (the table is built with
+        // capitalized keys at line ~2172). Enums must use `original` for
+        // the lookup because the table is built with original keys (line
+        // ~2133), but we keep capitalized as the alias name so users get
+        // a PascalCase `export type AccountType = …` regardless of their
+        // schema casing.
         let entity_aliases: Vec<(String, String)> = entities
             .iter()
             .map(|e| (e.name.capitalized.clone(), e.name.capitalized.clone()))
@@ -2217,57 +2214,23 @@ type testIndexer = {{
         })
     }
 
-    /// Names already declared at the top level of `packages/envio/index.d.ts`
-    /// (whether `export`-ed or not). Per-entity / per-enum aliases that would
-    /// collide are skipped — users still have access via the generic
-    /// `Entity<"Name">` / `Enum<"Name">` lookups.
+    /// Wrap the project-derived lookup tables in a `declare module "envio"`
+    /// block so the generic types in `packages/envio/index.d.ts` resolve
+    /// through the augmented `Global` interface.
     ///
-    /// Derived at compile time from the in-tree `envio/index.d.ts` so internal
-    /// helper types (`GlobalConfig`, `NotConfigured`, `IsEmptyObject`, …)
-    /// participate in the collision check without manual upkeep — TypeScript's
-    /// type namespace doesn't distinguish exported from non-exported names
-    /// inside a module, so a `declare module` augmentation that adds
-    /// `export type X` collides equally with either.
-    fn envio_reserved_exports() -> &'static std::collections::HashSet<&'static str> {
-        // Read the source file at compile time so the reserved set tracks
-        // whatever the workspace currently ships. `include_str!` resolves
-        // relative to this file (packages/cli/src/hbs_templating/).
-        const ENVIO_DTS: &str = include_str!("../../../envio/index.d.ts");
-        static RESERVED: std::sync::OnceLock<std::collections::HashSet<&'static str>> =
-            std::sync::OnceLock::new();
-        RESERVED.get_or_init(|| {
-            // Top-level declarations: `(export )?(declare )?(abstract )?(type|const|...) Name`.
-            let decl = regex::Regex::new(
-                r"(?m)^(?:export\s+)?(?:declare\s+)?(?:abstract\s+)?(?:type|const|let|var|function|class|interface|namespace|enum)\s+([A-Za-z_][A-Za-z0-9_]*)",
-            )
-            .expect("envio reserved decl regex");
-            // Named re-exports: `export { Foo, Bar as Baz }` — the bound name
-            // is the right-hand identifier (or the only identifier when no `as`).
-            let reexport = regex::Regex::new(
-                r"(?:[A-Za-z_][A-Za-z0-9_]*\s+as\s+)?([A-Za-z_][A-Za-z0-9_]*)",
-            )
-            .expect("envio reserved re-export regex");
-            let reexport_block = regex::Regex::new(r"(?m)^export\s*\{([^}]*)\}").unwrap();
-
-            let mut set: std::collections::HashSet<&'static str> = decl
-                .captures_iter(ENVIO_DTS)
-                .map(|c| c.get(1).expect("decl capture").as_str())
-                .collect();
-            for caps in reexport_block.captures_iter(ENVIO_DTS) {
-                let body = caps.get(1).expect("re-export body").as_str();
-                for entry in body.split(',') {
-                    if let Some(m) = reexport.captures(entry.trim()) {
-                        set.insert(m.get(1).expect("re-export name").as_str());
-                    }
-                }
-            }
-            set
-        })
-    }
-
-    /// Wrap the project-derived lookup tables in a `declare module "envio"` block
-    /// so the generic types in `packages/envio/index.d.ts` resolve through the
-    /// augmented `Global` interface.
+    /// Lookup tables are emitted at the host file's top level (not exported
+    /// and not inside a namespace) so the generated `.d.ts` reads top-down.
+    /// Their names use a `_Prj` prefix so they don't shadow envio's own
+    /// internal generics (`type EvmContracts<Config> = …` etc.) — without
+    /// the prefix, TypeScript's generic-inference path through
+    /// `IndexerFromConfig<Config> → EvmEcosystem<Config>` collapses
+    /// `indexer.onEvent`'s callback to `any`.
+    ///
+    /// Per-entity / per-enum aliases are emitted unconditionally — if a
+    /// user's entity or enum name collides with an existing `envio` export
+    /// (e.g. `Logger`, `BigDecimal`), they'll see a TS duplicate-identifier
+    /// error in the generated `.envio/types.d.ts` and can fall back to the
+    /// generic `Entity<"Name">` / `Enum<"Name">` lookups.
     fn wrap_envio_module_augmentation(
         lookup_tables: &str,
         entity_aliases: &[(String, String)],
@@ -2278,59 +2241,37 @@ type testIndexer = {{
         const I4: &str = "    ";
         const I6: &str = "      ";
 
-        // `_Project` namespace body sits two levels in (inside `declare module`,
-        // inside `namespace _Project`).
-        let lookup_block = lookup_tables
-            .lines()
-            .map(|line| {
-                if line.is_empty() {
-                    String::new()
-                } else {
-                    format!("{I4}{line}")
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
         // Only the configured ecosystem populates `Global.config.<eco>`. Generic
         // helpers in envio fall back to error-message strings for unconfigured
         // ecosystems.
         let ecosystem_field = match ecosystem {
             Ecosystem::Evm => {
-                "evm: { chains: _Project.EvmChains; contracts: _Project.EvmContracts; eventFilters: _Project.EvmEventFilters };"
+                "evm: { chains: _PrjEvmChains; contracts: _PrjEvmContracts; eventFilters: _PrjEvmEventFilters };"
             }
             Ecosystem::Fuel => {
-                "fuel: { chains: _Project.FuelChains; contracts: _Project.FuelContracts; eventFilters: _Project.FuelEventFilters };"
+                "fuel: { chains: _PrjFuelChains; contracts: _PrjFuelContracts; eventFilters: _PrjFuelEventFilters };"
             }
-            Ecosystem::Svm => "svm: { chains: _Project.SvmChains };",
+            Ecosystem::Svm => "svm: { chains: _PrjSvmChains };",
         };
         let config_block = [
             ecosystem_field,
-            "entities: _Project.Entities;",
-            "enums: _Project.Enums;",
+            "entities: _PrjEntities;",
+            "enums: _PrjEnums;",
         ]
         .into_iter()
         .map(|line| format!("{I6}{line}"))
         .collect::<Vec<_>>()
         .join("\n");
 
-        let reserved = Self::envio_reserved_exports();
-
-        // `(alias, key)`: `export type {alias} = _Project.{table}[{key}]`.
-        // Alias names go through the reserved-name check so user entity /
-        // enum names never collide with envio's existing exports.
         let render_aliases = |pairs: &[(String, String)], table: &str| -> String {
             pairs
                 .iter()
-                .filter(|(alias, _)| !reserved.contains(alias.as_str()))
-                .map(|(alias, key)| {
-                    format!("{I2}export type {alias} = _Project.{table}[\"{key}\"];")
-                })
+                .map(|(alias, key)| format!("{I2}export type {alias} = {table}[\"{key}\"];"))
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        let entity_aliases = render_aliases(entity_aliases, "Entities");
-        let enum_aliases = render_aliases(enum_aliases, "Enums");
+        let entity_aliases = render_aliases(entity_aliases, "_PrjEntities");
+        let enum_aliases = render_aliases(enum_aliases, "_PrjEnums");
 
         format!(
             "// This file is generated by HyperIndex codegen from config.yaml and schema.graphql.\n\
@@ -2340,11 +2281,9 @@ type testIndexer = {{
              \n\
              import type {{ Address, BigDecimal, SingleOrMultiple }} from \"envio\";\n\
              \n\
-             declare module \"envio\" {{\n\
-             {I2}namespace _Project {{\n\
-             {lookup_block}\n\
-             {I2}}}\n\
+             {lookup_tables}\n\
              \n\
+             declare module \"envio\" {{\n\
              {I2}interface Global {{\n\
              {I4}config: {{\n\
              {config_block}\n\
@@ -2354,6 +2293,7 @@ type testIndexer = {{
              {entity_aliases}\n\
              {enum_aliases}\n\
              }}\n",
+            lookup_tables = lookup_tables,
             entity_aliases = entity_aliases,
             enum_aliases = enum_aliases,
         )
@@ -2917,12 +2857,12 @@ mod test {
     }
 
     /// Regression: enum schema names that aren't already PascalCase must
-    /// produce an alias whose lookup key matches the `_Project.Enums` table
-    /// keys (which are emitted with `gql_enum.name.original`). The alias
-    /// itself stays capitalized so users get a PascalCase `export type`.
+    /// produce an alias whose lookup key matches the file-level `_PrjEnums`
+    /// table keys (which are emitted with `gql_enum.name.original`). The
+    /// alias itself stays capitalized so users get a PascalCase `export type`.
     #[test]
     fn enum_alias_preserves_original_case_for_lookup() {
-        let lookup_tables = "export type Enums = {\n  \"accountType\": \"ADMIN\" | \"USER\";\n};";
+        let lookup_tables = "type _PrjEnums = {\n  \"accountType\": \"ADMIN\" | \"USER\";\n};";
         let entity_aliases: Vec<(String, String)> = Vec::new();
         let enum_aliases = vec![("AccountType".to_string(), "accountType".to_string())];
 
@@ -2934,39 +2874,8 @@ mod test {
         );
 
         assert!(
-            out.contains("export type AccountType = _Project.Enums[\"accountType\"];"),
+            out.contains("export type AccountType = _PrjEnums[\"accountType\"];"),
             "alias should look up by original schema name, not the PascalCase alias.\nGot:\n{out}",
         );
-    }
-
-    /// `envio_reserved_exports` is auto-derived from `packages/envio/index.d.ts`.
-    /// This guards against regressions in the regex (e.g. it must continue to
-    /// catch both `export type X` and bare `type X` since augmentation conflicts
-    /// with either) by spot-checking a handful of names that span the file.
-    #[test]
-    fn envio_reserved_exports_covers_user_facing_and_internal_names() {
-        let reserved = super::ProjectTemplate::envio_reserved_exports();
-        for name in [
-            // Top-level user-facing exports.
-            "Indexer",
-            "Entities",
-            "EvmChainName",
-            "BigDecimal",
-            "S",
-            "createTestIndexer",
-            // Internal helper types that are NOT exported but still occupy
-            // the type namespace and would collide with augmentation aliases.
-            "GlobalConfig",
-            "NotConfigured",
-            "IsEmptyObject",
-            "EvmContracts",
-            "_ProjectEvmEvent",
-        ] {
-            assert!(
-                reserved.contains(name),
-                "expected `{name}` in envio_reserved_exports — the regex in \
-                 codegen_templates.rs may have stopped picking up its declaration kind",
-            );
-        }
     }
 }
