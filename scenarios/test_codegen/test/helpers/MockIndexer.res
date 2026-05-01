@@ -49,6 +49,7 @@ module Storage = {
       "entities": array<Internal.entityConfig>,
       "chainConfigs": array<Config.chain>,
       "enums": array<Table.enumConfig<Table.enum>>,
+      "envioInfo": JSON.t,
     }>,
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,
@@ -90,6 +91,9 @@ module Storage = {
     let dumpEffectCacheCalls = ref(0)
     let resumeInitialStateCalls = []
     let resumeInitialStateResolveFns = []
+    // Mock storage for envio_info so resume-path tests can exercise the
+    // stored-vs-current compat check (None arm + Some arm + diff throws).
+    let envioInfoRef: ref<option<JSON.t>> = ref(None)
 
     {
       isInitializedCalls,
@@ -119,13 +123,17 @@ module Storage = {
           ~chainConfigs=[],
           ~entities=[],
           ~enums=[],
-          ~envioInfo as _,
+          ~envioInfo,
         ) => {
+          // PgStorage writes envio_info as part of the same transaction as
+          // schema setup, so the mock mirrors that side effect on initialize.
+          envioInfoRef := Some(envioInfo)
           initializeCalls
           ->Array.push({
             "entities": entities,
             "chainConfigs": chainConfigs,
             "enums": enums,
+            "envioInfo": envioInfo,
           })
           ->ignore
           Promise.make((resolve, _reject) => {
@@ -179,8 +187,11 @@ module Storage = {
           })
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
-        readEnvioInfo: () => Promise.resolve(None),
-        writeEnvioInfo: (~envioInfo as _) => Promise.resolve(),
+        readEnvioInfo: () => Promise.resolve(envioInfoRef.contents),
+        writeEnvioInfo: (~envioInfo) => {
+          envioInfoRef := Some(envioInfo)
+          Promise.resolve()
+        },
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
         pruneStaleCheckpoints: (~safeCheckpointId as _) =>
           JsError.throwWithMessage("Not implemented"),

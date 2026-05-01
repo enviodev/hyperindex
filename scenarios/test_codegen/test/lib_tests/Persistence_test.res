@@ -24,7 +24,8 @@ describe("Test Persistence layer init", () => {
     ).toEqual([])
     t.expect(storageMock.initializeCalls, ~message=`Storage should not be initialized`).toEqual([])
 
-    let p = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
+    let envioInfo = JSON.Encode.object(Dict.make())
+    let p = persistence->Persistence.init(~chainConfigs=[], ~envioInfo)
 
     t.expect(
       storageMock.isInitializedCalls,
@@ -60,6 +61,7 @@ describe("Test Persistence layer init", () => {
           "entities": persistence.allEntities,
           "chainConfigs": [],
           "enums": persistence.allEnums,
+          "envioInfo": envioInfo,
         },
       ],
       0,
@@ -84,7 +86,7 @@ describe("Test Persistence layer init", () => {
     // Can resolve the promise now
     await p
 
-    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
+    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo)
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -94,7 +96,7 @@ describe("Test Persistence layer init", () => {
       ~message=`Calling init the second time shouldn't do anything`,
     ).toEqual((1, 1, 0))
 
-    let _p2 = persistence->Persistence.init(~reset=true, ~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
+    let _p2 = persistence->Persistence.init(~reset=true, ~chainConfigs=[], ~envioInfo)
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -110,6 +112,7 @@ describe("Test Persistence layer init", () => {
         "entities": persistence.allEntities,
         "chainConfigs": [],
         "enums": persistence.allEnums,
+        "envioInfo": envioInfo,
       },
     ))
   })
@@ -156,4 +159,77 @@ describe("Test Persistence layer init", () => {
 Although it should load effect caches metadata.`,
     ).toEqual((1, 0, 1))
   })
+
+  Async.it(
+    "Throws on resume when stored envio_info diverges from the current config",
+    async t => {
+      let storageMock = MockIndexer.Storage.make([
+        #isInitialized,
+        #initialize,
+        #resumeInitialState,
+      ])
+
+      // Seed envio_info with one config via initialize, then re-init the
+      // persistence layer with a different config — Persistence.init should
+      // detect the mismatch in resumeInitialState's compat check and throw.
+      let storedConfig = JSON.parseOrThrow(`{"name": "old", "evm": {}}`)
+      let initialState: Persistence.initialState = {
+        cleanRun: true,
+        chains: [],
+        cache: Dict.make(),
+        reorgCheckpoints: [],
+        checkpointId: 0n,
+      }
+
+      let firstPersistence = Persistence.make(
+        ~userEntities=[],
+        ~allEnums=[],
+        ~storage=storageMock.storage,
+      )
+      let initPromise =
+        firstPersistence->Persistence.init(~chainConfigs=[], ~envioInfo=storedConfig)
+      storageMock.resolveIsInitialized(false)
+      for _ in 1 to 3 {
+        await Promise.resolve()
+      }
+      storageMock.resolveInitialize(initialState)
+      await initPromise
+
+      // New persistence sharing the same storage mock — envio_info is now
+      // populated with `storedConfig`, so a mismatching ~envioInfo on resume
+      // should fail before resumeInitialState is even called.
+      let secondPersistence = Persistence.make(
+        ~userEntities=[],
+        ~allEnums=[],
+        ~storage=storageMock.storage,
+      )
+      let mismatchedConfig = JSON.parseOrThrow(`{"name": "new", "evm": {}}`)
+      let resumePromise =
+        secondPersistence->Persistence.init(~chainConfigs=[], ~envioInfo=mismatchedConfig)
+      storageMock.resolveIsInitialized(true)
+
+      let raised = try {
+        await resumePromise
+        None
+      } catch {
+      | exn => Some(exn)
+      }
+      let message = switch raised {
+      | Some(JsExn(e)) => e->JsExn.message->Option.getOr("")
+      | _ => ""
+      }
+      t.expect(
+        message->String.includes("Incompatible") || message->String.includes("incompatible"),
+        ~message="should throw an incompatibility error mentioning the failure",
+      ).toBe(true)
+      t.expect(
+        message->String.includes("name"),
+        ~message="should name the diverged top-level key",
+      ).toBe(true)
+      t.expect(
+        storageMock.resumeInitialStateCalls->Array.length,
+        ~message="resumeInitialState should NOT have been called — compat check fails first",
+      ).toBe(0)
+    },
+  )
 })
