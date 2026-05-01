@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use inquire::{Select, Text};
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
-    contains_no_whitespace_validator, is_directory_new_validator,
+    contains_no_whitespace_validator, is_directory_new_validator, is_valid_folder_name,
     is_valid_foldername_inquire_validator,
 };
 
@@ -277,7 +277,15 @@ pub async fn prompt_missing_init_args(
     project_paths: &ProjectPaths,
 ) -> Result<InitConfig> {
     let directory: String = match &project_paths.directory {
-        Some(args_directory) => args_directory.clone(),
+        Some(args_directory) => {
+            if !is_valid_folder_name(args_directory) {
+                anyhow::bail!(
+                    "Invalid --directory value {args_directory:?}: folder names cannot \
+                     contain any of: / \\ : * ? \" ' < > |, and cannot be empty."
+                );
+            }
+            args_directory.clone()
+        }
         None => Text::new("Specify a folder name (ENTER to skip): ")
             .with_default(DEFAULT_PROJECT_ROOT_PATH)
             .with_validator(is_valid_foldername_inquire_validator)
