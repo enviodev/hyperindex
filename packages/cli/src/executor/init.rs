@@ -130,9 +130,19 @@ pub async fn run_init_args(
         } => {
             let fuel_config = contract_import_selection.to_human_config(&init_config);
 
+            let addresses = fuel_config
+                .chains
+                .iter()
+                .filter_map(|chain| chain.contracts.as_ref())
+                .flatten()
+                .flat_map(|contract| contract.address.iter().cloned());
+
             // TODO: Allow parsed paths to not depend on a written config.yaml file in file system
             file_system::write_file_string_to_system(
-                fuel_config.to_string(),
+                crate::config_parsing::human_config::quote_known_addresses(
+                    fuel_config.to_string(),
+                    addresses,
+                ),
                 parsed_project_paths.project_root.join("config.yaml"),
             )
             .await
@@ -198,9 +208,19 @@ pub async fn run_init_args(
                 .to_human_config(&init_config)
                 .context("Failed to converting auto config selection into config.yaml")?;
 
+            let addresses = evm_config
+                .chains
+                .iter()
+                .filter_map(|chain| chain.contracts.as_ref())
+                .flatten()
+                .flat_map(|contract| contract.address.iter().cloned());
+
             // TODO: Allow parsed paths to not depend on a written config.yaml file in file system
             file_system::write_file_string_to_system(
-                evm_config.to_string(),
+                crate::config_parsing::human_config::quote_known_addresses(
+                    evm_config.to_string(),
+                    addresses,
+                ),
                 parsed_project_paths.project_root.join("config.yaml"),
             )
             .await

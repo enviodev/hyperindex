@@ -37,6 +37,10 @@ impl<T: Clone> NormalizedList<T> {
     pub fn is_empty(&self) -> bool {
         self.0.len() == 0
     }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.0.iter()
+    }
 }
 
 impl<T: Clone> From<OptSingleOrList<T>> for NormalizedList<T> {
