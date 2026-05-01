@@ -2208,99 +2208,53 @@ type testIndexer = {{
         })
     }
 
-    /// Reserved names already exported by `packages/envio/index.d.ts`. Per-entity /
-    /// per-enum aliases that would collide are skipped — users still have access via
-    /// the generic `Entity<"Name">` / `Enum<"Name">` lookups.
-    const ENVIO_RESERVED_EXPORTS: &'static [&'static str] = &[
-        "Address",
-        "Logger",
-        "Effect",
-        "EffectCaller",
-        "EffectContext",
-        "EffectArgs",
-        "EffectOptions",
-        "RateLimit",
-        "RateLimitDuration",
-        "TestHelpers",
-        "Prettify",
-        "WhereOperator",
-        "GetWhereFilter",
-        "BigDecimal",
-        "S",
-        "createEffect",
-        "Global",
-        "SingleOrMultiple",
-        "Indexer",
-        "TestIndexer",
-        "IndexerFromConfig",
-        "TestIndexerFromConfig",
-        "TestIndexerProcessConfig",
-        "Entities",
-        "Entity",
-        "EntityName",
-        "Enums",
-        "Enum",
-        "EnumName",
-        "HandlerContext",
-        "ChainId",
-        "EvmChainId",
-        "FuelChainId",
-        "SvmChainId",
-        "EvmChainName",
-        "EvmContractName",
-        "FuelChainName",
-        "FuelContractName",
-        "SvmChainName",
-        "EvmEvent",
-        "FuelEvent",
-        "EvmOnEvent",
-        "FuelOnEvent",
-        "EvmOnEventContext",
-        "EvmContractRegisterContext",
-        "FuelOnEventContext",
-        "FuelContractRegisterContext",
-        "SvmOnSlotContext",
-        "EvmOnEventOptions",
-        "EvmOnEventHandler",
-        "EvmContractRegisterOptions",
-        "EvmContractRegisterHandler",
-        "FuelOnEventOptions",
-        "FuelOnEventHandler",
-        "FuelContractRegisterOptions",
-        "FuelContractRegisterHandler",
-        "EvmOnEventWhere",
-        "EvmOnEventWhereFilter",
-        "EvmOnEventWhereArgs",
-        "EvmOnEventWhereChain",
-        "FuelOnEventWhere",
-        "FuelOnEventWhereFilter",
-        "FuelOnEventWhereArgs",
-        "FuelOnEventWhereChain",
-        "EvmOnBlockFilter",
-        "EvmOnBlockWhereResult",
-        "EvmOnBlockWhereArgs",
-        "EvmOnBlockContext",
-        "EvmOnBlockHandlerArgs",
-        "EvmOnBlockHandler",
-        "EvmOnBlockOptions",
-        "FuelOnBlockFilter",
-        "FuelOnBlockWhereResult",
-        "FuelOnBlockWhereArgs",
-        "FuelOnBlockContext",
-        "FuelOnBlockHandlerArgs",
-        "FuelOnBlockHandler",
-        "FuelOnBlockOptions",
-        "SvmOnSlotFilter",
-        "SvmOnSlotWhereResult",
-        "SvmOnSlotWhereArgs",
-        "SvmOnSlotHandlerArgs",
-        "SvmOnSlotHandler",
-        "SvmOnSlotOptions",
-        "EvmEventFilters",
-        "FuelEventFilters",
-        "indexer",
-        "createTestIndexer",
-    ];
+    /// Names already declared at the top level of `packages/envio/index.d.ts`
+    /// (whether `export`-ed or not). Per-entity / per-enum aliases that would
+    /// collide are skipped — users still have access via the generic
+    /// `Entity<"Name">` / `Enum<"Name">` lookups.
+    ///
+    /// Derived at compile time from the in-tree `envio/index.d.ts` so internal
+    /// helper types (`GlobalConfig`, `NotConfigured`, `IsEmptyObject`, …)
+    /// participate in the collision check without manual upkeep — TypeScript's
+    /// type namespace doesn't distinguish exported from non-exported names
+    /// inside a module, so a `declare module` augmentation that adds
+    /// `export type X` collides equally with either.
+    fn envio_reserved_exports() -> &'static std::collections::HashSet<&'static str> {
+        // Read the source file at compile time so the reserved set tracks
+        // whatever the workspace currently ships. `include_str!` resolves
+        // relative to this file (packages/cli/src/hbs_templating/).
+        const ENVIO_DTS: &str = include_str!("../../../envio/index.d.ts");
+        static RESERVED: std::sync::OnceLock<std::collections::HashSet<&'static str>> =
+            std::sync::OnceLock::new();
+        RESERVED.get_or_init(|| {
+            // Top-level declarations: `(export )?(declare )?(abstract )?(type|const|...) Name`.
+            let decl = regex::Regex::new(
+                r"(?m)^(?:export\s+)?(?:declare\s+)?(?:abstract\s+)?(?:type|const|let|var|function|class|interface|namespace|enum)\s+([A-Za-z_][A-Za-z0-9_]*)",
+            )
+            .expect("envio reserved decl regex");
+            // Named re-exports: `export { Foo, Bar as Baz }` — the bound name
+            // is the right-hand identifier (or the only identifier when no `as`).
+            let reexport = regex::Regex::new(
+                r"(?:[A-Za-z_][A-Za-z0-9_]*\s+as\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+            )
+            .expect("envio reserved re-export regex");
+            let reexport_block = regex::Regex::new(r"(?m)^export\s*\{([^}]*)\}").unwrap();
+
+            let mut set: std::collections::HashSet<&'static str> = decl
+                .captures_iter(ENVIO_DTS)
+                .map(|c| c.get(1).expect("decl capture").as_str())
+                .collect();
+            for caps in reexport_block.captures_iter(ENVIO_DTS) {
+                let body = caps.get(1).expect("re-export body").as_str();
+                for entry in body.split(',') {
+                    if let Some(m) = reexport.captures(entry.trim()) {
+                        set.insert(m.get(1).expect("re-export name").as_str());
+                    }
+                }
+            }
+            set
+        })
+    }
 
     /// Wrap the project-derived lookup tables in a `declare module "envio"` block
     /// so the generic types in `packages/envio/index.d.ts` resolve through the
@@ -2351,8 +2305,7 @@ type testIndexer = {{
         .collect::<Vec<_>>()
         .join("\n");
 
-        let reserved: std::collections::HashSet<&str> =
-            Self::ENVIO_RESERVED_EXPORTS.iter().copied().collect();
+        let reserved = Self::envio_reserved_exports();
 
         let render_aliases = |names: &[String], lookup: &str| -> String {
             names
@@ -2948,5 +2901,36 @@ mod test {
             user_edited,
             "user edits to .envio/.gitignore must be preserved across codegen runs",
         );
+    }
+
+    /// `envio_reserved_exports` is auto-derived from `packages/envio/index.d.ts`.
+    /// This guards against regressions in the regex (e.g. it must continue to
+    /// catch both `export type X` and bare `type X` since augmentation conflicts
+    /// with either) by spot-checking a handful of names that span the file.
+    #[test]
+    fn envio_reserved_exports_covers_user_facing_and_internal_names() {
+        let reserved = super::ProjectTemplate::envio_reserved_exports();
+        for name in [
+            // Top-level user-facing exports.
+            "Indexer",
+            "Entities",
+            "EvmChainName",
+            "BigDecimal",
+            "S",
+            "createTestIndexer",
+            // Internal helper types that are NOT exported but still occupy
+            // the type namespace and would collide with augmentation aliases.
+            "GlobalConfig",
+            "NotConfigured",
+            "IsEmptyObject",
+            "EvmContracts",
+            "_ProjectEvmEvent",
+        ] {
+            assert!(
+                reserved.contains(name),
+                "expected `{name}` in envio_reserved_exports — the regex in \
+                 codegen_templates.rs may have stopped picking up its declaration kind",
+            );
+        }
     }
 }

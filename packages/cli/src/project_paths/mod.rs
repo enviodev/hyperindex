@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use std::path::{Component, PathBuf};
+use std::path::PathBuf;
 
 use crate::{
     cli_args::{clap_definitions::ProjectPaths, init_config::InitConfig},
@@ -24,19 +24,28 @@ impl ParsedProjectPaths {
         let project_root = PathBuf::from(&project_root);
         let envio_dir = path_utils::normalize_path(project_root.join(ENVIO_DIR));
 
-        let config_relative_path = PathBuf::from(config);
-        // Reject absolute paths and any `..` component anywhere in the path —
-        // `foo/../../config.yaml` would otherwise resolve outside `project_root`.
-        if config_relative_path.is_absolute()
-            || config_relative_path
-                .components()
-                .any(|c| matches!(c, Component::ParentDir))
-        {
-            return Err(anyhow!("Config path must be in project directory"));
-        }
-
-        let config_joined: PathBuf = project_root.join(config_relative_path);
+        // `Path::join` returns the right-hand side verbatim when it's
+        // absolute, so this works for both absolute (`/repo/project/config.yaml`)
+        // and relative (`config.yaml`, `subdir/cfg.yaml`) inputs. Lexical
+        // normalization resolves any `..` so the containment check below
+        // covers `foo/../../config.yaml` and similar escapes.
+        let config_joined = project_root.join(config);
         let config = path_utils::normalize_path(config_joined);
+        let normalized_root = path_utils::normalize_path(project_root.clone());
+
+        // `diff_paths(config, root)` returns the path from root → config.
+        // If that path starts with `..`, the config sits outside the project
+        // root regardless of whether the inputs were absolute or relative.
+        let escapes_root = pathdiff::diff_paths(&config, &normalized_root)
+            .map(|rel| rel.starts_with(".."))
+            .unwrap_or(true);
+        if escapes_root {
+            return Err(anyhow!(
+                "Config path must be in project directory (got `{}`, project root `{}`)",
+                config.display(),
+                normalized_root.display(),
+            ));
+        }
 
         Ok(ParsedProjectPaths {
             project_root,
@@ -135,6 +144,28 @@ mod tests {
         let project_root = "./";
         let config = "../config.yaml";
         ParsedProjectPaths::new(project_root, config).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_project_path_rejects_nested_parent_dir_escape() {
+        // `foo/../../config.yaml` lexically resolves to `../config.yaml`,
+        // which is outside the project root.
+        ParsedProjectPaths::new("./", "foo/../../config.yaml").unwrap();
+    }
+
+    #[test]
+    fn test_project_path_accepts_absolute_config_inside_root() {
+        // Scripted invocations may pass an absolute `--config` / `ENVIO_CONFIG`
+        // pointing inside the project tree.
+        let paths = ParsedProjectPaths::new("/repo/project", "/repo/project/config.yaml").unwrap();
+        assert_eq!(paths.config, PathBuf::from("/repo/project/config.yaml"));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_project_path_rejects_absolute_config_outside_root() {
+        ParsedProjectPaths::new("/repo/project", "/etc/passwd").unwrap();
     }
 
     #[test]
