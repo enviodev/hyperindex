@@ -161,54 +161,50 @@ let make = (
 
 let init = {
   async (persistence, ~chainConfigs, ~reset=false) => {
-    try {
-      let shouldRun = switch persistence.storageStatus {
-      | Unknown => true
-      | Initializing(promise) => {
-          await promise
-          reset
-        }
-      | Ready(_) => reset
+    let shouldRun = switch persistence.storageStatus {
+    | Unknown => true
+    | Initializing(promise) => {
+        await promise
+        reset
       }
-      if shouldRun {
-        let resolveRef = ref(%raw(`null`))
-        let promise = Promise.make((resolve, _) => {
-          resolveRef := resolve
+    | Ready(_) => reset
+    }
+    if shouldRun {
+      let resolveRef = ref(%raw(`null`))
+      let promise = Promise.make((resolve, _) => {
+        resolveRef := resolve
+      })
+      persistence.storageStatus = Initializing(promise)
+      if reset || !(await persistence.storage.isInitialized()) {
+        Logging.info(`Initializing the indexer storage...`)
+        let initialState = await persistence.storage.initialize(
+          ~entities=persistence.allEntities,
+          ~enums=persistence.allEnums,
+          ~chainConfigs,
+        )
+        Logging.info(`The indexer storage is ready. Starting indexing!`)
+        persistence.storageStatus = Ready(initialState)
+      } else if (
+        // In case of a race condition,
+        // we want to set the initial status to Ready only once.
+        switch persistence.storageStatus {
+        | Initializing(_) => true
+        | _ => false
+        }
+      ) {
+        Logging.info(`Found existing indexer storage. Resuming indexing state...`)
+        let initialState = await persistence.storage.resumeInitialState()
+        persistence.storageStatus = Ready(initialState)
+        let progress = Dict.make()
+        initialState.chains->Array.forEach(c => {
+          progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
         })
-        persistence.storageStatus = Initializing(promise)
-        if reset || !(await persistence.storage.isInitialized()) {
-          Logging.info(`Initializing the indexer storage...`)
-          let initialState = await persistence.storage.initialize(
-            ~entities=persistence.allEntities,
-            ~enums=persistence.allEnums,
-            ~chainConfigs,
-          )
-          Logging.info(`The indexer storage is ready. Starting indexing!`)
-          persistence.storageStatus = Ready(initialState)
-        } else if (
-          // In case of a race condition,
-          // we want to set the initial status to Ready only once.
-          switch persistence.storageStatus {
-          | Initializing(_) => true
-          | _ => false
-          }
-        ) {
-          Logging.info(`Found existing indexer storage. Resuming indexing state...`)
-          let initialState = await persistence.storage.resumeInitialState()
-          persistence.storageStatus = Ready(initialState)
-          let progress = Dict.make()
-          initialState.chains->Array.forEach(c => {
-            progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
-          })
-          Logging.info({
-            "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
-            "progress": progress,
-          })
-        }
-        resolveRef.contents()
+        Logging.info({
+          "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
+          "progress": progress,
+        })
       }
-    } catch {
-    | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
+      resolveRef.contents()
     }
   }
 }
