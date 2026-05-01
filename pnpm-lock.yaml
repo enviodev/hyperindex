@@ -157,6 +157,8 @@ importers:
         specifier: ./generated
         version: link:generated
 
+  scenarios/e2e_test/generated: {}
+
   scenarios/fuel_test:
     dependencies:
       envio:

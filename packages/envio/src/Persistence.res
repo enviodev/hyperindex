@@ -220,7 +220,7 @@ let init = {
             if changedPaths->Array.length > 0 {
               let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
               JsError.throwWithMessage(
-                `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. Revert the changes above    # resume indexing where it left off\n  2. envio dev -r                # wipe the database and re-index from scratch`,
+                `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. Revert the changes above    # resume indexing where it left off\n  2. envio dev -r                # wipe the database and re-index from scratch`,
               )
             }
           }

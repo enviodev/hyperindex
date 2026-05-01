@@ -3,13 +3,18 @@ open Vitest
 let json = (s: string): JSON.t => s->JSON.parseOrThrow
 
 describe("Config.stripSensitiveData", () => {
-  it("removes rpcs and rpc from chains across evm/fuel/svm", t => {
+  it("removes rpcs, rpc, and hypersync from chains across evm/fuel/svm", t => {
     let input = json(`{
       "name": "demo",
       "evm": {
         "chains": {
           "1": {"id": 1, "rpcs": [{"url": "https://secret"}], "hypersync": "https://eth.hypersync.xyz"},
           "10": {"id": 10, "rpc": "https://other-secret"}
+        }
+      },
+      "fuel": {
+        "chains": {
+          "0": {"id": 0, "hypersync": "https://fuel.hypersync.xyz"}
         }
       },
       "svm": {
@@ -23,8 +28,13 @@ describe("Config.stripSensitiveData", () => {
       "name": "demo",
       "evm": {
         "chains": {
-          "1": {"id": 1, "hypersync": "https://eth.hypersync.xyz"},
+          "1": {"id": 1},
           "10": {"id": 10}
+        }
+      },
+      "fuel": {
+        "chains": {
+          "0": {"id": 0}
         }
       },
       "svm": {
@@ -34,7 +44,10 @@ describe("Config.stripSensitiveData", () => {
       }
     }`)
 
-    t.expect(Config.stripSensitiveData(input), ~message="strips rpcs and rpc").toEqual(expected)
+    t.expect(
+      Config.stripSensitiveData(input),
+      ~message="strips rpcs, rpc, and hypersync",
+    ).toEqual(expected)
   })
 
   it("does not mutate the input JSON", t => {
@@ -142,6 +155,40 @@ describe("Config.diffPaths", () => {
         ~current=Config.stripSensitiveData(currentRaw),
       ),
       ~message="rpc-only edits should produce no diff after stripping",
+    ).toEqual([])
+  })
+
+  it("ignores data-source flips that drop hypersync alongside rpcs edits", t => {
+    // When a user marks an RPC `for: sync`, the public config drops
+    // `chains.<id>.hypersync` (since `main` flips to Rpc). Stripping
+    // hypersync alongside rpcs makes that cascade invisible too.
+    let storedRaw = json(`{
+      "evm": {
+        "chains": {
+          "1": {
+            "id": 1,
+            "hypersync": "https://eth.hypersync.xyz",
+            "rpcs": [{"url": "u1", "for": "fallback"}]
+          }
+        }
+      }
+    }`)
+    let currentRaw = json(`{
+      "evm": {
+        "chains": {
+          "1": {
+            "id": 1,
+            "rpcs": [{"url": "u1", "for": "sync"}]
+          }
+        }
+      }
+    }`)
+    t.expect(
+      Config.diffPaths(
+        ~stored=Config.stripSensitiveData(storedRaw),
+        ~current=Config.stripSensitiveData(currentRaw),
+      ),
+      ~message="hypersync drop on data-source flip should not register as a diff",
     ).toEqual([])
   })
 })

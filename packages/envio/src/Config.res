@@ -867,7 +867,8 @@ let getPublicConfigJson = () =>
   | None => Core.getConfigJson()->JSON.parseOrThrow
   }
 
-// RPC urls (and fallback/ws/svm `rpc`) can carry secrets, so drop them
+// Source URLs (RPC, hypersync, fuel/svm `rpc`) can carry secrets — and even
+// non-secret edits to them shouldn't force a full re-index, so we drop them
 // before the config is written to `envio_info`. Walks a deep clone so the
 // caller's JSON is not mutated.
 let stripSensitiveData = (json: JSON.t): JSON.t => {
@@ -884,6 +885,7 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
           | Object(chain) => {
               chain->Utils.Dict.deleteInPlace("rpcs")
               chain->Utils.Dict.deleteInPlace("rpc")
+              chain->Utils.Dict.deleteInPlace("hypersync")
             }
           | _ => ()
           }
