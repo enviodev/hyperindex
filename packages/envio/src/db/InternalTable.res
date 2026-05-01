@@ -302,11 +302,18 @@ module EnvioInfo = {
   // the table is verifiably empty, so there's no need to DELETE first or
   // pay for upsert semantics. The table has no primary key by design
   // (single-column singleton), so ON CONFLICT isn't an option anyway.
+  //
+  // Pass the JSON object directly (not pre-stringified) — postgres.js
+  // serializes objects as JSON for jsonb columns. Pre-stringifying and
+  // binding as a string parameter caused the row to be stored as a
+  // jsonb *string scalar* (the literal text), so subsequent reads would
+  // see no top-level keys and the resume-time compat check would fail
+  // claiming the entire config differed.
   let write = (sql, ~pgSchema, ~envioInfo: JSON.t) => {
     sql
     ->Postgres.preparedUnsafe(
-      `INSERT INTO "${pgSchema}"."${table.tableName}" ("config") VALUES ($1::jsonb);`,
-      [envioInfo->JSON.stringify]->(Utils.magic: array<string> => unknown),
+      `INSERT INTO "${pgSchema}"."${table.tableName}" ("config") VALUES ($1);`,
+      [envioInfo]->(Utils.magic: array<JSON.t> => unknown),
     )
     ->Utils.Promise.ignoreValue
   }
