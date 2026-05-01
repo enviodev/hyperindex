@@ -1,4 +1,4 @@
-use crate::{cli_args::init_config::Language, project_paths::ParsedProjectPaths};
+use crate::cli_args::init_config::Language;
 use serde::Serialize;
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -15,19 +15,18 @@ impl InitTemplates {
     pub fn new(
         project_name: String,
         lang: &Language,
-        _project_paths: &ParsedProjectPaths,
         envio_version: String,
         envio_api_token: Option<String>,
         extra_dependencies: Vec<(String, String)>,
-    ) -> anyhow::Result<Self> {
-        Ok(InitTemplates {
+    ) -> Self {
+        InitTemplates {
             project_name,
             is_rescript: lang == &Language::ReScript,
             is_typescript: lang == &Language::TypeScript,
             envio_version,
             envio_api_token,
             extra_dependencies,
-        })
+        }
     }
 }
 
@@ -41,12 +40,10 @@ mod test {
         let init_temp = InitTemplates::new(
             "my-project".to_string(),
             &Language::ReScript,
-            &ParsedProjectPaths::default(),
             "latest".to_string(),
             None,
             vec![],
-        )
-        .unwrap();
+        );
 
         let expected = InitTemplates {
             project_name: "my-project".to_string(),

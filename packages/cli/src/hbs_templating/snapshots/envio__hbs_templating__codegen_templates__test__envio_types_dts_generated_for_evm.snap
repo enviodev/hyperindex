@@ -7,8 +7,7 @@ expression: project_template.envio_types_dts
 // If your project's types look out of date, run `envio codegen`
 // (or your package manager's `codegen` script, e.g. `pnpm codegen`).
 
-import type { default as BigDecimal } from "bignumber.js";
-import type { Address, SingleOrMultiple } from "envio";
+import type { Address, BigDecimal, SingleOrMultiple } from "envio";
 
 declare module "envio" {
   namespace _Project {

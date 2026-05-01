@@ -2338,8 +2338,7 @@ type testIndexer = {{
              // If your project's types look out of date, run `envio codegen`\n\
              // (or your package manager's `codegen` script, e.g. `pnpm codegen`).\n\
              \n\
-             import type {{ default as BigDecimal }} from \"bignumber.js\";\n\
-             import type {{ Address, SingleOrMultiple }} from \"envio\";\n\
+             import type {{ Address, BigDecimal, SingleOrMultiple }} from \"envio\";\n\
              \n\
              declare module \"envio\" {{\n\
              {I2}namespace _Project {{\n\
