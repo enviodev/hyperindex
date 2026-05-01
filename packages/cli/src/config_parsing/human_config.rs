@@ -1101,9 +1101,11 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         let cfg: super::evm::HumanConfig = serde_yaml::from_str(yaml).unwrap();
         let out = cfg.to_string();
         let raw = serde_yaml::to_string(&cfg).unwrap();
-        assert!(
-            out.ends_with(&raw),
-            "Display body must equal raw serde_yaml output verbatim — config_hash stability depends on it.\nDisplay:\n{out}\nserde_yaml:\n{raw}"
+        let expected =
+            format!("# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{raw}");
+        assert_eq!(
+            out, expected,
+            "Display output must remain byte-identical for config_hash stability — header and body both."
         );
     }
 
