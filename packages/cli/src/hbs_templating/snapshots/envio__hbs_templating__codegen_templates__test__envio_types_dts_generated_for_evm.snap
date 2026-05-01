@@ -9,11 +9,7 @@ expression: project_template.envio_types_dts
 
 import type { Address, BigDecimal, SingleOrMultiple } from "envio";
 
-type _PrjEvmChains = {
-  "ethereumMainnet": { id: 1 };
-};
-type _PrjEvmChainId = _PrjEvmChains[keyof _PrjEvmChains]["id"];
-type _PrjEvmBlock = {
+type EvmBlock = {
   /** The number field. */
   readonly number: number;
   /** The timestamp field. */
@@ -285,7 +281,7 @@ type _PrjEvmBlock = {
    */
   readonly mixHash: never;
 };
-type _PrjEvmTransaction = {
+type EvmTransaction = {
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -639,68 +635,16 @@ type _PrjEvmTransaction = {
    */
   readonly authorizationList: never;
 };
-type _PrjEvmContracts = {
-  "Contract1": {
-    "NewGravatar": {
-      /** The name of the event. */
-      readonly eventName: "NewGravatar";
-      /** The name of the contract that emitted this event. */
-      readonly contractName: "Contract1";
-      /** The unique identifier of the blockchain network where this event occurred. */
-      readonly chainId: _PrjEvmChainId;
-      /** The parameters or arguments associated with this event. */
-      readonly params: { readonly id: bigint; readonly owner: Address; readonly displayName: string; readonly imageUrl: string };
-      /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
-      readonly block: _PrjEvmBlock;
-      /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
-      readonly transaction: _PrjEvmTransaction;
-      /** The index of this event's log within the block. */
-      readonly logIndex: number;
-      /** The address of the contract that emitted this event. */
-      readonly srcAddress: Address;
-    };
-    "UpdatedGravatar": {
-      /** The name of the event. */
-      readonly eventName: "UpdatedGravatar";
-      /** The name of the contract that emitted this event. */
-      readonly contractName: "Contract1";
-      /** The unique identifier of the blockchain network where this event occurred. */
-      readonly chainId: _PrjEvmChainId;
-      /** The parameters or arguments associated with this event. */
-      readonly params: { readonly id: bigint; readonly owner: Address; readonly displayName: string; readonly imageUrl: string };
-      /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
-      readonly block: _PrjEvmBlock;
-      /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
-      readonly transaction: _PrjEvmTransaction;
-      /** The index of this event's log within the block. */
-      readonly logIndex: number;
-      /** The address of the contract that emitted this event. */
-      readonly srcAddress: Address;
-    };
-  };
-};
-type _PrjEvmEventFilters = {
-  "Contract1": {
-    "NewGravatar": { readonly params: {} };
-    "UpdatedGravatar": { readonly params: {} };
-  };
-};
-type _PrjFuelChains = {};
-type _PrjFuelChainId = "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'envio codegen'";
-type _PrjFuelContracts = {};
-type _PrjFuelEventFilters = {};
-declare namespace _PrjFuelTypes {}
-type _PrjSvmChains = {};
-type _PrjSvmChainId = "SvmChainId is not available. Configure SVM chains in config.yaml and run 'envio codegen'";
-type _PrjEnums = {
+declare namespace FuelTypes {}
+type Enums = {
   "Status": "ACTIVE" | "INACTIVE";
 };
-type _PrjEntities = {
+type Entities = {
   "EmptyEntity": {
     readonly "id": string;
     readonly "emptyField": string;
-    readonly "status": _PrjEnums["Status"];
-    readonly "optionalStatus": _PrjEnums["Status"] | undefined;
+    readonly "status": Enums["Status"];
+    readonly "optionalStatus": Enums["Status"] | undefined;
     readonly "related_id": string;
     readonly "optionalRelated_id": string | undefined;
     readonly "tags": readonly string[];
@@ -715,13 +659,59 @@ type _PrjEntities = {
 declare module "envio" {
   interface Global {
     config: {
-      evm: { chains: _PrjEvmChains; contracts: _PrjEvmContracts; eventFilters: _PrjEvmEventFilters };
-      entities: _PrjEntities;
-      enums: _PrjEnums;
+      evm: { chains: {
+  "ethereumMainnet": { id: 1 };
+      }; contracts: {
+  "Contract1": {
+    "NewGravatar": {
+      /** The name of the event. */
+      readonly eventName: "NewGravatar";
+      /** The name of the contract that emitted this event. */
+      readonly contractName: "Contract1";
+      /** The unique identifier of the blockchain network where this event occurred. */
+      readonly chainId: 1;
+      /** The parameters or arguments associated with this event. */
+      readonly params: { readonly id: bigint; readonly owner: Address; readonly displayName: string; readonly imageUrl: string };
+      /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
+      readonly block: EvmBlock;
+      /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
+      readonly transaction: EvmTransaction;
+      /** The index of this event's log within the block. */
+      readonly logIndex: number;
+      /** The address of the contract that emitted this event. */
+      readonly srcAddress: Address;
+    };
+    "UpdatedGravatar": {
+      /** The name of the event. */
+      readonly eventName: "UpdatedGravatar";
+      /** The name of the contract that emitted this event. */
+      readonly contractName: "Contract1";
+      /** The unique identifier of the blockchain network where this event occurred. */
+      readonly chainId: 1;
+      /** The parameters or arguments associated with this event. */
+      readonly params: { readonly id: bigint; readonly owner: Address; readonly displayName: string; readonly imageUrl: string };
+      /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
+      readonly block: EvmBlock;
+      /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
+      readonly transaction: EvmTransaction;
+      /** The index of this event's log within the block. */
+      readonly logIndex: number;
+      /** The address of the contract that emitted this event. */
+      readonly srcAddress: Address;
+    };
+  };
+      }; eventFilters: {
+  "Contract1": {
+    "NewGravatar": { readonly params: {} };
+    "UpdatedGravatar": { readonly params: {} };
+  };
+      } };
+      entities: Entities;
+      enums: Enums;
     };
   }
 
-  export type EmptyEntity = _PrjEntities["EmptyEntity"];
-  export type RelatedEntity = _PrjEntities["RelatedEntity"];
-  export type Status = _PrjEnums["Status"];
+  export type EmptyEntity = Entities["EmptyEntity"];
+  export type RelatedEntity = Entities["RelatedEntity"];
+  export type Status = Enums["Status"];
 }

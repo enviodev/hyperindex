@@ -1830,12 +1830,30 @@ type testIndexer = {{
             }
         };
 
-        // Generate envio.d.ts content (type declarations only)
-        // Always export all ecosystem types, even when empty
-        let envio_dts_code = {
+        // Generate envio.d.ts content. Two outputs:
+        //   - `lookup_tables`: file-level named types (`EvmBlock`, `Entities`,
+        //     etc.) that are shared across events / referenced by entity
+        //     fields. None of these names collide with `envio`'s exports or
+        //     internal generics, so no prefix is needed.
+        //   - body strings (`evm_chains_body`, `evm_contracts_body`, …):
+        //     inlined directly into `Global.config` by
+        //     `wrap_envio_module_augmentation`. Names that *would* collide
+        //     with envio's internal generics (`EvmContracts<Config>` etc.)
+        //     are avoided by inlining instead of naming.
+        let envio_dts_code;
+        let evm_chains_body: String;
+        let evm_contracts_body: String;
+        let evm_event_filters_body: String;
+        let fuel_chains_body: String;
+        let fuel_contracts_body: String;
+        let fuel_event_filters_body: String;
+        let svm_chains_body: String;
+        let entities_body: String;
+        let enums_body: String;
+        {
             let mut parts = Vec::new();
 
-            // Generate EvmChains type
+            // EVM chain table (inlined into Global.config.evm.chains).
             let evm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
                 chain_configs
                     .iter()
@@ -1851,21 +1869,24 @@ type testIndexer = {{
             } else {
                 vec![]
             };
-            parts.push(if evm_chains_entries.is_empty() {
-                "type _PrjEvmChains = {};".to_string()
+            evm_chains_body = if evm_chains_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "type _PrjEvmChains = {{\n{}\n}};",
-                    evm_chains_entries.join("\n")
-                )
-            });
-            parts.push(if evm_chains_entries.is_empty() {
-                "type _PrjEvmChainId = \"EvmChainId is not available. Configure EVM chains in config.yaml and run 'envio codegen'\";".to_string()
+                format!("{{\n{}\n      }}", evm_chains_entries.join("\n"))
+            };
+            // Inline chainId union for event payloads. Empty ecosystem →
+            // error string so users see a useful message in tsc errors.
+            let evm_chain_id_inline: String = if evm_chains_entries.is_empty() {
+                "\"EvmChainId is not available. Configure EVM chains in config.yaml and run 'envio codegen'\"".to_string()
             } else {
-                "type _PrjEvmChainId = _PrjEvmChains[keyof _PrjEvmChains][\"id\"];".to_string()
-            });
+                chain_configs
+                    .iter()
+                    .map(|c| c.network_config.id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            };
 
-            // Generate global EvmBlock/EvmTransaction types (not exported, used by events without custom field_selection)
+            // File-level shared block / transaction types (EVM).
             if cfg.get_ecosystem() == Ecosystem::Evm {
                 if let Some(ref all_fs) = all_ecosystem_fields {
                     let evm_block_type = Self::generate_ts_all_fields_record(
@@ -1875,7 +1896,7 @@ type testIndexer = {{
                         "global",
                         "  ",
                     );
-                    parts.push(format!("type _PrjEvmBlock = {};", evm_block_type));
+                    parts.push(format!("type EvmBlock = {};", evm_block_type));
                     let evm_tx_type = Self::generate_ts_all_fields_record(
                         &global_field_selection.transaction_fields,
                         &all_fs.transaction_fields,
@@ -1883,11 +1904,12 @@ type testIndexer = {{
                         "global",
                         "  ",
                     );
-                    parts.push(format!("type _PrjEvmTransaction = {};", evm_tx_type));
+                    parts.push(format!("type EvmTransaction = {};", evm_tx_type));
                 }
             }
 
-            // Generate EvmContracts type with full event types
+            // EVM contracts table (inlined). Uses inline chainId union and
+            // file-level `EvmBlock` / `EvmTransaction`.
             let evm_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
                 let all_evm = system_config::FieldSelection::all_evm();
                 let all_fields = FieldSelection::new(FieldSelectionOptions {
@@ -1905,9 +1927,9 @@ type testIndexer = {{
                                     name,
                                     event,
                                     &all_fields,
-                                    "_PrjEvmChainId",
-                                    "_PrjEvmBlock",
-                                    "_PrjEvmTransaction",
+                                    &evm_chain_id_inline,
+                                    "EvmBlock",
+                                    "EvmTransaction",
                                 )
                             })
                             .collect();
@@ -1917,18 +1939,13 @@ type testIndexer = {{
             } else {
                 vec![]
             };
-            parts.push(if evm_contracts_entries.is_empty() {
-                "type _PrjEvmContracts = {};".to_string()
+            evm_contracts_body = if evm_contracts_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "type _PrjEvmContracts = {{\n{}\n}};",
-                    evm_contracts_entries.join("\n")
-                )
-            });
+                format!("{{\n{}\n      }}", evm_contracts_entries.join("\n"))
+            };
 
-            // Generate EvmEventFilters — sibling of EvmContracts carrying the
-            // `where` filter shape for each event. Split out so per-event
-            // entries in EvmContracts stay focused on event payload types.
+            // EVM event filters table (inlined).
             let evm_event_filters_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
                 cfg.contracts
                     .iter()
@@ -1950,16 +1967,13 @@ type testIndexer = {{
             } else {
                 vec![]
             };
-            parts.push(if evm_event_filters_entries.is_empty() {
-                "type _PrjEvmEventFilters = {};".to_string()
+            evm_event_filters_body = if evm_event_filters_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "type _PrjEvmEventFilters = {{\n{}\n}};",
-                    evm_event_filters_entries.join("\n")
-                )
-            });
+                format!("{{\n{}\n      }}", evm_event_filters_entries.join("\n"))
+            };
 
-            // Generate FuelChains type
+            // Fuel chain table (inlined).
             let fuel_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 chain_configs
                     .iter()
@@ -1975,37 +1989,37 @@ type testIndexer = {{
             } else {
                 vec![]
             };
-            parts.push(if fuel_chains_entries.is_empty() {
-                "type _PrjFuelChains = {};".to_string()
+            fuel_chains_body = if fuel_chains_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "type _PrjFuelChains = {{\n{}\n}};",
-                    fuel_chains_entries.join("\n")
-                )
-            });
-            parts.push(if fuel_chains_entries.is_empty() {
-                "type _PrjFuelChainId = \"FuelChainId is not available. Configure Fuel chains in config.yaml and run 'envio codegen'\";".to_string()
+                format!("{{\n{}\n      }}", fuel_chains_entries.join("\n"))
+            };
+            let fuel_chain_id_inline: String = if fuel_chains_entries.is_empty() {
+                "\"FuelChainId is not available. Configure Fuel chains in config.yaml and run 'envio codegen'\"".to_string()
             } else {
-                "type _PrjFuelChainId = _PrjFuelChains[keyof _PrjFuelChains][\"id\"];".to_string()
-            });
+                chain_configs
+                    .iter()
+                    .map(|c| c.network_config.id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            };
 
-            // Generate FuelBlock/FuelTransaction types (not exported)
+            // File-level Fuel block / transaction types.
             if cfg.get_ecosystem() == Ecosystem::Fuel {
                 let fuel_fs_for_types = system_config::FieldSelection::fuel();
                 let fuel_all = FieldSelection::new_without_defaults(FieldSelectionOptions {
                     block_fields: fuel_fs_for_types.block_fields.clone(),
                     transaction_fields: fuel_fs_for_types.transaction_fields.clone(),
                 });
-                // Fuel has all fields selected by default — no deprecated fields
-                parts.push(format!("type _PrjFuelBlock = {};", fuel_all.ts_block_type));
+                parts.push(format!("type FuelBlock = {};", fuel_all.ts_block_type));
                 parts.push(format!(
-                    "type _PrjFuelTransaction = {};",
+                    "type FuelTransaction = {};",
                     fuel_all.ts_transaction_type
                 ));
             }
 
-            // Generate FuelContracts type with full event types
-            // Fuel has its own fixed field set — don't add EVM default block fields
+            // Fuel contracts table (inlined). Fuel events have no indexed-param
+            // filters, so the eventFilters body is always `{}`.
             let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 let fuel_fs = system_config::FieldSelection::fuel();
                 let aggregated = FieldSelection::new_without_defaults(FieldSelectionOptions {
@@ -2023,9 +2037,9 @@ type testIndexer = {{
                                     name,
                                     event,
                                     &aggregated,
-                                    "_PrjFuelChainId",
-                                    "_PrjFuelBlock",
-                                    "_PrjFuelTransaction",
+                                    &fuel_chain_id_inline,
+                                    "FuelBlock",
+                                    "FuelTransaction",
                                 )
                             })
                             .collect();
@@ -2035,27 +2049,21 @@ type testIndexer = {{
             } else {
                 vec![]
             };
-            parts.push(if fuel_contracts_entries.is_empty() {
-                "type _PrjFuelContracts = {};".to_string()
+            fuel_contracts_body = if fuel_contracts_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "type _PrjFuelContracts = {{\n{}\n}};",
-                    fuel_contracts_entries.join("\n")
-                )
-            });
+                format!("{{\n{}\n      }}", fuel_contracts_entries.join("\n"))
+            };
+            fuel_event_filters_body = "{}".to_string();
 
-            // Fuel events have no indexed-param filters — emit an empty
-            // FuelEventFilters sibling so the `EvmEventFilters<Config>`
-            // lookup helpers in index.d.ts can resolve cleanly.
-            parts.push("type _PrjFuelEventFilters = {};".to_string());
-
-            // Generate FuelTypes namespace — type declarations with generics support
+            // FuelTypes namespace at file scope (referenced by Fuel event
+            // payloads). No prefix — doesn't collide with envio.
             let fuel_types_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 cfg.contracts
                     .iter()
                     .filter_map(|(name, contract)| {
                         if let system_config::Abi::Fuel(fuel_abi) = &contract.abi {
-                            let ns = format!("_PrjFuelTypes.{}", name);
+                            let ns = format!("FuelTypes.{}", name);
                             let type_entries: Vec<String> = fuel_abi
                                 .to_type_decl_multi()
                                 .ok()?
@@ -2081,15 +2089,15 @@ type testIndexer = {{
                 vec![]
             };
             parts.push(if fuel_types_entries.is_empty() {
-                "declare namespace _PrjFuelTypes {}".to_string()
+                "declare namespace FuelTypes {}".to_string()
             } else {
                 format!(
-                    "declare namespace _PrjFuelTypes {{\n{}\n}}",
+                    "declare namespace FuelTypes {{\n{}\n}}",
                     fuel_types_entries.join("\n")
                 )
             });
 
-            // Generate SvmChains type
+            // SVM chain table (inlined).
             let svm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Svm {
                 chain_configs
                     .iter()
@@ -2105,21 +2113,16 @@ type testIndexer = {{
             } else {
                 vec![]
             };
-            parts.push(if svm_chains_entries.is_empty() {
-                "type _PrjSvmChains = {};".to_string()
+            svm_chains_body = if svm_chains_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "type _PrjSvmChains = {{\n{}\n}};",
-                    svm_chains_entries.join("\n")
-                )
-            });
-            parts.push(if svm_chains_entries.is_empty() {
-                "type _PrjSvmChainId = \"SvmChainId is not available. Configure SVM chains in config.yaml and run 'envio codegen'\";".to_string()
-            } else {
-                "type _PrjSvmChainId = _PrjSvmChains[keyof _PrjSvmChains][\"id\"];".to_string()
-            });
+                format!("{{\n{}\n      }}", svm_chains_entries.join("\n"))
+            };
 
-            // Generate Enums type with all enum types as fields
+            // File-level Enums and Entities tables. They reference each
+            // other (entity field types use `Enums["Foo"]`), so they must
+            // be named — but no prefix needed since neither name collides
+            // with anything still exported by envio.
             let enum_entries: Vec<String> = gql_enums
                 .iter()
                 .map(|gql_enum| {
@@ -2136,24 +2139,21 @@ type testIndexer = {{
                 })
                 .collect();
             parts.push(if enum_entries.is_empty() {
-                "type _PrjEnums = {};".to_string()
+                "type Enums = {};".to_string()
             } else {
-                format!("type _PrjEnums = {{\n{}\n}};", enum_entries.join("\n"))
+                format!("type Enums = {{\n{}\n}};", enum_entries.join("\n"))
             });
+            enums_body = "Enums".to_string();
 
-            // Generate Entities type with all entity types as fields
             let entity_entries: Vec<String> = entities
                 .iter()
                 .map(|entity| {
                     let field_entries: Vec<String> = entity
                         .params
                         .iter()
-                        // Skip derived fields as they are not stored in the DB
                         .filter(|param| !param.is_derived_field)
                         .map(|param| {
                             let ts_type = param.field_type.to_ts_type_string();
-                            // For entity fields, the actual stored value is the ID (string)
-                            // and the field name is suffixed with _id
                             let (field_name, field_type) = if param.is_entity_field {
                                 let base_type = if param.field_type.is_option() {
                                     "string | undefined".to_string()
@@ -2175,23 +2175,20 @@ type testIndexer = {{
                 })
                 .collect();
             parts.push(if entity_entries.is_empty() {
-                "type _PrjEntities = {};".to_string()
+                "type Entities = {};".to_string()
             } else {
-                format!("type _PrjEntities = {{\n{}\n}};", entity_entries.join("\n"))
+                format!("type Entities = {{\n{}\n}};", entity_entries.join("\n"))
             });
+            entities_body = "Entities".to_string();
 
-            parts.join("\n")
-        };
+            envio_dts_code = parts.join("\n");
+        }
 
-        // Each pair is `(alias_name, lookup_key)`. The alias name is the
-        // user-facing `export type X = ...` LHS; the lookup key is the
-        // property name on the file-level `_PrjEntities` / `_PrjEnums` table.
-        // Entities use capitalized for both (the table is built with
-        // capitalized keys at line ~2172). Enums must use `original` for
-        // the lookup because the table is built with original keys (line
-        // ~2133), but we keep capitalized as the alias name so users get
-        // a PascalCase `export type AccountType = …` regardless of their
-        // schema casing.
+        // Each pair is `(alias_name, lookup_key)`. Entities use capitalized
+        // for both (the `Entities` table is built with capitalized keys).
+        // Enums use `original` for the lookup (the `Enums` table is built
+        // with original keys to preserve schema casing) but capitalized for
+        // the alias so users get a PascalCase `export type AccountType = …`.
         let entity_aliases: Vec<(String, String)> = entities
             .iter()
             .map(|e| (e.name.capitalized.clone(), e.name.capitalized.clone()))
@@ -2210,21 +2207,34 @@ type testIndexer = {{
                 &entity_aliases,
                 &enum_aliases,
                 cfg.get_ecosystem(),
+                ConfigBodies {
+                    evm_chains: &evm_chains_body,
+                    evm_contracts: &evm_contracts_body,
+                    evm_event_filters: &evm_event_filters_body,
+                    fuel_chains: &fuel_chains_body,
+                    fuel_contracts: &fuel_contracts_body,
+                    fuel_event_filters: &fuel_event_filters_body,
+                    svm_chains: &svm_chains_body,
+                    entities: &entities_body,
+                    enums: &enums_body,
+                },
             ),
         })
     }
 
-    /// Wrap the project-derived lookup tables in a `declare module "envio"`
-    /// block so the generic types in `packages/envio/index.d.ts` resolve
-    /// through the augmented `Global` interface.
+    /// Wrap the project-derived types in a `declare module "envio"` block so
+    /// the generic types in `packages/envio/index.d.ts` resolve through the
+    /// augmented `Global` interface.
     ///
-    /// Lookup tables are emitted at the host file's top level (not exported
-    /// and not inside a namespace) so the generated `.d.ts` reads top-down.
-    /// Their names use a `_Prj` prefix so they don't shadow envio's own
-    /// internal generics (`type EvmContracts<Config> = …` etc.) — without
-    /// the prefix, TypeScript's generic-inference path through
-    /// `IndexerFromConfig<Config> → EvmEcosystem<Config>` collapses
-    /// `indexer.onEvent`'s callback to `any`.
+    /// File-level types (`EvmBlock`, `EvmTransaction`, `FuelBlock`,
+    /// `FuelTransaction`, `FuelTypes`, `Entities`, `Enums`) are emitted at
+    /// the host file's top level. Their names don't collide with anything
+    /// envio exports or uses internally as a generic. The per-ecosystem
+    /// `chains` / `contracts` / `eventFilters` shapes are inlined directly
+    /// into `Global.config` rather than named at file scope — naming them
+    /// (e.g. `EvmContracts`) would shadow envio's internal generic
+    /// `EvmContracts<Config>` and collapse `indexer.onEvent`'s callback to
+    /// `any`.
     ///
     /// Per-entity / per-enum aliases are emitted unconditionally — if a
     /// user's entity or enum name collides with an existing `envio` export
@@ -2232,10 +2242,11 @@ type testIndexer = {{
     /// error in the generated `.envio/types.d.ts` and can fall back to the
     /// generic `Entity<"Name">` / `Enum<"Name">` lookups.
     fn wrap_envio_module_augmentation(
-        lookup_tables: &str,
+        file_level_types: &str,
         entity_aliases: &[(String, String)],
         enum_aliases: &[(String, String)],
         ecosystem: Ecosystem,
+        bodies: ConfigBodies<'_>,
     ) -> String {
         const I2: &str = "  ";
         const I4: &str = "    ";
@@ -2245,20 +2256,26 @@ type testIndexer = {{
         // helpers in envio fall back to error-message strings for unconfigured
         // ecosystems.
         let ecosystem_field = match ecosystem {
-            Ecosystem::Evm => {
-                "evm: { chains: _PrjEvmChains; contracts: _PrjEvmContracts; eventFilters: _PrjEvmEventFilters };"
-            }
-            Ecosystem::Fuel => {
-                "fuel: { chains: _PrjFuelChains; contracts: _PrjFuelContracts; eventFilters: _PrjFuelEventFilters };"
-            }
-            Ecosystem::Svm => "svm: { chains: _PrjSvmChains };",
+            Ecosystem::Evm => format!(
+                "evm: {{ chains: {chains}; contracts: {contracts}; eventFilters: {filters} }};",
+                chains = bodies.evm_chains,
+                contracts = bodies.evm_contracts,
+                filters = bodies.evm_event_filters,
+            ),
+            Ecosystem::Fuel => format!(
+                "fuel: {{ chains: {chains}; contracts: {contracts}; eventFilters: {filters} }};",
+                chains = bodies.fuel_chains,
+                contracts = bodies.fuel_contracts,
+                filters = bodies.fuel_event_filters,
+            ),
+            Ecosystem::Svm => format!("svm: {{ chains: {} }};", bodies.svm_chains),
         };
         let config_block = [
-            ecosystem_field,
-            "entities: _PrjEntities;",
-            "enums: _PrjEnums;",
+            ecosystem_field.as_str(),
+            &format!("entities: {};", bodies.entities),
+            &format!("enums: {};", bodies.enums),
         ]
-        .into_iter()
+        .iter()
         .map(|line| format!("{I6}{line}"))
         .collect::<Vec<_>>()
         .join("\n");
@@ -2270,8 +2287,8 @@ type testIndexer = {{
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        let entity_aliases = render_aliases(entity_aliases, "_PrjEntities");
-        let enum_aliases = render_aliases(enum_aliases, "_PrjEnums");
+        let entity_aliases = render_aliases(entity_aliases, "Entities");
+        let enum_aliases = render_aliases(enum_aliases, "Enums");
 
         format!(
             "// This file is generated by HyperIndex codegen from config.yaml and schema.graphql.\n\
@@ -2281,7 +2298,7 @@ type testIndexer = {{
              \n\
              import type {{ Address, BigDecimal, SingleOrMultiple }} from \"envio\";\n\
              \n\
-             {lookup_tables}\n\
+             {file_level_types}\n\
              \n\
              declare module \"envio\" {{\n\
              {I2}interface Global {{\n\
@@ -2293,11 +2310,23 @@ type testIndexer = {{
              {entity_aliases}\n\
              {enum_aliases}\n\
              }}\n",
-            lookup_tables = lookup_tables,
+            file_level_types = file_level_types,
             entity_aliases = entity_aliases,
             enum_aliases = enum_aliases,
         )
     }
+}
+
+struct ConfigBodies<'a> {
+    evm_chains: &'a str,
+    evm_contracts: &'a str,
+    evm_event_filters: &'a str,
+    fuel_chains: &'a str,
+    fuel_contracts: &'a str,
+    fuel_event_filters: &'a str,
+    svm_chains: &'a str,
+    entities: &'a str,
+    enums: &'a str,
 }
 
 #[cfg(test)]
@@ -2857,24 +2886,35 @@ mod test {
     }
 
     /// Regression: enum schema names that aren't already PascalCase must
-    /// produce an alias whose lookup key matches the file-level `_PrjEnums`
+    /// produce an alias whose lookup key matches the file-level `Enums`
     /// table keys (which are emitted with `gql_enum.name.original`). The
     /// alias itself stays capitalized so users get a PascalCase `export type`.
     #[test]
     fn enum_alias_preserves_original_case_for_lookup() {
-        let lookup_tables = "type _PrjEnums = {\n  \"accountType\": \"ADMIN\" | \"USER\";\n};";
+        let file_level_types = "type Enums = {\n  \"accountType\": \"ADMIN\" | \"USER\";\n};";
         let entity_aliases: Vec<(String, String)> = Vec::new();
         let enum_aliases = vec![("AccountType".to_string(), "accountType".to_string())];
 
         let out = super::ProjectTemplate::wrap_envio_module_augmentation(
-            lookup_tables,
+            file_level_types,
             &entity_aliases,
             &enum_aliases,
             super::Ecosystem::Evm,
+            super::ConfigBodies {
+                evm_chains: "{}",
+                evm_contracts: "{}",
+                evm_event_filters: "{}",
+                fuel_chains: "{}",
+                fuel_contracts: "{}",
+                fuel_event_filters: "{}",
+                svm_chains: "{}",
+                entities: "Entities",
+                enums: "Enums",
+            },
         );
 
         assert!(
-            out.contains("export type AccountType = _PrjEnums[\"accountType\"];"),
+            out.contains("export type AccountType = Enums[\"accountType\"];"),
             "alias should look up by original schema name, not the PascalCase alias.\nGot:\n{out}",
         );
     }
