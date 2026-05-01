@@ -389,12 +389,9 @@ describe("Config.fromPublic", () => {
     )
   })
 
-  // Regression guard: a 20-byte hex address must round-trip verbatim through
-  // fromPublic and reach `chain.contracts[].addresses` with the exact same
-  // characters the JSON carries. The ERC20 template was sending corrupted
-  // addresses to HyperSync (top 53 bits preserved, bottom 107 zeroed) and
-  // every event was silently dropped because the on-chain contract address
-  // never matched the queried one.
+  // Locks fromPublic against silently dropping low bits — the ERC20
+  // silent-skip bug came from an f64-truncated address being sent to
+  // HyperSync, where every event query then returned zero matches.
   it("preserves full 20-byte hex address through fromPublic", t => {
     let uni = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
     let publicConfigJson: JSON.t = %raw(`{

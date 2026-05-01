@@ -1,7 +1,6 @@
 # yaml-language-server: $schema=../../../envio/evm.schema.json
-# Mirrors the ERC20 template's unquoted hex address style. Regression
-# guard for events being silently skipped when a 20-byte address loses
-# precision somewhere in the YAML → SystemConfig → public JSON pipeline.
+# Address kept unquoted on purpose — drives the regression test in
+# system_config.rs that locks the indexer-side YAML pipeline.
 name: unquoted-hex-address
 schema: ../schemas/schema.graphql
 description: Unquoted address regression

@@ -1999,13 +1999,10 @@ mod test {
         assert_eq!(&rendered_backoff_multiplicative, "0.8");
     }
 
-    // Regression guard for ERC20 template silently skipping every event:
-    // an unquoted 20-byte address in config.yaml was reaching the runtime
-    // with its low ~107 bits zeroed (top 53 bits preserved, then re-checksummed
-    // by viem on the JS side) — every log query returned 0 events because the
-    // address sent to HyperSync didn't match the on-chain contract. Asserts the
-    // exact literal survives YAML → SystemConfig → to_public_config_json, which
-    // is what NAPI hands to the runtime.
+    // 20-byte hex addresses must round-trip verbatim through the full
+    // YAML → SystemConfig → public JSON pipeline. The ERC20 silent-skip
+    // bug came from an editor f64-truncating the address on disk; this
+    // locks the indexer-side path so we never reintroduce the corruption.
     #[test]
     fn parses_unquoted_hex_address_through_full_pipeline() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
@@ -2040,9 +2037,8 @@ mod test {
             "public config JSON missing original address. Got:\n{public_json}"
         );
 
-        // executor::Command embeds the public config as serde_json::Value,
-        // then napi.rs re-serializes it. Mirror those two round-trips —
-        // any precision loss in the JSON layer would break the contains check.
+        // Mirror NAPI's two serde_json round-trips that hand the config
+        // to the JS runtime.
         use crate::executor::public_config_value;
         let value = public_config_value(&config).expect("public_config_value");
         let wire = serde_json::to_string(&value).expect("to_string");
