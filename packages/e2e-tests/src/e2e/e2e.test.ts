@@ -51,7 +51,7 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     indexerProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
       cwd: PROJECT_DIR,
       env: {
-        TUI_OFF: "true",
+        ENVIO_TUI: "false",
         ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
         ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
         ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
@@ -260,7 +260,7 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       secondProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
         cwd: PROJECT_DIR,
         env: {
-          TUI_OFF: "true",
+          ENVIO_TUI: "false",
           ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
           ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
           ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,

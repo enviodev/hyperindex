@@ -131,6 +131,9 @@ type storage = {
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
   ) => promise<unit>,
+  // Release any long-lived resources (e.g. the postgres connection pool) so
+  // short-lived CLI commands like `db-migrate setup` can exit cleanly.
+  close: unit => promise<unit>,
 }
 
 type storageStatus =
@@ -215,10 +218,17 @@ let init = {
           | Some(stored) =>
             let changedKeys = Config.topLevelDiffKeys(~stored, ~current=envioInfo)
             if changedKeys->Array.length > 0 {
+              let fields = changedKeys->Array.joinUnsafe(", ")
+              let revertAction = `Undo your ${fields} changes`
+              let restartAction = `envio dev -r`
+              let width = Math.Int.max(revertAction->String.length, restartAction->String.length)
+              let pad = (s: string) => s ++ " "->String.repeat(width - s->String.length)
               JsError.throwWithMessage(
-                `Incompatible config change detected in: ${changedKeys->Array.joinUnsafe(
-                    ", ",
-                  )}. Either revert these changes to keep indexing from the existing checkpoint, or pass --restart (\`envio dev -r\` / \`envio start -r\`) to wipe the database and re-index from scratch.`,
+                `Your changes to ${fields} are incompatible with the existing indexer data. Pick one:\n\n  1. ${pad(
+                    revertAction,
+                  )}    # resume indexing where it left off\n  2. ${pad(
+                    restartAction,
+                  )}    # wipe the database and re-index from scratch`,
               )
             }
           }
