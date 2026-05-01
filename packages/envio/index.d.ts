@@ -1506,13 +1506,6 @@ export type FuelChainId = IsEmptyObject<FuelChainsT> extends true ? NotConfigure
 /** Union of all configured SVM chain IDs. */
 export type SvmChainId  = IsEmptyObject<SvmChainsT>  extends true ? NotConfigured<"SvmChainId",  "Configure SVM chains">  : SvmChainsT [keyof SvmChainsT ]["id"];
 
-/** Union of all configured chain IDs across ecosystems. */
-export type ChainId =
-  IsEmptyObject<EvmChainsT> extends false ? EvmChainsT[keyof EvmChainsT]["id"] :
-  IsEmptyObject<FuelChainsT> extends false ? FuelChainsT[keyof FuelChainsT]["id"] :
-  IsEmptyObject<SvmChainsT> extends false ? SvmChainsT[keyof SvmChainsT]["id"] :
-  NotConfigured<"ChainId", "Configure chains">;
-
 /** Lookup an EVM event type by contract and event name. Without generics,
  *  resolves to the discriminated union of every EVM event in the project. */
 export type EvmEvent<
@@ -1541,30 +1534,15 @@ export type Indexer = IndexerFromConfig<GlobalConfig>;
 /** The test indexer instance bound to this project's configuration. */
 export type TestIndexer = TestIndexerFromConfig<GlobalConfig>;
 
-/** Lookup table of all entities defined in `schema.graphql`. */
-export type Entities = EntitiesT;
-/** Union of all entity names. */
+/** Union of all entity names defined in `schema.graphql`. */
 export type EntityName = keyof EntitiesT & string;
-/** Lookup an entity type by name. */
+/** Lookup an entity type by name (e.g. `Entity<"Account">`). */
 export type Entity<TName extends EntityName> = EntitiesT[TName];
 
-/** Lookup table of all enums defined in `schema.graphql`. */
-export type Enums = EnumsT;
-/** Union of all enum names. */
+/** Union of all enum names defined in `schema.graphql`. */
 export type EnumName = keyof EnumsT & string;
-/** Lookup an enum value type by name. */
+/** Lookup an enum value type by name (e.g. `Enum<"AccountType">`). */
 export type Enum<TName extends EnumName> = EnumsT[TName];
-
-/** Handler context resolved against the configured ecosystem.
- *  - EVM-only project → `EvmOnEventContext`.
- *  - Fuel-only project → `FuelOnEventContext`.
- *  - SVM-only project → `SvmOnSlotContext`.
- *  Falls back to `EvmOnEventContext` when nothing is configured yet. */
-export type HandlerContext =
-  IsEmptyObject<EvmChainsT> extends false ? EvmOnEventContext :
-  IsEmptyObject<FuelChainsT> extends false ? FuelOnEventContext :
-  IsEmptyObject<SvmChainsT> extends false ? SvmOnSlotContext :
-  EvmOnEventContext;
 
 // ============== Runtime values ==============
 

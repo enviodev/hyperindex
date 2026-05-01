@@ -215,8 +215,8 @@ Note: `context.Entity.set()` is synchronous — no await needed.
 ```ts
 // WRONG:  import { Pair } from "envio";  // Pair is a contract handler, not a type
 // CORRECT (when name collides with contract):
-import type { Entities } from "envio";
-const p: Entities["Pair"] = { ... };
+import type { Entity } from "envio";
+const p: Entity<"Pair"> = { ... };
 ```
 
 ### Schema Type Mapping
