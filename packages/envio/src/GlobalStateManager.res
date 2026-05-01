@@ -1,3 +1,5 @@
+@val external setImmediate: (unit => unit) => unit = "setImmediate"
+
 module type State = {
   type t
   type action
@@ -39,7 +41,7 @@ module MakeManager = (S: State) => {
   }
   and dispatchTask = (self, task: S.task) => {
     let stateId = self.state->S.getId
-    setTimeout(() => {
+    setImmediate(() => {
       if stateId !== self.state->S.getId {
         Logging.info("Invalidated task discarded")
       } else {
@@ -56,7 +58,7 @@ module MakeManager = (S: State) => {
         | e => e->self.onError
         }
       }
-    }, 0)->ignore
+    })
   }
 
   let getState = self => self.state

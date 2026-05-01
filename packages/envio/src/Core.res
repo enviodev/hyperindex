@@ -97,20 +97,56 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   return req(nodePath);
 }`)
 
+// Native `throw` so we can re-raise a caught JS error preserving its stack,
+// `code`, and any other fields a diagnostic might rely on.
+let rethrow: JsExn.t => 'a = %raw(`function(e) { throw e }`)
+
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
-  let platformPkg = `envio-${processPlatform}-${processArch}`
 
-  // 1. Platform package (production + CI via .pnpmfile.cjs redirect)
-  try {
-    callRequire(req, platformPkg)
-  } catch {
-  | _ =>
-    // 2. Dev build (cargo build on every run)
+  // npm's `libc` field installs only the matching package on Linux, so the
+  // wrong name throws MODULE_NOT_FOUND immediately and the next candidate
+  // wins. An empty list means the host isn't a publish target.
+  let candidates = switch (processPlatform, processArch) {
+  | ("linux", "x64") => [`envio-linux-x64`, `envio-linux-x64-musl`]
+  | ("linux", "arm64") => [`envio-linux-arm64`]
+  | ("darwin", "x64") => [`envio-darwin-x64`]
+  | ("darwin", "arm64") => [`envio-darwin-arm64`]
+  | _ => []
+  }
+
+  // Only swallow MODULE_NOT_FOUND (the optional package isn't installed on
+  // this host). Any other failure — corrupt .node, ABI mismatch, dlopen
+  // error — is a real load failure and must surface.
+  let rec tryRequire = i =>
+    switch candidates[i] {
+    | None => None
+    | Some(pkg) =>
+      try Some(callRequire(req, pkg)) catch {
+      | exn =>
+        switch exn->JsExn.anyToExnInternal {
+        | JsExn(e) if (e->(Utils.magic: JsExn.t => {..}))["code"] === "MODULE_NOT_FOUND" =>
+          tryRequire(i + 1)
+        | JsExn(e) => rethrow(e)
+        | _ => throw(exn)
+        }
+      }
+    }
+
+  switch tryRequire(0) {
+  | Some(addon) => addon
+  | None =>
+    // Dev build fallback (cargo build on every run)
     switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
     | Some(addon) => addon
     | None =>
-      JsError.throwWithMessage(`Couldn't load the envio native addon. Install the envio npm package.`)
+      let host = `${processPlatform}-${processArch}`
+      let msg = if candidates->Array.length === 0 {
+        `envio doesn't support ${host}. Supported: linux-x64 (glibc/musl), linux-arm64, darwin-x64, darwin-arm64.`
+      } else {
+        `Couldn't load the envio native addon for ${host}. Reinstall envio (ensure optional dependencies aren't skipped).`
+      }
+      JsError.throwWithMessage(msg)
     }
   }
 }

@@ -75,6 +75,7 @@
     "tsx": "4.21.0"
   },
   "devDependencies": {
-    "rescript": "12.2.0"
+    "rescript": "12.2.0",
+    "vitest": "4.0.18"
   }
 }
