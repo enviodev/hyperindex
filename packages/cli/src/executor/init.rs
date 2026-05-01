@@ -323,7 +323,7 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
     let prefix = if project_root != Path::new(".") {
         format!(
             "cd {} && ",
-            shell_single_quote(&project_root.display().to_string())
+            shell_quote(&project_root.display().to_string())
         )
     } else {
         String::new()
@@ -340,10 +340,18 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
     out
 }
 
-/// Single-quote so `$`, backticks, `&`, etc. in a folder name don't get
-/// interpreted when the user pastes the next-step command into a shell.
-fn shell_single_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
+/// Leave alphanumeric paths unquoted; single-quote anything containing chars
+/// the shell would interpret (spaces, `$`, backticks, `&`, `;`, etc.) so the
+/// printed `cd <path>` is safe to paste.
+fn shell_quote(s: &str) -> String {
+    let safe = !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'));
+    if safe {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
 }
 
 #[cfg(test)]
