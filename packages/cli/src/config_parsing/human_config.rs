@@ -206,26 +206,36 @@ pub struct ConfigDiscriminant {
     pub ecosystem: Option<String>,
 }
 
-// Wraps `0x…` scalars in YAML output with double quotes. Used at the init
-// write path (`envio init` / contract-import) to defend against editor
-// formatters that resolve unquoted YAML 1.1 hex integers and round-trip
-// through f64 on save — silently truncating addresses. Anchored to YAML
-// scalar contexts: identifier-shaped key followed by `:`, or a list-item
-// dash at any indentation.
-//
-// Lives outside Display because Display output feeds the persisted-state
-// `config_hash`; rewriting it there would flip the hash for every existing
-// user on upgrade and trigger a spurious re-migration.
-pub fn force_quote_hex_scalars(yaml: String) -> String {
-    use std::sync::OnceLock;
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new(
-            r"(?m)((?:[A-Za-z_][\w-]*:|^[ \t]*-)[ \t]+)(0x[0-9a-fA-F]+)([ \t]*(?:#|$))",
-        )
-        .unwrap()
-    });
-    re.replace_all(&yaml, "$1\"$2\"$3").into_owned()
+/// Wrap each given address in double quotes wherever it appears in `yaml`.
+///
+/// `serde_yaml::to_string` emits hex strings unquoted. yaml-language-server
+/// and Prettier then resolve the unquoted scalar as a YAML 1.1 hex integer
+/// and round-trip it through f64 on save — silently truncating 20-byte
+/// addresses (top ~53 bits preserved, bottom ~107 bits zeroed). Subsequent
+/// runs send a corrupted address to HyperSync and every event query
+/// returns 0 results.
+///
+/// Run only on the `envio init` / contract-import write path. `Display`
+/// must stay byte-identical to `serde_yaml::to_string` because its output
+/// feeds the persisted `config_hash`; quoting there would force a spurious
+/// re-migration on every existing user.
+///
+/// Literal `String::replace` is safe here: callers pass addresses from the
+/// typed `HumanConfig` we just serialized, the input is freshly-emitted
+/// YAML with no pre-quoted occurrences, and EVM/Fuel addresses are not
+/// substrings of one another. Dedup guards against a second pass turning
+/// `"0xabc"` into `""0xabc""`.
+pub fn quote_known_addresses(
+    mut yaml: String,
+    addresses: impl IntoIterator<Item = String>,
+) -> String {
+    let mut unique: Vec<String> = addresses.into_iter().collect();
+    unique.sort();
+    unique.dedup();
+    for addr in &unique {
+        yaml = yaml.replace(addr, &format!("\"{}\"", addr));
+    }
+    yaml
 }
 
 #[derive(Debug)]
@@ -1063,32 +1073,28 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     // them as YAML 1.1 hex integers and silently truncate them through f64
     // on the user's first save.
     #[test]
-    fn force_quote_hex_scalars_quotes_addresses() {
-        let unquoted = "address:\n- 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n\
-                        single: 0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74\n";
-        let out = super::force_quote_hex_scalars(unquoted.to_string());
-        assert!(
-            out.contains("\"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\"")
-                && out.contains("\"0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74\""),
-            "Both list and single hex scalars must be quoted. Got:\n{out}"
-        );
+    fn quote_known_addresses_quotes_each_occurrence() {
+        let a = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string();
+        let b = "0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74".to_string();
+        let yaml = format!("address:\n- {a}\nsingle: {b}\n");
+        let out = super::quote_known_addresses(yaml, [a.clone(), b.clone()]);
+        assert_eq!(out, format!("address:\n- \"{a}\"\nsingle: \"{b}\"\n"));
     }
 
+    // Dedup must drop repeats — otherwise a second pass over an already-quoted
+    // address would produce `""0xabc""` and break the YAML.
     #[test]
-    fn force_quote_hex_scalars_leaves_quoted_addresses_alone() {
-        let already_quoted =
-            "address: \"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\"\n".to_string();
-        let out = super::force_quote_hex_scalars(already_quoted.clone());
-        assert_eq!(
-            out, already_quoted,
-            "Quoted addresses must not get nested quotes"
-        );
+    fn quote_known_addresses_dedups_repeats() {
+        let a = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string();
+        let yaml = format!("address: {a}\n");
+        let out = super::quote_known_addresses(yaml, [a.clone(), a.clone()]);
+        assert_eq!(out, format!("address: \"{a}\"\n"));
     }
 
     // Display output feeds the persisted-state config_hash. It must NOT
-    // be passed through force_quote_hex_scalars (which is reserved for
-    // the init write path) — otherwise every existing user upgrading
-    // would see a fake config-change and trigger a forced re-migration.
+    // be quoted (quoting is reserved for the init write path) — otherwise
+    // every existing user upgrading would see a fake config-change and
+    // trigger a forced re-migration.
     #[test]
     fn evm_human_config_display_does_not_alter_serde_yaml_output() {
         let yaml = "name: t\nschema: ./s.graphql\ncontracts:\n  - name: C\n    handler: ./h.js\n    events:\n      - event: E\nchains:\n  - id: 1\n    rpc:\n      url: https://x\n    start_block: 0\n    contracts:\n      - name: C\n        address: \"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\"\n";
