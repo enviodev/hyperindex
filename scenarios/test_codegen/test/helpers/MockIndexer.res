@@ -62,6 +62,10 @@ module Storage = {
       "operator": Persistence.operator,
     }>,
     dumpEffectCacheCalls: ref<int>,
+    // Seeds the envio_info row that `readEnvioInfo` returns. Tests that
+    // exercise the resume path without first calling `initialize` use this
+    // to avoid the version-mismatch throw.
+    seedEnvioInfo: JSON.t => unit,
     storage: Persistence.storage,
   }
 
@@ -110,6 +114,9 @@ module Storage = {
       },
       resolveInitialize: (initialState: Persistence.initialState) => {
         initializeResolveFns->Array.forEach(resolve => resolve(initialState))
+      },
+      seedEnvioInfo: (envioInfo: JSON.t) => {
+        envioInfoRef := Some(envioInfo)
       },
       storage: {
         name: "mock",

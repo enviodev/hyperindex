@@ -67,8 +67,8 @@ type storage = {
   resumeInitialState: unit => promise<initialState>,
   // Read the envio_info JSON written by the last successful `initialize`.
   // None when the schema pre-dates the envio_info table or the row is
-  // missing — both are treated as "no compat check possible" rather than
-  // hard-failing the resume path.
+  // missing — `Persistence.init` treats both as a version mismatch and
+  // surfaces them through the same incompat-error path as a config diff.
   readEnvioInfo: unit => promise<option<JSON.t>>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
@@ -204,19 +204,20 @@ let init = {
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           // Fail fast before resumeInitialState's checkpoint/cache reads.
-          switch await persistence.storage.readEnvioInfo() {
-          | None =>
-            // Schema pre-dates envio_info — skip compat check, run `envio dev -r`
-            // to upgrade to the new layout.
-            Logging.info(`No envio_info row found — skipping config compat check.`)
-          | Some(stored) =>
-            let changedPaths = Config.diffPaths(~stored, ~current=envioInfo)
-            if changedPaths->Array.length > 0 {
-              let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
-              JsError.throwWithMessage(
-                `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. Revert the changes above    # resume indexing where it left off\n  2. envio dev -r                # wipe the database and re-index from scratch`,
-              )
-            }
+          let changedPaths = switch await persistence.storage.readEnvioInfo() {
+          // No envio_info row means the schema was initialized by an older
+          // envio version that didn't track config state (or the row was
+          // deleted out-of-band). We can't compare configs, so we surface
+          // it as an incompat error rather than silently resuming against
+          // unverified state.
+          | None => ["envio version"]
+          | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
+          }
+          if changedPaths->Array.length > 0 {
+            let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
+            JsError.throwWithMessage(
+              `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. Revert the changes above    # resume indexing where it left off\n  2. envio dev -r                # wipe the database and re-index from scratch`,
+            )
           }
           let initialState = await persistence.storage.resumeInitialState()
           persistence.storageStatus = Ready(initialState)

@@ -122,16 +122,20 @@ describe("Test Persistence layer init", () => {
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
-    let p = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
+    let envioInfo = JSON.Encode.object(Dict.make())
+    // Resume path now requires a stored envio_info row; without it, init
+    // throws a version-mismatch incompat error (covered by a separate test).
+    storageMock.seedEnvioInfo(envioInfo)
+
+    let p = persistence->Persistence.init(~chainConfigs=[], ~envioInfo)
     // Additional calls to init should not do anything
-    let _ = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
-    let _ = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
+    let _ = persistence->Persistence.init(~chainConfigs=[], ~envioInfo)
+    let _ = persistence->Persistence.init(~chainConfigs=[], ~envioInfo)
 
     storageMock.resolveIsInitialized(true)
-    // init goes through readEnvioInfo + writeEnvioInfo (backfill arm — the
-    // mock returns None) before reaching resumeInitialState. Drain enough
-    // microtasks for resumeInitialState to register its resolver before we
-    // try to resolve it.
+    // Drain enough microtasks for readEnvioInfo + the compat check to
+    // complete so resumeInitialState registers its resolver before we
+    // resolve it.
     for _ in 1 to 5 {
       await Promise.resolve()
     }
@@ -213,6 +217,39 @@ Although it should load effect caches metadata.`,
     }
     (raised, message, storageMock)
   }
+
+  Async.it("Throws version-mismatch incompat error when envio_info row is missing", async t => {
+    // Mirrors the upgrade case: schema initialized by an older envio (or
+    // envio_info row deleted out-of-band) — readEnvioInfo returns None and
+    // we surface it as the same incompat error rather than resuming.
+    let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState])
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+    let resumePromise =
+      persistence->Persistence.init(
+        ~chainConfigs=[],
+        ~envioInfo=JSON.parseOrThrow(`{"name": "demo"}`),
+      )
+    storageMock.resolveIsInitialized(true)
+    let raised = try {
+      await resumePromise
+      None
+    } catch {
+    | exn => Some(exn)
+    }
+    let message = switch raised {
+    | Some(JsExn(e)) => e->JsExn.message->Option.getOr("")
+    | _ => ""
+    }
+    t.expect(raised->Option.isSome, ~message="should throw on missing row").toBe(true)
+    t.expect(
+      message->String.includes("incompatible") && message->String.includes("envio version"),
+      ~message="reuses incompat error wording with version-mismatch bullet",
+    ).toBe(true)
+    t.expect(
+      storageMock.resumeInitialStateCalls->Array.length,
+      ~message="must not reach resumeInitialState",
+    ).toBe(0)
+  })
 
   Async.it("Throws on resume when stored envio_info diverges from the current config", async t => {
     let stored = JSON.parseOrThrow(`{"name": "old", "evm": {}}`)
