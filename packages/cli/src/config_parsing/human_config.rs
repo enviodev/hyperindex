@@ -206,7 +206,8 @@ pub struct ConfigDiscriminant {
     pub ecosystem: Option<String>,
 }
 
-/// Wrap each given address in double quotes wherever it appears in `yaml`.
+/// Wrap each given address in double quotes wherever it appears as a YAML
+/// scalar in `yaml`.
 ///
 /// `serde_yaml::to_string` emits hex strings unquoted. yaml-language-server
 /// and Prettier then resolve the unquoted scalar as a YAML 1.1 hex integer
@@ -220,22 +221,44 @@ pub struct ConfigDiscriminant {
 /// feeds the persisted `config_hash`; quoting there would force a spurious
 /// re-migration on every existing user.
 ///
-/// Literal `String::replace` is safe here: callers pass addresses from the
-/// typed `HumanConfig` we just serialized, the input is freshly-emitted
-/// YAML with no pre-quoted occurrences, and EVM/Fuel addresses are not
-/// substrings of one another. Dedup guards against a second pass turning
-/// `"0xabc"` into `""0xabc""`.
-pub fn quote_known_addresses(
-    mut yaml: String,
-    addresses: impl IntoIterator<Item = String>,
-) -> String {
+/// Anchored to YAML block-scalar boundaries — whitespace before the address
+/// and end-of-line / whitespace / `#` after — so a substring match inside
+/// another scalar (e.g. a description literal) doesn't get mangled, and a
+/// second pass over the same string is a no-op (the leading `"` already
+/// inserted breaks the pre-byte check).
+pub fn quote_known_addresses(yaml: String, addresses: impl IntoIterator<Item = String>) -> String {
     let mut unique: Vec<String> = addresses.into_iter().collect();
     unique.sort();
     unique.dedup();
+
+    let mut out = yaml;
     for addr in &unique {
-        yaml = yaml.replace(addr, &format!("\"{}\"", addr));
+        out = replace_address_at_scalar_boundary(&out, addr);
     }
-    yaml
+    out
+}
+
+fn replace_address_at_scalar_boundary(yaml: &str, addr: &str) -> String {
+    let bytes = yaml.as_bytes();
+    let quoted = format!("\"{addr}\"");
+    let mut result = String::with_capacity(yaml.len());
+    let mut last = 0;
+    while let Some(rel) = yaml[last..].find(addr) {
+        let start = last + rel;
+        let end = start + addr.len();
+        let before_ok = start == 0 || matches!(bytes[start - 1], b' ' | b'\t');
+        let after_ok =
+            end == bytes.len() || matches!(bytes[end], b'\n' | b'\r' | b' ' | b'\t' | b'#');
+        if before_ok && after_ok {
+            result.push_str(&yaml[last..start]);
+            result.push_str(&quoted);
+        } else {
+            result.push_str(&yaml[last..end]);
+        }
+        last = end;
+    }
+    result.push_str(&yaml[last..]);
+    result
 }
 
 #[derive(Debug)]
@@ -1089,6 +1112,32 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         let yaml = format!("address: {a}\n");
         let out = super::quote_known_addresses(yaml, [a.clone(), a.clone()]);
         assert_eq!(out, format!("address: \"{a}\"\n"));
+    }
+
+    // Idempotent: re-running over already-quoted output must not produce
+    // `""0xabc""`. The leading `"` byte fails the pre-boundary check.
+    #[test]
+    fn quote_known_addresses_is_idempotent() {
+        let a = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string();
+        let yaml = format!("address: {a}\n");
+        let once = super::quote_known_addresses(yaml, [a.clone()]);
+        let twice = super::quote_known_addresses(once.clone(), [a.clone()]);
+        assert_eq!(once, twice);
+    }
+
+    // Don't mangle scalars that happen to contain the address as a substring
+    // — e.g. a description literal mentioning the address.
+    #[test]
+    fn quote_known_addresses_skips_substring_matches() {
+        let a = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string();
+        let yaml = format!("description: see {a}-deployed\naddress: {a}\n");
+        let out = super::quote_known_addresses(yaml, [a.clone()]);
+        // The description occurrence is followed by `-`, so it must NOT be
+        // quoted. The standalone address occurrence (followed by newline) is.
+        assert_eq!(
+            out,
+            format!("description: see {a}-deployed\naddress: \"{a}\"\n")
+        );
     }
 
     // Display output feeds the persisted-state config_hash. It must NOT
