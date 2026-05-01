@@ -206,14 +206,17 @@ pub struct ConfigDiscriminant {
     pub ecosystem: Option<String>,
 }
 
-// serde_yaml emits hex addresses as plain (unquoted) scalars. yaml-language-server
-// and Prettier's YAML plugin then resolve them as YAML 1.1 hex integers and on
-// save round-trip the value through Number — silently truncating the bottom
-// ~107 bits and breaking every event query for that address. Wrap any `0x…`
-// scalar in double quotes so the editor sees a string regardless of YAML
-// version. Anchored to YAML scalar contexts: identifier-shaped key followed
-// by `:`, or a list-item dash at any indentation.
-pub(crate) fn force_quote_hex_scalars(yaml: String) -> String {
+// Wraps `0x…` scalars in YAML output with double quotes. Used at the init
+// write path (`envio init` / contract-import) to defend against editor
+// formatters that resolve unquoted YAML 1.1 hex integers and round-trip
+// through f64 on save — silently truncating addresses. Anchored to YAML
+// scalar contexts: identifier-shaped key followed by `:`, or a list-item
+// dash at any indentation.
+//
+// Lives outside Display because Display output feeds the persisted-state
+// `config_hash`; rewriting it there would flip the hash for every existing
+// user on upgrade and trigger a spurious re-migration.
+pub fn force_quote_hex_scalars(yaml: String) -> String {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
@@ -339,12 +342,10 @@ pub mod evm {
 
     impl Display for HumanConfig {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            let yaml = super::force_quote_hex_scalars(
-                serde_yaml::to_string(self).expect("Failed to serialize config"),
-            );
             write!(
                 f,
-                "# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{yaml}",
+                "# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{}",
+                serde_yaml::to_string(self).expect("Failed to serialize config")
             )
         }
     }
@@ -713,12 +714,10 @@ pub mod fuel {
 
     impl Display for HumanConfig {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            let yaml = super::force_quote_hex_scalars(
-                serde_yaml::to_string(self).expect("Failed to serialize config"),
-            );
             write!(
                 f,
-                "# yaml-language-server: $schema=./node_modules/envio/fuel.schema.json\n{yaml}",
+                "# yaml-language-server: $schema=./node_modules/envio/fuel.schema.json\n{}",
+                serde_yaml::to_string(self).expect("Failed to serialize config")
             )
         }
     }
@@ -870,12 +869,10 @@ pub mod svm {
 
     impl Display for HumanConfig {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            let yaml = super::force_quote_hex_scalars(
-                serde_yaml::to_string(self).expect("Failed to serialize config"),
-            );
             write!(
                 f,
-                "# yaml-language-server: $schema=./node_modules/envio/svm.schema.json\n{yaml}",
+                "# yaml-language-server: $schema=./node_modules/envio/svm.schema.json\n{}",
+                serde_yaml::to_string(self).expect("Failed to serialize config")
             )
         }
     }
@@ -1088,29 +1085,19 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         );
     }
 
+    // Display output feeds the persisted-state config_hash. It must NOT
+    // be passed through force_quote_hex_scalars (which is reserved for
+    // the init write path) — otherwise every existing user upgrading
+    // would see a fake config-change and trigger a forced re-migration.
     #[test]
-    fn evm_human_config_display_emits_quoted_addresses() {
-        // Round-trips an EvmConfig with an unquoted-style address through
-        // the Display impl that init writes to disk.
+    fn evm_human_config_display_does_not_alter_serde_yaml_output() {
         let yaml = "name: t\nschema: ./s.graphql\ncontracts:\n  - name: C\n    handler: ./h.js\n    events:\n      - event: E\nchains:\n  - id: 1\n    rpc:\n      url: https://x\n    start_block: 0\n    contracts:\n      - name: C\n        address: \"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\"\n";
         let cfg: super::evm::HumanConfig = serde_yaml::from_str(yaml).unwrap();
         let out = cfg.to_string();
+        let raw = serde_yaml::to_string(&cfg).unwrap();
         assert!(
-            out.contains("\"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\""),
-            "init-written YAML must keep the address quoted. Got:\n{out}"
-        );
-    }
-
-    #[test]
-    fn fuel_human_config_display_emits_quoted_addresses() {
-        // Fuel addresses are 32-byte hex starting with 0x, so the same
-        // truncation hazard applies and the same Display path must quote them.
-        let yaml = "name: t\necosystem: fuel\nchains:\n  - id: 0\n    start_block: 0\n    contracts:\n      - name: Greeter\n        address: \"0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b\"\n        abi_file_path: abis/greeter-abi.json\n        events:\n          - name: NewGreeting\n";
-        let cfg: super::fuel::HumanConfig = serde_yaml::from_str(yaml).unwrap();
-        let out = cfg.to_string();
-        assert!(
-            out.contains("\"0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b\""),
-            "Fuel init-written YAML must keep the address quoted. Got:\n{out}"
+            out.ends_with(&raw),
+            "Display body must equal raw serde_yaml output verbatim — config_hash stability depends on it.\nDisplay:\n{out}\nserde_yaml:\n{raw}"
         );
     }
 

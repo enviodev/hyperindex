@@ -132,7 +132,9 @@ pub async fn run_init_args(
 
             // TODO: Allow parsed paths to not depend on a written config.yaml file in file system
             file_system::write_file_string_to_system(
-                fuel_config.to_string(),
+                crate::config_parsing::human_config::force_quote_hex_scalars(
+                    fuel_config.to_string(),
+                ),
                 parsed_project_paths.project_root.join("config.yaml"),
             )
             .await
@@ -200,7 +202,9 @@ pub async fn run_init_args(
 
             // TODO: Allow parsed paths to not depend on a written config.yaml file in file system
             file_system::write_file_string_to_system(
-                evm_config.to_string(),
+                crate::config_parsing::human_config::force_quote_hex_scalars(
+                    evm_config.to_string(),
+                ),
                 parsed_project_paths.project_root.join("config.yaml"),
             )
             .await
