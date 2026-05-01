@@ -23,10 +23,11 @@ use schemars::schema_for;
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Command {
-    /// `migrate: Some` folds the migration into the same `init()` call as
-    /// the indexer startup.
+    /// `reset: true` wipes the schema before the indexer's first init call;
+    /// the runtime always runs `Persistence.init` either way (DB compat and
+    /// migration decisions live in ReScript now).
     Start {
-        migrate: Option<MigrateOpts>,
+        reset: bool,
         cwd: String,
         env: serde_json::Map<String, serde_json::Value>,
         config: serde_json::Value,
@@ -38,11 +39,6 @@ pub enum Command {
     DropSchema {
         config: serde_json::Value,
     },
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct MigrateOpts {
-    pub reset: bool,
 }
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
@@ -90,15 +86,9 @@ pub async fn execute(
             // `envio dev`; the JS side handles DB compat via `envio_info`.
             codegen::purge_and_run(&config).await?;
 
-            let migrate = if start_args.restart {
-                Some(MigrateOpts { reset: true })
-            } else {
-                None
-            };
-
             // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).
-            Ok(Some(build_start_command(&config, migrate, &[])?))
+            Ok(Some(build_start_command(&config, start_args.restart, &[])?))
         }
 
         CommandType::Local(local_commands) => {
@@ -151,7 +141,7 @@ pub async fn execute(
 /// append extra env pairs (e.g. `ENVIO_DEV_MODE` for `envio dev`).
 pub fn build_start_command(
     config: &SystemConfig,
-    migrate: Option<MigrateOpts>,
+    reset: bool,
     extra_env: &[(String, String)],
 ) -> Result<Command> {
     let config_path = config
@@ -166,7 +156,7 @@ pub fn build_start_command(
             .collect();
 
     Ok(Command::Start {
-        migrate,
+        reset,
         cwd: config
             .parsed_project_paths
             .project_root

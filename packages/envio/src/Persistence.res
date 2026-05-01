@@ -66,7 +66,9 @@ type storage = {
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
   // Read the envio_info JSON written by the last successful `initialize`.
-  // None means the schema pre-dates this code (no compat check possible).
+  // None when the schema pre-dates the envio_info table or the row is
+  // missing — both are treated as "no compat check possible" rather than
+  // hard-failing the resume path.
   readEnvioInfo: unit => promise<option<JSON.t>>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
