@@ -34,9 +34,16 @@ interface ClickHouseResult<T> {
   rows: number;
 }
 
+interface MetricsResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
 describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
   let indexerProcess: ChildProcess | null = null;
   let graphql: GraphQLClient;
+  let metricsWhileRunning: MetricsResult | null = null;
 
   beforeAll(async () => {
     graphql = new GraphQLClient({
@@ -89,15 +96,14 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       );
     }
 
-    const metricsResult = await runCommand(
+    // Capture metrics output here (must run before SIGKILL); assertions
+    // live in dedicated `it` blocks below so failures surface as test
+    // failures rather than aborting the suite.
+    metricsWhileRunning = await runCommand(
       config.envioCommand,
       [...config.envioArgs, "metrics"],
       { cwd: PROJECT_DIR, timeout: 10_000 }
     );
-    expect({
-      exitCode: metricsResult.exitCode,
-      hasEnvioMetric: metricsResult.stdout.includes("envio_progress_ready"),
-    }).toEqual({ exitCode: 0, hasEnvioMetric: true });
 
     // Kill so envio dev doesn't tear down docker before tests query it.
     indexerProcess.kill("SIGKILL");
@@ -127,6 +133,23 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     }).catch(() => {});
     await stopClickHouse();
   }, 30_000);
+
+  it("envio metrics returns Prometheus output while indexer is running", () => {
+    expect(metricsWhileRunning).not.toBeNull();
+    expect({
+      exitCode: metricsWhileRunning!.exitCode,
+      hasEnvioTypeLine: /^# TYPE envio_/m.test(metricsWhileRunning!.stdout),
+    }).toEqual({ exitCode: 0, hasEnvioTypeLine: true });
+  });
+
+  it("envio metrics exits 1 when indexer is not running", async () => {
+    const result = await runCommand(
+      config.envioCommand,
+      [...config.envioArgs, "metrics"],
+      { cwd: PROJECT_DIR, timeout: 15_000 }
+    );
+    expect(result.exitCode).toBe(1);
+  });
 
   it("should have _meta with isReady true", async () => {
     // After SIGKILL, Hasura is still running but may need a moment.

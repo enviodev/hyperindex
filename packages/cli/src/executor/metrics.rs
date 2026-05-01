@@ -1,23 +1,30 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
+use std::time::Duration;
 
 const DEFAULT_PORT: u16 = 9898;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn resolve_port() -> u16 {
+fn resolve_port() -> Result<u16> {
     for var in ["ENVIO_INDEXER_PORT", "METRICS_PORT"] {
         if let Ok(raw) = std::env::var(var) {
-            if let Ok(parsed) = raw.parse::<u16>() {
-                return parsed;
-            }
+            return raw
+                .parse::<u16>()
+                .with_context(|| format!("Invalid {var}={raw:?}: expected a port number 0-65535"));
         }
     }
-    DEFAULT_PORT
+    Ok(DEFAULT_PORT)
 }
 
 pub async fn run() -> Result<()> {
-    let port = resolve_port();
+    let port = resolve_port()?;
     let url = format!("http://127.0.0.1:{port}/metrics");
 
-    let response = reqwest::get(&url).await.map_err(|e| {
+    let client = reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .context("Failed building HTTP client")?;
+
+    let response = client.get(&url).send().await.map_err(|e| {
         anyhow!(
             "Failed to fetch metrics from {url}: {e}. Is the indexer running? \
              Set ENVIO_INDEXER_PORT if it's listening on a different port."
@@ -25,10 +32,12 @@ pub async fn run() -> Result<()> {
     })?;
 
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| anyhow!("Failed to read metrics response body from {url}: {e}"))?;
+    let body = response.text().await.map_err(|e| {
+        anyhow!(
+            "Failed to read metrics response body from {url}: {e}. \
+             Set ENVIO_INDEXER_PORT if the indexer is on a different port."
+        )
+    })?;
 
     if !status.is_success() {
         return Err(anyhow!("Metrics endpoint {url} returned {status}: {body}"));
