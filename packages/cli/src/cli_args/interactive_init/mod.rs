@@ -278,7 +278,19 @@ pub async fn prompt_missing_init_args(
 ) -> Result<InitConfig> {
     let directory: String = match &project_paths.directory {
         Some(args_directory) => {
-            if !is_valid_folder_name(args_directory) {
+            // `--directory` can be a path (e.g. `/tmp/foo/bar`); validate each
+            // segment against the per-folder rules so an apostrophe or other
+            // shell-unsafe char in any component fails fast.
+            let has_invalid_component =
+                std::path::Path::new(args_directory)
+                    .components()
+                    .any(|c| match c {
+                        std::path::Component::Normal(s) => {
+                            s.to_str().is_none_or(|s| !is_valid_folder_name(s))
+                        }
+                        _ => false,
+                    });
+            if has_invalid_component {
                 anyhow::bail!(
                     "Invalid --directory value {args_directory:?}: folder names cannot \
                      contain any of: / \\ : * ? \" ' < > |, and cannot be empty."
