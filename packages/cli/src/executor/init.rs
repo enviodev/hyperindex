@@ -320,13 +320,16 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
     out.push_str("Your indexer is ready! Pick how you'd like to run it:\n");
     out.push('\n');
 
-    let prefix = if project_root != Path::new(".") {
+    let in_current_dir = project_root
+        .components()
+        .all(|c| matches!(c, std::path::Component::CurDir));
+    let prefix = if in_current_dir {
+        String::new()
+    } else {
         format!(
             "cd {} && ",
             shell_quote(&project_root.display().to_string())
         )
-    } else {
-        String::new()
     };
     let cmd = pm.cmd();
 
@@ -386,5 +389,18 @@ mod tests {
             Path::new("alice's indexer"),
             PackageManager::Npm
         ));
+    }
+
+    #[test]
+    fn next_steps_in_subdir_with_shell_metacharacters() {
+        insta::assert_snapshot!(next_steps_message(
+            Path::new("my-$HOME-`tmp`"),
+            PackageManager::Npm
+        ));
+    }
+
+    #[test]
+    fn next_steps_in_current_dir_alias() {
+        insta::assert_snapshot!(next_steps_message(Path::new("./"), PackageManager::Npm));
     }
 }
