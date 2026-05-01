@@ -320,20 +320,19 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
     out.push_str("Your indexer is ready! Pick how you'd like to run it:\n");
     out.push('\n');
 
-    let mut step = 1;
-    if project_root != Path::new(".") {
-        let _ = writeln!(out, "  {step}. cd {}", project_root.display());
-        step += 1;
-    }
+    let prefix = if project_root != Path::new(".") {
+        format!("cd {} && ", project_root.display())
+    } else {
+        String::new()
+    };
+    let cmd = pm.cmd();
+
     let _ = writeln!(
         out,
-        "  {step}. {} test    # run the tests (recommended for AI)",
-        pm.cmd()
+        "  1. {prefix}{cmd} test    # run the tests (recommended for AI)"
     );
-    step += 1;
-    let _ = writeln!(out, "  {step}. {} dev     # run locally", pm.cmd());
-    step += 1;
-    let _ = writeln!(out, "  {step}. {} start   # run in production", pm.cmd());
+    let _ = writeln!(out, "  2. {prefix}{cmd} dev     # run locally");
+    let _ = writeln!(out, "  3. {prefix}{cmd} start   # run in production");
 
     out
 }
