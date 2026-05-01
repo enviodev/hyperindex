@@ -1,0 +1,11 @@
+---
+source: packages/cli/src/executor/init.rs
+expression: "next_steps_message(Path::new(\"my-indexer\"), PackageManager::Pnpm)"
+---
+
+Your indexer is ready! Pick how you'd like to run it:
+
+  1. cd my-indexer
+  2. pnpm test    # run the tests (recommended for AI)
+  3. pnpm dev     # run locally
+  4. pnpm start   # run in production

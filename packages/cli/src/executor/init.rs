@@ -304,27 +304,55 @@ pub async fn run_init_args(
         Err(e) => eprintln!("Warning: Failed to initialize git repository: {}", e),
     }
 
-    let in_subdir = parsed_project_paths.project_root != Path::new(".");
+    print!(
+        "{}",
+        next_steps_message(&parsed_project_paths.project_root, pm)
+    );
 
-    println!();
-    println!("Your indexer is ready! Pick how you'd like to run it:");
-    println!();
+    Ok(())
+}
+
+fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    out.push('\n');
+    out.push_str("Your indexer is ready! Pick how you'd like to run it:\n");
+    out.push('\n');
+
     let mut step = 1;
-    if in_subdir {
-        println!(
-            "  {step}. cd {}",
-            parsed_project_paths.project_root.display()
-        );
+    if project_root != Path::new(".") {
+        let _ = writeln!(out, "  {step}. cd {}", project_root.display());
         step += 1;
     }
-    println!(
+    let _ = writeln!(
+        out,
         "  {step}. {} test    # run the tests (recommended for AI)",
         pm.cmd()
     );
     step += 1;
-    println!("  {step}. {} dev     # run locally", pm.cmd());
+    let _ = writeln!(out, "  {step}. {} dev     # run locally", pm.cmd());
     step += 1;
-    println!("  {step}. {} start   # run in production", pm.cmd());
+    let _ = writeln!(out, "  {step}. {} start   # run in production", pm.cmd());
 
-    Ok(())
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli_args::init_config::PackageManager;
+
+    #[test]
+    fn next_steps_in_subdir() {
+        insta::assert_snapshot!(next_steps_message(
+            Path::new("my-indexer"),
+            PackageManager::Pnpm
+        ));
+    }
+
+    #[test]
+    fn next_steps_in_current_dir() {
+        insta::assert_snapshot!(next_steps_message(Path::new("."), PackageManager::Npm));
+    }
 }
