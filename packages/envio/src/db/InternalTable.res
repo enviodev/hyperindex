@@ -283,8 +283,8 @@ WHERE "id" = $1;`
 }
 
 module EnvioInfo = {
-  // Singleton table: at most one row, holding the public config used on the
-  // last successful initialization.
+  // Singleton table — written once by `initialize` inside the schema-setup
+  // transaction, read on resume for the config compat check.
   let table = mkTable(
     "envio_info",
     ~fields=[mkField("config", Json, ~fieldSchema=S.json(~validate=false))],
@@ -297,18 +297,8 @@ module EnvioInfo = {
     ->Promise.thenResolve(rows => rows->Belt.Array.get(0)->Belt.Option.map(row => row["config"]))
   }
 
-  // Plain INSERT: callers (storage initialize on a fresh schema, or the
-  // resume-time backfill after read returned None) only call `write` when
-  // the table is verifiably empty, so there's no need to DELETE first or
-  // pay for upsert semantics. The table has no primary key by design
-  // (single-column singleton), so ON CONFLICT isn't an option anyway.
-  //
-  // Pass the JSON object directly (not pre-stringified) — postgres.js
-  // serializes objects as JSON for jsonb columns. Pre-stringifying and
-  // binding as a string parameter caused the row to be stored as a
-  // jsonb *string scalar* (the literal text), so subsequent reads would
-  // see no top-level keys and the resume-time compat check would fail
-  // claiming the entire config differed.
+  // Pass the object directly — postgres.js serializes it as JSON for jsonb.
+  // Stringifying first would store a jsonb string scalar, not an object.
   let write = (sql, ~pgSchema, ~envioInfo: JSON.t) => {
     sql
     ->Postgres.preparedUnsafe(

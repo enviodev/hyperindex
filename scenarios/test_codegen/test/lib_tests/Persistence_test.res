@@ -160,76 +160,120 @@ Although it should load effect caches metadata.`,
     ).toEqual((1, 0, 1))
   })
 
-  Async.it(
-    "Throws on resume when stored envio_info diverges from the current config",
-    async t => {
-      let storageMock = MockIndexer.Storage.make([
-        #isInitialized,
-        #initialize,
-        #resumeInitialState,
-      ])
+  // Seed envio_info via the storage mock's initialize, then resume with a
+  // different config and capture whatever Persistence.init decides to throw.
+  let resumeWithDifferentConfig = async (~stored: JSON.t, ~current: JSON.t) => {
+    let storageMock = MockIndexer.Storage.make([
+      #isInitialized,
+      #initialize,
+      #resumeInitialState,
+    ])
+    let initialState: Persistence.initialState = {
+      cleanRun: true,
+      chains: [],
+      cache: Dict.make(),
+      reorgCheckpoints: [],
+      checkpointId: 0n,
+    }
+    let p1 = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+    let initPromise = p1->Persistence.init(~chainConfigs=[], ~envioInfo=stored)
+    storageMock.resolveIsInitialized(false)
+    for _ in 1 to 3 {
+      await Promise.resolve()
+    }
+    storageMock.resolveInitialize(initialState)
+    await initPromise
 
-      // Seed envio_info with one config via initialize, then re-init the
-      // persistence layer with a different config — Persistence.init should
-      // detect the mismatch in resumeInitialState's compat check and throw.
-      let storedConfig = JSON.parseOrThrow(`{"name": "old", "evm": {}}`)
-      let initialState: Persistence.initialState = {
-        cleanRun: true,
-        chains: [],
-        cache: Dict.make(),
-        reorgCheckpoints: [],
-        checkpointId: 0n,
-      }
+    let p2 = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+    let resumePromise = p2->Persistence.init(~chainConfigs=[], ~envioInfo=current)
+    storageMock.resolveIsInitialized(true)
+    // Drain enough microtasks for the compat-passing path to reach
+    // resumeInitialState and register its resolver before we resolve it.
+    for _ in 1 to 5 {
+      await Promise.resolve()
+    }
+    let resumeInitialState: Persistence.initialState = {
+      cleanRun: false,
+      chains: [],
+      cache: Dict.make(),
+      reorgCheckpoints: [],
+      checkpointId: 0n,
+    }
+    storageMock.resolveLoadInitialState(resumeInitialState)
 
-      let firstPersistence = Persistence.make(
-        ~userEntities=[],
-        ~allEnums=[],
-        ~storage=storageMock.storage,
-      )
-      let initPromise =
-        firstPersistence->Persistence.init(~chainConfigs=[], ~envioInfo=storedConfig)
-      storageMock.resolveIsInitialized(false)
-      for _ in 1 to 3 {
-        await Promise.resolve()
-      }
-      storageMock.resolveInitialize(initialState)
-      await initPromise
+    let raised = try {
+      await resumePromise
+      None
+    } catch {
+    | exn => Some(exn)
+    }
+    let message = switch raised {
+    | Some(JsExn(e)) => e->JsExn.message->Option.getOr("")
+    | _ => ""
+    }
+    (raised, message, storageMock)
+  }
 
-      // New persistence sharing the same storage mock — envio_info is now
-      // populated with `storedConfig`, so a mismatching ~envioInfo on resume
-      // should fail before resumeInitialState is even called.
-      let secondPersistence = Persistence.make(
-        ~userEntities=[],
-        ~allEnums=[],
-        ~storage=storageMock.storage,
-      )
-      let mismatchedConfig = JSON.parseOrThrow(`{"name": "new", "evm": {}}`)
-      let resumePromise =
-        secondPersistence->Persistence.init(~chainConfigs=[], ~envioInfo=mismatchedConfig)
-      storageMock.resolveIsInitialized(true)
+  Async.it("Throws on resume when stored envio_info diverges from the current config", async t => {
+    let stored = JSON.parseOrThrow(`{"name": "old", "evm": {}}`)
+    let current = JSON.parseOrThrow(`{"name": "new", "evm": {}}`)
+    let (raised, message, storageMock) = await resumeWithDifferentConfig(~stored, ~current)
+    t.expect(raised->Option.isSome, ~message="should throw").toBe(true)
+    t.expect(message->String.includes("incompatible"), ~message="error wording").toBe(true)
+    t.expect(message->String.includes("name"), ~message="names the diverged path").toBe(true)
+    t.expect(
+      storageMock.resumeInitialStateCalls->Array.length,
+      ~message="compat check fails before resumeInitialState",
+    ).toBe(0)
+  })
 
-      let raised = try {
-        await resumePromise
-        None
-      } catch {
-      | exn => Some(exn)
-      }
-      let message = switch raised {
-      | Some(JsExn(e)) => e->JsExn.message->Option.getOr("")
-      | _ => ""
-      }
-      t.expect(
-        message->String.includes("Incompatible") || message->String.includes("incompatible"),
-        ~message="should throw an incompatibility error mentioning the failure",
-      ).toBe(true)
-      t.expect(
-        message->String.includes("name"),
-        ~message="should name the diverged path",
-      ).toBe(true)
-      t.expect(
-        storageMock.resumeInitialStateCalls->Array.length,
-        ~message="resumeInitialState should NOT have been called — compat check fails first",
-      ).toBe(0)
-    },
-  )
+  Async.it("Throws naming chains.<id> when a new chain is added", async t => {
+    let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
+    let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}}`)
+    let (raised, message, _) = await resumeWithDifferentConfig(~stored, ~current)
+    t.expect(raised->Option.isSome, ~message="should throw on chain add").toBe(true)
+    t.expect(
+      message->String.includes("evm.chains.10"),
+      ~message="error names the new chain key",
+    ).toBe(true)
+  })
+
+  Async.it("Throws naming chains.<id> when an existing chain is removed", async t => {
+    let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}}`)
+    let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
+    let (raised, message, _) = await resumeWithDifferentConfig(~stored, ~current)
+    t.expect(raised->Option.isSome, ~message="should throw on chain remove").toBe(true)
+    t.expect(
+      message->String.includes("evm.chains.10"),
+      ~message="error names the removed chain key",
+    ).toBe(true)
+  })
+
+  Async.it("Does NOT throw when only RPC or hypersync options change", async t => {
+    // Both sides go through stripSensitiveData first, mimicking what
+    // `Main.getEnvioInfo` does on every Persistence.init call.
+    let stored = Config.stripSensitiveData(
+      JSON.parseOrThrow(`{
+        "evm": {"chains": {"1": {
+          "id": 1,
+          "hypersync": "https://eth.hypersync.xyz",
+          "rpcs": [{"url": "u-old", "for": "fallback", "pollingInterval": 1000}]
+        }}}
+      }`),
+    )
+    let current = Config.stripSensitiveData(
+      JSON.parseOrThrow(`{
+        "evm": {"chains": {"1": {
+          "id": 1,
+          "rpcs": [{"url": "u-new", "for": "sync", "pollingInterval": 5000}]
+        }}}
+      }`),
+    )
+    let (raised, _message, storageMock) = await resumeWithDifferentConfig(~stored, ~current)
+    t.expect(raised, ~message="rpc/hypersync edits should not throw").toEqual(None)
+    t.expect(
+      storageMock.resumeInitialStateCalls->Array.length,
+      ~message="resumeInitialState runs once when compat passes",
+    ).toBe(1)
+  })
 })

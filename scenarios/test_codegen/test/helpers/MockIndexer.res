@@ -188,10 +188,6 @@ module Storage = {
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
         readEnvioInfo: () => Promise.resolve(envioInfoRef.contents),
-        writeEnvioInfo: (~envioInfo) => {
-          envioInfoRef := Some(envioInfo)
-          Promise.resolve()
-        },
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
         pruneStaleCheckpoints: (~safeCheckpointId as _) =>
           JsError.throwWithMessage("Not implemented"),

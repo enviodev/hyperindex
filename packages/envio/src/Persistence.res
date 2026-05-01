@@ -65,13 +65,9 @@ type storage = {
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
-  // Read the persisted envio_info JSON (None if the schema pre-dates this
-  // change or the row was wiped). Storage treats it as opaque — the caller
-  // (typically Persistence.init) is responsible for compat checks.
+  // Read the envio_info JSON written by the last successful `initialize`.
+  // None means the schema pre-dates this code (no compat check possible).
   readEnvioInfo: unit => promise<option<JSON.t>>,
-  // Write the persisted envio_info JSON. Used by Persistence.init to
-  // backfill the row on resume when readEnvioInfo returned None.
-  writeEnvioInfo: (~envioInfo: JSON.t) => promise<unit>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
     ~ids: array<string>,
@@ -205,16 +201,12 @@ let init = {
           }
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
-          // Compat check happens before resumeInitialState's full state load
-          // so we fail fast on incompatible configs without paying for the
-          // checkpoint/cache reads.
+          // Fail fast before resumeInitialState's checkpoint/cache reads.
           switch await persistence.storage.readEnvioInfo() {
           | None =>
-            // Schema exists but envio_info doesn't — pre-existing schema
-            // upgraded to this code, or the row was manually wiped. Backfill
-            // from the current config; nothing to compare against.
-            Logging.info(`No envio_info row found — persisting current config without compat check.`)
-            await persistence.storage.writeEnvioInfo(~envioInfo)
+            // Schema pre-dates envio_info — skip compat check, run `envio dev -r`
+            // to upgrade to the new layout.
+            Logging.info(`No envio_info row found — skipping config compat check.`)
           | Some(stored) =>
             let changedPaths = Config.diffPaths(~stored, ~current=envioInfo)
             if changedPaths->Array.length > 0 {

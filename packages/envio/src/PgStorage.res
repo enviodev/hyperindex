@@ -1657,7 +1657,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   }
 
   let readEnvioInfo = () => InternalTable.EnvioInfo.read(sql, ~pgSchema)
-  let writeEnvioInfo = (~envioInfo) => InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
   let close = () => sql->Postgres.endSql
 
   {
@@ -1666,7 +1665,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     initialize,
     resumeInitialState,
     readEnvioInfo,
-    writeEnvioInfo,
     loadByFieldOrThrow,
     loadByIdsOrThrow,
     dumpEffectCache,

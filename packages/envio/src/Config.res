@@ -867,10 +867,8 @@ let getPublicConfigJson = () =>
   | None => Core.getConfigJson()->JSON.parseOrThrow
   }
 
-// Source URLs (RPC, hypersync, fuel/svm `rpc`) can carry secrets — and even
-// non-secret edits to them shouldn't force a full re-index, so we drop them
-// before the config is written to `envio_info`. Walks a deep clone so the
-// caller's JSON is not mutated.
+// Drops source URLs from each chain so RPC/hypersync edits don't trigger
+// the resume-time compat check (and don't end up in `envio_info`).
 let stripSensitiveData = (json: JSON.t): JSON.t => {
   let cloned = json->JSON.stringify->JSON.parseOrThrow
   let stripChains = (ecosystem: option<JSON.t>) =>
@@ -905,9 +903,8 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
   cloned
 }
 
-// Recursively sort object keys so two structurally-equal JSONs serialize to
-// the same string. Postgres `jsonb` does not preserve key order, so we can't
-// just compare raw `JSON.stringify` output of stored vs current config.
+// Postgres jsonb doesn't preserve key order, so canonicalize with sorted
+// keys before string-comparing.
 let rec canonicalJson = (json: JSON.t): JSON.t =>
   switch json {
   | Object(d) => {
@@ -922,12 +919,8 @@ let rec canonicalJson = (json: JSON.t): JSON.t =>
   | _ => json
   }
 
-// Sorted list of leaf paths whose values differ between `stored` and
-// `current`. Object keys join with '.', array indices format as '[i]'.
-// Equal subtrees are skipped; the recursion only descends where the
-// canonical representations differ, so unchanged branches don't pay for a
-// full walk. Used by Persistence.init to name the actual changed fields in
-// the resume-time incompat error (top-level "evm" alone is too coarse).
+// Returns dotted leaf paths (`a.b[i].c`) where `stored` differs from
+// `current`. Skips subtrees whose canonical JSON matches.
 let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
   let acc = []
   let rec go = (s: JSON.t, c: JSON.t, prefix: string) => {
