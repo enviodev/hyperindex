@@ -345,7 +345,8 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
 
 /// Leave alphanumeric paths unquoted; single-quote anything containing chars
 /// the shell would interpret (spaces, `$`, backticks, `&`, `;`, etc.) so the
-/// printed `cd <path>` is safe to paste.
+/// printed `cd <path>` is safe to paste. Folder name validation rejects `'`,
+/// so a plain single-quote wrap is sufficient.
 fn shell_quote(s: &str) -> String {
     let safe = !s.is_empty()
         && s.chars()
@@ -353,7 +354,7 @@ fn shell_quote(s: &str) -> String {
     if safe {
         s.to_string()
     } else {
-        format!("'{}'", s.replace('\'', "'\\''"))
+        format!("'{s}'")
     }
 }
 
@@ -379,14 +380,6 @@ mod tests {
     fn next_steps_in_subdir_with_spaces() {
         insta::assert_snapshot!(next_steps_message(
             Path::new("my indexer"),
-            PackageManager::Npm
-        ));
-    }
-
-    #[test]
-    fn next_steps_in_subdir_with_single_quote() {
-        insta::assert_snapshot!(next_steps_message(
-            Path::new("alice's indexer"),
             PackageManager::Npm
         ));
     }
