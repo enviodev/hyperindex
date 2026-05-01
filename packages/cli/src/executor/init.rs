@@ -321,7 +321,10 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
     out.push('\n');
 
     let prefix = if project_root != Path::new(".") {
-        format!("cd {} && ", project_root.display())
+        format!(
+            "cd {} && ",
+            shell_single_quote(&project_root.display().to_string())
+        )
     } else {
         String::new()
     };
@@ -335,6 +338,12 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
     let _ = writeln!(out, "  3. {prefix}{cmd} start   # run in production");
 
     out
+}
+
+/// Single-quote so `$`, backticks, `&`, etc. in a folder name don't get
+/// interpreted when the user pastes the next-step command into a shell.
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]
@@ -353,5 +362,21 @@ mod tests {
     #[test]
     fn next_steps_in_current_dir() {
         insta::assert_snapshot!(next_steps_message(Path::new("."), PackageManager::Npm));
+    }
+
+    #[test]
+    fn next_steps_in_subdir_with_spaces() {
+        insta::assert_snapshot!(next_steps_message(
+            Path::new("my indexer"),
+            PackageManager::Npm
+        ));
+    }
+
+    #[test]
+    fn next_steps_in_subdir_with_single_quote() {
+        insta::assert_snapshot!(next_steps_message(
+            Path::new("alice's indexer"),
+            PackageManager::Npm
+        ));
     }
 }

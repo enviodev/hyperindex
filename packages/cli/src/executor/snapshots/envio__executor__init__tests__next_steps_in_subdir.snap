@@ -5,6 +5,6 @@ expression: "next_steps_message(Path::new(\"my-indexer\"), PackageManager::Pnpm)
 
 Your indexer is ready! Pick how you'd like to run it:
 
-  1. cd my-indexer && pnpm test    # run the tests (recommended for AI)
-  2. cd my-indexer && pnpm dev     # run locally
-  3. cd my-indexer && pnpm start   # run in production
+  1. cd 'my-indexer' && pnpm test    # run the tests (recommended for AI)
+  2. cd 'my-indexer' && pnpm dev     # run locally
+  3. cd 'my-indexer' && pnpm start   # run in production
