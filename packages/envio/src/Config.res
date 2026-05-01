@@ -920,32 +920,49 @@ let rec canonicalJson = (json: JSON.t): JSON.t =>
   | _ => json
   }
 
-// Top-level keys whose values differ between `stored` and `current` (sorted).
-// A key present on only one side is reported. Nested changes still surface
-// as the enclosing top-level key, so the message stays compact.
-let topLevelDiffKeys = (~stored: JSON.t, ~current: JSON.t): array<string> => {
-  let storedObj = switch stored {
-  | Object(d) => d
-  | _ => Dict.make()
-  }
-  let currentObj = switch current {
-  | Object(d) => d
-  | _ => Dict.make()
-  }
-  let allKeys = Utils.Set.fromArray(
-    Array.concat(storedObj->Dict.keysToArray, currentObj->Dict.keysToArray),
-  )
-  allKeys
-  ->Utils.Set.toArray
-  ->Array.filter(k =>
-    switch (storedObj->Dict.get(k), currentObj->Dict.get(k)) {
-    | (None, None) => false
-    | (None, Some(_)) | (Some(_), None) => true
-    | (Some(sv), Some(cv)) =>
-      JSON.stringify(canonicalJson(sv)) !== JSON.stringify(canonicalJson(cv))
+// Sorted list of leaf paths whose values differ between `stored` and
+// `current`. Object keys join with '.', array indices format as '[i]'.
+// Equal subtrees are skipped; the recursion only descends where the
+// canonical representations differ, so unchanged branches don't pay for a
+// full walk. Used by Persistence.init to name the actual changed fields in
+// the resume-time incompat error (top-level "evm" alone is too coarse).
+let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
+  let acc = []
+  let rec go = (s: JSON.t, c: JSON.t, prefix: string) => {
+    if JSON.stringify(canonicalJson(s)) === JSON.stringify(canonicalJson(c)) {
+      ()
+    } else {
+      switch (s, c) {
+      | (Object(sObj), Object(cObj)) =>
+        let keys = Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
+        keys
+        ->Utils.Set.toArray
+        ->Array.toSorted(String.compare)
+        ->Array.forEach(k => {
+          let p = prefix === "" ? k : `${prefix}.${k}`
+          switch (sObj->Dict.get(k), cObj->Dict.get(k)) {
+          | (None, None) => ()
+          | (None, _) | (_, None) => acc->Array.push(p)->ignore
+          | (Some(sv), Some(cv)) => go(sv, cv, p)
+          }
+        })
+      | (Array(sArr), Array(cArr)) =>
+        let maxLen = Math.Int.max(sArr->Array.length, cArr->Array.length)
+        for i in 0 to maxLen - 1 {
+          let p = `${prefix}[${Int.toString(i)}]`
+          switch (sArr->Belt.Array.get(i), cArr->Belt.Array.get(i)) {
+          | (None, _) | (_, None) => acc->Array.push(p)->ignore
+          | (Some(sv), Some(cv)) => go(sv, cv, p)
+          }
+        }
+      | _ =>
+        // Type mismatch or scalar diff
+        acc->Array.push(prefix === "" ? "<root>" : prefix)->ignore
+      }
     }
-  )
-  ->Array.toSorted(String.compare)
+  }
+  go(stored, current, "")
+  acc
 }
 
 // The returned value is a pure function of the JSON — no handler

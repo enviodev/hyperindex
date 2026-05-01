@@ -216,19 +216,11 @@ let init = {
             Logging.info(`No envio_info row found — persisting current config without compat check.`)
             await persistence.storage.writeEnvioInfo(~envioInfo)
           | Some(stored) =>
-            let changedKeys = Config.topLevelDiffKeys(~stored, ~current=envioInfo)
-            if changedKeys->Array.length > 0 {
-              let fields = changedKeys->Array.joinUnsafe(", ")
-              let revertAction = `Undo your ${fields} changes`
-              let restartAction = `envio dev -r`
-              let width = Math.Int.max(revertAction->String.length, restartAction->String.length)
-              let pad = (s: string) => s ++ " "->String.repeat(width - s->String.length)
+            let changedPaths = Config.diffPaths(~stored, ~current=envioInfo)
+            if changedPaths->Array.length > 0 {
+              let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
               JsError.throwWithMessage(
-                `Your changes to ${fields} are incompatible with the existing indexer data. Pick one:\n\n  1. ${pad(
-                    revertAction,
-                  )}    # resume indexing where it left off\n  2. ${pad(
-                    restartAction,
-                  )}    # wipe the database and re-index from scratch`,
+                `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. Revert the changes above    # resume indexing where it left off\n  2. envio dev -r                # wipe the database and re-index from scratch`,
               )
             }
           }

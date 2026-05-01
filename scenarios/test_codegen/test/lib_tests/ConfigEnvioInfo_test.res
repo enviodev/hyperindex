@@ -61,43 +61,87 @@ describe("Config.stripSensitiveData", () => {
   })
 })
 
-describe("Config.topLevelDiffKeys", () => {
+describe("Config.diffPaths", () => {
   it("returns [] for structurally equal JSON regardless of key order", t => {
     let stored = json(`{"a": {"x": 1, "y": 2}, "b": [1, 2, 3]}`)
     let current = json(`{"b": [1, 2, 3], "a": {"y": 2, "x": 1}}`)
     t.expect(
-      Config.topLevelDiffKeys(~stored, ~current),
+      Config.diffPaths(~stored, ~current),
       ~message="key-order independent",
     ).toEqual([])
   })
 
-  it("reports only the top-level keys whose values differ", t => {
-    let stored = json(`{"name": "old", "evm": {"chains": {"1": {"id": 1}}}, "fuel": null}`)
-    let current = json(`{"name": "new", "evm": {"chains": {"1": {"id": 1}}}, "fuel": null}`)
-    t.expect(Config.topLevelDiffKeys(~stored, ~current), ~message="single field").toEqual(["name"])
+  it("reports the dotted path of a single changed leaf", t => {
+    let stored = json(`{"name": "old", "evm": {"chains": {"1": {"id": 1}}}}`)
+    let current = json(`{"name": "new", "evm": {"chains": {"1": {"id": 1}}}}`)
+    t.expect(Config.diffPaths(~stored, ~current), ~message="single field").toEqual(["name"])
   })
 
-  it("surfaces nested changes as the enclosing top-level key", t => {
+  it("drills into nested objects to the actual leaf path", t => {
     let stored = json(`{"evm": {"chains": {"1": {"startBlock": 0}}}}`)
     let current = json(`{"evm": {"chains": {"1": {"startBlock": 100}}}}`)
     t.expect(
-      Config.topLevelDiffKeys(~stored, ~current),
-      ~message="nested change rolled up",
-    ).toEqual(["evm"])
+      Config.diffPaths(~stored, ~current),
+      ~message="nested leaf, not 'evm'",
+    ).toEqual(["evm.chains.1.startBlock"])
+  })
+
+  it("uses [i] notation for array index changes", t => {
+    let stored = json(`{"contracts": [{"name": "A"}, {"name": "B"}]}`)
+    let current = json(`{"contracts": [{"name": "A"}, {"name": "C"}]}`)
+    t.expect(
+      Config.diffPaths(~stored, ~current),
+      ~message="array index path",
+    ).toEqual(["contracts[1].name"])
+  })
+
+  it("reports an array element that exists on only one side", t => {
+    let stored = json(`{"contracts": [{"name": "A"}]}`)
+    let current = json(`{"contracts": [{"name": "A"}, {"name": "B"}]}`)
+    t.expect(
+      Config.diffPaths(~stored, ~current),
+      ~message="missing array slot",
+    ).toEqual(["contracts[1]"])
   })
 
   it("reports keys present on only one side", t => {
     let stored = json(`{"a": 1, "b": 2}`)
     let current = json(`{"a": 1, "c": 3}`)
     t.expect(
-      Config.topLevelDiffKeys(~stored, ~current),
+      Config.diffPaths(~stored, ~current),
       ~message="added/removed keys",
     ).toEqual(["b", "c"])
   })
 
-  it("returns multiple changed keys sorted", t => {
-    let stored = json(`{"z": 0, "a": 0, "m": 0}`)
-    let current = json(`{"z": 1, "a": 1, "m": 0}`)
-    t.expect(Config.topLevelDiffKeys(~stored, ~current), ~message="sorted").toEqual(["a", "z"])
+  it("collects multiple diffs in deterministic key order", t => {
+    let stored = json(`{"z": {"q": 0}, "a": 0, "m": 0}`)
+    let current = json(`{"z": {"q": 1}, "a": 1, "m": 0}`)
+    t.expect(Config.diffPaths(~stored, ~current), ~message="sorted").toEqual(["a", "z.q"])
+  })
+
+  it("ignores rpcs entirely when both sides come from stripSensitiveData", t => {
+    // Mimics the user-reported scenario: only RPC fields edited; after
+    // stripping, both sides should be identical and the diff empty.
+    let storedRaw = json(`{
+      "evm": {
+        "chains": {
+          "1": {"id": 1, "rpcs": [{"url": "u1", "pollingInterval": 1000}]}
+        }
+      }
+    }`)
+    let currentRaw = json(`{
+      "evm": {
+        "chains": {
+          "1": {"id": 1, "rpcs": [{"url": "u1", "pollingInterval": 5000}]}
+        }
+      }
+    }`)
+    t.expect(
+      Config.diffPaths(
+        ~stored=Config.stripSensitiveData(storedRaw),
+        ~current=Config.stripSensitiveData(currentRaw),
+      ),
+      ~message="rpc-only edits should produce no diff after stripping",
+    ).toEqual([])
   })
 })

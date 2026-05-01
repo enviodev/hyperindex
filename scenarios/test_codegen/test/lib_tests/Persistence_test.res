@@ -224,7 +224,7 @@ Although it should load effect caches metadata.`,
       ).toBe(true)
       t.expect(
         message->String.includes("name"),
-        ~message="should name the diverged top-level key",
+        ~message="should name the diverged path",
       ).toBe(true)
       t.expect(
         storageMock.resumeInitialStateCalls->Array.length,
