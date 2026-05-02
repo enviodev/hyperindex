@@ -7,17 +7,20 @@ let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher
 let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.chains => {
   let chains = Dict.make()
 
+  // For unordered multichain, isRealtime flips to true only after every chain
+  // has caught up. Isolated multichain (per-chain semantics) is a future addition.
+  let isRealtime = chainFetchers->ChainMap.values->Array.every(cf => cf->ChainFetcher.isReady)
+
   chainFetchers
   ->ChainMap.entries
-  ->Array.forEach(((chain, chainFetcher)) => {
+  ->Array.forEach(((chain, _chainFetcher)) => {
     let chainId = chain->ChainMap.Chain.toChainId->Int.toString
-    let isLive = chainFetcher->ChainFetcher.isReady
 
     chains->Dict.set(
       chainId,
       {
         Internal.id: chain->ChainMap.Chain.toChainId,
-        isLive,
+        isRealtime,
       },
     )
   })

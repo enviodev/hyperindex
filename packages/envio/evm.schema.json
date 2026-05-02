@@ -568,7 +568,7 @@
         {
           "description": "Use RPC for real-time indexing only. HyperSync will be used for historical sync, then automatically switch to this RPC once synced for lower latency.",
           "type": "string",
-          "const": "live"
+          "const": "realtime"
         }
       ]
     },

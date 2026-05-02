@@ -837,7 +837,7 @@ let checkAndFetchForChain = (
         ~waitForNewBlock=(~knownHeight) =>
           chainFetcher.sourceManager->waitForNewBlock(
             ~knownHeight,
-            ~isLive=chainFetcher->ChainFetcher.isReady,
+            ~isRealtime=chainFetcher->ChainFetcher.isReady,
             ~reducedPolling,
           ),
         ~onNewBlock=(~knownHeight) =>
@@ -847,7 +847,7 @@ let checkAndFetchForChain = (
             let response = await chainFetcher.sourceManager->executeQuery(
               ~query,
               ~knownHeight=fetchState.knownHeight,
-              ~isLive=chainFetcher->ChainFetcher.isReady,
+              ~isRealtime=chainFetcher->ChainFetcher.isReady,
             )
             dispatchAction(ValidatePartitionQueryResponse({chain, response, query}))
           } catch {

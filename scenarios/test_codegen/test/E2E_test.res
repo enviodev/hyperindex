@@ -1097,7 +1097,7 @@ describe("E2E tests", () => {
       let liveSource = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
-        ~sourceFor=Source.Live,
+        ~sourceFor=Source.Realtime,
       )
 
       let indexerMock = await MockIndexer.Indexer.make(
@@ -1145,7 +1145,7 @@ describe("E2E tests", () => {
       syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexerMock.getBatchWritePromise()
 
-      // First waitForNewBlock runs with isLive=false (NextQuery fires before
+      // First waitForNewBlock runs with isRealtime=false (NextQuery fires before
       // EventBatchProcessed sets timestampCaughtUpToHeadOrEndblock).
       // Only Sync participates in height racing initially.
       t.expect(
@@ -1154,7 +1154,7 @@ describe("E2E tests", () => {
       ).toEqual(2)
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should NOT participate yet (isLive still false)",
+        ~message="Live source should NOT participate yet (isRealtime still false)",
       ).toEqual(0)
 
       // Resolve the first waitForNewBlock to advance to the next cycle
@@ -1170,7 +1170,7 @@ describe("E2E tests", () => {
       liveSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
       await indexerMock.getBatchWritePromise()
 
-      // Now isLive=true (EventBatchProcessed has set timestampCaughtUpToHeadOrEndblock).
+      // Now isRealtime=true (EventBatchProcessed has set timestampCaughtUpToHeadOrEndblock).
       // Second waitForNewBlock: Live=Primary races, Sync=Secondary (not in main group).
       t.expect(
         syncSource.getHeightOrThrowCalls->Array.length,
@@ -1178,7 +1178,7 @@ describe("E2E tests", () => {
       ).toEqual(2)
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should now participate in height racing after isLive=true",
+        ~message="Live source should now participate in height racing after isRealtime=true",
       ).toEqual(1)
     },
   )

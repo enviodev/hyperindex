@@ -301,9 +301,9 @@ type entityHandlerContext<'entity> = {
 
 type chainInfo = {
   id: int,
-  // true when the chain has completed initial sync and is processing live events
-  // false during historical synchronization
-  isLive: bool,
+  // true when ALL chains have completed initial sync and are processing real-time events
+  // (for unordered multichain mode). False during historical synchronization on any chain.
+  isRealtime: bool,
 }
 
 type chains = dict<chainInfo>

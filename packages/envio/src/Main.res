@@ -85,7 +85,7 @@ let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
 
 // Persistence is set by Main.start before handler modules load, so that
 // the exported indexer value can lazily expose DB state (startBlock,
-// endBlock, isLive, dynamic contract addresses) once it's ready.
+// endBlock, isRealtime, dynamic contract addresses) once it's ready.
 let globalPersistenceRef: ref<option<Persistence.t>> = ref(None)
 
 let getInitialChainState = (~chainId: int): option<Persistence.initialChainState> => {
@@ -143,25 +143,31 @@ let buildChainsObject = (~config: Config.t) => {
     )
     ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
     ->Utils.Object.defineProperty(
-      "isLive",
+      "isRealtime",
       {
         enumerable: true,
+        // For unordered multichain, isRealtime is true only when ALL chains
+        // have finished backfill. (Isolated multichain — separate per-chain
+        // logic — is a future addition.)
         get: () => {
           switch globalGsManagerRef.contents {
           | Some(gsManager) =>
             let state = gsManager->GlobalStateManager.getState
-            let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
-            let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-            chainFetcher->ChainFetcher.isReady
-          // Before the GlobalStateManager is available (eg during handler
-          // module load after resume), derive liveness from persistence:
-          // a chain is considered live when it previously caught up to head
-          // or endBlock (timestampCaughtUpToHeadOrEndblock is set).
+            state.chainManager.chainFetchers
+            ->ChainMap.values
+            ->Array.every(cf => cf->ChainFetcher.isReady)
           | None =>
-            switch getInitialChainState(~chainId=chainConfig.id) {
-            | Some(chainState) => chainState.timestampCaughtUpToHeadOrEndblock->Option.isSome
-            | None => false
-            }
+            // Before the GlobalStateManager is available (eg during handler
+            // module load after resume), derive from persistence: every
+            // chain must have previously caught up to head or endBlock.
+            config.chainMap
+            ->ChainMap.values
+            ->Array.every(c =>
+              switch getInitialChainState(~chainId=c.id) {
+              | Some(chainState) => chainState.timestampCaughtUpToHeadOrEndblock->Option.isSome
+              | None => false
+              }
+            )
           }
         },
       },

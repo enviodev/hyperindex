@@ -152,9 +152,9 @@ module EnvioAddresses = {
   }->Internal.fromGenericEntityConfig
 }
 
-type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("live") Live
+type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
 
-let rpcSourceForSchema = S.enum([Sync, Fallback, Live])
+let rpcSourceForSchema = S.enum([Sync, Fallback, Realtime])
 
 let rpcConfigSchema = S.schema(s =>
   {
@@ -616,7 +616,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     switch sourceFor {
     | Sync => Source.Sync
     | Fallback => Source.Fallback
-    | Live => Source.Live
+    | Realtime => Source.Realtime
     }
   }
 
