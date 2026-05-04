@@ -1293,6 +1293,9 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       cleanRun: true,
       cache,
       reorgCheckpoints: [],
+      // Just-written row; resume's compat check would no-op on a clean run,
+      // but keep the field consistent with the resume path's shape.
+      envioInfo: Some(envioInfo),
       chains: chainConfigs->Array.map((chainConfig): Persistence.initialChainState => {
         id: chainConfig.id,
         startBlock: chainConfig.startBlock,
@@ -1489,7 +1492,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints) = await Promise.all4((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints, envioInfo) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -1523,6 +1526,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
           }>,
         >
       ),
+      InternalTable.EnvioInfo.read(sql, ~pgSchema),
     ))
 
     let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
@@ -1547,6 +1551,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       cache,
       chains,
       checkpointId,
+      envioInfo,
     }
   }
 
@@ -1656,7 +1661,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     )
   }
 
-  let readEnvioInfo = () => InternalTable.EnvioInfo.read(sql, ~pgSchema)
   let close = () => sql->Postgres.endSql
 
   {
@@ -1664,7 +1668,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     isInitialized,
     initialize,
     resumeInitialState,
-    readEnvioInfo,
     loadByFieldOrThrow,
     loadByIdsOrThrow,
     dumpEffectCache,

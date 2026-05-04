@@ -619,6 +619,7 @@ let migrate = async (~reset) => {
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~envioInfo=getEnvioInfo(),
+    ~resetCommand="envio local db-migrate setup",
   )
   await persistence.storage.close()
 }
@@ -665,6 +666,10 @@ let start = async (
     ~reset,
     ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
     ~envioInfo=getEnvioInfo(),
+    // `envio dev` sets ENVIO_DEV_MODE=true (see executor/dev.rs); `envio
+    // start` doesn't. The flag drives the wipe-and-restart command we
+    // recommend in the incompat error.
+    ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
   )
 
   // `Config.loadWithoutRegistrations` never sees registration state; handler,

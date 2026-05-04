@@ -293,6 +293,9 @@ let makeInitialState = (
     chains,
     checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     reorgCheckpoints: [],
+    // TestIndexer fakes the resume path; mirror what Main.start passes as
+    // ~envioInfo so the compat check always sees an empty diff.
+    envioInfo: Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
   }
 }
 

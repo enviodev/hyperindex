@@ -113,7 +113,6 @@ let makeStorage = (proxy: t): Persistence.storage => {
     )
   },
   resumeInitialState: async () => proxy.initialState,
-  readEnvioInfo: async () => None,
   loadByIdsOrThrow: async (~ids, ~table: Table.table, ~rowsSchema) => {
     let response = await proxy->sendRequest(~payload=LoadByIds({tableName: table.tableName, ids}))
     response->S.parseOrThrow(rowsSchema)
