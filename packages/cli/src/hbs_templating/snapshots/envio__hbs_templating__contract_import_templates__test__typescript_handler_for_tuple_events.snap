@@ -5,10 +5,10 @@ expression: content
 /*
  * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
-import { indexer } from "generated";
+import { indexer } from "envio";
 import type {
   SablierLockupTranched_CreateLockupTranchedStream,
-} from "generated";
+} from "envio";
 
 indexer.onEvent({ contract: "SablierLockupTranched", event: "CreateLockupTranchedStream" }, async ({ event, context }) => {
   const entity: SablierLockupTranched_CreateLockupTranchedStream = {

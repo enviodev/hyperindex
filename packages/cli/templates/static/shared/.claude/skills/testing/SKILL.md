@@ -11,11 +11,11 @@ description: >-
 
 ## Setup
 
-HyperIndex uses Vitest with `createTestIndexer()` from `generated`. The simplest way to start is auto-exit mode — no block ranges needed. The indexer automatically finds the first block with events and processes it.
+HyperIndex uses Vitest with `createTestIndexer()` from `envio`. The simplest way to start is auto-exit mode — no block ranges needed. The indexer automatically finds the first block with events and processes it.
 
 ```ts
 import { describe, it } from "vitest";
-import { createTestIndexer } from "generated";
+import { createTestIndexer } from "envio";
 
 describe("Indexer Testing", () => {
   it("Should process first two blocks with events", async (t) => {

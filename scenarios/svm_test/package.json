@@ -20,9 +20,6 @@
     "envio": "file:../../packages/envio",
     "rescript": "12.2.0"
   },
-  "optionalDependencies": {
-    "generated": "./generated"
-  },
   "engines": {
     "node": ">=22.0.0"
   }

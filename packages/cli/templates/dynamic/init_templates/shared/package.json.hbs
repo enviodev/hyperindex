@@ -29,9 +29,6 @@
     {{#each extra_dependencies}}"{{this.[0]}}": "{{this.[1]}}"{{#unless @last}},
     {{/unless}}{{/each}}{{/if}}
   },
-  "optionalDependencies": {
-    "generated": "{{relative_path_from_root_to_generated}}"
-  },
   "engines": {
     "node": ">=22.0.0"
   }

@@ -139,49 +139,16 @@ async fn execute_command_silent(
 }
 
 pub mod codegen {
-    use crate::{
-        config_parsing::system_config::SystemConfig, hbs_templating, template_dirs::TemplateDirs,
-    };
-    use anyhow::{self, Context, Result};
-    use std::path::Path;
-
-    use tokio::fs;
-
-    pub async fn remove_files_except_git(directory: &Path) -> Result<()> {
-        let mut entries = fs::read_dir(directory).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let file_type = entry.file_type().await?;
-            let path = entry.path();
-
-            if path.ends_with(".git") {
-                continue;
-            }
-
-            if file_type.is_dir() {
-                fs::remove_dir_all(&path).await?;
-            } else {
-                fs::remove_file(&path).await?;
-            }
-        }
-
-        Ok(())
-    }
+    use crate::{config_parsing::system_config::SystemConfig, hbs_templating};
+    use anyhow::{self, Context};
 
     pub async fn run_codegen(config: &SystemConfig) -> anyhow::Result<()> {
-        let template_dirs = TemplateDirs::new();
-        fs::create_dir_all(&config.parsed_project_paths.generated).await?;
-
         let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(config)
             .context("Failed creating project template")?;
 
-        template_dirs
-            .get_codegen_static_dir()?
-            .extract(&config.parsed_project_paths.generated)
-            .context("Failed extracting static codegen files")?;
-
         template
             .generate_templates(&config.parsed_project_paths)
-            .context("Failed generating dynamic codegen files")?;
+            .context("Failed generating codegen files")?;
 
         Ok(())
     }

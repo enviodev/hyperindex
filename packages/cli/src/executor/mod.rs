@@ -1,6 +1,7 @@
 use crate::{
     clap_definitions::{JsonSchema, Script},
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
+    commands,
     config_parsing::{human_config, system_config::SystemConfig},
     docker_env,
     project_paths::ParsedProjectPaths,
@@ -87,10 +88,13 @@ pub async fn execute(
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
 
-            // Always regenerate so the runtime never boots against a stale
-            // `generated/` (e.g. after an `envio` package upgrade). Mirrors
-            // `envio dev`; the JS side handles DB compat via `envio_info`.
-            codegen::purge_and_run(&config).await?;
+            // Always regenerate so the runtime never boots against stale
+            // codegen output (e.g. after an `envio` package upgrade).
+            // Mirrors `envio dev`; the JS side handles DB compat via
+            // `envio_info`.
+            commands::codegen::run_codegen(&config)
+                .await
+                .context("Failed running codegen")?;
 
             // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).

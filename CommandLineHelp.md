@@ -36,18 +36,15 @@ This document contains the help content for the `envio` command-line program.
 ###### **Subcommands:**
 
 * `init` — Initialize an indexer with one of the initialization options
-* `dev` — Development commands for starting, stopping, and restarting the indexer with automatic codegen for any changed files
+* `dev` — Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching
 * `stop` — Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
 * `codegen` — Generate indexing code from user-defined configuration & schema files
 * `local` — Prepare local environment for envio testing
-* `start` — Start the indexer without any automatic codegen
+* `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 
 ###### **Options:**
 
 * `-d`, `--directory <DIRECTORY>` — The directory of the project. Defaults to current dir ("./")
-* `-o`, `--output-directory <OUTPUT_DIRECTORY>` — The directory for generated code output. We recommend configuring this using the `output` field in your config.yaml instead
-
-  Default value: `generated`
 * `--config <CONFIG>` — The file in the project containing the configuration. It can also be set via the `ENVIO_CONFIG` environment variable
 
   Default value: `config.yaml`
@@ -73,6 +70,10 @@ Initialize an indexer with one of the initialization options
 * `-l`, `--language <LANGUAGE>` — The language used to write handlers
 
   Possible values: `typescript`, `rescript`
+
+* `--package-manager <PACKAGE_MANAGER>` — The package manager used for `install` and post-init build steps (default: pnpm)
+
+  Possible values: `pnpm`, `npm`, `yarn`, `bun`
 
 * `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file
 
@@ -242,13 +243,13 @@ Initialize Fuel indexer from an example template
 
 ## `envio dev`
 
-Development commands for starting, stopping, and restarting the indexer with automatic codegen for any changed files
+Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching
 
 **Usage:** `envio dev [OPTIONS]`
 
 ###### **Options:**
 
-* `-r`, `--restart` — Force restart: clear the database and re-index from scratch. Dev mode restarts automatically on config/schema changes, use this flag when you need a restart without making changes
+* `-r`, `--restart` — Force restart: clear the database and re-index from scratch. Required when config/schema/ABI changes are incompatible with the existing indexer state
 
 
 
@@ -350,7 +351,7 @@ Setup database by dropping schema and then running migrations
 
 ## `envio start`
 
-Start the indexer without any automatic codegen
+Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 
 **Usage:** `envio start [OPTIONS]`
 

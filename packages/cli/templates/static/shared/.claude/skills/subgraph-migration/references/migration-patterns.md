@@ -84,7 +84,7 @@ export function convertTokenToDecimal(tokenAmount: bigint, exchangeDecimals: big
 }
 
 // CORRECT — maintains precision
-import { BigDecimal } from "generated";
+import { BigDecimal } from "envio";
 
 export const ZERO_BD = new BigDecimal(0);
 export const ONE_BD = new BigDecimal(1);
