@@ -135,10 +135,9 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
   }, 30_000);
 
   it("envio metrics returns Prometheus output while indexer is running", () => {
-    expect(metricsWhileRunning).not.toBeNull();
     expect({
-      exitCode: metricsWhileRunning!.exitCode,
-      hasEnvioTypeLine: /^# TYPE envio_/m.test(metricsWhileRunning!.stdout),
+      exitCode: metricsWhileRunning?.exitCode,
+      hasEnvioTypeLine: /^# TYPE envio_/m.test(metricsWhileRunning?.stdout ?? ""),
     }).toEqual({ exitCode: 0, hasEnvioTypeLine: true });
   });
 

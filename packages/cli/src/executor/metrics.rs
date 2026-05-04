@@ -30,12 +30,10 @@ pub async fn run() -> Result<()> {
     })?;
 
     let status = response.status();
-    let body = response.text().await.map_err(|e| {
-        anyhow!(
-            "Failed to read metrics response body from {url}: {e}. \
-             Set ENVIO_INDEXER_PORT if the indexer is on a different port."
-        )
-    })?;
+    let body = response
+        .text()
+        .await
+        .map_err(|e| anyhow!("Failed to read metrics response body from {url} ({status}): {e}"))?;
 
     if !status.is_success() {
         return Err(anyhow!("Metrics endpoint {url} returned {status}: {body}"));
