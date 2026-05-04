@@ -6,6 +6,7 @@ import {
   type Indexer,
   type EvmChainId,
   type EvmChainName,
+  type EvmContractName,
   type EvmEvent,
   type FuelChainId,
   type FuelEvent,
@@ -18,12 +19,20 @@ import {
   type EvmOnEventContext,
   type EvmContractRegisterContext,
   type EvmOnEventWhere,
+  type Entity,
+  type EntityName,
+  type Enum,
+  type EnumName,
 } from "envio";
 import {
   type Address,
   type EvmOnBlockWhereResult,
   type EvmOnBlockFilter,
   type EvmOnBlockOptions,
+  type EvmOnBlockContext,
+  type EvmOnBlockHandler,
+  type EvmOnBlockHandlerArgs,
+  type EvmOnBlockWhereArgs,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 import { createTestIndexer } from "envio";
@@ -1765,5 +1774,113 @@ describe("onEvent / contractRegister types", () => {
     expectType<EvmOnBlockFilter>(_ok);
     expectType<EvmOnBlockFilter>(_partial);
     expectType<EvmOnBlockFilter>(_empty);
+  });
+});
+
+describe("Schema-bound types: Entity / EntityName / Enum / EnumName", () => {
+  it("EntityName accepts schema entity names and rejects others", () => {
+    // Positive: known entities are assignable to EntityName.
+    const _user: EntityName = "User";
+    const _gravatar: EntityName = "Gravatar";
+    expectType<EntityName>(_user);
+    expectType<EntityName>(_gravatar);
+
+    // @ts-expect-error - "NotAnEntity" is not in the schema
+    const _bad: EntityName = "NotAnEntity";
+  });
+
+  it("Entity<TName> resolves to the per-entity shape", () => {
+    // Entity<"User"> is the same shape as the per-entity alias `User`.
+    expectType<TypeEqual<Entity<"User">, User>>(true);
+
+    // Spot-check a couple of fields on the resolved type.
+    expectType<TypeEqual<Entity<"User">["id"], string>>(true);
+    expectType<
+      TypeEqual<Entity<"User">["accountType"], "ADMIN" | "USER">
+    >(true);
+    expectType<
+      TypeEqual<Entity<"User">["gravatar_id"], string | undefined>
+    >(true);
+
+    // @ts-expect-error - "NotAnEntity" is not assignable to EntityName
+    type _bad = Entity<"NotAnEntity">;
+  });
+
+  it("EnumName accepts schema enum names and rejects others", () => {
+    const _account: EnumName = "AccountType";
+    const _size: EnumName = "GravatarSize";
+    expectType<EnumName>(_account);
+    expectType<EnumName>(_size);
+
+    // @ts-expect-error - "NotAnEnum" is not in the schema
+    const _bad: EnumName = "NotAnEnum";
+  });
+
+  it("Enum<TName> resolves to the schema enum's value union", () => {
+    expectType<TypeEqual<Enum<"AccountType">, "ADMIN" | "USER">>(true);
+    expectType<
+      TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">
+    >(true);
+
+    // @ts-expect-error - "NotAnEnum" is not assignable to EnumName
+    type _bad = Enum<"NotAnEnum">;
+  });
+});
+
+describe("Config-bound types: EvmContractName", () => {
+  it("EvmContractName is the union of configured EVM contract names", () => {
+    expectType<
+      TypeEqual<
+        EvmContractName,
+        | "NftFactory"
+        | "EventFiltersTest"
+        | "SimpleNft"
+        | "TestEvents"
+        | "Gravatar"
+        | "Noop"
+      >
+    >(true);
+
+    // @ts-expect-error - "NotAContract" is not configured
+    const _bad: EvmContractName = "NotAContract";
+  });
+});
+
+describe("EvmOnBlock surface: Args / Context / Handler / WhereArgs", () => {
+  it("EvmOnBlockContext is an alias of EvmOnEventContext", () => {
+    expectType<TypeEqual<EvmOnBlockContext, EvmOnEventContext>>(true);
+  });
+
+  it("EvmOnBlockHandlerArgs has block.number and the block context", () => {
+    expectType<
+      TypeEqual<EvmOnBlockHandlerArgs["block"], { readonly number: number }>
+    >(true);
+    expectType<
+      TypeEqual<EvmOnBlockHandlerArgs["context"], EvmOnBlockContext>
+    >(true);
+  });
+
+  it("EvmOnBlockHandler is an async function from args to void", () => {
+    expectType<
+      TypeEqual<
+        EvmOnBlockHandler,
+        (args: EvmOnBlockHandlerArgs) => Promise<void>
+      >
+    >(true);
+  });
+
+  it("EvmOnBlockWhereArgs.chain exposes id and per-contract handles", () => {
+    // chain.id narrows to the configured EVM chain-id union.
+    expectType<TypeEqual<EvmOnBlockWhereArgs["chain"]["id"], EvmChainId>>(true);
+    expectType<TypeEqual<EvmOnBlockWhereArgs["chain"]["isLive"], boolean>>(
+      true
+    );
+    // Configured contracts are reachable on the chain handle.
+    expectType<
+      TypeEqual<EvmOnBlockWhereArgs["chain"]["NftFactory"]["name"], "NftFactory">
+    >(true);
+    expectType<
+      TypeEqual<EvmOnBlockWhereArgs["chain"]["Gravatar"]["name"], "Gravatar">
+    >(true);
   });
 });
