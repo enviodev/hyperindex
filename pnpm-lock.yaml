@@ -152,10 +152,6 @@ importers:
       vitest:
         specifier: 4.1.0
         version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
-    optionalDependencies:
-      generated:
-        specifier: ./generated
-        version: link:generated
 
   scenarios/fuel_test:
     dependencies:
@@ -181,10 +177,6 @@ importers:
       vitest:
         specifier: 4.1.0
         version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
-    optionalDependencies:
-      generated:
-        specifier: ./generated
-        version: link:generated
 
   scenarios/helpers:
     dependencies:
@@ -225,10 +217,6 @@ importers:
       vitest:
         specifier: 4.1.0
         version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
-    optionalDependencies:
-      generated:
-        specifier: ./generated
-        version: link:generated
 
   scenarios/test_codegen:
     dependencies:
@@ -272,12 +260,6 @@ importers:
       vitest:
         specifier: 4.1.0
         version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
-    optionalDependencies:
-      generated:
-        specifier: ./generated
-        version: link:generated
-
-  scenarios/test_codegen/generated: {}
 
 packages:
 

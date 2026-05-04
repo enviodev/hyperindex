@@ -1,5 +1,5 @@
 import { describe, it } from "vitest";
-import { createTestIndexer } from "generated";
+import { createTestIndexer } from "envio";
 
 describe("Indexer Testing", () => {
   it("Should register pool and handle swap events", async (t) => {

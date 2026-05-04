@@ -14,7 +14,6 @@ description: >-
 name: my-indexer
 description: Optional description
 schema: schema.graphql         # custom path (default: schema.graphql)
-output: generated/             # custom output path (default: generated/)
 address_format: checksum       # checksum (default) | lowercase
 
 contracts:

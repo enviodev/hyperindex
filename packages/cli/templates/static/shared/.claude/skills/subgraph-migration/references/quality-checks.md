@@ -23,15 +23,15 @@ pnpm test              # Run tests
 
 ```typescript
 // WRONG — Pair is a contract handler, not a type
-import { Pair, Token } from "generated";
+import { Pair, Token } from "envio";
 const p: Pair = { ... };
 
-// CORRECT — use Entities type map (only needed if name collides with a contract)
-import type { Entities } from "generated";
-const p: Entities["Pair"] = { ... };
+// CORRECT — use the Entity<"Name"> lookup
+import type { Entity } from "envio";
+const p: Entity<"Pair"> = { ... };
 ```
 
-If there's no collision (entity name differs from contract name), you can import the type directly from `"generated"`.
+`Entity<"Name">` is the safe form whenever an entity name collides with another export from `"envio"` (contract handlers, runtime types). For names that don't collide, the per-entity alias (`import type { Account } from "envio"`) also works.
 
 ### Issue 2: BigDecimal vs bigint Type Mismatches
 
@@ -53,17 +53,17 @@ export function fetchTokenTotalSupply(tokenAddress: string): bigint {
 ### Issue 3: Entity Field Name Mismatches
 
 **Problem:** Wrong field names that don't match generated types.
-**Symptom:** "Property 'token0' does not exist on type 'Entities["Pair"]'"
+**Symptom:** "Property 'token0' does not exist on type 'Entity<\"Pair\">'"
 
 ```typescript
 // WRONG
-const pair: Entities["Pair"] = {
+const pair: Entity<"Pair"> = {
   token0: token0.id,    // Should be token0_id
   token1: token1.id,    // Should be token1_id
 };
 
 // CORRECT — use _id suffix for relationships
-const pair: Entities["Pair"] = {
+const pair: Entity<"Pair"> = {
   token0_id: token0.id,
   token1_id: token1.id,
 };
@@ -78,8 +78,8 @@ const pair: Entities["Pair"] = {
 // WRONG
 import { BigDecimal } from "bignumber.js";
 
-// CORRECT — import from generated
-import { BigDecimal } from "generated";
+// CORRECT — import from envio
+import { BigDecimal } from "envio";
 ```
 
 ### Issue 5: Hardcoded Values Instead of Constants
@@ -179,11 +179,11 @@ const mints = await context.Mint.getWhere({ transaction_id: { _eq: transactionId
 
 ## 12 Common Fixes to Apply Automatically
 
-1. **Fix entity type imports** — Use `Entities["Name"]` from `"generated"` for entity types
+1. **Fix entity type imports** — Use `Entity<"Name">` from `"envio"` for entity types
 2. **Fix type mismatches** — Match entity field types exactly (BigDecimal vs bigint)
 3. **Fix field names** — Use exact field names from generated types (`_id` suffix)
-4. **Fix BigDecimal imports** — Import from `"generated"` not `"bignumber.js"`
-5. **Fix entity type annotations** — Use `Entities["Pair"]` when name collides with contract handler
+4. **Fix BigDecimal imports** — Import from `"envio"` not `"bignumber.js"`
+5. **Fix entity type annotations** — Use `Entity<"Pair">` when name collides with contract handler
 6. **Fix transaction field access** — Add `field_selection` in config.yaml
 7. **Fix hardcoded values** — Use constants from original subgraph
 8. **Fix missing field selection** — Add for ALL events needing transaction data
@@ -196,7 +196,7 @@ const mints = await context.Mint.getWhere({ transaction_id: { _eq: transactionId
 
 ```typescript
 // BEFORE — multiple issues
-import { Pair, Token } from "generated";
+import { Pair, Token } from "envio";
 import { BigDecimal } from "bignumber.js";
 
 const pair: Pair = {
@@ -205,10 +205,10 @@ const pair: Pair = {
 };
 
 // AFTER — all issues fixed
-import type { Entities } from "generated";
-import { BigDecimal } from "generated";
+import type { Entity } from "envio";
+import { BigDecimal } from "envio";
 
-const pair: Entities["Pair"] = {
+const pair: Entity<"Pair"> = {
   token0_id: token0.id,      // Correct field name
   totalSupply: ZERO_BI,      // Correct type (bigint)
 };

@@ -3,7 +3,7 @@
 process.env.E2E_EXPECTED_END_BLOCK = "10861774";
 
 import { describe, it } from "vitest";
-import { createTestIndexer } from "generated";
+import { createTestIndexer } from "envio";
 
 describe("Indexer smoke test", () => {
   it(

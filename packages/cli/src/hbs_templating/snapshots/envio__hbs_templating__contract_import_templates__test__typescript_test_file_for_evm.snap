@@ -1,10 +1,9 @@
 ---
 source: packages/cli/src/hbs_templating/contract_import_templates.rs
-assertion_line: 1104
 expression: content
 ---
 import { describe, it } from "vitest";
-import { createTestIndexer, type Contract1_NewGravatar } from "generated";
+import { createTestIndexer, type Contract1_NewGravatar } from "envio";
 import { TestHelpers } from "envio";
 
 describe("Contract1 contract NewGravatar event tests", () => {

@@ -1,7 +1,7 @@
 import { expectType, type TypeEqual } from "ts-expect";
 import assert from "assert";
 import { it } from "vitest";
-import { createTestIndexer, type EvmEvent } from "generated";
+import { createTestIndexer, type EvmEvent } from "envio";
 
 type CustomSelectionEvent = EvmEvent<"Gravatar", "CustomSelection">;
 type EmptyEventEvent = EvmEvent<"Gravatar", "EmptyEvent">;

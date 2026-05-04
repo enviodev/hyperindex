@@ -279,12 +279,10 @@ pub async fn run_init_args(
     let hbs_template = InitTemplates::new(
         init_config.name.clone(),
         &init_config.language,
-        &parsed_project_paths,
         envio_version.clone(),
         init_config.api_token,
         extra_dependencies,
-    )
-    .context("Failed creating init templates")?;
+    );
 
     let init_shared_template_dir = template_dirs.get_init_template_dynamic_shared()?;
 

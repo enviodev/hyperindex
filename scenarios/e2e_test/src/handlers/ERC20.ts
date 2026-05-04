@@ -1,4 +1,4 @@
-import { indexer } from "generated";
+import { indexer } from "envio";
 
 // Verify that indexer.chains reads endBlock from the database, not from config.
 // E2E_EXPECTED_END_BLOCK is always required so the check runs on every start.

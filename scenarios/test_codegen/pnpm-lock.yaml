@@ -48,10 +48,6 @@ importers:
       vitest:
         specifier: 4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.10.4)(jsdom@16.7.0)(tsx@4.21.0)
-    optionalDependencies:
-      generated:
-        specifier: ./generated
-        version: link:generated
 
   ../helpers:
     dependencies:
@@ -73,8 +69,6 @@ importers:
       rescript-schema:
         specifier: 9.5.1
         version: 9.5.1(rescript@12.2.0)
-
-  generated: {}
 
 packages:
 

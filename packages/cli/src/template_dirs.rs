@@ -177,27 +177,6 @@ impl<'a> TemplateDirs<'a> {
             .ok_or_else(|| anyhow!("Unexpected, {} templates dir does not exist", template_type))
     }
 
-    ///Gets the codegen template dir for either static or dynamic templates
-    fn get_codegen_dir(&self, template_type: TemplateType) -> Result<RelativeDir<'a>> {
-        let template_dir = self
-            .get_template_dir(template_type)
-            .context("Failed getting template dir")?;
-
-        template_dir
-            .get_dir("codegen")
-            .ok_or_else(|| anyhow!("Unexpected, codegen dir does not exist"))
-    }
-
-    ///Gets the templates/static/codegen directory
-    pub fn get_codegen_static_dir(&self) -> Result<RelativeDir<'a>> {
-        self.get_codegen_dir(TemplateType::Static)
-    }
-
-    ///Gets the templates/dynamic/codegen directory
-    pub fn get_codegen_dynamic_dir(&self) -> Result<RelativeDir<'a>> {
-        self.get_codegen_dir(TemplateType::Dynamic)
-    }
-
     ///Gets the templates/static/shared directory
     pub fn get_shared_static_dir(&self) -> Result<RelativeDir<'a>> {
         let template_dir = self
@@ -411,18 +390,6 @@ mod test {
     use super::*;
     use strum::IntoEnumIterator;
     use tempdir::TempDir;
-
-    #[test]
-    fn codegen_templates_exist() {
-        let template_dirs = TemplateDirs::new();
-        template_dirs
-            .get_codegen_static_dir()
-            .expect("codegen static");
-
-        template_dirs
-            .get_codegen_dynamic_dir()
-            .expect("codegen dynamic");
-    }
 
     #[test]
     fn shared_static_dir_exists() {

@@ -72,6 +72,15 @@ describe("Config.stripSensitiveData", () => {
     let input = json(`{"name": "demo", "entities": []}`)
     t.expect(Config.stripSensitiveData(input), ~message="passthrough").toEqual(input)
   })
+
+  it("strips isDev so toggling envio dev/start doesn't trigger compat reset", t => {
+    let dev = json(`{"name": "demo", "isDev": true, "entities": []}`)
+    let start = json(`{"name": "demo", "entities": []}`)
+    t.expect(
+      Config.stripSensitiveData(dev),
+      ~message="dev and start strip to identical envio_info",
+    ).toEqual(Config.stripSensitiveData(start))
+  })
 })
 
 describe("Config.diffPaths", () => {

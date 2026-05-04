@@ -21,7 +21,7 @@ This is an ESM project (`"type": "module"` in package.json). Top-level `await` i
 ## Handler Registration
 
 ```ts
-import { Contract } from "generated";
+import { Contract } from "envio";
 
 Contract.Event.handler(async ({ event, context }) => {
   // event.params.<name>  — decoded event parameters
@@ -84,7 +84,7 @@ if (entity) {
 ## `indexer` Runtime API
 
 ```ts
-import { indexer } from "generated";
+import { indexer } from "envio";
 
 indexer.name;                        // "my-indexer"
 indexer.chainIds;                    // [1, 137]

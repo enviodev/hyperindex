@@ -14,7 +14,7 @@ import {
   type EvmEvent,
   type NftCollection,
   type User,
-} from "generated";
+} from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
 

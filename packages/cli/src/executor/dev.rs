@@ -1,7 +1,8 @@
 use crate::{
+    commands,
     config_parsing::system_config::SystemConfig,
     docker_env,
-    executor::{build_start_command, codegen, Command},
+    executor::{build_start_command, Command},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
 };
@@ -11,10 +12,12 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
     let config =
         SystemConfig::parse_from_project_files(&project_paths).context("Failed parsing config")?;
 
-    // Always regenerate from a clean directory — the JS runtime now does the
+    // Always regenerate before launching — the JS runtime does the
     // config-vs-DB compatibility check, so there's no separate file-based
     // codegen-staleness gate to maintain.
-    codegen::purge_and_run(&config).await?;
+    commands::codegen::run_codegen(&config)
+        .await
+        .context("Failed running codegen")?;
 
     let up_result = docker_env::up(docker_env::UpOptions {
         project_root: &config.parsed_project_paths.project_root,
@@ -38,8 +41,6 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
     // reads `envio_info`, compares against the current config, and either
     // reuses the existing schema, initializes a fresh one, or errors out on
     // incompatible changes. `restart` only forces a reset.
-    let mut indexer_env = up_result.indexer_env.clone();
-    indexer_env.push(("ENVIO_DEV_MODE".to_string(), "true".to_string()));
-
-    build_start_command(&config, restart, &indexer_env).context("Failed building start command")
+    build_start_command(&config, restart, true, &up_result.indexer_env)
+        .context("Failed building start command")
 }

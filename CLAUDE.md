@@ -20,7 +20,7 @@
 - Rust CLI: `packages/cli`, entry at `lib.rs`, commands at `commands.rs`.
 - Config parsing pipeline: `human_config.rs` → `system_config.rs` → internal JSON → `hbs_templating/codegen_templates.rs` → `Config.res`.
 - Shared runtime library: `packages/envio`.
-- To edit runtime code, edit templates under `packages/cli/templates/`, not files in `generated/`.
+- To edit runtime code, edit templates under `packages/cli/templates/` or `packages/envio/`, not the codegen output under `<project>/.envio/`.
 - Prefer reading `.res` modules directly; ignore compiled `.js` artifacts.
 
 ## Testing
