@@ -143,11 +143,7 @@ describe("Test Persistence layer init", () => {
       persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
 
     storageMock.resolveIsInitialized(true)
-    // Drain enough microtasks for resumeInitialState to register its
-    // resolver before we resolve it.
-    for _ in 1 to 5 {
-      await Promise.resolve()
-    }
+    let _ = await Promise.resolve()
 
     let initialState: Persistence.initialState = {
       cleanRun: false,
@@ -187,9 +183,7 @@ Although it should load effect caches metadata.`,
         ~resetCommand=resetCmd,
       )
     storageMock.resolveIsInitialized(true)
-    for _ in 1 to 5 {
-      await Promise.resolve()
-    }
+    let _ = await Promise.resolve()
     let initialState: Persistence.initialState = {
       cleanRun: false,
       chains: [],

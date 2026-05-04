@@ -303,20 +303,21 @@ module EnvioInfo = {
   // was initialized by an older envio that didn't have `envio_info`.
   let undefinedTableSqlState = "42P01"
 
+  @get external getCode: JsExn.t => option<string> = "code"
+
   let read = async (sql, ~pgSchema): option<JSON.t> => {
-    let rows = try await sql->Postgres.unsafe(
+    let rows: array<{
+      "config": string,
+    }> = try await sql->Postgres.unsafe(
       `SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`,
     ) catch {
     | exn =>
       switch exn->JsExn.anyToExnInternal {
-      | JsExn(e) if (e->(Utils.magic: JsExn.t => {..}))["code"] === undefinedTableSqlState => []
+      | JsExn(e) if e->getCode === Some(undefinedTableSqlState) => []
       | _ => throw(exn)
       }
     }
-    rows
-    ->(Utils.magic: array<unknown> => array<{"config": string}>)
-    ->Belt.Array.get(0)
-    ->Belt.Option.map(row => row["config"]->JSON.parseOrThrow)
+    rows->Belt.Array.get(0)->Belt.Option.map(row => row["config"]->JSON.parseOrThrow)
   }
 
   // Upsert keyed on the fixed id so the table stays a singleton even if
