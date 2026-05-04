@@ -85,7 +85,7 @@ let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
 
 // Persistence is set by Main.start before handler modules load, so that
 // the exported indexer value can lazily expose DB state (startBlock,
-// endBlock, isLive, dynamic contract addresses) once it's ready.
+// endBlock, isRealtime, dynamic contract addresses) once it's ready.
 let globalPersistenceRef: ref<option<Persistence.t>> = ref(None)
 
 let getInitialChainState = (~chainId: int): option<Persistence.initialChainState> => {
@@ -143,25 +143,28 @@ let buildChainsObject = (~config: Config.t) => {
     )
     ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
     ->Utils.Object.defineProperty(
-      "isLive",
+      "isRealtime",
       {
         enumerable: true,
         get: () => {
           switch globalGsManagerRef.contents {
           | Some(gsManager) =>
-            let state = gsManager->GlobalStateManager.getState
-            let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
-            let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-            chainFetcher->ChainFetcher.isReady
+            (gsManager->GlobalStateManager.getState).chainManager->ChainManager.isRealtime
           // Before the GlobalStateManager is available (eg during handler
-          // module load after resume), derive liveness from persistence:
-          // a chain is considered live when it previously caught up to head
-          // or endBlock (timestampCaughtUpToHeadOrEndblock is set).
+          // module load after resume), derive from persistence: every chain
+          // must have previously caught up to head or endBlock. Mirror the
+          // ChainManager.makeFromDbState path: updateSyncTimeOnRestart wipes
+          // the saved timestamps so a restart re-enters backfill.
+          | None if Env.updateSyncTimeOnRestart => false
           | None =>
-            switch getInitialChainState(~chainId=chainConfig.id) {
-            | Some(chainState) => chainState.timestampCaughtUpToHeadOrEndblock->Option.isSome
-            | None => false
-            }
+            config.chainMap
+            ->ChainMap.values
+            ->Array.every(c =>
+              switch getInitialChainState(~chainId=c.id) {
+              | Some(chainState) => chainState.timestampCaughtUpToHeadOrEndblock->Option.isSome
+              | None => false
+              }
+            )
           }
         },
       },
@@ -608,13 +611,19 @@ type process
 
 type mainArgs = Yargs.parsedArgs<args>
 
-type migrateOpts = {reset: bool, persistedState: JSON.t}
+// The RPC-stripped public config that the storage layer persists in
+// `envio_info` (on initialize) and validates against (on resume).
+let getEnvioInfo = () => Config.getPublicConfigJson()->Config.stripSensitiveData
 
-let migrate = async (~reset, ~persistedState) => {
+let migrate = async (~reset) => {
   let config = Config.loadWithoutRegistrations()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
-  await persistence->Persistence.init(~reset, ~chainConfigs=config.chainMap->ChainMap.values)
-  await Core.upsertPersistedState(persistedState->JSON.stringify)
+  await persistence->Persistence.init(
+    ~reset,
+    ~chainConfigs=config.chainMap->ChainMap.values,
+    ~envioInfo=getEnvioInfo(),
+    ~resetCommand="envio local db-migrate setup",
+  )
   await persistence.storage.close()
 }
 
@@ -627,7 +636,7 @@ let dropSchema = async () => {
 
 let start = async (
   ~persistence: option<Persistence.t>=?,
-  ~migrate: option<migrateOpts>=?,
+  ~reset=false,
   ~isTest=false,
   ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
@@ -650,22 +659,21 @@ let start = async (
 
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
-  // `migrate`, when provided, folds the DB setup into the same `init()` call.
   let configWithoutRegistrations = Config.loadWithoutRegistrations()
   let persistence = switch persistence {
   | Some(p) => p
   | None => PgStorage.makePersistenceFromConfig(~config=configWithoutRegistrations)
   }
   globalPersistenceRef := Some(persistence)
-  let reset = migrate->Option.map(m => m.reset)->Option.getOr(false)
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
+    ~envioInfo=getEnvioInfo(),
+    // `envio dev` sets ENVIO_DEV_MODE=true (see executor/dev.rs); `envio
+    // start` doesn't. The flag drives the wipe-and-restart command we
+    // recommend in the incompat error.
+    ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
   )
-  switch migrate {
-  | Some({persistedState}) => await Core.upsertPersistedState(persistedState->JSON.stringify)
-  | None => ()
-  }
 
   // `Config.loadWithoutRegistrations` never sees registration state; handler,
   // contractRegister, and eventFilters are baked into each event config only

@@ -109,7 +109,7 @@ export type Prettify<T> = { [K in keyof T]: T[K] } & {};
  * Operator for filtering entity fields in getWhere queries.
  * Only fields with `@index` in the schema can be queried at runtime.
  */
-export type WhereOperator<T> = {
+export type GetWhereOperator<T> = {
   /** Matches entities where the field equals the given value. */
   readonly _eq?: T;
   /** Matches entities where the field is greater than the given value. */
@@ -126,13 +126,13 @@ export type WhereOperator<T> = {
 
 /**
  * Constructs a getWhere filter type from an entity type.
- * Each field can be filtered using {@link WhereOperator} (`_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`).
+ * Each field can be filtered using {@link GetWhereOperator} (`_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`).
  *
  * Note: only fields with `@index` in the schema can be queried at runtime.
  * Attempting to filter on a non-indexed field will throw a descriptive error.
  */
 export type GetWhereFilter<E> = {
-  [K in keyof E]?: WhereOperator<E[K]>;
+  [K in keyof E]?: GetWhereOperator<E[K]>;
 };
 
 type UnknownToOutput<T> = T extends Sury.Schema<unknown>
@@ -375,8 +375,9 @@ type EvmChain<
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether the chain has completed initial sync and is processing live events. */
-  readonly isLive: boolean;
+  /** Whether all chains have entered real-time indexing mode (caught up to head,
+   * or reached their configured endBlock for finite-range indexers). */
+  readonly isRealtime: boolean;
 } & {
   readonly [K in ContractName]: EvmContract<K>;
 };
@@ -430,8 +431,9 @@ type FuelChain<
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether the chain has completed initial sync and is processing live events. */
-  readonly isLive: boolean;
+  /** Whether all chains have entered real-time indexing mode (caught up to head,
+   * or reached their configured endBlock for finite-range indexers). */
+  readonly isRealtime: boolean;
 } & {
   readonly [K in ContractName]: FuelContract<K>;
 };
@@ -462,8 +464,9 @@ type SvmChain<Id extends number = number> = {
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether the chain has completed initial sync and is processing live events. */
-  readonly isLive: boolean;
+  /** Whether all chains have entered real-time indexing mode (caught up to head,
+   * or reached their configured endBlock for finite-range indexers). */
+  readonly isRealtime: boolean;
 };
 
 // ============== Indexer Type ==============
@@ -544,7 +547,7 @@ type BaseHandlerContext<Config extends IndexerConfigTypes = GlobalConfig, ChainI
   /** Chain state for the current event's chain. */
   readonly chain: {
     readonly id: ChainId;
-    readonly isLive: boolean;
+    readonly isRealtime: boolean;
   };
 } & {
   readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
@@ -582,8 +585,8 @@ type ContractRegistration = {
 };
 
 /** Context for contractRegister handlers. Chain object includes contract registration methods.
- * `isLive` is intentionally absent: contract registration runs during historical sync,
- * so the "live" distinction isn't meaningful and the runtime does not expose it. */
+ * `isRealtime` is intentionally absent: contract registration runs during historical sync,
+ * so the "realtime" distinction isn't meaningful and the runtime does not expose it. */
 export type EvmContractRegisterContext<Config extends IndexerConfigTypes = GlobalConfig> = Prettify<{
   readonly log: Logger;
   readonly chain: {
@@ -593,7 +596,7 @@ export type EvmContractRegisterContext<Config extends IndexerConfigTypes = Globa
   };
 }>;
 
-/** Context for contractRegister handlers in Fuel ecosystem. `isLive` is intentionally
+/** Context for contractRegister handlers in Fuel ecosystem. `isRealtime` is intentionally
  * absent — see EvmContractRegisterContext. */
 export type FuelContractRegisterContext<Config extends IndexerConfigTypes = GlobalConfig> = Prettify<{
   readonly log: Logger;

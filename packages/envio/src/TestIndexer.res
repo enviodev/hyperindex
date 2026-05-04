@@ -293,6 +293,9 @@ let makeInitialState = (
     chains,
     checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     reorgCheckpoints: [],
+    // TestIndexer fakes the resume path; mirror what Main.start passes as
+    // ~envioInfo so the compat check always sees an empty diff.
+    envioInfo: Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
   }
 }
 
@@ -579,7 +582,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
         {enumerable: true, value: chainConfig.endBlock},
       )
       ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
-      ->Utils.Object.definePropertyWithValue("isLive", {enumerable: true, value: false})
+      ->Utils.Object.definePropertyWithValue("isRealtime", {enumerable: true, value: false})
       ->ignore
 
       // Add contracts to chain object

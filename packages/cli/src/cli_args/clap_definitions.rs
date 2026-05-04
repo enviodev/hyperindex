@@ -58,6 +58,9 @@ pub enum CommandType {
     ///Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`.
     Start(StartArgs),
 
+    ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
+    Metrics,
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),

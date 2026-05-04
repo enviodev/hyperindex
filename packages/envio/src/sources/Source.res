@@ -32,7 +32,7 @@ type getItemsError =
 
 exception GetItemsError(getItemsError)
 
-type sourceFor = Sync | Fallback | Live
+type sourceFor = Sync | Fallback | Realtime
 
 type t = {
   name: string,

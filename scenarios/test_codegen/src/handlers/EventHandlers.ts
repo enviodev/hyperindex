@@ -161,7 +161,7 @@ indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ eve
       typeof context.chain,
       {
         readonly id: EvmChainId;
-        readonly isLive: boolean;
+        readonly isRealtime: boolean;
       }
     >
   >(true);

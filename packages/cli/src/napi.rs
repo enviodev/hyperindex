@@ -26,18 +26,6 @@ pub fn get_config_json(
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
 }
 
-/// Requires the migration tables to already exist.
-#[napi_derive::napi]
-pub async fn upsert_persisted_state(json: String) -> napi::Result<()> {
-    let state: crate::persisted_state::PersistedState = serde_json::from_str(&json)
-        .map_err(|e| napi::Error::from_reason(format!("Failed to parse persisted state: {e}")))?;
-    state
-        .upsert_to_db()
-        .await
-        .map_err(|e| napi::Error::from_reason(format!("Failed to upsert persisted state: {e}")))?;
-    Ok(())
-}
-
 /// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when
 /// Rust has handled the command end-to-end (help/version, codegen, init,
 /// stop, docker up/down). The Node process then exits with code 0.

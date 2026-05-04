@@ -10,17 +10,13 @@ NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
 
 // Wire format mirrors the Rust `executor::Command` enum — a tagged JSON
 // object with a `kind` discriminator.
-// `migrate` is `Null.t`, not `option`: Rust serde encodes `None` as JSON
-// `null`, but ReScript's `option` expects `undefined`, so a `null` value
-// wrongly passes `Option.map`'s `!== undefined` check. Callers convert via
-// `Null.toOption` at use time.
 type startCmd = {
-  migrate: Null.t<Main.migrateOpts>,
+  reset: bool,
   cwd: string,
   env: dict<JSON.t>,
   config: JSON.t,
 }
-type migrateCmd = {reset: bool, persistedState: JSON.t, config: JSON.t}
+type migrateCmd = {reset: bool, config: JSON.t}
 type dropSchemaCmd = {config: JSON.t}
 
 type command =
@@ -56,19 +52,19 @@ let applyEnv = (env: dict<JSON.t>) =>
 let run = async args => {
   try {
     switch (await Core.runCli(args))->Null.toOption {
-    // Rust-only command (codegen / init / stop / docker / help / version /
-    // scripts) — nothing for JS to do, exit cleanly.
+    // Rust-only command (codegen / init / stop / docker / metrics / help /
+    // version / scripts) — nothing for JS to do, exit cleanly.
     | None => ()
     | Some(json) =>
       switch decodeCommand(json->JSON.parseOrThrow) {
-      | Start({migrate, cwd, env, config}) =>
+      | Start({reset, cwd, env, config}) =>
         Config.prime(config)
         processChdir(cwd)
         applyEnv(env)
-        await Main.start(~migrate=?migrate->Null.toOption)
-      | Migrate({reset, persistedState, config}) =>
+        await Main.start(~reset)
+      | Migrate({reset, config}) =>
         Config.prime(config)
-        await Main.migrate(~reset, ~persistedState)
+        await Main.migrate(~reset)
       | DropSchema({config}) =>
         Config.prime(config)
         await Main.dropSchema()

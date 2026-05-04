@@ -1858,8 +1858,8 @@ type indexerChain = {
   startBlock: int,
   /** The block number to stop indexing at (if specified). */
   endBlock: option<int>,
-  /** Whether the chain has completed initial sync and is processing live events. */
-  isLive: bool,
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
+  isRealtime: bool,
   \"EventFiltersTest": indexerContract,
   \"Gravatar": indexerContract,
   \"NftFactory": indexerContract,

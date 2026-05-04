@@ -4,16 +4,16 @@ type sourceRole = Primary | Secondary
 
 let getSourceRole: (
   ~sourceFor: Source.sourceFor,
-  ~isLive: bool,
-  ~hasLive: bool,
+  ~isRealtime: bool,
+  ~hasRealtime: bool,
 ) => option<sourceRole>
 
 let make: (
   ~sources: array<Source.t>,
   ~maxPartitionConcurrency: int,
-  ~isLive: bool,
+  ~isRealtime: bool,
   ~newBlockStallTimeout: int=?,
-  ~newBlockStallTimeoutLive: int=?,
+  ~newBlockStallTimeoutRealtime: int=?,
   ~stalledPollingInterval: int=?,
   ~reducedPollingInterval: int=?,
   ~recoveryTimeout: float=?,
@@ -31,13 +31,18 @@ let fetchNext: (
   ~stateId: int,
 ) => promise<unit>
 
-let waitForNewBlock: (t, ~knownHeight: int, ~isLive: bool, ~reducedPolling: bool) => promise<int>
+let waitForNewBlock: (
+  t,
+  ~knownHeight: int,
+  ~isRealtime: bool,
+  ~reducedPolling: bool,
+) => promise<int>
 
 let executeQuery: (
   t,
   ~query: FetchState.query,
   ~knownHeight: int,
-  ~isLive: bool,
+  ~isRealtime: bool,
 ) => promise<Source.blockRangeFetchResponse>
 
 let makeGetHeightRetryInterval: (

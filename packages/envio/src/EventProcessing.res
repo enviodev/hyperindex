@@ -7,17 +7,17 @@ let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher
 let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.chains => {
   let chains = Dict.make()
 
-  chainFetchers
-  ->ChainMap.entries
-  ->Array.forEach(((chain, chainFetcher)) => {
-    let chainId = chain->ChainMap.Chain.toChainId->Int.toString
-    let isLive = chainFetcher->ChainFetcher.isReady
+  let isRealtime = chainFetchers->ChainMap.values->Array.every(cf => cf->ChainFetcher.isReady)
 
+  chainFetchers
+  ->ChainMap.keys
+  ->Array.forEach(chain => {
+    let chainId = chain->ChainMap.Chain.toChainId
     chains->Dict.set(
-      chainId,
+      chainId->Int.toString,
       {
-        Internal.id: chain->ChainMap.Chain.toChainId,
-        isLive,
+        Internal.id: chainId,
+        isRealtime,
       },
     )
   })

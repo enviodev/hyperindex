@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=../../../envio/evm.schema.json
+# Address kept unquoted on purpose — drives the regression test in
+# system_config.rs that locks the indexer-side YAML pipeline.
+name: unquoted-hex-address
+schema: ../schemas/schema.graphql
+description: Unquoted address regression
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Contract1
+        abi_file_path: ../abis/Contract1.json
+        handler: ./src/EventHandler.js
+        address: 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984
+        events:
+          - event: "NewGravatar"
+          - event: "UpdatedGravatar"

@@ -23,9 +23,10 @@ Utils.Object.defineProperty(
   effectContextPrototype,
   "log",
   {
-    get: () => {
+    // Wrap with toMethod so `this` binds to the EffectContext instance.
+    get: Utils.toMethod(() => {
       (paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))).item->Logging.getUserLogger
-    },
+    }),
   },
 )
 %%raw(`
@@ -239,6 +240,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
       (filter => getWhereHandler(params, filter->(Utils.magic: unknown => dict<dict<unknown>>)))->(
         Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown
       )
+
     | "getOrThrow" =>
       (
         (entityId, ~message=?) =>

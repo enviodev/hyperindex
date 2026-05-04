@@ -28,6 +28,7 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate down`↴](#envio-local-db-migrate-down)
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
 * [`envio start`↴](#envio-start)
+* [`envio metrics`↴](#envio-metrics)
 
 ## `envio`
 
@@ -41,6 +42,7 @@ This document contains the help content for the `envio` command-line program.
 * `codegen` — Generate indexing code from user-defined configuration & schema files
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
+* `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 
 ###### **Options:**
 
@@ -358,6 +360,14 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 ###### **Options:**
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
+
+
+
+## `envio metrics`
+
+Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
+
+**Usage:** `envio metrics`
 
 
 

@@ -49,6 +49,7 @@ module Storage = {
       "entities": array<Internal.entityConfig>,
       "chainConfigs": array<Config.chain>,
       "enums": array<Table.enumConfig<Table.enum>>,
+      "envioInfo": JSON.t,
     }>,
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,
@@ -115,12 +116,18 @@ module Storage = {
             isInitializedResolveFns->Array.push(resolve)->ignore
           })
         }),
-        initialize: implement(#initialize, (~chainConfigs=[], ~entities=[], ~enums=[]) => {
+        initialize: implement(#initialize, (
+          ~chainConfigs=[],
+          ~entities=[],
+          ~enums=[],
+          ~envioInfo,
+        ) => {
           initializeCalls
           ->Array.push({
             "entities": entities,
             "chainConfigs": chainConfigs,
             "enums": enums,
+            "envioInfo": envioInfo,
           })
           ->ignore
           Promise.make((resolve, _reject) => {
@@ -212,6 +219,7 @@ module Storage = {
         chains: [],
         reorgCheckpoints: [],
         checkpointId: 0n,
+        envioInfo: None,
       }),
     }
   }
@@ -336,7 +344,12 @@ module Indexer = {
 
     let gsManagerRef = ref(None)
 
-    await persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values, ~reset)
+    await persistence->Persistence.init(
+      ~chainConfigs=config.chainMap->ChainMap.values,
+      ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~resetCommand="envio dev -r",
+      ~reset,
+    )
 
     let chainManager = ChainManager.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,

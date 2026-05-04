@@ -649,6 +649,69 @@ describe("E2E tests", () => {
     ])
   })
 
+  // Reproduction for https://github.com/enviodev/hyperindex/issues/1173
+  // The effect context's `log` getter is compiled as an arrow function, so
+  // `this` is captured from the surrounding ESM module scope (undefined under
+  // strict mode) instead of the EffectContext instance. The lookup
+  // `paramsByThis.get(undefined)` returns undefined, and accessing `.item`
+  // throws `TypeError: Cannot read properties of undefined (reading 'item')`.
+  Async.it("context.log should be accessible from inside an effect handler", async t => {
+    let sourceMock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    let probeEffect = Envio.createEffect(
+      {
+        name: "logProbeEffect",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+      },
+      async ({input, context}) => {
+        context.log.info("hello from effect")
+        input ++ "-output"
+      },
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    let effectResult = ref(None)
+    let effectError = ref(None)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            switch await context.effect(probeEffect, "test") {
+            | output => effectResult := Some(output)
+            | exception exn => effectError := Some(exn)
+            }
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(
+      (effectError.contents, effectResult.contents),
+      ~message="context.log access from inside an effect must not throw",
+    ).toEqual((None, Some("test-output")))
+  })
+
   Async.it(
     "Should attempt fallback source when primary source fails with missing params",
     async t => {
@@ -1097,7 +1160,7 @@ describe("E2E tests", () => {
       let liveSource = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
-        ~sourceFor=Source.Live,
+        ~sourceFor=Source.Realtime,
       )
 
       let indexerMock = await MockIndexer.Indexer.make(
@@ -1145,7 +1208,7 @@ describe("E2E tests", () => {
       syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexerMock.getBatchWritePromise()
 
-      // First waitForNewBlock runs with isLive=false (NextQuery fires before
+      // First waitForNewBlock runs with isRealtime=false (NextQuery fires before
       // EventBatchProcessed sets timestampCaughtUpToHeadOrEndblock).
       // Only Sync participates in height racing initially.
       t.expect(
@@ -1154,7 +1217,7 @@ describe("E2E tests", () => {
       ).toEqual(2)
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should NOT participate yet (isLive still false)",
+        ~message="Live source should NOT participate yet (isRealtime still false)",
       ).toEqual(0)
 
       // Resolve the first waitForNewBlock to advance to the next cycle
@@ -1170,7 +1233,7 @@ describe("E2E tests", () => {
       liveSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
       await indexerMock.getBatchWritePromise()
 
-      // Now isLive=true (EventBatchProcessed has set timestampCaughtUpToHeadOrEndblock).
+      // Now isRealtime=true (EventBatchProcessed has set timestampCaughtUpToHeadOrEndblock).
       // Second waitForNewBlock: Live=Primary races, Sync=Secondary (not in main group).
       t.expect(
         syncSource.getHeightOrThrowCalls->Array.length,
@@ -1178,7 +1241,7 @@ describe("E2E tests", () => {
       ).toEqual(2)
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should now participate in height racing after isLive=true",
+        ~message="Live source should now participate in height racing after isRealtime=true",
       ).toEqual(1)
     },
   )

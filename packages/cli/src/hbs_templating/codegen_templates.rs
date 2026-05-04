@@ -1323,8 +1323,8 @@ type indexerChain = {{
   startBlock: int,
   /** The block number to stop indexing at (if specified). */
   endBlock: option<int>,
-  /** Whether the chain has completed initial sync and is processing live events. */
-  isLive: bool,{contract_fields}
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
+  isRealtime: bool,{contract_fields}
 }}"#
         );
 

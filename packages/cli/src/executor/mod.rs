@@ -4,7 +4,6 @@ use crate::{
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
     docker_env,
-    persisted_state::PersistedState,
     project_paths::ParsedProjectPaths,
     scripts,
 };
@@ -13,6 +12,7 @@ mod codegen;
 mod dev;
 pub mod init;
 mod local;
+mod metrics;
 
 use anyhow::{Context, Result};
 use schemars::schema_for;
@@ -25,30 +25,22 @@ use schemars::schema_for;
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Command {
-    /// `migrate: Some` folds the migration into the same `init()` call as
-    /// the indexer startup.
+    /// `reset: true` wipes the schema before the indexer's first init call;
+    /// the runtime always runs `Persistence.init` either way (DB compat and
+    /// migration decisions live in ReScript now).
     Start {
-        migrate: Option<MigrateOpts>,
+        reset: bool,
         cwd: String,
         env: serde_json::Map<String, serde_json::Value>,
         config: serde_json::Value,
     },
     Migrate {
         reset: bool,
-        #[serde(rename = "persistedState")]
-        persisted_state: PersistedState,
         config: serde_json::Value,
     },
     DropSchema {
         config: serde_json::Value,
     },
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct MigrateOpts {
-    pub reset: bool,
-    #[serde(rename = "persistedState")]
-    pub persisted_state: PersistedState,
 }
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
@@ -87,28 +79,26 @@ pub async fn execute(
             Ok(None)
         }
 
+        CommandType::Metrics => {
+            metrics::run().await?;
+            Ok(None)
+        }
+
         CommandType::Start(start_args) => {
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
 
+            // Always regenerate so the runtime never boots against stale
+            // codegen output (e.g. after an `envio` package upgrade).
+            // Mirrors `envio dev`; the JS side handles DB compat via
+            // `envio_info`.
             commands::codegen::run_codegen(&config)
                 .await
                 .context("Failed running codegen")?;
 
-            let migrate = if start_args.restart {
-                let persisted_state = PersistedState::get_current_state(&config)
-                    .context("Failed constructing persisted state")?;
-                Some(MigrateOpts {
-                    reset: true,
-                    persisted_state,
-                })
-            } else {
-                None
-            };
-
             // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).
-            Ok(Some(build_start_command(&config, migrate, &[])?))
+            Ok(Some(build_start_command(&config, start_args.restart, &[])?))
         }
 
         CommandType::Local(local_commands) => {
@@ -161,7 +151,7 @@ pub async fn execute(
 /// append extra env pairs (e.g. `ENVIO_DEV_MODE` for `envio dev`).
 pub fn build_start_command(
     config: &SystemConfig,
-    migrate: Option<MigrateOpts>,
+    reset: bool,
     extra_env: &[(String, String)],
 ) -> Result<Command> {
     let config_path = config
@@ -176,7 +166,7 @@ pub fn build_start_command(
             .collect();
 
     Ok(Command::Start {
-        migrate,
+        reset,
         cwd: config
             .parsed_project_paths
             .project_root
