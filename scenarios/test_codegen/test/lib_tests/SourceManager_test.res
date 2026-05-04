@@ -76,7 +76,7 @@ describe("SourceManager creation", () => {
   it("Successfully creates with a sync source", t => {
     let source = MockIndexer.Source.make([]).source
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[source],
       ~maxPartitionConcurrency=10,
     )
@@ -88,7 +88,7 @@ describe("SourceManager creation", () => {
     let sync0 = MockIndexer.Source.make([]).source
     let sync1 = MockIndexer.Source.make([]).source
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[fallback, sync0, sync1],
       ~maxPartitionConcurrency=10,
     )
@@ -96,10 +96,10 @@ describe("SourceManager creation", () => {
   })
 
   it("Prefers sync source over live source as initial active source", t => {
-    let live = MockIndexer.Source.make([], ~sourceFor=Live).source
+    let live = MockIndexer.Source.make([], ~sourceFor=Realtime).source
     let sync = MockIndexer.Source.make([]).source
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[live, sync],
       ~maxPartitionConcurrency=10,
     )
@@ -109,9 +109,9 @@ describe("SourceManager creation", () => {
 
   it("Prefers live source over sync source as initial active source in live mode", t => {
     let sync = MockIndexer.Source.make([]).source
-    let live = MockIndexer.Source.make([], ~sourceFor=Live).source
+    let live = MockIndexer.Source.make([], ~sourceFor=Realtime).source
     let sourceManager = SourceManager.make(
-      ~isLive=true,
+      ~isRealtime=true,
       ~sources=[sync, live],
       ~maxPartitionConcurrency=10,
     )
@@ -121,13 +121,13 @@ describe("SourceManager creation", () => {
   it("Fails to create without primary sources", t => {
     t.expect(
       () => {
-        SourceManager.make(~isLive=false, ~sources=[], ~maxPartitionConcurrency=10)
+        SourceManager.make(~isRealtime=false, ~sources=[], ~maxPartitionConcurrency=10)
       },
     ).toThrowError("Invalid configuration, no data-source for historical sync provided")
     t.expect(
       () => {
         SourceManager.make(
-          ~isLive=false,
+          ~isRealtime=false,
           ~sources=[MockIndexer.Source.make([], ~sourceFor=Fallback).source],
           ~maxPartitionConcurrency=10,
         )
@@ -137,43 +137,43 @@ describe("SourceManager creation", () => {
 })
 
 describe("SourceManager.getSourceRole", () => {
-  it("Backfill (isLive=false): Sync is Primary, Fallback is Secondary, Live is ignored", t => {
-    t.expect(SourceManager.getSourceRole(~sourceFor=Sync, ~isLive=false, ~hasLive=false)).toEqual(
+  it("Backfill (isRealtime=false): Sync is Primary, Fallback is Secondary, Live is ignored", t => {
+    t.expect(SourceManager.getSourceRole(~sourceFor=Sync, ~isRealtime=false, ~hasRealtime=false)).toEqual(
       Some(Primary),
     )
     t.expect(
-      SourceManager.getSourceRole(~sourceFor=Fallback, ~isLive=false, ~hasLive=false),
+      SourceManager.getSourceRole(~sourceFor=Fallback, ~isRealtime=false, ~hasRealtime=false),
     ).toEqual(Some(Secondary))
-    t.expect(SourceManager.getSourceRole(~sourceFor=Live, ~isLive=false, ~hasLive=false)).toEqual(
+    t.expect(SourceManager.getSourceRole(~sourceFor=Realtime, ~isRealtime=false, ~hasRealtime=false)).toEqual(
       None,
     )
-    // hasLive doesn't matter during backfill
-    t.expect(SourceManager.getSourceRole(~sourceFor=Sync, ~isLive=false, ~hasLive=true)).toEqual(
+    // hasRealtime doesn't matter during backfill
+    t.expect(SourceManager.getSourceRole(~sourceFor=Sync, ~isRealtime=false, ~hasRealtime=true)).toEqual(
       Some(Primary),
     )
-    t.expect(SourceManager.getSourceRole(~sourceFor=Live, ~isLive=false, ~hasLive=true)).toEqual(
+    t.expect(SourceManager.getSourceRole(~sourceFor=Realtime, ~isRealtime=false, ~hasRealtime=true)).toEqual(
       None,
     )
   })
 
   it("Live mode with Live source: Live is Primary, Sync+Fallback are Secondary", t => {
-    t.expect(SourceManager.getSourceRole(~sourceFor=Live, ~isLive=true, ~hasLive=true)).toEqual(
+    t.expect(SourceManager.getSourceRole(~sourceFor=Realtime, ~isRealtime=true, ~hasRealtime=true)).toEqual(
       Some(Primary),
     )
-    t.expect(SourceManager.getSourceRole(~sourceFor=Sync, ~isLive=true, ~hasLive=true)).toEqual(
+    t.expect(SourceManager.getSourceRole(~sourceFor=Sync, ~isRealtime=true, ~hasRealtime=true)).toEqual(
       Some(Secondary),
     )
-    t.expect(SourceManager.getSourceRole(~sourceFor=Fallback, ~isLive=true, ~hasLive=true)).toEqual(
+    t.expect(SourceManager.getSourceRole(~sourceFor=Fallback, ~isRealtime=true, ~hasRealtime=true)).toEqual(
       Some(Secondary),
     )
   })
 
   it("Live mode without Live source: Sync is Primary, Fallback is Secondary", t => {
-    t.expect(SourceManager.getSourceRole(~sourceFor=Sync, ~isLive=true, ~hasLive=false)).toEqual(
+    t.expect(SourceManager.getSourceRole(~sourceFor=Sync, ~isRealtime=true, ~hasRealtime=false)).toEqual(
       Some(Primary),
     )
     t.expect(
-      SourceManager.getSourceRole(~sourceFor=Fallback, ~isLive=true, ~hasLive=false),
+      SourceManager.getSourceRole(~sourceFor=Fallback, ~isRealtime=true, ~hasRealtime=false),
     ).toEqual(Some(Secondary))
   })
 })
@@ -193,20 +193,20 @@ describe("SourceManager source priority with Live sources", () => {
   }
 
   Async.it(
-    "During isLive=true with Live source: Live is primary, Sync+Fallback are secondary in waitForNewBlock",
+    "During isRealtime=true with Live source: Live is primary, Sync+Fallback are secondary in waitForNewBlock",
     async t => {
       let syncMock = MockIndexer.Source.make([#getHeightOrThrow])
-      let liveMock = MockIndexer.Source.make([#getHeightOrThrow], ~sourceFor=Live)
+      let liveMock = MockIndexer.Source.make([#getHeightOrThrow], ~sourceFor=Realtime)
       let fallbackMock = MockIndexer.Source.make([#getHeightOrThrow], ~sourceFor=Fallback)
-      let newBlockStallTimeoutLive = 5
+      let newBlockStallTimeoutRealtime = 5
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
-        ~newBlockStallTimeoutLive,
+        ~newBlockStallTimeoutRealtime,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
 
       // Live is primary - should be called immediately
       t.expect(
@@ -231,26 +231,26 @@ describe("SourceManager source priority with Live sources", () => {
   )
 
   Async.it(
-    "During isLive=true with Live source: Sync and Fallback are used as secondary after timeout",
+    "During isRealtime=true with Live source: Sync and Fallback are used as secondary after timeout",
     async t => {
       let syncMock = MockIndexer.Source.make([#getHeightOrThrow])
-      let liveMock = MockIndexer.Source.make([#getHeightOrThrow], ~sourceFor=Live)
+      let liveMock = MockIndexer.Source.make([#getHeightOrThrow], ~sourceFor=Realtime)
       let fallbackMock = MockIndexer.Source.make([#getHeightOrThrow], ~sourceFor=Fallback)
-      let newBlockStallTimeoutLive = 5
+      let newBlockStallTimeoutRealtime = 5
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
-        ~newBlockStallTimeoutLive,
+        ~newBlockStallTimeoutRealtime,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
 
       // Live doesn't find new block
       liveMock.resolveGetHeightOrThrow(100)
 
       // Wait for stall timeout
-      await Utils.delay(newBlockStallTimeoutLive)
+      await Utils.delay(newBlockStallTimeoutRealtime)
 
       // After timeout, Sync and Fallback should be called as secondaries
       t.expect(
@@ -270,27 +270,27 @@ describe("SourceManager source priority with Live sources", () => {
   )
 
   Async.it(
-    "During isLive=true with Live source: recovery from secondary goes to Live (not Sync)",
+    "During isRealtime=true with Live source: recovery from secondary goes to Live (not Sync)",
     async t => {
       let syncMock = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow])
-      let liveMock = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Live)
+      let liveMock = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Realtime)
       let fallbackMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow],
         ~sourceFor=Fallback,
       )
-      let newBlockStallTimeoutLive = 0
+      let newBlockStallTimeoutRealtime = 0
       let sourceManager = SourceManager.make(
-        ~isLive=false,
-        ~newBlockStallTimeoutLive,
+        ~isRealtime=false,
+        ~newBlockStallTimeoutRealtime,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
       )
 
       {
-        // Switch to fallback via waitForNewBlock with isLive=true
+        // Switch to fallback via waitForNewBlock with isRealtime=true
 
-        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
-        await Utils.delay(newBlockStallTimeoutLive)
+        let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
+        await Utils.delay(newBlockStallTimeoutRealtime)
         fallbackMock.resolveGetHeightOrThrow(101)
         t.expect(await p).toBe(101)
         t.expect(sourceManager->SourceManager.getActiveSource).toBe(fallbackMock.source)
@@ -298,12 +298,12 @@ describe("SourceManager source priority with Live sources", () => {
 
       {
         // Live never failed in executeQuery, recovery is immediate.
-        // With isLive=true, Live is Primary so recovery goes to Live, not Sync.
+        // With isRealtime=true, Live is Primary so recovery goes to Live, not Sync.
 
         let p =
           sourceManager->SourceManager.executeQuery(
             ~query=mockQuery(),
-            ~isLive=true,
+            ~isRealtime=true,
             ~knownHeight=100,
           )
         // The query goes to Live (recovered primary), not fallback
@@ -316,23 +316,23 @@ describe("SourceManager source priority with Live sources", () => {
 
       t.expect(
         sourceManager->SourceManager.getActiveSource,
-        ~message="Should recover to Live source (primary when isLive=true), not Sync",
+        ~message="Should recover to Live source (primary when isRealtime=true), not Sync",
       ).toBe(liveMock.source)
     },
   )
 
   Async.it(
-    "During isLive=true without Live source: Sync is primary, Fallback is secondary",
+    "During isRealtime=true without Live source: Sync is primary, Fallback is secondary",
     async t => {
       let syncMock = MockIndexer.Source.make([#getHeightOrThrow])
       let fallbackMock = MockIndexer.Source.make([#getHeightOrThrow], ~sourceFor=Fallback)
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[syncMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=0, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=0, ~reducedPolling=false)
 
       t.expect(
         syncMock.getHeightOrThrowCalls->Array.length,
@@ -459,7 +459,7 @@ describe("SourceManager fetchNext", () => {
     "Executes full partitions in any order when we didn't reach concurency limit",
     async t => {
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[source],
         ~maxPartitionConcurrency=10,
       )
@@ -529,7 +529,7 @@ describe("SourceManager fetchNext", () => {
     "Slices full partitions to the concurrency limit, takes the earliest queries first",
     async t => {
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[source],
         ~maxPartitionConcurrency=2,
       )
@@ -587,7 +587,7 @@ describe("SourceManager fetchNext", () => {
     "Skips full partitions at the chain last block and the ones at the mergeBlock",
     async t => {
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[source],
         ~maxPartitionConcurrency=10,
       )
@@ -623,7 +623,7 @@ describe("SourceManager fetchNext", () => {
 
   Async.it("Starts indexing from the initial state", async t => {
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[source],
       ~maxPartitionConcurrency=10,
     )
@@ -673,7 +673,7 @@ describe("SourceManager fetchNext", () => {
 
   Async.it("Waits for new block with knownHeight=0 even when all partitions are done", async t => {
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[source],
       ~maxPartitionConcurrency=10,
     )
@@ -704,7 +704,7 @@ describe("SourceManager fetchNext", () => {
 
   Async.it("Waits for new block when all partitions are at the knownHeight", async t => {
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[source],
       ~maxPartitionConcurrency=10,
     )
@@ -749,7 +749,7 @@ describe("SourceManager fetchNext", () => {
 
   Async.it("Restarts waiting for new block after a rollback", async t => {
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[source],
       ~maxPartitionConcurrency=10,
     )
@@ -810,7 +810,7 @@ describe("SourceManager fetchNext", () => {
 
   Async.it("Can add new partitions until the concurrency limit reached", async t => {
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[source],
       ~maxPartitionConcurrency=3,
     )
@@ -932,7 +932,7 @@ describe("SourceManager fetchNext", () => {
 
   Async.it("Should not query partitions that are at max queue size", async t => {
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[source],
       ~maxPartitionConcurrency=10,
     )
@@ -977,7 +977,7 @@ describe("SourceManager fetchNext", () => {
 
   Async.it("Sorts after all the filtering is applied", async t => {
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[source],
       ~maxPartitionConcurrency=1,
     )
@@ -1019,12 +1019,12 @@ describe("SourceManager wait for new blocks", () => {
         #getHeightOrThrow,
       ])
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[source],
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=0, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=0, ~reducedPolling=false)
 
       t.expect(getHeightOrThrowCalls->Array.length).toEqual(1)
       resolveGetHeightOrThrow(1)
@@ -1039,12 +1039,12 @@ describe("SourceManager wait for new blocks", () => {
       let mock0 = MockIndexer.Source.make([#getHeightOrThrow])
       let mock1 = MockIndexer.Source.make([#getHeightOrThrow])
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[mock0.source, mock1.source],
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=0, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=0, ~reducedPolling=false)
 
       t.expect(mock0.getHeightOrThrowCalls->Array.length).toEqual(1)
       t.expect(mock1.getHeightOrThrowCalls->Array.length).toEqual(1)
@@ -1071,16 +1071,16 @@ describe("SourceManager wait for new blocks", () => {
     },
   )
 
-  Async.it("Excludes live source from height fetch when isLive is false", async t => {
+  Async.it("Excludes live source from height fetch when isRealtime is false", async t => {
     let syncMock = MockIndexer.Source.make([#getHeightOrThrow])
-    let liveMock = MockIndexer.Source.make([#getHeightOrThrow], ~sourceFor=Live)
+    let liveMock = MockIndexer.Source.make([#getHeightOrThrow], ~sourceFor=Realtime)
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[syncMock.source, liveMock.source],
       ~maxPartitionConcurrency=10,
     )
 
-    let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=0, ~reducedPolling=false)
+    let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=0, ~reducedPolling=false)
 
     t.expect(
       syncMock.getHeightOrThrowCalls->Array.length,
@@ -1088,7 +1088,7 @@ describe("SourceManager wait for new blocks", () => {
     ).toEqual(1)
     t.expect(
       liveMock.getHeightOrThrowCalls->Array.length,
-      ~message="Should not call live source when isLive is false",
+      ~message="Should not call live source when isRealtime is false",
     ).toEqual(0)
 
     syncMock.resolveGetHeightOrThrow(1)
@@ -1099,15 +1099,15 @@ describe("SourceManager wait for new blocks", () => {
     ).toBe(syncMock.source)
   })
 
-  Async.it("Includes live source in height fetch when isLive is true", async t => {
+  Async.it("Includes live source in height fetch when isRealtime is true", async t => {
     let syncMock = MockIndexer.Source.make([#getHeightOrThrow])
-    let liveMock = MockIndexer.Source.make([#getHeightOrThrow], ~sourceFor=Live)
+    let liveMock = MockIndexer.Source.make([#getHeightOrThrow], ~sourceFor=Realtime)
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[syncMock.source, liveMock.source],
       ~maxPartitionConcurrency=10,
     )
-    let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=0, ~reducedPolling=false)
+    let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=0, ~reducedPolling=false)
 
     // With new priority logic: Live is Primary, Sync is Secondary when Live is present
     t.expect(
@@ -1116,7 +1116,7 @@ describe("SourceManager wait for new blocks", () => {
     ).toEqual(0)
     t.expect(
       liveMock.getHeightOrThrowCalls->Array.length,
-      ~message="Should call live source as primary when isLive is true",
+      ~message="Should call live source as primary when isRealtime is true",
     ).toEqual(1)
 
     liveMock.resolveGetHeightOrThrow(1)
@@ -1136,12 +1136,12 @@ describe("SourceManager wait for new blocks", () => {
       let mock0 = MockIndexer.Source.make([#getHeightOrThrow], ~pollingInterval=pollingInterval0)
       let mock1 = MockIndexer.Source.make([#getHeightOrThrow], ~pollingInterval=pollingInterval1)
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[mock0.source, mock1.source],
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=100, ~reducedPolling=false)
 
       let ((), ()) = await Promise.all2((
         (
@@ -1224,7 +1224,7 @@ describe("SourceManager wait for new blocks", () => {
       let mock0 = MockIndexer.Source.make([#getHeightOrThrow], ~pollingInterval=pollingInterval0)
       let mock1 = MockIndexer.Source.make([#getHeightOrThrow], ~pollingInterval=pollingInterval1)
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[mock0.source, mock1.source],
         ~maxPartitionConcurrency=10,
         ~getHeightRetryInterval=SourceManager.makeGetHeightRetryInterval(
@@ -1234,7 +1234,7 @@ describe("SourceManager wait for new blocks", () => {
         ),
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=100, ~reducedPolling=false)
 
       let ((), ()) = await Promise.all2((
         (
@@ -1362,14 +1362,14 @@ describe("SourceManager wait for new blocks", () => {
         ~pollingInterval,
       )
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[sync.source, fallback.source],
         ~maxPartitionConcurrency=10,
         ~newBlockStallTimeout,
         ~stalledPollingInterval,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=100, ~reducedPolling=false)
 
       t.expect(sync.getHeightOrThrowCalls->Array.length).toEqual(1)
       t.expect(fallback.getHeightOrThrowCalls->Array.length).toEqual(0)
@@ -1441,7 +1441,7 @@ describe("SourceManager wait for new blocks", () => {
         ~message="Polling for fallback source should stop after successful response",
       ).toEqual(2)
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=101, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=101, ~reducedPolling=false)
 
       t.expect(
         sync.getHeightOrThrowCalls->Array.length,
@@ -1486,14 +1486,14 @@ describe("SourceManager wait for new blocks", () => {
       let sync = MockIndexer.Source.make([#getHeightOrThrow], ~pollingInterval)
 
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[sync.source],
         ~maxPartitionConcurrency=10,
         ~newBlockStallTimeout,
         ~stalledPollingInterval,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=100, ~reducedPolling=false)
 
       t.expect(sync.getHeightOrThrowCalls->Array.length).toEqual(1)
       sync.resolveGetHeightOrThrow(100)
@@ -1541,7 +1541,7 @@ describe("SourceManager wait for new blocks", () => {
       let sync = MockIndexer.Source.make([#getHeightOrThrow], ~pollingInterval)
 
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[sync.source],
         ~maxPartitionConcurrency=10,
         ~stalledPollingInterval,
@@ -1549,7 +1549,7 @@ describe("SourceManager wait for new blocks", () => {
       )
 
       let p = sourceManager->SourceManager.waitForNewBlock(
-        ~isLive=false,
+        ~isRealtime=false,
         ~knownHeight=100,
         ~reducedPolling=true,
       )
@@ -1597,12 +1597,12 @@ describe("SourceManager.executeQuery", () => {
       #getItemsOrThrow,
     ])
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[source],
       ~maxPartitionConcurrency=10,
     )
     let p =
-      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=false, ~knownHeight=100)
     t.expect(getItemsOrThrowCalls->Array.map(call => call.payload)).toEqual([
       {"fromBlock": 0, "toBlock": None, "retry": 0, "p": "0"},
     ])
@@ -1613,12 +1613,12 @@ describe("SourceManager.executeQuery", () => {
   Async.it("Rethrows unknown errors", async t => {
     let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[sourceMock.source],
       ~maxPartitionConcurrency=10,
     )
     let p =
-      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=false, ~knownHeight=100)
     let error = {
       "message": "Something went wrong",
     }
@@ -1634,7 +1634,7 @@ describe("SourceManager.executeQuery", () => {
   Async.it("Immediately retries with the suggested toBlock", async t => {
     let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[
         sourceMock.source,
         // Added second source without mock to the test,
@@ -1644,7 +1644,7 @@ describe("SourceManager.executeQuery", () => {
       ~maxPartitionConcurrency=10,
     )
     let p =
-      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=false, ~knownHeight=100)
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.length,
       ~message="Should call getItemsOrThrow",
@@ -1684,7 +1684,7 @@ describe("SourceManager.executeQuery", () => {
       let syncMock = MockIndexer.Source.make([#getItemsOrThrow])
       let fallbackMock = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Fallback)
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[syncMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
       )
@@ -1693,7 +1693,7 @@ describe("SourceManager.executeQuery", () => {
       let p =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
-          ~isLive=false,
+          ~isRealtime=false,
           ~knownHeight=100,
         )
 
@@ -1801,7 +1801,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       )
       let newBlockStallTimeout = 0
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~newBlockStallTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
@@ -1810,7 +1810,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       {
         // Switch active source to fallback via waitForNewBlock
 
-        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
+        let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=100, ~reducedPolling=false)
         await Utils.delay(newBlockStallTimeout)
         fallbackMock.resolveGetHeightOrThrow(101)
         t.expect(await p).toBe(101)
@@ -1827,7 +1827,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         let p =
           sourceManager->SourceManager.executeQuery(
             ~query=mockQuery(),
-            ~isLive=false,
+            ~isRealtime=false,
             ~knownHeight=100,
           )
         // Query goes to sync (recovered primary), not fallback
@@ -1855,7 +1855,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       )
       let recoveryTimeout = 5.0
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~recoveryTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
@@ -1867,7 +1867,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         let p =
           sourceManager->SourceManager.executeQuery(
             ~query=mockQuery(),
-            ~isLive=false,
+            ~isRealtime=false,
             ~knownHeight=100,
           )
         // Fail sync twice (retries 0, 1 don't switch), then on retry 2 it switches
@@ -1909,7 +1909,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         let p =
           sourceManager->SourceManager.executeQuery(
             ~query=mockQuery(),
-            ~isLive=false,
+            ~isRealtime=false,
             ~knownHeight=100,
           )
         switch fallbackMock.getItemsOrThrowCalls {
@@ -1933,7 +1933,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         let p =
           sourceManager->SourceManager.executeQuery(
             ~query=mockQuery(),
-            ~isLive=false,
+            ~isRealtime=false,
             ~knownHeight=100,
           )
         // Query goes to sync (recovered primary)
@@ -1955,7 +1955,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     let syncMock = MockIndexer.Source.make([#getItemsOrThrow])
     let recoveryTimeout = 0.0
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[syncMock.source],
       ~maxPartitionConcurrency=10,
       ~recoveryTimeout,
@@ -1966,7 +1966,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let p =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
-          ~isLive=false,
+          ~isRealtime=false,
           ~knownHeight=100,
         )
       switch syncMock.getItemsOrThrowCalls {
@@ -1985,10 +1985,10 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
   Async.it(
     "Does not attempt recovery when active source is already primary (live source)",
     async t => {
-      let liveMock = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Live)
+      let liveMock = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Realtime)
       let recoveryTimeout = 0.0
       let sourceManager = SourceManager.make(
-        ~isLive=true,
+        ~isRealtime=true,
         ~sources=[liveMock.source],
         ~maxPartitionConcurrency=10,
         ~recoveryTimeout,
@@ -1999,7 +1999,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         let p =
           sourceManager->SourceManager.executeQuery(
             ~query=mockQuery(),
-            ~isLive=true,
+            ~isRealtime=true,
             ~knownHeight=100,
           )
         switch liveMock.getItemsOrThrowCalls {
@@ -2020,15 +2020,15 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     "When switching to secondary via waitForNewBlock in live mode, immediately recovers to live primary",
     async t => {
       let syncMock = MockIndexer.Source.make([#getHeightOrThrow])
-      let liveMock = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Live)
+      let liveMock = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Realtime)
       let fallbackMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow],
         ~sourceFor=Fallback,
       )
-      let newBlockStallTimeoutLive = 0
+      let newBlockStallTimeoutRealtime = 0
       let sourceManager = SourceManager.make(
-        ~isLive=false,
-        ~newBlockStallTimeoutLive,
+        ~isRealtime=false,
+        ~newBlockStallTimeoutRealtime,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
       )
@@ -2036,8 +2036,8 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       {
         // Switch activeSource to fallback via waitForNewBlock
 
-        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
-        await Utils.delay(newBlockStallTimeoutLive)
+        let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
+        await Utils.delay(newBlockStallTimeoutRealtime)
         fallbackMock.resolveGetHeightOrThrow(101)
         t.expect(await p).toBe(101)
         t.expect(
@@ -2052,10 +2052,10 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         let p =
           sourceManager->SourceManager.executeQuery(
             ~query=mockQuery(),
-            ~isLive=true,
+            ~isRealtime=true,
             ~knownHeight=100,
           )
-        // Query goes to live (primary when isLive=true), not fallback
+        // Query goes to live (primary when isRealtime=true), not fallback
         switch liveMock.getItemsOrThrowCalls {
         | [call] => call.resolve([])
         | _ => JsError.throwWithMessage("Expected one pending call to liveMock")
@@ -2077,7 +2077,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let fallbackMock = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Fallback)
       let recoveryTimeout = 5.0
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~recoveryTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
@@ -2089,7 +2089,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         let p =
           sourceManager->SourceManager.executeQuery(
             ~query=mockQuery(),
-            ~isLive=false,
+            ~isRealtime=false,
             ~knownHeight=100,
           )
         for idx in 0 to 2 {
@@ -2130,7 +2130,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         let p =
           sourceManager->SourceManager.executeQuery(
             ~query=mockQuery(),
-            ~isLive=false,
+            ~isRealtime=false,
             ~knownHeight=100,
           )
         // Recovery switches to sync before query
@@ -2152,7 +2152,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         let p =
           sourceManager->SourceManager.executeQuery(
             ~query=mockQuery(),
-            ~isLive=false,
+            ~isRealtime=false,
             ~knownHeight=101,
           )
         for idx in 0 to 2 {
@@ -2193,7 +2193,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         let p =
           sourceManager->SourceManager.executeQuery(
             ~query=mockQuery(),
-            ~isLive=false,
+            ~isRealtime=false,
             ~knownHeight=102,
           )
         switch syncMock.getItemsOrThrowCalls {
@@ -2211,24 +2211,24 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
   )
 
   Async.it(
-    "Disabling one of two Live sources keeps hasLive true, disabling both clears it",
+    "Disabling one of two Live sources keeps hasRealtime true, disabling both clears it",
     async t => {
       let syncMock = MockIndexer.Source.make([#getItemsOrThrow])
-      let liveMock0 = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Live)
-      let liveMock1 = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Live)
+      let liveMock0 = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Realtime)
+      let liveMock1 = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Realtime)
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[syncMock.source, liveMock0.source, liveMock1.source],
         ~maxPartitionConcurrency=10,
       )
 
-      // In isLive=true mode with hasLive=true, Live sources are Primary.
+      // In isRealtime=true mode with hasRealtime=true, Live sources are Primary.
       // getNextSources picks liveMock0 (first primary).
       // Disable liveMock0 via UnsupportedSelection.
       let p1 =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
-          ~isLive=true,
+          ~isRealtime=true,
           ~knownHeight=100,
         )
       liveMock0.getItemsOrThrowCalls->Array.forEach(
@@ -2247,13 +2247,13 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let p2 =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
-          ~isLive=true,
+          ~isRealtime=true,
           ~knownHeight=100,
         )
       liveMock1.getItemsOrThrowCalls->Array.forEach(
         call => call.reject(Source.GetItemsError(UnsupportedSelection({message: "test disable"}))),
       )
-      // With both Live sources disabled, hasLive should be false.
+      // With both Live sources disabled, hasRealtime should be false.
       // Sync becomes Primary and should get the query.
       await Utils.delay(0)
       syncMock.getItemsOrThrowCalls->Array.forEach(call => call.resolve([]))
@@ -2270,7 +2270,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     let syncMock1 = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow])
     let newBlockStallTimeout = 0
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~newBlockStallTimeout,
       ~sources=[syncMock0.source, syncMock1.source],
       ~maxPartitionConcurrency=10,
@@ -2279,7 +2279,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     {
       // Switch activeSource to syncMock1 via waitForNewBlock
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=100, ~reducedPolling=false)
       await Utils.delay(newBlockStallTimeout)
       syncMock1.resolveGetHeightOrThrow(101)
       t.expect(await p).toBe(101)
@@ -2296,7 +2296,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let p =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
-          ~isLive=false,
+          ~isRealtime=false,
           ~knownHeight=100,
         )
       switch syncMock1.getItemsOrThrowCalls {
@@ -2318,7 +2318,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let syncMock0 = MockIndexer.Source.make([#getItemsOrThrow])
       let syncMock1 = MockIndexer.Source.make([#getItemsOrThrow])
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[syncMock0.source, syncMock1.source],
         ~maxPartitionConcurrency=10,
       )
@@ -2326,7 +2326,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let p =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
-          ~isLive=false,
+          ~isRealtime=false,
           ~knownHeight=100,
         )
 
@@ -2366,7 +2366,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let p2 =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
-          ~isLive=false,
+          ~isRealtime=false,
           ~knownHeight=100,
         )
       switch syncMock1.getItemsOrThrowCalls {
@@ -2402,7 +2402,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let syncMock1 = MockIndexer.Source.make([#getItemsOrThrow])
       let syncMock2 = MockIndexer.Source.make([#getItemsOrThrow])
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[syncMock0.source, syncMock1.source, syncMock2.source],
         ~maxPartitionConcurrency=10,
       )
@@ -2410,7 +2410,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let p =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
-          ~isLive=false,
+          ~isRealtime=false,
           ~knownHeight=100,
         )
 
@@ -2465,7 +2465,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     let fallbackMock = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Fallback)
     let recoveryTimeout = 50.0
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[syncMock.source, fallbackMock.source],
       ~maxPartitionConcurrency=10,
       ~recoveryTimeout,
@@ -2473,7 +2473,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
 
     // Fail sync with WithBackoff enough times to trigger a switch (retries 0, 1, 2)
     let p1 =
-      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=false, ~knownHeight=100)
     let withBackoff = Source.GetItemsError(
       FailedGettingItems({
         exn: %raw(`null`),
@@ -2515,7 +2515,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let p2 =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
-          ~isLive=false,
+          ~isRealtime=false,
           ~knownHeight=100,
         )
       switch fallbackMock.getItemsOrThrowCalls {
@@ -2533,7 +2533,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     await Utils.delay(recoveryTimeout->Float.toInt)
 
     let p3 =
-      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=false, ~knownHeight=100)
     switch syncMock.getItemsOrThrowCalls {
     | [call] => call.resolve([])
     | _ => JsError.throwWithMessage("Expected sync to recover after timeout")
@@ -2550,13 +2550,13 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     let syncMock1 = MockIndexer.Source.make([#getItemsOrThrow])
     let fallbackMock = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Fallback)
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[syncMock0.source, syncMock1.source, fallbackMock.source],
       ~maxPartitionConcurrency=10,
     )
 
     let p =
-      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=false, ~knownHeight=100)
 
     // Exclude syncMock0 via ImpossibleForTheQuery
     switch syncMock0.getItemsOrThrowCalls {
@@ -2607,13 +2607,13 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
   Async.it("WithBackoff with single source retries with delay, no crash", async t => {
     let syncMock = MockIndexer.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[syncMock.source],
       ~maxPartitionConcurrency=10,
     )
 
     let p =
-      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=false, ~knownHeight=100)
     let withBackoff = Source.GetItemsError(
       FailedGettingItems({
         exn: %raw(`null`),
@@ -2651,7 +2651,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let syncMock0 = MockIndexer.Source.make([#getItemsOrThrow])
       let syncMock1 = MockIndexer.Source.make([#getItemsOrThrow])
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[syncMock0.source, syncMock1.source],
         ~maxPartitionConcurrency=10,
       )
@@ -2661,7 +2661,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let p0 =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
-          ~isLive=false,
+          ~isRealtime=false,
           ~knownHeight=100,
         )
       switch syncMock0.getItemsOrThrowCalls {
@@ -2694,7 +2694,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let p =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
-          ~isLive=false,
+          ~isRealtime=false,
           ~knownHeight=100,
         )
       switch syncMock1.getItemsOrThrowCalls {
@@ -2726,20 +2726,20 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     },
   )
 
-  Async.it("Disabling a Sync source does not affect hasLive", async t => {
+  Async.it("Disabling a Sync source does not affect hasRealtime", async t => {
     let syncMock = MockIndexer.Source.make([#getItemsOrThrow])
-    let liveMock = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Live)
+    let liveMock = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Realtime)
     let fallbackMock = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Fallback)
     let sourceManager = SourceManager.make(
-      ~isLive=false,
+      ~isRealtime=false,
       ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
       ~maxPartitionConcurrency=10,
     )
 
-    // In isLive=true mode, liveMock is Primary (hasLive=true).
-    // Disable sync via UnsupportedSelection — should NOT affect hasLive.
+    // In isRealtime=true mode, liveMock is Primary (hasRealtime=true).
+    // Disable sync via UnsupportedSelection — should NOT affect hasRealtime.
     let p1 =
-      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=true, ~knownHeight=100)
+      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=true, ~knownHeight=100)
     // liveMock is primary in live mode, gets query first
     switch liveMock.getItemsOrThrowCalls {
     | [call] => call.resolve([])
@@ -2749,7 +2749,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
 
     // Now disable sync via a backfill query where sync is primary
     let p2 =
-      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=false, ~knownHeight=100)
     switch syncMock.getItemsOrThrowCalls {
     | [call] =>
       call.reject(Source.GetItemsError(UnsupportedSelection({message: "test disable sync"})))
@@ -2763,19 +2763,19 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     }
     let _ = await p2
 
-    // In isLive=true mode again, liveMock should still be Primary (hasLive unaffected by sync disable)
+    // In isRealtime=true mode again, liveMock should still be Primary (hasRealtime unaffected by sync disable)
     let p3 =
-      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=true, ~knownHeight=100)
+      sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=true, ~knownHeight=100)
     switch liveMock.getItemsOrThrowCalls {
     | [call] => call.resolve([])
     | _ =>
-      JsError.throwWithMessage("Expected liveMock to be primary in live mode (hasLive still true)")
+      JsError.throwWithMessage("Expected liveMock to be primary in live mode (hasRealtime still true)")
     }
     let _ = await p3
 
     t.expect(
       sourceManager->SourceManager.getActiveSource,
-      ~message="Live source should remain primary — disabling Sync doesn't affect hasLive",
+      ~message="Live source should remain primary — disabling Sync doesn't affect hasRealtime",
     ).toBe(liveMock.source)
   })
 })
@@ -2786,12 +2786,12 @@ describe("SourceManager height subscription", () => {
     async t => {
       let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
       let sourceManager = SourceManager.make(
-        ~isLive=true,
+        ~isRealtime=true,
         ~sources=[mock.source],
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
 
       // First call to getHeightOrThrow
       t.expect(mock.getHeightOrThrowCalls->Array.length).toEqual(1)
@@ -2816,20 +2816,20 @@ describe("SourceManager height subscription", () => {
   Async.it("Uses cached height from subscription if higher than knownHeight", async t => {
     let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
-      ~isLive=true,
+      ~isRealtime=true,
       ~sources=[mock.source],
       ~maxPartitionConcurrency=10,
     )
 
     // First call - create subscription
-    let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
+    let p1 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     mock.triggerHeightSubscription(105)
     t.expect(await p1).toEqual(105)
 
     // Second call - should use cached height immediately without calling getHeightOrThrow
-    let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101, ~reducedPolling=false)
+    let p2 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=101, ~reducedPolling=false)
     t.expect(
       mock.getHeightOrThrowCalls->Array.length,
       ~message="Should not call getHeightOrThrow again since subscription exists",
@@ -2842,20 +2842,20 @@ describe("SourceManager height subscription", () => {
     async t => {
       let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
       let sourceManager = SourceManager.make(
-        ~isLive=true,
+        ~isRealtime=true,
         ~sources=[mock.source],
         ~maxPartitionConcurrency=10,
       )
 
       // First call - create subscription and set initial height
-      let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
+      let p1 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
       mock.resolveGetHeightOrThrow(100)
       await Utils.delay(0)
       mock.triggerHeightSubscription(101)
       t.expect(await p1).toEqual(101)
 
       // Second call with higher knownHeight - should wait for next subscription event
-      let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101, ~reducedPolling=false)
+      let p2 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=101, ~reducedPolling=false)
       t.expect(
         mock.getHeightOrThrowCalls->Array.length,
         ~message="Should not call getHeightOrThrow since subscription exists",
@@ -2874,12 +2874,12 @@ describe("SourceManager height subscription", () => {
       let pollingInterval = 1
       let mock = MockIndexer.Source.make([#getHeightOrThrow], ~pollingInterval)
       let sourceManager = SourceManager.make(
-        ~isLive=false,
+        ~isRealtime=false,
         ~sources=[mock.source],
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100, ~reducedPolling=false)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=100, ~reducedPolling=false)
 
       // Return same height - should trigger polling since no subscription available
       mock.resolveGetHeightOrThrow(100)
@@ -2901,21 +2901,21 @@ describe("SourceManager height subscription", () => {
       let stallTimeout = 20
       let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
       let sourceManager = SourceManager.make(
-        ~isLive=true,
+        ~isRealtime=true,
         ~sources=[mock.source],
         ~maxPartitionConcurrency=10,
-        ~newBlockStallTimeoutLive=stallTimeout,
+        ~newBlockStallTimeoutRealtime=stallTimeout,
       )
 
       // First call - create subscription
-      let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
+      let p1 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
       mock.resolveGetHeightOrThrow(100)
       await Utils.delay(0)
       mock.triggerHeightSubscription(101)
       t.expect(await p1).toEqual(101)
 
       // Second call - subscription exists but won't deliver
-      let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101, ~reducedPolling=false)
+      let p2 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=101, ~reducedPolling=false)
 
       // Wait for stallTimeout/2 to trigger REST polling fallback
       await Utils.delay(stallTimeout / 2 + 5)
@@ -2935,20 +2935,20 @@ describe("SourceManager height subscription", () => {
   Async.it("Ignores subscription heights lower than or equal to knownHeight", async t => {
     let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
-      ~isLive=true,
+      ~isRealtime=true,
       ~sources=[mock.source],
       ~maxPartitionConcurrency=10,
     )
 
     // First call - create subscription
-    let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100, ~reducedPolling=false)
+    let p1 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     mock.triggerHeightSubscription(101)
     t.expect(await p1).toEqual(101)
 
     // Second call with higher knownHeight
-    let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=105, ~reducedPolling=false)
+    let p2 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=105, ~reducedPolling=false)
 
     // Trigger with lower heights - should be ignored
     mock.triggerHeightSubscription(102)

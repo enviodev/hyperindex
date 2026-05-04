@@ -80,12 +80,12 @@ let _checkHandlerContext = (ctx: Indexer.handlerContext) => {
   let _: bool = ctx.isPreload
   let chainInfo: Internal.chainInfo = ctx.chain
   let _: int = chainInfo.id
-  let _: bool = chainInfo.isLive
+  let _: bool = chainInfo.isRealtime
   let _: Envio.logger = ctx.log
 }
 
 // 5. contractRegisterContext has chain.ContractName.add() registration.
-// Note: chain does NOT expose isLive — contract registration runs during sync
+// Note: chain does NOT expose isRealtime — contract registration runs during sync
 // so the "live" distinction isn't meaningful and the field was dropped.
 let _checkContractRegisterContext = (ctx: Indexer.contractRegisterContext) => {
   let chain: Indexer.contractRegisterChain = ctx.chain

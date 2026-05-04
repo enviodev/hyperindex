@@ -29,8 +29,8 @@ chains:
   - id: 1
     rpc:
       - url: ${ENVIO_RPC_URL}
-        for: sync                    # sync | live | fallback
-        ws: ${ENVIO_WS_URL}               # WebSocket for lower-latency live block detection
+        for: sync                    # sync | realtime | fallback
+        ws: ${ENVIO_WS_URL}               # WebSocket for lower-latency realtime block detection
         initial_block_interval: 5000 # Starting blocks per query
         backoff_multiplicative: 0.8  # Scale factor after RPC error (0.5-0.9)
         acceleration_additive: 1000  # Blocks added per successful query
@@ -45,11 +45,11 @@ chains:
 
 | Value | Description |
 |-------|-------------|
-| `sync` | RPC as main data source for both historical and live |
-| `live` | HyperSync for historical, switch to RPC for live (lower latency) |
+| `sync` | RPC as main data source for both historical and realtime |
+| `realtime` | HyperSync for historical, switch to RPC for realtime (lower latency) |
 | `fallback` | Backup when primary stalls (default when HyperSync available) |
 
-### WebSocket for Live Indexing
+### WebSocket for Realtime Indexing
 
 Add `ws:` for lower-latency new block detection via `eth_subscribe("newHeads")`:
 
@@ -57,7 +57,7 @@ Add `ws:` for lower-latency new block detection via `eth_subscribe("newHeads")`:
 rpc:
   - url: ${ENVIO_RPC_ENDPOINT}
     ws: ${ENVIO_WS_ENDPOINT}
-    for: live
+    for: realtime
 ```
 
 ## Database Indexes

@@ -220,12 +220,14 @@ export type HandlerContext = {
   /**
    * Chain state information for the current event's chain.
    * - id: the chain ID
-   * - isLive: true when the chain has completed initial sync and is processing live events,
-   *            false during historical synchronization
+   * - isRealtime: true once all chains have entered real-time indexing mode
+   *               (caught up to head, or reached their configured endBlock
+   *               for finite-range indexers). False while any chain is still
+   *               backfilling.
    */
   readonly chain: {
     readonly id: ChainId;
-    readonly isLive: boolean;
+    readonly isRealtime: boolean;
   };
   {{#each entities as | entity |}}
   readonly {{entity.name.original}}: {

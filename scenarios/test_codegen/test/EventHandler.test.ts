@@ -79,28 +79,28 @@ describe("Use Envio test framework to test event handlers", () => {
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly gnosis: {
             readonly id: 100;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly polygon: {
             readonly id: 137;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly "1337": {
             readonly id: 1337;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
         } & {
           readonly 1: {
@@ -108,33 +108,33 @@ describe("Use Envio test framework to test event handlers", () => {
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly 100: {
             readonly id: 100;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly 137: {
             readonly id: 137;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly 1337: {
             readonly id: 1337;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
         }
       >
     >(true);
-    // Check that chain has the expected structure with name and isLive
+    // Check that chain has the expected structure with name and isRealtime
     expectType<
       TypeEqual<
         typeof indexer.chains.ethereumMainnet,
@@ -143,7 +143,7 @@ describe("Use Envio test framework to test event handlers", () => {
           readonly startBlock: number;
           readonly endBlock: number | undefined;
           readonly name: string;
-          readonly isLive: boolean;
+          readonly isRealtime: boolean;
         } & ExpectedEvmContracts
       >
     >(true);
@@ -184,7 +184,7 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(indexer.chains[1].startBlock, 1);
     assert.deepEqual(indexer.chains[1].endBlock, undefined);
     assert.deepEqual(indexer.chains[1].name, "ethereumMainnet");
-    assert.deepEqual(indexer.chains[1].isLive, false);
+    assert.deepEqual(indexer.chains[1].isRealtime, false);
     assert.deepEqual(indexer.chains[1].Noop.addresses, [
       "0x0b2F78c5Bf6d9c12EE1225d5f374Aa91204580C3",
     ]);
@@ -197,7 +197,7 @@ describe("Use Envio test framework to test event handlers", () => {
       "startBlock",
       "endBlock",
       "name",
-      "isLive",
+      "isRealtime",
       "EventFiltersTest",
       "Gravatar",
       "NftFactory",
@@ -871,7 +871,7 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(chain.name, "ethereumMainnet");
     assert.deepEqual(chain.startBlock, 1);
     assert.deepEqual(chain.endBlock, undefined);
-    assert.deepEqual(chain.isLive, false);
+    assert.deepEqual(chain.isRealtime, false);
 
     // Chain by name (non-enumerable alias)
     assert.deepEqual(testIndexer.chains[1], testIndexer.chains.ethereumMainnet);
@@ -1112,7 +1112,7 @@ describe("Use Envio test framework to test event handlers", () => {
 
     // Verify chain info types
     expectType<TypeEqual<typeof testIndexer.chainIds, readonly (1 | 100 | 137 | 1337)[]>>(true);
-    expectType<TypeEqual<typeof testIndexer.chains[1]["isLive"], boolean>>(true);
+    expectType<TypeEqual<typeof testIndexer.chains[1]["isRealtime"], boolean>>(true);
     expectType<TypeEqual<typeof testIndexer.chains[1]["id"], 1>>(true);
 
     const result = await testIndexer.process({
@@ -1589,7 +1589,7 @@ describe("onEvent / contractRegister types", () => {
 
   it("EvmOnEventContext has chain info and entity ops", () => {
     expectType<TypeEqual<EvmOnEventContext["chain"]["id"], EvmChainId>>(true);
-    expectType<TypeEqual<EvmOnEventContext["chain"]["isLive"], boolean>>(true);
+    expectType<TypeEqual<EvmOnEventContext["chain"]["isRealtime"], boolean>>(true);
     expectType<TypeEqual<EvmOnEventContext["isPreload"], boolean>>(true);
 
     // Entity ops are available on context

@@ -542,7 +542,7 @@ pub mod evm {
                            historical sync, then automatically switch to this RPC once synced \
                            for lower latency."
         )]
-        Live,
+        Realtime,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
