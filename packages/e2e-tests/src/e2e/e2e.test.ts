@@ -138,10 +138,17 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
   it("should expose schema descriptions via GraphQL introspection", async () => {
     // Pulls the whole introspected schema from the live Hasura endpoint and
     // snapshots descriptions on user-defined entity types — covers entity
-    // (table comment), regular fields (column comment), indexed field, and
-    // derivedFrom relationship (relationship comment) round-tripping from
-    // schema.graphql through to Hasura's GraphQL introspection. `#` line
-    // comments are GraphQL comments (not descriptions) and must NOT appear.
+    // (table comment), regular fields (column comment), and indexed field
+    // round-tripping from schema.graphql through to Hasura introspection.
+    // `#` line comments are GraphQL comments (not descriptions) and must
+    // NOT appear.
+    //
+    // Note on relationships: Hasura overrides the `comment` on array/object
+    // relationships with hardcoded defaults ("An array relationship" / "An
+    // aggregate relationship" / "An object relationship") in GraphQL
+    // introspection. The schema-level description we set still lands in
+    // Hasura's metadata API, but it does not surface here, so the snapshot
+    // captures Hasura's defaults for relationship fields.
     interface IntrospectedField {
       name: string;
       description: string | null;
@@ -192,8 +199,12 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
               "name": "id",
             },
             {
-              "description": "All transfers sent from this account",
+              "description": "An array relationship",
               "name": "outgoing",
+            },
+            {
+              "description": "An aggregate relationship",
+              "name": "outgoing_aggregate",
             },
           ],
           "name": "Account",
