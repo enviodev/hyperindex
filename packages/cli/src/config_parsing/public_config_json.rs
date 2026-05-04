@@ -307,7 +307,7 @@ impl SystemConfig {
                                 source_for: match rpc.source_for {
                                     Some(For::Sync) => "sync",
                                     Some(For::Fallback) => "fallback",
-                                    Some(For::Live) => "live",
+                                    Some(For::Realtime) => "realtime",
                                     None => unreachable!(
                                         "source_for should be resolved by from_evm_network_config"
                                     ),

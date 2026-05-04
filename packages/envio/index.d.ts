@@ -362,8 +362,9 @@ type EvmChain<
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether the chain has completed initial sync and is processing live events. */
-  readonly isLive: boolean;
+  /** Whether all chains have entered real-time indexing mode (caught up to head,
+   * or reached their configured endBlock for finite-range indexers). */
+  readonly isRealtime: boolean;
 } & {
   readonly [K in ContractName]: EvmContract<K>;
 };
@@ -417,8 +418,9 @@ type FuelChain<
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether the chain has completed initial sync and is processing live events. */
-  readonly isLive: boolean;
+  /** Whether all chains have entered real-time indexing mode (caught up to head,
+   * or reached their configured endBlock for finite-range indexers). */
+  readonly isRealtime: boolean;
 } & {
   readonly [K in ContractName]: FuelContract<K>;
 };
@@ -449,8 +451,9 @@ type SvmChain<Id extends number = number> = {
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether the chain has completed initial sync and is processing live events. */
-  readonly isLive: boolean;
+  /** Whether all chains have entered real-time indexing mode (caught up to head,
+   * or reached their configured endBlock for finite-range indexers). */
+  readonly isRealtime: boolean;
 };
 
 // ============== Indexer Type ==============
@@ -530,7 +533,7 @@ type BaseHandlerContext<Config extends IndexerConfigTypes, ChainId> = {
   /** Chain state for the current event's chain. */
   readonly chain: {
     readonly id: ChainId;
-    readonly isLive: boolean;
+    readonly isRealtime: boolean;
   };
 } & {
   readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
@@ -568,8 +571,8 @@ type ContractRegistration = {
 };
 
 /** Context for contractRegister handlers. Chain object includes contract registration methods.
- * `isLive` is intentionally absent: contract registration runs during historical sync,
- * so the "live" distinction isn't meaningful and the runtime does not expose it. */
+ * `isRealtime` is intentionally absent: contract registration runs during historical sync,
+ * so the "realtime" distinction isn't meaningful and the runtime does not expose it. */
 export type EvmContractRegisterContext<Config extends IndexerConfigTypes> = Prettify<{
   readonly log: Logger;
   readonly chain: {
@@ -579,7 +582,7 @@ export type EvmContractRegisterContext<Config extends IndexerConfigTypes> = Pret
   };
 }>;
 
-/** Context for contractRegister handlers in Fuel ecosystem. `isLive` is intentionally
+/** Context for contractRegister handlers in Fuel ecosystem. `isRealtime` is intentionally
  * absent — see EvmContractRegisterContext. */
 export type FuelContractRegisterContext<Config extends IndexerConfigTypes> = Prettify<{
   readonly log: Logger;

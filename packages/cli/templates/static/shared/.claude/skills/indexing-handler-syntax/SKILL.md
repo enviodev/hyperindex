@@ -63,8 +63,8 @@ context.Entity.deleteUnsafe(id);     // delete (sync — no await)
 ### Context Properties
 
 ```ts
-context.chain.id       // number — current chain ID
-context.chain.isLive   // boolean — true when processing live blocks
+context.chain.id           // number — current chain ID
+context.chain.isRealtime   // boolean — true when ALL chains have caught up to head
 context.isPreload      // boolean — true during preload phase
 context.log            // { debug, info, warn, error, errorWithExn }
 context.effect(fn, input)  // external call via Effect API (see indexing-external-calls)
@@ -91,7 +91,7 @@ indexer.chainIds;                    // [1, 137]
 indexer.chains[1].id;                // 1
 indexer.chains[1].name;              // "ethereum"
 indexer.chains[1].startBlock;        // 0
-indexer.chains[1].isLive;            // false
+indexer.chains[1].isRealtime;        // false
 indexer.chains[1].MyContract.name;   // "MyContract"
 indexer.chains[1].MyContract.addresses; // ["0x..."]
 indexer.chains[1].MyContract.abi;    // [...]

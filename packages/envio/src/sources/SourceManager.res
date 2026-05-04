@@ -22,7 +22,7 @@ type t = {
   mutable status: sourceManagerStatus,
   maxPartitionConcurrency: int,
   newBlockStallTimeout: int,
-  newBlockStallTimeoutLive: int,
+  newBlockStallTimeoutRealtime: int,
   stalledPollingInterval: int,
   reducedPollingInterval: int,
   getHeightRetryInterval: (~retry: int) => int,
@@ -31,7 +31,7 @@ type t = {
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
   recoveryTimeout: float,
-  mutable hasLive: bool,
+  mutable hasRealtime: bool,
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
@@ -39,16 +39,16 @@ let getActiveSource = sourceManager => sourceManager.activeSource
 type sourceRole = Primary | Secondary
 
 // Determines whether a source is Primary or Secondary given the current mode.
-// isLive=false (backfill): Sync=Primary, Fallback=Secondary, Live=ignored (None).
-// isLive=true with hasLive: Live=Primary, Sync+Fallback=Secondary.
-// isLive=true without hasLive: Sync=Primary, Fallback=Secondary.
-let getSourceRole = (~sourceFor: Source.sourceFor, ~isLive, ~hasLive) =>
-  switch (isLive, sourceFor) {
+// isRealtime=false (backfill): Sync=Primary, Fallback=Secondary, Realtime=ignored (None).
+// isRealtime=true with hasRealtime: Realtime=Primary, Sync+Fallback=Secondary.
+// isRealtime=true without hasRealtime: Sync=Primary, Fallback=Secondary.
+let getSourceRole = (~sourceFor: Source.sourceFor, ~isRealtime, ~hasRealtime) =>
+  switch (isRealtime, sourceFor) {
   | (false, Sync) => Some(Primary)
   | (false, Fallback) => Some(Secondary)
-  | (false, Live) => None
-  | (true, Live) => Some(Primary)
-  | (true, Sync) => hasLive ? Some(Secondary) : Some(Primary)
+  | (false, Realtime) => None
+  | (true, Realtime) => Some(Primary)
+  | (true, Sync) => hasRealtime ? Some(Secondary) : Some(Primary)
   | (true, Fallback) => Some(Secondary)
   }
 
@@ -70,9 +70,9 @@ let makeGetHeightRetryInterval = (
 let make = (
   ~sources: array<Source.t>,
   ~maxPartitionConcurrency,
-  ~isLive,
+  ~isRealtime,
   ~newBlockStallTimeout=60_000,
-  ~newBlockStallTimeoutLive=20_000,
+  ~newBlockStallTimeoutRealtime=20_000,
   ~stalledPollingInterval=5_000,
   ~reducedPollingInterval=60_000,
   ~recoveryTimeout=60_000.0,
@@ -82,9 +82,9 @@ let make = (
     ~maxRetryInterval=60_000,
   ),
 ) => {
-  let hasLive = sources->Array.some(s => s.sourceFor === Live)
+  let hasRealtime = sources->Array.some(s => s.sourceFor === Realtime)
   let initialActiveSource = switch sources->Array.find(source =>
-    getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive) === Some(Primary)
+    getSourceRole(~sourceFor=source.sourceFor, ~isRealtime, ~hasRealtime) === Some(Primary)
   ) {
   | Some(source) => source
   | None =>
@@ -112,14 +112,14 @@ let make = (
     waitingForNewBlockStateId: None,
     fetchingPartitionsCount: 0,
     newBlockStallTimeout,
-    newBlockStallTimeoutLive,
+    newBlockStallTimeoutRealtime,
     stalledPollingInterval,
     reducedPollingInterval,
     getHeightRetryInterval,
     recoveryTimeout,
     statusStart: Hrtime.makeTimer(),
     status: Idle,
-    hasLive,
+    hasRealtime,
   }
 }
 
@@ -183,23 +183,22 @@ let fetchNext = async (
         ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
       )
       sourceManager->trackNewStatus(~newStatus=Querieng)
-      let _ =
-        await queries
-        ->Array.map(q => {
-          let promise = q->executeQuery
-          let _ = promise->Promise.thenResolve(_ => {
-            sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-            Prometheus.IndexingConcurrency.set(
-              ~concurrency=sourceManager.fetchingPartitionsCount,
-              ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-            )
-            if sourceManager.fetchingPartitionsCount === 0 {
-              sourceManager->trackNewStatus(~newStatus=Idle)
-            }
-          })
-          promise
+      let _ = await queries
+      ->Array.map(q => {
+        let promise = q->executeQuery
+        let _ = promise->Promise.thenResolve(_ => {
+          sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
+          Prometheus.IndexingConcurrency.set(
+            ~concurrency=sourceManager.fetchingPartitionsCount,
+            ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+          )
+          if sourceManager.fetchingPartitionsCount === 0 {
+            sourceManager->trackNewStatus(~newStatus=Idle)
+          }
         })
-        ->Promise.all
+        promise
+      })
+      ->Promise.all
     }
   }
 }
@@ -213,13 +212,13 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
     | Some(unsubscribe) => unsubscribe()
     | None => ()
     }
-    if sourceState.source.sourceFor === Live {
-      // Only clear hasLive if no other non-disabled Live sources remain
-      let hasOtherLive =
+    if sourceState.source.sourceFor === Realtime {
+      // Only clear hasRealtime if no other non-disabled Realtime sources remain
+      let hasOtherRealtime =
         sourceManager.sourcesState->Array.some(s =>
-          s !== sourceState && !s.disabled && s.source.sourceFor === Live
+          s !== sourceState && !s.disabled && s.source.sourceFor === Realtime
         )
-      sourceManager.hasLive = hasOtherLive
+      sourceManager.hasRealtime = hasOtherRealtime
     }
     true
   } else {
@@ -232,7 +231,7 @@ let getSourceNewHeight = async (
   ~sourceState: sourceState,
   ~knownHeight,
   ~stallTimeout,
-  ~isLive,
+  ~isRealtime,
   ~status: ref<status>,
   ~logger,
   ~reducedPolling,
@@ -287,7 +286,7 @@ let getSourceNewHeight = async (
           // If createHeightSubscription is available and height hasn't changed,
           // create subscription instead of polling
           switch source.createHeightSubscription {
-          | Some(createSubscription) if isLive =>
+          | Some(createSubscription) if isRealtime =>
             let unsubscribe = createSubscription(~onHeight=newHeight => {
               sourceState.knownHeight = newHeight
               // Resolve all pending height resolvers
@@ -343,7 +342,7 @@ let compareByOldestFailure = (a: sourceState, b: sourceState) =>
   }
 
 // Priority: working primaries > working secondaries > all primaries.
-let getNextSources = (sourceManager, ~isLive, ~excludedSources=?) => {
+let getNextSources = (sourceManager, ~isRealtime, ~excludedSources=?) => {
   let now = Date.now()
   let workingPrimarySources = []
   let allPrimarySources = []
@@ -362,8 +361,8 @@ let getNextSources = (sourceManager, ~isLive, ~excludedSources=?) => {
         }
         switch getSourceRole(
           ~sourceFor=sourceState.source.sourceFor,
-          ~isLive,
-          ~hasLive=sourceManager.hasLive,
+          ~isRealtime,
+          ~hasRealtime=sourceManager.hasRealtime,
         ) {
         | Some(Primary) =>
           allPrimarySources->Array.push(sourceState)
@@ -389,8 +388,8 @@ let getNextSources = (sourceManager, ~isLive, ~excludedSources=?) => {
 
 // Single source selection from getNextSources.
 // Prefers activeSource if it's in the candidates. Fast path: check first item.
-let getNextSource = (sourceManager, ~isLive, ~excludedSources=?) => {
-  let sources = sourceManager->getNextSources(~isLive, ~excludedSources?)
+let getNextSource = (sourceManager, ~isRealtime, ~excludedSources=?) => {
+  let sources = sourceManager->getNextSources(~isRealtime, ~excludedSources?)
   switch sources->Array.get(0) {
   | None => None
   | Some(first) if first.source === sourceManager.activeSource => Some(first)
@@ -403,7 +402,7 @@ let getNextSource = (sourceManager, ~isLive, ~excludedSources=?) => {
 }
 
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
-let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPolling) => {
+let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
   let {sourcesState} = sourceManager
 
   let logger = Logging.createChild(
@@ -421,7 +420,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPo
     logger->Logging.childTrace("Initiating check for new blocks.")
   }
 
-  let mainSources = sourceManager->getNextSources(~isLive)
+  let mainSources = sourceManager->getNextSources(~isRealtime)
 
   let status = ref(Active)
 
@@ -429,8 +428,8 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPo
   // to avoid spurious stall warnings while waiting for other chains to backfill
   let stallTimeout = if reducedPolling {
     sourceManager.reducedPollingInterval * 2
-  } else if isLive {
-    sourceManager.newBlockStallTimeoutLive
+  } else if isRealtime {
+    sourceManager.newBlockStallTimeoutRealtime
   } else {
     sourceManager.newBlockStallTimeout
   }
@@ -444,7 +443,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPo
           ~sourceState,
           ~knownHeight,
           ~stallTimeout,
-          ~isLive,
+          ~isRealtime,
           ~status,
           ~logger,
           ~reducedPolling,
@@ -460,8 +459,8 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPo
             !(mainSources->Array.includes(sourceState)) &&
             getSourceRole(
               ~sourceFor=sourceState.source.sourceFor,
-              ~isLive,
-              ~hasLive=sourceManager.hasLive,
+              ~isRealtime,
+              ~hasRealtime=sourceManager.hasRealtime,
             )->Option.isSome
           ) {
             fallbackSources->Array.push(sourceState)
@@ -494,7 +493,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPo
                 ~sourceState,
                 ~knownHeight,
                 ~stallTimeout,
-                ~isLive,
+                ~isRealtime,
                 ~status,
                 ~logger,
                 ~reducedPolling,
@@ -521,7 +520,12 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive, ~reducedPo
   newBlockHeight
 }
 
-let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight, ~isLive) => {
+let executeQuery = async (
+  sourceManager: t,
+  ~query: FetchState.query,
+  ~knownHeight,
+  ~isRealtime,
+) => {
   let noSourcesError = "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
 
   // Sources where the query is impossible — lazily allocated, excluded for the duration of this query
@@ -534,7 +538,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
   while responseRef.contents->Option.isNone {
     // Select the best source at the start of every iteration
     let sourceState = switch sourceManager->getNextSource(
-      ~isLive,
+      ~isRealtime,
       ~excludedSources=?excludedSourcesRef.contents,
     ) {
     | Some(s) =>
@@ -670,7 +674,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
           sourceState.lastFailedAt = Some(now)
           // Check if there's a working (recovered) source to switch to immediately
           let nextSource =
-            sourceManager->getNextSource(~isLive, ~excludedSources=?excludedSourcesRef.contents)
+            sourceManager->getNextSource(~isRealtime, ~excludedSources=?excludedSourcesRef.contents)
           let hasWorkingAlternative = switch nextSource {
           | Some(s) =>
             switch s.lastFailedAt {
