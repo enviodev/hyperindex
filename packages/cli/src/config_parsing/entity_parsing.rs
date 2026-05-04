@@ -256,11 +256,17 @@ impl Schema {
 pub struct GraphQLEnum {
     pub name: String,
     pub values: Vec<String>,
+    pub description: Option<String>,
 }
 
 impl GraphQLEnum {
     pub fn new(name: String, values: Vec<String>) -> anyhow::Result<Self> {
-        Self { name, values }.valididate()
+        Self {
+            name,
+            values,
+            description: None,
+        }
+        .valididate()
     }
 
     fn valididate(self) -> anyhow::Result<Self> {
@@ -314,7 +320,9 @@ impl GraphQLEnum {
             .iter()
             .map(|value| value.name.clone())
             .collect::<Vec<String>>();
-        Self::new(name, values)
+        let mut gql_enum = Self::new(name, values)?;
+        gql_enum.description = enm.description.clone();
+        Ok(gql_enum)
     }
 }
 
@@ -323,6 +331,7 @@ pub struct Entity {
     pub name: String,
     pub fields: Vec<Field>,
     pub multi_field_indexes: Vec<MultiFieldIndex>,
+    pub description: Option<String>,
 }
 
 impl Entity {
@@ -381,6 +390,7 @@ impl Entity {
             name: name.to_string(),
             fields,
             multi_field_indexes,
+            description: None,
         })
     }
 
@@ -474,10 +484,10 @@ impl Entity {
             .collect::<anyhow::Result<Vec<Field>>>()
             .context(format!("Failed parsing fields on entity {name}"))?;
 
-        let entity = Self::new(name, fields, multi_field_indexes)
+        let mut entity = Self::new(name, fields, multi_field_indexes)
             .context(format!("Failed constructing entity {name}",))?;
+        entity.description = obj.description.clone();
 
-        // Here, store indexed information somewhere within your entity structure or handle them accordingly
         Ok(entity)
     }
 
@@ -587,6 +597,7 @@ fn get_positive_integer(arg_value: &Value<String>) -> anyhow::Result<u32> {
 pub struct Field {
     pub name: String,
     pub field_type: FieldType,
+    pub description: Option<String>,
 }
 
 impl Field {
@@ -770,6 +781,7 @@ impl Field {
         Ok(Field {
             name: field.name.clone(),
             field_type,
+            description: field.description.clone(),
         })
     }
 
@@ -873,6 +885,7 @@ impl Field {
                 linked_entity: gql_field_type.get_linked_entity(schema)?,
                 is_primary_key: self.is_primary_key(),
                 is_nullable: gql_field_type.is_optional(),
+                description: self.description.clone(),
             })),
         }
     }
@@ -886,6 +899,7 @@ impl Field {
                 field_name: self.name.clone(),
                 derived_from_field: derived_from_field.clone(),
                 derived_from_entity: entity_name.clone(),
+                description: self.description.clone(),
             }),
             FieldType::RegularField { .. } => None,
         }
@@ -2708,5 +2722,62 @@ type TestEntity
         // Single-field index should not appear in composite indices
         let composite = parsed_entity.get_composite_indices();
         assert_eq!(composite.len(), 0);
+    }
+
+    #[test]
+    fn test_descriptions_extracted_from_schema() {
+        let schema_str = r#"
+"A user of the protocol"
+type User {
+  "The user's unique identifier (Ethereum address)"
+  id: ID!
+  "Total amount the user has staked"
+  balance: BigInt!
+  "Tokens owned by this user"
+  tokens: [Token!]! @derivedFrom(field: "owner")
+}
+
+"An NFT token"
+type Token {
+  id: ID!
+  owner: User!
+}
+
+"Status of an entity"
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+
+        let user = schema.entities.get("User").unwrap();
+        assert_eq!(user.description.as_deref(), Some("A user of the protocol"));
+
+        let id_field = user.get_field("id").unwrap();
+        assert_eq!(
+            id_field.description.as_deref(),
+            Some("The user's unique identifier (Ethereum address)")
+        );
+
+        let balance_field = user.get_field("balance").unwrap();
+        assert_eq!(
+            balance_field.description.as_deref(),
+            Some("Total amount the user has staked")
+        );
+
+        let tokens_field = user.get_field("tokens").unwrap();
+        assert_eq!(
+            tokens_field.description.as_deref(),
+            Some("Tokens owned by this user")
+        );
+
+        let token = schema.entities.get("Token").unwrap();
+        assert_eq!(token.description.as_deref(), Some("An NFT token"));
+        assert_eq!(token.get_field("owner").unwrap().description, None);
+
+        let status = schema.enums.get("Status").unwrap();
+        assert_eq!(status.description.as_deref(), Some("Status of an entity"));
     }
 }
