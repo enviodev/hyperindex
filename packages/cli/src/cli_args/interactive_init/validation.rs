@@ -9,7 +9,7 @@ use std::fs;
 
 pub fn is_valid_folder_name(name: &str) -> bool {
     // Disallow invalid characters in folder names.
-    let invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+    let invalid_chars = ['/', '\\', ':', '*', '?', '"', '\'', '<', '>', '|'];
     if name.chars().any(|c| invalid_chars.contains(&c)) {
         return false;
     }
@@ -27,7 +27,7 @@ pub fn is_valid_foldername_inquire_validator(name: &str) -> Result<Validation, C
     if !is_valid_folder_name(name) {
         Ok(Validation::Invalid(
             "Invalid folder name. The folder name cannot contain any of the following \
-             special characters: / \\ : * ? \" < > |"
+             special characters: / \\ : * ? \" ' < > |"
                 .into(),
         ))
     } else {
@@ -116,14 +116,17 @@ mod tests {
     fn invalid_folder_name() {
         let invalid_name_star = "my*folder";
         let invalid_name_colon = "my:folder";
+        let invalid_name_quote = "alice's";
         let invalid_name_empty = "";
 
         let is_invalid_star = super::is_valid_folder_name(invalid_name_star);
         let is_invalid_colon = super::is_valid_folder_name(invalid_name_colon);
+        let is_invalid_quote = super::is_valid_folder_name(invalid_name_quote);
         let is_invalid_empty = super::is_valid_folder_name(invalid_name_empty);
 
         assert!(!is_invalid_star);
         assert!(!is_invalid_colon);
+        assert!(!is_invalid_quote);
         assert!(!is_invalid_empty);
     }
 }

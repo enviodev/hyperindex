@@ -324,20 +324,96 @@ pub async fn run_init_args(
         Err(e) => eprintln!("Warning: Failed to initialize git repository: {}", e),
     }
 
-    if parsed_project_paths.project_root != Path::new(".") {
-        std::env::set_current_dir(&parsed_project_paths.project_root)
-            .context("Failed entering the project directory")?;
-    }
-
-    println!();
-    println!("Your indexer is ready! Pick how you'd like to run it:");
-    println!();
-    println!(
-        "  1. {} test    # run the tests (recommended for AI)",
-        pm.cmd()
+    print!(
+        "{}",
+        next_steps_message(&parsed_project_paths.project_root, pm)
     );
-    println!("  2. {} dev     # run locally", pm.cmd());
-    println!("  3. {} start   # run in production", pm.cmd());
 
     Ok(())
+}
+
+fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    out.push('\n');
+    out.push_str("Your indexer is ready! Pick how you'd like to run it:\n");
+    out.push('\n');
+
+    let in_current_dir = project_root
+        .components()
+        .all(|c| matches!(c, std::path::Component::CurDir));
+    let prefix = if in_current_dir {
+        String::new()
+    } else {
+        format!(
+            "cd {} && ",
+            shell_quote(&project_root.display().to_string())
+        )
+    };
+    let cmd = pm.cmd();
+
+    let _ = writeln!(
+        out,
+        "  1. {prefix}{cmd} test    # run the tests (recommended for AI)"
+    );
+    let _ = writeln!(out, "  2. {prefix}{cmd} dev     # run locally");
+    let _ = writeln!(out, "  3. {prefix}{cmd} start   # run in production");
+
+    out
+}
+
+/// Leave alphanumeric paths unquoted; single-quote anything containing chars
+/// the shell would interpret (spaces, `$`, backticks, `&`, `;`, etc.) so the
+/// printed `cd <path>` is safe to paste. Folder name validation rejects `'`,
+/// so a plain single-quote wrap is sufficient.
+fn shell_quote(s: &str) -> String {
+    let safe = !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'));
+    if safe {
+        s.to_string()
+    } else {
+        format!("'{s}'")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli_args::init_config::PackageManager;
+
+    #[test]
+    fn next_steps_in_subdir() {
+        insta::assert_snapshot!(next_steps_message(
+            Path::new("my-indexer"),
+            PackageManager::Pnpm
+        ));
+    }
+
+    #[test]
+    fn next_steps_in_current_dir() {
+        insta::assert_snapshot!(next_steps_message(Path::new("."), PackageManager::Npm));
+    }
+
+    #[test]
+    fn next_steps_in_subdir_with_spaces() {
+        insta::assert_snapshot!(next_steps_message(
+            Path::new("my indexer"),
+            PackageManager::Npm
+        ));
+    }
+
+    #[test]
+    fn next_steps_in_subdir_with_shell_metacharacters() {
+        insta::assert_snapshot!(next_steps_message(
+            Path::new("my-$HOME-`tmp`"),
+            PackageManager::Npm
+        ));
+    }
+
+    #[test]
+    fn next_steps_in_current_dir_alias() {
+        insta::assert_snapshot!(next_steps_message(Path::new("./"), PackageManager::Npm));
+    }
 }
