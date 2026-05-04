@@ -146,16 +146,13 @@ let buildChainsObject = (~config: Config.t) => {
       "isRealtime",
       {
         enumerable: true,
-        // For unordered multichain, isRealtime is true only when ALL chains
-        // have finished backfill. (Isolated multichain — separate per-chain
-        // logic — is a future addition.)
+        // For unordered multichain, isRealtime is true only once every chain
+        // has caught up to head/endBlock. (Isolated multichain — separate
+        // per-chain logic — is a future addition.)
         get: () => {
           switch globalGsManagerRef.contents {
           | Some(gsManager) =>
-            let state = gsManager->GlobalStateManager.getState
-            state.chainManager.chainFetchers
-            ->ChainMap.values
-            ->Array.every(cf => cf->ChainFetcher.isReady)
+            (gsManager->GlobalStateManager.getState).chainManager->ChainManager.isRealtime
           | None =>
             // Before the GlobalStateManager is available (eg during handler
             // module load after resume), derive from persistence: every

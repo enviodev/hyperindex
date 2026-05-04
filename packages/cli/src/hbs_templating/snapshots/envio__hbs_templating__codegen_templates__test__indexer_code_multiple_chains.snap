@@ -400,7 +400,7 @@ type indexerChain = {
   startBlock: int,
   /** The block number to stop indexing at (if specified). */
   endBlock: option<int>,
-  /** Whether all chains have completed initial sync and are processing real-time events. */
+  /** Whether all chains have caught up to head and entered real-time indexing mode. */
   isRealtime: bool,
   \"Contract1": indexerContract,
   \"Contract2": indexerContract,

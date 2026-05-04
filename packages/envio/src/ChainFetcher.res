@@ -47,6 +47,7 @@ let make = (
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
   ~isInReorgThreshold,
+  ~isRealtime,
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
   ~knownHeight=0,
@@ -243,7 +244,7 @@ let make = (
     sourceManager: SourceManager.make(
       ~sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
-      ~isRealtime=timestampCaughtUpToHeadOrEndblock->Option.isSome,
+      ~isRealtime,
     ),
     reorgDetection: ReorgDetection.make(
       ~chainReorgCheckpoints,
@@ -287,6 +288,7 @@ let makeFromConfig = (
     ~logger,
     ~indexingAddresses=configAddresses(chainConfig),
     ~isInReorgThreshold=false,
+    ~isRealtime=false,
     ~knownHeight,
   )
 }
@@ -299,6 +301,7 @@ let makeFromDbState = (
   ~resumedChainState: Persistence.initialChainState,
   ~reorgCheckpoints,
   ~isInReorgThreshold,
+  ~isRealtime,
   ~config,
   ~registrations,
   ~targetBufferSize,
@@ -332,6 +335,7 @@ let makeFromDbState = (
     ~logger,
     ~targetBufferSize,
     ~isInReorgThreshold,
+    ~isRealtime,
     ~knownHeight=resumedChainState.sourceBlockNumber,
   )
 }

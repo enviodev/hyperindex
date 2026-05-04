@@ -12,14 +12,13 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
   let isRealtime = chainFetchers->ChainMap.values->Array.every(cf => cf->ChainFetcher.isReady)
 
   chainFetchers
-  ->ChainMap.entries
-  ->Array.forEach(((chain, _chainFetcher)) => {
-    let chainId = chain->ChainMap.Chain.toChainId->Int.toString
-
+  ->ChainMap.keys
+  ->Array.forEach(chain => {
+    let chainId = chain->ChainMap.Chain.toChainId
     chains->Dict.set(
-      chainId,
+      chainId->Int.toString,
       {
-        Internal.id: chain->ChainMap.Chain.toChainId,
+        Internal.id: chainId,
         isRealtime,
       },
     )

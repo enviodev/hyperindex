@@ -820,26 +820,21 @@ let checkAndFetchForChain = (
     let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
     if !isPreparingRollback(state) {
       let {fetchState} = chainFetcher
+      let isRealtime = state.chainManager->ChainManager.isRealtime
 
-      // Reduce polling to 60s when this chain is caught up but waiting for other chains
+      // Reduce polling to 60s when this chain is caught up but other chains
+      // are still backfilling — i.e. this chain is ready but isRealtime=false.
       let reducedPolling = if state.ctx.config.shouldRollbackOnReorg {
         !state.chainManager.isInReorgThreshold &&
         fetchState->FetchState.isReadyToEnterReorgThreshold
       } else {
-        chainFetcher->ChainFetcher.isReady &&
-          state.chainManager.chainFetchers
-          ->ChainMap.values
-          ->Array.some(cf => !(cf->ChainFetcher.isReady))
+        chainFetcher->ChainFetcher.isReady && !isRealtime
       }
 
       await chainFetcher.sourceManager->SourceManager.fetchNext(
         ~fetchState,
         ~waitForNewBlock=(~knownHeight) =>
-          chainFetcher.sourceManager->waitForNewBlock(
-            ~knownHeight,
-            ~isRealtime=chainFetcher->ChainFetcher.isReady,
-            ~reducedPolling,
-          ),
+          chainFetcher.sourceManager->waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling),
         ~onNewBlock=(~knownHeight) =>
           dispatchAction(FinishWaitingForNewBlock({chain, knownHeight})),
         ~executeQuery=async query => {
@@ -847,7 +842,7 @@ let checkAndFetchForChain = (
             let response = await chainFetcher.sourceManager->executeQuery(
               ~query,
               ~knownHeight=fetchState.knownHeight,
-              ~isRealtime=chainFetcher->ChainFetcher.isReady,
+              ~isRealtime,
             )
             dispatchAction(ValidatePartitionQueryResponse({chain, response, query}))
           } catch {

@@ -362,8 +362,8 @@ type EvmChain<
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether all chains have completed initial sync and are processing real-time events.
-   * For unordered multichain mode this flips once every chain has caught up;
+  /** Whether all chains have caught up to head and entered real-time indexing mode.
+   * For unordered multichain mode this flips once every chain has finished backfill;
    * isolated multichain (per-chain semantics) is a future addition. */
   readonly isRealtime: boolean;
 } & {
@@ -419,8 +419,8 @@ type FuelChain<
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether all chains have completed initial sync and are processing real-time events.
-   * For unordered multichain mode this flips once every chain has caught up;
+  /** Whether all chains have caught up to head and entered real-time indexing mode.
+   * For unordered multichain mode this flips once every chain has finished backfill;
    * isolated multichain (per-chain semantics) is a future addition. */
   readonly isRealtime: boolean;
 } & {
@@ -453,8 +453,8 @@ type SvmChain<Id extends number = number> = {
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether all chains have completed initial sync and are processing real-time events.
-   * For unordered multichain mode this flips once every chain has caught up;
+  /** Whether all chains have caught up to head and entered real-time indexing mode.
+   * For unordered multichain mode this flips once every chain has finished backfill;
    * isolated multichain (per-chain semantics) is a future addition. */
   readonly isRealtime: boolean;
 };
