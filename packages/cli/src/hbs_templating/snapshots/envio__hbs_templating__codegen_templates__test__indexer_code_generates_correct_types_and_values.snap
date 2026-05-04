@@ -335,7 +335,7 @@ type indexerChain = {
   startBlock: int,
   /** The block number to stop indexing at (if specified). */
   endBlock: option<int>,
-  /** Whether all chains have caught up to head and entered real-time indexing mode. */
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
   isRealtime: bool,
   \"Contract1": indexerContract,
 }

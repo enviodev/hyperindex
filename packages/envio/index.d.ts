@@ -362,7 +362,8 @@ type EvmChain<
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether all chains have caught up to head and entered real-time indexing mode. */
+  /** Whether all chains have entered real-time indexing mode (caught up to head,
+   * or reached their configured endBlock for finite-range indexers). */
   readonly isRealtime: boolean;
 } & {
   readonly [K in ContractName]: EvmContract<K>;
@@ -417,7 +418,8 @@ type FuelChain<
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether all chains have caught up to head and entered real-time indexing mode. */
+  /** Whether all chains have entered real-time indexing mode (caught up to head,
+   * or reached their configured endBlock for finite-range indexers). */
   readonly isRealtime: boolean;
 } & {
   readonly [K in ContractName]: FuelContract<K>;
@@ -449,7 +451,8 @@ type SvmChain<Id extends number = number> = {
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether all chains have caught up to head and entered real-time indexing mode. */
+  /** Whether all chains have entered real-time indexing mode (caught up to head,
+   * or reached their configured endBlock for finite-range indexers). */
   readonly isRealtime: boolean;
 };
 

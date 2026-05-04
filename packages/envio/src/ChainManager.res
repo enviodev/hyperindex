@@ -161,8 +161,12 @@ let isActivelyIndexing = chainManager =>
   chainManager.chainFetchers->ChainMap.values->Array.every(ChainFetcher.isActivelyIndexing)
 
 // True only once every chain has caught up to head/endBlock.
-let isRealtime = chainManager =>
-  chainManager.chainFetchers->ChainMap.values->Array.every(ChainFetcher.isReady)
+// Array.every is true on an empty array; guard against the no-fetchers case
+// to match ChainManager.makeFromDbState's startup requirement.
+let isRealtime = chainManager => {
+  let chainFetchers = chainManager.chainFetchers->ChainMap.values
+  chainFetchers->Array.length > 0 && chainFetchers->Array.every(ChainFetcher.isReady)
+}
 
 let getSafeCheckpointId = (chainManager: t) => {
   let chainFetchers = chainManager.chainFetchers->ChainMap.values

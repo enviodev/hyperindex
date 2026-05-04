@@ -150,10 +150,13 @@ let buildChainsObject = (~config: Config.t) => {
           switch globalGsManagerRef.contents {
           | Some(gsManager) =>
             (gsManager->GlobalStateManager.getState).chainManager->ChainManager.isRealtime
+          // Before the GlobalStateManager is available (eg during handler
+          // module load after resume), derive from persistence: every chain
+          // must have previously caught up to head or endBlock. Mirror the
+          // ChainManager.makeFromDbState path: updateSyncTimeOnRestart wipes
+          // the saved timestamps so a restart re-enters backfill.
+          | None if Env.updateSyncTimeOnRestart => false
           | None =>
-            // Before the GlobalStateManager is available (eg during handler
-            // module load after resume), derive from persistence: every
-            // chain must have previously caught up to head or endBlock.
             config.chainMap
             ->ChainMap.values
             ->Array.every(c =>
