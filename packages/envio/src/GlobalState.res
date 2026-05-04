@@ -182,7 +182,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
 
   let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
-  let allChainsReady = ref(true)
+  let allChainsReady = ref(chainManager.chainFetchers->ChainMap.values->Array.length > 0)
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(prev => {
     let cf = prev
     let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
@@ -336,6 +336,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     | None => chainManager.committedCheckpointId
     },
     chainFetchers,
+    isRealtime: chainManager.isRealtime || allChainsReady.contents,
   }
 }
 
