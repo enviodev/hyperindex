@@ -4,7 +4,7 @@ use super::{
     human_config::evm::For,
     system_config::{self, Abi, Ecosystem, EventKind, FuelEventKind, SystemConfig},
 };
-use crate::{config_parsing::chain_helpers::Network, persisted_state, utils::text::Capitalize};
+use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -583,7 +583,7 @@ impl SystemConfig {
             .collect::<Result<_>>()?;
 
         let config = PublicConfigJson {
-            version: persisted_state::current_version(),
+            version: system_config::VERSION,
             name: &cfg.name,
             description: cfg.human_config.get_base_config().description.as_deref(),
             handlers: cfg.handlers.as_deref(),

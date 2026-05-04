@@ -185,7 +185,7 @@ let makeInitializeTransaction = (
 ) => {
   let generalTables = [
     InternalTable.Chains.table,
-    InternalTable.PersistedState.table,
+    InternalTable.EnvioInfo.table,
     InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
   ]
@@ -1202,7 +1202,12 @@ let make = (
     cache
   }
 
-  let initialize = async (~chainConfigs=[], ~entities=[], ~enums=[]): Persistence.initialState => {
+  let initialize = async (
+    ~chainConfigs=[],
+    ~entities=[],
+    ~enums=[],
+    ~envioInfo,
+  ): Persistence.initialState => {
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
     )
@@ -1243,11 +1248,14 @@ let make = (
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
       ~isHasuraEnabled,
     )
-    // Execute all queries within a single transaction for integrity
-    let _ = await sql->Postgres.beginSql(sql => {
+    // Execute all queries within a single transaction for integrity.
+    // The envio_info row is written in the same transaction so a successful
+    // initialize is atomic — no schema can come up without the matching row.
+    let _ = await sql->Postgres.beginSql(async sql => {
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
-      Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
+      let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
+      await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
     })
 
     // Populate config addresses into envio_addresses with registration_block/log = -1
@@ -1285,6 +1293,9 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       cleanRun: true,
       cache,
       reorgCheckpoints: [],
+      // Just-written row; resume's compat check would no-op on a clean run,
+      // but keep the field consistent with the resume path's shape.
+      envioInfo: Some(envioInfo),
       chains: chainConfigs->Array.map((chainConfig): Persistence.initialChainState => {
         id: chainConfig.id,
         startBlock: chainConfig.startBlock,
@@ -1481,7 +1492,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints) = await Promise.all4((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints, envioInfo) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -1515,6 +1526,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
           }>,
         >
       ),
+      InternalTable.EnvioInfo.read(sql, ~pgSchema),
     ))
 
     let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
@@ -1539,6 +1551,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       cache,
       chains,
       checkpointId,
+      envioInfo,
     }
   }
 

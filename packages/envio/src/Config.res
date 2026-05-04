@@ -861,6 +861,118 @@ let prime = (json: JSON.t): unit => {
   cached := None
 }
 
+let getPublicConfigJson = () =>
+  switch primedJson.contents {
+  | Some(json) => json
+  | None => Core.getConfigJson()->JSON.parseOrThrow
+  }
+
+// Drops source URLs from each chain so RPC/hypersync edits don't trigger
+// the resume-time compat check (and don't end up in `envio_info`).
+let stripSensitiveData = (json: JSON.t): JSON.t => {
+  let cloned = json->JSON.stringify->JSON.parseOrThrow
+  let stripChains = (ecosystem: option<JSON.t>) =>
+    switch ecosystem {
+    | Some(Object(ecosystemDict)) =>
+      switch ecosystemDict->Dict.get("chains") {
+      | Some(Object(chains)) =>
+        chains
+        ->Dict.valuesToArray
+        ->Array.forEach(chainJson =>
+          switch chainJson {
+          | Object(chain) => {
+              chain->Utils.Dict.deleteInPlace("rpcs")
+              chain->Utils.Dict.deleteInPlace("rpc")
+              chain->Utils.Dict.deleteInPlace("hypersync")
+            }
+          | _ => ()
+          }
+        )
+      | _ => ()
+      }
+    | _ => ()
+    }
+  switch cloned {
+  | Object(obj) => {
+      stripChains(obj->Dict.get("evm"))
+      stripChains(obj->Dict.get("fuel"))
+      stripChains(obj->Dict.get("svm"))
+    }
+  | _ => ()
+  }
+  cloned
+}
+
+// Postgres jsonb doesn't preserve key order, so canonicalize with sorted
+// keys before string-comparing.
+let rec canonicalJson = (json: JSON.t): JSON.t =>
+  switch json {
+  | Object(d) => {
+      let sorted = Dict.make()
+      d
+      ->Dict.keysToArray
+      ->Array.toSorted(String.compare)
+      ->Array.forEach(k => sorted->Dict.set(k, d->Dict.getUnsafe(k)->canonicalJson))
+      Object(sorted)
+    }
+  | Array(arr) => Array(arr->Array.map(canonicalJson))
+  | _ => json
+  }
+
+// Returns dotted leaf paths (`a.b[i].c`) where `stored` differs from
+// `current`. Skips subtrees whose canonical JSON matches.
+let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
+  let acc = []
+  let rec go = (s: JSON.t, c: JSON.t, prefix: string) => {
+    if JSON.stringify(canonicalJson(s)) === JSON.stringify(canonicalJson(c)) {
+      ()
+    } else {
+      switch (s, c) {
+      | (Object(sObj), Object(cObj)) =>
+        let keys = Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
+        keys
+        ->Utils.Set.toArray
+        ->Array.toSorted(String.compare)
+        ->Array.forEach(k => {
+          let p = prefix === "" ? k : `${prefix}.${k}`
+          switch (sObj->Dict.get(k), cObj->Dict.get(k)) {
+          | (None, None) => ()
+          | (None, _) | (_, None) => acc->Array.push(p)->ignore
+          | (Some(sv), Some(cv)) => go(sv, cv, p)
+          }
+        })
+      | (Array(sArr), Array(cArr)) =>
+        let maxLen = Math.Int.max(sArr->Array.length, cArr->Array.length)
+        for i in 0 to maxLen - 1 {
+          let p = `${prefix}[${Int.toString(i)}]`
+          switch (sArr->Belt.Array.get(i), cArr->Belt.Array.get(i)) {
+          | (None, _) | (_, None) => acc->Array.push(p)->ignore
+          | (Some(sv), Some(cv)) => go(sv, cv, p)
+          }
+        }
+      | _ =>
+        // Type mismatch or scalar diff
+        acc->Array.push(prefix === "" ? "<root>" : prefix)->ignore
+      }
+    }
+  }
+  go(stored, current, "")
+  acc
+}
+
+// Throws an `incompatible config` error listing each path in `changedPaths`,
+// plus the revert/reset remediation. `~resetCommand` lets each call site
+// (`envio dev -r` / `envio start -r` / `envio local db-migrate setup`)
+// surface the right wipe-and-restart command.
+let throwIfIncompatible = (changedPaths: array<string>, ~resetCommand: string) => {
+  if changedPaths->Array.length > 0 {
+    let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
+    JsError.throwWithMessage(
+      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. Revert the changes above    # resume indexing where it left off\n  2. ${resetCommand}                # wipe the database and re-index from scratch`,
+    )
+  }
+}
+
 // The returned value is a pure function of the JSON — no handler
 // registrations are applied here. Post-registration configs come from
 // `HandlerLoader.applyRegistrations`. That purity is what lets this
@@ -869,10 +981,7 @@ let loadWithoutRegistrations = () =>
   switch cached.contents {
   | Some(c) => c
   | None => {
-      let c = switch primedJson.contents {
-      | Some(json) => json->fromPublic
-      | None => Core.getConfigJson()->JSON.parseOrThrow->fromPublic
-      }
+      let c = getPublicConfigJson()->fromPublic
       cached := Some(c)
       c
     }

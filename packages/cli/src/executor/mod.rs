@@ -3,7 +3,6 @@ use crate::{
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     config_parsing::{human_config, system_config::SystemConfig},
     docker_env,
-    persisted_state::{self, PersistedState, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     scripts,
 };
@@ -25,30 +24,22 @@ use schemars::schema_for;
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Command {
-    /// `migrate: Some` folds the migration into the same `init()` call as
-    /// the indexer startup.
+    /// `reset: true` wipes the schema before the indexer's first init call;
+    /// the runtime always runs `Persistence.init` either way (DB compat and
+    /// migration decisions live in ReScript now).
     Start {
-        migrate: Option<MigrateOpts>,
+        reset: bool,
         cwd: String,
         env: serde_json::Map<String, serde_json::Value>,
         config: serde_json::Value,
     },
     Migrate {
         reset: bool,
-        #[serde(rename = "persistedState")]
-        persisted_state: PersistedState,
         config: serde_json::Value,
     },
     DropSchema {
         config: serde_json::Value,
     },
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct MigrateOpts {
-    pub reset: bool,
-    #[serde(rename = "persistedState")]
-    pub persisted_state: PersistedState,
 }
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
@@ -93,49 +84,17 @@ pub async fn execute(
         }
 
         CommandType::Start(start_args) => {
-            // Warn early if the generated directory looks stale — `envio start`
-            // keeps running even in these cases, but the indexer will use
-            // whatever generated code is on disk.
-            match PersistedStateExists::get_persisted_state_file(&parsed_project_paths) {
-                PersistedStateExists::Exists(ps)
-                    if ps.envio_version != persisted_state::current_version() =>
-                {
-                    eprintln!(
-                        "Warning: the generated directory was built with envio {}, but you're \
-                         running envio {}. Run `envio codegen` to regenerate it (or switch to the \
-                         matching envio version).",
-                        &ps.envio_version,
-                        persisted_state::current_version(),
-                    )
-                }
-                PersistedStateExists::NotExists => eprintln!(
-                    "Warning: no generated files found. Run `envio codegen` first to generate the \
-                     indexer runtime.",
-                ),
-                PersistedStateExists::Corrupted => eprintln!(
-                    "Warning: the generated directory is in an invalid state. Run `envio codegen` \
-                     to regenerate it.",
-                ),
-                PersistedStateExists::Exists(_) => (),
-            };
-
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
 
-            let migrate = if start_args.restart {
-                let persisted_state = PersistedState::get_current_state(&config)
-                    .context("Failed constructing persisted state")?;
-                Some(MigrateOpts {
-                    reset: true,
-                    persisted_state,
-                })
-            } else {
-                None
-            };
+            // Always regenerate so the runtime never boots against a stale
+            // `generated/` (e.g. after an `envio` package upgrade). Mirrors
+            // `envio dev`; the JS side handles DB compat via `envio_info`.
+            codegen::purge_and_run(&config).await?;
 
             // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).
-            Ok(Some(build_start_command(&config, migrate, &[])?))
+            Ok(Some(build_start_command(&config, start_args.restart, &[])?))
         }
 
         CommandType::Local(local_commands) => {
@@ -188,7 +147,7 @@ pub async fn execute(
 /// append extra env pairs (e.g. `ENVIO_DEV_MODE` for `envio dev`).
 pub fn build_start_command(
     config: &SystemConfig,
-    migrate: Option<MigrateOpts>,
+    reset: bool,
     extra_env: &[(String, String)],
 ) -> Result<Command> {
     let config_path = config
@@ -203,7 +162,7 @@ pub fn build_start_command(
             .collect();
 
     Ok(Command::Start {
-        migrate,
+        reset,
         cwd: config
             .parsed_project_paths
             .project_root

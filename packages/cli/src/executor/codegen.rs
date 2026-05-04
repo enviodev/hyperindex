@@ -1,35 +1,28 @@
 use crate::{
-    commands,
-    config_parsing::system_config::SystemConfig,
-    persisted_state::{self, PersistedStateExists},
-    project_paths::ParsedProjectPaths,
+    commands, config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths,
 };
 use anyhow::{Context, Result};
 
-pub async fn run_codegen(project_paths: &ParsedProjectPaths) -> Result<()> {
-    //Manage purging of gengerated folder
-    match PersistedStateExists::get_persisted_state_file(project_paths) {
-        PersistedStateExists::Exists(ps)
-            if ps.envio_version != persisted_state::current_version() =>
-        {
-            println!(
-                "Envio version '{}' does not match the previous version '{}' used in the \
-                 generated directory",
-                persisted_state::current_version(),
-                &ps.envio_version
-            );
-            println!("Purging generated directory",);
-            commands::codegen::remove_files_except_git(&project_paths.generated)
-                .await
-                .context("Failed purging generated")?;
-        }
-        _ => (),
-    };
+/// Purge `generated/` and re-run codegen against the already-parsed config.
+/// Shared by `envio dev` and `envio start` so both paths regenerate from a
+/// clean slate before handing off to JS.
+pub async fn purge_and_run(config: &SystemConfig) -> Result<()> {
+    let generated = &config.parsed_project_paths.generated;
+    // First-run / freshly-checked-out projects don't have a `generated/` yet;
+    // `run_codegen` will create it. Only purge when it already exists.
+    if generated.exists() {
+        commands::codegen::remove_files_except_git(generated)
+            .await
+            .context("Failed purging generated")?;
+    }
+    commands::codegen::run_codegen(config)
+        .await
+        .context("Failed running codegen")?;
+    Ok(())
+}
 
+pub async fn run_codegen(project_paths: &ParsedProjectPaths) -> Result<()> {
     let config =
         SystemConfig::parse_from_project_files(project_paths).context("Failed parsing config")?;
-
-    commands::codegen::run_codegen(&config).await?;
-
-    Ok(())
+    purge_and_run(&config).await
 }

@@ -33,6 +33,11 @@ type initialState = {
   checkpointId: Internal.checkpointId,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
+  // Public config snapshot read from envio_info, used by `Persistence.init`
+  // to compat-check a resume against the running config. None when the
+  // schema pre-dates envio_info or the row is missing — `init` treats that
+  // as a version mismatch.
+  envioInfo: option<JSON.t>,
 }
 
 type operator = [#">" | #"=" | #"<"]
@@ -55,11 +60,14 @@ type storage = {
   // and we can skip initialization
   isInitialized: unit => promise<bool>,
   // Should initialize the storage so we can start interacting with it
-  // Eg create connection, schema, tables, etc.
+  // Eg create connection, schema, tables, etc. `envioInfo` is opaque JSON
+  // persisted as part of the same transaction so a fresh schema always
+  // carries a matching row — storage doesn't interpret it.
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
+    ~envioInfo: JSON.t,
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
   @raises("StorageError")
@@ -160,7 +168,7 @@ let make = (
 }
 
 let init = {
-  async (persistence, ~chainConfigs, ~reset=false) => {
+  async (persistence, ~chainConfigs, ~envioInfo, ~resetCommand, ~reset=false) => {
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -182,6 +190,7 @@ let init = {
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,
             ~chainConfigs,
+            ~envioInfo,
           )
           Logging.info(`The indexer storage is ready. Starting indexing!`)
           persistence.storageStatus = Ready(initialState)
@@ -195,6 +204,15 @@ let init = {
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState()
+          // Compat-check the running config against what was stored on the
+          // last successful initialize. None means the schema pre-dates
+          // envio_info (or the row was wiped out-of-band) and we can't
+          // compare — treat it as a version mismatch.
+          let changedPaths = switch initialState.envioInfo {
+          | None => ["envio info is missing — storage initialized by an older envio"]
+          | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
+          }
+          Config.throwIfIncompatible(changedPaths, ~resetCommand)
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

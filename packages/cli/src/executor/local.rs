@@ -3,7 +3,6 @@ use crate::{
     config_parsing::system_config::SystemConfig,
     docker_env,
     executor::{public_config_value, Command},
-    persisted_state::PersistedState,
     project_paths::ParsedProjectPaths,
 };
 use anyhow::{Context, Result};
@@ -36,29 +35,19 @@ pub async fn run_local(
             }
         },
         LocalCommandTypes::DbMigrate(subcommand) => match subcommand {
-            DbMigrateSubcommands::Up => {
-                let persisted_state = PersistedState::get_current_state(&config)
-                    .context("Failed constructing persisted state")?;
-                Ok(Some(Command::Migrate {
-                    reset: false,
-                    persisted_state,
-                    config: public_config_value(&config)?,
-                }))
-            }
+            DbMigrateSubcommands::Up => Ok(Some(Command::Migrate {
+                reset: false,
+                config: public_config_value(&config)?,
+            })),
 
             DbMigrateSubcommands::Down => Ok(Some(Command::DropSchema {
                 config: public_config_value(&config)?,
             })),
 
-            DbMigrateSubcommands::Setup => {
-                let persisted_state = PersistedState::get_current_state(&config)
-                    .context("Failed constructing persisted state")?;
-                Ok(Some(Command::Migrate {
-                    reset: true,
-                    persisted_state,
-                    config: public_config_value(&config)?,
-                }))
-            }
+            DbMigrateSubcommands::Setup => Ok(Some(Command::Migrate {
+                reset: true,
+                config: public_config_value(&config)?,
+            })),
         },
     }
 }
