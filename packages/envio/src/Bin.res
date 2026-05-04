@@ -56,8 +56,8 @@ let applyEnv = (env: dict<JSON.t>) =>
 let run = async args => {
   try {
     switch (await Core.runCli(args))->Null.toOption {
-    // Rust-only command (codegen / init / stop / docker / help / version /
-    // scripts) — nothing for JS to do, exit cleanly.
+    // Rust-only command (codegen / init / stop / docker / metrics / help /
+    // version / scripts) — nothing for JS to do, exit cleanly.
     | None => ()
     | Some(json) =>
       switch decodeCommand(json->JSON.parseOrThrow) {
