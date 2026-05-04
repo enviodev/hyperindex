@@ -182,7 +182,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
 
   let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
-  let allChainsReady = ref(chainManager.chainFetchers->ChainMap.values->Array.length > 0)
+  let allChainsReady = ref(true)
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(prev => {
     let cf = prev
     let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
@@ -821,7 +821,7 @@ let checkAndFetchForChain = (
     let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
     if !isPreparingRollback(state) {
       let {fetchState} = chainFetcher
-      let isRealtime = state.chainManager->ChainManager.isRealtime
+      let isRealtime = state.chainManager.isRealtime
 
       // Reduce polling when there's nothing useful to fetch right now:
       //   - this chain has caught up but others are still backfilling, or

@@ -163,8 +163,6 @@ let isProgressAtHead = chainManager =>
 let isActivelyIndexing = chainManager =>
   chainManager.chainFetchers->ChainMap.values->Array.every(ChainFetcher.isActivelyIndexing)
 
-let isRealtime = chainManager => chainManager.isRealtime
-
 let getSafeCheckpointId = (chainManager: t) => {
   let chainFetchers = chainManager.chainFetchers->ChainMap.values
 
