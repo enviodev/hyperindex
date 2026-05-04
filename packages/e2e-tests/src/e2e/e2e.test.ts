@@ -135,6 +135,103 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     expect(result.data?._meta).toEqual([{ chainId: 1, isReady: true }]);
   });
 
+  it("should expose schema descriptions via GraphQL introspection", async () => {
+    // Pulls the whole introspected schema from the live Hasura endpoint and
+    // snapshots descriptions on user-defined entity types — covers entity
+    // (table comment), regular fields (column comment), indexed field, and
+    // derivedFrom relationship (relationship comment) round-tripping from
+    // schema.graphql through to Hasura's GraphQL introspection. `#` line
+    // comments are GraphQL comments (not descriptions) and must NOT appear.
+    interface IntrospectedField {
+      name: string;
+      description: string | null;
+    }
+    interface IntrospectedType {
+      name: string;
+      description: string | null;
+      fields: IntrospectedField[] | null;
+    }
+    const result = await graphql.query<{
+      __schema: { types: IntrospectedType[] };
+    }>(`{
+      __schema {
+        types {
+          name
+          description
+          fields {
+            name
+            description
+          }
+        }
+      }
+    }`);
+
+    const userTypeNames = new Set(["Transfer", "Account"]);
+    const userTypes = (result.data?.__schema.types ?? [])
+      .filter((t) => userTypeNames.has(t.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((t) => ({
+        name: t.name,
+        description: t.description,
+        fields: t.fields
+          ?.slice()
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((f) => ({
+            name: f.name,
+            description: f.description,
+          })),
+      }));
+
+    expect(userTypes).toMatchInlineSnapshot(`
+      [
+        {
+          "description": "An on-chain account participating in transfers",
+          "fields": [
+            {
+              "description": "The account's Ethereum address",
+              "name": "id",
+            },
+            {
+              "description": "All transfers sent from this account",
+              "name": "outgoing",
+            },
+          ],
+          "name": "Account",
+        },
+        {
+          "description": "An ERC-20 transfer event",
+          "fields": [
+            {
+              "description": "Block number the transfer was emitted in",
+              "name": "blockNumber",
+            },
+            {
+              "description": "Sender address",
+              "name": "from",
+            },
+            {
+              "description": "Composite ID built from chainId-block-logIndex",
+              "name": "id",
+            },
+            {
+              "description": "Recipient address",
+              "name": "to",
+            },
+            {
+              "description": "Hash of the transaction that emitted the transfer",
+              "name": "transactionHash",
+            },
+            {
+              "description": "Token amount transferred (raw, no decimals applied)",
+              "name": "value",
+            },
+          ],
+          "name": "Transfer",
+        },
+      ]
+    `);
+  });
+
   it("should have Transfer entities indexed", async () => {
     const result = await graphql.poll<{
       Transfer: Array<{
