@@ -5,14 +5,12 @@ const DEFAULT_PORT: u16 = 9898;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn resolve_port() -> Result<u16> {
-    for var in ["ENVIO_INDEXER_PORT", "METRICS_PORT"] {
-        if let Ok(raw) = std::env::var(var) {
-            return raw
-                .parse::<u16>()
-                .with_context(|| format!("Invalid {var}={raw:?}: expected a port number 0-65535"));
-        }
+    match std::env::var("ENVIO_INDEXER_PORT") {
+        Ok(raw) => raw.parse::<u16>().with_context(|| {
+            format!("Invalid ENVIO_INDEXER_PORT={raw:?}: expected a port number 0-65535")
+        }),
+        Err(_) => Ok(DEFAULT_PORT),
     }
-    Ok(DEFAULT_PORT)
 }
 
 pub async fn run() -> Result<()> {
