@@ -1,0 +1,10 @@
+---
+source: packages/cli/src/executor/init.rs
+expression: "next_steps_message(Path::new(\".\"), PackageManager::Npm)"
+---
+
+Your indexer is ready! Pick how you'd like to run it:
+
+  1. npm test    # run the tests (recommended for AI)
+  2. npm dev     # run locally
+  3. npm start   # run in production

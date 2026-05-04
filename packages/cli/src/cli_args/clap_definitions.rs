@@ -62,6 +62,9 @@ pub enum CommandType {
     ///Start the indexer without any automatic codegen
     Start(StartArgs),
 
+    ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
+    Metrics,
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),

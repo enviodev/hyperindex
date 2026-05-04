@@ -11,6 +11,7 @@ mod codegen;
 mod dev;
 pub mod init;
 mod local;
+mod metrics;
 
 use anyhow::{Context, Result};
 use schemars::schema_for;
@@ -74,6 +75,11 @@ pub async fn execute(
 
         CommandType::Stop => {
             docker_env::down().await?;
+            Ok(None)
+        }
+
+        CommandType::Metrics => {
+            metrics::run().await?;
             Ok(None)
         }
 
