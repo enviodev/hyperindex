@@ -2367,7 +2367,7 @@ mod test {
             .expect("Deserialized yml config should be parseable");
 
         config
-            .to_public_config_json()
+            .to_public_config_json(false)
             .expect("should be able to serialize public config JSON")
     }
 

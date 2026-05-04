@@ -86,6 +86,7 @@ type t = {
   maxAddrInPartition: int,
   batchSize: int,
   lowercaseAddresses: bool,
+  isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
@@ -439,6 +440,7 @@ let publicConfigSchema = S.schema(s =>
     "name": s.matches(S.string),
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
+    "isDev": s.matches(S.option(S.bool)),
     "multichain": s.matches(S.option(multichainSchema)),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
@@ -801,6 +803,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     maxAddrInPartition,
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     lowercaseAddresses,
+    isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,
     userEntities,
     allEntities,
@@ -868,7 +871,9 @@ let getPublicConfigJson = () =>
   }
 
 // Drops source URLs from each chain so RPC/hypersync edits don't trigger
-// the resume-time compat check (and don't end up in `envio_info`).
+// the resume-time compat check (and don't end up in `envio_info`). Also
+// drops `isDev`, which toggles between `envio dev` and `envio start` and
+// has no bearing on schema/indexing compatibility.
 let stripSensitiveData = (json: JSON.t): JSON.t => {
   let cloned = json->JSON.stringify->JSON.parseOrThrow
   let stripChains = (ecosystem: option<JSON.t>) =>
@@ -894,6 +899,7 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
     }
   switch cloned {
   | Object(obj) => {
+      obj->Utils.Dict.deleteInPlace("isDev")
       stripChains(obj->Dict.get("evm"))
       stripChains(obj->Dict.get("fuel"))
       stripChains(obj->Dict.get("svm"))

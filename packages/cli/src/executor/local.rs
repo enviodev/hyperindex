@@ -37,16 +37,16 @@ pub async fn run_local(
         LocalCommandTypes::DbMigrate(subcommand) => match subcommand {
             DbMigrateSubcommands::Up => Ok(Some(Command::Migrate {
                 reset: false,
-                config: public_config_value(&config)?,
+                config: public_config_value(&config, false)?,
             })),
 
             DbMigrateSubcommands::Down => Ok(Some(Command::DropSchema {
-                config: public_config_value(&config)?,
+                config: public_config_value(&config, false)?,
             })),
 
             DbMigrateSubcommands::Setup => Ok(Some(Command::Migrate {
                 reset: true,
-                config: public_config_value(&config)?,
+                config: public_config_value(&config, false)?,
             })),
         },
     }

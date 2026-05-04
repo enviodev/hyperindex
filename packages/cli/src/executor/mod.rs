@@ -98,7 +98,12 @@ pub async fn execute(
 
             // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).
-            Ok(Some(build_start_command(&config, start_args.restart, &[])?))
+            Ok(Some(build_start_command(
+                &config,
+                start_args.restart,
+                false,
+                &[],
+            )?))
         }
 
         CommandType::Local(local_commands) => {
@@ -148,10 +153,12 @@ pub async fn execute(
 }
 
 /// `ENVIO_CONFIG` is always present in the returned `env`; callers may
-/// append extra env pairs (e.g. `ENVIO_DEV_MODE` for `envio dev`).
+/// append extra env pairs (e.g. ClickHouse credentials from Docker for
+/// `envio dev`).
 pub fn build_start_command(
     config: &SystemConfig,
     reset: bool,
+    is_dev: bool,
     extra_env: &[(String, String)],
 ) -> Result<Command> {
     let config_path = config
@@ -173,13 +180,13 @@ pub fn build_start_command(
             .to_string_lossy()
             .into_owned(),
         env,
-        config: public_config_value(config)?,
+        config: public_config_value(config, is_dev)?,
     })
 }
 
 /// Returns a `Value` (not a string) so the serde payload embeds the config
 /// as a nested JSON object — the JS side then skips the extra `JSON.parse`.
-pub fn public_config_value(config: &SystemConfig) -> Result<serde_json::Value> {
-    serde_json::from_str(&config.to_public_config_json()?)
+pub fn public_config_value(config: &SystemConfig, is_dev: bool) -> Result<serde_json::Value> {
+    serde_json::from_str(&config.to_public_config_json(is_dev)?)
         .context("Failed parsing public config JSON")
 }
