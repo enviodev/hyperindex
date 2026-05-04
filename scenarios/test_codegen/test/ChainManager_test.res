@@ -132,6 +132,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       multichain: Ordered,
       committedCheckpointId: 0n,
       isInReorgThreshold: false,
+      isRealtime: false,
     },
     numberOfMockEventsCreated.contents,
     allEvents,

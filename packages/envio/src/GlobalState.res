@@ -336,6 +336,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     | None => chainManager.committedCheckpointId
     },
     chainFetchers,
+    isRealtime: chainManager.isRealtime || allChainsReady.contents,
   }
 }
 
@@ -820,7 +821,7 @@ let checkAndFetchForChain = (
     let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
     if !isPreparingRollback(state) {
       let {fetchState} = chainFetcher
-      let isRealtime = state.chainManager->ChainManager.isRealtime
+      let isRealtime = state.chainManager.isRealtime
 
       // Reduce polling when there's nothing useful to fetch right now:
       //   - this chain has caught up but others are still backfilling, or

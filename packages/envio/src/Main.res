@@ -148,8 +148,7 @@ let buildChainsObject = (~config: Config.t) => {
         enumerable: true,
         get: () => {
           switch globalGsManagerRef.contents {
-          | Some(gsManager) =>
-            (gsManager->GlobalStateManager.getState).chainManager->ChainManager.isRealtime
+          | Some(gsManager) => (gsManager->GlobalStateManager.getState).chainManager.isRealtime
           // Before the GlobalStateManager is available (eg during handler
           // module load after resume), derive from persistence: every chain
           // must have previously caught up to head or endBlock. Mirror the
