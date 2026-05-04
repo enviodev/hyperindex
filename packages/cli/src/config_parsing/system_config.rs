@@ -2030,7 +2030,7 @@ mod test {
         );
 
         let public_json = config
-            .to_public_config_json()
+            .to_public_config_json(false)
             .expect("Failed serializing public config");
         assert!(
             public_json.contains("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),
@@ -2040,7 +2040,7 @@ mod test {
         // Mirror NAPI's two serde_json round-trips that hand the config
         // to the JS runtime.
         use crate::executor::public_config_value;
-        let value = public_config_value(&config).expect("public_config_value");
+        let value = public_config_value(&config, false).expect("public_config_value");
         let wire = serde_json::to_string(&value).expect("to_string");
         assert!(
             wire.contains("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),

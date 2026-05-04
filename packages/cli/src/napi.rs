@@ -22,7 +22,7 @@ pub fn get_config_json(
     let system_config = SystemConfig::parse_from_project_files(&project_paths)
         .map_err(|e| napi::Error::from_reason(format!("Config parse error: {e}")))?;
     system_config
-        .to_public_config_json()
+        .to_public_config_json(false)
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
 }
 
