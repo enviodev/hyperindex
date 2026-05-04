@@ -960,6 +960,19 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
   acc
 }
 
+// Throws an `incompatible config` error listing each path in `changedPaths`,
+// plus the revert/reset remediation. `~resetCommand` lets each call site
+// (`envio dev -r` / `envio start -r` / `envio local db-migrate setup`)
+// surface the right wipe-and-restart command.
+let throwIfIncompatible = (changedPaths: array<string>, ~resetCommand: string) => {
+  if changedPaths->Array.length > 0 {
+    let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
+    JsError.throwWithMessage(
+      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. Revert the changes above    # resume indexing where it left off\n  2. ${resetCommand}                # wipe the database and re-index from scratch`,
+    )
+  }
+}
+
 // The returned value is a pure function of the JSON — no handler
 // registrations are applied here. Post-registration configs come from
 // `HandlerLoader.applyRegistrations`. That purity is what lets this

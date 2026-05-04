@@ -91,9 +91,6 @@ module Storage = {
     let dumpEffectCacheCalls = ref(0)
     let resumeInitialStateCalls = []
     let resumeInitialStateResolveFns = []
-    // Mock storage for envio_info so resume-path tests can exercise the
-    // stored-vs-current compat check (None arm + Some arm + diff throws).
-    let envioInfoRef: ref<option<JSON.t>> = ref(None)
 
     {
       isInitializedCalls,
@@ -125,9 +122,6 @@ module Storage = {
           ~enums=[],
           ~envioInfo,
         ) => {
-          // PgStorage writes envio_info as part of the same transaction as
-          // schema setup, so the mock mirrors that side effect on initialize.
-          envioInfoRef := Some(envioInfo)
           initializeCalls
           ->Array.push({
             "entities": entities,
@@ -187,7 +181,6 @@ module Storage = {
           })
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
-        readEnvioInfo: () => Promise.resolve(envioInfoRef.contents),
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
         pruneStaleCheckpoints: (~safeCheckpointId as _) =>
           JsError.throwWithMessage("Not implemented"),
@@ -226,6 +219,7 @@ module Storage = {
         chains: [],
         reorgCheckpoints: [],
         checkpointId: 0n,
+        envioInfo: None,
       }),
     }
   }
@@ -353,6 +347,7 @@ module Indexer = {
     await persistence->Persistence.init(
       ~chainConfigs=config.chainMap->ChainMap.values,
       ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~resetCommand="envio dev -r",
       ~reset,
     )
 

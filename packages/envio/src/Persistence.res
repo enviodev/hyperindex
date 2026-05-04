@@ -33,6 +33,11 @@ type initialState = {
   checkpointId: Internal.checkpointId,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
+  // Public config snapshot read from envio_info, used by `Persistence.init`
+  // to compat-check a resume against the running config. None when the
+  // schema pre-dates envio_info or the row is missing — `init` treats that
+  // as a version mismatch.
+  envioInfo: option<JSON.t>,
 }
 
 type operator = [#">" | #"=" | #"<"]
@@ -65,9 +70,6 @@ type storage = {
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
-  // Read the envio_info JSON written by the last successful `initialize`.
-  // None means the schema pre-dates this code (no compat check possible).
-  readEnvioInfo: unit => promise<option<JSON.t>>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
     ~ids: array<string>,
@@ -166,7 +168,7 @@ let make = (
 }
 
 let init = {
-  async (persistence, ~chainConfigs, ~envioInfo, ~reset=false) => {
+  async (persistence, ~chainConfigs, ~envioInfo, ~resetCommand, ~reset=false) => {
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -201,22 +203,16 @@ let init = {
           }
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
-          // Fail fast before resumeInitialState's checkpoint/cache reads.
-          switch await persistence.storage.readEnvioInfo() {
-          | None =>
-            // Schema pre-dates envio_info — skip compat check, run `envio dev -r`
-            // to upgrade to the new layout.
-            Logging.info(`No envio_info row found — skipping config compat check.`)
-          | Some(stored) =>
-            let changedPaths = Config.diffPaths(~stored, ~current=envioInfo)
-            if changedPaths->Array.length > 0 {
-              let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
-              JsError.throwWithMessage(
-                `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. Revert the changes above    # resume indexing where it left off\n  2. envio dev -r                # wipe the database and re-index from scratch`,
-              )
-            }
-          }
           let initialState = await persistence.storage.resumeInitialState()
+          // Compat-check the running config against what was stored on the
+          // last successful initialize. None means the schema pre-dates
+          // envio_info (or the row was wiped out-of-band) and we can't
+          // compare — treat it as a version mismatch.
+          let changedPaths = switch initialState.envioInfo {
+          | None => ["envio info is missing — storage initialized by an older envio"]
+          | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
+          }
+          Config.throwIfIncompatible(changedPaths, ~resetCommand)
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

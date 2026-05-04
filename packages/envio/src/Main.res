@@ -608,8 +608,6 @@ type process
 
 type mainArgs = Yargs.parsedArgs<args>
 
-type migrateOpts = {reset: bool}
-
 // The RPC-stripped public config that the storage layer persists in
 // `envio_info` (on initialize) and validates against (on resume).
 let getEnvioInfo = () => Config.getPublicConfigJson()->Config.stripSensitiveData
@@ -621,6 +619,7 @@ let migrate = async (~reset) => {
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~envioInfo=getEnvioInfo(),
+    ~resetCommand="envio local db-migrate setup",
   )
   await persistence.storage.close()
 }
@@ -634,7 +633,7 @@ let dropSchema = async () => {
 
 let start = async (
   ~persistence: option<Persistence.t>=?,
-  ~migrate: option<migrateOpts>=?,
+  ~reset=false,
   ~isTest=false,
   ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
@@ -657,18 +656,20 @@ let start = async (
 
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
-  // `migrate`, when provided, folds the DB setup into the same `init()` call.
   let configWithoutRegistrations = Config.loadWithoutRegistrations()
   let persistence = switch persistence {
   | Some(p) => p
   | None => PgStorage.makePersistenceFromConfig(~config=configWithoutRegistrations)
   }
   globalPersistenceRef := Some(persistence)
-  let reset = migrate->Option.map(m => m.reset)->Option.getOr(false)
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
     ~envioInfo=getEnvioInfo(),
+    // `envio dev` sets ENVIO_DEV_MODE=true (see executor/dev.rs); `envio
+    // start` doesn't. The flag drives the wipe-and-restart command we
+    // recommend in the incompat error.
+    ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
   )
 
   // `Config.loadWithoutRegistrations` never sees registration state; handler,

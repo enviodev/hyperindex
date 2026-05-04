@@ -1,5 +1,7 @@
 open Vitest
 
+let resetCmd = "envio dev -r"
+
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async t => {
     let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState, #initialize])
@@ -25,7 +27,8 @@ describe("Test Persistence layer init", () => {
     t.expect(storageMock.initializeCalls, ~message=`Storage should not be initialized`).toEqual([])
 
     let envioInfo = JSON.Encode.object(Dict.make())
-    let p = persistence->Persistence.init(~chainConfigs=[], ~envioInfo)
+    let p =
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
 
     t.expect(
       storageMock.isInitializedCalls,
@@ -73,6 +76,7 @@ describe("Test Persistence layer init", () => {
       cache: Dict.make(),
       reorgCheckpoints: [],
       checkpointId: 0n,
+      envioInfo: Some(envioInfo),
     }
     storageMock.resolveInitialize(initialState)
     let _ = await Promise.resolve()
@@ -86,7 +90,7 @@ describe("Test Persistence layer init", () => {
     // Can resolve the promise now
     await p
 
-    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo)
+    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -96,7 +100,13 @@ describe("Test Persistence layer init", () => {
       ~message=`Calling init the second time shouldn't do anything`,
     ).toEqual((1, 1, 0))
 
-    let _p2 = persistence->Persistence.init(~reset=true, ~chainConfigs=[], ~envioInfo)
+    let _p2 =
+      persistence->Persistence.init(
+        ~reset=true,
+        ~chainConfigs=[],
+        ~envioInfo,
+        ~resetCommand=resetCmd,
+      )
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -122,16 +132,19 @@ describe("Test Persistence layer init", () => {
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
-    let p = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
+    let envioInfo = JSON.Encode.object(Dict.make())
+
+    let p =
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
     // Additional calls to init should not do anything
-    let _ = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
-    let _ = persistence->Persistence.init(~chainConfigs=[], ~envioInfo=JSON.Encode.object(Dict.make()))
+    let _ =
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
+    let _ =
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
 
     storageMock.resolveIsInitialized(true)
-    // init goes through readEnvioInfo + writeEnvioInfo (backfill arm — the
-    // mock returns None) before reaching resumeInitialState. Drain enough
-    // microtasks for resumeInitialState to register its resolver before we
-    // try to resolve it.
+    // Drain enough microtasks for resumeInitialState to register its
+    // resolver before we resolve it.
     for _ in 1 to 5 {
       await Promise.resolve()
     }
@@ -142,6 +155,8 @@ describe("Test Persistence layer init", () => {
       cache: Dict.make(),
       reorgCheckpoints: [],
       checkpointId: 0n,
+      // Compat check sees a stored value matching the running one → no-op.
+      envioInfo: Some(envioInfo),
     }
     storageMock.resolveLoadInitialState(initialState)
     await p
@@ -160,46 +175,30 @@ Although it should load effect caches metadata.`,
     ).toEqual((1, 0, 1))
   })
 
-  // Seed envio_info via the storage mock's initialize, then resume with a
-  // different config and capture whatever Persistence.init decides to throw.
-  let resumeWithDifferentConfig = async (~stored: JSON.t, ~current: JSON.t) => {
-    let storageMock = MockIndexer.Storage.make([
-      #isInitialized,
-      #initialize,
-      #resumeInitialState,
-    ])
-    let initialState: Persistence.initialState = {
-      cleanRun: true,
-      chains: [],
-      cache: Dict.make(),
-      reorgCheckpoints: [],
-      checkpointId: 0n,
-    }
-    let p1 = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
-    let initPromise = p1->Persistence.init(~chainConfigs=[], ~envioInfo=stored)
-    storageMock.resolveIsInitialized(false)
-    for _ in 1 to 3 {
-      await Promise.resolve()
-    }
-    storageMock.resolveInitialize(initialState)
-    await initPromise
-
-    let p2 = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
-    let resumePromise = p2->Persistence.init(~chainConfigs=[], ~envioInfo=current)
+  // Drive a single resume against a mock that returns `~storedEnvioInfo` from
+  // resumeInitialState, then capture whatever Persistence.init throws.
+  let resumeWith = async (~storedEnvioInfo: option<JSON.t>, ~current: JSON.t) => {
+    let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState])
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+    let resumePromise =
+      persistence->Persistence.init(
+        ~chainConfigs=[],
+        ~envioInfo=current,
+        ~resetCommand=resetCmd,
+      )
     storageMock.resolveIsInitialized(true)
-    // Drain enough microtasks for the compat-passing path to reach
-    // resumeInitialState and register its resolver before we resolve it.
     for _ in 1 to 5 {
       await Promise.resolve()
     }
-    let resumeInitialState: Persistence.initialState = {
+    let initialState: Persistence.initialState = {
       cleanRun: false,
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
       checkpointId: 0n,
+      envioInfo: storedEnvioInfo,
     }
-    storageMock.resolveLoadInitialState(resumeInitialState)
+    storageMock.resolveLoadInitialState(initialState)
 
     let raised = try {
       await resumePromise
@@ -214,39 +213,69 @@ Although it should load effect caches metadata.`,
     (raised, message, storageMock)
   }
 
+  Async.it("Throws version-mismatch incompat error when envio_info is missing", async t => {
+    let (_, message, _) = await resumeWith(
+      ~storedEnvioInfo=None,
+      ~current=JSON.parseOrThrow(`{"name": "demo"}`),
+    )
+    t.expect(message, ~message="full incompat message with missing-info bullet").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - envio info is missing — storage initialized by an older envio
+
+Pick one:
+
+  1. Revert the changes above    # resume indexing where it left off
+  2. envio dev -r                # wipe the database and re-index from scratch`,
+    )
+  })
+
   Async.it("Throws on resume when stored envio_info diverges from the current config", async t => {
     let stored = JSON.parseOrThrow(`{"name": "old", "evm": {}}`)
     let current = JSON.parseOrThrow(`{"name": "new", "evm": {}}`)
-    let (raised, message, storageMock) = await resumeWithDifferentConfig(~stored, ~current)
-    t.expect(raised->Option.isSome, ~message="should throw").toBe(true)
-    t.expect(message->String.includes("incompatible"), ~message="error wording").toBe(true)
-    t.expect(message->String.includes("name"), ~message="names the diverged path").toBe(true)
-    t.expect(
-      storageMock.resumeInitialStateCalls->Array.length,
-      ~message="compat check fails before resumeInitialState",
-    ).toBe(0)
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="full incompat message naming the diverged path").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - name
+
+Pick one:
+
+  1. Revert the changes above    # resume indexing where it left off
+  2. envio dev -r                # wipe the database and re-index from scratch`,
+    )
   })
 
   Async.it("Throws naming chains.<id> when a new chain is added", async t => {
     let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
     let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}}`)
-    let (raised, message, _) = await resumeWithDifferentConfig(~stored, ~current)
-    t.expect(raised->Option.isSome, ~message="should throw on chain add").toBe(true)
-    t.expect(
-      message->String.includes("evm.chains.10"),
-      ~message="error names the new chain key",
-    ).toBe(true)
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="full incompat message naming the new chain key").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - evm.chains.10
+
+Pick one:
+
+  1. Revert the changes above    # resume indexing where it left off
+  2. envio dev -r                # wipe the database and re-index from scratch`,
+    )
   })
 
   Async.it("Throws naming chains.<id> when an existing chain is removed", async t => {
     let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}}`)
     let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
-    let (raised, message, _) = await resumeWithDifferentConfig(~stored, ~current)
-    t.expect(raised->Option.isSome, ~message="should throw on chain remove").toBe(true)
-    t.expect(
-      message->String.includes("evm.chains.10"),
-      ~message="error names the removed chain key",
-    ).toBe(true)
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="full incompat message naming the removed chain key").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - evm.chains.10
+
+Pick one:
+
+  1. Revert the changes above    # resume indexing where it left off
+  2. envio dev -r                # wipe the database and re-index from scratch`,
+    )
   })
 
   Async.it("Does NOT throw when only RPC or hypersync options change", async t => {
@@ -269,11 +298,13 @@ Although it should load effect caches metadata.`,
         }}}
       }`),
     )
-    let (raised, _message, storageMock) = await resumeWithDifferentConfig(~stored, ~current)
-    t.expect(raised, ~message="rpc/hypersync edits should not throw").toEqual(None)
+    let (raised, _message, storageMock) = await resumeWith(
+      ~storedEnvioInfo=Some(stored),
+      ~current,
+    )
     t.expect(
-      storageMock.resumeInitialStateCalls->Array.length,
-      ~message="resumeInitialState runs once when compat passes",
-    ).toBe(1)
+      (raised, storageMock.resumeInitialStateCalls->Array.length),
+      ~message="rpc/hypersync edits should not throw and resumeInitialState runs once",
+    ).toEqual((None, 1))
   })
 })

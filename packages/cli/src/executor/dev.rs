@@ -1,7 +1,7 @@
 use crate::{
     config_parsing::system_config::SystemConfig,
     docker_env,
-    executor::{build_start_command, codegen, Command, MigrateOpts},
+    executor::{build_start_command, codegen, Command},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
 };
@@ -34,14 +34,12 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
         }
     }
 
-    // DB compatibility and migration decisions now live in ReScript — we always
-    // send a migrate opts, and the runtime reads `envio_info`, compares against
-    // the current config, and either reuses the existing schema, initializes a
-    // fresh one, or errors out on incompatible changes.
-    let migrate = Some(MigrateOpts { reset: restart });
-
+    // DB compatibility and migration decisions live in ReScript: the runtime
+    // reads `envio_info`, compares against the current config, and either
+    // reuses the existing schema, initializes a fresh one, or errors out on
+    // incompatible changes. `restart` only forces a reset.
     let mut indexer_env = up_result.indexer_env.clone();
     indexer_env.push(("ENVIO_DEV_MODE".to_string(), "true".to_string()));
 
-    build_start_command(&config, migrate, &indexer_env).context("Failed building start command")
+    build_start_command(&config, restart, &indexer_env).context("Failed building start command")
 }
