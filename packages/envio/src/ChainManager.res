@@ -57,9 +57,8 @@ let makeFromDbState = (
     Prometheus.EffectCacheCount.set(~count, ~effectName)
   })
 
-  // For unordered multichain, isRealtime is true only when every chain has
-  // previously caught up to head/endBlock. updateSyncTimeOnRestart wipes the
-  // saved timestamp so a restart re-enters backfill mode for all chains.
+  // updateSyncTimeOnRestart wipes the saved timestamp so a restart re-enters
+  // backfill mode for all chains.
   let isRealtime =
     !Env.updateSyncTimeOnRestart &&
     initialState.chains->Array.length > 0 &&
@@ -161,9 +160,7 @@ let isProgressAtHead = chainManager =>
 let isActivelyIndexing = chainManager =>
   chainManager.chainFetchers->ChainMap.values->Array.every(ChainFetcher.isActivelyIndexing)
 
-// True only once every chain has caught up to head/endBlock — the global
-// "real-time mode" signal for unordered multichain. Per-chain semantics for
-// isolated multichain are a future addition.
+// True only once every chain has caught up to head/endBlock.
 let isRealtime = chainManager =>
   chainManager.chainFetchers->ChainMap.values->Array.every(ChainFetcher.isReady)
 

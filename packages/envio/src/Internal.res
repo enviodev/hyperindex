@@ -301,8 +301,8 @@ type entityHandlerContext<'entity> = {
 
 type chainInfo = {
   id: int,
-  // true once ALL chains have caught up to head and entered real-time indexing mode
-  // (for unordered multichain). False while any chain is still backfilling.
+  // True once every chain has caught up to head/endBlock and entered real-time
+  // indexing mode. False while any chain is still backfilling.
   isRealtime: bool,
 }
 

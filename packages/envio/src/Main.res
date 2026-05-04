@@ -146,9 +146,6 @@ let buildChainsObject = (~config: Config.t) => {
       "isRealtime",
       {
         enumerable: true,
-        // For unordered multichain, isRealtime is true only once every chain
-        // has caught up to head/endBlock. (Isolated multichain — separate
-        // per-chain logic — is a future addition.)
         get: () => {
           switch globalGsManagerRef.contents {
           | Some(gsManager) =>

@@ -362,9 +362,7 @@ type EvmChain<
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether all chains have caught up to head and entered real-time indexing mode.
-   * For unordered multichain mode this flips once every chain has finished backfill;
-   * isolated multichain (per-chain semantics) is a future addition. */
+  /** Whether all chains have caught up to head and entered real-time indexing mode. */
   readonly isRealtime: boolean;
 } & {
   readonly [K in ContractName]: EvmContract<K>;
@@ -419,9 +417,7 @@ type FuelChain<
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether all chains have caught up to head and entered real-time indexing mode.
-   * For unordered multichain mode this flips once every chain has finished backfill;
-   * isolated multichain (per-chain semantics) is a future addition. */
+  /** Whether all chains have caught up to head and entered real-time indexing mode. */
   readonly isRealtime: boolean;
 } & {
   readonly [K in ContractName]: FuelContract<K>;
@@ -453,9 +449,7 @@ type SvmChain<Id extends number = number> = {
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
-  /** Whether all chains have caught up to head and entered real-time indexing mode.
-   * For unordered multichain mode this flips once every chain has finished backfill;
-   * isolated multichain (per-chain semantics) is a future addition. */
+  /** Whether all chains have caught up to head and entered real-time indexing mode. */
   readonly isRealtime: boolean;
 };
 

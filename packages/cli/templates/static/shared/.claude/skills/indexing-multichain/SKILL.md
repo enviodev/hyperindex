@@ -32,7 +32,7 @@ Contract.Event.handler(async ({ event, context }) => {
     137: { wrappedNative: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270" },
   }[chainId];
 
-  // context.chain.isRealtime is true once ALL chains finished backfill (unordered multichain)
+  // context.chain.isRealtime is true once ALL chains have caught up to head
   if (context.chain.isRealtime) {
     // Realtime-only logic
   }
