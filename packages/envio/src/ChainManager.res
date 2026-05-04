@@ -3,6 +3,8 @@ type t = {
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   multichain: Config.multichain,
   isInReorgThreshold: bool,
+  // True once every chain has caught up to head/endBlock. Monotonic during a run.
+  isRealtime: bool,
 }
 
 // Check if progress is past the reorg threshold (safe block).
@@ -107,6 +109,7 @@ let makeFromDbState = (
     multichain: config.multichain,
     chainFetchers,
     isInReorgThreshold,
+    isRealtime,
   }
 }
 
@@ -159,14 +162,6 @@ let isProgressAtHead = chainManager =>
 
 let isActivelyIndexing = chainManager =>
   chainManager.chainFetchers->ChainMap.values->Array.every(ChainFetcher.isActivelyIndexing)
-
-// True only once every chain has caught up to head/endBlock.
-// Array.every is true on an empty array; guard against the no-fetchers case
-// to match ChainManager.makeFromDbState's startup requirement.
-let isRealtime = chainManager => {
-  let chainFetchers = chainManager.chainFetchers->ChainMap.values
-  chainFetchers->Array.length > 0 && chainFetchers->Array.every(ChainFetcher.isReady)
-}
 
 let getSafeCheckpointId = (chainManager: t) => {
   let chainFetchers = chainManager.chainFetchers->ChainMap.values
