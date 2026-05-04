@@ -214,44 +214,68 @@ Although it should load effect caches metadata.`,
   }
 
   Async.it("Throws version-mismatch incompat error when envio_info is missing", async t => {
-    let (raised, message, _) = await resumeWith(
+    let (_, message, _) = await resumeWith(
       ~storedEnvioInfo=None,
       ~current=JSON.parseOrThrow(`{"name": "demo"}`),
     )
-    t.expect(
-      (raised->Option.isSome, message->String.includes("incompatible"), message->String.includes("envio info is missing"), message->String.includes(resetCmd)),
-      ~message="should throw and reuse the incompat wording with the missing-info bullet and the resetCommand",
-    ).toEqual((true, true, true, true))
+    t.expect(message, ~message="full incompat message with missing-info bullet").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - envio info is missing — storage initialized by an older envio
+
+Pick one:
+
+  1. Revert the changes above    # resume indexing where it left off
+  2. envio dev -r                # wipe the database and re-index from scratch`,
+    )
   })
 
   Async.it("Throws on resume when stored envio_info diverges from the current config", async t => {
     let stored = JSON.parseOrThrow(`{"name": "old", "evm": {}}`)
     let current = JSON.parseOrThrow(`{"name": "new", "evm": {}}`)
-    let (raised, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(
-      (raised->Option.isSome, message->String.includes("incompatible"), message->String.includes("name")),
-      ~message="should throw, reuse the incompat wording, and name the diverged path",
-    ).toEqual((true, true, true))
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="full incompat message naming the diverged path").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - name
+
+Pick one:
+
+  1. Revert the changes above    # resume indexing where it left off
+  2. envio dev -r                # wipe the database and re-index from scratch`,
+    )
   })
 
   Async.it("Throws naming chains.<id> when a new chain is added", async t => {
     let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
     let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}}`)
-    let (raised, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(
-      (raised->Option.isSome, message->String.includes("evm.chains.10")),
-      ~message="should throw and name the new chain key",
-    ).toEqual((true, true))
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="full incompat message naming the new chain key").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - evm.chains.10
+
+Pick one:
+
+  1. Revert the changes above    # resume indexing where it left off
+  2. envio dev -r                # wipe the database and re-index from scratch`,
+    )
   })
 
   Async.it("Throws naming chains.<id> when an existing chain is removed", async t => {
     let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}}`)
     let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
-    let (raised, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(
-      (raised->Option.isSome, message->String.includes("evm.chains.10")),
-      ~message="should throw and name the removed chain key",
-    ).toEqual((true, true))
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="full incompat message naming the removed chain key").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - evm.chains.10
+
+Pick one:
+
+  1. Revert the changes above    # resume indexing where it left off
+  2. envio dev -r                # wipe the database and re-index from scratch`,
+    )
   })
 
   Async.it("Does NOT throw when only RPC or hypersync options change", async t => {
