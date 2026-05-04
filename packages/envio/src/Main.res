@@ -651,15 +651,14 @@ let start = async (
   | (_, Some(tui)) => tui
   | (_, None) => !Envio.isNonInteractive()
   }
-  // isDevelopmentMode controls whether the indexer stays alive after all
-  // chains finish (keepProcessAlive) and whether the console API is exposed.
-  // Set by `envio dev` via the ENVIO_DEV_MODE env var; `envio start` leaves
-  // it unset so the process exits cleanly when indexing completes.
-  let isDevelopmentMode = !isTest && Envio.isDevMode()
-
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
   let configWithoutRegistrations = Config.loadWithoutRegistrations()
+  // isDevelopmentMode controls whether the indexer stays alive after all
+  // chains finish (keepProcessAlive) and whether the console API is exposed.
+  // Set by `envio dev` via the public config's `isDev` field; `envio start`
+  // leaves it false so the process exits cleanly when indexing completes.
+  let isDevelopmentMode = !isTest && configWithoutRegistrations.isDev
   let persistence = switch persistence {
   | Some(p) => p
   | None => PgStorage.makePersistenceFromConfig(~config=configWithoutRegistrations)
@@ -669,9 +668,6 @@ let start = async (
     ~reset,
     ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
     ~envioInfo=getEnvioInfo(),
-    // `envio dev` sets ENVIO_DEV_MODE=true (see executor/dev.rs); `envio
-    // start` doesn't. The flag drives the wipe-and-restart command we
-    // recommend in the incompat error.
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
   )
 
