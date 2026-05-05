@@ -91,6 +91,51 @@ module TotalEventsProcessed = {
   }
 }
 
+module GlobalEventsPerSecond = {
+  type sample = {time: float, events: float}
+
+  let windowMs = 60_000.
+
+  let computeEps = (samples: array<sample>) => {
+    let now = Date.now()
+    let cutoff = now -. windowMs
+    let inWindow = samples->Array.filter(s => s.time >= cutoff)
+    let len = inWindow->Array.length
+    switch (inWindow->Array.get(0), inWindow->Array.get(len - 1)) {
+    | (Some(first), Some(last)) if last.time > first.time =>
+      Some((last.events -. first.events) /. ((last.time -. first.time) /. 1000.))
+    | _ => None
+    }
+  }
+
+  @react.component
+  let make = (~totalEventsProcessed: float) => {
+    let (samples, setSamples) = React.useState((): array<sample> => [])
+
+    React.useEffect1(() => {
+      let now = Date.now()
+      let cutoff = now -. windowMs
+      setSamples(prev => {
+        let kept = prev->Array.filter(s => s.time >= cutoff)
+        kept->Array.concat([{time: now, events: totalEventsProcessed}])
+      })
+      None
+    }, [totalEventsProcessed])
+
+    switch computeEps(samples) {
+    | Some(eps) =>
+      <Text>
+        <Text bold=true> {"Events/sec: "->React.string} </Text>
+        <Text color={Secondary}>
+          {`${Math.round(eps)->TuiData.formatFloatLocaleString}`->React.string}
+        </Text>
+        <Text color={Gray}> {" (1m avg)"->React.string} </Text>
+      </Text>
+    | None => React.null
+    }
+  }
+}
+
 module App = {
   @react.component
   let make = (~getState) => {
@@ -215,6 +260,9 @@ module App = {
       })
       ->React.array}
       <TotalEventsProcessed totalEventsProcessed />
+      {SyncETA.isIndexerFullySynced(chains)
+        ? React.null
+        : <GlobalEventsPerSecond totalEventsProcessed />}
       <SyncETA chains indexerStartTime=state.indexerStartTime />
       <Newline />
       <Box flexDirection={Row}>
