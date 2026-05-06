@@ -1,5 +1,5 @@
 ---
-name: testing
+name: indexer-testing
 description: >-
   Write and run tests for Envio Indexer projects using Vitest and createTestIndexer().
   Covers test setup, processing block ranges, asserting entity changes with

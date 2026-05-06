@@ -433,6 +433,7 @@ mod test {
             names,
             vec![
                 "indexer-configuration",
+                "indexer-testing",
                 "indexing-blocks",
                 "indexing-external-calls",
                 "indexing-factory",
@@ -444,8 +445,7 @@ mod test {
                 "indexing-traces",
                 "indexing-transactions",
                 "indexing-wildcard",
-                "subgraph-migration",
-                "testing",
+                "migrate-from-subgraph",
             ]
         );
     }

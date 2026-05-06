@@ -1,5 +1,5 @@
 ---
-name: subgraph-migration
+name: migrate-from-subgraph
 description: >-
   Migrate a TheGraph subgraph to Envio Indexer using TDD. Covers schema
   conversion (remove @entity, Bytes->String, @derivedFrom), handler translation
