@@ -129,7 +129,6 @@ module GlobalEventsPerSecond = {
         <Text color={Secondary}>
           {`${Math.round(eps)->TuiData.formatFloatLocaleString}`->React.string}
         </Text>
-        <Text color={Gray}> {" (1m avg)"->React.string} </Text>
       </Text>
     | None => React.null
     }
