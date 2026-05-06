@@ -4,6 +4,8 @@ description: >-
   Use when indexing contracts deployed by factory contracts at runtime.
   contractRegister API, dynamic contract config (no address), async
   registration, and same-block event coverage.
+metadata:
+  managed-by: envio
 ---
 
 # Factory / Dynamic Contracts

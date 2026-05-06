@@ -4,6 +4,8 @@ description: >-
   Use when making RPC calls, fetch requests, or any external I/O from handlers.
   Effect API with createEffect, S schema validation, context.effect(), preload
   optimization (handlers run twice), cache and rateLimit options.
+metadata:
+  managed-by: envio
 ---
 
 # External Calls (Effect API)

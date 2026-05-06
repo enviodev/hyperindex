@@ -4,6 +4,8 @@ description: >-
   Use when writing or editing event handlers. Handler registration, context API
   (entity CRUD, getWhere queries, chain, log), spread updates, indexer runtime
   API, and common pitfalls.
+metadata:
+  managed-by: envio
 ---
 
 # Handler Syntax & Core API

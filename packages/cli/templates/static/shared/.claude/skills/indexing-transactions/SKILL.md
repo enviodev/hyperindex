@@ -4,6 +4,8 @@ description: >-
   Use when needing transaction-level data in handlers. Configure field_selection
   to include transaction fields on events, and access via event.transaction.
   No native transaction handler — access through event handlers.
+metadata:
+  managed-by: envio
 ---
 
 # Transaction Data

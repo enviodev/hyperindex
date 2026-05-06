@@ -4,6 +4,8 @@ description: >-
   Use when optimizing indexer speed or tuning sync performance. HyperSync vs
   RPC, batch size, RPC tuning parameters, WebSocket config, and preload
   optimization.
+metadata:
+  managed-by: envio
 ---
 
 # Performance Tuning

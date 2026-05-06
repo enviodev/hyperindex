@@ -4,6 +4,8 @@ description: >-
   Use when defining or editing schema.graphql. Entity types, scalar types,
   enums, relationships, @derivedFrom, @index, @config directives, array rules,
   naming conventions, and schema-to-TypeScript type mapping.
+metadata:
+  managed-by: envio
 ---
 
 # Schema Reference (schema.graphql)

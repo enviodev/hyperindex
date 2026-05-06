@@ -4,6 +4,8 @@ description: >-
   Use when filtering events by indexed parameters to reduce processing volume.
   The `where` option supports static filters, dynamic per-chain functions,
   contract address filtering, and conditional enable/disable.
+metadata:
+  managed-by: envio
 ---
 
 # Event Filters (`where`)

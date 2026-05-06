@@ -4,6 +4,8 @@ description: >-
   Use when indexing all instances of a contract across all addresses (e.g., all
   ERC-20 transfers on a chain). Config setup (no address), wildcard handler
   option, and event.srcAddress.
+metadata:
+  managed-by: envio
 ---
 
 # Wildcard Indexing

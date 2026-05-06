@@ -4,6 +4,8 @@ description: >-
   Use when deploying an indexer across multiple chains. Entity ID namespacing
   to avoid collisions, chain-specific configuration patterns, and the
   context.chain runtime API.
+metadata:
+  managed-by: envio
 ---
 
 # Multichain Indexing

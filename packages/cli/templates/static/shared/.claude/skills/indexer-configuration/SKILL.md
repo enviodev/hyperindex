@@ -4,6 +4,8 @@ description: >-
   Use when writing or editing config.yaml. Chain/contract structure, addresses,
   start_block, event selection, field_selection, custom event names, env vars,
   address_format, schema/output paths, YAML validation, and deprecated options.
+metadata:
+  managed-by: envio
 ---
 
 # Config Reference (config.yaml)

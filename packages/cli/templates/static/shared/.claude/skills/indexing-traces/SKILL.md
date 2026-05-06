@@ -4,6 +4,8 @@ description: >-
   Use when needing call trace data from transactions. HyperSync supports trace
   queries at the data layer. No handler-level trace API currently — access
   traces via HyperSync client directly.
+metadata:
+  managed-by: envio
 ---
 
 # Trace Indexing

@@ -5,6 +5,8 @@ description: >-
   Covers test setup, processing block ranges, asserting entity changes with
   toMatchInlineSnapshot, and TDD workflow. Use when writing tests, debugging
   handler output, or verifying indexer behavior.
+metadata:
+  managed-by: envio
 ---
 
 # Envio Indexer Testing

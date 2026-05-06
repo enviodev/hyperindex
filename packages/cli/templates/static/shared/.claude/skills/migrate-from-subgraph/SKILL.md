@@ -5,6 +5,8 @@ description: >-
   conversion (remove @entity, Bytes->String, @derivedFrom), handler translation
   (save->set, store.get->context.get, templates->contractRegister), and
   verification against subgraph data.
+metadata:
+  managed-by: envio
 ---
 
 # TheGraph to Envio Indexer Migration
