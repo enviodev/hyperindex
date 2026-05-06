@@ -1,5 +1,5 @@
 use crate::{
-    clap_definitions::{JsonSchema, Script},
+    clap_definitions::{JsonSchema, Script, SkillsSubcommand},
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
@@ -13,6 +13,7 @@ mod dev;
 pub mod init;
 mod local;
 mod metrics;
+mod skills;
 
 use anyhow::{Context, Result};
 use schemars::schema_for;
@@ -81,6 +82,11 @@ pub async fn execute(
 
         CommandType::Metrics => {
             metrics::run().await?;
+            Ok(None)
+        }
+
+        CommandType::Skills(SkillsSubcommand::Update) => {
+            skills::run_update(&parsed_project_paths)?;
             Ok(None)
         }
 

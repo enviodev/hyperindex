@@ -189,6 +189,15 @@ impl<'a> TemplateDirs<'a> {
             .ok_or_else(|| anyhow!("Unexpected, shared dir does not exist"))
     }
 
+    ///Gets templates/static/shared/.claude/skills — the canonical set of
+    ///skills shipped by this CLI version. Reused by `envio init` (extracted
+    ///as part of the shared dir) and `envio skills update`.
+    pub fn get_shared_skills_dir(&self) -> Result<RelativeDir<'a>> {
+        self.get_shared_static_dir()?
+            .get_dir(".claude/skills")
+            .ok_or_else(|| anyhow!("Unexpected, shared .claude/skills dir does not exist"))
+    }
+
     ///Gets directories within dynamic
     fn get_dynamic_dir<T: Display>(&self, dirname: T) -> Result<RelativeDir<'a>> {
         let template_dir = self
@@ -397,6 +406,48 @@ mod test {
         template_dirs
             .get_shared_static_dir()
             .expect("shared static dir");
+    }
+
+    #[test]
+    fn shared_skills_dir_lists_expected_skills() {
+        let template_dirs = TemplateDirs::new();
+        let skills = template_dirs
+            .get_shared_skills_dir()
+            .expect("shared skills dir");
+
+        let mut names: Vec<String> = skills
+            .entries()
+            .iter()
+            .filter_map(|e| match e {
+                DirEntry::Dir(d) => d
+                    .path()
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(String::from),
+                DirEntry::File(_) => None,
+            })
+            .collect();
+        names.sort();
+
+        assert_eq!(
+            names,
+            vec![
+                "indexer-blocks",
+                "indexer-configuration",
+                "indexer-external-calls",
+                "indexer-factory",
+                "indexer-filters",
+                "indexer-handlers",
+                "indexer-multichain",
+                "indexer-performance",
+                "indexer-schema",
+                "indexer-testing",
+                "indexer-traces",
+                "indexer-transactions",
+                "indexer-wildcard",
+                "migrate-from-subgraph",
+            ]
+        );
     }
 
     #[test]
