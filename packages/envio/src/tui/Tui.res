@@ -97,11 +97,8 @@ module GlobalEventsPerSecond = {
   let windowMs = 60_000.
 
   let computeEps = (samples: array<sample>) => {
-    let now = Date.now()
-    let cutoff = now -. windowMs
-    let inWindow = samples->Array.filter(s => s.time >= cutoff)
-    let len = inWindow->Array.length
-    switch (inWindow->Array.get(0), inWindow->Array.get(len - 1)) {
+    let len = samples->Array.length
+    switch (samples->Array.get(0), samples->Array.get(len - 1)) {
     | (Some(first), Some(last)) if last.time > first.time =>
       Some((last.events -. first.events) /. ((last.time -. first.time) /. 1000.))
     | _ => None
