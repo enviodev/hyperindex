@@ -61,9 +61,21 @@ pub enum CommandType {
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
     Metrics,
 
+    ///Manage Envio-provided Claude Code skills under `.claude/skills/`
+    #[command(subcommand)]
+    Skills(SkillsSubcommand),
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SkillsSubcommand {
+    ///Re-extract every skill shipped by this CLI version, overwriting the
+    ///matching directories under `<cwd>/.claude/skills/`. Skills not shipped
+    ///by envio are left untouched.
+    Update,
 }
 
 #[derive(Debug, Subcommand)]

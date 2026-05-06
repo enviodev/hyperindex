@@ -29,6 +29,8 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
 * [`envio start`↴](#envio-start)
 * [`envio metrics`↴](#envio-metrics)
+* [`envio skills`↴](#envio-skills)
+* [`envio skills update`↴](#envio-skills-update)
 
 ## `envio`
 
@@ -43,6 +45,7 @@ This document contains the help content for the `envio` command-line program.
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 * `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
+* `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
 
 ###### **Options:**
 
@@ -368,6 +371,26 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 
 **Usage:** `envio metrics`
+
+
+
+## `envio skills`
+
+Manage Envio-provided Claude Code skills under `.claude/skills/`
+
+**Usage:** `envio skills <COMMAND>`
+
+###### **Subcommands:**
+
+* `update` — Re-extract every skill shipped by this CLI version, overwriting the matching directories under `<cwd>/.claude/skills/`. Skills not shipped by envio are left untouched
+
+
+
+## `envio skills update`
+
+Re-extract every skill shipped by this CLI version, overwriting the matching directories under `<cwd>/.claude/skills/`. Skills not shipped by envio are left untouched
+
+**Usage:** `envio skills update`
 
 
 
