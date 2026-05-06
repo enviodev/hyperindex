@@ -78,20 +78,7 @@ module ChainLine = {
   }
 }
 
-module TotalEventsProcessed = {
-  @react.component
-  let make = (~totalEventsProcessed) => {
-    let label = "Total Events: "
-    <Text>
-      <Text bold=true> {label->React.string} </Text>
-      <Text color={Secondary}>
-        {`${totalEventsProcessed->TuiData.formatFloatLocaleString}`->React.string}
-      </Text>
-    </Text>
-  }
-}
-
-module GlobalEventsPerSecond = {
+module EventsPerSecond = {
   type sample = {time: float, events: float}
 
   let windowMs = 60_000.
@@ -105,8 +92,7 @@ module GlobalEventsPerSecond = {
     }
   }
 
-  @react.component
-  let make = (~totalEventsProcessed: float) => {
+  let use = (~totalEventsProcessed: float) => {
     let (samples, setSamples) = React.useState((): array<sample> => [])
 
     React.useEffect1(() => {
@@ -119,16 +105,26 @@ module GlobalEventsPerSecond = {
       None
     }, [totalEventsProcessed])
 
-    switch computeEps(samples) {
-    | Some(eps) =>
-      <Text>
-        <Text bold=true> {"Events/sec: "->React.string} </Text>
-        <Text color={Secondary}>
-          {`${Math.round(eps)->TuiData.formatFloatLocaleString}`->React.string}
-        </Text>
+    computeEps(samples)
+  }
+}
+
+module TotalEventsProcessed = {
+  @react.component
+  let make = (~totalEventsProcessed, ~eventsPerSecond: option<float>) => {
+    <Text>
+      <Text bold=true> {"Total Events: "->React.string} </Text>
+      <Text color={Secondary}>
+        {`${totalEventsProcessed->TuiData.formatFloatLocaleString}`->React.string}
       </Text>
-    | None => React.null
-    }
+      {switch eventsPerSecond {
+      | Some(eps) =>
+        <Text color={Gray}>
+          {` (${Math.round(eps)->TuiData.formatFloatLocaleString} events/sec)`->React.string}
+        </Text>
+      | None => React.null
+      }}
+    </Text>
   }
 }
 
@@ -229,6 +225,7 @@ module App = {
         acc
       }
     })
+    let eventsPerSecond = EventsPerSecond.use(~totalEventsProcessed)
 
     <Box flexDirection={Column}>
       <BigText
@@ -255,10 +252,10 @@ module App = {
         />
       })
       ->React.array}
-      <TotalEventsProcessed totalEventsProcessed />
-      {SyncETA.isIndexerFullySynced(chains)
-        ? React.null
-        : <GlobalEventsPerSecond totalEventsProcessed />}
+      <TotalEventsProcessed
+        totalEventsProcessed
+        eventsPerSecond={SyncETA.isIndexerFullySynced(chains) ? None : eventsPerSecond}
+      />
       <SyncETA chains indexerStartTime=state.indexerStartTime />
       <Newline />
       <Box flexDirection={Row}>
