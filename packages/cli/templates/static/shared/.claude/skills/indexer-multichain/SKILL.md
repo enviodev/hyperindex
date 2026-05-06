@@ -1,5 +1,5 @@
 ---
-name: indexing-multichain
+name: indexer-multichain
 description: >-
   Use when deploying an indexer across multiple chains. Entity ID namespacing
   to avoid collisions, chain-specific configuration patterns, and the

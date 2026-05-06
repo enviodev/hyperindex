@@ -1,5 +1,5 @@
 ---
-name: indexing-factory
+name: indexer-factory
 description: >-
   Use when indexing contracts deployed by factory contracts at runtime.
   contractRegister API, dynamic contract config (no address), async

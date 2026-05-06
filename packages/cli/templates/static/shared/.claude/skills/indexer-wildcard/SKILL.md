@@ -1,5 +1,5 @@
 ---
-name: indexing-wildcard
+name: indexer-wildcard
 description: >-
   Use when indexing all instances of a contract across all addresses (e.g., all
   ERC-20 transfers on a chain). Config setup (no address), wildcard handler
@@ -51,7 +51,7 @@ indexer.onEvent(
 
 ## Combining with Event Filters (`where`)
 
-Wildcard indexing produces high event volume. Use `where` to reduce it — see the `indexing-filters` skill for object, array, function, and `addresses` forms.
+Wildcard indexing produces high event volume. Use `where` to reduce it — see the `indexer-filters` skill for object, array, function, and `addresses` forms.
 
 ```ts
 indexer.onEvent(

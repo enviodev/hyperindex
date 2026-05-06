@@ -1,5 +1,5 @@
 ---
-name: indexing-transactions
+name: indexer-transactions
 description: >-
   Use when needing transaction-level data in handlers. Configure field_selection
   to include transaction fields on events, and access via event.transaction.

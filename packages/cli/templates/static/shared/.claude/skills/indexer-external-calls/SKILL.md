@@ -1,5 +1,5 @@
 ---
-name: indexing-external-calls
+name: indexer-external-calls
 description: >-
   Use when making RPC calls, fetch requests, or any external I/O from handlers.
   Effect API with createEffect, S schema validation, context.effect(), preload

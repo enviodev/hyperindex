@@ -1,5 +1,5 @@
 ---
-name: indexing-handler-syntax
+name: indexer-handlers
 description: >-
   Use when writing or editing event handlers. Handler registration, context API
   (entity CRUD, getWhere queries, chain, log), spread updates, indexer runtime
@@ -35,7 +35,7 @@ Contract.Event.handler(async ({ event, context }) => {
 });
 ```
 
-Handlers accept an optional 2nd argument — see `indexing-wildcard` and `indexing-filters` skills.
+Handlers accept an optional 2nd argument — see `indexer-wildcard` and `indexer-filters` skills.
 
 ## Context API
 
@@ -60,7 +60,7 @@ context.Entity.set(entity);          // create or update (sync — no await)
 context.Entity.deleteUnsafe(id);     // delete (sync — no await)
 ```
 
-`getWhere` operators: `_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`. Only `@index` fields are queryable. See `indexing-schema` for @index syntax.
+`getWhere` operators: `_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`. Only `@index` fields are queryable. See `indexer-schema` for @index syntax.
 
 ### Context Properties
 
@@ -69,7 +69,7 @@ context.chain.id           // number — current chain ID
 context.chain.isRealtime   // boolean — true when ALL chains have caught up to head
 context.isPreload      // boolean — true during preload phase
 context.log            // { debug, info, warn, error, errorWithExn }
-context.effect(fn, input)  // external call via Effect API (see indexing-external-calls)
+context.effect(fn, input)  // external call via Effect API (see indexer-external-calls)
 ```
 
 ## Spread Operator for Updates
@@ -124,7 +124,7 @@ This is globally unique across chains and blocks. Use it as the default unless t
 
 **Decimal normalization** — ALWAYS normalize when adding tokens with different decimals.
 
-**Schema & config** — see `indexing-schema` and `indexer-configuration` skills for full reference.
+**Schema & config** — see `indexer-schema` and `indexer-configuration` skills for full reference.
 
 ## Deep Documentation
 

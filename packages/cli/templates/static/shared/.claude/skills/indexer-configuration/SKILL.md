@@ -52,7 +52,7 @@ Uses `chains` (not `networks`) and `max_reorg_depth` (not `confirmed_block_thres
 - name: Token
   # address omitted — indexes all matching events chain-wide
 
-# Factory-registered — see indexing-factory skill
+# Factory-registered — see indexer-factory skill
 ```
 
 For proxied contracts, use the **proxy address** (where events emit), not the implementation.
@@ -111,7 +111,7 @@ contracts:
             - gasPrice
 ```
 
-Global `field_selection` is at the root level (sibling to `contracts` and `chains`). Per-event `field_selection` is directly under the event entry. See `indexing-transactions` skill for full field lists.
+Global `field_selection` is at the root level (sibling to `contracts` and `chains`). Per-event `field_selection` is directly under the event entry. See `indexer-transactions` skill for full field lists.
 
 ## Environment Variables
 
@@ -149,7 +149,7 @@ Add at top of file for IDE schema validation:
 
 ## RPC Configuration
 
-RPC tuning parameters are documented in the `indexing-performance` skill.
+RPC tuning parameters are documented in the `indexer-performance` skill.
 
 ## Deep Documentation
 

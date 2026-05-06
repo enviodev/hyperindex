@@ -1,5 +1,5 @@
 ---
-name: indexing-schema
+name: indexer-schema
 description: >-
   Use when defining or editing schema.graphql. Entity types, scalar types,
   enums, relationships, @derivedFrom, @index, @config directives, array rules,

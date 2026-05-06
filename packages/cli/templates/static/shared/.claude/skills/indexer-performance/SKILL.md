@@ -1,5 +1,5 @@
 ---
-name: indexing-performance
+name: indexer-performance
 description: >-
   Use when optimizing indexer speed or tuning sync performance. HyperSync vs
   RPC, batch size, RPC tuning parameters, WebSocket config, and preload
@@ -64,7 +64,7 @@ rpc:
 
 ## Database Indexes
 
-Add `@index` to schema fields for faster queries — see `indexing-schema` for full syntax (single-field, composite, DESC direction).
+Add `@index` to schema fields for faster queries — see `indexer-schema` for full syntax (single-field, composite, DESC direction).
 
 ## Deep Documentation
 

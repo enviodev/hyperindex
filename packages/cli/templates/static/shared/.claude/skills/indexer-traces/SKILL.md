@@ -1,5 +1,5 @@
 ---
-name: indexing-traces
+name: indexer-traces
 description: >-
   Use when needing call trace data from transactions. HyperSync supports trace
   queries at the data layer. No handler-level trace API currently — access

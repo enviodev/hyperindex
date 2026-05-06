@@ -1,5 +1,5 @@
 ---
-name: indexing-filters
+name: indexer-filters
 description: >-
   Use when filtering events by indexed parameters to reduce processing volume.
   The `where` option supports static filters, dynamic per-chain functions,

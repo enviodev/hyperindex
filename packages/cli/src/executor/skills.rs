@@ -10,7 +10,22 @@ use crate::{project_paths::ParsedProjectPaths, template_dirs::TemplateDirs};
 /// `envio skills update`. Adding a name here is a one-way ratchet: once
 /// it's listed, every future update will delete a same-named directory in
 /// the user's project if that project has no marker-bearing skills at all.
-const LEGACY_SKILL_NAMES: &[&str] = &["indexing-config", "subgraph-migration", "testing"];
+const LEGACY_SKILL_NAMES: &[&str] = &[
+    "indexing-blocks",
+    "indexing-config",
+    "indexing-external-calls",
+    "indexing-factory",
+    "indexing-filters",
+    "indexing-handler-syntax",
+    "indexing-multichain",
+    "indexing-performance",
+    "indexing-schema",
+    "indexing-traces",
+    "indexing-transactions",
+    "indexing-wildcard",
+    "subgraph-migration",
+    "testing",
+];
 
 const MANAGED_BY_ENVIO: &str = "envio";
 
