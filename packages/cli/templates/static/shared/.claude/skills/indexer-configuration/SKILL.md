@@ -1,5 +1,5 @@
 ---
-name: indexing-config
+name: indexer-configuration
 description: >-
   Use when writing or editing config.yaml. Chain/contract structure, addresses,
   start_block, event selection, field_selection, custom event names, env vars,

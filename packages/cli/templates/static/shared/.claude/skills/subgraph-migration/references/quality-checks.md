@@ -1,6 +1,6 @@
 # Quality Checks
 
-Common issues, fixes, and validation patterns for subgraph-to-HyperIndex migrations.
+Common issues, fixes, and validation patterns for subgraph-to-Envio-Indexer migrations.
 
 ## Validation Commands
 

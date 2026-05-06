@@ -73,7 +73,7 @@ NftFactory.SimpleNftCreated.contractRegister(async ({ event, context }) => {
 
 ## Same-Block Coverage
 
-When a dynamic contract is registered, HyperIndex indexes all events from that contract in the **same block** where it was created — even events from earlier transactions in that block.
+When a dynamic contract is registered, the Envio Indexer indexes all events from that contract in the **same block** where it was created — even events from earlier transactions in that block.
 
 ## Deep Documentation
 

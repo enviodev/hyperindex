@@ -432,8 +432,8 @@ mod test {
         assert_eq!(
             names,
             vec![
+                "indexer-configuration",
                 "indexing-blocks",
-                "indexing-config",
                 "indexing-external-calls",
                 "indexing-factory",
                 "indexing-filters",

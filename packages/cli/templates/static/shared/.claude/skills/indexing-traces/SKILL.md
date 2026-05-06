@@ -10,7 +10,7 @@ description: >-
 
 ## Current Status
 
-HyperSync supports full trace queries at the data layer, but HyperIndex does not yet expose a handler-level trace API (like `onTrace`).
+HyperSync supports full trace queries at the data layer, but the Envio Indexer does not yet expose a handler-level trace API (like `onTrace`).
 
 ## HyperSync Trace Support
 

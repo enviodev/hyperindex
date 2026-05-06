@@ -1,17 +1,17 @@
 ---
 name: testing
 description: >-
-  Write and run tests for HyperIndex indexers using Vitest and createTestIndexer().
+  Write and run tests for Envio Indexer projects using Vitest and createTestIndexer().
   Covers test setup, processing block ranges, asserting entity changes with
   toMatchInlineSnapshot, and TDD workflow. Use when writing tests, debugging
   handler output, or verifying indexer behavior.
 ---
 
-# HyperIndex Testing
+# Envio Indexer Testing
 
 ## Setup
 
-HyperIndex uses Vitest with `createTestIndexer()` from `envio`. The simplest way to start is auto-exit mode — no block ranges needed. The indexer automatically finds the first block with events and processes it.
+The Envio Indexer uses Vitest with `createTestIndexer()` from `envio`. The simplest way to start is auto-exit mode — no block ranges needed. The indexer automatically finds the first block with events and processes it.
 
 ```ts
 import { describe, it } from "vitest";

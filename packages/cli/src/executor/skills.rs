@@ -75,7 +75,7 @@ mod tests {
         // Pre-seed a stale copy of one skill plus an unrelated user-authored
         // skill. The unrelated one must survive the update.
         let skills_root = tmp.path().join(".claude").join("skills");
-        let stale = skills_root.join("indexing-config");
+        let stale = skills_root.join("indexer-configuration");
         let user = skills_root.join("user-authored");
         fs::create_dir_all(&stale).unwrap();
         fs::create_dir_all(&user).unwrap();
@@ -114,7 +114,7 @@ mod tests {
         actual.sort();
 
         let stale_skill_md =
-            fs::read_to_string(skills_root.join("indexing-config").join("SKILL.md")).unwrap();
+            fs::read_to_string(skills_root.join("indexer-configuration").join("SKILL.md")).unwrap();
         let user_skill_md =
             fs::read_to_string(skills_root.join("user-authored").join("SKILL.md")).unwrap();
 

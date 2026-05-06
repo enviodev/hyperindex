@@ -10,7 +10,7 @@ description: >-
 
 ## Why Effects?
 
-HyperIndex uses **Preload Optimization** — handlers run TWICE:
+Envio Indexer uses **Preload Optimization** — handlers run TWICE:
 
 1. **Preload pass**: all handlers in the batch run in parallel (to warm caches)
 2. **Sequential pass**: handlers run in event order (actual state changes)

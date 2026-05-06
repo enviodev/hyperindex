@@ -34,4 +34,4 @@ Use this checklist to verify migration completeness before final sign-off.
 - [ ] Tests pass for all handlers
 - [ ] Snapshots captured for regression testing
 - [ ] Results verified against subgraph data at test blocks
-- [ ] Entity counts match between subgraph and HyperIndex
+- [ ] Entity counts match between subgraph and Envio Indexer

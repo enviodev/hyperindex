@@ -122,7 +122,7 @@ This is globally unique across chains and blocks. Use it as the default unless t
 
 **Decimal normalization** — ALWAYS normalize when adding tokens with different decimals.
 
-**Schema & config** — see `indexing-schema` and `indexing-config` skills for full reference.
+**Schema & config** — see `indexing-schema` and `indexer-configuration` skills for full reference.
 
 ## Deep Documentation
 

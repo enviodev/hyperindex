@@ -1,15 +1,15 @@
 ---
 name: subgraph-migration
 description: >-
-  Migrate a TheGraph subgraph to Envio HyperIndex using TDD. Covers schema
+  Migrate a TheGraph subgraph to Envio Indexer using TDD. Covers schema
   conversion (remove @entity, Bytes->String, @derivedFrom), handler translation
   (save->set, store.get->context.get, templates->contractRegister), and
   verification against subgraph data.
 ---
 
-# TheGraph to Envio HyperIndex Migration
+# TheGraph to Envio Indexer Migration
 
-Migrate from TheGraph subgraph to Envio HyperIndex using Test-Driven Development.
+Migrate from TheGraph subgraph to the Envio Indexer using Test-Driven Development.
 
 ## Before Starting
 
@@ -18,7 +18,7 @@ Migrate from TheGraph subgraph to Envio HyperIndex using Test-Driven Development
 2. **Chain ID and contract addresses**
 3. **Block range for testing** (pick blocks with representative events)
 
-The subgraph GraphQL is the **source of truth** — use it to verify HyperIndex produces identical data.
+The subgraph GraphQL is the **source of truth** — use it to verify the Envio Indexer produces identical data.
 
 **Prerequisites:** Subgraph folder in workspace, Node.js v22+, pnpm, Docker
 

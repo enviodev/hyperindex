@@ -8,7 +8,7 @@ description: >-
 
 # Transaction Data
 
-HyperIndex does not have a native transaction handler (`onTransaction`). Transaction data is accessed through event handlers via `field_selection` in config.yaml.
+The Envio Indexer does not have a native transaction handler (`onTransaction`). Transaction data is accessed through event handlers via `field_selection` in config.yaml.
 
 ## Configuring Transaction Fields
 

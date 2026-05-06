@@ -1,6 +1,6 @@
 # Migration Patterns
 
-Detailed code patterns for migrating from TheGraph subgraph to Envio HyperIndex.
+Detailed code patterns for migrating from TheGraph subgraph to the Envio Indexer.
 
 ## Entity Creation Pattern
 
