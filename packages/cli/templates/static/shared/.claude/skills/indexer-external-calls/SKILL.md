@@ -10,128 +10,84 @@ metadata:
 
 # External Calls (Effect API)
 
-## Why Effects?
+Handlers run twice: parallel **preload pass** (warms caches), then **sequential pass** (state changes). All external I/O (fetch, RPC, APIs) MUST go through `createEffect` + `context.effect()` — otherwise it double-executes and blocks parallelization.
 
-Envio Indexer uses **Preload Optimization** — handlers run TWICE:
-
-1. **Preload pass**: all handlers in the batch run in parallel (to warm caches)
-2. **Sequential pass**: handlers run in event order (actual state changes)
-
-All external calls (fetch, RPC, APIs) MUST use the Effect API to prevent double execution and enable parallelization.
-
-## Defining an Effect
+## Define and call
 
 ```ts
 import { S, createEffect } from "envio";
 
-export const getSomething = createEffect(
+const getOwner = createEffect(
   {
-    name: "getSomething",
-    input: {
-      address: S.string,
-      blockNumber: S.number,
-    },
+    name: "getOwner",
+    input: { tokenId: S.bigint },
     output: S.union([S.string, null]),
     cache: true,
     rateLimit: false,
   },
-  async ({ input, context }) => {
-    const something = await fetch(
-      `https://api.example.com/something?address=${input.address}&blockNumber=${input.blockNumber}`
-    );
-    return something.json();
+  async ({ input }) => {
+    const res = await fetch(`https://api.example.com/owner/${input.tokenId}`);
+    return res.json();
+  }
+);
+
+indexer.onEvent(
+  { contract: "Token", event: "Transfer" },
+  async ({ event, context }) => {
+    const owner = await context.effect(getOwner, { tokenId: event.params.tokenId });
   }
 );
 ```
 
-## Consuming in Handlers
+## Pass minimum input
+
+`input` carries only what varies per call. Bake static config (URLs, tokens, channel IDs, env vars) into the effect body. Build payloads/strings inside the effect.
 
 ```ts
-import { getSomething } from "./utils";
-
-Contract.Event.handler(async ({ event, context }) => {
-  const something = await context.effect(getSomething, {
-    address: event.srcAddress,
-    blockNumber: event.block.number,
-  });
-  // Use the result...
-});
+// ❌ input: { url, chatId, text }   — config and pre-built strings leak into the call site
+// ✅ input: { usd, blockNumber }    — only the values that vary per call
 ```
 
-## context.isPreload Guard
+Dedup is keyed by hash of `input`; leaner inputs dedupe better, validate faster, and let one effect serve many call sites.
 
-For non-effect side effects that should only run once:
+## Schema (`S`)
 
-```ts
-Contract.Event.handler(async ({ event, context }) => {
-  const data = await context.effect(myEffect, input);
+`S.string`, `S.number`, `S.bigint`, `S.boolean`, `S.schema({ ... })`, `S.array(...)`, `S.union([..., null])`, `S.optional(...)`.
+Full ref: https://raw.githubusercontent.com/DZakh/sury/refs/tags/v9.3.0/docs/js-usage.md
 
-  if (!context.isPreload) {
-    console.log("Processing event", event.block.number);
-  }
-});
-```
-
-## S Schema Module
-
-The `S` module exposes a schema creation API for input/output validation:
-https://raw.githubusercontent.com/DZakh/sury/refs/tags/v9.3.0/docs/js-usage.md
-
-Common schemas:
-- `S.string`, `S.number`, `S.boolean`
-- `S.schema({ field: S.string })`
-- `S.array(S.string)`
-- `S.union([S.string, null])`
-- `S.optional(S.string)`
-
-## RPC Call Pattern (viem)
+## RPC pattern (viem)
 
 ```ts
-import { createEffect, S } from "envio";
-import { createPublicClient, http, parseAbi } from "viem";
+const client = createPublicClient({ transport: http(process.env.ENVIO_RPC_URL) });
 
-const ERC20_ABI = parseAbi([
-  "function name() view returns (string)",
-  "function symbol() view returns (string)",
-  "function decimals() view returns (uint8)",
-]);
-
-const client = createPublicClient({
-  transport: http(process.env.ENVIO_RPC_URL),
-});
-
-export const getTokenMetadata = createEffect(
+const getTokenMetadata = createEffect(
   {
     name: "getTokenMetadata",
     input: S.string,
-    output: S.schema({
-      name: S.string,
-      symbol: S.string,
-      decimals: S.number,
-    }),
+    output: { name: S.string, symbol: S.string, decimals: S.number },
     cache: true,
+    rateLimit: false,
   },
   async ({ input: address }) => {
+    const args = { address: address as `0x${string}`, abi: ERC20_ABI };
     const [name, symbol, decimals] = await Promise.all([
-      client.readContract({ address: address as `0x${string}`, abi: ERC20_ABI, functionName: "name" }),
-      client.readContract({ address: address as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" }),
-      client.readContract({ address: address as `0x${string}`, abi: ERC20_ABI, functionName: "decimals" }),
+      client.readContract({ ...args, functionName: "name" }),
+      client.readContract({ ...args, functionName: "symbol" }),
+      client.readContract({ ...args, functionName: "decimals" }),
     ]);
     return { name, symbol, decimals: Number(decimals) };
   }
 );
 ```
 
-## Effect Options
+## Options
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `name` | `string` | Name for debugging/logging |
-| `input` | `S.Schema` | Input validation schema |
-| `output` | `S.Schema` | Output validation schema |
-| `cache` | `boolean` | Cache results for identical inputs (default: `false`) |
-| `rateLimit` | `boolean \| { calls, per }` | Rate limit calls (default: `false`) |
-
-## Deep Documentation
+| Option | Type | Default |
+|---|---|---|
+| `name` | `string` | — |
+| `input` | `S.Schema` | — |
+| `output` | `S.Schema` | — |
+| `cache` | `boolean` | `false` |
+| `rateLimit` | `false \| { calls, per }` | required |
 
 Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
