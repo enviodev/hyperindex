@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=../../packages/envio/evm.schema.json
+#
+# Sample bulk-mode config for backfilling USDC Transfers on Ethereum mainnet.
+# Run with:
+#
+#   ENVIO_BULK_MODE=1 \
+#   ENVIO_BULK_SHARDS=8 \
+#   ENVIO_API_TOKEN=<your token> \
+#   ENVIO_CLICKHOUSE_HOST=http://localhost:8123 \
+#     pnpm envio start
+#
+# For other ERC20 tokens, change the address and start_block. The bulk path
+# only writes the first event of the first contract, so any ERC20 works as
+# long as you keep the Transfer event listed.
+name: bulk-erc20-example
+description: Bulk-mode firehose backfill of USDC Transfer events to ClickHouse
+rollback_on_reorg: false
+save_full_history: false
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    hypersync_config:
+      url: https://eth.hypersync.xyz
+    start_block: 6082465 # USDC contract creation
+    end_block: 19000000  # Pick whatever upper bound you want; bulk mode requires a finite range
+    contracts:
+      - name: ERC20
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"

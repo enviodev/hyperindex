@@ -61,7 +61,12 @@ let run = async args => {
         Config.prime(config)
         processChdir(cwd)
         applyEnv(env)
-        await Main.start(~reset)
+        if BulkConfig.isEnabled() {
+          let parsedConfig = Config.loadWithoutRegistrations()
+          await BulkMode.start(~config=parsedConfig)
+        } else {
+          await Main.start(~reset)
+        }
       | Migrate({reset, config}) =>
         Config.prime(config)
         await Main.migrate(~reset)
