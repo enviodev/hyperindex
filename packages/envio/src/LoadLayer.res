@@ -119,6 +119,10 @@ let rec callEffect = async (
   switch failure {
   | None => ()
   | Some(exn) =>
+    // TODO: skip retry when the effect's input may be speculative — i.e., when
+    // any preload-mode context access or entity `get` was performed before
+    // this call. Without that signal, we'd re-run handlers whose inputs the
+    // real run will recompute anyway. For now we always retry per maxRetries.
     let shouldRetry = switch effect.maxRetries {
     | None => true
     | Some(n) => attempt < n
