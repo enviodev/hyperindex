@@ -44,6 +44,43 @@ export const getSomething = createEffect(
 );
 ```
 
+## Pass Minimum Input
+
+Pass only the per-call data that varies between invocations. Bake static config (URLs, tokens, channel names, env-derived values) into the effect body. Construct strings, payloads, and templates inside the effect — not at the call site.
+
+```ts
+// ❌ Bloated input: static config and pre-built strings leak into the call site
+export const notifyLargeSwap = createEffect(
+  {
+    name: "notifyLargeSwap",
+    input: { url: S.string, chatId: S.string, text: S.string },
+  },
+  async ({ input }) => {
+    await fetch(input.url, {
+      method: "POST",
+      body: JSON.stringify({ chat_id: input.chatId, text: input.text }),
+    });
+  }
+);
+
+// ✅ Minimum input: only the values that vary per call
+export const notifyLargeSwap = createEffect(
+  {
+    name: "notifyLargeSwap",
+    input: { usd: S.bigint, blockNumber: S.number },
+  },
+  async ({ input }) => {
+    const text = `Large swap: $${input.usd.toLocaleString()} in block ${input.blockNumber}`;
+    await fetch(`https://api.telegram.org/bot${process.env.ENVIO_TG_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      body: JSON.stringify({ chat_id: process.env.ENVIO_TG_CHAT_ID, text }),
+    });
+  }
+);
+```
+
+Why: within-batch dedup is keyed by hash of `input` — leaner inputs dedupe more reliably. Smaller schemas validate faster, logs stay readable, and the effect becomes reusable across handlers without each call site re-supplying the same config.
+
 ## Consuming in Handlers
 
 ```ts
