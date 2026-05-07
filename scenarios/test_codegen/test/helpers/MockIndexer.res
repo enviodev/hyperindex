@@ -376,17 +376,14 @@ module Indexer = {
     {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
-          let before = (gsManager->GlobalStateManager.getState).processedBatches
-          while before >= (gsManager->GlobalStateManager.getState).processedBatches {
+          let beforeBatches = (gsManager->GlobalStateManager.getState).processedBatches
+          let beforeCheckpoint = persistence.writtenCheckpointId
+          while (
+            beforeBatches >= (gsManager->GlobalStateManager.getState).processedBatches ||
+            beforeCheckpoint >= persistence.writtenCheckpointId
+          ) {
             await Utils.delay(1)
           }
-          // Skip extra microtasks for indexer to fire follow-up actions
-          // (e.g. the NextQuery dispatch that schedules the next
-          // getItemsOrThrow call). Without this, callers that immediately
-          // call resolveGetItemsOrThrow can race the dispatch and observe
-          // an empty calls array.
-          await Utils.delay(0)
-          await Utils.delay(0)
           resolve()
         })
       },

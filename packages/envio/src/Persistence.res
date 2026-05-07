@@ -398,7 +398,7 @@ let rec executeWrite = persistence => {
             "msg": "Background write completed",
             "write_time_elapsed": dbWriteDuration,
           })
-          Prometheus.ProcessingBatch.setDbWriteDuration(~dbWriteDuration)
+          Prometheus.StorageWrite.increment(~storage="postgres", ~timeSeconds=dbWriteDuration)
 
           onWriteComplete(persistence.writtenCheckpointId)
 
