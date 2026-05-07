@@ -23,6 +23,7 @@ const getOwner = createEffect(
     input: { tokenId: S.bigint },
     output: S.union([S.string, null]),
     cache: true,
+    rateLimit: false,
   },
   async ({ input }) => {
     const res = await fetch(`https://api.example.com/owner/${input.tokenId}`);
@@ -30,9 +31,12 @@ const getOwner = createEffect(
   }
 );
 
-Contract.Transfer.handler(async ({ event, context }) => {
-  const owner = await context.effect(getOwner, { tokenId: event.params.tokenId });
-});
+indexer.onEvent(
+  { contract: "Token", event: "Transfer" },
+  async ({ event, context }) => {
+    const owner = await context.effect(getOwner, { tokenId: event.params.tokenId });
+  }
+);
 ```
 
 ## Pass minimum input
@@ -45,14 +49,6 @@ Contract.Transfer.handler(async ({ event, context }) => {
 ```
 
 Dedup is keyed by hash of `input`; leaner inputs dedupe better, validate faster, and let one effect serve many call sites.
-
-## isPreload guard
-
-For non-idempotent side effects you can't move into an effect:
-
-```ts
-if (!context.isPreload) console.log("event", event.block.number);
-```
 
 ## Schema (`S`)
 
@@ -68,8 +64,9 @@ const getTokenMetadata = createEffect(
   {
     name: "getTokenMetadata",
     input: S.string,
-    output: S.schema({ name: S.string, symbol: S.string, decimals: S.number }),
+    output: { name: S.string, symbol: S.string, decimals: S.number },
     cache: true,
+    rateLimit: false,
   },
   async ({ input: address }) => {
     const args = { address: address as `0x${string}`, abi: ERC20_ABI };
@@ -91,6 +88,6 @@ const getTokenMetadata = createEffect(
 | `input` | `S.Schema` | — |
 | `output` | `S.Schema` | — |
 | `cache` | `boolean` | `false` |
-| `rateLimit` | `false \| { calls, per }` | `false` |
+| `rateLimit` | `false \| { calls, per }` | required |
 
 Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
