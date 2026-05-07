@@ -19,6 +19,11 @@ type chainPlan = {
 type t = {
   enabled: bool,
   shards: int,
+  // Block range each work-queue chunk covers. Workers always process a chunk
+  // end-to-end before pulling the next one from the queue, so this controls
+  // the granularity of load balancing across workers. 50K is a sane default
+  // for ERC20 Transfer on a chain like Ethereum mainnet.
+  chunkSize: int,
   // ClickHouse table name to write into. v1 supports a single table.
   tableName: string,
   // ClickHouse connection details. Resolved at startup time so they propagate
@@ -77,6 +82,7 @@ let buildFromConfig = async (~config: Config.t): t => {
   }
 
   let shards = getEnvIntOr("ENVIO_BULK_SHARDS", ~fallback=8)
+  let chunkSize = getEnvIntOr("ENVIO_BULK_CHUNK_SIZE", ~fallback=50_000)
   let tableName = getEnvOr("ENVIO_BULK_TABLE", ~fallback=BulkSchema.erc20Transfer.tableName)
 
   // ClickHouse connection — bulk mode always writes to ClickHouse.
@@ -158,6 +164,7 @@ let buildFromConfig = async (~config: Config.t): t => {
   {
     enabled: true,
     shards,
+    chunkSize,
     tableName,
     clickhouseUrl,
     clickhouseDatabase,

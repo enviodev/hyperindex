@@ -190,6 +190,49 @@ module GetLogs = {
 
     res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
   }
+
+  // Streamed variant: uses HyperSync's `collectEvents` API which spawns
+  // server-side concurrent workers (default 10) to fan out the block range
+  // into parallel sub-queries. We get the same logsQueryPage shape back, but
+  // saturated by the server's parallelism rather than one round-trip per
+  // page. Use this for bulk backfill where you want to pull a wide range
+  // (50K-1M blocks) in a single call.
+  let collectAll = async (
+    ~client: HyperSyncClient.t,
+    ~fromBlock,
+    ~toBlock,
+    ~logSelections: array<LogSelection.t>,
+    ~fieldSelection,
+    ~concurrency: int,
+    ~nonOptionalBlockFieldNames,
+    ~nonOptionalTransactionFieldNames,
+  ): logsQueryPage => {
+    let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
+      topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
+        let topics = HyperSyncClient.QueryTypes.makeTopicSelection(
+          ~topic0,
+          ~topic1,
+          ~topic2,
+          ~topic3,
+        )
+        HyperSyncClient.QueryTypes.makeLogSelection(~address=addresses, ~topics)
+      })
+    )
+
+    let query = makeRequestBody(
+      ~fromBlock,
+      ~toBlockInclusive=toBlock,
+      ~addressesWithTopics,
+      ~fieldSelection,
+    )
+
+    let makeStreamConfig: int => HyperSyncClient.streamConfig = %raw(`function(c) {
+      return { concurrency: c };
+    }`)
+    let config = makeStreamConfig(concurrency)
+    let res = await client.collectEvents(~query, ~config)
+    res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
+  }
 }
 
 module BlockData = {

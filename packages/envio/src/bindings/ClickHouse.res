@@ -29,6 +29,18 @@ type insertParams<'a> = {
 @send
 external insert: (client, insertParams<'a>) => promise<unit> = "insert"
 
+// Raw insert that lets the caller pass any `values` payload (a Readable stream
+// of Buffers, a single Buffer, etc.). Used by bulk mode to ship RowBinary
+// bytes directly without the @clickhouse/client doing any per-row JSON encoding.
+type insertRawParams<'values> = {
+  table: string,
+  values: 'values,
+  format: string,
+}
+
+@send
+external insertRaw: (client, insertRawParams<'values>) => promise<unit> = "insert"
+
 type queryParams = {query: string}
 type queryResult<'a>
 

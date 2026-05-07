@@ -1,125 +1,121 @@
 // Bulk mode coordinator. Runs on the main thread when ENVIO_BULK_MODE=1.
 //
-// For each chain in the user's config, splits [startBlock, endBlock] into N
-// shards, spawns one worker thread per shard, and reports aggregate progress
-// to stdout. Workers each own their HyperSync + ClickHouse connections; this
-// thread does no fetching or writing of event data.
+// Splits each chain's [startBlock, endBlock] into fixed-size chunks (default
+// 50K blocks each) and dispatches them to a pool of N worker threads through
+// a work-stealing queue. Workers pull the next chunk as soon as they finish
+// the current one, so all N stay busy until the full range is covered. This
+// avoids the dead-tail of fixed N-shard splits, where the densest shard ends
+// up dominating wall time.
 //
-// PostgreSQL is only used for shard-progress bookkeeping so a kill -9 can be
-// resumed without re-doing finished ranges. The bulk row data lives entirely
-// in ClickHouse.
+// PostgreSQL is only used for shard-progress bookkeeping (not yet wired in).
+// The bulk row data lives entirely in ClickHouse.
 
 let workerEntryPath = () => {
   let dir = NodeJs.Path.getDirname(NodeJs.ImportMeta.importMeta)
   NodeJs.Path.join(dir, "BulkWorkerEntry.res.mjs")->NodeJs.Path.toString
 }
 
-type shardPlan = {
-  shardId: int,
+type chunk = {
   fromBlock: int,
   toBlock: int,
 }
 
-// Even split by block range. ERC20 activity is heavily skewed toward recent
-// blocks, so the last shard typically does most of the work; that's the cost
-// of a hackathon-quality splitter. A density-aware splitter is a follow-up.
-let makeShardPlan = (~fromBlock: int, ~toBlock: int, ~shardCount: int): array<shardPlan> => {
-  let totalBlocks = toBlock - fromBlock + 1
-  let perShard = totalBlocks / shardCount
-  let plan = []
-  for shardId in 0 to shardCount - 1 {
-    let from = fromBlock + shardId * perShard
-    let to = if shardId === shardCount - 1 {
-      toBlock
-    } else {
-      from + perShard - 1
-    }
-    plan->Array.push({shardId, fromBlock: from, toBlock: to})->ignore
+let makeChunks = (~fromBlock: int, ~toBlock: int, ~chunkSize: int): array<chunk> => {
+  let chunks = []
+  let cursor = ref(fromBlock)
+  while cursor.contents <= toBlock {
+    let to_ = Pervasives.min(cursor.contents + chunkSize - 1, toBlock)
+    chunks->Array.push({fromBlock: cursor.contents, toBlock: to_})->ignore
+    cursor := to_ + 1
   }
-  plan
+  chunks
 }
 
-// Per-shard live state on the main thread.
-type shardState = {
-  plan: shardPlan,
+// Per-worker live state on the main thread. We track the last reported
+// `lifetimeEvents` separately per worker so the global total is just a sum
+// over the latest reports — no double-counting on chunk boundaries.
+type workerLive = {
   mutable lastBlock: int,
-  mutable eventsWritten: float,
-  mutable done: bool,
-  mutable error: option<string>,
+  mutable lifetimeEvents: float,
+  mutable currentChunk: option<chunk>,
+  mutable drained: bool,
 }
 
-// Aggregate progress and print a one-line status update per second.
 let startProgressLogger = (
   ~chainId: int,
-  ~shards: array<shardState>,
-  ~totalBlocks: int,
+  ~workers: array<workerLive>,
+  ~chunksTotal: int,
+  ~chunksCompleted: ref<int>,
   ~startedAt: float,
 ) => {
   let render = () => {
-    let totalEvents = shards->Array.reduce(0., (acc, s) => acc +. s.eventsWritten)
-    let blocksDone = shards->Array.reduce(0, (acc, s) => acc + (s.lastBlock - s.plan.fromBlock + 1))
+    let totalEvents = workers->Array.reduce(0., (acc, w) => acc +. w.lifetimeEvents)
     let elapsedSec = (Date.now() -. startedAt) /. 1000.
     let rate = if elapsedSec > 0. {
       totalEvents /. elapsedSec
     } else {
       0.
     }
-    let pct = if totalBlocks > 0 {
-      blocksDone->Int.toFloat /. totalBlocks->Int.toFloat *. 100.
-    } else {
-      0.
-    }
-    let doneCount = shards->Array.reduce(0, (acc, s) => acc + (s.done ? 1 : 0))
+    let drainedCount = workers->Array.reduce(0, (acc, w) => acc + (w.drained ? 1 : 0))
+    let activeCount = workers->Array.length - drainedCount
     Console.log(
-      `[bulk chain=${chainId->Int.toString}] ${pct->Float.toFixed(
-          ~digits=1,
-        )}% blocks=${blocksDone->Int.toString}/${totalBlocks->Int.toString} events=${totalEvents->Float.toFixed(
+      `[bulk chain=${chainId->Int.toString}] chunks=${chunksCompleted.contents->Int.toString}/${chunksTotal->Int.toString} events=${totalEvents->Float.toFixed(
           ~digits=0,
-        )} rate=${rate->Float.toFixed(
-          ~digits=0,
-        )} ev/s shardsDone=${doneCount->Int.toString}/${shards
+        )} rate=${rate->Float.toFixed(~digits=0)} ev/s active=${activeCount->Int.toString}/${workers
         ->Array.length
         ->Int.toString} elapsed=${elapsedSec->Float.toFixed(~digits=1)}s`,
     )
   }
-  // Bind the host setInterval/clearInterval through globalThis so the local
-  // ReScript-side names don't shadow the JS globals (a `let setInterval = ...`
-  // that calls `setInterval(...)` recurses forever — Node.js bug we hit).
+  // Bind to the JS globals through globalThis so the local `setInterval`
+  // identifier doesn't shadow itself (`let setInterval = (...) => setInterval(...)`
+  // self-recurses → Maximum call stack size exceeded).
   let scheduleInterval: (
     unit => unit,
     int,
   ) => 'a = %raw(`(fn, ms) => globalThis.setInterval(fn, ms)`)
   let cancelInterval: 'a => unit = %raw(`(id) => { try { globalThis.clearInterval(id); } catch (_) {} }`)
   let id = scheduleInterval(render, 1000)
-  // Returns a stop function the caller can call when all shards are done.
   (): unit => cancelInterval(id)
 }
 
 let runChain = async (~bulkConfig: BulkConfig.t, ~chainPlan: BulkConfig.chainPlan): float => {
   let startedAt = Date.now()
-  let shardCount = bulkConfig.shards
-  let plan = makeShardPlan(~fromBlock=chainPlan.fromBlock, ~toBlock=chainPlan.toBlock, ~shardCount)
-  let totalBlocks = chainPlan.toBlock - chainPlan.fromBlock + 1
-
-  let shards: array<shardState> = plan->Array.map(p => {
-    {plan: p, lastBlock: p.fromBlock - 1, eventsWritten: 0., done: false, error: None}
-  })
+  let workerCount = bulkConfig.shards
+  let chunkSize = bulkConfig.chunkSize
+  let chunks = makeChunks(~fromBlock=chainPlan.fromBlock, ~toBlock=chainPlan.toBlock, ~chunkSize)
+  let chunksTotal = chunks->Array.length
+  let nextChunkIdx = ref(0)
+  let chunksCompleted = ref(0)
 
   Console.log(
-    `[bulk] chain=${chainPlan.chainId->Int.toString} starting ${shardCount->Int.toString} shards over blocks [${chainPlan.fromBlock->Int.toString}, ${chainPlan.toBlock->Int.toString}]`,
+    `[bulk] chain=${chainPlan.chainId->Int.toString} workers=${workerCount->Int.toString} chunkSize=${chunkSize->Int.toString} chunks=${chunksTotal->Int.toString} blocks=[${chainPlan.fromBlock->Int.toString}, ${chainPlan.toBlock->Int.toString}]`,
   )
+
+  let workers: array<workerLive> = Array.make(
+    ~length=workerCount,
+    {
+      lastBlock: 0,
+      lifetimeEvents: 0.,
+      currentChunk: None,
+      drained: false,
+    },
+  )
+  // Array.make duplicates the same record reference for every slot; rebuild
+  // each slot so the per-worker state is independent.
+  for i in 0 to workerCount - 1 {
+    workers->Array.setUnsafe(
+      i,
+      {lastBlock: 0, lifetimeEvents: 0., currentChunk: None, drained: false},
+    )
+  }
 
   let entry = workerEntryPath()
 
-  // Wrap each worker in a Promise that resolves when it sends Done or
-  // rejects on WorkerError / abnormal exit.
-  let workerPromises = shards->Array.map(shard => {
+  let workerPromises = Belt.Array.makeBy(workerCount, workerId => {
     Promise.make((resolve, reject) => {
       let workerData: BulkWorker.workerData = {
-        shardId: shard.plan.shardId,
+        workerId,
         chainId: chainPlan.chainId,
-        fromBlock: shard.plan.fromBlock,
-        toBlock: shard.plan.toBlock,
         hypersyncUrl: chainPlan.hypersyncUrl,
         hypersyncToken: bulkConfig.hypersyncToken,
         contractAddresses: chainPlan.contractAddresses,
@@ -139,41 +135,59 @@ let runChain = async (~bulkConfig: BulkConfig.t, ~chainPlan: BulkConfig.chainPla
       )
 
       let makeJsError: string => exn = %raw(`(s) => new Error(s)`)
+      let postToWorker: (
+        'a,
+        BulkWorker.mainMessage,
+      ) => unit = %raw(`(w, msg) => w.postMessage(msg)`)
+
+      let dispatchOrDrain = () => {
+        if nextChunkIdx.contents < chunksTotal {
+          let chunk = chunks->Array.getUnsafe(nextChunkIdx.contents)
+          nextChunkIdx := nextChunkIdx.contents + 1
+          let workerLive = workers->Array.getUnsafe(workerId)
+          workerLive.currentChunk = Some(chunk)
+          worker->postToWorker(Work({fromBlock: chunk.fromBlock, toBlock: chunk.toBlock}))
+        } else {
+          worker->postToWorker(Drain({_dummy: false}))
+        }
+      }
 
       worker->NodeJs.WorkerThreads.onMessage(
         (msg: BulkWorker.workerMessage) => {
           switch msg {
-          | Progress({lastBlock, eventsWritten}) => {
-              shard.lastBlock = lastBlock
-              shard.eventsWritten = eventsWritten
-            }
-          | Done({totalEvents}) => {
-              shard.eventsWritten = totalEvents
-              shard.lastBlock = shard.plan.toBlock
-              shard.done = true
-              resolve()
-            }
-          | WorkerError({message}) => {
-              shard.error = Some(message)
-              reject(makeJsError(message))
-            }
+          | Ready(_) => dispatchOrDrain()
+          | NeedNext(_) =>
+            chunksCompleted := chunksCompleted.contents + 1
+            dispatchOrDrain()
+          | Progress({workerId: wid, lastBlock, lifetimeEvents}) =>
+            let w = workers->Array.getUnsafe(wid)
+            w.lastBlock = lastBlock
+            w.lifetimeEvents = lifetimeEvents
+          | Drained({workerId: wid, totalEvents}) =>
+            let w = workers->Array.getUnsafe(wid)
+            w.lifetimeEvents = totalEvents
+            w.drained = true
+            resolve()
+          | WorkerError({message}) => reject(makeJsError(message))
           }
         },
       )
 
       worker->NodeJs.WorkerThreads.onError(
         err => {
-          shard.error = Some(err->Utils.prettifyExn->String.make)
           reject(err)
         },
       )
 
       worker->NodeJs.WorkerThreads.onExit(
         code => {
-          if code !== 0 && !shard.done {
-            let msg = `Worker for shard ${shard.plan.shardId->Int.toString} exited with code ${code->Int.toString}`
-            shard.error = Some(msg)
-            reject(makeJsError(msg))
+          let w = workers->Array.getUnsafe(workerId)
+          if code !== 0 && !w.drained {
+            reject(
+              makeJsError(
+                `Worker ${workerId->Int.toString} exited with code ${code->Int.toString}`,
+              ),
+            )
           }
         },
       )
@@ -182,14 +196,12 @@ let runChain = async (~bulkConfig: BulkConfig.t, ~chainPlan: BulkConfig.chainPla
 
   let stopLogger = startProgressLogger(
     ~chainId=chainPlan.chainId,
-    ~shards,
-    ~totalBlocks,
+    ~workers,
+    ~chunksTotal,
+    ~chunksCompleted,
     ~startedAt,
   )
 
-  // Promise.all rejects fast on the first failed worker. For a hackathon this
-  // is fine — surface the error and exit. A retry-failed-shards loop is a
-  // follow-up.
   try {
     let _ = await Promise.all(workerPromises)
   } catch {
@@ -200,7 +212,7 @@ let runChain = async (~bulkConfig: BulkConfig.t, ~chainPlan: BulkConfig.chainPla
 
   stopLogger()
 
-  let totalEvents = shards->Array.reduce(0., (acc, s) => acc +. s.eventsWritten)
+  let totalEvents = workers->Array.reduce(0., (acc, w) => acc +. w.lifetimeEvents)
   let elapsedSec = (Date.now() -. startedAt) /. 1000.
   Console.log(
     `[bulk] chain=${chainPlan.chainId->Int.toString} done events=${totalEvents->Float.toFixed(
@@ -211,16 +223,12 @@ let runChain = async (~bulkConfig: BulkConfig.t, ~chainPlan: BulkConfig.chainPla
   totalEvents
 }
 
-// Initialize the ClickHouse database + table once before workers start. This
-// avoids each worker racing to CREATE TABLE.
 let initClickHouse = async (~bulkConfig: BulkConfig.t) => {
   let bootstrapClient = ClickHouse.createClient({
     url: bulkConfig.clickhouseUrl,
     username: bulkConfig.clickhouseUsername,
     password: bulkConfig.clickhousePassword,
   })
-  // CREATE DATABASE on the unscoped client, then re-create on a scoped one for
-  // CREATE TABLE — mirrors the existing ClickHouse.initialize path.
   await bootstrapClient->ClickHouse.exec({
     query: `CREATE DATABASE IF NOT EXISTS \`${bulkConfig.clickhouseDatabase}\``,
   })
@@ -243,7 +251,7 @@ let start = async (~config: Config.t) => {
 
   let bulkConfig = await BulkConfig.buildFromConfig(~config)
   Console.log(
-    `[bulk] config: shards=${bulkConfig.shards->Int.toString} table=${bulkConfig.tableName} chains=${bulkConfig.chains
+    `[bulk] config: workers=${bulkConfig.shards->Int.toString} chunkSize=${bulkConfig.chunkSize->Int.toString} table=${bulkConfig.tableName} chains=${bulkConfig.chains
       ->Array.length
       ->Int.toString}`,
   )
@@ -253,8 +261,6 @@ let start = async (~config: Config.t) => {
 
   let startedAt = Date.now()
 
-  // Run all chains in parallel — they don't share workers or connections, so
-  // there's no benefit to serializing them.
   let perChainTotals = await bulkConfig.chains
   ->Array.map(chainPlan => runChain(~bulkConfig, ~chainPlan))
   ->Promise.all

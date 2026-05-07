@@ -28,8 +28,8 @@ chains:
   - id: 1
     hypersync_config:
       url: https://eth.hypersync.xyz
-    start_block: 6082465  # USDC contract creation
-    end_block: 19000000   # ~13M blocks of USDC activity
+    start_block: 18000000
+    end_block: 19000000   # 1M blocks of dense USDC activity
     contracts:
       - name: ERC20
         address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
