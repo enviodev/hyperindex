@@ -6,6 +6,7 @@ import {
   type Indexer,
   type EvmChainId,
   type EvmChainName,
+  type EvmContractName,
   type EvmEvent,
   type FuelChainId,
   type FuelEvent,
@@ -18,15 +19,23 @@ import {
   type EvmOnEventContext,
   type EvmContractRegisterContext,
   type EvmOnEventWhere,
-} from "generated";
+  type Entity,
+  type EntityName,
+  type Enum,
+  type EnumName,
+} from "envio";
 import {
   type Address,
   type EvmOnBlockWhereResult,
   type EvmOnBlockFilter,
   type EvmOnBlockOptions,
+  type EvmOnBlockContext,
+  type EvmOnBlockHandler,
+  type EvmOnBlockHandlerArgs,
+  type EvmOnBlockWhereArgs,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
-import { createTestIndexer } from "generated";
+import { createTestIndexer } from "envio";
 
 describe("Use Envio test framework to test event handlers", () => {
   it("Indexer types and value", () => {
@@ -79,28 +88,28 @@ describe("Use Envio test framework to test event handlers", () => {
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly gnosis: {
             readonly id: 100;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly polygon: {
             readonly id: 137;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly "1337": {
             readonly id: 1337;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
         } & {
           readonly 1: {
@@ -108,33 +117,33 @@ describe("Use Envio test framework to test event handlers", () => {
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly 100: {
             readonly id: 100;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly 137: {
             readonly id: 137;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly 1337: {
             readonly id: 1337;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
         }
       >
     >(true);
-    // Check that chain has the expected structure with name and isLive
+    // Check that chain has the expected structure with name and isRealtime
     expectType<
       TypeEqual<
         typeof indexer.chains.ethereumMainnet,
@@ -143,7 +152,7 @@ describe("Use Envio test framework to test event handlers", () => {
           readonly startBlock: number;
           readonly endBlock: number | undefined;
           readonly name: string;
-          readonly isLive: boolean;
+          readonly isRealtime: boolean;
         } & ExpectedEvmContracts
       >
     >(true);
@@ -160,13 +169,13 @@ describe("Use Envio test framework to test event handlers", () => {
     expectType<
       TypeEqual<
         FuelChainId,
-        "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
+        "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'envio codegen'"
       >
     >(true);
     expectType<
       TypeEqual<
         SvmChainId,
-        "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
+        "SvmChainId is not available. Configure SVM chains in config.yaml and run 'envio codegen'"
       >
     >(true);
 
@@ -184,9 +193,12 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(indexer.chains[1].startBlock, 1);
     assert.deepEqual(indexer.chains[1].endBlock, undefined);
     assert.deepEqual(indexer.chains[1].name, "ethereumMainnet");
-    assert.deepEqual(indexer.chains[1].isLive, false);
+    assert.deepEqual(indexer.chains[1].isRealtime, false);
     assert.deepEqual(indexer.chains[1].Noop.addresses, [
       "0x0b2F78c5Bf6d9c12EE1225d5f374Aa91204580C3",
+    ]);
+    assert.deepEqual(indexer.chains[1337].Gravatar.addresses, [
+      "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
     ]);
     assert.deepEqual(indexer.chains[1].Noop.name, "Noop");
     assert.deepEqual(Object.keys(indexer.chains[1]), [
@@ -194,7 +206,7 @@ describe("Use Envio test framework to test event handlers", () => {
       "startBlock",
       "endBlock",
       "name",
-      "isLive",
+      "isRealtime",
       "EventFiltersTest",
       "Gravatar",
       "NftFactory",
@@ -868,7 +880,7 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(chain.name, "ethereumMainnet");
     assert.deepEqual(chain.startBlock, 1);
     assert.deepEqual(chain.endBlock, undefined);
-    assert.deepEqual(chain.isLive, false);
+    assert.deepEqual(chain.isRealtime, false);
 
     // Chain by name (non-enumerable alias)
     assert.deepEqual(testIndexer.chains[1], testIndexer.chains.ethereumMainnet);
@@ -1109,7 +1121,7 @@ describe("Use Envio test framework to test event handlers", () => {
 
     // Verify chain info types
     expectType<TypeEqual<typeof testIndexer.chainIds, readonly (1 | 100 | 137 | 1337)[]>>(true);
-    expectType<TypeEqual<typeof testIndexer.chains[1]["isLive"], boolean>>(true);
+    expectType<TypeEqual<typeof testIndexer.chains[1]["isRealtime"], boolean>>(true);
     expectType<TypeEqual<typeof testIndexer.chains[1]["id"], 1>>(true);
 
     const result = await testIndexer.process({
@@ -1523,7 +1535,7 @@ describe("Use Envio test framework to test event handlers", () => {
     expectType<
       TypeEqual<
         FuelEvent,
-        "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
+        "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'envio codegen'"
       >
     >(true);
   });
@@ -1586,7 +1598,7 @@ describe("onEvent / contractRegister types", () => {
 
   it("EvmOnEventContext has chain info and entity ops", () => {
     expectType<TypeEqual<EvmOnEventContext["chain"]["id"], EvmChainId>>(true);
-    expectType<TypeEqual<EvmOnEventContext["chain"]["isLive"], boolean>>(true);
+    expectType<TypeEqual<EvmOnEventContext["chain"]["isRealtime"], boolean>>(true);
     expectType<TypeEqual<EvmOnEventContext["isPreload"], boolean>>(true);
 
     // Entity ops are available on context
@@ -1762,5 +1774,113 @@ describe("onEvent / contractRegister types", () => {
     expectType<EvmOnBlockFilter>(_ok);
     expectType<EvmOnBlockFilter>(_partial);
     expectType<EvmOnBlockFilter>(_empty);
+  });
+});
+
+describe("Schema-bound types: Entity / EntityName / Enum / EnumName", () => {
+  it("EntityName accepts schema entity names and rejects others", () => {
+    // Positive: known entities are assignable to EntityName.
+    const _user: EntityName = "User";
+    const _gravatar: EntityName = "Gravatar";
+    expectType<EntityName>(_user);
+    expectType<EntityName>(_gravatar);
+
+    // @ts-expect-error - "NotAnEntity" is not in the schema
+    const _bad: EntityName = "NotAnEntity";
+  });
+
+  it("Entity<TName> resolves to the per-entity shape", () => {
+    // Entity<"User"> is the same shape as the per-entity alias `User`.
+    expectType<TypeEqual<Entity<"User">, User>>(true);
+
+    // Spot-check a couple of fields on the resolved type.
+    expectType<TypeEqual<Entity<"User">["id"], string>>(true);
+    expectType<
+      TypeEqual<Entity<"User">["accountType"], "ADMIN" | "USER">
+    >(true);
+    expectType<
+      TypeEqual<Entity<"User">["gravatar_id"], string | undefined>
+    >(true);
+
+    // @ts-expect-error - "NotAnEntity" is not assignable to EntityName
+    type _bad = Entity<"NotAnEntity">;
+  });
+
+  it("EnumName accepts schema enum names and rejects others", () => {
+    const _account: EnumName = "AccountType";
+    const _size: EnumName = "GravatarSize";
+    expectType<EnumName>(_account);
+    expectType<EnumName>(_size);
+
+    // @ts-expect-error - "NotAnEnum" is not in the schema
+    const _bad: EnumName = "NotAnEnum";
+  });
+
+  it("Enum<TName> resolves to the schema enum's value union", () => {
+    expectType<TypeEqual<Enum<"AccountType">, "ADMIN" | "USER">>(true);
+    expectType<
+      TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">
+    >(true);
+
+    // @ts-expect-error - "NotAnEnum" is not assignable to EnumName
+    type _bad = Enum<"NotAnEnum">;
+  });
+});
+
+describe("Config-bound types: EvmContractName", () => {
+  it("EvmContractName is the union of configured EVM contract names", () => {
+    expectType<
+      TypeEqual<
+        EvmContractName,
+        | "NftFactory"
+        | "EventFiltersTest"
+        | "SimpleNft"
+        | "TestEvents"
+        | "Gravatar"
+        | "Noop"
+      >
+    >(true);
+
+    // @ts-expect-error - "NotAContract" is not configured
+    const _bad: EvmContractName = "NotAContract";
+  });
+});
+
+describe("EvmOnBlock surface: Args / Context / Handler / WhereArgs", () => {
+  it("EvmOnBlockContext is an alias of EvmOnEventContext", () => {
+    expectType<TypeEqual<EvmOnBlockContext, EvmOnEventContext>>(true);
+  });
+
+  it("EvmOnBlockHandlerArgs has block.number and the block context", () => {
+    expectType<
+      TypeEqual<EvmOnBlockHandlerArgs["block"], { readonly number: number }>
+    >(true);
+    expectType<
+      TypeEqual<EvmOnBlockHandlerArgs["context"], EvmOnBlockContext>
+    >(true);
+  });
+
+  it("EvmOnBlockHandler is an async function from args to void", () => {
+    expectType<
+      TypeEqual<
+        EvmOnBlockHandler,
+        (args: EvmOnBlockHandlerArgs) => Promise<void>
+      >
+    >(true);
+  });
+
+  it("EvmOnBlockWhereArgs.chain exposes id and per-contract handles", () => {
+    // chain.id narrows to the configured EVM chain-id union.
+    expectType<TypeEqual<EvmOnBlockWhereArgs["chain"]["id"], EvmChainId>>(true);
+    expectType<TypeEqual<EvmOnBlockWhereArgs["chain"]["isRealtime"], boolean>>(
+      true
+    );
+    // Configured contracts are reachable on the chain handle.
+    expectType<
+      TypeEqual<EvmOnBlockWhereArgs["chain"]["NftFactory"]["name"], "NftFactory">
+    >(true);
+    expectType<
+      TypeEqual<EvmOnBlockWhereArgs["chain"]["Gravatar"]["name"], "Gravatar">
+    >(true);
   });
 });

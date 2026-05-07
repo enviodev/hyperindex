@@ -11,12 +11,13 @@ let loadById = (
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (idsToLoad, ~onError as _) => {
-    let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
+    let storage = persistence->Persistence.getInitializedStorageOrThrow
+    let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
 
     // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
-      await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
+      await storage.loadByIdsOrThrow(
         ~table=entityConfig.table,
         ~rowsSchema=entityConfig.rowsSchema,
         ~ids=idsToLoad,
@@ -42,6 +43,7 @@ let loadById = (
     })
 
     timerRef->Prometheus.StorageLoad.endOperation(
+      ~storage=storage.name,
       ~operation=key,
       ~whereSize=idsToLoad->Array.length,
       ~size=dbEntities->Array.length,
@@ -255,11 +257,12 @@ let loadEffect = (
       | _ => false
       }
     ) {
-      let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
+      let storage = persistence->Persistence.getInitializedStorageOrThrow
+      let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
       let {table, outputSchema} = effect.storageMeta
 
       let dbEntities = try {
-        await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
+        await storage.loadByIdsOrThrow(
           ~table,
           ~rowsSchema=Internal.effectCacheItemRowsSchema,
           ~ids=idsToLoad,
@@ -297,6 +300,7 @@ let loadEffect = (
       })
 
       timerRef->Prometheus.StorageLoad.endOperation(
+        ~storage=storage.name,
         ~operation=key,
         ~whereSize=idsToLoad->Array.length,
         ~size=dbEntities->Array.length,
@@ -358,7 +362,8 @@ let loadByField = (
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (fieldValues: array<'fieldValue>, ~onError as _) => {
-    let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
+    let storage = persistence->Persistence.getInitializedStorageOrThrow
+    let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
 
     let size = ref(0)
 
@@ -374,9 +379,7 @@ let loadByField = (
     ->Array.map(async index => {
       inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
       try {
-        let entities = await (
-          persistence->Persistence.getInitializedStorageOrThrow
-        ).loadByFieldOrThrow(
+        let entities = await storage.loadByFieldOrThrow(
           ~operator=switch index {
           | Single({operator: Gt}) => #">"
           | Single({operator: Eq}) => #"="
@@ -421,6 +424,7 @@ let loadByField = (
     ->Promise.all
 
     timerRef->Prometheus.StorageLoad.endOperation(
+      ~storage=storage.name,
       ~operation=key,
       ~whereSize=fieldValues->Array.length,
       ~size=size.contents,

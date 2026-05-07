@@ -4,7 +4,7 @@ use super::{
     human_config::evm::For,
     system_config::{self, Abi, Ecosystem, EventKind, FuelEventKind, SystemConfig},
 };
-use crate::{config_parsing::chain_helpers::Network, persisted_state, utils::text::Capitalize};
+use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -26,6 +26,8 @@ pub(crate) struct PublicConfigJson<'a> {
     description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     handlers: Option<&'a str>,
+    #[serde(skip_serializing_if = "is_false")]
+    is_dev: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     multichain: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -282,7 +284,7 @@ fn chain_id_to_name(chain_id: u64, ecosystem: &Ecosystem) -> String {
 }
 
 impl SystemConfig {
-    pub fn to_public_config_json(&self) -> Result<String> {
+    pub fn to_public_config_json(&self, is_dev: bool) -> Result<String> {
         let cfg = self;
 
         // Build chains map
@@ -307,7 +309,7 @@ impl SystemConfig {
                                 source_for: match rpc.source_for {
                                     Some(For::Sync) => "sync",
                                     Some(For::Fallback) => "fallback",
-                                    Some(For::Live) => "live",
+                                    Some(For::Realtime) => "realtime",
                                     None => unreachable!(
                                         "source_for should be resolved by from_evm_network_config"
                                     ),
@@ -583,10 +585,11 @@ impl SystemConfig {
             .collect::<Result<_>>()?;
 
         let config = PublicConfigJson {
-            version: persisted_state::current_version(),
+            version: system_config::VERSION,
             name: &cfg.name,
             description: cfg.human_config.get_base_config().description.as_deref(),
             handlers: cfg.handlers.as_deref(),
+            is_dev,
             multichain,
             full_batch_size: cfg.human_config.get_base_config().full_batch_size,
             rollback_on_reorg: cfg.rollback_on_reorg,

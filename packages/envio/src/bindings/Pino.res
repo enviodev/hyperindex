@@ -7,7 +7,6 @@ type logLevelBuiltin = [
   | #fatal
   | #silent
 ]
-@genType
 type logLevelUser = [
   | // NOTE: pino does better when these are all lowercase - some parts of the code lower case logs.
   #udebug
@@ -19,7 +18,6 @@ type logLevel = [logLevelBuiltin | logLevelUser]
 
 type pinoMessageBlob
 type pinoMessageBlobWithError
-@genType
 type t = {
   trace: pinoMessageBlob => unit,
   debug: pinoMessageBlob => unit,

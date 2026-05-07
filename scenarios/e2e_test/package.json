@@ -9,15 +9,12 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@types/node": "^24.10.1",
-    "typescript": "5.9.3",
-    "vitest": "4.0.18"
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.0"
   },
   "dependencies": {
     "envio": "file:../../packages/envio"
-  },
-  "optionalDependencies": {
-    "generated": "./generated"
   },
   "engines": {
     "node": ">=22.0.0"

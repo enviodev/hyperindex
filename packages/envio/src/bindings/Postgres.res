@@ -1,6 +1,3 @@
-// Only needed for some old tests
-// Remove @genType in the future
-@genType.import(("postgres", "Sql"))
 type sql
 
 type undefinedTransform = | @as(undefined) Undefined | @as(null) Null
@@ -92,6 +89,11 @@ type poolConfig = {
 external makeSql: (~config: poolConfig) => sql = "default"
 
 @send external beginSql: (sql, sql => promise<'result>) => promise<'result> = "begin"
+
+// Graceful pool shutdown — drains in-flight queries, then closes connections.
+// Without this the pool's idle TCP sockets keep Node's event loop alive after
+// short-lived commands (db-migrate, drop-schema) finish their work.
+@send external endSql: sql => promise<unit> = "end"
 
 // TODO: can explore this approach (https://forum.rescript-lang.org/t/rfc-support-for-tagged-template-literals/3744)
 // @send @variadic

@@ -1,5 +1,13 @@
 open Vitest
 
+// Query only dynamically registered addresses (exclude config addresses with registrationBlock=-1)
+let queryDynamicAddresses = (indexerMock: MockIndexer.Indexer.t) =>
+  (
+    indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
+      array<InternalTable.EnvioAddresses.t>,
+    >
+  )->Promise.thenResolve(rows => rows->Array.filter(r => r.registrationBlock !== -1))
+
 describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
     ~t,
@@ -667,11 +675,7 @@ describe("E2E rollback tests", () => {
       ],
     ))
     t.expect(
-      await (
-        indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
-          array<InternalTable.EnvioAddresses.t>,
-        >
-      ),
+      await queryDynamicAddresses(indexerMock),
       ~message="Shouldn't store dynamic contracts at this point",
     ).toEqual([])
 
@@ -708,11 +712,7 @@ describe("E2E rollback tests", () => {
       ],
     ))
     t.expect(
-      await (
-        indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
-          array<InternalTable.EnvioAddresses.t>,
-        >
-      ),
+      await queryDynamicAddresses(indexerMock),
       ~message="Added the processed dynamic contract to the db",
     ).toEqual([
       {
@@ -729,13 +729,7 @@ describe("E2E rollback tests", () => {
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=103)
     await indexerMock.getBatchWritePromise()
     t.expect(
-      (
-        await (
-          indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
-            array<InternalTable.EnvioAddresses.t>,
-          >
-        )
-      )->Array.length,
+      (await queryDynamicAddresses(indexerMock))->Array.length,
       ~message="Should add the processed dynamic contracts to the db",
     ).toEqual(2)
 
@@ -792,13 +786,7 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
     t.expect(
-      (
-        await (
-          indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
-            array<InternalTable.EnvioAddresses.t>,
-          >
-        )
-      )->Array.length,
+      (await queryDynamicAddresses(indexerMock))->Array.length,
       ~message=`Nothing won't be rollbacked at this point. Since we need to process an event for this (rollback db only on batch write).
 This might be wrong after we start exposing a block hash for progress block.`,
     ).toEqual(2)
@@ -818,11 +806,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await (
-        indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
-          array<InternalTable.EnvioAddresses.t>,
-        >
-      ),
+      await queryDynamicAddresses(indexerMock),
       ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
     ).toEqual([
       {

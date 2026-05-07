@@ -241,7 +241,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~indexingContracts,
+    ~indexingAddresses,
     ~knownHeight,
     ~partitionId as _,
     ~selection,
@@ -436,7 +436,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
             ~sighash=topic0->EvmTypes.Hex.toString,
             ~topicCount=log.topics->Array.length,
           ),
-          ~indexingContracts,
+          ~indexingAddresses,
           ~contractAddress=log.address,
           ~blockNumber=block.number->Belt.Option.getUnsafe,
         )

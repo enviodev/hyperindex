@@ -22,7 +22,7 @@ type initialChainState = {
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  dynamicContracts: array<Internal.indexingContract>,
+  indexingAddresses: array<Internal.indexingAddress>,
   sourceBlockNumber: int,
 }
 
@@ -33,6 +33,11 @@ type initialState = {
   checkpointId: Internal.checkpointId,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
+  // Public config snapshot read from envio_info, used by `Persistence.init`
+  // to compat-check a resume against the running config. None when the
+  // schema pre-dates envio_info or the row is missing — `init` treats that
+  // as a version mismatch.
+  envioInfo: option<JSON.t>,
 }
 
 type rollbackEntityDiff = {
@@ -67,15 +72,20 @@ type effectCacheWriteData = {
 }
 
 type storage = {
+  // Identifier used as the `storage` label on Prometheus metrics.
+  name: string,
   // Should return true if we already have persisted data
   // and we can skip initialization
   isInitialized: unit => promise<bool>,
   // Should initialize the storage so we can start interacting with it
-  // Eg create connection, schema, tables, etc.
+  // Eg create connection, schema, tables, etc. `envioInfo` is opaque JSON
+  // persisted as part of the same transaction so a fresh schema always
+  // carries a matching row — storage doesn't interpret it.
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
+    ~envioInfo: JSON.t,
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
   @raises("StorageError")
@@ -137,6 +147,9 @@ type storage = {
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
   ) => promise<unit>,
+  // Release any long-lived resources (e.g. the postgres connection pool) so
+  // short-lived CLI commands like `db-migrate setup` can exit cleanly.
+  close: unit => promise<unit>,
 }
 
 type storageStatus =
@@ -190,7 +203,7 @@ let make = (
 }
 
 let init = {
-  async (persistence, ~chainConfigs, ~reset=false) => {
+  async (persistence, ~chainConfigs, ~envioInfo, ~resetCommand, ~reset=false) => {
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -212,6 +225,7 @@ let init = {
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,
             ~chainConfigs,
+            ~envioInfo,
           )
           Logging.info(`The indexer storage is ready. Starting indexing!`)
           persistence.writtenCheckpointId = initialState.checkpointId
@@ -227,6 +241,15 @@ let init = {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState()
           persistence.writtenCheckpointId = initialState.checkpointId
+          // Compat-check the running config against what was stored on the
+          // last successful initialize. None means the schema pre-dates
+          // envio_info (or the row was wiped out-of-band) and we can't
+          // compare — treat it as a version mismatch.
+          let changedPaths = switch initialState.envioInfo {
+          | None => ["envio info is missing — storage initialized by an older envio"]
+          | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
+          }
+          Config.throwIfIncompatible(changedPaths, ~resetCommand)
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {
@@ -312,20 +335,19 @@ let prepareRollbackDiff = async (
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
 ): rollbackDiff => {
-  let entityChanges =
-    await persistence.allEntities
-    ->Array.map(async entityConfig => {
-      let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
-        ~entityConfig,
-        ~rollbackTargetCheckpointId,
-      )
+  let entityChanges = await persistence.allEntities
+  ->Array.map(async entityConfig => {
+    let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+      ~entityConfig,
+      ~rollbackTargetCheckpointId,
+    )
 
-      let removedIds = removedIdsResult->Array.map(data => data["id"])
-      let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
+    let removedIds = removedIdsResult->Array.map(data => data["id"])
+    let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
 
-      ({entityConfig, removedIds, restoredEntities}: rollbackEntityDiff)
-    })
-    ->Promise.all
+    ({entityConfig, removedIds, restoredEntities}: rollbackEntityDiff)
+  })
+  ->Promise.all
 
   {rollbackTargetCheckpointId, rollbackDiffCheckpointId, entityChanges}
 }

@@ -389,6 +389,45 @@ describe("Config.fromPublic", () => {
     )
   })
 
+  // Locks fromPublic against silently dropping low bits — the ERC20
+  // silent-skip bug came from an f64-truncated address being sent to
+  // HyperSync, where every event query then returned zero matches.
+  it("preserves full 20-byte hex address through fromPublic", t => {
+    let uni = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+    let publicConfigJson: JSON.t = %raw(`{
+      "version": "0.0.1-dev",
+      "name": "test",
+      "storage": { "postgres": true },
+      "evm": {
+        "chains": {
+          "ethereumMainnet": {
+            "id": 1,
+            "startBlock": 0,
+            "rpcs": [{ "url": "https://eth.com", "for": "sync" }],
+            "contracts": {
+              "ERC20": {
+                "addresses": ["0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"]
+              }
+            }
+          }
+        },
+        "contracts": {
+          "ERC20": {
+            "abi": [{"type":"event","name":"Transfer","inputs":[],"anonymous":false}],
+            "events": [{ "event": "Transfer()", "name": "Transfer", "sighash": "0x00000000" }]
+          }
+        },
+        "addressFormat": "checksum"
+      }
+    }`)
+
+    let config = Config.fromPublic(publicConfigJson)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    let contract = chain.contracts->Array.getUnsafe(0)
+    let address = contract.addresses->Array.getUnsafe(0)
+    t.expect(address->Address.toString, ~message="Address must be preserved verbatim").toBe(uni)
+  })
+
   it("works with already-capitalized contract name", t => {
     let publicConfigJson: JSON.t = %raw(`{
       "version": "0.0.1-dev",

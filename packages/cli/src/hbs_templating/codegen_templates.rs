@@ -1,11 +1,9 @@
 use std::{
     collections::BTreeSet,
     fmt::{Display, Write},
-    path::PathBuf,
     vec,
 };
 
-use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     config_parsing::{
         chain_helpers::Network,
@@ -14,22 +12,16 @@ use crate::{
         field_types,
         human_config::HumanConfig,
         system_config::{
-            self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField,
-            SystemConfig,
+            self, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField, SystemConfig,
         },
     },
-    persisted_state::{PersistedState, PersistedStateJsonString},
-    project_paths::{
-        path_utils::{add_leading_relative_dot, add_trailing_relative_dot},
-        ParsedProjectPaths,
-    },
-    template_dirs::TemplateDirs,
-    type_schema::{RecordField, SchemaMode, TypeExpr, TypeIdent},
+    constants::project_paths::{ENVIO_ENV_DTS_FILE, ENVIO_TYPES_FILE},
+    project_paths::ParsedProjectPaths,
+    type_schema::{RecordField, TypeExpr, TypeIdent},
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use convert_case::{Case, Casing};
-use pathdiff::diff_paths;
 
 use crate::config_parsing::abi_compat::EventParam;
 use serde::Serialize;
@@ -199,7 +191,6 @@ impl CompositeIndexFieldTemplate {
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub type_code: String,
-    pub schema_code: String,
     pub get_where_filter_code: String,
     pub postgres_fields: Vec<field_types::Field>,
     pub composite_indices: Vec<Vec<CompositeIndexFieldTemplate>>,
@@ -241,9 +232,7 @@ impl EntityRecordTypeTemplate {
                 entity.name
             ))?;
 
-        let type_expr = TypeExpr::Record(record_fields);
-        let type_code = type_expr.to_string();
-        let schema_code = type_expr.to_rescript_schema(&"t".to_string(), &SchemaMode::ForDb);
+        let type_code = TypeExpr::Record(record_fields).to_string();
 
         let postgres_fields = entity
             .get_fields()
@@ -297,7 +286,6 @@ impl EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
             postgres_fields,
             type_code,
-            schema_code,
             get_where_filter_code,
             derived_fields,
             composite_indices,
@@ -336,6 +324,11 @@ impl EventMod {
         // filter shapes are expressed inside `params` itself via
         // `SingleOrMultiple` — there's no top-level `Multiple` constructor.
         //
+        // The `block` sibling carries the per-event startBlock override
+        // (`block.number._gte` → overrides contract `start_block`). Only
+        // `_gte` is valid; `_lte` / `_every` are rejected at registration
+        // time and aren't part of the generated type.
+        //
         // - Events with no indexed params (Fuel, or EVM events without indexed
         //   fields) get the `Internal.noOnEventWhere` stub so the option field
         //   exists but cannot be populated.
@@ -345,11 +338,13 @@ impl EventMod {
         let where_type_code = match self.event_filter_type.as_str() {
             "{}" => "type onEventWhere = Internal.noOnEventWhere".to_string(),
             _ => format!(
-                "type onEventWhereCondition = {{params?: SingleOrMultiple.t<whereParams>}}\n\
+                "type onEventWhereBlockNumber = {{_gte?: int}}\n\
+type onEventWhereBlock = {{number?: onEventWhereBlockNumber}}\n\
+type onEventWhereFilter = {{params?: SingleOrMultiple.t<whereParams>, block?: onEventWhereBlock}}\n\
 type onEventWhereChainContract = {{/** Addresses of the {contract_capitalized} contract on this chain. */ addresses: array<Address.t>}}\n\
 type onEventWhereChain = {{/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, \\\"{contract_capitalized}\": onEventWhereChainContract}}\n\
 type onEventWhereArgs = {{chain: onEventWhereChain}}\n\
-@unboxed type onEventWhereResult = Filter(onEventWhereCondition) | @as(false) SkipAll | @as(true) KeepAll\n\
+@unboxed type onEventWhereResult = Filter(onEventWhereFilter) | @as(false) SkipAll | @as(true) KeepAll\n\
 type onEventWhere = onEventWhereArgs => onEventWhereResult",
                 contract_capitalized = self.contract_name.capitalized,
             ),
@@ -648,17 +643,14 @@ impl ContractTemplate {
                     contract.name
                 ))?;
 
+                // Indexer.res lives at <project_root>/src/Indexer.res, so `../`
+                // from the compiled .mjs reaches the project root.
+                // Escape back-ticks just in case: the abi path is inside a
+                // template literal.
                 format!(
-                    "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
-                   relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}",
-                    // Use the config.yaml-relative path (NOT the absolute
-                    // path_buf) so the generated import resolves correctly
-                    // when Path.relativePathToRootFromGenerated prefixes it.
-                    // If we decide to inline the abi, instead of using require
-                    // we need to remember that abi might contain ` and we should escape it
-                    abi.path_relative_to_root,
-                    all_abi_type_declarations,
-                    all_abi_type_declarations.to_rescript_schema(&SchemaMode::ForDb)
+                    "let abi = FuelSDK.transpileAbi((await \
+                     Utils.importPathWithJson(`../{}`))[\"default\"])\n{}",
+                    abi.path_relative_to_root, all_abi_type_declarations,
                 )
             }
         };
@@ -846,7 +838,6 @@ impl FieldSelection {
             block_field_templates.push(SelectedFieldTemplate {
                 name: name.clone(),
                 res_name,
-                default_value_rescript: field.data_type.get_default_value_rescript(),
                 ts_type: field.data_type.to_ts_type_string(),
                 res_type: field.data_type.to_string(),
             });
@@ -864,7 +855,6 @@ impl FieldSelection {
             transaction_field_templates.push(SelectedFieldTemplate {
                 name: name.clone(),
                 res_name,
-                default_value_rescript: field.data_type.get_default_value_rescript(),
                 ts_type: field.data_type.to_ts_type_string(),
                 res_type: field.data_type.to_string(),
             });
@@ -900,41 +890,80 @@ struct SelectedFieldTemplate {
     res_name: String,
     res_type: String,
     ts_type: String,
-    default_value_rescript: String,
 }
 
-#[derive(Serialize)]
 pub struct ProjectTemplate {
-    project_name: String,
-    codegen_contracts: Vec<ContractTemplate>,
-    entities: Vec<EntityRecordTypeTemplate>,
-    gql_enums: Vec<GraphQlEnumTypeTemplate>,
+    /// Read by chain-config unit tests in this module. Not used by the
+    /// production codegen flow, hence the dead-code allowance.
+    #[allow(dead_code)]
     chain_configs: Vec<NetworkConfigTemplate>,
-    persisted_state: PersistedStateJsonString,
-    has_multiple_events: bool,
-    is_evm_ecosystem: bool,
-    is_fuel_ecosystem: bool,
-    is_svm_ecosystem: bool,
-
-    envio_version: String,
+    is_rescript: bool,
     indexer_code: String,
-    internal_config_json_code: String,
-    envio_dts_code: String,
-    //Used for the package.json reference to handlers in generated
-    relative_path_to_root_from_generated: String,
-    relative_path_to_generated_from_root: String,
+    envio_types_dts: String,
+}
+
+/// Write `contents` to `path` only when it differs from what's on disk.
+/// Saves an mtime bump on every codegen run when nothing has changed —
+/// downstream watchers (rescript-legacy, tsc --watch) won't see spurious
+/// invalidations.
+fn write_if_changed(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    if let Ok(existing) = std::fs::read_to_string(path) {
+        if existing == contents {
+            return Ok(());
+        }
+    }
+    std::fs::write(path, contents)
 }
 
 impl ProjectTemplate {
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
-        let template_dirs = TemplateDirs::new();
-        let dynamic_codegen_dir = template_dirs
-            .get_codegen_dynamic_dir()
-            .context("Failed getting dynamic codegen dir")?;
+        // 1. `.envio/types.d.ts` — augments `envio` with project-derived
+        //    chains/contracts/entities/enums.
+        std::fs::create_dir_all(&project_paths.envio_dir)
+            .context("Failed to create .envio directory")?;
+        write_if_changed(&project_paths.envio_types_dts(), &self.envio_types_dts)
+            .context("Failed writing .envio/types.d.ts")?;
 
-        let hbs =
-            HandleBarsDirGenerator::new(&dynamic_codegen_dir, &self, &project_paths.generated);
-        hbs.generate_hbs_templates()?;
+        // 2. `.envio/.gitignore` — keeps `types.d.ts` out of git while leaving
+        //    sibling artifacts (like cache/) tracked. Written once; never
+        //    overwritten so users may add their own entries.
+        let gitignore_path = project_paths.envio_dir.join(".gitignore");
+        if !gitignore_path.exists() {
+            std::fs::write(
+                &gitignore_path,
+                "# Ephemeral codegen output. Add other .envio entries here as needed.\n\
+                 types.d.ts\n",
+            )
+            .context("Failed writing .envio/.gitignore")?;
+        }
+
+        // 3. `envio-env.d.ts` — committed glue file at the project root. Pulls
+        //    `.envio/types.d.ts` into the TS program so the augmented `envio`
+        //    module surface is visible to user handlers.
+        let envio_env = format!(
+            "/**\n \
+             * This file is generated by HyperIndex codegen. Do not edit manually.\n \
+             * It wires project-specific types from `.envio/types.d.ts` into the `envio` module.\n \
+             * If your project's types look out of date, run `envio codegen`\n \
+             * (or your package manager's `codegen` script, e.g. `pnpm codegen`).\n \
+             */\n\
+             /// <reference path=\"./{}/{}\" />\n",
+            crate::constants::project_paths::ENVIO_DIR,
+            ENVIO_TYPES_FILE,
+        );
+        write_if_changed(&project_paths.envio_env_dts(), &envio_env)
+            .with_context(|| format!("Failed writing {ENVIO_ENV_DTS_FILE} to project root"))?;
+
+        // 4. `src/Indexer.res` — bridges ReScript handlers to the runtime.
+        if self.is_rescript {
+            let src_dir = project_paths.project_root.join("src");
+            std::fs::create_dir_all(&src_dir).context("Failed to create user src directory")?;
+            write_if_changed(
+                &src_dir.join("Indexer.res"),
+                &format!("{}\n", self.indexer_code),
+            )
+            .context("Failed writing Indexer.res to user src directory")?;
+        }
 
         Ok(())
     }
@@ -1160,8 +1189,6 @@ impl ProjectTemplate {
     }
 
     pub fn from_config(cfg: &SystemConfig) -> Result<Self> {
-        let project_paths = &cfg.parsed_project_paths;
-
         // Compute all available fields for the ecosystem (EVM has all block/tx fields,
         // Fuel has fixed fields). Used for generating deprecated S.never markers.
         let all_ecosystem_fields = match cfg.get_ecosystem() {
@@ -1214,43 +1241,6 @@ impl ProjectTemplate {
             .collect::<Result<_>>()
             .context("Failed generating chain configs template")?;
 
-        let persisted_state = PersistedState::get_current_state(cfg)
-            .context("Failed creating default persisted state")?
-            .into();
-        let total_number_of_events: usize = codegen_contracts
-            .iter()
-            .map(|contract| contract.codegen_events.len())
-            .sum();
-        let has_multiple_events = total_number_of_events > 1;
-
-        //Take the absolute paths of  project root and generated, diff them to get
-        //relative path from generated to root and add a trailing dot. So in a default project, if your
-        //generated folder is at ./generated. Then this should output ../.
-        //OR say for instance its at artifacts/generated. This should output ../../.
-        //Generated path on construction has to be inside the root directory
-        //Used for the package.json reference to handlers in generated
-        let diff_from_current = |path: &PathBuf, base: &PathBuf| -> Result<String> {
-            Ok(add_trailing_relative_dot(
-                diff_paths(path, base)
-                    .ok_or_else(|| anyhow!("Failed to diffing paths {:?} and {:?}", path, base))?,
-            )
-            .to_str()
-            .ok_or_else(|| anyhow!("Failed converting path to str"))?
-            .to_string())
-        };
-        let relative_path_to_root_from_generated =
-            diff_from_current(&project_paths.project_root, &project_paths.generated)
-                .context("Failed to get relative path from output directory to project root")?;
-
-        let relative_path_to_generated_from_root = add_leading_relative_dot(
-            diff_paths(&project_paths.generated, &project_paths.project_root).ok_or_else(|| {
-                anyhow!("Failed to diff paths for relative_path_to_generated_from_root")
-            })?,
-        )
-        .to_str()
-        .ok_or_else(|| anyhow!("Failed converting path to str"))?
-        .to_string();
-
         let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
 
         let chain_id_cases = match &cfg.human_config {
@@ -1272,26 +1262,18 @@ impl ProjectTemplate {
                 .collect::<Vec<_>>(),
         };
 
-        // Generate onBlock function with ecosystem-specific types
+        // Generate onBlock handler signature with ecosystem-specific types.
+        // Mirror the TypeScript surface in `packages/envio/index.d.ts`
+        // (`EvmOnBlockHandlerArgs`, `FuelOnBlockHandlerArgs`,
+        // `SvmOnSlotHandlerArgs`).
         let on_block_handler_type = match cfg.get_ecosystem() {
-            Ecosystem::Evm => {
-                "Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>"
-            }
-            Ecosystem::Fuel => {
-                "Envio.onBlockArgs<Envio.fuelBlockEvent, handlerContext> => promise<unit>"
-            }
-            Ecosystem::Svm => "Envio.svmOnBlockArgs<handlerContext> => promise<unit>",
+            Ecosystem::Evm => "Envio.evmOnBlockArgs<handlerContext> => promise<unit>",
+            Ecosystem::Fuel => "Envio.fuelOnBlockArgs<handlerContext> => promise<unit>",
+            Ecosystem::Svm => "Envio.svmOnSlotArgs<handlerContext> => promise<unit>",
         };
 
-        // Generate chainId type with ecosystem-specific import from Types.ts
-        let chain_id_import_name = match cfg.get_ecosystem() {
-            Ecosystem::Evm => "EvmChainId",
-            Ecosystem::Fuel => "FuelChainId",
-            Ecosystem::Svm => "SvmChainId",
-        };
         let chain_id_type = format!(
-            r#"@genType.import(("./Types.ts", "{chain_id_import_name}"))
-type chainId = [{}]"#,
+            "type chainId = [{}]",
             chain_id_cases
                 .iter()
                 .map(|chain_id_case| format!("#{}", chain_id_case))
@@ -1341,8 +1323,8 @@ type indexerChain = {{
   startBlock: int,
   /** The block number to stop indexing at (if specified). */
   endBlock: option<int>,
-  /** Whether the chain has completed initial sync and is processing live events. */
-  isLive: bool,{contract_fields}
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
+  isRealtime: bool,{contract_fields}
 }}"#
         );
 
@@ -1371,8 +1353,13 @@ type indexerChains = {{
             indexer_chains_fields
         );
 
-        let indexer_type = format!(
-            r#"/** Metadata and configuration for the indexer. */
+        // Ecosystem-specific indexer surface. EVM/Fuel expose event + block
+        // handlers; SVM has no event handlers and uses `onSlot` instead of
+        // `onBlock`. Mirrors the TS typings in `packages/envio/index.d.ts`
+        // and the ecosystem-specific key set in `Main.getGlobalIndexer`.
+        let indexer_type = match cfg.get_ecosystem() {
+            Ecosystem::Evm | Ecosystem::Fuel => format!(
+                r#"/** Metadata and configuration for the indexer. */
 type indexer = {{
   /** The name of the indexer from config.yaml. */
   name: string,
@@ -1398,7 +1385,26 @@ type indexer = {{
     {on_block_handler_type},
   ) => unit,
 }}"#
-        );
+            ),
+            Ecosystem::Svm => format!(
+                r#"/** Metadata and configuration for the indexer. */
+type indexer = {{
+  /** The name of the indexer from config.yaml. */
+  name: string,
+  /** The description of the indexer from config.yaml. */
+  description: option<string>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
+  /** Register a Slot Handler. Evaluates `where` once per configured chain at registration time. */
+  onSlot: (
+    Envio.onBlockOptions<indexerChain>,
+    {on_block_handler_type},
+  ) => unit,
+}}"#
+            ),
+        };
 
         // Generate getChainById function
         let get_chain_by_id_cases = chain_configs
@@ -1441,8 +1447,7 @@ switch chainId {{
             .join("\n");
 
         let handler_context_code = format!(
-            r#"@genType
-type handlerEntityOperations<'entity, 'getWhereFilter> = {{
+            r#"type handlerEntityOperations<'entity, 'getWhereFilter> = {{
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
@@ -1451,7 +1456,6 @@ type handlerEntityOperations<'entity, 'getWhereFilter> = {{
   deleteUnsafe: string => unit,
 }}
 
-@genType.import(("./Types.ts", "HandlerContext"))
 type handlerContext = {{
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
@@ -1519,7 +1523,7 @@ type handlerContext = {{
                     )
                 };
                 format!(
-                    "@genType\nmodule {} = {{\n{}\n\n{}{}\n}}",
+                    "module {} = {{\n{}\n\n{}{}\n}}",
                     contract.name.capitalized, module_header, events_code, event_identity,
                 )
             })
@@ -1627,17 +1631,12 @@ type handlerContext = {{
 
         // Combine all parts into indexer_code — includes everything from the template
         let indexer_code = format!(
-            r#"@@directive("import internalConfigJson from '../internal.config.json' with {{ type: 'json' }}")
-
-//*************
-//***ENTITIES**
-//*************
-@genType.as("Id")
-type id = string
-
-//*************
-//**CONTRACTS**
-//*************
+            r#"/**
+ * This file is generated by HyperIndex codegen from config.yaml and schema.graphql.
+ * Do not edit manually.
+ * If your project's types look out of date, run `envio codegen`
+ * (or your package manager's `codegen` script, e.g. `pnpm codegen`).
+ */
 
 module Transaction = {{
   type t = {transaction_module_type}
@@ -1648,7 +1647,6 @@ module Block = {{
 }}
 
 module SingleOrMultiple: {{
-  @genType.import(("./bindings/OpaqueTypes", "SingleOrMultiple"))
   type t<'a>
   let normalizeOrThrow: (t<'a>, ~nestedArrayDepth: int=?) => array<'a>
   let single: 'a => t<'a>
@@ -1715,7 +1713,6 @@ type contractRegisterChain = {{
 {contract_register_chain_fields}
 }}
 
-@genType
 type contractRegisterContext = {{
   log: Envio.logger,
   chain: contractRegisterChain,
@@ -1810,25 +1807,11 @@ type testIndexer = {{
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
 
-        // Append the Generated module (was in Indexer.res.hbs, now in Rust)
-        let generated_module = r#"module Generated = {
-let makeGeneratedConfig = () => {
-  Config.fromPublic(%raw(`internalConfigJson`))
-}
+        let generated_top_level_bindings =
+            r#"@module("envio") external indexer: indexer = "indexer"
 
-// Config without handler registration - used by tests, migrations, etc.
-let configWithoutRegistrations = makeGeneratedConfig()
-let allEntities = configWithoutRegistrations.allEntities
-
-}"#;
-
-        indexer_code = format!("{}\n\n{}", indexer_code, generated_module);
-
-        let generated_top_level_bindings = format!(
-            "{}\n\n{}",
-            r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#,
-            r#"let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
-        );
+@module("envio") external createTestIndexer: unit => testIndexer = "createTestIndexer""#
+                .to_string();
 
         indexer_code = format!("{}\n\n{}", indexer_code, generated_top_level_bindings);
 
@@ -1852,17 +1835,30 @@ let allEntities = configWithoutRegistrations.allEntities
             }
         };
 
-        let internal_config_json_code = cfg.to_public_config_json()?;
-
-        // Generate envio.d.ts content (type declarations only)
-        // Always export all ecosystem types, even when empty
-        let envio_dts_code = {
+        // Generate envio.d.ts content. Two outputs:
+        //   - `lookup_tables`: file-level named types (`EvmBlock`, `Entities`,
+        //     etc.) that are shared across events / referenced by entity
+        //     fields. None of these names collide with `envio`'s exports or
+        //     internal generics, so no prefix is needed.
+        //   - body strings (`evm_chains_body`, `evm_contracts_body`, …):
+        //     inlined directly into `Global.config` by
+        //     `wrap_envio_module_augmentation`. Names that *would* collide
+        //     with envio's internal generics (`EvmContracts<Config>` etc.)
+        //     are avoided by inlining instead of naming.
+        let envio_dts_code;
+        let evm_chains_body: String;
+        let evm_contracts_body: String;
+        let evm_event_filters_body: String;
+        let fuel_chains_body: String;
+        let fuel_contracts_body: String;
+        let fuel_event_filters_body: String;
+        let svm_chains_body: String;
+        let entities_body: String;
+        let enums_body: String;
+        {
             let mut parts = Vec::new();
 
-            parts.push("import type {default as BigDecimal} from 'bignumber.js';".to_string());
-            parts.push("import type {Address, SingleOrMultiple} from 'envio';".to_string());
-
-            // Generate EvmChains type
+            // EVM chain table (inlined into Global.config.evm.chains).
             let evm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
                 chain_configs
                     .iter()
@@ -1878,21 +1874,24 @@ let allEntities = configWithoutRegistrations.allEntities
             } else {
                 vec![]
             };
-            parts.push(if evm_chains_entries.is_empty() {
-                "export type EvmChains = {};".to_string()
+            evm_chains_body = if evm_chains_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "export type EvmChains = {{\n{}\n}};",
-                    evm_chains_entries.join("\n")
-                )
-            });
-            parts.push(if evm_chains_entries.is_empty() {
-                "export type EvmChainId = \"EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'\";".to_string()
+                format!("{{\n{}\n      }}", evm_chains_entries.join("\n"))
+            };
+            // Inline chainId union for event payloads. Empty ecosystem →
+            // error string so users see a useful message in tsc errors.
+            let evm_chain_id_inline: String = if evm_chains_entries.is_empty() {
+                "\"EvmChainId is not available. Configure EVM chains in config.yaml and run 'envio codegen'\"".to_string()
             } else {
-                "export type EvmChainId = EvmChains[keyof EvmChains][\"id\"];".to_string()
-            });
+                chain_configs
+                    .iter()
+                    .map(|c| c.network_config.id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            };
 
-            // Generate global EvmBlock/EvmTransaction types (not exported, used by events without custom field_selection)
+            // File-level shared block / transaction types (EVM).
             if cfg.get_ecosystem() == Ecosystem::Evm {
                 if let Some(ref all_fs) = all_ecosystem_fields {
                     let evm_block_type = Self::generate_ts_all_fields_record(
@@ -1914,7 +1913,8 @@ let allEntities = configWithoutRegistrations.allEntities
                 }
             }
 
-            // Generate EvmContracts type with full event types
+            // EVM contracts table (inlined). Uses inline chainId union and
+            // file-level `EvmBlock` / `EvmTransaction`.
             let evm_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
                 let all_evm = system_config::FieldSelection::all_evm();
                 let all_fields = FieldSelection::new(FieldSelectionOptions {
@@ -1932,7 +1932,7 @@ let allEntities = configWithoutRegistrations.allEntities
                                     name,
                                     event,
                                     &all_fields,
-                                    "EvmChainId",
+                                    &evm_chain_id_inline,
                                     "EvmBlock",
                                     "EvmTransaction",
                                 )
@@ -1944,18 +1944,13 @@ let allEntities = configWithoutRegistrations.allEntities
             } else {
                 vec![]
             };
-            parts.push(if evm_contracts_entries.is_empty() {
-                "export type EvmContracts = {};".to_string()
+            evm_contracts_body = if evm_contracts_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "export type EvmContracts = {{\n{}\n}};",
-                    evm_contracts_entries.join("\n")
-                )
-            });
+                format!("{{\n{}\n      }}", evm_contracts_entries.join("\n"))
+            };
 
-            // Generate EvmEventFilters — sibling of EvmContracts carrying the
-            // `where` filter shape for each event. Split out so per-event
-            // entries in EvmContracts stay focused on event payload types.
+            // EVM event filters table (inlined).
             let evm_event_filters_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
                 cfg.contracts
                     .iter()
@@ -1977,16 +1972,13 @@ let allEntities = configWithoutRegistrations.allEntities
             } else {
                 vec![]
             };
-            parts.push(if evm_event_filters_entries.is_empty() {
-                "export type EvmEventFilters = {};".to_string()
+            evm_event_filters_body = if evm_event_filters_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "export type EvmEventFilters = {{\n{}\n}};",
-                    evm_event_filters_entries.join("\n")
-                )
-            });
+                format!("{{\n{}\n      }}", evm_event_filters_entries.join("\n"))
+            };
 
-            // Generate FuelChains type
+            // Fuel chain table (inlined).
             let fuel_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 chain_configs
                     .iter()
@@ -2002,28 +1994,28 @@ let allEntities = configWithoutRegistrations.allEntities
             } else {
                 vec![]
             };
-            parts.push(if fuel_chains_entries.is_empty() {
-                "export type FuelChains = {};".to_string()
+            fuel_chains_body = if fuel_chains_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "export type FuelChains = {{\n{}\n}};",
-                    fuel_chains_entries.join("\n")
-                )
-            });
-            parts.push(if fuel_chains_entries.is_empty() {
-                "export type FuelChainId = \"FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'\";".to_string()
+                format!("{{\n{}\n      }}", fuel_chains_entries.join("\n"))
+            };
+            let fuel_chain_id_inline: String = if fuel_chains_entries.is_empty() {
+                "\"FuelChainId is not available. Configure Fuel chains in config.yaml and run 'envio codegen'\"".to_string()
             } else {
-                "export type FuelChainId = FuelChains[keyof FuelChains][\"id\"];".to_string()
-            });
+                chain_configs
+                    .iter()
+                    .map(|c| c.network_config.id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            };
 
-            // Generate FuelBlock/FuelTransaction types (not exported)
+            // File-level Fuel block / transaction types.
             if cfg.get_ecosystem() == Ecosystem::Fuel {
                 let fuel_fs_for_types = system_config::FieldSelection::fuel();
                 let fuel_all = FieldSelection::new_without_defaults(FieldSelectionOptions {
                     block_fields: fuel_fs_for_types.block_fields.clone(),
                     transaction_fields: fuel_fs_for_types.transaction_fields.clone(),
                 });
-                // Fuel has all fields selected by default — no deprecated fields
                 parts.push(format!("type FuelBlock = {};", fuel_all.ts_block_type));
                 parts.push(format!(
                     "type FuelTransaction = {};",
@@ -2031,8 +2023,8 @@ let allEntities = configWithoutRegistrations.allEntities
                 ));
             }
 
-            // Generate FuelContracts type with full event types
-            // Fuel has its own fixed field set — don't add EVM default block fields
+            // Fuel contracts table (inlined). Fuel events have no indexed-param
+            // filters, so the eventFilters body is always `{}`.
             let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 let fuel_fs = system_config::FieldSelection::fuel();
                 let aggregated = FieldSelection::new_without_defaults(FieldSelectionOptions {
@@ -2050,7 +2042,7 @@ let allEntities = configWithoutRegistrations.allEntities
                                     name,
                                     event,
                                     &aggregated,
-                                    "FuelChainId",
+                                    &fuel_chain_id_inline,
                                     "FuelBlock",
                                     "FuelTransaction",
                                 )
@@ -2062,21 +2054,15 @@ let allEntities = configWithoutRegistrations.allEntities
             } else {
                 vec![]
             };
-            parts.push(if fuel_contracts_entries.is_empty() {
-                "export type FuelContracts = {};".to_string()
+            fuel_contracts_body = if fuel_contracts_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "export type FuelContracts = {{\n{}\n}};",
-                    fuel_contracts_entries.join("\n")
-                )
-            });
+                format!("{{\n{}\n      }}", fuel_contracts_entries.join("\n"))
+            };
+            fuel_event_filters_body = "{}".to_string();
 
-            // Fuel events have no indexed-param filters — emit an empty
-            // FuelEventFilters sibling so the `EvmEventFilters<Config>`
-            // lookup helpers in index.d.ts can resolve cleanly.
-            parts.push("export type FuelEventFilters = {};".to_string());
-
-            // Generate FuelTypes namespace — type declarations with generics support
+            // FuelTypes namespace at file scope (referenced by Fuel event
+            // payloads). No prefix — doesn't collide with envio.
             let fuel_types_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 cfg.contracts
                     .iter()
@@ -2116,7 +2102,7 @@ let allEntities = configWithoutRegistrations.allEntities
                 )
             });
 
-            // Generate SvmChains type
+            // SVM chain table (inlined).
             let svm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Svm {
                 chain_configs
                     .iter()
@@ -2132,21 +2118,16 @@ let allEntities = configWithoutRegistrations.allEntities
             } else {
                 vec![]
             };
-            parts.push(if svm_chains_entries.is_empty() {
-                "export type SvmChains = {};".to_string()
+            svm_chains_body = if svm_chains_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!(
-                    "export type SvmChains = {{\n{}\n}};",
-                    svm_chains_entries.join("\n")
-                )
-            });
-            parts.push(if svm_chains_entries.is_empty() {
-                "export type SvmChainId = \"SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'\";".to_string()
-            } else {
-                "export type SvmChainId = SvmChains[keyof SvmChains][\"id\"];".to_string()
-            });
+                format!("{{\n{}\n      }}", svm_chains_entries.join("\n"))
+            };
 
-            // Generate Enums type with all enum types as fields
+            // File-level Enums and Entities tables. They reference each
+            // other (entity field types use `Enums["Foo"]`), so they must
+            // be named — but no prefix needed since neither name collides
+            // with anything still exported by envio.
             let enum_entries: Vec<String> = gql_enums
                 .iter()
                 .map(|gql_enum| {
@@ -2163,24 +2144,21 @@ let allEntities = configWithoutRegistrations.allEntities
                 })
                 .collect();
             parts.push(if enum_entries.is_empty() {
-                "export type Enums = {};".to_string()
+                "type Enums = {};".to_string()
             } else {
-                format!("export type Enums = {{\n{}\n}};", enum_entries.join("\n"))
+                format!("type Enums = {{\n{}\n}};", enum_entries.join("\n"))
             });
+            enums_body = "Enums".to_string();
 
-            // Generate Entities type with all entity types as fields
             let entity_entries: Vec<String> = entities
                 .iter()
                 .map(|entity| {
                     let field_entries: Vec<String> = entity
                         .params
                         .iter()
-                        // Skip derived fields as they are not stored in the DB
                         .filter(|param| !param.is_derived_field)
                         .map(|param| {
                             let ts_type = param.field_type.to_ts_type_string();
-                            // For entity fields, the actual stored value is the ID (string)
-                            // and the field name is suffixed with _id
                             let (field_name, field_type) = if param.is_entity_field {
                                 let base_type = if param.field_type.is_option() {
                                     "string | undefined".to_string()
@@ -2202,37 +2180,146 @@ let allEntities = configWithoutRegistrations.allEntities
                 })
                 .collect();
             parts.push(if entity_entries.is_empty() {
-                "export type Entities = {};".to_string()
+                "type Entities = {};".to_string()
             } else {
-                format!(
-                    "export type Entities = {{\n{}\n}};",
-                    entity_entries.join("\n")
-                )
+                format!("type Entities = {{\n{}\n}};", entity_entries.join("\n"))
             });
+            entities_body = "Entities".to_string();
 
-            parts.join("\n")
-        };
+            envio_dts_code = parts.join("\n");
+        }
+
+        // Per-entity aliases shadow the lookup table for ergonomic imports
+        // (`import type { User } from "envio"`). Enums skip aliasing —
+        // their schema names often clash with TS reserved words or
+        // existing envio exports, so users go through `Enum<"Name">`.
+        let entity_aliases: Vec<String> = entities
+            .iter()
+            .map(|e| e.name.capitalized.clone())
+            .collect();
 
         Ok(ProjectTemplate {
-            project_name: cfg.name.clone(),
-            codegen_contracts,
-            entities,
-            gql_enums,
             chain_configs,
-            persisted_state,
-            has_multiple_events,
-            is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
-            is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
-            is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
-            envio_version: get_envio_version()?,
+            is_rescript: cfg.is_rescript,
             indexer_code,
-            internal_config_json_code,
-            envio_dts_code,
-            //Used for the package.json reference to handlers in generated
-            relative_path_to_root_from_generated,
-            relative_path_to_generated_from_root,
+            envio_types_dts: Self::wrap_envio_module_augmentation(
+                &envio_dts_code,
+                &entity_aliases,
+                cfg.get_ecosystem(),
+                ConfigBodies {
+                    evm_chains: &evm_chains_body,
+                    evm_contracts: &evm_contracts_body,
+                    evm_event_filters: &evm_event_filters_body,
+                    fuel_chains: &fuel_chains_body,
+                    fuel_contracts: &fuel_contracts_body,
+                    fuel_event_filters: &fuel_event_filters_body,
+                    svm_chains: &svm_chains_body,
+                    entities: &entities_body,
+                    enums: &enums_body,
+                },
+            ),
         })
     }
+
+    /// Wrap the project-derived types in a `declare module "envio"` block so
+    /// the generic types in `packages/envio/index.d.ts` resolve through the
+    /// augmented `Global` interface.
+    ///
+    /// File-level types (`EvmBlock`, `EvmTransaction`, `FuelBlock`,
+    /// `FuelTransaction`, `FuelTypes`, `Entities`, `Enums`) are emitted at
+    /// the host file's top level. Their names don't collide with anything
+    /// envio exports or uses internally as a generic. The per-ecosystem
+    /// `chains` / `contracts` / `eventFilters` shapes are inlined directly
+    /// into `Global.config` rather than named at file scope — naming them
+    /// (e.g. `EvmContracts`) would shadow envio's internal generic
+    /// `EvmContracts<Config>` and collapse `indexer.onEvent`'s callback to
+    /// `any`.
+    ///
+    /// Per-entity aliases are emitted so handlers can `import type { Foo }
+    /// from "envio"`. Enums skip aliasing — schema enum names commonly
+    /// collide with TS reserved words or envio exports — users go through
+    /// `Enum<"Name">` instead.
+    fn wrap_envio_module_augmentation(
+        file_level_types: &str,
+        entity_aliases: &[String],
+        ecosystem: Ecosystem,
+        bodies: ConfigBodies<'_>,
+    ) -> String {
+        const I2: &str = "  ";
+        const I4: &str = "    ";
+        const I6: &str = "      ";
+
+        // Only the configured ecosystem populates `Global.config.<eco>`. Generic
+        // helpers in envio fall back to error-message strings for unconfigured
+        // ecosystems.
+        let ecosystem_field = match ecosystem {
+            Ecosystem::Evm => format!(
+                "evm: {{ chains: {chains}; contracts: {contracts}; eventFilters: {filters} }};",
+                chains = bodies.evm_chains,
+                contracts = bodies.evm_contracts,
+                filters = bodies.evm_event_filters,
+            ),
+            Ecosystem::Fuel => format!(
+                "fuel: {{ chains: {chains}; contracts: {contracts}; eventFilters: {filters} }};",
+                chains = bodies.fuel_chains,
+                contracts = bodies.fuel_contracts,
+                filters = bodies.fuel_event_filters,
+            ),
+            Ecosystem::Svm => format!("svm: {{ chains: {} }};", bodies.svm_chains),
+        };
+        let config_block = [
+            ecosystem_field.as_str(),
+            &format!("entities: {};", bodies.entities),
+            &format!("enums: {};", bodies.enums),
+        ]
+        .iter()
+        .map(|line| format!("{I6}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        let entity_aliases = entity_aliases
+            .iter()
+            .map(|name| format!("{I2}export type {name} = Entities[\"{name}\"];"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        format!(
+            "/**\n \
+             * This file is generated by HyperIndex codegen from config.yaml and schema.graphql.\n \
+             * Do not edit manually.\n \
+             * If your project's types look out of date, run `envio codegen`\n \
+             * (or your package manager's `codegen` script, e.g. `pnpm codegen`).\n \
+             */\n\
+             \n\
+             import type {{ Address, BigDecimal, SingleOrMultiple }} from \"envio\";\n\
+             \n\
+             {file_level_types}\n\
+             \n\
+             declare module \"envio\" {{\n\
+             {I2}interface Global {{\n\
+             {I4}config: {{\n\
+             {config_block}\n\
+             {I4}}};\n\
+             {I2}}}\n\
+             \n\
+             {entity_aliases}\n\
+             }}\n",
+            file_level_types = file_level_types,
+            entity_aliases = entity_aliases,
+        )
+    }
+}
+
+struct ConfigBodies<'a> {
+    evm_chains: &'a str,
+    evm_contracts: &'a str,
+    evm_event_filters: &'a str,
+    fuel_chains: &'a str,
+    fuel_contracts: &'a str,
+    fuel_event_filters: &'a str,
+    svm_chains: &'a str,
+    entities: &'a str,
+    enums: &'a str,
 }
 
 #[cfg(test)]
@@ -2262,15 +2349,26 @@ mod test {
     fn get_project_template_helper(configs_file_name: &str) -> super::ProjectTemplate {
         let project_root = get_test_path_string_helper();
         let config = format!("configs/{}", configs_file_name);
-        let generated = "generated/";
-        let project_paths =
-            ParsedProjectPaths::new(&project_root, generated, &config).expect("Parsed paths");
+        let project_paths = ParsedProjectPaths::new(&project_root, &config).expect("Parsed paths");
 
         let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");
 
         super::ProjectTemplate::from_config(&config)
             .expect("should be able to get project template")
+    }
+
+    fn get_internal_config_json_helper(configs_file_name: &str) -> String {
+        let project_root = get_test_path_string_helper();
+        let config = format!("configs/{}", configs_file_name);
+        let project_paths = ParsedProjectPaths::new(&project_root, &config).expect("Parsed paths");
+
+        let config = SystemConfig::parse_from_project_files(&project_paths)
+            .expect("Deserialized yml config should be parseable");
+
+        config
+            .to_public_config_json(false)
+            .expect("should be able to serialize public config JSON")
     }
 
     #[test]
@@ -2299,16 +2397,6 @@ mod test {
         let expected_chain_configs = vec![chain_config_1];
 
         let project_template = get_project_template_helper("fuel-config.yaml");
-
-        assert_eq!(
-            project_template.relative_path_to_root_from_generated,
-            "../.".to_string()
-        );
-        assert_eq!(
-          project_template.relative_path_to_generated_from_root,
-          "./generated".to_string(),
-          "relative_path_to_generated_from_root should start with ./ for Node.js module resolution"
-      );
 
         assert_eq!(
             expected_chain_configs[0].network_config,
@@ -2342,11 +2430,6 @@ mod test {
         let expected_chain_configs = vec![chain_config_1];
 
         let project_template = get_project_template_helper("config1.yaml");
-
-        assert_eq!(
-            project_template.relative_path_to_root_from_generated,
-            "../.".to_string()
-        );
 
         assert_eq!(
             expected_chain_configs[0].network_config,
@@ -2665,49 +2748,49 @@ mod test {
 
     #[test]
     fn internal_config_json_code_generated_for_evm() {
-        let project_template = get_project_template_helper("config1.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config1.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
     fn internal_config_json_code_generated_for_fuel() {
-        let project_template = get_project_template_helper("fuel-config.yaml");
         // Note: Fuel defaults to rollback_on_reorg: false in system_config.rs,
         // which differs from the runtime default of true, so it's included
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("fuel-config.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
     fn internal_config_json_code_with_all_options() {
-        let project_template = get_project_template_helper("config-with-all-options.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config-with-all-options.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
-    fn envio_dts_code_generated_for_evm() {
+    fn envio_types_dts_generated_for_evm() {
         let project_template = get_project_template_helper("config1.yaml");
-        insta::assert_snapshot!(project_template.envio_dts_code);
+        insta::assert_snapshot!(project_template.envio_types_dts);
     }
 
     #[test]
-    fn envio_dts_code_generated_for_fuel() {
+    fn envio_types_dts_generated_for_fuel() {
         let project_template = get_project_template_helper("fuel-config.yaml");
-        insta::assert_snapshot!(project_template.envio_dts_code);
+        insta::assert_snapshot!(project_template.envio_types_dts);
     }
 
     #[test]
     fn internal_config_json_code_with_no_contracts() {
         // config4.yaml has empty contracts array - tests that comma is properly
         // placed before addressFormat when contracts section is omitted
-        let project_template = get_project_template_helper("config4.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config4.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
     fn internal_config_json_code_with_multiple_contracts() {
         // config2.yaml has two contracts - tests comma separation between contracts
-        let project_template = get_project_template_helper("config2.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config2.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
@@ -2725,7 +2808,109 @@ mod test {
 
     #[test]
     fn internal_config_json_code_with_lowercase_contract_name() {
-        let project_template = get_project_template_helper("lowercase-contract-name.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("lowercase-contract-name.yaml");
+        insta::assert_snapshot!(json);
+    }
+
+    /// End-to-end: `generate_templates` writes the four expected artifacts
+    /// (`.envio/types.d.ts`, `.envio/.gitignore`, `envio-env.d.ts`, and for
+    /// ReScript projects `src/Indexer.res`) into the project root. Also
+    /// verifies that `.envio/.gitignore` is write-once: a user-modified
+    /// version is preserved across subsequent codegen runs.
+    #[test]
+    fn generate_templates_writes_expected_files() {
+        use tempdir::TempDir;
+
+        let project_template = get_project_template_helper("config1.yaml");
+
+        // Drive `generate_templates` against a fresh tempdir so we can poke
+        // at the on-disk output without polluting the test fixtures.
+        let tmp = TempDir::new("envio-codegen-test").expect("create tempdir");
+        let project_root = tmp.path().to_path_buf();
+        let project_paths = ParsedProjectPaths {
+            project_root: project_root.clone(),
+            config: project_root.join("config.yaml"),
+            envio_dir: project_root.join(".envio"),
+        };
+
+        project_template
+            .generate_templates(&project_paths)
+            .expect("first codegen run");
+
+        let types_dts = project_root.join(".envio/types.d.ts");
+        let gitignore = project_root.join(".envio/.gitignore");
+        let envio_env = project_root.join("envio-env.d.ts");
+
+        assert!(types_dts.exists(), ".envio/types.d.ts must exist");
+        assert!(gitignore.exists(), ".envio/.gitignore must exist");
+        assert!(envio_env.exists(), "envio-env.d.ts must exist");
+
+        let types_dts_contents = std::fs::read_to_string(&types_dts).expect("read types.d.ts");
+        assert!(
+            types_dts_contents.contains("declare module \"envio\""),
+            "types.d.ts should augment the envio module",
+        );
+
+        let envio_env_contents = std::fs::read_to_string(&envio_env).expect("read envio-env.d.ts");
+        assert!(
+            envio_env_contents.contains("/// <reference path=\"./.envio/types.d.ts\" />"),
+            "envio-env.d.ts should reference .envio/types.d.ts via triple-slash directive",
+        );
+
+        let gitignore_contents = std::fs::read_to_string(&gitignore).expect("read .gitignore");
+        assert!(
+            gitignore_contents.contains("types.d.ts"),
+            ".envio/.gitignore should ignore types.d.ts",
+        );
+
+        // Write-once: a user edits the .gitignore — codegen must not stomp it.
+        let user_edited = "types.d.ts\nmy-extra-rule\n";
+        std::fs::write(&gitignore, user_edited).expect("user edits .gitignore");
+
+        project_template
+            .generate_templates(&project_paths)
+            .expect("second codegen run");
+
+        assert_eq!(
+            std::fs::read_to_string(&gitignore).expect("read .gitignore after second run"),
+            user_edited,
+            "user edits to .envio/.gitignore must be preserved across codegen runs",
+        );
+    }
+
+    /// Regression: only entities get per-name aliases; enum schema names
+    /// often clash with TS reserved words or envio exports, so they're
+    /// only available via `Enum<"Name">`.
+    #[test]
+    fn entities_get_aliases_enums_do_not() {
+        let file_level_types =
+            "type Enums = {\n  \"accountType\": \"ADMIN\" | \"USER\";\n};\ntype Entities = {\n  \"User\": { readonly id: string };\n};";
+        let entity_aliases = vec!["User".to_string()];
+
+        let out = super::ProjectTemplate::wrap_envio_module_augmentation(
+            file_level_types,
+            &entity_aliases,
+            super::Ecosystem::Evm,
+            super::ConfigBodies {
+                evm_chains: "{}",
+                evm_contracts: "{}",
+                evm_event_filters: "{}",
+                fuel_chains: "{}",
+                fuel_contracts: "{}",
+                fuel_event_filters: "{}",
+                svm_chains: "{}",
+                entities: "Entities",
+                enums: "Enums",
+            },
+        );
+
+        assert_eq!(
+            (
+                out.contains("export type User = Entities[\"User\"];"),
+                out.contains("export type AccountType"),
+            ),
+            (true, false),
+            "Got:\n{out}",
+        );
     }
 }

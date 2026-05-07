@@ -1,19 +1,8 @@
-// Recursive tuple/struct component metadata emitted by the CLI when an event
-// param (or any nested field) is a Solidity struct. `name` is always non-empty —
-// the CLI fills in `"0"`, `"1"`, ... for anonymous components in mixed-name
-// tuples — so the runtime can always rebuild a keyed object.
-type rec eventParamComponent = {
-  name: string,
-  abiType: string,
-  components?: array<eventParamComponent>,
-}
-
-type eventParam = {
-  name: string,
-  abiType: string,
-  indexed: bool,
-  components?: array<eventParamComponent>,
-}
+// Types moved to `Internal` so `Internal.evmEventConfig` can retain
+// `indexedParams: array<eventParam>` for post-registration filter rebuild.
+// Re-exported here as aliases for existing call sites.
+type eventParamComponent = Internal.eventParamComponent
+type eventParam = Internal.eventParam
 
 let eventParamComponentSchema = S.recursive(self =>
   S.object((s): eventParamComponent => {
@@ -430,24 +419,40 @@ let buildEvmEventConfig = (
   ~contractRegister: option<Internal.contractRegister>,
   ~eventFilters: option<JSON.t>,
   ~probeChainId: int,
+  ~onEventBlockFilterSchema: S.t<option<unknown>>,
   ~blockFields: option<array<Internal.evmBlockField>>=?,
   ~transactionFields: option<array<Internal.evmTransactionField>>=?,
+  ~startBlock: option<int>=?,
   ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>=Utils.Set.make(),
   ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>=Utils.Set.make(),
 ): Internal.evmEventConfig => {
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
   let indexedParams = params->Array.filter(p => p.indexed)
 
-  let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(
+  let {
+    getEventFiltersOrThrow,
+    filterByAddresses,
+    startBlock: whereStartBlock,
+  } = LogSelection.parseEventFiltersOrThrow(
     ~eventFilters,
     ~sighash,
     ~params=indexedParams->Array.map(p => p.name),
     ~contractName,
     ~probeChainId,
+    ~onEventBlockFilterSchema,
     ~topic1=?indexedParams->Array.get(0)->Option.map(buildTopicGetter),
     ~topic2=?indexedParams->Array.get(1)->Option.map(buildTopicGetter),
     ~topic3=?indexedParams->Array.get(2)->Option.map(buildTopicGetter),
   )
+
+  // `where.block.number._gte` overrides the contract-level startBlock
+  // when present. The user opts into this explicitly in handler code so
+  // it should win over the `config.yaml` contract `start_block`; absent
+  // `where.block`, the caller's contract-level value passes through.
+  let resolvedStartBlock = switch whereStartBlock {
+  | Some(_) as sb => sb
+  | None => startBlock
+  }
 
   let (selectedBlockFields, selectedTransactionFields) = resolveFieldSelection(
     ~blockFields,
@@ -468,9 +473,12 @@ let buildEvmEventConfig = (
     getEventFiltersOrThrow,
     filterByAddresses,
     dependsOnAddresses: !isWildcard || filterByAddresses,
+    startBlock: resolvedStartBlock,
     convertHyperSyncEventArgs: buildHyperSyncDecoder(params),
     selectedBlockFields,
     selectedTransactionFields,
+    sighash,
+    indexedParams,
   }
 }
 
@@ -485,6 +493,7 @@ let buildFuelEventConfig = (
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
+  ~startBlock: option<int>=?,
 ): Internal.fuelEventConfig => {
   let fuelKind = switch kind {
   | "logData" =>
@@ -531,6 +540,7 @@ let buildFuelEventConfig = (
     simulateParamsSchema: paramsSchema,
     filterByAddresses: false,
     dependsOnAddresses: !isWildcard,
+    startBlock,
     kind: fuelKind,
   }
 }

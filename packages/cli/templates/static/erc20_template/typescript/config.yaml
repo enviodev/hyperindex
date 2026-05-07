@@ -11,9 +11,9 @@ chains:
     start_block: 0
     contracts:
       - name: ERC20
-        address: 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984 # UNI
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984" # UNI
   - id: 100 # Gnosis Mainnet
     start_block: 0
     contracts:
       - name: ERC20
-        address: 0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74 #UNI
+        address: "0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74" #UNI

@@ -23,6 +23,15 @@ type t = {
       a second time in `Main.res` by the shared `blockRangeSchema` — that
       keeps range-field validation in one place for every ecosystem. */
   onBlockFilterSchema: S.t<option<unknown>>,
+  /** Schema that unwraps the ecosystem-specific `block` wrapper from the
+      user's `onEvent` `where` value (`block.number` on EVM, `block.height`
+      on Fuel) and surfaces the raw inner `{_gte?}` chunk as
+      `option<unknown>`. Separate from `onBlockFilterSchema` because event
+      block filters support only `_gte` (→ per-event `startBlock`) — `_lte`
+      and `_every` are rejected by the inner `eventBlockRangeSchema` in
+      `LogSelection.res`. SVM does not support event handlers, so its
+      schema always surfaces `None`. */
+  onEventBlockFilterSchema: S.t<option<unknown>>,
 }
 
 let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {

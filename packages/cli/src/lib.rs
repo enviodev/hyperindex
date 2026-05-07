@@ -9,7 +9,7 @@ mod evm;
 pub mod executor;
 mod fuel;
 mod hbs_templating;
-mod persisted_state;
+mod napi;
 mod project_paths;
 pub mod scripts;
 mod service_health;

@@ -254,7 +254,6 @@ type evmTransactionInput = {
   authorizationList?: JSON.t,
 }
 
-@genType
 type genericEvent<'params, 'block, 'transaction> = {
   contractName: string,
   eventName: string,
@@ -270,35 +269,28 @@ type event = genericEvent<eventParams, eventBlock, eventTransaction>
 
 external fromGenericEvent: genericEvent<'a, 'b, 'c> => event = "%identity"
 
-@genType
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
 }
-@genType
 type genericLoader<'args, 'loaderReturn> = 'args => promise<'loaderReturn>
 
-@genType
 type genericContractRegisterArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
 }
-@genType.import(("./Types.ts", "GenericContractRegister"))
 type genericContractRegister<'args> = 'args => promise<unit>
 
 type contractRegisterContext
 type contractRegisterArgs = genericContractRegisterArgs<event, contractRegisterContext>
 type contractRegister = genericContractRegister<contractRegisterArgs>
 
-@genType
 type genericHandlerArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
 }
-@genType
 type genericHandler<'args> = 'args => promise<unit>
 
-@genType
 type entityHandlerContext<'entity> = {
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
@@ -309,9 +301,9 @@ type entityHandlerContext<'entity> = {
 
 type chainInfo = {
   id: int,
-  // true when the chain has completed initial sync and is processing live events
-  // false during historical synchronization
-  isLive: bool,
+  // True once every chain has caught up to head/endBlock and entered real-time
+  // indexing mode. False while any chain is still backfilling.
+  isRealtime: bool,
 }
 
 type chains = dict<chainInfo>
@@ -327,12 +319,28 @@ type handlerArgs = {
 }
 type handler = genericHandler<handlerArgs>
 
-@genType
 type genericHandlerWithLoader<'loader, 'handler, 'where> = {
   loader: 'loader,
   handler: 'handler,
   wildcard?: bool,
   where?: 'where,
+}
+
+// Recursive tuple/struct component metadata emitted by the CLI when an event
+// param (or any nested field) is a Solidity struct. `name` is always non-empty —
+// the CLI fills in `"0"`, `"1"`, ... for anonymous components in mixed-name
+// tuples — so the runtime can always rebuild a keyed object.
+type rec eventParamComponent = {
+  name: string,
+  abiType: string,
+  components?: array<eventParamComponent>,
+}
+
+type eventParam = {
+  name: string,
+  abiType: string,
+  indexed: bool,
+  components?: array<eventParamComponent>,
 }
 
 // This is private so it's not manually constructed internally
@@ -353,6 +361,7 @@ type eventConfig = private {
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
   simulateParamsSchema: S.schema<eventParams>,
+  startBlock: option<int>,
 }
 
 type fuelEventKind =
@@ -361,7 +370,6 @@ type fuelEventKind =
   | Burn
   | Transfer
   | Call
-@genType.opaque
 type fuelEventConfig = {
   ...eventConfig,
   kind: fuelEventKind,
@@ -387,31 +395,42 @@ type onEventWhereArgs<'chain> = {chain: 'chain}
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
 
-@genType.opaque
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
   selectedTransactionFields: Utils.Set.t<evmTransactionField>,
+  // Retained so `HandlerLoader.applyRegistrations` can re-run
+  // `LogSelection.parseEventFiltersOrThrow` after handler modules register
+  // with a `where:` filter. Only indexed params are kept — they're all the
+  // filter parser needs for topic-getter construction + key validation.
+  sighash: string,
+  indexedParams: array<eventParam>,
 }
+
+// Shared formula for `eventConfig.dependsOnAddresses`. Kept here so
+// `EventConfigBuilder.build{Evm,Fuel}EventConfig` and
+// `HandlerLoader.applyRegistrations` stay in sync when handler state flips
+// the value. Fuel events always have `filterByAddresses=false`, so callers
+// there simply pass it through as `false`.
+let dependsOnAddresses = (~isWildcard, ~filterByAddresses) => !isWildcard || filterByAddresses
+
 type evmContractConfig = {
   name: string,
   abi: EvmTypes.Abi.t,
   events: array<evmEventConfig>,
 }
 
-type indexingContract = {
+type indexingAddress = {
   address: Address.t,
   contractName: string,
-  startBlock: int,
-  // Needed for rollback
-  // If not set, assume the contract comes from config
-  // and shouldn't be rolled back
-  registrationBlock: option<int>,
+  // Needed for rollback.
+  // -1 for config addresses that shouldn't be rolled back.
+  registrationBlock: int,
 }
 
-type dcs = array<indexingContract>
+type dcs = array<indexingAddress>
 
 // Duplicate the type from item
 // to make item properly unboxed
@@ -477,13 +496,11 @@ external getItemDcs: item => option<dcs> = "dcs"
 @set
 external setItemDcs: (item, dcs) => unit = "dcs"
 
-@genType
 type eventOptions<'where> = {
   wildcard?: bool,
   where?: 'where,
 }
 
-@genType
 type fuelSupplyParams = {
   subId: string,
   amount: bigint,
@@ -492,7 +509,6 @@ let fuelSupplyParamsSchema = S.schema(s => {
   subId: s.matches(S.string),
   amount: s.matches(Utils.BigInt.schema),
 })
-@genType
 type fuelTransferParams = {
   to: Address.t,
   assetId: string,
@@ -566,7 +582,6 @@ let makeCacheTable = (~effectName) => {
   )
 }
 
-@genType.import(("./Types.ts", "Invalid"))
 type noOnEventWhere
 
 type checkpointId = bigint

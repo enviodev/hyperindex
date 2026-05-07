@@ -32,7 +32,7 @@ use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 type ContractNameKey = String;
@@ -385,47 +385,36 @@ fn is_valid_release_version_number(version: &str) -> bool {
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns the envio npm package specifier for codegen.
-/// Release builds (valid semver) → version string for npm.
-/// Dev builds → `file:` path to the local packages/envio directory.
-pub fn get_envio_version() -> Result<String> {
+/// - Release builds (valid semver `VERSION`) → that version, for npm.
+/// - Dev builds → `file:{envio_package_dir}`, where the caller (NAPI host
+///   or a test) supplies the absolute path to `packages/envio`.
+///
+/// A dev build without an `envio_package_dir` is a configuration error —
+/// there's no reliable way to locate the JS package from inside Rust alone.
+pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
     if is_valid_release_version_number(VERSION) {
         return Ok(VERSION.to_string());
     }
 
-    // Dev mode: walk up from the binary to find the local envio package.
-    // Using current_exe() instead of current_dir() so this works even when
-    // cwd is outside the repo (e.g. template tests that run in /tmp/).
-    let exe = env::current_exe()
-        .and_then(|p| p.canonicalize())
-        .context("failed to resolve current executable path")?;
-    // When the binary lives inside .envio-artifacts/ (the pre-built CI artifact),
-    // prefer .envio-artifacts/envio — it has compiled .res.mjs files that the
-    // source directory lacks. Dev binaries in target/ should use packages/envio
-    // to avoid creating a duplicate envio instance alongside workspace packages
-    // that already reference packages/envio (duplicate instances cause Prometheus
-    // metric registration collisions).
-    let prefer_artifact = exe
-        .components()
-        .any(|c| c.as_os_str() == ".envio-artifacts");
-    let mut dir = exe.parent();
-    while let Some(d) = dir {
-        let artifact = d.join(".envio-artifacts/envio");
-        let source = d.join("packages/envio");
-        if prefer_artifact && artifact.is_dir() {
-            return Ok(format!("file:{}", artifact.to_string_lossy()));
-        }
-        if source.is_dir() {
-            return Ok(format!("file:{}", source.to_string_lossy()));
-        }
-        if artifact.is_dir() {
-            return Ok(format!("file:{}", artifact.to_string_lossy()));
-        }
-        dir = d.parent();
+    let pkg_dir = envio_package_dir.ok_or_else(|| {
+        anyhow!(
+            "envio version is not a release ({VERSION}) and no envio_package_dir was supplied. \
+             Run via the NAPI host (which resolves it from import.meta.url) or pass an explicit path."
+        )
+    })?;
+
+    // Format as `file:{dir}` so the generated `package.json` resolves to
+    // the SAME envio instance as the parent, avoiding duplicate module
+    // instances that break shared registries (HandlerRegister, Prometheus
+    // metrics).
+    let pkg = PathBuf::from(pkg_dir);
+    if !pkg.is_dir() {
+        return Err(anyhow!(
+            "envio_package_dir does not exist or is not a directory: {}",
+            pkg.display()
+        ));
     }
-    Err(anyhow!(
-        "could not find packages/envio above executable: {}",
-        exe.display()
-    ))
+    Ok(format!("file:{}", pkg.to_string_lossy()))
 }
 
 #[derive(Debug)]
@@ -445,6 +434,9 @@ pub struct SystemConfig {
     pub human_config: HumanConfig,
     pub lowercase_addresses: bool,
     pub handlers: Option<String>,
+    // Project uses ReScript when a rescript.json sits at the project root —
+    // file existence is the source of truth; no explicit flag in config.yaml.
+    pub is_rescript: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -458,7 +450,14 @@ impl Storage {
         let (postgres, clickhouse) = match config {
             // Default: only Postgres enabled
             None => (true, false),
-            Some(s) => (s.postgres.unwrap_or(true), s.clickhouse.unwrap_or(false)),
+            Some(s) => {
+                let clickhouse = s.clickhouse.unwrap_or(false);
+                // When clickhouse is enabled, postgres must be set explicitly
+                // so that the validation below catches a clickhouse-only config
+                // instead of silently defaulting postgres to true.
+                let postgres = s.postgres.unwrap_or(!clickhouse);
+                (postgres, clickhouse)
+            }
         };
         if clickhouse && !postgres {
             return Err(anyhow!(
@@ -586,38 +585,12 @@ impl SystemConfig {
         let base_config = human_config.get_base_config();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
 
-        // Create a new ParsedProjectPaths that uses the output field from config if specified
-        let final_project_paths = {
-            match base_config.output.as_ref() {
-                Some(output) => {
-                    // If output is specified, create a new ParsedProjectPaths with the custom output path
-                    // The output path is relative to the config file location
-                    let config_dir = project_paths.config.parent().ok_or_else(|| {
-                        anyhow!("Unexpected config file should have a parent directory")
-                    })?;
+        let final_project_paths = project_paths.clone();
 
-                    let output_relative_path = PathBuf::from(output);
-                    if let Some(Component::ParentDir) =
-                        output_relative_path.components().peekable().peek()
-                    {
-                        anyhow::bail!("Output folder must be in project directory");
-                    }
-
-                    let output_joined = config_dir.join(output_relative_path);
-                    let output_normalized = path_utils::normalize_path(output_joined);
-
-                    ParsedProjectPaths {
-                        project_root: project_paths.project_root.clone(),
-                        config: project_paths.config.clone(),
-                        generated: output_normalized,
-                    }
-                }
-                None => {
-                    // If no output is specified, use the default ParsedProjectPaths
-                    project_paths.clone()
-                }
-            }
-        };
+        let is_rescript = final_project_paths
+            .project_root
+            .join("rescript.json")
+            .exists();
 
         match human_config {
             HumanConfig::Evm(ref evm_config) => {
@@ -787,6 +760,7 @@ impl SystemConfig {
                     ),
                     handlers: base_config.handlers.clone(),
                     human_config,
+                    is_rescript,
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
@@ -929,6 +903,7 @@ impl SystemConfig {
                     lowercase_addresses: false,
                     handlers: base_config.handlers.clone(),
                     human_config,
+                    is_rescript,
                 })
             }
             HumanConfig::Svm(ref svm_config) => {
@@ -971,6 +946,7 @@ impl SystemConfig {
                     lowercase_addresses: false,
                     handlers: None,
                     human_config,
+                    is_rescript,
                 })
             }
         }
@@ -1969,7 +1945,7 @@ mod test {
     use super::SystemConfig;
     use crate::{
         config_parsing::{
-            human_config::{evm::HumanConfig as EvmConfig, BaseConfig},
+            human_config::evm::HumanConfig as EvmConfig,
             system_config::{DataSource, Event, MainEvmDataSource},
         },
         project_paths::ParsedProjectPaths,
@@ -1992,13 +1968,60 @@ mod test {
         assert_eq!(&rendered_backoff_multiplicative, "0.8");
     }
 
+    // 20-byte hex addresses must round-trip verbatim through the full
+    // YAML → SystemConfig → public JSON pipeline. The ERC20 silent-skip
+    // bug came from an editor f64-truncating the address on disk; this
+    // locks the indexer-side path so we never reintroduce the corruption.
+    #[test]
+    fn parses_unquoted_hex_address_through_full_pipeline() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let project_paths = ParsedProjectPaths::new(&test_dir, "configs/unquoted-hex-address.yaml")
+            .expect("Failed creating parsed_paths");
+
+        let config =
+            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
+
+        let chains = config.get_chains();
+        let chain = chains
+            .iter()
+            .find(|c| c.id == 1)
+            .expect("chain id 1 missing");
+        let contract = chain
+            .contracts
+            .iter()
+            .find(|c| c.name == "Contract1")
+            .expect("Contract1 missing");
+        assert_eq!(
+            contract.addresses,
+            vec!["0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string()],
+            "address must round-trip verbatim through SystemConfig"
+        );
+
+        let public_json = config
+            .to_public_config_json(false)
+            .expect("Failed serializing public config");
+        assert!(
+            public_json.contains("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),
+            "public config JSON missing original address. Got:\n{public_json}"
+        );
+
+        // Mirror NAPI's two serde_json round-trips that hand the config
+        // to the JS runtime.
+        use crate::executor::public_config_value;
+        let value = public_config_value(&config, false).expect("public_config_value");
+        let wire = serde_json::to_string(&value).expect("to_string");
+        assert!(
+            wire.contains("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),
+            "NAPI wire JSON missing original address. Got:\n{wire}"
+        );
+    }
+
     #[test]
     fn test_get_contract_abi() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_root = test_dir.as_str();
         let config_dir = "configs/config1.yaml";
-        let generated = "generated/";
-        let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
+        let project_paths = ParsedProjectPaths::new(project_root, config_dir)
             .expect("Failed creating parsed_paths");
 
         let config =
@@ -2085,8 +2108,7 @@ mod test {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_root = test_dir.as_str();
         let config_dir = "configs/nested-abi.yaml";
-        let generated = "generated/";
-        let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
+        let project_paths = ParsedProjectPaths::new(project_root, config_dir)
             .expect("Failed creating parsed_paths");
 
         let config =
@@ -2404,108 +2426,6 @@ mod test {
     }
 
     #[test]
-    fn test_output_configuration() {
-        use crate::config_parsing::human_config::{
-            evm::{Chain as EvmChain, HumanConfig as EvmConfig},
-            HumanConfig,
-        };
-        use crate::project_paths::ParsedProjectPaths;
-
-        // Test with default output (no output field specified)
-        let evm_config = EvmConfig {
-            base: BaseConfig {
-                name: "Test Project".to_string(),
-                description: None,
-                schema: None,
-                output: None,
-                handlers: None,
-                full_batch_size: None,
-                storage: None,
-            },
-            ecosystem: None,
-            contracts: None,
-            chains: vec![EvmChain {
-                id: 1,
-                hypersync_config: None,
-                rpc: None,
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: None,
-                block_lag: None,
-                contracts: None,
-            }],
-            rollback_on_reorg: None,
-            save_full_history: None,
-            field_selection: None,
-            raw_events: None,
-            address_format: None,
-        };
-
-        let project_paths = ParsedProjectPaths::new(".", "generated", "config.yaml").unwrap();
-        let schema = crate::config_parsing::entity_parsing::Schema {
-            entities: std::collections::HashMap::new(),
-            enums: std::collections::HashMap::new(),
-        };
-
-        let system_config = SystemConfig::from_human_config(
-            HumanConfig::Evm(evm_config),
-            schema.clone(),
-            &project_paths,
-        )
-        .unwrap();
-
-        // Should use the default generated path
-        assert_eq!(
-            system_config.parsed_project_paths.generated,
-            project_paths.generated
-        );
-
-        // Test with custom output path
-        let evm_config_with_output = EvmConfig {
-            base: BaseConfig {
-                name: "Test Project".to_string(),
-                description: None,
-                schema: None,
-                output: Some("custom/output".to_string()),
-                handlers: None,
-                full_batch_size: None,
-                storage: None,
-            },
-            ecosystem: None,
-            contracts: None,
-            chains: vec![EvmChain {
-                id: 1,
-                hypersync_config: None,
-                rpc: None,
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: None,
-                block_lag: None,
-                contracts: None,
-            }],
-            rollback_on_reorg: None,
-            save_full_history: None,
-            field_selection: None,
-            raw_events: None,
-            address_format: None,
-        };
-
-        let system_config_with_output = SystemConfig::from_human_config(
-            HumanConfig::Evm(evm_config_with_output),
-            schema,
-            &project_paths,
-        )
-        .unwrap();
-
-        // Should use the custom output path relative to config location
-        let expected_custom_path = std::path::PathBuf::from("custom/output");
-        assert_eq!(
-            system_config_with_output.parsed_project_paths.generated,
-            expected_custom_path
-        );
-    }
-
-    #[test]
     fn test_storage_resolve() {
         use super::human_config::StorageConfig;
 
@@ -2547,6 +2467,19 @@ mod test {
         // ClickHouse without Postgres -> user-friendly error
         let err = super::Storage::resolve(Some(&StorageConfig {
             postgres: Some(false),
+            clickhouse: Some(true),
+        }))
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("ClickHouse is not supported as a single storage yet"),
+            "Unexpected error: {err}"
+        );
+
+        // ClickHouse enabled with Postgres omitted -> same error; user must
+        // opt in to Postgres explicitly rather than relying on the default.
+        let err = super::Storage::resolve(Some(&StorageConfig {
+            postgres: None,
             clickhouse: Some(true),
         }))
         .unwrap_err();

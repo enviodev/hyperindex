@@ -1,7 +1,7 @@
 /*
  * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
-import { indexer } from "generated";
+import { indexer } from "envio";
 import { createEffect, S } from "envio";
 
 const blockSchema = S.schema({
@@ -56,7 +56,7 @@ const getBlockEffect = createEffect(
       throw new Error(parsedData.error);
     }
     return parsedData.result ?? null;
-  }
+  },
 );
 
 indexer.onSlot({ name: "BlockTracker" }, async ({ slot, context }) => {

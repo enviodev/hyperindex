@@ -160,11 +160,7 @@ function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
       }
     );
 
-    if (result.exitCode !== 0) {
-      console.error(`[${name}] init failed:`, result.stderr);
-      console.error(`[${name}] stdout:`, result.stdout);
-    }
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode, `[${name}] init failed (exit ${result.exitCode}):\n${result.stderr}\n${result.stdout}`).toBe(0);
   }, config.timeouts.install + 10_000);
 
   it("installs dependencies", async () => {
@@ -173,10 +169,7 @@ function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
       timeout: config.timeouts.install,
     });
 
-    if (result.exitCode !== 0) {
-      console.error(`[${name}] pnpm install failed:`, result.stderr);
-    }
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode, `[${name}] pnpm install failed (exit ${result.exitCode}):\n${result.stderr}`).toBe(0);
   }, config.timeouts.install + 10_000);
 
   it("runs codegen successfully", async () => {
@@ -185,10 +178,7 @@ function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
       timeout: config.timeouts.codegen,
     });
 
-    if (result.exitCode !== 0) {
-      console.error(`[${name}] codegen failed:`, result.stderr);
-    }
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode, `[${name}] codegen failed (exit ${result.exitCode}):\n${result.stderr}`).toBe(0);
   }, config.timeouts.codegen + 10_000);
 
   it.skipIf(!hasTests)("runs tests successfully", async () => {
@@ -197,11 +187,7 @@ function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
       timeout: config.timeouts.test,
     });
 
-    if (result.exitCode !== 0) {
-      console.error(`[${name}] test failed:`, result.stderr);
-      console.error(`[${name}] stdout:`, result.stdout);
-    }
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode, `[${name}] test failed (exit ${result.exitCode}):\n${result.stderr}\n${result.stdout}`).toBe(0);
   }, config.timeouts.test + 10_000);
 }
 

@@ -1,6 +1,46 @@
 open Vitest
 
 describe("E2E tests", () => {
+  let getChainAddresses = async (indexerMock: MockIndexer.Indexer.t, ~chainId) => {
+    let addresses: array<InternalTable.EnvioAddresses.t> = await indexerMock.queryRaw(
+      InternalTable.EnvioAddresses.entityConfig,
+    )
+    addresses
+    ->Array.filter(a => a.chainId === chainId)
+    ->Array.map(a => (
+      a->Config.EnvioAddresses.getAddress->Address.toString,
+      a.contractName,
+      a.registrationBlock,
+    ))
+  }
+
+  Async.it(
+    "Populates config addresses on init and preserves them across restart",
+    async t => {
+      let sourceMock = MockIndexer.Source.make([], ~chain=#1337)
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
+      )
+
+      let expected = [
+        ("0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3", "Gravatar", -1),
+        ("0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC", "NftFactory", -1),
+      ]
+
+      t.expect(
+        await getChainAddresses(indexerMock, ~chainId=1337),
+        ~message="Config addresses should be inserted with registrationBlock=-1 on init",
+      ).toEqual(expected)
+
+      let restarted = await indexerMock.restart()
+
+      t.expect(
+        await getChainAddresses(restarted, ~chainId=1337),
+        ~message="Config addresses should survive restart from DB",
+      ).toEqual(expected)
+    },
+  )
+
   Async.it("Currectly starts indexing from a non-zero start block", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -507,19 +547,28 @@ describe("E2E tests", () => {
       [
         {
           value: "2",
-          labels: Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          labels: Dict.fromArray([
+            ("operation", "testEffectWithCache.effect"),
+            ("storage", "postgres"),
+          ]),
         },
       ],
       [
         {
           value: "1",
-          labels: Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          labels: Dict.fromArray([
+            ("operation", "testEffectWithCache.effect"),
+            ("storage", "postgres"),
+          ]),
         },
       ],
       [
         {
           value: "1",
-          labels: Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          labels: Dict.fromArray([
+            ("operation", "testEffectWithCache.effect"),
+            ("storage", "postgres"),
+          ]),
         },
       ],
     ))
@@ -598,6 +647,69 @@ describe("E2E tests", () => {
         labels: Dict.fromArray([("effect", "testEffectWithCache")]),
       },
     ])
+  })
+
+  // Reproduction for https://github.com/enviodev/hyperindex/issues/1173
+  // The effect context's `log` getter is compiled as an arrow function, so
+  // `this` is captured from the surrounding ESM module scope (undefined under
+  // strict mode) instead of the EffectContext instance. The lookup
+  // `paramsByThis.get(undefined)` returns undefined, and accessing `.item`
+  // throws `TypeError: Cannot read properties of undefined (reading 'item')`.
+  Async.it("context.log should be accessible from inside an effect handler", async t => {
+    let sourceMock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    let probeEffect = Envio.createEffect(
+      {
+        name: "logProbeEffect",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+      },
+      async ({input, context}) => {
+        context.log.info("hello from effect")
+        input ++ "-output"
+      },
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    let effectResult = ref(None)
+    let effectError = ref(None)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            switch await context.effect(probeEffect, "test") {
+            | output => effectResult := Some(output)
+            | exception exn => effectError := Some(exn)
+            }
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(
+      (effectError.contents, effectResult.contents),
+      ~message="context.log access from inside an effect must not throw",
+    ).toEqual((None, Some("test-output")))
   })
 
   Async.it(
@@ -1048,7 +1160,7 @@ describe("E2E tests", () => {
       let liveSource = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
-        ~sourceFor=Source.Live,
+        ~sourceFor=Source.Realtime,
       )
 
       let indexerMock = await MockIndexer.Indexer.make(
@@ -1096,7 +1208,7 @@ describe("E2E tests", () => {
       syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexerMock.getBatchWritePromise()
 
-      // First waitForNewBlock runs with isLive=false (NextQuery fires before
+      // First waitForNewBlock runs with isRealtime=false (NextQuery fires before
       // EventBatchProcessed sets timestampCaughtUpToHeadOrEndblock).
       // Only Sync participates in height racing initially.
       t.expect(
@@ -1105,7 +1217,7 @@ describe("E2E tests", () => {
       ).toEqual(2)
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should NOT participate yet (isLive still false)",
+        ~message="Live source should NOT participate yet (isRealtime still false)",
       ).toEqual(0)
 
       // Resolve the first waitForNewBlock to advance to the next cycle
@@ -1121,7 +1233,7 @@ describe("E2E tests", () => {
       liveSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
       await indexerMock.getBatchWritePromise()
 
-      // Now isLive=true (EventBatchProcessed has set timestampCaughtUpToHeadOrEndblock).
+      // Now isRealtime=true (EventBatchProcessed has set timestampCaughtUpToHeadOrEndblock).
       // Second waitForNewBlock: Live=Primary races, Sync=Secondary (not in main group).
       t.expect(
         syncSource.getHeightOrThrowCalls->Array.length,
@@ -1129,7 +1241,7 @@ describe("E2E tests", () => {
       ).toEqual(2)
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should now participate in height racing after isLive=true",
+        ~message="Live source should now participate in height racing after isRealtime=true",
       ).toEqual(1)
     },
   )
@@ -1479,6 +1591,8 @@ describe("E2E tests", () => {
       ("3", 26441, Some(26980)),
       ("4", 26981, Some(27520)),
       ("4", 27521, Some(28060)),
+      ("4", 28061, Some(28600)),
+      ("4", 28601, Some(29140)),
     ])
 
     // Verify merged partition "4" has both DC addresses
@@ -1491,7 +1605,7 @@ describe("E2E tests", () => {
     ).toEqual(2)
   })
 
-  Async.it(
+  Async.itSkipInClaudeCloud(
     "_meta and chain_metadata return events processed as a number (float4 cast)",
     async t => {
       let sourceMock = MockIndexer.Source.make(
@@ -1556,6 +1670,142 @@ describe("E2E tests", () => {
           ],
         },
       })
+    },
+  )
+
+  Async.it(
+    "Multichain with reorg: staggered chain catch-up still enters reorg threshold",
+    async t => {
+      let sourceMock1337 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock100 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock1337.source]),
+          },
+          {
+            chain: #100,
+            sourceConfig: Config.CustomSources([sourceMock100.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      // Chain 1337 catches up first
+      await MockIndexer.Helper.initialEnterReorgThreshold(
+        ~t,
+        ~indexerMock,
+        ~sourceMock=sourceMock1337,
+      )
+
+      // System should NOT be in reorg threshold yet (chain 100 still backfilling)
+      t.expect(
+        await indexerMock.metric("envio_reorg_threshold"),
+        ~message="Should not be in reorg threshold while chain 100 is still backfilling",
+      ).toEqual([{value: "0", labels: Dict.make()}])
+
+      // Now chain 100 catches up
+      await MockIndexer.Helper.initialEnterReorgThreshold(
+        ~t,
+        ~indexerMock,
+        ~sourceMock=sourceMock100,
+      )
+
+      // System should now be in reorg threshold
+      t.expect(
+        await indexerMock.metric("envio_reorg_threshold"),
+        ~message="Should be in reorg threshold after both chains caught up",
+      ).toEqual([{value: "1", labels: Dict.make()}])
+
+      // Chains are at block 100, need to advance to 300 after threshold entry
+      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(
+        await indexerMock.metric("hyperindex_synced_to_head"),
+        ~message="All chains should be synced to head after advancing to block 300",
+      ).toEqual([{value: "1", labels: Dict.make()}])
+    },
+  )
+
+  Async.it(
+    "Multichain without reorg: staggered chain catch-up reports readiness correctly",
+    async t => {
+      let sourceMock1337 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock100 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock1337.source]),
+          },
+          {
+            chain: #100,
+            sourceConfig: Config.CustomSources([sourceMock100.source]),
+          },
+        ],
+        ~shouldRollbackOnReorg=false,
+      )
+      await Utils.delay(0)
+
+      // Without reorg, chains don't use blockLag so they fetch from startBlock to knownHeight
+      // Chain 1337 catches up first
+      t.expect(sourceMock1337.getHeightOrThrowCalls->Array.length).toEqual(1)
+      sourceMock1337.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await indexerMock.getBatchWritePromise()
+
+      // Chain 1337 should be ready, chain 100 should not
+      t.expect(
+        await indexerMock.metric("envio_progress_ready"),
+        ~message="Only chain 1337 should be ready",
+      ).toEqual([
+        {value: "0", labels: Dict.fromArray([("chainId", "100")])},
+        {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
+      ])
+      t.expect(
+        await indexerMock.metric("hyperindex_synced_to_head"),
+        ~message="Not all chains synced yet",
+      ).toEqual([{value: "0", labels: Dict.make()}])
+
+      // Chain 100 catches up
+      t.expect(sourceMock100.getHeightOrThrowCalls->Array.length).toEqual(1)
+      sourceMock100.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await indexerMock.getBatchWritePromise()
+
+      // Both chains should now be ready
+      t.expect(
+        await indexerMock.metric("envio_progress_ready"),
+        ~message="Both chains should be ready",
+      ).toEqual([
+        {value: "1", labels: Dict.fromArray([("chainId", "100")])},
+        {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
+      ])
+      t.expect(
+        await indexerMock.metric("hyperindex_synced_to_head"),
+        ~message="All chains should be synced to head",
+      ).toEqual([{value: "1", labels: Dict.make()}])
     },
   )
 })

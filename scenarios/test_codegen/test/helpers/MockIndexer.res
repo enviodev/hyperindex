@@ -1,6 +1,6 @@
 type chainId = Indexer.chainId
 
-let config = Indexer.Generated.configWithoutRegistrations
+let config = Config.loadWithoutRegistrations()
 
 let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   config.userEntitiesByName
@@ -22,7 +22,7 @@ module InMemoryStore = {
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=config.allEntities)
     entities->Array.forEach(((entityConfig, items)) => {
       items->Array.forEach(entity => {
         inMemoryStore->setEntity(~entityConfig, entity)
@@ -49,6 +49,7 @@ module Storage = {
       "entities": array<Internal.entityConfig>,
       "chainConfigs": array<Config.chain>,
       "enums": array<Table.enumConfig<Table.enum>>,
+      "envioInfo": JSON.t,
     }>,
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,
@@ -108,18 +109,25 @@ module Storage = {
         initializeResolveFns->Array.forEach(resolve => resolve(initialState))
       },
       storage: {
+        name: "mock",
         isInitialized: implement(#isInitialized, () => {
           isInitializedCalls->Array.push(true)->ignore
           Promise.make((resolve, _reject) => {
             isInitializedResolveFns->Array.push(resolve)->ignore
           })
         }),
-        initialize: implement(#initialize, (~chainConfigs=[], ~entities=[], ~enums=[]) => {
+        initialize: implement(#initialize, (
+          ~chainConfigs=[],
+          ~entities=[],
+          ~enums=[],
+          ~envioInfo,
+        ) => {
           initializeCalls
           ->Array.push({
             "entities": entities,
             "chainConfigs": chainConfigs,
             "enums": enums,
+            "envioInfo": envioInfo,
           })
           ->ignore
           Promise.make((resolve, _reject) => {
@@ -194,6 +202,7 @@ module Storage = {
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
         ) => JsError.throwWithMessage("Not implemented"),
+        close: () => Promise.resolve(),
       },
     }
   }
@@ -201,7 +210,7 @@ module Storage = {
   let toPersistence = (storageMock: t) => {
     {
       ...PgStorage.makePersistenceFromConfig(
-        ~config=Indexer.Generated.configWithoutRegistrations,
+        ~config=Config.loadWithoutRegistrations(),
         ~storage=storageMock.storage,
       ),
       storageStatus: Ready({
@@ -210,6 +219,7 @@ module Storage = {
         chains: [],
         reorgCheckpoints: [],
         checkpointId: 0n,
+        envioInfo: None,
       }),
     }
   }
@@ -262,6 +272,7 @@ module Indexer = {
     ~enableRawEvents=false,
     ~reset=true,
     ~batchSize=?,
+    ~shouldRollbackOnReorg=true,
   ) => {
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
@@ -272,12 +283,12 @@ module Indexer = {
     | Some(_) => ()
     }
 
-    let registrations = await HandlerLoader.registerAllHandlers(
-      ~config=Indexer.Generated.configWithoutRegistrations,
+    let (postRegistrationConfig, registrations) = await HandlerLoader.registerAllHandlers(
+      ~config=Config.loadWithoutRegistrations(),
     )
 
     let config = {
-      let config = Indexer.Generated.makeGeneratedConfig()
+      let config = postRegistrationConfig
 
       let chainMap =
         chains
@@ -298,7 +309,7 @@ module Indexer = {
 
       {
         ...config,
-        shouldRollbackOnReorg: true,
+        shouldRollbackOnReorg,
         shouldSaveFullHistory: saveFullHistory,
         enableRawEvents,
         chainMap,
@@ -334,9 +345,14 @@ module Indexer = {
 
     let gsManagerRef = ref(None)
 
-    await persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values, ~reset)
+    await persistence->Persistence.init(
+      ~chainConfigs=config.chainMap->ChainMap.values,
+      ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~resetCommand="envio dev -r",
+      ~reset,
+    )
 
-    let chainManager = await ChainManager.makeFromDbState(
+    let chainManager = ChainManager.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~registrations,
@@ -364,6 +380,13 @@ module Indexer = {
           while before >= (gsManager->GlobalStateManager.getState).processedBatches {
             await Utils.delay(1)
           }
+          // Skip extra microtasks for indexer to fire follow-up actions
+          // (e.g. the NextQuery dispatch that schedules the next
+          // getItemsOrThrow call). Without this, callers that immediately
+          // call resolveGetItemsOrThrow can race the dispatch and observe
+          // an empty calls array.
+          await Utils.delay(0)
+          await Utils.delay(0)
           resolve()
         })
       },
@@ -478,6 +501,7 @@ module Indexer = {
           ~saveFullHistory,
           ~reset=false,
           ~batchSize?,
+          ~shouldRollbackOnReorg,
         )
       },
       graphql: query => {
@@ -680,7 +704,7 @@ module Source = {
             ~fromBlock,
             ~toBlock,
             ~addressesByContractName as _addressesByContractName,
-            ~indexingContracts as _,
+            ~indexingAddresses as _,
             ~knownHeight,
             ~partitionId,
             ~selection as _,
@@ -740,6 +764,7 @@ module Source = {
                             isWildcard: false,
                             filterByAddresses: false,
                             dependsOnAddresses: false,
+                            startBlock: None,
                             handler: switch item.handler {
                             | Some(handler) =>
                               (
@@ -779,6 +804,8 @@ module Source = {
                               JsError.throwWithMessage("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
                             selectedTransactionFields: Utils.Set.make(),
+                            sighash: "",
+                            indexedParams: [],
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -886,6 +913,7 @@ let evmEventConfig = (
   ~isWildcard=false,
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
+  ~startBlock: option<int>=?,
 ): Internal.evmEventConfig => {
   {
     id,
@@ -895,6 +923,7 @@ let evmEventConfig = (
     filterByAddresses,
     dependsOnAddresses: filterByAddresses ||
     dependsOnAddresses->Belt.Option.getWithDefault(!isWildcard),
+    startBlock,
     handler: None,
     contractRegister: None,
     paramsRawEventSchema: S.literal(%raw(`null`))
@@ -935,5 +964,7 @@ let evmEventConfig = (
     convertHyperSyncEventArgs: _ => JsError.throwWithMessage("Not implemented"),
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
+    sighash: id,
+    indexedParams: [],
   }
 }

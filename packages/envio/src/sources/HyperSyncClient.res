@@ -330,7 +330,6 @@ module ResponseTypes = {
     mixHash?: string,
   }
 
-  @genType
   type accessList = {
     address?: Address.t,
     storageKeys?: array<string>,
@@ -341,7 +340,6 @@ module ResponseTypes = {
     storageKeys: ?s.field("storageKeys", S.option(S.array(S.string))),
   })
 
-  @genType
   type authorizationList = {
     chainId: bigint,
     address: Address.t,

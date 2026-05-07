@@ -19,9 +19,23 @@ type t = {
 }
 
 //CONSTRUCTION
+let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
+  let addresses = []
+  chainConfig.contracts->Array.forEach(contract => {
+    contract.addresses->Array.forEach(address => {
+      addresses->Array.push({
+        Internal.address,
+        contractName: contract.name,
+        registrationBlock: -1,
+      })
+    })
+  })
+  addresses
+}
+
 let make = (
   ~chainConfig: Config.chain,
-  ~dynamicContracts: array<Internal.indexingContract>,
+  ~indexingAddresses: array<Internal.indexingAddress>,
   ~startBlock,
   ~endBlock,
   ~firstEventBlock=None,
@@ -33,6 +47,7 @@ let make = (
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
   ~isInReorgThreshold,
+  ~isRealtime,
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
   ~knownHeight=0,
@@ -44,7 +59,6 @@ let make = (
   let eventRouter = EventRouter.empty()
 
   // Aggregate events we want to fetch
-  let contracts = []
   let eventConfigs: array<Internal.eventConfig> = []
 
   let notRegisteredEvents = []
@@ -115,21 +129,7 @@ let make = (
       )
     | _ => ()
     }
-
-    contract.addresses->Array.forEach(address => {
-      contracts->Array.push({
-        Internal.address,
-        contractName: contract.name,
-        startBlock: switch contract.startBlock {
-        | Some(startBlock) => startBlock
-        | None => chainConfig.startBlock
-        },
-        registrationBlock: None,
-      })
-    })
   })
-
-  dynamicContracts->Array.forEach(dc => contracts->Array.push(dc))
 
   if notRegisteredEvents->Utils.Array.notEmpty {
     logger->Logging.childInfo(
@@ -170,7 +170,7 @@ let make = (
 
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
-    ~contracts,
+    ~addresses=indexingAddresses,
     ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
@@ -244,7 +244,7 @@ let make = (
     sourceManager: SourceManager.make(
       ~sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
-      ~isLive=timestampCaughtUpToHeadOrEndblock->Option.isSome,
+      ~isRealtime,
     ),
     reorgDetection: ReorgDetection.make(
       ~chainReorgCheckpoints,
@@ -286,8 +286,9 @@ let makeFromConfig = (
     ~numEventsProcessed=0.,
     ~targetBufferSize,
     ~logger,
-    ~dynamicContracts=[],
+    ~indexingAddresses=configAddresses(chainConfig),
     ~isInReorgThreshold=false,
+    ~isRealtime=false,
     ~knownHeight,
   )
 }
@@ -295,11 +296,12 @@ let makeFromConfig = (
 /**
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
-let makeFromDbState = async (
+let makeFromDbState = (
   chainConfig: Config.chain,
   ~resumedChainState: Persistence.initialChainState,
   ~reorgCheckpoints,
   ~isInReorgThreshold,
+  ~isRealtime,
   ~config,
   ~registrations,
   ~targetBufferSize,
@@ -316,7 +318,7 @@ let makeFromDbState = async (
       : resumedChainState.startBlock - 1
 
   make(
-    ~dynamicContracts=resumedChainState.dynamicContracts,
+    ~indexingAddresses=resumedChainState.indexingAddresses,
     ~chainConfig,
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock,
@@ -333,27 +335,13 @@ let makeFromDbState = async (
     ~logger,
     ~targetBufferSize,
     ~isInReorgThreshold,
+    ~isRealtime,
     ~knownHeight=resumedChainState.sourceBlockNumber,
   )
 }
 
-/**
- * Helper function to get the configured start block for a contract from config
- */
-let getContractStartBlock = (
-  config: Config.t,
-  ~chain: ChainMap.Chain.t,
-  ~contractName: string,
-): option<int> => {
-  let chainConfig = config.chainMap->ChainMap.get(chain)
-  chainConfig.contracts
-  ->Array.find(contract => contract.name === contractName)
-  ->Option.flatMap(contract => contract.startBlock)
-}
-
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
-  ~chain: ChainMap.Chain.t,
   ~config: Config.t,
 ) => {
   let itemsWithDcs = []
@@ -362,17 +350,10 @@ let runContractRegistersOrThrow = async (
     let eventItem = item->Internal.castUnsafeEventItem
     let {blockNumber} = eventItem
 
-    // Use contract-specific start block if configured, otherwise fall back to registration block
-    let contractStartBlock = switch getContractStartBlock(config, ~chain, ~contractName) {
-    | Some(configuredStartBlock) => configuredStartBlock
-    | None => blockNumber
-    }
-
-    let dc: Internal.indexingContract = {
+    let dc: Internal.indexingAddress = {
       address: contractAddress,
       contractName,
-      startBlock: contractStartBlock,
-      registrationBlock: Some(blockNumber),
+      registrationBlock: blockNumber,
     }
 
     switch item->Internal.getItemDcs {

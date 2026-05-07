@@ -19,7 +19,7 @@ type contract = {
   eventSignatures: array<string>,
 }
 
-// Source config parsed from internal.config.json - sources are created lazily in ChainFetcher
+// Sources are instantiated lazily in ChainFetcher from this config.
 type evmRpcConfig = {
   url: string,
   sourceFor: Source.sourceFor,
@@ -86,6 +86,7 @@ type t = {
   maxAddrInPartition: int,
   batchSize: int,
   lowercaseAddresses: bool,
+  isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
@@ -152,10 +153,9 @@ module EnvioAddresses = {
   }->Internal.fromGenericEntityConfig
 }
 
-// Types for parsing source config from internal.config.json
-type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("live") Live
+type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
 
-let rpcSourceForSchema = S.enum([Sync, Fallback, Live])
+let rpcSourceForSchema = S.enum([Sync, Fallback, Realtime])
 
 let rpcConfigSchema = S.schema(s =>
   {
@@ -291,7 +291,7 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
   | "bigint" => (Table.BigInt({precision: ?prop["precision"]}), Utils.BigInt.schema->S.toUnknown)
   | "bigdecimal" => (
       Table.BigDecimal({
-        config: ?prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getOr(0))),
+        config: ?(prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getOr(0)))),
       }),
       BigDecimal.schema->S.toUnknown,
     )
@@ -440,6 +440,7 @@ let publicConfigSchema = S.schema(s =>
     "name": s.matches(S.string),
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
+    "isDev": s.matches(S.option(S.bool)),
     "multichain": s.matches(S.option(multichainSchema)),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
@@ -454,12 +455,13 @@ let publicConfigSchema = S.schema(s =>
   }
 )
 
-let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
+let fromPublic = (publicConfigJson: JSON.t) => {
+  let maxAddrInPartition = Env.maxAddrInPartition
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
   | S.Raised(exn) =>
     JsError.throwWithMessage(
-      `Invalid internal.config.ts: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`,
+      `Invalid indexer config: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`,
     )
   }
 
@@ -478,6 +480,12 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
     JsError.throwWithMessage(
       "Invalid indexer config: Multiple ecosystems are not supported for a single indexer",
     )
+  }
+
+  let ecosystem = switch ecosystemName {
+  | Ecosystem.Evm => Evm.ecosystem
+  | Ecosystem.Fuel => Fuel.ecosystem
+  | Ecosystem.Svm => Svm.ecosystem
   }
 
   // Extract EVM-specific options with defaults
@@ -533,7 +541,13 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
   }
 
   // Build event configs for a contract from JSON event items
-  let buildContractEvents = (~contractName, ~events: option<array<_>>, ~abi, ~chainId: int) => {
+  let buildContractEvents = (
+    ~contractName,
+    ~events: option<array<_>>,
+    ~abi,
+    ~chainId: int,
+    ~startBlock: option<int>,
+  ) => {
     switch events {
     | None => []
     | Some(eventItems) =>
@@ -542,10 +556,6 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
         let sighash = eventItem["sighash"]
         let params = eventItem["params"]->Option.getOr([])
         let kind = eventItem["kind"]
-        // Get handler registration data
-        let isWildcard = HandlerRegister.isWildcard(~contractName, ~eventName)
-        let handler = HandlerRegister.getHandler(~contractName, ~eventName)
-        let contractRegister = HandlerRegister.getContractRegister(~contractName, ~eventName)
 
         switch ecosystemName {
         | Ecosystem.Fuel =>
@@ -557,9 +567,10 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
               ~kind=fuelKind,
               ~sighash,
               ~rawAbi=abi->(Utils.magic: EvmTypes.Abi.t => JSON.t),
-              ~isWildcard,
-              ~handler,
-              ~contractRegister,
+              ~isWildcard=false,
+              ~handler=None,
+              ~contractRegister=None,
+              ~startBlock?,
             ) :> Internal.eventConfig)
           | None =>
             JsError.throwWithMessage(
@@ -572,13 +583,15 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
             ~eventName,
             ~sighash,
             ~params,
-            ~isWildcard,
-            ~handler,
-            ~contractRegister,
-            ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
+            ~isWildcard=false,
+            ~handler=None,
+            ~contractRegister=None,
+            ~eventFilters=None,
             ~probeChainId=chainId,
+            ~onEventBlockFilterSchema=ecosystem.onEventBlockFilterSchema,
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
+            ~startBlock?,
             ~globalBlockFieldsSet,
             ~globalTransactionFieldsSet,
           ) :> Internal.eventConfig)
@@ -605,7 +618,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
     switch sourceFor {
     | Sync => Source.Sync
     | Fallback => Source.Fallback
-    | Live => Source.Live
+    | Realtime => Source.Realtime
     }
   }
 
@@ -640,6 +653,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
             ~events=contractData["events"],
             ~abi=contractData["abi"],
             ~chainId,
+            ~startBlock,
           )
 
           {
@@ -733,12 +747,6 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
     })
     ->ChainMap.fromArrayUnsafe
 
-  let ecosystem = switch ecosystemName {
-  | Ecosystem.Evm => Evm.ecosystem
-  | Ecosystem.Fuel => Fuel.ecosystem
-  | Ecosystem.Svm => Svm.ecosystem
-  }
-
   // Parse enums and entities from JSON config
   let allEnums =
     publicConfig["enums"]
@@ -795,6 +803,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
     maxAddrInPartition,
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     lowercaseAddresses,
+    isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,
     userEntities,
     allEntities,
@@ -845,11 +854,141 @@ let getChain = (config, ~chainId) => {
       )
 }
 
-@val external envioConfigEnv: option<string> = "process.env.ENVIO_CONFIG"
+// A CLI command payload already contains the resolved JSON; priming lets
+// downstream callers skip the NAPI `getConfigJson` round-trip. Calling
+// `prime` again invalidates the memo.
+%%private(let primedJson: ref<option<JSON.t>> = ref(None))
+%%private(let cached: ref<option<t>> = ref(None))
+let prime = (json: JSON.t): unit => {
+  primedJson := Some(json)
+  cached := None
+}
 
-let fromEnv = () => {
-  switch envioConfigEnv {
-  | Some(configStr) => configStr->JSON.parseOrThrow->fromPublic
-  | None => JsError.throwWithMessage("ENVIO_CONFIG environment variable is not set")
+let getPublicConfigJson = () =>
+  switch primedJson.contents {
+  | Some(json) => json
+  | None => Core.getConfigJson()->JSON.parseOrThrow
+  }
+
+// Drops source URLs from each chain so RPC/hypersync edits don't trigger
+// the resume-time compat check (and don't end up in `envio_info`). Also
+// drops `isDev`, which toggles between `envio dev` and `envio start` and
+// has no bearing on schema/indexing compatibility.
+let stripSensitiveData = (json: JSON.t): JSON.t => {
+  let cloned = json->JSON.stringify->JSON.parseOrThrow
+  let stripChains = (ecosystem: option<JSON.t>) =>
+    switch ecosystem {
+    | Some(Object(ecosystemDict)) =>
+      switch ecosystemDict->Dict.get("chains") {
+      | Some(Object(chains)) =>
+        chains
+        ->Dict.valuesToArray
+        ->Array.forEach(chainJson =>
+          switch chainJson {
+          | Object(chain) => {
+              chain->Utils.Dict.deleteInPlace("rpcs")
+              chain->Utils.Dict.deleteInPlace("rpc")
+              chain->Utils.Dict.deleteInPlace("hypersync")
+            }
+          | _ => ()
+          }
+        )
+      | _ => ()
+      }
+    | _ => ()
+    }
+  switch cloned {
+  | Object(obj) => {
+      obj->Utils.Dict.deleteInPlace("isDev")
+      stripChains(obj->Dict.get("evm"))
+      stripChains(obj->Dict.get("fuel"))
+      stripChains(obj->Dict.get("svm"))
+    }
+  | _ => ()
+  }
+  cloned
+}
+
+// Postgres jsonb doesn't preserve key order, so canonicalize with sorted
+// keys before string-comparing.
+let rec canonicalJson = (json: JSON.t): JSON.t =>
+  switch json {
+  | Object(d) => {
+      let sorted = Dict.make()
+      d
+      ->Dict.keysToArray
+      ->Array.toSorted(String.compare)
+      ->Array.forEach(k => sorted->Dict.set(k, d->Dict.getUnsafe(k)->canonicalJson))
+      Object(sorted)
+    }
+  | Array(arr) => Array(arr->Array.map(canonicalJson))
+  | _ => json
+  }
+
+// Returns dotted leaf paths (`a.b[i].c`) where `stored` differs from
+// `current`. Skips subtrees whose canonical JSON matches.
+let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
+  let acc = []
+  let rec go = (s: JSON.t, c: JSON.t, prefix: string) => {
+    if JSON.stringify(canonicalJson(s)) === JSON.stringify(canonicalJson(c)) {
+      ()
+    } else {
+      switch (s, c) {
+      | (Object(sObj), Object(cObj)) =>
+        let keys = Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
+        keys
+        ->Utils.Set.toArray
+        ->Array.toSorted(String.compare)
+        ->Array.forEach(k => {
+          let p = prefix === "" ? k : `${prefix}.${k}`
+          switch (sObj->Dict.get(k), cObj->Dict.get(k)) {
+          | (None, None) => ()
+          | (None, _) | (_, None) => acc->Array.push(p)->ignore
+          | (Some(sv), Some(cv)) => go(sv, cv, p)
+          }
+        })
+      | (Array(sArr), Array(cArr)) =>
+        let maxLen = Math.Int.max(sArr->Array.length, cArr->Array.length)
+        for i in 0 to maxLen - 1 {
+          let p = `${prefix}[${Int.toString(i)}]`
+          switch (sArr->Belt.Array.get(i), cArr->Belt.Array.get(i)) {
+          | (None, _) | (_, None) => acc->Array.push(p)->ignore
+          | (Some(sv), Some(cv)) => go(sv, cv, p)
+          }
+        }
+      | _ =>
+        // Type mismatch or scalar diff
+        acc->Array.push(prefix === "" ? "<root>" : prefix)->ignore
+      }
+    }
+  }
+  go(stored, current, "")
+  acc
+}
+
+// Throws an `incompatible config` error listing each path in `changedPaths`,
+// plus the revert/reset remediation. `~resetCommand` lets each call site
+// (`envio dev -r` / `envio start -r` / `envio local db-migrate setup`)
+// surface the right wipe-and-restart command.
+let throwIfIncompatible = (changedPaths: array<string>, ~resetCommand: string) => {
+  if changedPaths->Array.length > 0 {
+    let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
+    JsError.throwWithMessage(
+      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. Revert the changes above    # resume indexing where it left off\n  2. ${resetCommand}                # wipe the database and re-index from scratch`,
+    )
   }
 }
+
+// The returned value is a pure function of the JSON — no handler
+// registrations are applied here. Post-registration configs come from
+// `HandlerLoader.applyRegistrations`. That purity is what lets this
+// memoize without invalidation.
+let loadWithoutRegistrations = () =>
+  switch cached.contents {
+  | Some(c) => c
+  | None => {
+      let c = getPublicConfigJson()->fromPublic
+      cached := Some(c)
+      c
+    }
+  }

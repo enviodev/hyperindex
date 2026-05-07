@@ -18,10 +18,23 @@ type metricValue = {
 type metricInstance = {get: unit => promise<{"values": array<metricValue>}>}
 @send external getSingleMetric: (registry, string) => option<metricInstance> = "getSingleMetric"
 @send external resetMetrics: registry => unit = "resetMetrics"
+@send external clear: registry => unit = "clear"
+
+// Idempotent metric creation: if the metric already exists in the
+// registry (e.g., module loaded twice via different pnpm paths),
+// return the existing one instead of throwing.
+let getOrCreate = (name: string, create: unit => 'a): 'a => {
+  switch defaultRegister->getSingleMetric(name) {
+  | Some(existing) => existing->(Utils.magic: metricInstance => 'a)
+  | None => create()
+  }
+}
 
 module Counter = {
   type counter
-  @new @module("prom-client") external makeCounter: customMetric<'a> => counter = "Counter"
+  @new @module("prom-client") external makeCounterUnsafe: customMetric<'a> => counter = "Counter"
+  let makeCounter = (config: customMetric<'a>): counter =>
+    getOrCreate(config["name"], () => makeCounterUnsafe(config))
 
   @send external inc: counter => unit = "inc"
   @send external incMany: (counter, int) => unit = "inc"
@@ -31,7 +44,9 @@ module Counter = {
 
 module Gauge = {
   type gauge
-  @new @module("prom-client") external makeGauge: customMetric<'a> => gauge = "Gauge"
+  @new @module("prom-client") external makeGaugeUnsafe: customMetric<'a> => gauge = "Gauge"
+  let makeGauge = (config: customMetric<'a>): gauge =>
+    getOrCreate(config["name"], () => makeGaugeUnsafe(config))
 
   @send external inc: gauge => unit = "inc"
   @send external incMany: (gauge, int) => unit = "inc"

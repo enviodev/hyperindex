@@ -1,8 +1,5 @@
 let getCacheRowCountFnName = "get_cache_row_count"
 
-// Only needed for some old tests
-// Remove @genType in the future
-@genType
 let makeClient = () => {
   Postgres.makeSql(
     ~config={
@@ -188,7 +185,7 @@ let makeInitializeTransaction = (
 ) => {
   let generalTables = [
     InternalTable.Chains.table,
-    InternalTable.PersistedState.table,
+    InternalTable.EnvioInfo.table,
     InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
   ]
@@ -1138,36 +1135,35 @@ let make = (
             entry->String.endsWith(".tsv")
           })
 
-          let _ =
-            await cacheFiles
-            ->Array.map(entry => {
-              let effectName = entry->String.slice(~start=0, ~end=-4)
-              let table = Internal.makeCacheTable(~effectName)
+          let _ = await cacheFiles
+          ->Array.map(entry => {
+            let effectName = entry->String.slice(~start=0, ~end=-4)
+            let table = Internal.makeCacheTable(~effectName)
 
-              sql
-              ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
-              ->Promise.then(() => {
-                let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
+            sql
+            ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
+            ->Promise.then(() => {
+              let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
 
-                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
+              let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
 
-                Promise.make(
-                  (resolve, reject) => {
-                    NodeJs.ChildProcess.execWithOptions(
-                      command,
-                      psqlExecOptions,
-                      (~error, ~stdout, ~stderr as _) => {
-                        switch error {
-                        | Value(error) => reject(error)
-                        | Null => resolve(stdout)
-                        }
-                      },
-                    )
-                  },
-                )
-              })
+              Promise.make(
+                (resolve, reject) => {
+                  NodeJs.ChildProcess.execWithOptions(
+                    command,
+                    psqlExecOptions,
+                    (~error, ~stdout, ~stderr as _) => {
+                      switch error {
+                      | Value(error) => reject(error)
+                      | Null => resolve(stdout)
+                      }
+                    },
+                  )
+                },
+              )
             })
-            ->Promise.all
+          })
+          ->Promise.all
 
           Logging.info("Successfully uploaded cache.")
         }
@@ -1181,8 +1177,9 @@ let make = (
       }
     }
 
-    let cacheTableInfo: array<schemaCacheTableInfo> =
-      await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema))
+    let cacheTableInfo: array<schemaCacheTableInfo> = await sql->Postgres.unsafe(
+      makeSchemaCacheTableInfoQuery(~pgSchema),
+    )
 
     if withUpload && cacheTableInfo->Utils.Array.notEmpty {
       // Integration with other tools like Hasura
@@ -1205,9 +1202,15 @@ let make = (
     cache
   }
 
-  let initialize = async (~chainConfigs=[], ~entities=[], ~enums=[]): Persistence.initialState => {
-    let schemaTableNames: array<schemaTableName> =
-      await sql->Postgres.unsafe(makeSchemaTableNamesQuery(~pgSchema))
+  let initialize = async (
+    ~chainConfigs=[],
+    ~entities=[],
+    ~enums=[],
+    ~envioInfo,
+  ): Persistence.initialState => {
+    let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
+      makeSchemaTableNamesQuery(~pgSchema),
+    )
 
     // The initialization query will completely drop the schema and recreate it from scratch.
     // So we need to check if the schema is not used for anything else than envio.
@@ -1245,12 +1248,38 @@ let make = (
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
       ~isHasuraEnabled,
     )
-    // Execute all queries within a single transaction for integrity
-    let _ = await sql->Postgres.beginSql(sql => {
+    // Execute all queries within a single transaction for integrity.
+    // The envio_info row is written in the same transaction so a successful
+    // initialize is atomic — no schema can come up without the matching row.
+    let _ = await sql->Postgres.beginSql(async sql => {
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
-      Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
+      let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
+      await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
     })
+
+    // Populate config addresses into envio_addresses with registration_block/log = -1
+    let ids = []
+    let addrChainIds = []
+    let addrContractNames = []
+    chainConfigs->Array.forEach(chain => {
+      chain.contracts->Array.forEach(contract => {
+        contract.addresses->Array.forEach(
+          address => {
+            ids->Array.push(Config.EnvioAddresses.makeId(~chainId=chain.id, ~address))->ignore
+            addrChainIds->Array.push(chain.id)->ignore
+            addrContractNames->Array.push(contract.name)->ignore
+          },
+        )
+      })
+    })
+    if ids->Array.length > 0 {
+      await sql->Postgres.unpreparedUnsafe(
+        `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
+SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::text[]) AS t(id, chain_id, contract_name);`,
+        (ids, addrChainIds, addrContractNames)->(Utils.magic: _ => unknown),
+      )
+    }
 
     let cache = await restoreEffectCache(~withUpload=true)
 
@@ -1264,6 +1293,9 @@ let make = (
       cleanRun: true,
       cache,
       reorgCheckpoints: [],
+      // Just-written row; resume's compat check would no-op on a clean run,
+      // but keep the field consistent with the resume path's shape.
+      envioInfo: Some(envioInfo),
       chains: chainConfigs->Array.map((chainConfig): Persistence.initialChainState => {
         id: chainConfig.id,
         startBlock: chainConfig.startBlock,
@@ -1273,7 +1305,7 @@ let make = (
         numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
-        dynamicContracts: [],
+        indexingAddresses: ChainFetcher.configAddresses(chainConfig),
         sourceBlockNumber: 0,
       }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,
@@ -1384,10 +1416,9 @@ let make = (
     let {table, itemSchema} = effect.storageMeta
 
     if initialize {
-      let _ =
-        await sql->Postgres.unsafe(
-          makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
-        )
+      let _ = await sql->Postgres.unsafe(
+        makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
+      )
       // Integration with other tools like Hasura
       switch onNewTables {
       | Some(onNewTables) => await onNewTables(~tableNames=[table.tableName])
@@ -1401,9 +1432,9 @@ let make = (
   let dumpEffectCache = async () => {
     try {
       let cacheTableInfo: array<schemaCacheTableInfo> =
-        (await sql
-        ->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))
-        ->Array.filter(i => i.count > 0)
+        (await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))->Array.filter(i =>
+          i.count > 0
+        )
 
       if cacheTableInfo->Utils.Array.notEmpty {
         // Create .envio/cache directory if it doesn't exist
@@ -1461,7 +1492,7 @@ let make = (
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints) = await Promise.all4((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints, envioInfo) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -1476,7 +1507,7 @@ let make = (
           timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
           numEventsProcessed: rawInitialState.numEventsProcessed,
           progressBlockNumber: rawInitialState.progressBlockNumber,
-          dynamicContracts: rawInitialState.dynamicContracts,
+          indexingAddresses: rawInitialState.indexingAddresses,
           sourceBlockNumber: rawInitialState.sourceBlockNumber,
         })
       }),
@@ -1495,6 +1526,7 @@ let make = (
           }>,
         >
       ),
+      InternalTable.EnvioInfo.read(sql, ~pgSchema),
     ))
 
     let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
@@ -1519,6 +1551,7 @@ let make = (
       cache,
       chains,
       checkpointId,
+      envioInfo,
     }
   }
 
@@ -1594,8 +1627,8 @@ let make = (
         Some(
           sink.writeBatch(~batch, ~updatedEntities)
           ->Promise.thenResolve(_ => {
-            Prometheus.SinkWrite.increment(
-              ~sinkName=sink.name,
+            Prometheus.StorageWrite.increment(
+              ~storage=sink.name,
               ~timeSeconds=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
             )
             None
@@ -1607,6 +1640,7 @@ let make = (
     | None => None
     }
 
+    let primaryTimerRef = Hrtime.makeTimer()
     await writeBatch(
       sql,
       ~batch,
@@ -1621,9 +1655,16 @@ let make = (
       ~updatedEntities,
       ~sinkPromise,
     )
+    Prometheus.StorageWrite.increment(
+      ~storage="postgres",
+      ~timeSeconds=primaryTimerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+    )
   }
 
+  let close = () => sql->Postgres.endSql
+
   {
+    name: "postgres",
     isInitialized,
     initialize,
     resumeInitialState,
@@ -1638,6 +1679,7 @@ let make = (
     getRollbackProgressDiff,
     getRollbackData,
     writeBatch: writeBatchMethod,
+    close,
   }
 }
 
@@ -1660,20 +1702,31 @@ let makeStorageFromEnv = (
       // Postgres storage. Required env vars are validated here only when
       // the user opts in via `storage.clickhouse: true` in config.yaml.
       if config.storage.clickhouse {
-        let requireEnv = (opt, name) =>
+        let host = Env.ClickHouse.host()
+        let username = Env.ClickHouse.username()
+        let password = Env.ClickHouse.password()
+        let missing = []
+        let checkEnv = (opt, name) =>
           switch opt {
-          | Some(v) => v
-          | None =>
-            JsError.throwWithMessage(
-              `ClickHouse storage is enabled but required env var ${name} is not set. Please set it or disable clickhouse in the \`storage\` config.`,
-            )
+          | Some(_) => ()
+          | None => missing->Array.push(name)->ignore
           }
+        host->checkEnv("ENVIO_CLICKHOUSE_HOST")
+        username->checkEnv("ENVIO_CLICKHOUSE_USERNAME")
+        password->checkEnv("ENVIO_CLICKHOUSE_PASSWORD")
+        if missing->Array.length > 0 {
+          JsError.throwWithMessage(
+            `ClickHouse storage is enabled but required env vars are not set: ${missing->Array.joinUnsafe(
+                ", ",
+              )}. Please set them, disable clickhouse in the \`storage\` config, or run \`envio dev\` for a pre-configured local ClickHouse.`,
+          )
+        }
         Some(
           Sink.makeClickHouse(
-            ~host=Env.ClickHouse.host->requireEnv("ENVIO_CLICKHOUSE_HOST"),
-            ~database=Env.ClickHouse.database,
-            ~username=Env.ClickHouse.username->requireEnv("ENVIO_CLICKHOUSE_USERNAME"),
-            ~password=Env.ClickHouse.password->requireEnv("ENVIO_CLICKHOUSE_PASSWORD"),
+            ~host=host->Option.getUnsafe,
+            ~database=Env.ClickHouse.database(),
+            ~username=username->Option.getUnsafe,
+            ~password=password->Option.getUnsafe,
           ),
         )
       } else {

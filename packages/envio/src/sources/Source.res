@@ -32,7 +32,7 @@ type getItemsError =
 
 exception GetItemsError(getItemsError)
 
-type sourceFor = Sync | Fallback | Live
+type sourceFor = Sync | Fallback | Realtime
 
 type t = {
   name: string,
@@ -50,7 +50,7 @@ type t = {
     ~fromBlock: int,
     ~toBlock: option<int>,
     ~addressesByContractName: dict<array<Address.t>>,
-    ~indexingContracts: dict<Internal.indexingContract>,
+    ~indexingAddresses: dict<FetchState.indexingAddress>,
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,

@@ -34,9 +34,16 @@ interface ClickHouseResult<T> {
   rows: number;
 }
 
+interface MetricsResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
 describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
   let indexerProcess: ChildProcess | null = null;
   let graphql: GraphQLClient;
+  let metricsWhileRunning: MetricsResult | null = null;
 
   beforeAll(async () => {
     graphql = new GraphQLClient({
@@ -51,13 +58,16 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     indexerProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
       cwd: PROJECT_DIR,
       env: {
-        TUI_OFF: "true",
+        ENVIO_TUI: "false",
         ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
         ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
         ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
         ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
         // First run: no DB state yet, fallback returns the config endBlock
         E2E_EXPECTED_END_BLOCK: "10861774",
+        // Flush chain metadata immediately (no throttle) so isReady
+        // is in the DB before the test kills the process.
+        ENVIO_THROTTLE_CHAIN_METADATA_INTERVAL_MILLIS: "0",
       },
     });
 
@@ -67,10 +77,48 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       120_000
     );
 
-    // Kill immediately so envio dev doesn't tear down docker before tests query it.
-    // The "Exiting with success" → process.exit(0) path runs docker compose down.
+    // Poll Hasura until `_meta.isReady` lands in the DB — avoids the prior
+    // hard `setTimeout(3000)` that was tuned to CI throttle flushes and went
+    // flaky under load. Throttle is disabled via env above, so isReady
+    // should appear within a few seconds; we allow up to 30s for slow CI.
+    const readiness = await graphql.poll<{
+      _meta: Array<{ chainId: number; isReady: boolean }>;
+    }>({
+      query: `{ _meta { chainId isReady } }`,
+      validate: (data) =>
+        data._meta?.length > 0 && data._meta.every((m) => m.isReady),
+      maxAttempts: 60,
+      timeoutMs: 30_000,
+    });
+    if (!readiness.success) {
+      throw new Error(
+        `_meta.isReady did not become true before kill: ${readiness.error}, last response: ${JSON.stringify(readiness.lastResponse)}`
+      );
+    }
+
+    // Capture metrics output here (must run before SIGKILL); assertions
+    // live in dedicated `it` blocks below so failures surface as test
+    // failures rather than aborting the suite.
+    metricsWhileRunning = await runCommand(
+      config.envioCommand,
+      [...config.envioArgs, "metrics"],
+      { cwd: PROJECT_DIR, timeout: 10_000 }
+    );
+
+    // Kill so envio dev doesn't tear down docker before tests query it.
     indexerProcess.kill("SIGKILL");
     indexerProcess = null;
+
+    // Verify Hasura is still responsive after killing the indexer
+    const health = await graphql.poll<{ __typename: string }>({
+      query: `{ __typename }`,
+      validate: (data) => data.__typename === "query_root",
+      maxAttempts: 20,
+      timeoutMs: 10_000,
+    });
+    if (!health.success) {
+      throw new Error(`Hasura not responsive after indexer kill: ${health.error}`);
+    }
   }, 300_000); // 5 min for codegen + install + build + indexer startup
 
   afterAll(async () => {
@@ -86,19 +134,36 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     await stopClickHouse();
   }, 30_000);
 
+  it("envio metrics returns Prometheus output while indexer is running", () => {
+    expect({
+      exitCode: metricsWhileRunning?.exitCode,
+      hasEnvioTypeLine: /^# TYPE envio_/m.test(metricsWhileRunning?.stdout ?? ""),
+    }).toEqual({ exitCode: 0, hasEnvioTypeLine: true });
+  });
+
+  it("envio metrics exits 1 when indexer is not running", async () => {
+    const result = await runCommand(
+      config.envioCommand,
+      [...config.envioArgs, "metrics"],
+      { cwd: PROJECT_DIR, timeout: 15_000 }
+    );
+    expect(result.exitCode).toBe(1);
+  });
+
   it("should have _meta with isReady true", async () => {
-    // Chain metadata uses a throttled DB write, so poll briefly
+    // After SIGKILL, Hasura is still running but may need a moment.
+    // Use generous polling to avoid flaky failures.
     const result = await graphql.poll<{
       _meta: Array<{ chainId: number; isReady: boolean }>;
     }>({
       query: `{ _meta { chainId isReady } }`,
       validate: (data) =>
         data._meta?.length > 0 && data._meta.every((m) => m.isReady),
-      maxAttempts: 10,
-      timeoutMs: 5_000,
+      maxAttempts: 30,
+      timeoutMs: 30_000,
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success, `_meta poll failed: ${result.error}, last response: ${JSON.stringify(result.lastResponse)}`).toBe(true);
     expect(result.data?._meta).toEqual([{ chainId: 1, isReady: true }]);
   });
 
@@ -227,7 +292,7 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       secondProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
         cwd: PROJECT_DIR,
         env: {
-          TUI_OFF: "true",
+          ENVIO_TUI: "false",
           ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
           ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
           ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,

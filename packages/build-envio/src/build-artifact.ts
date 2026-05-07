@@ -46,6 +46,7 @@ const README_PATH = path.join(REPO_ROOT, "packages/cli/README.md");
 
 /** Files/dirs to copy from envio package into dist. */
 const PUBLISH_FILES = [
+  "bin.mjs",
   "evm.schema.json",
   "fuel.schema.json",
   "svm.schema.json",
@@ -54,58 +55,6 @@ const PUBLISH_FILES = [
   "index.js",
   "src",
 ];
-
-/** Production bin.mjs — resolves the platform-specific binary and spawns it. */
-const PRODUCTION_BIN_MJS = `#!/usr/bin/env node
-//@ts-check
-
-import { spawnSync } from "child_process";
-import { createRequire } from "module";
-
-const require = createRequire(import.meta.url);
-
-/**
- * Returns the executable path for envio located inside node_modules.
- * The naming convention is envio-\${os}-\${arch}
- * @see https://nodejs.org/api/os.html#osarch
- * @see https://nodejs.org/api/os.html#osplatform
- * @example "x/xx/node_modules/envio-darwin-arm64"
- */
-function getExePath() {
-  const pkg = \`envio-\${process.platform}-\${process.arch}\`;
-  const bin = "bin/envio";
-
-  try {
-    return require.resolve(\`\${pkg}/\${bin}\`);
-  } catch {}
-
-  throw new Error(
-    \`Couldn't find envio binary package "\${pkg}".\\n\` +
-      \`Checked: require.resolve("\${pkg}/\${bin}")\\n\` +
-      \`If you're using pnpm, yarn, or npm with --omit=optional, ensure optional \` +
-      \`dependencies are installed:\\n\` +
-      \`  npm install \${pkg}\\n\`
-  );
-}
-
-/**
- * Runs \`envio\` with args using nodejs spawn
- */
-function runEnvio() {
-  const args = process.argv.slice(2);
-  const exePath = getExePath();
-
-  const processResult = spawnSync(exePath, args, { stdio: "inherit" });
-
-  if (processResult.error) {
-    console.error(\`Failed to run envio binary at \${exePath}: \${processResult.error.message}\`);
-    process.exit(1);
-  }
-  process.exit(processResult.status ?? 1);
-}
-
-runEnvio();
-`;
 
 // ── Core logic ──────────────────────────────────────────────────────
 
@@ -124,13 +73,16 @@ export function buildPackageJson(
   pkg.version = version;
   delete pkg.private;
   delete pkg.scripts;
+  delete pkg.devDependencies;
 
-  // Keep bin pointing to bin.mjs (same path as dev, but production content)
   pkg.bin = "./bin.mjs";
 
-  // Add optional platform-specific dependencies
+  // Add optional platform-specific dependencies. npm/pnpm use the `libc`
+  // field in each platform package's package.json to skip the wrong flavor
+  // on Linux (glibc vs musl).
   pkg.optionalDependencies = {
     "envio-linux-x64": platformPkgVersion,
+    "envio-linux-x64-musl": platformPkgVersion,
     "envio-linux-arm64": platformPkgVersion,
     "envio-darwin-x64": platformPkgVersion,
     "envio-darwin-arm64": platformPkgVersion,
@@ -144,9 +96,9 @@ export function buildPackageJson(
  */
 export function compileRescript(envioDir: string): void {
   console.log("Compiling ReScript...");
-  // Use the rescript-legacy binary directly to avoid pnpm workspace detection issues.
+  // Use the rescript binary directly to avoid pnpm workspace detection issues.
   // With pnpm's default isolated layout, the bin is in envio's own node_modules.
-  execSync("./node_modules/.bin/rescript-legacy", {
+  execSync("./node_modules/.bin/rescript", {
     cwd: envioDir,
     stdio: "inherit",
   });
@@ -210,11 +162,7 @@ export function build(opts: BuildOptions): void {
   copyPublishFiles(envioDir, outDir);
   console.log(`Copied publish files to ${outDir}`);
 
-  // 3. Write production bin.mjs (replaces the dev version)
-  fs.writeFileSync(path.join(outDir, "bin.mjs"), PRODUCTION_BIN_MJS);
-  console.log("Wrote production bin.mjs");
-
-  // 4. Write publish-ready package.json into dist
+  // 3. Write publish-ready package.json into dist
   const devPkg = JSON.parse(
     fs.readFileSync(path.join(envioDir, "package.json"), "utf-8")
   );

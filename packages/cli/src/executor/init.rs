@@ -19,11 +19,15 @@ use crate::{
     template_dirs::TemplateDirs,
     utils::file_system,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 use std::path::Path;
 
-pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) -> Result<()> {
+pub async fn run_init_args(
+    init_args: InitArgs,
+    project_paths: &ProjectPaths,
+    envio_package_dir: Option<&str>,
+) -> Result<()> {
     let template_dirs = TemplateDirs::new();
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
@@ -126,9 +130,19 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         } => {
             let fuel_config = contract_import_selection.to_human_config(&init_config);
 
+            let addresses = fuel_config
+                .chains
+                .iter()
+                .filter_map(|chain| chain.contracts.as_ref())
+                .flatten()
+                .flat_map(|contract| contract.address.iter().cloned());
+
             // TODO: Allow parsed paths to not depend on a written config.yaml file in file system
             file_system::write_file_string_to_system(
-                fuel_config.to_string(),
+                crate::config_parsing::human_config::quote_known_addresses(
+                    fuel_config.to_string(),
+                    addresses,
+                ),
                 parsed_project_paths.project_root.join("config.yaml"),
             )
             .await
@@ -194,9 +208,19 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 .to_human_config(&init_config)
                 .context("Failed to converting auto config selection into config.yaml")?;
 
+            let addresses = evm_config
+                .chains
+                .iter()
+                .filter_map(|chain| chain.contracts.as_ref())
+                .flatten()
+                .flat_map(|contract| contract.address.iter().cloned());
+
             // TODO: Allow parsed paths to not depend on a written config.yaml file in file system
             file_system::write_file_string_to_system(
-                evm_config.to_string(),
+                crate::config_parsing::human_config::quote_known_addresses(
+                    evm_config.to_string(),
+                    addresses,
+                ),
                 parsed_project_paths.project_root.join("config.yaml"),
             )
             .await
@@ -242,7 +266,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         }
     }
 
-    let envio_version = get_envio_version()?;
+    let envio_version = get_envio_version(envio_package_dir)?;
 
     let extra_dependencies = match &init_config.ecosystem {
         Ecosystem::Evm {
@@ -255,12 +279,10 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
     let hbs_template = InitTemplates::new(
         init_config.name.clone(),
         &init_config.language,
-        &parsed_project_paths,
         envio_version.clone(),
         init_config.api_token,
         extra_dependencies,
-    )
-    .context("Failed creating init templates")?;
+    );
 
     let init_shared_template_dir = template_dirs.get_init_template_dynamic_shared()?;
 
@@ -280,11 +302,17 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
 
     commands::codegen::run_codegen(&config).await?;
 
+    let pm = init_config.package_manager;
+    println!("Installing dependencies with {}...", pm);
+    commands::pm::install(pm, &parsed_project_paths.project_root)
+        .await
+        .context("Failed installing project dependencies")?;
+
     if init_config.language == Language::ReScript {
-        let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;
-        if !res_build_exit.success() {
-            return Err(anyhow!("Failed to build rescript"))?;
-        }
+        println!("Building ReScript sources...");
+        commands::pm::run_script(pm, "build", &parsed_project_paths.project_root)
+            .await
+            .context("Failed running ReScript build after init")?;
     }
 
     // Initialize git repository (non-fatal if it fails)
@@ -294,15 +322,96 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         Err(e) => eprintln!("Warning: Failed to initialize git repository: {}", e),
     }
 
-    // If the project directory is not the current directory, print a message for user to cd into it
-    if parsed_project_paths.project_root != Path::new(".") {
-        let dir_name = parsed_project_paths
-            .project_root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_else(|| parsed_project_paths.project_root.to_str().unwrap_or(""));
-        println!("Run `cd {}` to enter the project directory.", dir_name);
-    }
+    print!(
+        "{}",
+        next_steps_message(&parsed_project_paths.project_root, pm)
+    );
 
     Ok(())
+}
+
+fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    out.push('\n');
+    out.push_str("Your indexer is ready! Pick how you'd like to run it:\n");
+    out.push('\n');
+
+    let in_current_dir = project_root
+        .components()
+        .all(|c| matches!(c, std::path::Component::CurDir));
+    let prefix = if in_current_dir {
+        String::new()
+    } else {
+        format!(
+            "cd {} && ",
+            shell_quote(&project_root.display().to_string())
+        )
+    };
+    let cmd = pm.cmd();
+
+    let _ = writeln!(
+        out,
+        "  1. {prefix}{cmd} test    # run the tests (recommended for AI)"
+    );
+    let _ = writeln!(out, "  2. {prefix}{cmd} dev     # run locally");
+    let _ = writeln!(out, "  3. {prefix}{cmd} start   # run in production");
+
+    out
+}
+
+/// Leave alphanumeric paths unquoted; single-quote anything containing chars
+/// the shell would interpret (spaces, `$`, backticks, `&`, `;`, etc.) so the
+/// printed `cd <path>` is safe to paste. Folder name validation rejects `'`,
+/// so a plain single-quote wrap is sufficient.
+fn shell_quote(s: &str) -> String {
+    let safe = !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'));
+    if safe {
+        s.to_string()
+    } else {
+        format!("'{s}'")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli_args::init_config::PackageManager;
+
+    #[test]
+    fn next_steps_in_subdir() {
+        insta::assert_snapshot!(next_steps_message(
+            Path::new("my-indexer"),
+            PackageManager::Pnpm
+        ));
+    }
+
+    #[test]
+    fn next_steps_in_current_dir() {
+        insta::assert_snapshot!(next_steps_message(Path::new("."), PackageManager::Npm));
+    }
+
+    #[test]
+    fn next_steps_in_subdir_with_spaces() {
+        insta::assert_snapshot!(next_steps_message(
+            Path::new("my indexer"),
+            PackageManager::Npm
+        ));
+    }
+
+    #[test]
+    fn next_steps_in_subdir_with_shell_metacharacters() {
+        insta::assert_snapshot!(next_steps_message(
+            Path::new("my-$HOME-`tmp`"),
+            PackageManager::Npm
+        ));
+    }
+
+    #[test]
+    fn next_steps_in_current_dir_alias() {
+        insta::assert_snapshot!(next_steps_message(Path::new("./"), PackageManager::Npm));
+    }
 }

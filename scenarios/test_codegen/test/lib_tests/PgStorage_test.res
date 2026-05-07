@@ -264,7 +264,7 @@ GRANT ALL ON SCHEMA "test_schema" TO public;
 CREATE TYPE "test_schema".AccountType AS ENUM('ADMIN', 'USER');
 CREATE TYPE "test_schema".GravatarSize AS ENUM('SMALL', 'MEDIUM', 'LARGE');
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "test_schema"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
@@ -340,7 +340,7 @@ CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE VIEW "test_schema"."_meta" AS 
@@ -419,7 +419,7 @@ CREATE SCHEMA "public";
 GRANT ALL ON SCHEMA "public" TO "postgres";
 GRANT ALL ON SCHEMA "public" TO public;
 CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
-CREATE TABLE IF NOT EXISTS "public"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "public"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
@@ -815,12 +815,11 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
   SELECT COALESCE(json_agg(json_build_object(
     'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
     'contractName', "contract_name",
-    'startBlock', "registration_block",
     'registrationBlock', "registration_block"
   )), '[]'::json)
   FROM "test_schema"."envio_addresses"
   WHERE "chain_id" = chains."id"
-) as "dynamicContracts"
+) as "indexingAddresses"
 FROM "test_schema"."envio_chains" as chains;`
 
         t.expect(query, ~message="Initial state SQL should match exactly").toBe(expectedQuery)
@@ -919,12 +918,12 @@ GROUP BY "chain_id";`
 })
 
 describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
-  // Exercises the requireEnv path in makeStorageFromEnv that's only taken
+  // Exercises the validation path in makeStorageFromEnv that's only taken
   // when `storage.clickhouse: true` in config.yaml. The test suite does not
   // set any ENVIO_CLICKHOUSE_* vars, so this should throw a user-friendly
-  // error pointing at the first missing one (ENVIO_CLICKHOUSE_HOST).
+  // error listing every missing required env var in a single message.
   Async.it(
-    "Throws when storage.clickhouse=true but ENVIO_CLICKHOUSE_HOST is missing",
+    "Throws listing all missing ENVIO_CLICKHOUSE_* env vars when storage.clickhouse=true",
     async t => {
       let config = {
         ...MockIndexer.config,
@@ -942,8 +941,10 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
       }
       t.expect(
         message,
-        ~message="Should throw a helpful error naming the missing env var",
-      ).toMatch(%re(`/ClickHouse storage is enabled.*ENVIO_CLICKHOUSE_HOST/`))
+        ~message="Should throw a helpful error naming every missing env var at once",
+      ).toBe(
+        "ClickHouse storage is enabled but required env vars are not set: ENVIO_CLICKHOUSE_HOST, ENVIO_CLICKHOUSE_USERNAME, ENVIO_CLICKHOUSE_PASSWORD. Please set them, disable clickhouse in the `storage` config, or run `envio dev` for a pre-configured local ClickHouse.",
+      )
     },
   )
 
@@ -957,6 +958,42 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
       // Just ensure construction succeeds without touching ClickHouse env vars.
       let _ = PgStorage.makeStorageFromEnv(~config)
       t.expect(true, ~message="Expected no throw when clickhouse is disabled").toBe(true)
+    },
+  )
+
+  // `envio dev` applies ENVIO_CLICKHOUSE_* vars via Bin.applyEnv, which runs
+  // AFTER Env.res has been imported. If Env.ClickHouse cached reads at module
+  // load, those late writes would be invisible and validation would still
+  // throw. This test simulates that timing by writing the vars to process.env
+  // right before calling makeStorageFromEnv.
+  Async.it(
+    "Picks up ENVIO_CLICKHOUSE_* vars set after Env.res has been loaded",
+    async t => {
+      let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
+      let unsetEnvVar: string => unit = %raw(`(k) => { delete process.env[k]; }`)
+      setEnvVar("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123")
+      setEnvVar("ENVIO_CLICKHOUSE_USERNAME", "default")
+      setEnvVar("ENVIO_CLICKHOUSE_PASSWORD", "testing")
+      setEnvVar("ENVIO_CLICKHOUSE_DATABASE", "envio_sink")
+      let config = {
+        ...MockIndexer.config,
+        storage: ({postgres: true, clickhouse: true}: Config.storage),
+      }
+      let result = try {
+        let _ = PgStorage.makeStorageFromEnv(~config)
+        Ok()
+      } catch {
+      | JsExn(e) => Error(e->JsExn.message->Option.getOr(""))
+      | _ => Error("non-JsExn")
+      }
+      unsetEnvVar("ENVIO_CLICKHOUSE_HOST")
+      unsetEnvVar("ENVIO_CLICKHOUSE_USERNAME")
+      unsetEnvVar("ENVIO_CLICKHOUSE_PASSWORD")
+      unsetEnvVar("ENVIO_CLICKHOUSE_DATABASE")
+      t.expect(
+        result,
+        ~message="Should read ClickHouse env vars lazily so envio dev's late injection works",
+      ).toEqual(Ok())
     },
   )
 })

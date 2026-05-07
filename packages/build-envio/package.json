@@ -10,7 +10,7 @@
     "build": "node src/build-artifact.ts"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0"
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3"
   }
 }

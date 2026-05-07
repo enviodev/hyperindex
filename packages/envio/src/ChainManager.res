@@ -3,6 +3,8 @@ type t = {
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   multichain: Config.multichain,
   isInReorgThreshold: bool,
+  // True once every chain has caught up to head/endBlock. Monotonic during a run.
+  isRealtime: bool,
 }
 
 // Check if progress is past the reorg threshold (safe block).
@@ -29,7 +31,7 @@ let calculateTargetBufferSize = (~activeChainsCount) => {
   }
 }
 
-let makeFromDbState = async (
+let makeFromDbState = (
   ~initialState: Persistence.initialState,
   ~config: Config.t,
   ~registrations,
@@ -57,24 +59,31 @@ let makeFromDbState = async (
     Prometheus.EffectCacheCount.set(~count, ~effectName)
   })
 
-  let chainFetchersArr = await initialState.chains
-  ->Array.map(async (resumedChainState: Persistence.initialChainState) => {
-    let chain = Config.getChain(config, ~chainId=resumedChainState.id)
-    let chainConfig = config.chainMap->ChainMap.get(chain)
+  // updateSyncTimeOnRestart wipes the saved timestamp so a restart re-enters
+  // backfill mode for all chains.
+  let isRealtime =
+    !Env.updateSyncTimeOnRestart &&
+    initialState.chains->Array.length > 0 &&
+    initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
 
-    (
-      chain,
-      await chainConfig->ChainFetcher.makeFromDbState(
-        ~resumedChainState,
-        ~reorgCheckpoints=initialState.reorgCheckpoints,
-        ~isInReorgThreshold,
-        ~targetBufferSize,
-        ~config,
-        ~registrations,
-      ),
-    )
-  })
-  ->Promise.all
+  let chainFetchersArr =
+    initialState.chains->Array.map((resumedChainState: Persistence.initialChainState) => {
+      let chain = Config.getChain(config, ~chainId=resumedChainState.id)
+      let chainConfig = config.chainMap->ChainMap.get(chain)
+
+      (
+        chain,
+        chainConfig->ChainFetcher.makeFromDbState(
+          ~resumedChainState,
+          ~reorgCheckpoints=initialState.reorgCheckpoints,
+          ~isInReorgThreshold,
+          ~isRealtime,
+          ~targetBufferSize,
+          ~config,
+          ~registrations,
+        ),
+      )
+    })
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
@@ -100,6 +109,7 @@ let makeFromDbState = async (
     multichain: config.multichain,
     chainFetchers,
     isInReorgThreshold,
+    isRealtime,
   }
 }
 

@@ -1,10 +1,11 @@
 use anyhow::anyhow;
-use std::path::{Component, PathBuf};
+use std::path::PathBuf;
 
 use crate::{
     cli_args::{clap_definitions::ProjectPaths, init_config::InitConfig},
     constants::project_paths::{
-        DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH, DEFAULT_PROJECT_ROOT_PATH,
+        DEFAULT_CONFIG_PATH, DEFAULT_PROJECT_ROOT_PATH, ENVIO_DIR, ENVIO_ENV_DTS_FILE,
+        ENVIO_TYPES_FILE,
     },
 };
 
@@ -14,51 +15,64 @@ pub mod path_utils;
 pub struct ParsedProjectPaths {
     pub project_root: PathBuf,
     pub config: PathBuf,
-    pub generated: PathBuf,
+    /// Project-root + `.envio/` — holds ephemeral codegen output and cache.
+    pub envio_dir: PathBuf,
 }
 
 impl ParsedProjectPaths {
-    pub fn new(
-        project_root: &str,
-        generated: &str,
-        config: &str,
-    ) -> anyhow::Result<ParsedProjectPaths> {
+    pub fn new(project_root: &str, config: &str) -> anyhow::Result<ParsedProjectPaths> {
         let project_root = PathBuf::from(&project_root);
-        let generated_relative_path = PathBuf::from(generated);
-        if let Some(Component::ParentDir) = generated_relative_path.components().peekable().peek() {
-            return Err(anyhow!("Generated folder must be in project directory"));
-        }
-        let generated_joined: PathBuf = project_root.join(generated_relative_path);
-        let generated = path_utils::normalize_path(generated_joined);
+        let envio_dir = path_utils::normalize_path(project_root.join(ENVIO_DIR));
 
-        let config_relative_path = PathBuf::from(config);
-        if let Some(Component::ParentDir) = config_relative_path.components().peekable().peek() {
-            return Err(anyhow!("Config path must be in project directory"));
-        }
-
-        let config_joined: PathBuf = project_root.join(config_relative_path);
+        // `Path::join` returns the right-hand side verbatim when it's
+        // absolute, so this works for both absolute (`/repo/project/config.yaml`)
+        // and relative (`config.yaml`, `subdir/cfg.yaml`) inputs. Lexical
+        // normalization resolves any `..` so the containment check below
+        // covers `foo/../../config.yaml` and similar escapes.
+        let config_joined = project_root.join(config);
         let config = path_utils::normalize_path(config_joined);
+        let normalized_root = path_utils::normalize_path(project_root.clone());
+
+        // `diff_paths(config, root)` returns the path from root → config.
+        // If that path starts with `..`, the config sits outside the project
+        // root regardless of whether the inputs were absolute or relative.
+        let escapes_root = pathdiff::diff_paths(&config, &normalized_root)
+            .map(|rel| rel.starts_with(".."))
+            .unwrap_or(true);
+        if escapes_root {
+            return Err(anyhow!(
+                "Config path must be in project directory (got `{}`, project root `{}`)",
+                config.display(),
+                normalized_root.display(),
+            ));
+        }
 
         Ok(ParsedProjectPaths {
             project_root,
-            generated,
+            envio_dir,
             config,
         })
     }
 
     pub fn default_with_root(project_root: &str) -> anyhow::Result<ParsedProjectPaths> {
-        Self::new(project_root, DEFAULT_GENERATED_PATH, DEFAULT_CONFIG_PATH)
+        Self::new(project_root, DEFAULT_CONFIG_PATH)
+    }
+
+    /// Path to the codegen-emitted `.envio/types.d.ts` file.
+    pub fn envio_types_dts(&self) -> PathBuf {
+        self.envio_dir.join(ENVIO_TYPES_FILE)
+    }
+
+    /// Path to the user-facing `envio-env.d.ts` glue file at the project root.
+    pub fn envio_env_dts(&self) -> PathBuf {
+        self.project_root.join(ENVIO_ENV_DTS_FILE)
     }
 }
 
 impl Default for ParsedProjectPaths {
     fn default() -> Self {
-        Self::new(
-            DEFAULT_PROJECT_ROOT_PATH,
-            DEFAULT_GENERATED_PATH,
-            DEFAULT_CONFIG_PATH,
-        )
-        .expect("Unexpected failure initializing default parsed paths")
+        Self::new(DEFAULT_PROJECT_ROOT_PATH, DEFAULT_CONFIG_PATH)
+            .expect("Unexpected failure initializing default parsed paths")
     }
 }
 
@@ -69,11 +83,7 @@ impl TryFrom<ProjectPaths> for ParsedProjectPaths {
             .directory
             .unwrap_or_else(|| DEFAULT_PROJECT_ROOT_PATH.to_string());
 
-        Self::new(
-            &project_root,
-            &project_paths.output_directory,
-            &project_paths.config,
-        )
+        Self::new(&project_root, &project_paths.config)
     }
 }
 
@@ -97,7 +107,7 @@ mod tests {
         let expected_project_paths = ParsedProjectPaths {
             project_root: PathBuf::from("."),
             config: PathBuf::from("config.yaml"),
-            generated: PathBuf::from("generated"),
+            envio_dir: PathBuf::from(".envio"),
         };
         assert_eq!(expected_project_paths, project_paths,)
     }
@@ -105,14 +115,12 @@ mod tests {
     fn test_project_path_alternative_case() {
         let project_root = "my_dir/my_project";
         let config = "custom_config.yaml";
-        let generated = "custom_gen/my_project_generated";
-        let project_paths = ParsedProjectPaths::new(project_root, generated, config).unwrap();
+        let project_paths = ParsedProjectPaths::new(project_root, config).unwrap();
 
         let expected_project_paths = ParsedProjectPaths {
             project_root: PathBuf::from("my_dir/my_project/"),
             config: PathBuf::from("my_dir/my_project/custom_config.yaml"),
-
-            generated: PathBuf::from("my_dir/my_project/custom_gen/my_project_generated"),
+            envio_dir: PathBuf::from("my_dir/my_project/.envio"),
         };
         assert_eq!(expected_project_paths, project_paths,)
     }
@@ -120,24 +128,14 @@ mod tests {
     fn test_project_path_relative_case() {
         let project_root = "../my_dir/my_project";
         let config = "custom_config.yaml";
-        let generated = "custom_gen/my_project_generated";
-        let project_paths = ParsedProjectPaths::new(project_root, generated, config).unwrap();
+        let project_paths = ParsedProjectPaths::new(project_root, config).unwrap();
 
         let expected_project_paths = ParsedProjectPaths {
             project_root: PathBuf::from("../my_dir/my_project/"),
             config: PathBuf::from("../my_dir/my_project/custom_config.yaml"),
-            generated: PathBuf::from("../my_dir/my_project/custom_gen/my_project_generated"),
+            envio_dir: PathBuf::from("../my_dir/my_project/.envio"),
         };
         assert_eq!(expected_project_paths, project_paths)
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_project_path_panics_when_generated_is_outside_of_root() {
-        let project_root = "./";
-        let config = "config.yaml";
-        let generated = "../generated/";
-        ParsedProjectPaths::new(project_root, config, generated).unwrap();
     }
 
     #[test]
@@ -145,8 +143,29 @@ mod tests {
     fn test_project_path_panics_when_config_is_outside_of_root() {
         let project_root = "./";
         let config = "../config.yaml";
-        let generated = "generated/";
-        ParsedProjectPaths::new(project_root, config, generated).unwrap();
+        ParsedProjectPaths::new(project_root, config).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_project_path_rejects_nested_parent_dir_escape() {
+        // `foo/../../config.yaml` lexically resolves to `../config.yaml`,
+        // which is outside the project root.
+        ParsedProjectPaths::new("./", "foo/../../config.yaml").unwrap();
+    }
+
+    #[test]
+    fn test_project_path_accepts_absolute_config_inside_root() {
+        // Scripted invocations may pass an absolute `--config` / `ENVIO_CONFIG`
+        // pointing inside the project tree.
+        let paths = ParsedProjectPaths::new("/repo/project", "/repo/project/config.yaml").unwrap();
+        assert_eq!(paths.config, PathBuf::from("/repo/project/config.yaml"));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_project_path_rejects_absolute_config_outside_root() {
+        ParsedProjectPaths::new("/repo/project", "/etc/passwd").unwrap();
     }
 
     #[test]

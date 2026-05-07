@@ -1,7 +1,7 @@
 open Vitest
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
-  let config = Indexer.Generated.configWithoutRegistrations
+  let config = Config.loadWithoutRegistrations()
   let allEvents = []
   let numberOfMockEventsCreated = ref(0)
 
@@ -27,7 +27,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~eventConfigs,
-      ~contracts=[],
+      ~addresses=[],
       ~startBlock=0,
       ~targetBufferSize=5000,
       ~chainId=1,
@@ -74,7 +74,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             eventConfigs,
           },
           addressesByContractName: Dict.make(),
-          indexingContracts: fetchState.contents.indexingContracts,
+          indexingAddresses: fetchState.contents.indexingAddresses,
         }
 
         fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
@@ -110,7 +110,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       sourceManager: SourceManager.make(
         ~sources,
         ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
-        ~isLive=false,
+        ~isRealtime=false,
       ),
       chainConfig,
       // This is quite a hack - but it works!
@@ -132,6 +132,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       multichain: Ordered,
       committedCheckpointId: 0n,
       isInReorgThreshold: false,
+      isRealtime: false,
     },
     numberOfMockEventsCreated.contents,
     allEvents,

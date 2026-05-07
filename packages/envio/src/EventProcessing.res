@@ -7,17 +7,17 @@ let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher
 let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.chains => {
   let chains = Dict.make()
 
-  chainFetchers
-  ->ChainMap.entries
-  ->Array.forEach(((chain, chainFetcher)) => {
-    let chainId = chain->ChainMap.Chain.toChainId->Int.toString
-    let isLive = chainFetcher->ChainFetcher.isReady
+  let isRealtime = chainFetchers->ChainMap.values->Array.every(cf => cf->ChainFetcher.isReady)
 
+  chainFetchers
+  ->ChainMap.keys
+  ->Array.forEach(chain => {
+    let chainId = chain->ChainMap.Chain.toChainId
     chains->Dict.set(
-      chainId,
+      chainId->Int.toString,
       {
-        Internal.id: chain->ChainMap.Chain.toChainId,
-        isLive,
+        Internal.id: chainId,
+        isRealtime,
       },
     )
   })
@@ -28,26 +28,19 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
 let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   switch fields {
   | None => %raw(`{}`)
-  | Some(fields) => {
-      let keys = fields->Dict.keysToArray
-      let new = Dict.make()
-      for i in 0 to keys->Array.length - 1 {
-        let key = keys->Array.getUnsafe(i)
-        let value = fields->Dict.getUnsafe(key)
-        // Skip `undefined` values and convert bigint fields to string
-        // There are not fields with nested bigints, so this is safe
-        new->Dict.set(
-          key,
-          typeof(value) === #bigint
-            ? value
-              ->(Utils.magic: unknown => bigint)
-              ->BigInt.toString
-              ->(Utils.magic: string => unknown)
-            : value,
-        )
-      }
-      new->(Utils.magic: dict<unknown> => JSON.t)
-    }
+  | Some(fields) =>
+    // Convert bigint fields to string. There are no fields with nested
+    // bigints, so iterating only the top level is safe.
+    fields
+    ->Utils.Dict.mapValues(value =>
+      typeof(value) === #bigint
+        ? value
+          ->(Utils.magic: unknown => bigint)
+          ->BigInt.toString
+          ->(Utils.magic: string => unknown)
+        : value
+    )
+    ->(Utils.magic: dict<unknown> => JSON.t)
   }
 }
 
@@ -364,7 +357,6 @@ type logPartitionInfo = {
   firstItemBlockNumber?: int,
   lastItemBlockNumber?: int,
 }
-
 
 let processEventBatch = async (
   ~batch: Batch.t,

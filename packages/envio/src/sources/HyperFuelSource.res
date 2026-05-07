@@ -218,7 +218,7 @@ let make = ({chain, endpointUrl}: options): t => {
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~indexingContracts,
+    ~indexingAddresses,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -365,7 +365,7 @@ let make = ({chain, endpointUrl}: options): t => {
 
       let eventConfig = switch selectionConfig.eventRouter->EventRouter.get(
         ~tag=eventId,
-        ~indexingContracts,
+        ~indexingAddresses,
         ~contractAddress,
         ~blockNumber=block.height,
       ) {

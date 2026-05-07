@@ -7,7 +7,7 @@ pub mod validation;
 
 use super::{
     clap_definitions::{self, InitArgs, ProjectPaths},
-    init_config::{InitConfig, Language},
+    init_config::{self, InitConfig, Language},
 };
 use crate::{
     clap_definitions::InitFlow,
@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use inquire::{Select, Text};
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
-    contains_no_whitespace_validator, is_directory_new_validator,
+    contains_no_whitespace_validator, is_directory_new_validator, is_valid_folder_name,
     is_valid_foldername_inquire_validator,
 };
 
@@ -277,7 +277,27 @@ pub async fn prompt_missing_init_args(
     project_paths: &ProjectPaths,
 ) -> Result<InitConfig> {
     let directory: String = match &project_paths.directory {
-        Some(args_directory) => args_directory.clone(),
+        Some(args_directory) => {
+            // `--directory` can be a path (e.g. `/tmp/foo/bar`); validate each
+            // segment against the per-folder rules so an apostrophe or other
+            // shell-unsafe char in any component fails fast.
+            let has_invalid_component =
+                std::path::Path::new(args_directory)
+                    .components()
+                    .any(|c| match c {
+                        std::path::Component::Normal(s) => {
+                            s.to_str().is_none_or(|s| !is_valid_folder_name(s))
+                        }
+                        _ => false,
+                    });
+            if has_invalid_component {
+                anyhow::bail!(
+                    "Invalid --directory value {args_directory:?}: folder names cannot \
+                     contain any of: / \\ : * ? \" ' < > |, and cannot be empty."
+                );
+            }
+            args_directory.clone()
+        }
         None => Text::new("Specify a folder name (ENTER to skip): ")
             .with_default(DEFAULT_PROJECT_ROOT_PATH)
             .with_validator(is_valid_foldername_inquire_validator)
@@ -335,11 +355,16 @@ pub async fn prompt_missing_init_args(
     }
     .context("Prompting for API Token")?;
 
+    let package_manager = init_args
+        .package_manager
+        .unwrap_or_else(init_config::PackageManager::resolve_default);
+
     Ok(InitConfig {
         name,
         directory,
         ecosystem,
         language,
         api_token,
+        package_manager,
     })
 }

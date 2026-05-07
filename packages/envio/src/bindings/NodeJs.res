@@ -44,6 +44,7 @@ module Process = {
   type t = {env: dict<string>, execArgv: array<string>}
   @module external process: t = "process"
   @module("process") external cwd: unit => string = "cwd"
+  @get external execPath: t => string = "execPath"
 }
 
 module ChildProcess = {

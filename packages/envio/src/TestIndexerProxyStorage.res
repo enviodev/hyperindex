@@ -105,8 +105,9 @@ let sendRequest = (proxy: t, ~payload: workerPayload): promise<JSON.t> => {
 }
 
 let makeStorage = (proxy: t): Persistence.storage => {
+  name: "test-proxy",
   isInitialized: async () => true,
-  initialize: async (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?) => {
+  initialize: async (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?, ~envioInfo as _) => {
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called. Use resumeInitialState instead.",
     )
@@ -200,4 +201,5 @@ let makeStorage = (proxy: t): Persistence.storage => {
       "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
     )
   },
+  close: async () => (),
 }

@@ -1,10 +1,10 @@
 open Vitest
 
-let _ = await HandlerLoader.registerAllHandlers(
-  ~config=Indexer.Generated.configWithoutRegistrations,
+// `registerAllHandlers` returns `(configWithRegistrations, _)` — the returned
+// config captures the event filters registered by the handler modules.
+let (configWithRegistrations, _) = await HandlerLoader.registerAllHandlers(
+  ~config=Config.loadWithoutRegistrations(),
 )
-// Rebuild config after handler registration to pick up event filters
-let configWithRegistrations = Indexer.Generated.makeGeneratedConfig()
 
 let getEvmEventConfig = MockConfig.getEvmEventConfig(~config=configWithRegistrations, ...)
 
