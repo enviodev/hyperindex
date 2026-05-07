@@ -36,12 +36,9 @@ let createTableSqlForErc20Transfer = (~tableName) =>
   contract        FixedString(20),
   \`from\`          FixedString(20),
   \`to\`            FixedString(20),
-  value           String,
-  INDEX idx_from \`from\`    TYPE bloom_filter(0.01) GRANULARITY 4,
-  INDEX idx_to   \`to\`      TYPE bloom_filter(0.01) GRANULARITY 4,
-  INDEX idx_tx   tx_hash   TYPE bloom_filter(0.01) GRANULARITY 4
+  value           String
 )
-ENGINE = ReplacingMergeTree
+ENGINE = MergeTree
 ORDER BY (chain_id, block_number, log_index)
 PARTITION BY toYYYYMM(block_timestamp)
 SETTINGS index_granularity = 8192`

@@ -471,10 +471,32 @@ type queryResponse = {
   rollbackGuard: option<ResponseTypes.rollbackGuard>,
 }
 
-//Todo, add bindings for these types
-type streamConfig
+type streamConfig = {
+  /** Number of async threads spawned to execute parallel block ranges. Default: 10. */
+  concurrency?: int,
+  /** Initial batch size; auto-tuned by the lib at runtime. Default: 1000. */
+  batchSize?: int,
+  /** Cap for dynamic batch growth. Default: 200000. */
+  maxBatchSize?: int,
+  /** Floor for dynamic batch shrink. Default: 200. */
+  minBatchSize?: int,
+  /** Per-request hard cap on returned blocks. */
+  maxNumBlocks?: int,
+  /** Per-request hard cap on returned transactions. */
+  maxNumTransactions?: int,
+  /** Per-request hard cap on returned logs. */
+  maxNumLogs?: int,
+  /** Per-request hard cap on returned traces. */
+  maxNumTraces?: int,
+  /** Response size in bytes above which the lib shrinks the batch. Default: 500000. */
+  responseBytesCeiling?: int,
+  /** Response size in bytes below which the lib grows the batch. Default: 250000. */
+  responseBytesFloor?: int,
+  /** Stream data in reverse order. Default: false. */
+  reverse?: bool,
+}
+
 type queryResponseStream
-type eventStream
 
 @tag("type")
 type heightStreamEvent =
@@ -491,6 +513,17 @@ module HeightStream = {
   }
 }
 
+module EventStream = {
+  // Server-side-parallel event stream. Each `recv` yields the next batch as
+  // soon as it lands, while the lib continues to fetch further batches in
+  // parallel up to `streamConfig.concurrency`. `recv` resolving to `null`
+  // signals the stream is fully drained.
+  type t = {
+    close: unit => promise<unit>,
+    recv: unit => promise<Nullable.t<eventResponse>>,
+  }
+}
+
 type t = {
   getHeight: unit => promise<int>,
   collect: (~query: query, ~config: streamConfig) => promise<queryResponse>,
@@ -499,7 +532,7 @@ type t = {
   get: (~query: query) => promise<queryResponse>,
   getEvents: (~query: query) => promise<eventResponse>,
   stream: (~query: query, ~config: streamConfig) => promise<queryResponseStream>,
-  streamEvents: (~query: query, ~config: streamConfig) => promise<eventStream>,
+  streamEvents: (~query: query, ~config: streamConfig) => promise<EventStream.t>,
   streamHeight: unit => promise<HeightStream.t>,
 }
 

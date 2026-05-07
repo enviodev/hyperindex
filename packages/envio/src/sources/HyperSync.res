@@ -191,19 +191,16 @@ module GetLogs = {
     res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
   }
 
-  // Streamed variant: uses HyperSync's `collectEvents` API which spawns
-  // server-side concurrent workers (default 10) to fan out the block range
-  // into parallel sub-queries. We get the same logsQueryPage shape back, but
-  // saturated by the server's parallelism rather than one round-trip per
-  // page. Use this for bulk backfill where you want to pull a wide range
-  // (50K-1M blocks) in a single call.
+  // `collectEvents` wrapper: server runs `concurrency` parallel sub-queries,
+  // accumulates them into one big response, and returns it. Wall time is
+  // bounded by the slowest sub-query — no per-batch pipelining on the client.
   let collectAll = async (
     ~client: HyperSyncClient.t,
     ~fromBlock,
     ~toBlock,
     ~logSelections: array<LogSelection.t>,
     ~fieldSelection,
-    ~concurrency: int,
+    ~streamConfig: HyperSyncClient.streamConfig,
     ~nonOptionalBlockFieldNames,
     ~nonOptionalTransactionFieldNames,
   ): logsQueryPage => {
@@ -225,13 +222,62 @@ module GetLogs = {
       ~addressesWithTopics,
       ~fieldSelection,
     )
-
-    let makeStreamConfig: int => HyperSyncClient.streamConfig = %raw(`function(c) {
-      return { concurrency: c };
-    }`)
-    let config = makeStreamConfig(concurrency)
-    let res = await client.collectEvents(~query, ~config)
+    let res = await client.collectEvents(~query, ~config=streamConfig)
     res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
+  }
+
+  // `streamEvents` wrapper: server still runs `concurrency` parallel
+  // sub-queries, but each finished batch is yielded immediately through
+  // `recv()` instead of being held until the slowest one completes. This
+  // lets the consumer pipeline decode + downstream IO with the next fetch,
+  // turning the stream into a continuous CPU/IO firehose. Caller must
+  // `close()` when done. `recv` returns `None` once the stream is drained.
+  module EventStream = {
+    type t = {
+      recv: unit => promise<option<logsQueryPage>>,
+      close: unit => promise<unit>,
+    }
+  }
+
+  let openEventStream = async (
+    ~client: HyperSyncClient.t,
+    ~fromBlock,
+    ~toBlock,
+    ~logSelections: array<LogSelection.t>,
+    ~fieldSelection,
+    ~streamConfig: HyperSyncClient.streamConfig,
+    ~nonOptionalBlockFieldNames,
+    ~nonOptionalTransactionFieldNames,
+  ): EventStream.t => {
+    let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
+      topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
+        let topics = HyperSyncClient.QueryTypes.makeTopicSelection(
+          ~topic0,
+          ~topic1,
+          ~topic2,
+          ~topic3,
+        )
+        HyperSyncClient.QueryTypes.makeLogSelection(~address=addresses, ~topics)
+      })
+    )
+
+    let query = makeRequestBody(
+      ~fromBlock,
+      ~toBlockInclusive=toBlock,
+      ~addressesWithTopics,
+      ~fieldSelection,
+    )
+
+    let stream = await client.streamEvents(~query, ~config=streamConfig)
+    let recv = async () => {
+      let next = await stream.recv()
+      switch next->Nullable.toOption {
+      | None => None
+      | Some(res) =>
+        Some(res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames))
+      }
+    }
+    {recv, close: stream.close}
   }
 }
 

@@ -57,10 +57,28 @@ module GetLogs: {
     ~toBlock: option<int>,
     ~logSelections: array<LogSelection.t>,
     ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
-    ~concurrency: int,
+    ~streamConfig: HyperSyncClient.streamConfig,
     ~nonOptionalBlockFieldNames: array<string>,
     ~nonOptionalTransactionFieldNames: array<string>,
   ) => promise<logsQueryPage>
+
+  module EventStream: {
+    type t = {
+      recv: unit => promise<option<logsQueryPage>>,
+      close: unit => promise<unit>,
+    }
+  }
+
+  let openEventStream: (
+    ~client: HyperSyncClient.t,
+    ~fromBlock: int,
+    ~toBlock: option<int>,
+    ~logSelections: array<LogSelection.t>,
+    ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
+    ~streamConfig: HyperSyncClient.streamConfig,
+    ~nonOptionalBlockFieldNames: array<string>,
+    ~nonOptionalTransactionFieldNames: array<string>,
+  ) => promise<EventStream.t>
 }
 
 let queryBlockData: (

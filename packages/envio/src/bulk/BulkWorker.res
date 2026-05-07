@@ -125,11 +125,19 @@ let runWorker = async (~data: workerData, ~port: NodeJs.WorkerThreads.messagePor
   let lifetimeEvents = ref(0.)
   let lastReportedAt = ref(Date.now())
 
-  // Holds the previous CH insert so the next iteration can fire HyperSync
-  // and decode while the network call is still in flight (fetch+decode and
-  // CH ingest run concurrently). Worker still waits for the in-flight insert
-  // before queueing the next one, so memory stays bounded.
-  let pendingInsert: ref<promise<unit>> = ref(Promise.resolve())
+  // Bounded queue of in-flight CH inserts. With streamEvents firing batches
+  // very fast, allowing only one in-flight POST stalls the fetch/decode path
+  // behind ClickHouse. We let up to N inserts overlap; the (N+1)th waits for
+  // the oldest to drain. Tunable via ENVIO_BULK_CH_INFLIGHT.
+  let chInFlightLimit = switch %raw(`process.env.ENVIO_BULK_CH_INFLIGHT`)->Nullable.toOption {
+  | Some(s) =>
+    switch Belt.Int.fromString(s) {
+    | Some(n) if n > 0 => n
+    | _ => 4
+    }
+  | None => 4
+  }
+  let inFlightInserts: array<promise<unit>> = []
 
   // Per-phase timing accumulators in milliseconds. Reported at drain so we
   // can see where the worker is spending its time without per-iteration log
@@ -141,24 +149,132 @@ let runWorker = async (~data: workerData, ~port: NodeJs.WorkerThreads.messagePor
   let tInsertWait = ref(0.)
   let bytesPosted = ref(0.)
 
-  // Per-worker server-side concurrency for HyperSync's collectEvents. Default
-  // 10 (the lib default), tunable via env var. Each worker × concurrency =
-  // total in-flight server queries from the token, so balance worker count
-  // against this for the rate limit.
+  // Per-worker server-side concurrency for HyperSync. With an unlimited
+  // token the cap is server CPU + per-worker decode CPU rather than the
+  // token's per-second rate. Default 16 (above the SDK default of 10) so
+  // the firehose stays full; tune via env var when contending across many
+  // workers on the same token.
   let serverConcurrency = switch %raw(`process.env.ENVIO_BULK_HS_CONCURRENCY`)->Nullable.toOption {
   | Some(s) =>
     switch Belt.Int.fromString(s) {
     | Some(n) => n
-    | None => 10
+    | None => 16
     }
-  | None => 10
+  | None => 16
   }
 
-  // Process one block range. Returns when [fromBlock, toBlock] is fully
-  // covered. Uses HyperSync's `collectEvents` API which spawns server-side
-  // concurrent sub-queries — much faster than a single getEvents call for
-  // large block ranges, and bounded only by the server token's overall rate
-  // limit instead of the per-call latency floor.
+  let _ = serverConcurrency // streamEvents disabled in this build
+
+  // Process one HyperSync response: decode, build columns, encode RowBinary,
+  // queue CH POST. Mutates `inFlightInserts`, `lifetimeEvents`, and the
+  // per-phase timing refs from the enclosing scope.
+  let processPage = async (~page: HyperSync.logsQueryPage) => {
+    let pageItemCount = page.items->Array.length
+    if pageItemCount > 0 {
+      let tDecodeStart = Date.now()
+      let decoded = await decoder.decodeEvents(page.events)
+      tDecode := tDecode.contents +. (Date.now() -. tDecodeStart)
+      let tBuildStart = Date.now()
+
+      let chainIds = Uint32Array.fromLength(pageItemCount)
+      let blockNumbers = Uint32Array.fromLength(pageItemCount)
+      let blockTimestampsMs = Float64Array.fromLength(pageItemCount)
+      let logIndices = Uint32Array.fromLength(pageItemCount)
+      let txHashesHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
+      let contractsHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
+      let fromsHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
+      let tosHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
+      let valuesDec = Belt.Array.makeUninitializedUnsafe(pageItemCount)
+
+      let written = ref(0)
+      for idx in 0 to pageItemCount - 1 {
+        let item: HyperSync.logsQueryPageItem = page.items->Array.getUnsafe(idx)
+        let decodedNullable = decoded->Array.getUnsafe(idx)
+        switch decodedNullable->Nullable.toOption {
+        | None => ()
+        | Some(d) =>
+          let blockNumber = item.block.number->Belt.Option.getUnsafe
+          let blockTs = item.block.timestamp->Belt.Option.getUnsafe
+          let txHash = getTxHash(item.transaction)
+          let from = switch d.indexed->Belt.Array.get(0) {
+          | Some(DecodedStr(s)) => s
+          | Some(DecodedVal({val: DecodedStr(s)})) => s
+          | _ =>
+            switch item.log.topics->Belt.Array.get(1) {
+            | Some(t) => t->EvmTypes.Hex.toString->topicToAddress
+            | None => ""
+            }
+          }
+          let to_ = switch d.indexed->Belt.Array.get(1) {
+          | Some(DecodedStr(s)) => s
+          | Some(DecodedVal({val: DecodedStr(s)})) => s
+          | _ =>
+            switch item.log.topics->Belt.Array.get(2) {
+            | Some(t) => t->EvmTypes.Hex.toString->topicToAddress
+            | None => ""
+            }
+          }
+          let value = extractTransferValue(d)
+          let w = written.contents
+          chainIds->u32Set(w, data.chainId)
+          blockNumbers->u32Set(w, blockNumber)
+          blockTimestampsMs->f64Set(w, (blockTs * 1000)->Int.toFloat)
+          logIndices->u32Set(w, item.log.logIndex)
+          txHashesHex->Belt.Array.setUnsafe(w, txHash)
+          contractsHex->Belt.Array.setUnsafe(w, item.log.address->Address.toString)
+          fromsHex->Belt.Array.setUnsafe(w, from)
+          tosHex->Belt.Array.setUnsafe(w, to_)
+          valuesDec->Belt.Array.setUnsafe(w, value)
+          written := w + 1
+        }
+      }
+
+      tBuild := tBuild.contents +. (Date.now() -. tBuildStart)
+      let rowCount = written.contents
+      if rowCount > 0 {
+        let tEncodeStart = Date.now()
+        let buf = BulkRowBinary.encodeBatch(
+          ~chainIds,
+          ~blockNumbers,
+          ~blockTimestampsMs,
+          ~logIndices,
+          ~txHashesHex,
+          ~contractsHex,
+          ~fromsHex,
+          ~tosHex,
+          ~valuesDec,
+          ~rowCount,
+        )
+        tEncode := tEncode.contents +. (Date.now() -. tEncodeStart)
+        let bufLen: 'a => float = %raw(`(b) => b.length`)
+        bytesPosted := bytesPosted.contents +. bufLen(buf)
+        let tWaitStart = Date.now()
+        if inFlightInserts->Array.length >= chInFlightLimit {
+          let oldest = inFlightInserts->Array.shift->Belt.Option.getUnsafe
+          await oldest
+        }
+        tInsertWait := tInsertWait.contents +. (Date.now() -. tWaitStart)
+        let next = BulkRowBinary.insertRowBinary(
+          ~url=data.clickhouseUrl,
+          ~database=data.clickhouseDatabase,
+          ~table=data.tableName,
+          ~username=data.clickhouseUsername,
+          ~password=data.clickhousePassword,
+          ~body=buf,
+        )
+        inFlightInserts->Array.push(next)
+        lifetimeEvents := lifetimeEvents.contents +. rowCount->Int.toFloat
+      }
+    }
+  }
+
+  let streamConfig: HyperSyncClient.streamConfig = {concurrency: serverConcurrency}
+
+  // Process one block range with `collectEvents` — the SDK runs `concurrency`
+  // parallel sub-queries server-side and returns one combined response per
+  // round trip. Cursor advances by `nextBlock`, looping if the response was
+  // capped. The in-flight CH pipeline keeps the upload side from stalling
+  // fetch/decode.
   let processChunk = async (~fromBlock: int, ~toBlock: int) => {
     let cursor = ref(fromBlock)
     while cursor.contents <= toBlock {
@@ -169,114 +285,13 @@ let runWorker = async (~data: workerData, ~port: NodeJs.WorkerThreads.messagePor
         ~toBlock=Some(toBlock),
         ~logSelections,
         ~fieldSelection,
-        ~concurrency=serverConcurrency,
+        ~streamConfig,
         ~nonOptionalBlockFieldNames=["number", "timestamp"],
         ~nonOptionalTransactionFieldNames=[],
       )
       tFetch := tFetch.contents +. (Date.now() -. tFetchStart)
       cursor := page.nextBlock
-
-      let pageItemCount = page.items->Array.length
-      if pageItemCount > 0 {
-        let tDecodeStart = Date.now()
-        let decoded = await decoder.decodeEvents(page.events)
-        tDecode := tDecode.contents +. (Date.now() -. tDecodeStart)
-        let tBuildStart = Date.now()
-
-        // Build column arrays sized to the page. Sized once, no resizing.
-        let chainIds = Uint32Array.fromLength(pageItemCount)
-        let blockNumbers = Uint32Array.fromLength(pageItemCount)
-        let blockTimestampsMs = Float64Array.fromLength(pageItemCount)
-        let logIndices = Uint32Array.fromLength(pageItemCount)
-        let txHashesHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
-        let contractsHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
-        let fromsHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
-        let tosHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
-        let valuesDec = Belt.Array.makeUninitializedUnsafe(pageItemCount)
-
-        let written = ref(0)
-        for idx in 0 to pageItemCount - 1 {
-          let item: HyperSync.logsQueryPageItem = page.items->Array.getUnsafe(idx)
-          let decodedNullable = decoded->Array.getUnsafe(idx)
-          switch decodedNullable->Nullable.toOption {
-          | None => () // log didn't decode — skip
-          | Some(d) =>
-            let blockNumber = item.block.number->Belt.Option.getUnsafe
-            let blockTs = item.block.timestamp->Belt.Option.getUnsafe
-            let txHash = getTxHash(item.transaction)
-            let from = switch d.indexed->Belt.Array.get(0) {
-            | Some(DecodedStr(s)) => s
-            | Some(DecodedVal({val: DecodedStr(s)})) => s
-            | _ =>
-              switch item.log.topics->Belt.Array.get(1) {
-              | Some(t) => t->EvmTypes.Hex.toString->topicToAddress
-              | None => ""
-              }
-            }
-            let to_ = switch d.indexed->Belt.Array.get(1) {
-            | Some(DecodedStr(s)) => s
-            | Some(DecodedVal({val: DecodedStr(s)})) => s
-            | _ =>
-              switch item.log.topics->Belt.Array.get(2) {
-              | Some(t) => t->EvmTypes.Hex.toString->topicToAddress
-              | None => ""
-              }
-            }
-            let value = extractTransferValue(d)
-
-            let w = written.contents
-            chainIds->u32Set(w, data.chainId)
-            blockNumbers->u32Set(w, blockNumber)
-            blockTimestampsMs->f64Set(w, (blockTs * 1000)->Int.toFloat)
-            logIndices->u32Set(w, item.log.logIndex)
-            txHashesHex->Belt.Array.setUnsafe(w, txHash)
-            contractsHex->Belt.Array.setUnsafe(w, item.log.address->Address.toString)
-            fromsHex->Belt.Array.setUnsafe(w, from)
-            tosHex->Belt.Array.setUnsafe(w, to_)
-            valuesDec->Belt.Array.setUnsafe(w, value)
-            written := w + 1
-          }
-        }
-
-        tBuild := tBuild.contents +. (Date.now() -. tBuildStart)
-        let rowCount = written.contents
-        if rowCount > 0 {
-          let tEncodeStart = Date.now()
-          let buf = BulkRowBinary.encodeBatch(
-            ~chainIds,
-            ~blockNumbers,
-            ~blockTimestampsMs,
-            ~logIndices,
-            ~txHashesHex,
-            ~contractsHex,
-            ~fromsHex,
-            ~tosHex,
-            ~valuesDec,
-            ~rowCount,
-          )
-          tEncode := tEncode.contents +. (Date.now() -. tEncodeStart)
-          let bufLen: 'a => float = %raw(`(b) => b.length`)
-          bytesPosted := bytesPosted.contents +. bufLen(buf)
-          // Wait for the previous CH insert to finish so we don't pile up
-          // unbounded backpressure. Then fire the next one without awaiting,
-          // letting the loop body advance to the next HyperSync fetch + decode
-          // while CH is still ingesting. This pipelines IO in the worker.
-          let tWaitStart = Date.now()
-          await pendingInsert.contents
-          tInsertWait := tInsertWait.contents +. (Date.now() -. tWaitStart)
-          pendingInsert :=
-            BulkRowBinary.insertRowBinary(
-              ~url=data.clickhouseUrl,
-              ~database=data.clickhouseDatabase,
-              ~table=data.tableName,
-              ~username=data.clickhouseUsername,
-              ~password=data.clickhousePassword,
-              ~body=buf,
-            )
-          lifetimeEvents := lifetimeEvents.contents +. rowCount->Int.toFloat
-        }
-      }
-
+      await processPage(~page)
       let now = Date.now()
       if now -. lastReportedAt.contents > 1000. {
         lastReportedAt := now
@@ -310,11 +325,13 @@ let runWorker = async (~data: workerData, ~port: NodeJs.WorkerThreads.messagePor
       )
       port->postWorkerMessage(NeedNext({workerId: data.workerId}))
     | Drain(_) =>
-      // Make sure the in-flight CH insert from the last chunk has completed
-      // before we tell main we're drained — otherwise the parent could exit
-      // before bytes hit ClickHouse.
+      // Drain all in-flight CH inserts before signalling done so the parent
+      // never exits while bytes are still on the way to ClickHouse.
       let tWaitStart = Date.now()
-      await pendingInsert.contents
+      while inFlightInserts->Array.length > 0 {
+        let oldest = inFlightInserts->Array.shift->Belt.Option.getUnsafe
+        await oldest
+      }
       tInsertWait := tInsertWait.contents +. (Date.now() -. tWaitStart)
       let mb = bytesPosted.contents /. 1024. /. 1024.
       let log: string => unit = %raw(`(s) => process.stderr.write(s + "\n")`)
