@@ -238,25 +238,23 @@ module Entity = {
   that the entity is not set to the in memory store,
   and the second option means that the entity doesn't esist/deleted.
   It's needed to prevent an additional round trips to the database for deleted entities. */
-  let getUnsafe = (inMemTable: t<'entity>) => (key: string) =>
-    inMemTable.table.dict
-    ->Dict.getUnsafe(key)
-    ->rowToEntity
+  let getUnsafe = (inMemTable: t<'entity>) =>
+    (key: string) =>
+      inMemTable.table.dict
+      ->Dict.getUnsafe(key)
+      ->rowToEntity
 
-  let hasIndex = (
-    inMemTable: t<'entity>,
-    ~fieldName,
-    ~operator: TableIndices.Operator.t,
-  ) => fieldValueHash => {
-    switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
-    | None => false
-    | Some(indicesSerializedToValue) => {
-        // Should match TableIndices.toString logic
-        let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
-        indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) !== None
+  let hasIndex = (inMemTable: t<'entity>, ~fieldName, ~operator: TableIndices.Operator.t) =>
+    fieldValueHash => {
+      switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+      | None => false
+      | Some(indicesSerializedToValue) => {
+          // Should match TableIndices.toString logic
+          let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
+          indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) !== None
+        }
       }
     }
-  }
 
   let getUnsafeOnIndex = (
     inMemTable: t<'entity>,
@@ -423,10 +421,7 @@ module Entity = {
       | None => ()
       | Some(row) =>
         switch row.status {
-        | Loaded =>
-          // Loaded entities are just cache — evict from memory
-          inMemTable->deleteEntityFromIndices(~entityId=key, ~entityIndices=row.entityIndices)
-          inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
+        | Loaded => ()
         | Updated(update) if update.latestChange->Change.getCheckpointId <= writtenCheckpointId =>
           let hasActiveIndices = row.entityIndices->Utils.Set.size > 0
           if !hasActiveIndices {
