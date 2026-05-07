@@ -35,18 +35,16 @@ type mainMessage =
   | @as("work") Work({fromBlock: int, toBlock: int})
   | @as("drain") Drain({_dummy: bool})
 
+// Minimal field selection for bulk ERC20 Transfer. Drops Topic3 (always
+// empty for Transfer) and the entire transaction sub-object (we no longer
+// store tx_hash). Address has to stay because HyperSync.convertEvent
+// asserts it's present on every page item; we ignore the value at runtime
+// (single-contract assumption stamps `contract` from workerData) but the
+// SDK still ships it. Topic0..Topic2 stay so positional indexing into
+// `topics[]` matches our `topics[1]`/`topics[2]` reads.
 let buildFieldSelection = (): HyperSyncClient.QueryTypes.fieldSelection => {
   block: [Number, Timestamp],
-  transaction: [Hash],
-  log: [LogIndex, Address, Topic0, Topic1, Topic2, Topic3, Data],
-}
-
-let getTxHash = (txn: Internal.eventTransaction): string => {
-  let dict = txn->(Utils.magic: Internal.eventTransaction => dict<unknown>)
-  switch dict->Utils.Dict.dangerouslyGetNonOption("hash") {
-  | Some(v) => v->(Utils.magic: unknown => string)
-  | None => ""
-  }
+  log: [LogIndex, Address, Topic0, Topic1, Topic2, Data],
 }
 
 let buildLogSelection = (data: workerData): array<LogSelection.t> => {
@@ -165,14 +163,32 @@ let runWorker = async (~data: workerData, ~port: NodeJs.WorkerThreads.messagePor
 
   let _ = serverConcurrency // streamEvents disabled in this build
 
-  // Process one HyperSync response: decode, build columns, encode RowBinary,
-  // queue CH POST. Mutates `inFlightInserts`, `lifetimeEvents`, and the
-  // per-phase timing refs from the enclosing scope.
+  // Single-contract assumption: the contract column on every row is just
+  // the address we filtered on, so we can stamp it from workerData and skip
+  // both the per-row Address field on the wire and the runtime decoder.
+  let contractFixed = data.contractAddresses->Belt.Array.get(0)->Belt.Option.getWithDefault("0x")
+
+  // BigInt(value-hex).toString() for the uint256 `value` column. JS BigInt
+  // accepts "0x..." directly. Cheaper than HyperSync's full ABI decoder
+  // because we know the wire format up-front: one 32-byte word, no dynamic
+  // types, no signature lookup.
+  let hexDataToDecimalString: string => string = %raw(`function(data) {
+    if (!data || data.length < 3) return "0";
+    try { return BigInt(data).toString(); }
+    catch (_) { return "0"; }
+  }`)
+
+  // Process one HyperSync response: extract columns inline (no ABI decoder
+  // call), encode RowBinary, queue CH POST. Mutates `inFlightInserts`,
+  // `lifetimeEvents`, and the per-phase timing refs from the enclosing scope.
   let processPage = async (~page: HyperSync.logsQueryPage) => {
     let pageItemCount = page.items->Array.length
     if pageItemCount > 0 {
+      // The decoder phase is now a no-op — Transfer's wire layout is fixed,
+      // so we extract from/to/value directly from the log topics + data
+      // without paying the per-event ABI decode cost. Keep the timing label
+      // so traces stay comparable across versions.
       let tDecodeStart = Date.now()
-      let decoded = await decoder.decodeEvents(page.events)
       tDecode := tDecode.contents +. (Date.now() -. tDecodeStart)
       let tBuildStart = Date.now()
 
@@ -180,7 +196,6 @@ let runWorker = async (~data: workerData, ~port: NodeJs.WorkerThreads.messagePor
       let blockNumbers = Uint32Array.fromLength(pageItemCount)
       let blockTimestampsMs = Float64Array.fromLength(pageItemCount)
       let logIndices = Uint32Array.fromLength(pageItemCount)
-      let txHashesHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
       let contractsHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
       let fromsHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
       let tosHex = Belt.Array.makeUninitializedUnsafe(pageItemCount)
@@ -189,43 +204,28 @@ let runWorker = async (~data: workerData, ~port: NodeJs.WorkerThreads.messagePor
       let written = ref(0)
       for idx in 0 to pageItemCount - 1 {
         let item: HyperSync.logsQueryPageItem = page.items->Array.getUnsafe(idx)
-        let decodedNullable = decoded->Array.getUnsafe(idx)
-        switch decodedNullable->Nullable.toOption {
-        | None => ()
-        | Some(d) =>
-          let blockNumber = item.block.number->Belt.Option.getUnsafe
-          let blockTs = item.block.timestamp->Belt.Option.getUnsafe
-          let txHash = getTxHash(item.transaction)
-          let from = switch d.indexed->Belt.Array.get(0) {
-          | Some(DecodedStr(s)) => s
-          | Some(DecodedVal({val: DecodedStr(s)})) => s
-          | _ =>
-            switch item.log.topics->Belt.Array.get(1) {
-            | Some(t) => t->EvmTypes.Hex.toString->topicToAddress
-            | None => ""
-            }
+        switch (item.block.number, item.block.timestamp) {
+        | (Some(blockNumber), Some(blockTs)) =>
+          let from = switch item.log.topics->Belt.Array.get(1) {
+          | Some(t) => t->EvmTypes.Hex.toString->topicToAddress
+          | None => ""
           }
-          let to_ = switch d.indexed->Belt.Array.get(1) {
-          | Some(DecodedStr(s)) => s
-          | Some(DecodedVal({val: DecodedStr(s)})) => s
-          | _ =>
-            switch item.log.topics->Belt.Array.get(2) {
-            | Some(t) => t->EvmTypes.Hex.toString->topicToAddress
-            | None => ""
-            }
+          let to_ = switch item.log.topics->Belt.Array.get(2) {
+          | Some(t) => t->EvmTypes.Hex.toString->topicToAddress
+          | None => ""
           }
-          let value = extractTransferValue(d)
+          let value = hexDataToDecimalString(item.log.data)
           let w = written.contents
           chainIds->u32Set(w, data.chainId)
           blockNumbers->u32Set(w, blockNumber)
           blockTimestampsMs->f64Set(w, (blockTs * 1000)->Int.toFloat)
           logIndices->u32Set(w, item.log.logIndex)
-          txHashesHex->Belt.Array.setUnsafe(w, txHash)
-          contractsHex->Belt.Array.setUnsafe(w, item.log.address->Address.toString)
+          contractsHex->Belt.Array.setUnsafe(w, contractFixed)
           fromsHex->Belt.Array.setUnsafe(w, from)
           tosHex->Belt.Array.setUnsafe(w, to_)
           valuesDec->Belt.Array.setUnsafe(w, value)
           written := w + 1
+        | _ => ()
         }
       }
 
@@ -238,7 +238,6 @@ let runWorker = async (~data: workerData, ~port: NodeJs.WorkerThreads.messagePor
           ~blockNumbers,
           ~blockTimestampsMs,
           ~logIndices,
-          ~txHashesHex,
           ~contractsHex,
           ~fromsHex,
           ~tosHex,

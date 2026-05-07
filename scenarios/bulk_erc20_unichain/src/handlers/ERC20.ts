@@ -7,6 +7,5 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
     to: event.params.to,
     value: event.params.value,
     blockNumber: event.block.number,
-    transactionHash: event.transaction.hash,
   });
 });

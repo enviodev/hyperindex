@@ -32,7 +32,6 @@ let createTableSqlForErc20Transfer = (~tableName) =>
   block_number    UInt32,
   block_timestamp DateTime64(3, 'UTC'),
   log_index       UInt32,
-  tx_hash         FixedString(32),
   contract        FixedString(20),
   \`from\`          FixedString(20),
   \`to\`            FixedString(20),

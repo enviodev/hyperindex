@@ -4,5 +4,4 @@ type Transfer {
   to: String!
   value: BigInt!
   blockNumber: Int!
-  transactionHash: String!
 }

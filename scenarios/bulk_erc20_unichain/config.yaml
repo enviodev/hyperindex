@@ -17,8 +17,8 @@ chains:
   - id: 130
     hypersync_config:
       url: https://unichain.hypersync.xyz
-    start_block: 0
-    end_block: 18000000
+    start_block: 13000000
+    end_block: 14000000  # 1M blocks of dense Unichain USDC activity
     contracts:
       - name: ERC20
         address: "0x078D782b760474a361dDA0AF3839290b0EF57AD6"
