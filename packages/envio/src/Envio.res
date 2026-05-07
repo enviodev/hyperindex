@@ -79,8 +79,9 @@ and effectOptions<'input, 'output> = {
   output: S.t<'output>,
   /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
   rateLimit: rateLimit,
-  /** Maximum retry attempts on handler failure. Omit for unlimited retries (default).
-      Set to 0 to disable retries. Retries use exponential backoff with full jitter. */
+  /** Maximum retry attempts on handler failure. Defaults to 10 when omitted.
+      Set to 0 to disable. Retries use exponential backoff with full jitter and
+      consume rate-limit tokens; a warn log is emitted after 5 consecutive failures. */
   maxRetries?: int,
   /** Whether the effect should be cached. */
   cache?: bool,

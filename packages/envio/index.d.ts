@@ -80,9 +80,10 @@ export type EffectOptions<Input, Output> = {
   /** Rate limit for the effect. Set to `false` to disable or provide
    * `{calls, per: "second" | "minute"}` to enable. */
   readonly rateLimit: RateLimit;
-  /** Maximum retry attempts on handler failure. Omit for unlimited retries
-   * (default). Set to `0` to disable retries. Retries use exponential
-   * backoff with full jitter and consume rate-limit tokens. */
+  /** Maximum retry attempts on handler failure. Defaults to `10` when
+   * omitted. Set to `0` to disable. Retries use exponential backoff with
+   * full jitter and consume rate-limit tokens; a warn log is emitted after
+   * 5 consecutive failures. */
   readonly maxRetries?: number;
   /** Whether the effect should be cached. */
   readonly cache?: boolean;
@@ -211,9 +212,10 @@ export function createEffect<
     readonly output: OS;
     /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
     readonly rateLimit: RateLimit;
-    /** Maximum retry attempts on handler failure. Omit for unlimited
-     * retries (default). Set to 0 to disable retries. Retries use
-     * exponential backoff with full jitter and consume rate-limit tokens. */
+    /** Maximum retry attempts on handler failure. Defaults to 10 when
+     * omitted. Set to 0 to disable. Retries use exponential backoff with
+     * full jitter and consume rate-limit tokens; a warn log is emitted
+     * after 5 consecutive failures. */
     readonly maxRetries?: number;
     /** Whether the effect should be cached. */
     readonly cache?: boolean;

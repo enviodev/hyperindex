@@ -123,15 +123,22 @@ let rec callEffect = async (
     // any preload-mode context access or entity `get` was performed before
     // this call. Without that signal, we'd re-run handlers whose inputs the
     // real run will recompute anyway. For now we always retry per maxRetries.
-    let shouldRetry = switch effect.maxRetries {
-    | None => true
-    | Some(n) => attempt < n
-    }
+    let cap = effect.maxRetries->Belt.Option.getWithDefault(10)
+    let shouldRetry = attempt < cap
     if shouldRetry {
       Prometheus.EffectRetriesCount.increment(~effectName)
+      let nextAttempt = attempt + 1
+
+      // Warn once when an effect has been failing for a while so users notice
+      // before the retry budget runs out.
+      if nextAttempt === 5 {
+        Logging.warn(
+          `Effect "${effectName}" failed 5 times in a row. Continuing to retry with exponential backoff.`,
+        )
+      }
       // Exponential backoff with full jitter: random in [0, min(100ms * 2^attempt, 30s)].
       // Cap exponent at 9 (100 * 2^9 = 51200ms) so the cap dominates and the math
-      // can't overflow under unlimited retries.
+      // can't overflow.
       let cappedExp = Math.Int.min(attempt, 9)
       let upperMs = Math.Int.min(
         100 * Math.pow(2.0, ~exp=cappedExp->Belt.Int.toFloat)->Belt.Float.toInt,
@@ -144,7 +151,7 @@ let rec callEffect = async (
         ~inMemTable,
         ~onError,
         ~isFromQueue=false,
-        ~attempt=attempt + 1,
+        ~attempt=nextAttempt,
       )->Utils.Promise.ignoreValue
     } else {
       onError(~inputKey=arg.cacheKey, ~exn)

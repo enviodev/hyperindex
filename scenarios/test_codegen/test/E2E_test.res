@@ -1147,6 +1147,10 @@ describe("E2E tests", () => {
       await indexerMock.queryEffectCache("throwingEffect"),
       ~message="Should only cache p2's successful result, not p1's failed call",
     ).toEqual([{"id": `"shouldn't-fail"`, "output": %raw(`"shouldn't-fail-output"`)}])
+    t.expect(
+      await indexerMock.metric("envio_effect_retries"),
+      ~message="maxRetries=0 must not record any retry",
+    ).toEqual([])
   })
 
   Async.it("Effect with maxRetries retries on failure and eventually succeeds", async t => {
@@ -1268,6 +1272,10 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     t.expect(attemptCount.contents, ~message="handler called exactly once").toEqual(1)
+    t.expect(
+      await indexerMock.metric("envio_effect_retries"),
+      ~message="should record no retry attempts",
+    ).toEqual([])
   })
 
   Async.it("Effect with bounded maxRetries gives up after exhausting attempts", async t => {
@@ -1327,6 +1335,155 @@ describe("E2E tests", () => {
       attemptCount.contents,
       ~message="handler called 1 + maxRetries times",
     ).toEqual(3)
+    t.expect(
+      await indexerMock.metric("envio_effect_retries"),
+      ~message="should record maxRetries attempts",
+    ).toEqual([
+      {
+        value: "2",
+        labels: {"effect": "alwaysFailEffect"}->Utils.magic,
+      },
+    ])
+  })
+
+  Async.it("Effect with omitted maxRetries retries on transient failure", async t => {
+    let sourceMock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    let attemptCount = ref(0)
+    let defaultRetriesEffect = Envio.createEffect(
+      {
+        name: "defaultRetriesEffect",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+        // maxRetries omitted — defaults to 10.
+      },
+      async ({input}) => {
+        attemptCount := attemptCount.contents + 1
+        if attemptCount.contents < 2 {
+          Utils.Error.make("transient")->throw
+        }
+        input ++ "-output"
+      },
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            t.expect(
+              await context.effect(defaultRetriesEffect, "hi"),
+              ~message="should succeed after retry",
+            ).toEqual("hi-output")
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(attemptCount.contents, ~message="handler called twice").toEqual(2)
+    t.expect(
+      await indexerMock.metric("envio_effect_retries"),
+      ~message="default cap allows the single retry",
+    ).toEqual([
+      {
+        value: "1",
+        labels: {"effect": "defaultRetriesEffect"}->Utils.magic,
+      },
+    ])
+  })
+
+  Async.it("Effect retries respect rateLimit tokens", async t => {
+    let sourceMock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    let attemptCount = ref(0)
+    let rateLimitedRetryEffect = Envio.createEffect(
+      {
+        name: "rateLimitedRetryEffect",
+        input: S.string,
+        output: S.string,
+        // 1 call per 500ms — well above the first retry's backoff cap
+        // (~100ms) so each retry hits an empty window and must queue,
+        // proving retries flow through executeWithRateLimit.
+        rateLimit: Enable({calls: 1, per: Milliseconds(500)}),
+        maxRetries: 2,
+      },
+      async ({input: _}) => {
+        attemptCount := attemptCount.contents + 1
+        Utils.Error.make("nope")->throw
+      },
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            let didThrow = try {
+              let _ = await context.effect(rateLimitedRetryEffect, "x")
+              false
+            } catch {
+            | _ => true
+            }
+            t.expect(didThrow, ~message="effect call should reject").toEqual(true)
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(attemptCount.contents, ~message="all attempts ran").toEqual(3)
+    t.expect(
+      await indexerMock.metric("envio_effect_retries"),
+      ~message="retries logged",
+    ).toEqual([
+      {
+        value: "2",
+        labels: {"effect": "rateLimitedRetryEffect"}->Utils.magic,
+      },
+    ])
+    // Each retry must have consumed a rate-limit token, so the queue
+    // wait counter records non-zero time spent waiting for windows.
+    let queueWait = await indexerMock.metric("envio_effect_queue_wait_seconds")
+    t.expect(
+      queueWait->Array.length > 0,
+      ~message="queue wait should be tracked when retries flow through rateLimit",
+    ).toEqual(true)
   })
 
   Async.it(
