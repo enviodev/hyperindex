@@ -6,6 +6,7 @@ let loadById: (
   ~shouldGroup: bool,
   ~item: Internal.item,
   ~entityId: string,
+  ~checkpointId: bigint,
 ) => promise<option<Internal.entity>>
 
 let loadByField: (

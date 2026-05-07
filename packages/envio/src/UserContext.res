@@ -236,6 +236,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~shouldGroup=params.isPreload,
             ~item=params.item,
             ~entityId,
+            ~checkpointId=params.checkpointId,
           )
       )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
     | "getWhere" =>
@@ -254,6 +255,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~shouldGroup=params.isPreload,
             ~item=params.item,
             ~entityId,
+            ~checkpointId=params.checkpointId,
           )->Promise.thenResolve(entity => {
             switch entity {
             | Some(entity) => entity
@@ -277,6 +279,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~shouldGroup=params.isPreload,
             ~item=params.item,
             ~entityId=entity.id,
+            ~checkpointId=params.checkpointId,
           )->Promise.thenResolve(storageEntity => {
             switch storageEntity {
             | Some(entity) => entity

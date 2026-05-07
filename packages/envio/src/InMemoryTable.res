@@ -44,6 +44,7 @@ module Entity = {
     latest: option<'entity>,
     status: Internal.inMemoryStoreEntityStatus<'entity>,
     entityIndices: Utils.Set.t<TableIndices.Index.t>,
+    mutable lastReferencedCheckpointId: bigint,
   }
   type t<'entity> = {
     table: t<string, entityWithIndices<'entity>>,
@@ -139,6 +140,7 @@ module Entity = {
     inMemTable: t<'entity>,
     ~key: string,
     ~entity: option<'entity>,
+    ~checkpointId: bigint=0n,
     // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
     ~allowOverWriteEntity=false,
   ) => {
@@ -163,6 +165,7 @@ module Entity = {
           latest: entity,
           status: Loaded,
           entityIndices,
+          lastReferencedCheckpointId: checkpointId,
         },
       )
     }
@@ -189,14 +192,21 @@ module Entity = {
     | Delete(_) => None
     }
 
+    let checkpointId = change->Change.getCheckpointId
     inMemTable.changeCount = inMemTable.changeCount +. 1.
 
     let updatedEntityRecord = switch inMemTable.table->get(change->Change.getEntityId) {
-    | None => {latest, status: newStatus(), entityIndices: Utils.Set.make()}
+    | None => {
+        latest,
+        status: newStatus(),
+        entityIndices: Utils.Set.make(),
+        lastReferencedCheckpointId: checkpointId,
+      }
     | Some({status: Loaded, entityIndices}) => {
         latest,
         status: newStatus(),
         entityIndices,
+        lastReferencedCheckpointId: checkpointId,
       }
     | Some({status: Updated(previous_values), entityIndices}) =>
       let newStatus = Internal.Updated({
@@ -215,7 +225,7 @@ module Entity = {
         },
         containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
       })
-      {latest, status: newStatus, entityIndices}
+      {latest, status: newStatus, entityIndices, lastReferencedCheckpointId: checkpointId}
     }
 
     switch change {
@@ -420,33 +430,34 @@ module Entity = {
       switch inMemTable.table.dict->Utils.Dict.dangerouslyGetNonOption(key) {
       | None => ()
       | Some(row) =>
-        switch row.status {
-        | Loaded => ()
-        | Updated(update) if update.latestChange->Change.getCheckpointId <= writtenCheckpointId =>
+        if row.lastReferencedCheckpointId <= writtenCheckpointId {
           let hasActiveIndices = row.entityIndices->Utils.Set.size > 0
-          if !hasActiveIndices {
-            // Written to DB, no active index — evict entirely
+          switch row.status {
+          | Updated(_) if !hasActiveIndices =>
             inMemTable->deleteEntityFromIndices(~entityId=key, ~entityIndices=row.entityIndices)
             inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
-          } else {
-            // Written to DB, still has active index — reset to Loaded
-            inMemTable.table.dict->Dict.set(key, {...row, status: Loaded})
+          | Updated(_) => inMemTable.table.dict->Dict.set(key, {...row, status: Loaded})
+          | Loaded =>
+            inMemTable->deleteEntityFromIndices(~entityId=key, ~entityIndices=row.entityIndices)
+            inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
           }
-        | Updated(update) =>
-          remainingChangeCount := remainingChangeCount.contents +. 1.
-          // Clear already-written history but keep the update status
-          // since it has changes newer than what was written
-          inMemTable.table.dict->Dict.set(
-            key,
-            {
-              ...row,
-              status: Updated({
-                ...update,
-                history: [update.latestChange],
-                containsRollbackDiffChange: false,
-              }),
-            },
-          )
+        } else {
+          switch row.status {
+          | Updated(update) =>
+            remainingChangeCount := remainingChangeCount.contents +. 1.
+            inMemTable.table.dict->Dict.set(
+              key,
+              {
+                ...row,
+                status: Updated({
+                  ...update,
+                  history: [update.latestChange],
+                  containsRollbackDiffChange: false,
+                }),
+              },
+            )
+          | Loaded => ()
+          }
         }
       }
     }
