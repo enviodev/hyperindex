@@ -61,12 +61,13 @@ let loadById = (
   )
 }
 
-let callEffect = (
+let rec callEffect = async (
   ~effect: Internal.effect,
   ~arg: Internal.effectArgs,
   ~inMemTable: InMemoryStore.effectCacheInMemTable,
   ~timerRef,
   ~onError,
+  ~attempt,
 ) => {
   let effectName = effect.name
   let hadActiveCalls = effect.activeCallsCount > 0
@@ -87,43 +88,72 @@ let callEffect = (
   }
   effect.prevCallStartTimerRef = timerRef
 
-  effect.handler(arg)
-  ->Promise.thenResolve(output => {
+  let failure = switch await effect.handler(arg) {
+  | output =>
     inMemTable.dict->Dict.set(arg.cacheKey, output)
     if arg.context.cache {
       inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
     }
-  })
-  ->Utils.Promise.catchResolve(exn => {
-    onError(~inputKey=arg.cacheKey, ~exn)
-  })
-  ->Promise.finally(() => {
-    effect.activeCallsCount = effect.activeCallsCount - 1
-    Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
-      ~labels=effectName,
-      ~value=effect.activeCallsCount,
-    )
-    let newTimer = Hrtime.makeTimer()
-    Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
-      ~labels=effectName,
-      ~value=Hrtime.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
-    )
-    effect.prevCallStartTimerRef = newTimer
+    None
+  | exception exn => Some(exn)
+  }
 
-    Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(~labels=effectName)
-    Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.handleFloat(
-      ~labels=effectName,
-      ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
-    )
-  })
+  effect.activeCallsCount = effect.activeCallsCount - 1
+  Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
+    ~labels=effectName,
+    ~value=effect.activeCallsCount,
+  )
+  let newTimer = Hrtime.makeTimer()
+  Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
+    ~labels=effectName,
+    ~value=Hrtime.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
+  )
+  effect.prevCallStartTimerRef = newTimer
+
+  Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(~labels=effectName)
+  Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.handleFloat(
+    ~labels=effectName,
+    ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+  )
+
+  switch failure {
+  | None => ()
+  | Some(exn) =>
+    let shouldRetry = switch effect.maxRetries {
+    | None => true
+    | Some(n) => attempt < n
+    }
+    if shouldRetry {
+      Prometheus.EffectRetriesCount.increment(~effectName)
+      // Exponential backoff with full jitter: random in [0, min(100ms * 2^attempt, 30s)].
+      // Cap exponent at 9 (100 * 2^9 = 51200ms) so the cap dominates and the math
+      // can't overflow under unlimited retries.
+      let cappedExp = Math.Int.min(attempt, 9)
+      let upperMs = Math.Int.min(
+        100 * Math.pow(2.0, ~exp=cappedExp->Belt.Int.toFloat)->Belt.Float.toInt,
+        30000,
+      )
+      await Utils.delay((Math.random() *. upperMs->Belt.Int.toFloat)->Belt.Float.toInt)
+      await executeWithRateLimit(
+        ~effect,
+        ~effectArgs=[arg],
+        ~inMemTable,
+        ~onError,
+        ~isFromQueue=false,
+        ~attempt=attempt + 1,
+      )->Utils.Promise.ignoreValue
+    } else {
+      onError(~inputKey=arg.cacheKey, ~exn)
+    }
+  }
 }
-
-let rec executeWithRateLimit = (
+and executeWithRateLimit = (
   ~effect: Internal.effect,
   ~effectArgs: array<Internal.effectArgs>,
   ~inMemTable,
   ~onError,
   ~isFromQueue: bool,
+  ~attempt,
 ) => {
   let effectName = effect.name
 
@@ -142,6 +172,7 @@ let rec executeWithRateLimit = (
           ~inMemTable,
           ~timerRef,
           ~onError,
+          ~attempt,
         )->Utils.Promise.ignoreValue,
       )
       ->ignore
@@ -175,6 +206,7 @@ let rec executeWithRateLimit = (
           ~inMemTable,
           ~timerRef,
           ~onError,
+          ~attempt,
         )->Utils.Promise.ignoreValue,
       )
       ->ignore
@@ -222,6 +254,7 @@ let rec executeWithRateLimit = (
             ~inMemTable,
             ~onError,
             ~isFromQueue=true,
+            ~attempt,
           )
         })
         ->Utils.Promise.ignoreValue,
@@ -324,6 +357,7 @@ let loadEffect = (
           ~inMemTable,
           ~onError,
           ~isFromQueue=false,
+          ~attempt=0,
         )->Utils.Promise.ignoreValue
       }
     }

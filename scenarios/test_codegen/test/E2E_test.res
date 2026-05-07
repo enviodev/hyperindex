@@ -1098,6 +1098,7 @@ describe("E2E tests", () => {
         input: S.string,
         output: S.string,
         rateLimit: Disable,
+        maxRetries: 0,
         cache: true,
       },
       async ({input}) => {
@@ -1146,6 +1147,186 @@ describe("E2E tests", () => {
       await indexerMock.queryEffectCache("throwingEffect"),
       ~message="Should only cache p2's successful result, not p1's failed call",
     ).toEqual([{"id": `"shouldn't-fail"`, "output": %raw(`"shouldn't-fail-output"`)}])
+  })
+
+  Async.it("Effect with maxRetries retries on failure and eventually succeeds", async t => {
+    let sourceMock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    let attemptCount = ref(0)
+    let flakyEffect = Envio.createEffect(
+      {
+        name: "flakyEffect",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+        maxRetries: 3,
+      },
+      async ({input}) => {
+        attemptCount := attemptCount.contents + 1
+        if attemptCount.contents < 3 {
+          Utils.Error.make("transient failure")->throw
+        }
+        input ++ "-output"
+      },
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            t.expect(
+              await context.effect(flakyEffect, "hello"),
+              ~message="should succeed after 2 retries",
+            ).toEqual("hello-output")
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(attemptCount.contents, ~message="handler called 3 times").toEqual(3)
+    t.expect(
+      await indexerMock.metric("envio_effect_retries"),
+      ~message="should record 2 retry attempts",
+    ).toEqual([
+      {
+        value: "2",
+        labels: {"effect": "flakyEffect"}->Utils.magic,
+      },
+    ])
+  })
+
+  Async.it("Effect with maxRetries=0 fails immediately without retrying", async t => {
+    let sourceMock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    let attemptCount = ref(0)
+    let noRetryEffect = Envio.createEffect(
+      {
+        name: "noRetryEffect",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+        maxRetries: 0,
+      },
+      async ({input: _}) => {
+        attemptCount := attemptCount.contents + 1
+        Utils.Error.make("boom")->throw
+      },
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            let didThrow = try {
+              let _ = await context.effect(noRetryEffect, "x")
+              false
+            } catch {
+            | _ => true
+            }
+            t.expect(didThrow, ~message="effect call should reject").toEqual(true)
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(attemptCount.contents, ~message="handler called exactly once").toEqual(1)
+  })
+
+  Async.it("Effect with bounded maxRetries gives up after exhausting attempts", async t => {
+    let sourceMock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    let attemptCount = ref(0)
+    let alwaysFailEffect = Envio.createEffect(
+      {
+        name: "alwaysFailEffect",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+        maxRetries: 2,
+      },
+      async ({input: _}) => {
+        attemptCount := attemptCount.contents + 1
+        Utils.Error.make("nope")->throw
+      },
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            let didThrow = try {
+              let _ = await context.effect(alwaysFailEffect, "x")
+              false
+            } catch {
+            | _ => true
+            }
+            t.expect(didThrow, ~message="effect call should reject after retries").toEqual(true)
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(
+      attemptCount.contents,
+      ~message="handler called 1 + maxRetries times",
+    ).toEqual(3)
   })
 
   Async.it(

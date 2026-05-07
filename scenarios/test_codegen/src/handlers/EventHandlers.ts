@@ -559,6 +559,7 @@ const throwingEffect = createEffect(
     },
     output: S.string,
     rateLimit: false,
+    maxRetries: 0,
     cache: true,
   },
   async (_) => {

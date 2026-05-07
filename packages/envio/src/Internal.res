@@ -566,6 +566,8 @@ type effect = {
   mutable activeCallsCount: int,
   mutable prevCallStartTimerRef: Hrtime.timeRef,
   rateLimit: option<rateLimitState>,
+  // None means retry forever; Some(n) caps total retry attempts at n.
+  maxRetries: option<int>,
 }
 let cacheTablePrefix = "envio_effect_"
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)

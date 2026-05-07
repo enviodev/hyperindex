@@ -79,6 +79,9 @@ and effectOptions<'input, 'output> = {
   output: S.t<'output>,
   /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
   rateLimit: rateLimit,
+  /** Maximum retry attempts on handler failure. Omit for unlimited retries (default).
+      Set to 0 to disable retries. Retries use exponential backoff with full jitter. */
+  maxRetries?: int,
   /** Whether the effect should be cached. */
   cache?: bool,
 }
@@ -148,6 +151,7 @@ let createEffect = (
         nextWindowPromise: None,
       })
     },
+    maxRetries: options.maxRetries,
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
 }
 

@@ -694,6 +694,18 @@ module EffectCalls = {
   )
 }
 
+module EffectRetriesCount = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_effect_retries",
+    ~help="The number of retried Effect function calls due to handler failures.",
+    ~labelSchema=effectLabelsSchema,
+  )
+
+  let increment = (~effectName) => {
+    counter->SafeCounter.increment(~labels=effectName)
+  }
+}
+
 module EffectCacheCount = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_effect_cache",
