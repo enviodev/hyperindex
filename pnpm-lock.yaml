@@ -150,6 +150,19 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  scenarios/bulk_erc20_unichain:
+    dependencies:
+      envio:
+        specifier: file:../../packages/envio
+        version: link:../../packages/envio
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   scenarios/e2e_test:
     dependencies:
       envio:

@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=../../packages/envio/evm.schema.json
+#
+# Bulk-mode config for backfilling USDC Transfers on Unichain mainnet.
+# Smaller chain than Ethereum, useful for comparing density / rate limits.
+name: bulk-erc20-unichain
+description: Bulk-mode firehose backfill of USDC Transfer events on Unichain
+rollback_on_reorg: false
+save_full_history: false
+storage:
+  postgres: true
+  clickhouse: true
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 130
+    hypersync_config:
+      url: https://unichain.hypersync.xyz
+    start_block: 0
+    end_block: 18000000
+    contracts:
+      - name: ERC20
+        address: "0x078D782b760474a361dDA0AF3839290b0EF57AD6"
