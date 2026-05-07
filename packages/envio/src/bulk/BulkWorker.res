@@ -32,17 +32,9 @@ type workerMessage =
 // sent over the wire, which directly cuts decode + bandwidth time. We need
 // transaction.hash for the tx_hash column, but skip the rest.
 let buildFieldSelection = (): HyperSyncClient.QueryTypes.fieldSelection => {
-  block: [
-    "number"->(Utils.magic: string => HyperSyncClient.QueryTypes.blockField),
-    "timestamp"->(Utils.magic: string => HyperSyncClient.QueryTypes.blockField),
-  ],
-  transaction: ["hash"->(Utils.magic: string => HyperSyncClient.QueryTypes.transactionField)],
-  log: [
-    "logIndex"->(Utils.magic: string => HyperSyncClient.QueryTypes.logField),
-    "address"->(Utils.magic: string => HyperSyncClient.QueryTypes.logField),
-    "topics"->(Utils.magic: string => HyperSyncClient.QueryTypes.logField),
-    "data"->(Utils.magic: string => HyperSyncClient.QueryTypes.logField),
-  ],
+  block: [Number, Timestamp],
+  transaction: [Hash],
+  log: [LogIndex, Address, Topic0, Topic1, Topic2, Topic3, Data],
 }
 
 // Transaction objects come back as Internal.eventTransaction which is an
@@ -135,12 +127,6 @@ let extractTransferValue = (decoded: HyperSyncClient.Decoder.decodedEvent): stri
   }
 }
 
-// Range-chunk size. HyperSync handles big ranges fine (it pages internally),
-// but we want progress messages frequently and want to bound per-chunk memory,
-// so we step in fixed block chunks. The actual per-call response size is
-// driven by HyperSync's `nextBlock` cursor.
-let rangeStep = 50_000
-
 let postProgress = (port: NodeJs.WorkerThreads.messagePort, msg: workerMessage) => {
   port->NodeJs.WorkerThreads.postMessage(msg)
 }
@@ -180,15 +166,13 @@ let runWorker = async (~data: workerData, ~port: NodeJs.WorkerThreads.messagePor
   let toBlockInclusive = data.toBlock
 
   while cursor.contents <= toBlockInclusive {
-    let chunkTo = Pervasives.min(cursor.contents + rangeStep - 1, toBlockInclusive)
-
     // HyperSync.GetLogs.query handles pagination internally up to the next
     // archive-height boundary and returns a logsQueryPage. We then decode
     // once for the page and stream rows to ClickHouse.
     let page = await HyperSync.GetLogs.query(
       ~client,
       ~fromBlock=cursor.contents,
-      ~toBlock=Some(chunkTo),
+      ~toBlock=Some(toBlockInclusive),
       ~logSelections,
       ~fieldSelection,
       ~nonOptionalBlockFieldNames=["number", "timestamp"],
@@ -266,14 +250,11 @@ let runWorker = async (~data: workerData, ~port: NodeJs.WorkerThreads.messagePor
       totalEvents := totalEvents.contents +. rows->Array.length->Int.toFloat
     }
 
-    // Advance cursor: trust HyperSync's nextBlock if it advanced past chunkTo,
-    // otherwise step by chunkTo+1.
-    let advanced = if page.nextBlock > chunkTo + 1 {
-      page.nextBlock
-    } else {
-      chunkTo + 1
-    }
-    cursor := advanced
+    // HyperSync's `nextBlock` is the exclusive upper bound of what was
+    // returned. If response was truncated (page limit), nextBlock <= toBlock
+    // and we re-query from there. If it covered the whole range, nextBlock
+    // > toBlockInclusive and the loop exits.
+    cursor := page.nextBlock
 
     // Throttle progress messages to ~1/sec to avoid flooding the parent.
     let now = Date.now()

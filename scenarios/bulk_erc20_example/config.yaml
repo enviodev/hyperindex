@@ -9,13 +9,17 @@
 #   ENVIO_CLICKHOUSE_HOST=http://localhost:8123 \
 #     pnpm envio start
 #
-# For other ERC20 tokens, change the address and start_block. The bulk path
-# only writes the first event of the first contract, so any ERC20 works as
-# long as you keep the Transfer event listed.
+# `storage: clickhouse: true` is here so `envio local docker up` (or
+# `envio dev`) spins up a local ClickHouse container at :8123 that bulk
+# mode writes into. Bulk mode itself bypasses the regular CH/PG storage
+# path — these flags only affect the docker-up convenience.
 name: bulk-erc20-example
 description: Bulk-mode firehose backfill of USDC Transfer events to ClickHouse
 rollback_on_reorg: false
 save_full_history: false
+storage:
+  postgres: true
+  clickhouse: true
 contracts:
   - name: ERC20
     events:
@@ -24,8 +28,8 @@ chains:
   - id: 1
     hypersync_config:
       url: https://eth.hypersync.xyz
-    start_block: 6082465 # USDC contract creation
-    end_block: 19000000  # Pick whatever upper bound you want; bulk mode requires a finite range
+    start_block: 6082465  # USDC contract creation
+    end_block: 19000000   # ~13M blocks of USDC activity
     contracts:
       - name: ERC20
         address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"

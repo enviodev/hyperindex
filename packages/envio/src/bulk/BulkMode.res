@@ -82,11 +82,17 @@ let startProgressLogger = (
         ->Int.toString} elapsed=${elapsedSec->Float.toFixed(~digits=1)}s`,
     )
   }
-  let setInterval: (unit => unit, int) => 'a = %raw(`(fn, ms) => setInterval(fn, ms)`)
-  let clearInterval: 'a => unit = %raw(`(id) => { try { clearInterval(id); } catch (_) {} }`)
-  let id = setInterval(render, 1000)
+  // Bind the host setInterval/clearInterval through globalThis so the local
+  // ReScript-side names don't shadow the JS globals (a `let setInterval = ...`
+  // that calls `setInterval(...)` recurses forever — Node.js bug we hit).
+  let scheduleInterval: (
+    unit => unit,
+    int,
+  ) => 'a = %raw(`(fn, ms) => globalThis.setInterval(fn, ms)`)
+  let cancelInterval: 'a => unit = %raw(`(id) => { try { globalThis.clearInterval(id); } catch (_) {} }`)
+  let id = scheduleInterval(render, 1000)
   // Returns a stop function the caller can call when all shards are done.
-  (): unit => clearInterval(id)
+  (): unit => cancelInterval(id)
 }
 
 let runChain = async (~bulkConfig: BulkConfig.t, ~chainPlan: BulkConfig.chainPlan): float => {
@@ -129,7 +135,6 @@ let runChain = async (~bulkConfig: BulkConfig.t, ~chainPlan: BulkConfig.chainPla
         entry,
         {
           workerData: workerData->(Utils.magic: BulkWorker.workerData => JSON.t),
-          env: %raw(`process.env`),
         },
       )
 
