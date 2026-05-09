@@ -566,6 +566,23 @@ const throwingEffect = createEffect(
   },
 );
 
+// Regression: Date.now() exposes whether the cache is reused. Across worker
+// boundaries the value should still come from the first call's cache.
+const splitProcessTimestampEffect = createEffect(
+  {
+    name: "splitProcessTimestampEffect",
+    input: {
+      id: S.string,
+    },
+    output: S.bigint,
+    rateLimit: false,
+    cache: true,
+  },
+  async (_) => {
+    return BigInt(Date.now());
+  },
+);
+
 let getOrThrowInLoaderCount = 0;
 let loaderSetCount = 0;
 
@@ -792,6 +809,23 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
         id: "1",
       });
       fail("Should have thrown");
+    }
+
+    case "splitProcessEffectCacheRegression": {
+      // Same effect input across both .process() calls — when the cache is
+      // persisted, every call sees the value computed in the first run.
+      const ts = await context.effect(splitProcessTimestampEffect, {
+        id: "stable",
+      });
+      context.Gravatar.set({
+        id: event.params.contract,
+        owner_id: event.params.contract,
+        displayName: "split-process-marker",
+        imageUrl: "",
+        updatesCount: ts,
+        size: "SMALL",
+      });
+      break;
     }
   }
 });

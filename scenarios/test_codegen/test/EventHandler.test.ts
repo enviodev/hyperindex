@@ -1539,6 +1539,235 @@ describe("Use Envio test framework to test event handlers", () => {
       >
     >(true);
   });
+
+  // Regression test for https://github.com/beefyfinance/beefy-envio-balances-indexer/pull/4
+  // Splitting indexer.process() across two calls on the same statically
+  // configured contract used to hang on the second call.
+  it(
+    "Split indexer.process() calls on the same static contract without hanging",
+    async () => {
+      const indexer = createTestIndexer();
+
+      // First call: NewGravatar at block 2578061 (mirrors the high-block setup
+      // from the original repro).
+      const setupResult = await indexer.process({
+        chains: {
+          1337: {
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "NewGravatar",
+                block: { number: 2578061, timestamp: 1691945469 },
+                logIndex: 4,
+                transaction: {
+                  hash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+                  transactionIndex: 7,
+                },
+                params: {
+                  id: 1n,
+                  owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                  displayName: "first",
+                  imageUrl: "first.png",
+                },
+              },
+            ],
+          },
+        },
+      });
+      assert.strictEqual(
+        setupResult.changes[0]?.eventsProcessed,
+        1,
+        "Setup event should have been processed",
+      );
+
+      // Second call: another event on the same contract one block later.
+      // Race against a timeout so a hang fails the test instead of freezing CI.
+      const processPromise = indexer.process({
+        chains: {
+          1337: {
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "NewGravatar",
+                block: { number: 2578062, timestamp: 1691945470 },
+                logIndex: 31,
+                transaction: {
+                  hash: "0x0000000000000000000000000000000000000000000000000000000000000002",
+                  transactionIndex: 7,
+                },
+                params: {
+                  id: 2n,
+                  owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                  displayName: "second",
+                  imageUrl: "second.png",
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const timeoutPromise = new Promise<"timeout">((resolve) =>
+        setTimeout(() => resolve("timeout"), 15_000),
+      );
+
+      const result = await Promise.race([processPromise, timeoutPromise]);
+      assert.notStrictEqual(
+        result,
+        "timeout",
+        "indexer.process() hung on the second call",
+      );
+      assert.ok(
+        (result as { changes: Array<{ eventsProcessed?: number }> }).changes.some(
+          (c) => (c.eventsProcessed ?? 0) > 0,
+        ),
+        "Event was not processed in the second .process() call",
+      );
+    },
+    20_000,
+  );
+
+  // Sibling regression: the first call registers a dynamic contract; the
+  // second call must still process events on that newly registered address.
+  it(
+    "Split indexer.process() calls register a dynamic contract then emit on it without hanging",
+    async () => {
+      const indexer = createTestIndexer();
+      const dcAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+      // First call: register SimpleNft via NftFactory.SimpleNftCreated.
+      const registerResult = await indexer.process({
+        chains: {
+          1337: {
+            simulate: [
+              {
+                contract: "NftFactory",
+                event: "SimpleNftCreated",
+                block: { number: 100 },
+                params: {
+                  contractAddress: dcAddress,
+                  name: "TestNft",
+                  symbol: "TNFT",
+                  maxSupply: 100n,
+                },
+              },
+            ],
+          },
+        },
+      });
+      assert.deepEqual(registerResult.changes[0]?.addresses, {
+        sets: [{ address: dcAddress, contract: "SimpleNft" }],
+      });
+
+      // Second call: fire Transfer on the dynamic contract registered above.
+      const processPromise = indexer.process({
+        chains: {
+          1337: {
+            simulate: [
+              {
+                contract: "SimpleNft",
+                event: "Transfer",
+                block: { number: 101 },
+                srcAddress: dcAddress,
+                params: {
+                  from: "0xc29d2531651fcd304c60fbfb8073a518d8fe0a21",
+                  to: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                  tokenId: 1n,
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const timeoutPromise = new Promise<"timeout">((resolve) =>
+        setTimeout(() => resolve("timeout"), 15_000),
+      );
+
+      const result = await Promise.race([processPromise, timeoutPromise]);
+      assert.notStrictEqual(
+        result,
+        "timeout",
+        "indexer.process() hung after a prior call registered a dynamic contract",
+      );
+      assert.ok(
+        (result as { changes: Array<{ eventsProcessed?: number }> }).changes.some(
+          (c) => (c.eventsProcessed ?? 0) > 0,
+        ),
+        "Transfer event on dynamic contract was not processed in the second .process() call",
+      );
+    },
+    20_000,
+  );
+
+  // Regression test for the underlying cause of
+  // https://github.com/beefyfinance/beefy-envio-balances-indexer/pull/4 :
+  // an effect with `cache: true` should reuse its cached value across separate
+  // indexer.process() calls. Today TestIndexerProxyStorage.dumpEffectCache is a
+  // no-op, so each .process() call spawns a fresh worker with an empty cache
+  // and any cached effect (e.g. an RPC multicall) is re-run. With slow effects
+  // this doubles the runtime of split tests and looks like a hang under tight
+  // testTimeout settings.
+  it.fails(
+    "Effect cache persists across split indexer.process() calls",
+    async () => {
+      const indexer = createTestIndexer();
+      const dcAddrA = "0x1111111111111111111111111111111111111111";
+      const dcAddrB = "0x2222222222222222222222222222222222222222";
+
+      await indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: {
+                  contract: dcAddrA,
+                  testCase: "splitProcessEffectCacheRegression",
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      // Spread the calls in time so a re-run of the effect in the second
+      // worker is guaranteed to produce a different Date.now() value.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      await indexer.process({
+        chains: {
+          1337: {
+            startBlock: 101,
+            endBlock: 200,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: {
+                  contract: dcAddrB,
+                  testCase: "splitProcessEffectCacheRegression",
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const first = await indexer.Gravatar.get(dcAddrA);
+      const second = await indexer.Gravatar.get(dcAddrB);
+      assert.ok(first && second, "Both calls should have produced entities");
+      assert.strictEqual(
+        first.updatesCount,
+        second.updatesCount,
+        "Cached effect should produce the same value across .process() calls",
+      );
+    },
+    20_000,
+  );
 });
 
 describe("onEvent / contractRegister types", () => {
