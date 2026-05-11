@@ -65,9 +65,19 @@ pub enum CommandType {
     #[command(subcommand)]
     Skills(SkillsSubcommand),
 
+    ///Inspect the indexer config
+    #[command(subcommand)]
+    Config(ConfigSubcommand),
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigSubcommand {
+    ///Print the resolved indexer config as JSON
+    View,
 }
 
 #[derive(Debug, Subcommand)]
