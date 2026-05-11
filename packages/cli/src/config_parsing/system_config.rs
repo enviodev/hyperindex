@@ -484,12 +484,10 @@ impl Storage {
 }
 
 /// Check per-entity `@storage` directives against the resolved global storage.
-/// Two failure modes are aggregated into a single error message so users can
-/// fix everything at once:
-///   - E2: in multi-storage mode every entity must declare `@storage`.
-///   - E1: every backend an entity declares must be enabled globally.
-/// E3/E4 (malformed directive, all-false) are raised earlier in
-/// `entity_parsing::parse_storage_directive`.
+/// Aggregates both failure classes (entity targets a disabled backend; entity
+/// missing the directive in multi-storage mode) into a single error so users
+/// fix everything in one pass. Malformed directives are raised earlier, during
+/// schema parsing.
 pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
     let multi = storage.is_multi();
 
