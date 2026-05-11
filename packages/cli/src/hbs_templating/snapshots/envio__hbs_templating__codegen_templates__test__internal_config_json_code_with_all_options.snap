@@ -122,6 +122,10 @@ expression: json
   "entities": [
     {
       "name": "EmptyEntity",
+      "storage": {
+        "postgres": true,
+        "clickhouse": true
+      },
       "properties": [
         {
           "name": "id",
@@ -170,6 +174,10 @@ expression: json
     },
     {
       "name": "RelatedEntity",
+      "storage": {
+        "postgres": true,
+        "clickhouse": true
+      },
       "properties": [
         {
           "name": "id",

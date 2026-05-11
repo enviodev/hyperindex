@@ -61,6 +61,10 @@ struct StorageConfig {
 #[serde(rename_all = "camelCase")]
 struct EntityJson {
     name: String,
+    // Resolved per-entity storage (after applying single-storage inheritance
+    // and validating against the global storage config). Downstream consumers
+    // such as Hasura read these to decide whether to expose the entity.
+    storage: StorageConfig,
     properties: Vec<PropertyJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     derived_fields: Vec<DerivedFieldJson>,
@@ -575,8 +579,15 @@ impl SystemConfig {
                     })
                     .collect();
 
+                let (entity_postgres, entity_clickhouse) =
+                    entity.resolved_storage(cfg.storage.postgres, cfg.storage.clickhouse);
+
                 Ok(EntityJson {
                     name: entity.name.clone(),
+                    storage: StorageConfig {
+                        postgres: entity_postgres,
+                        clickhouse: entity_clickhouse,
+                    },
                     properties,
                     derived_fields,
                     composite_indices,

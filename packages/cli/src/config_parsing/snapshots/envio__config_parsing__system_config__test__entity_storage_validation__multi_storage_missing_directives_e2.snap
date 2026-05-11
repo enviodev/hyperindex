@@ -1,0 +1,16 @@
+---
+source: packages/cli/src/config_parsing/system_config.rs
+expression: err.to_string()
+---
+Schema validation failed:
+
+Entities missing the @storage directive (multi-storage mode requires it):
+  - Approval
+  - DailySnapshot
+  - Transfer
+
+Fixes:
+  - Add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:
+      type Approval @storage(postgres: true) { ... }
+      type Approval @storage(clickhouse: true) { ... }
+      type Approval @storage(postgres: true, clickhouse: true) { ... }

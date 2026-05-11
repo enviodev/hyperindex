@@ -89,6 +89,12 @@ type t = {
   isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
+  // Subset of `userEntities` whose resolved storage includes Postgres.
+  // In single-storage Postgres mode this is identical to `userEntities`.
+  // In multi-storage mode it only contains entities the user opted into
+  // Postgres for via `@storage(postgres: true)`. Hasura tracks tables from
+  // this list, since Hasura sits on top of Postgres.
+  pgUserEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
 }
@@ -269,9 +275,17 @@ let propertySchema = S.schema(s =>
   }
 )
 
+let entityStorageSchema = S.schema(s =>
+  {
+    "postgres": s.matches(S.bool),
+    "clickhouse": s.matches(S.option(S.bool)),
+  }
+)
+
 let entityJsonSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
+    "storage": s.matches(entityStorageSchema),
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
     "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
@@ -756,10 +770,16 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   let enumConfigsByName =
     allEnums->Array.map(enumConfig => (enumConfig.name, enumConfig))->Dict.fromArray
 
-  let userEntities =
-    publicConfig["entities"]
-    ->Option.getOr([])
-    ->parseEntitiesFromJson(~enumConfigsByName)
+  let entitiesJson = publicConfig["entities"]->Option.getOr([])
+  let userEntities = entitiesJson->parseEntitiesFromJson(~enumConfigsByName)
+
+  // Filter to the subset whose resolved per-entity storage includes
+  // Postgres. Hasura tracks tables from this list. Indices align with
+  // `entitiesJson` since `parseEntitiesFromJson` maps 1:1.
+  let pgUserEntities =
+    userEntities->Belt.Array.keepWithIndex((_, i) =>
+      (entitiesJson->Array.getUnsafe(i))["storage"]["postgres"]
+    )
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 
@@ -806,6 +826,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,
     userEntities,
+    pgUserEntities,
     allEntities,
     allEnums,
   }

@@ -1,0 +1,5 @@
+---
+source: packages/cli/src/config_parsing/entity_parsing.rs
+expression: err.to_string()
+---
+Invalid @storage directive on `TestEntity`. Argument `postgres` is specified more than once. Expected boolean args from {postgres, clickhouse}, e.g. @storage(postgres: true, clickhouse: true).

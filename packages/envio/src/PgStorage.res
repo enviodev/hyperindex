@@ -1744,7 +1744,7 @@ let makeStorageFromEnv = (
                 secret: Env.Hasura.secret,
               },
               ~pgSchema,
-              ~userEntities=config.userEntities,
+              ~userEntities=config.pgUserEntities,
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Schema.make(config.allEntities->Belt.Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
