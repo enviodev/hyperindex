@@ -24,17 +24,14 @@ describe("envio config view", () => {
       status: result.status,
       signal: result.signal,
       parsed: JSON.parse(result.stdout),
-    }).toMatchInlineSnapshot(
-      { parsed: { version: expect.any(String) } },
-      `
+    }).toMatchInlineSnapshot(`
       {
         "parsed": {
-          "version": Any<String>,
+          "version": "0.0.1-dev",
         },
         "signal": null,
         "status": 0,
       }
-    `,
-    );
+    `);
   });
 });
