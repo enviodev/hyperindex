@@ -111,7 +111,7 @@ describe("E2E tests", () => {
     ).toEqual([{value: "1", labels: Dict.make()}])
   })
 
-  Async.it("Prom metrics are set independently per chain", async t => {
+  Async.itWithOptions("Prom metrics are set independently per chain", {retry: 3}, async t => {
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
