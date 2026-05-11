@@ -14,12 +14,29 @@ if (actual !== expected) {
 }
 
 indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, context }) => {
+  const id = `${event.chainId}-${event.block.number}-${event.logIndex}`;
+
   context.Transfer.set({
-    id: `${event.chainId}-${event.block.number}-${event.logIndex}`,
+    id,
     from: event.params.from,
     to: event.params.to,
     value: event.params.value,
     blockNumber: event.block.number,
     transactionHash: event.transaction.hash,
+  });
+
+  // Per-entity storage override: only Postgres receives this row
+  // (declared in schema.graphql via @storage(postgres: true)).
+  context.TransferPgOnly.set({
+    id,
+    from: event.params.from,
+    value: event.params.value,
+  });
+
+  // Mirror override: only ClickHouse receives this row.
+  context.TransferChOnly.set({
+    id,
+    from: event.params.from,
+    value: event.params.value,
   });
 });
