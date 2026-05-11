@@ -1,5 +1,5 @@
 use crate::{
-    clap_definitions::{JsonSchema, Script, SkillsSubcommand},
+    clap_definitions::{ConfigSubcommand, JsonSchema, Script, SkillsSubcommand},
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
@@ -9,6 +9,7 @@ use crate::{
 };
 
 mod codegen;
+mod config;
 mod dev;
 pub mod init;
 mod local;
@@ -87,6 +88,11 @@ pub async fn execute(
 
         CommandType::Skills(SkillsSubcommand::Update) => {
             skills::run_update(&parsed_project_paths)?;
+            Ok(None)
+        }
+
+        CommandType::Config(ConfigSubcommand::View) => {
+            config::run_view()?;
             Ok(None)
         }
 
