@@ -1,5 +1,0 @@
----
-source: packages/cli/src/config_parsing/entity_parsing.rs
-expression: err.to_string()
----
-@storage on `TestEntity` enables no storage. At least one of {postgres, clickhouse} must be true.

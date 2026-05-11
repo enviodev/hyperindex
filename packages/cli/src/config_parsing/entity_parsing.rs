@@ -2880,7 +2880,12 @@ type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
 type TestEntity @storage(redis: true) { id: ID! }
         "#;
         let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        insta::assert_snapshot!(err.to_string());
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Unknown argument `redis`. \
+             Expected boolean args from {postgres, clickhouse}, e.g. @storage(postgres: \
+             true, clickhouse: true)."
+        );
     }
 
     #[test]
@@ -2889,7 +2894,12 @@ type TestEntity @storage(redis: true) { id: ID! }
 type TestEntity @storage(postgres: "yes") { id: ID! }
         "#;
         let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        insta::assert_snapshot!(err.to_string());
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Argument `postgres` must be a \
+             boolean. Expected boolean args from {postgres, clickhouse}, e.g. \
+             @storage(postgres: true, clickhouse: true)."
+        );
     }
 
     #[test]
@@ -2898,7 +2908,12 @@ type TestEntity @storage(postgres: "yes") { id: ID! }
 type TestEntity @storage(postgres: true) @storage(clickhouse: true) { id: ID! }
         "#;
         let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        insta::assert_snapshot!(err.to_string());
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Only one @storage directive is \
+             allowed per entity. Expected boolean args from {postgres, clickhouse}, e.g. \
+             @storage(postgres: true, clickhouse: true)."
+        );
     }
 
     #[test]
@@ -2907,7 +2922,12 @@ type TestEntity @storage(postgres: true) @storage(clickhouse: true) { id: ID! }
 type TestEntity @storage(postgres: true, postgres: false) { id: ID! }
         "#;
         let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        insta::assert_snapshot!(err.to_string());
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Argument `postgres` is specified \
+             more than once. Expected boolean args from {postgres, clickhouse}, e.g. \
+             @storage(postgres: true, clickhouse: true)."
+        );
     }
 
     #[test]
@@ -2916,7 +2936,11 @@ type TestEntity @storage(postgres: true, postgres: false) { id: ID! }
 type TestEntity @storage(postgres: false) { id: ID! }
         "#;
         let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        insta::assert_snapshot!(err.to_string());
+        assert_eq!(
+            err.to_string(),
+            "@storage on `TestEntity` enables no storage. At least one of {postgres, \
+             clickhouse} must be true."
+        );
     }
 
     #[test]
@@ -2925,7 +2949,11 @@ type TestEntity @storage(postgres: false) { id: ID! }
 type TestEntity @storage { id: ID! }
         "#;
         let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        insta::assert_snapshot!(err.to_string());
+        assert_eq!(
+            err.to_string(),
+            "@storage on `TestEntity` enables no storage. At least one of {postgres, \
+             clickhouse} must be true."
+        );
     }
 
     #[test]

@@ -2667,7 +2667,16 @@ mod test {
                 clickhouse: false,
             };
             let err = validate_entity_storage(&storage, &schema).unwrap_err();
-            insta::assert_snapshot!(err.to_string());
+            assert_eq!(
+                err.to_string(),
+                "Schema validation failed:\n\
+                 \n\
+                 Entities using storages not enabled in config.yaml:\n  \
+                 - `Snapshot` uses `clickhouse`, but `clickhouse` is not enabled.\n\
+                 \n\
+                 Fixes:\n  \
+                 - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml."
+            );
         }
 
         #[test]
@@ -2696,7 +2705,21 @@ mod test {
                 clickhouse: true,
             };
             let err = validate_entity_storage(&storage, &schema).unwrap_err();
-            insta::assert_snapshot!(err.to_string());
+            assert_eq!(
+                err.to_string(),
+                "Schema validation failed:\n\
+                 \n\
+                 Entities missing the @storage directive (multi-storage mode requires it):\n  \
+                 - Approval\n  \
+                 - DailySnapshot\n  \
+                 - Transfer\n\
+                 \n\
+                 Fixes:\n  \
+                 - Add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
+                 type Approval @storage(postgres: true) { ... }\n      \
+                 type Approval @storage(clickhouse: true) { ... }\n      \
+                 type Approval @storage(postgres: true, clickhouse: true) { ... }"
+            );
         }
 
         #[test]
@@ -2713,7 +2736,13 @@ mod test {
                 clickhouse: true,
             };
             let err = validate_entity_storage(&storage, &schema).unwrap_err();
-            insta::assert_snapshot!(err.to_string());
+            // Construction order above is Zebra→Apple→Mango; HashMap
+            // iteration is unspecified. Error message must list them
+            // alphabetically.
+            assert!(
+                err.to_string().contains("- Apple\n  - Mango\n  - Zebra"),
+                "Entities not listed alphabetically. Got:\n{err}"
+            );
         }
     }
 }
