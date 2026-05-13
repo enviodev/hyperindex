@@ -302,8 +302,9 @@ let setUpdatesOrThrow = async (
 let makeCreateHistoryTableQuery = (
   ~entityConfig: Internal.entityConfig,
   ~database: string,
-  ~tableEngine: string="MergeTree()",
+  ~replicated: bool=false,
 ) => {
+  let tableEngine = replicated ? "ReplicatedMergeTree" : "MergeTree()"
   let fieldDefinitions = entityConfig.table.fields->Belt.Array.keepMap(field => {
     switch field {
     | Field(field) =>
@@ -341,7 +342,8 @@ ORDER BY (${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
 }
 
 // Generate CREATE TABLE query for checkpoints
-let makeCreateCheckpointsTableQuery = (~database: string, ~tableEngine: string="MergeTree()") => {
+let makeCreateCheckpointsTableQuery = (~database: string, ~replicated: bool=false) => {
+  let tableEngine = replicated ? "ReplicatedMergeTree" : "MergeTree()"
   let idField = (#id: InternalTable.Checkpoints.field :> string)
   let chainIdField = (#chain_id: InternalTable.Checkpoints.field :> string)
   let blockNumberField = (#block_number: InternalTable.Checkpoints.field :> string)
@@ -418,7 +420,7 @@ let initialize = async (
   ~enums as _: array<Table.enumConfig<Table.enum>>,
 ) => {
   try {
-    let tableEngine = Env.ClickHouse.replicated() ? "ReplicatedMergeTree" : "MergeTree()"
+    let replicated = Env.ClickHouse.replicated()
 
     await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}`})
     await client->exec({query: `CREATE DATABASE IF NOT EXISTS ${database}`})
@@ -426,10 +428,10 @@ let initialize = async (
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
-        client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database, ~tableEngine)})
+        client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database, ~replicated)})
       ),
     )->Utils.Promise.ignoreValue
-    await client->exec({query: makeCreateCheckpointsTableQuery(~database, ~tableEngine)})
+    await client->exec({query: makeCreateCheckpointsTableQuery(~database, ~replicated)})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
