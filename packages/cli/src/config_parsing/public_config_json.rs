@@ -51,10 +51,19 @@ pub(crate) struct PublicConfigJson<'a> {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct StorageConfig {
-    postgres: bool,
+pub(crate) struct StorageConfig {
+    pub(crate) postgres: bool,
     #[serde(skip_serializing_if = "is_false")]
-    clickhouse: bool,
+    pub(crate) clickhouse: bool,
+}
+
+impl From<&system_config::Storage> for StorageConfig {
+    fn from(s: &system_config::Storage) -> Self {
+        Self {
+            postgres: s.postgres,
+            clickhouse: s.clickhouse,
+        }
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -595,10 +604,7 @@ impl SystemConfig {
             rollback_on_reorg: cfg.rollback_on_reorg,
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
-            storage: StorageConfig {
-                postgres: cfg.storage.postgres,
-                clickhouse: cfg.storage.clickhouse,
-            },
+            storage: (&cfg.storage).into(),
             evm,
             fuel,
             svm,

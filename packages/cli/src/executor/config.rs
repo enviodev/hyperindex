@@ -1,5 +1,8 @@
 use crate::{
-    config_parsing::system_config::{SystemConfig, VERSION},
+    config_parsing::{
+        public_config_json::StorageConfig,
+        system_config::{SystemConfig, VERSION},
+    },
     project_paths::ParsedProjectPaths,
 };
 use anyhow::{Context, Result};
@@ -7,17 +10,9 @@ use serde::Serialize;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StorageView {
-    postgres: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    clickhouse: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct ConfigView<'a> {
     version: &'a str,
-    storage: StorageView,
+    storage: StorageConfig,
 }
 
 pub fn run_view(parsed_project_paths: &ParsedProjectPaths) -> Result<()> {
@@ -26,10 +21,7 @@ pub fn run_view(parsed_project_paths: &ParsedProjectPaths) -> Result<()> {
 
     let payload = ConfigView {
         version: VERSION,
-        storage: StorageView {
-            postgres: config.storage.postgres,
-            clickhouse: config.storage.clickhouse,
-        },
+        storage: (&config.storage).into(),
     };
 
     println!(
