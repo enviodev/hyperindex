@@ -92,7 +92,7 @@ pub async fn execute(
         }
 
         CommandType::Config(ConfigSubcommand::View) => {
-            config::run_view()?;
+            config::run_view(&parsed_project_paths)?;
             Ok(None)
         }
 

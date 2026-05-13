@@ -27,6 +27,10 @@ describe("envio config view", () => {
     }).toMatchInlineSnapshot(`
       {
         "parsed": {
+          "storage": {
+            "clickhouse": true,
+            "postgres": true,
+          },
           "version": "0.0.1-dev",
         },
         "signal": null,

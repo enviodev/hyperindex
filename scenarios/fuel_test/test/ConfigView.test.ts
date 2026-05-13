@@ -27,6 +27,9 @@ describe("envio config view", () => {
     }).toMatchInlineSnapshot(`
       {
         "parsed": {
+          "storage": {
+            "postgres": true,
+          },
           "version": "0.0.1-dev",
         },
         "signal": null,
