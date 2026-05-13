@@ -51,10 +51,10 @@ pub(crate) struct PublicConfigJson<'a> {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct StorageConfig {
-    pub(crate) postgres: bool,
+struct StorageConfig {
+    postgres: bool,
     #[serde(skip_serializing_if = "is_false")]
-    pub(crate) clickhouse: bool,
+    clickhouse: bool,
 }
 
 impl From<&system_config::Storage> for StorageConfig {
@@ -614,4 +614,19 @@ impl SystemConfig {
 
         Ok(serde_json::to_string_pretty(&config)? + "\n")
     }
+
+    pub fn to_view_json(&self) -> Result<String> {
+        let view = ConfigView {
+            version: system_config::VERSION,
+            storage: (&self.storage).into(),
+        };
+        Ok(serde_json::to_string_pretty(&view)?)
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigView<'a> {
+    version: &'a str,
+    storage: StorageConfig,
 }
