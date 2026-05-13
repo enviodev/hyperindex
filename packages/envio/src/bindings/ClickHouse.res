@@ -299,7 +299,11 @@ let setUpdatesOrThrow = async (
 }
 
 // Generate CREATE TABLE query for entity history table
-let makeCreateHistoryTableQuery = (~entityConfig: Internal.entityConfig, ~database: string) => {
+let makeCreateHistoryTableQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~database: string,
+  ~tableEngine: string="MergeTree()",
+) => {
   let fieldDefinitions = entityConfig.table.fields->Belt.Array.keepMap(field => {
     switch field {
     | Field(field) =>
@@ -332,12 +336,12 @@ let makeCreateHistoryTableQuery = (~entityConfig: Internal.entityConfig, ~databa
       ~isArray=false,
     )}
 )
-ENGINE = MergeTree()
+ENGINE = ${tableEngine}
 ORDER BY (${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
 }
 
 // Generate CREATE TABLE query for checkpoints
-let makeCreateCheckpointsTableQuery = (~database: string) => {
+let makeCreateCheckpointsTableQuery = (~database: string, ~tableEngine: string="MergeTree()") => {
   let idField = (#id: InternalTable.Checkpoints.field :> string)
   let chainIdField = (#chain_id: InternalTable.Checkpoints.field :> string)
   let blockNumberField = (#block_number: InternalTable.Checkpoints.field :> string)
@@ -367,7 +371,7 @@ let makeCreateCheckpointsTableQuery = (~database: string) => {
       ~isArray=false,
     )}
 )
-ENGINE = MergeTree()
+ENGINE = ${tableEngine}
 ORDER BY (${idField})`
 }
 
@@ -414,16 +418,18 @@ let initialize = async (
   ~enums as _: array<Table.enumConfig<Table.enum>>,
 ) => {
   try {
+    let tableEngine = Env.ClickHouse.replicated() ? "ReplicatedMergeTree" : "MergeTree()"
+
     await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}`})
     await client->exec({query: `CREATE DATABASE IF NOT EXISTS ${database}`})
     await client->exec({query: `USE ${database}`})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
-        client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database)})
+        client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database, ~tableEngine)})
       ),
     )->Utils.Promise.ignoreValue
-    await client->exec({query: makeCreateCheckpointsTableQuery(~database)})
+    await client->exec({query: makeCreateCheckpointsTableQuery(~database, ~tableEngine)})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
