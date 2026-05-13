@@ -61,15 +61,25 @@ struct StorageConfig {
 #[serde(rename_all = "camelCase")]
 struct EntityJson {
     name: String,
-    // Resolved per-entity storage (after applying single-storage inheritance
-    // and validating against the global storage config). Downstream consumers
-    // such as Hasura read these to decide whether to expose the entity.
-    storage: StorageConfig,
+    // Mirrors the user's `@storage(...)` directive verbatim: only the args
+    // they wrote are emitted, and the whole field is omitted when the
+    // directive is absent. Resolution against the global storage happens
+    // on the ReScript side.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    storage: Option<EntityStorageJson>,
     properties: Vec<PropertyJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     derived_fields: Vec<DerivedFieldJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     composite_indices: Vec<Vec<CompositeIndexJson>>,
+}
+
+#[derive(Serialize, Debug)]
+struct EntityStorageJson {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    postgres: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clickhouse: Option<bool>,
 }
 
 #[derive(Serialize, Debug)]
@@ -579,15 +589,18 @@ impl SystemConfig {
                     })
                     .collect();
 
-                let (entity_postgres, entity_clickhouse) =
-                    entity.resolved_storage(cfg.storage.postgres, cfg.storage.clickhouse);
+                let storage = if entity.has_storage_directive() {
+                    Some(EntityStorageJson {
+                        postgres: entity.postgres,
+                        clickhouse: entity.clickhouse,
+                    })
+                } else {
+                    None
+                };
 
                 Ok(EntityJson {
                     name: entity.name.clone(),
-                    storage: StorageConfig {
-                        postgres: entity_postgres,
-                        clickhouse: entity_clickhouse,
-                    },
+                    storage,
                     properties,
                     derived_fields,
                     composite_indices,

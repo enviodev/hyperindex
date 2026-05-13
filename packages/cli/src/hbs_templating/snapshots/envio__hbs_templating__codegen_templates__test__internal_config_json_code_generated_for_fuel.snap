@@ -49,9 +49,6 @@ expression: json
   "entities": [
     {
       "name": "EmptyEntity",
-      "storage": {
-        "postgres": true
-      },
       "properties": [
         {
           "name": "id",

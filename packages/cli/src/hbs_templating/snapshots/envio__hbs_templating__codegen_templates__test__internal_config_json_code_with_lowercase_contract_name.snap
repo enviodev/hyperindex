@@ -100,9 +100,6 @@ expression: json
   "entities": [
     {
       "name": "EmptyEntity",
-      "storage": {
-        "postgres": true
-      },
       "properties": [
         {
           "name": "id",
@@ -151,9 +148,6 @@ expression: json
     },
     {
       "name": "RelatedEntity",
-      "storage": {
-        "postgres": true
-      },
       "properties": [
         {
           "name": "id",

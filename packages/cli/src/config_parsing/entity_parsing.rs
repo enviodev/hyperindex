@@ -492,21 +492,6 @@ impl Entity {
         self.postgres.is_some() || self.clickhouse.is_some()
     }
 
-    /// Resolved storage assumes the entity has passed `validate_entity_storage`.
-    /// In single-storage mode an entity without `@storage` inherits the global
-    /// set; otherwise the explicit per-entity flags win, with unspecified
-    /// fields defaulting to `false`.
-    pub fn resolved_storage(&self, global_postgres: bool, global_clickhouse: bool) -> (bool, bool) {
-        let multi_storage = global_postgres && global_clickhouse;
-        if !self.has_storage_directive() && !multi_storage {
-            return (global_postgres, global_clickhouse);
-        }
-        (
-            self.postgres.unwrap_or(false),
-            self.clickhouse.unwrap_or(false),
-        )
-    }
-
     /// Returns the fields of this [`Entity`] in schema-defined order.
     pub fn get_fields(&self) -> Vec<&Field> {
         self.fields.iter().collect()
@@ -2945,25 +2930,5 @@ type TestEntity @storage { id: ID! }
             "@storage on `TestEntity` enables no storage. At least one of {postgres, \
              clickhouse} must be true."
         );
-    }
-
-    #[test]
-    fn resolved_storage_single_storage_inherits_global() {
-        let schema_str = r#"
-type TestEntity { id: ID! }
-        "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
-        // single-storage postgres → inherits (true, false)
-        assert_eq!(entity.resolved_storage(true, false), (true, false));
-    }
-
-    #[test]
-    fn resolved_storage_multi_storage_uses_explicit_only() {
-        let schema_str = r#"
-type TestEntity @storage(clickhouse: true) { id: ID! }
-        "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
-        // Unspecified postgres defaults to false in multi-storage mode.
-        assert_eq!(entity.resolved_storage(true, true), (false, true));
     }
 }
