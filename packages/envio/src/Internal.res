@@ -524,11 +524,11 @@ type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
 
 type entity = private {id: string}
 
-// Mirrors `@storage(...)`. None = directive absent; per-field None = arg
-// absent. Resolution against global storage is at the call site.
+// Per-entity storage resolved at parse time against the global storage
+// config. Downstream PG/CH consumers just check the matching boolean.
 type entityStorage = {
-  postgres: option<bool>,
-  clickhouse: option<bool>,
+  postgres: bool,
+  clickhouse: bool,
 }
 
 type genericEntityConfig<'entity> = {
@@ -537,7 +537,7 @@ type genericEntityConfig<'entity> = {
   schema: S.t<'entity>,
   rowsSchema: S.t<array<'entity>>,
   table: Table.table,
-  storage: option<entityStorage>,
+  storage: entityStorage,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"

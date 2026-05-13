@@ -150,7 +150,10 @@ module EnvioAddresses = {
     schema,
     rowsSchema,
     table,
-    storage: None,
+    // Internal address tracking is Postgres-only; the global config is
+    // always required to have Postgres enabled (Storage::resolve forbids
+    // a Postgres-disabled global), so this is safe regardless of mode.
+    storage: {postgres: true, clickhouse: false},
   }->Internal.fromGenericEntityConfig
 }
 
@@ -357,6 +360,7 @@ let parseEnumsFromJson = (enumsJson: dict<array<string>>): array<Table.enumConfi
 let parseEntitiesFromJson = (
   entitiesJson: array<'entityJson>,
   ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
+  ~globalStorage: storage,
 ): array<Internal.entityConfig> => {
   entitiesJson->Array.mapWithIndex((entityJson, index) => {
     let entityName = entityJson["name"]
@@ -425,13 +429,19 @@ let parseEntitiesFromJson = (
       dict
     })
 
-    let storage = switch entityJson["storage"] {
-    | Some(s) =>
-      Some({
-        Internal.postgres: s["postgres"],
-        clickhouse: s["clickhouse"],
-      })
-    | None => None
+    // Resolve per-entity storage against the global config. The CLI
+    // validates that an entity never opts into a backend the global
+    // config didn't enable, and that at least one backend stays true
+    // for an annotated entity — so `getOr(false)` is safe here.
+    let storage: Internal.entityStorage = switch entityJson["storage"] {
+    | Some(s) => {
+        postgres: s["postgres"]->Option.getOr(false),
+        clickhouse: s["clickhouse"]->Option.getOr(false),
+      }
+    | None => {
+        postgres: globalStorage.postgres,
+        clickhouse: globalStorage.clickhouse,
+      }
     }
 
     {
@@ -775,10 +785,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   let enumConfigsByName =
     allEnums->Array.map(enumConfig => (enumConfig.name, enumConfig))->Dict.fromArray
 
+  let globalStorage: storage = {
+    postgres: publicConfig["storage"]["postgres"],
+    clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
+  }
+
   let userEntities =
     publicConfig["entities"]
     ->Option.getOr([])
-    ->parseEntitiesFromJson(~enumConfigsByName)
+    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage)
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 
@@ -810,10 +825,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
-    storage: {
-      postgres: publicConfig["storage"]["postgres"],
-      clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
-    },
+    storage: globalStorage,
     multichain: publicConfig["multichain"]->Option.getOr(Unordered),
     chainMap,
     defaultChain: chains->Array.get(0),
@@ -1012,13 +1024,4 @@ let loadWithoutRegistrations = () =>
     }
   }
 
-// Postgres-backed subset of userEntities. An entity without `@storage`
-// inherits the global storage; otherwise its explicit `postgres` flag wins.
-let getPgUserEntities = (config: t) =>
-  config.userEntities->Array.filter(entity =>
-    switch entity.storage {
-    | Some({postgres: Some(true)}) => true
-    | Some(_) => false
-    | None => config.storage.postgres
-    }
-  )
+let getPgUserEntities = (config: t) => config.userEntities->Array.filter(e => e.storage.postgres)
