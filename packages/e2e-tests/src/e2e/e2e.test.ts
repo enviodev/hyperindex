@@ -24,6 +24,7 @@ import {
   stopClickHouse,
   queryClickHouse,
 } from "../utils/clickhouse.js";
+import { runPgSql } from "../utils/postgres.js";
 import path from "path";
 
 const PROJECT_DIR = path.join(config.scenariosDir, "e2e_test");
@@ -264,6 +265,95 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       id: expect.any(String),
       envio_change: "SET",
     });
+  });
+
+  // --- Per-entity @storage routing ---
+  //
+  // The e2e_test schema declares:
+  //   Transfer        @storage(postgres: true, clickhouse: true)
+  //   TransferPgOnly  @storage(postgres: true)
+  //   TransferChOnly  @storage(clickhouse: true)
+  //
+  // Each backend should host exactly the entities that opted into it, with
+  // at least one row each. Hasura sits on top of Postgres so it must
+  // expose Transfer and TransferPgOnly only.
+
+  it("Postgres has tables for postgres-enabled entities only", async () => {
+    const tables = await runPgSql(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
+      ORDER BY table_name
+    `);
+    expect(tables.map((r) => r[0])).toMatchInlineSnapshot();
+
+    const transferCount = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
+    expect(Number(transferCount[0]?.[0])).toBeGreaterThan(0);
+
+    const pgOnlyCount = await runPgSql(`SELECT count(*)::text FROM "TransferPgOnly"`);
+    expect(Number(pgOnlyCount[0]?.[0])).toBeGreaterThan(0);
+  });
+
+  it("ClickHouse has tables for clickhouse-enabled entities only", async () => {
+    const tables = await queryClickHouse<
+      ClickHouseResult<{ name: string }>
+    >(
+      `SELECT name FROM system.tables
+       WHERE database = '${CH_DATABASE}'
+         AND name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
+       ORDER BY name
+       FORMAT JSON`
+    );
+    expect(tables.data.map((r) => r.name)).toMatchInlineSnapshot();
+
+    const transferCh = await queryClickHouse<
+      ClickHouseResult<{ c: string }>
+    >(`SELECT count() as c FROM ${CH_DATABASE}.Transfer FORMAT JSON`);
+    expect(Number(transferCh.data[0]?.c)).toBeGreaterThan(0);
+
+    const chOnly = await queryClickHouse<
+      ClickHouseResult<{ c: string }>
+    >(`SELECT count() as c FROM ${CH_DATABASE}.TransferChOnly FORMAT JSON`);
+    expect(Number(chOnly.data[0]?.c)).toBeGreaterThan(0);
+  });
+
+  it("Hasura GraphQL schema exposes only postgres-backed entities", async () => {
+    const result = await graphql.query<{
+      __schema: {
+        queryType: { fields: Array<{ name: string }> };
+        types: Array<{
+          name: string;
+          kind: string;
+          fields: Array<{ name: string }> | null;
+        }>;
+      };
+    }>(`{
+      __schema {
+        queryType { fields { name } }
+        types { name kind fields { name } }
+      }
+    }`);
+
+    const userEntityNames = ["Transfer", "TransferPgOnly", "TransferChOnly"];
+    const isEntityQuery = (name: string) =>
+      userEntityNames.some((p) => name === p || name.startsWith(`${p}_`));
+
+    const entityQueries = result
+      .data!.__schema.queryType.fields.filter((f) => isEntityQuery(f.name))
+      .map((f) => f.name)
+      .sort();
+
+    const entityObjectTypes = result
+      .data!.__schema.types.filter(
+        (t) => t.kind === "OBJECT" && userEntityNames.includes(t.name)
+      )
+      .map((t) => ({
+        name: t.name,
+        fields: t.fields?.map((f) => f.name).sort() ?? [],
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    expect({ entityQueries, entityObjectTypes }).toMatchInlineSnapshot();
   });
 
   it("should resume with DB state on second start", async () => {

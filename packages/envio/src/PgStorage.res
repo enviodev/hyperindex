@@ -1208,6 +1208,12 @@ let make = (
     ~enums=[],
     ~envioInfo,
   ): Persistence.initialState => {
+    // Per-entity storage routing: PG owns tables only for entities that
+    // opted into Postgres; the sink mirrors only those that opted into
+    // ClickHouse.
+    let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
+    let chEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse)
+
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
     )
@@ -1235,14 +1241,14 @@ let make = (
 
     // Call sink.initialize before executing PG queries
     switch sink {
-    | Some(sink) => await sink.initialize(~chainConfigs, ~entities, ~enums)
+    | Some(sink) => await sink.initialize(~chainConfigs, ~entities=chEntities, ~enums)
     | None => ()
     }
 
     let queries = makeInitializeTransaction(
       ~pgSchema,
       ~pgUser,
-      ~entities,
+      ~entities=pgEntities,
       ~enums,
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
@@ -1620,12 +1626,21 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~updatedEffectsCache,
     ~updatedEntities,
   ) => {
+    let pgUpdates =
+      updatedEntities->Array.filter(({entityConfig}: Persistence.updatedEntity) =>
+        entityConfig.storage.postgres
+      )
+    let chUpdates =
+      updatedEntities->Array.filter(({entityConfig}: Persistence.updatedEntity) =>
+        entityConfig.storage.clickhouse
+      )
+
     // Initialize sink if configured
     let sinkPromise = switch sink {
     | Some(sink) => {
         let timerRef = Hrtime.makeTimer()
         Some(
-          sink.writeBatch(~batch, ~updatedEntities)
+          sink.writeBatch(~batch, ~updatedEntities=chUpdates)
           ->Promise.thenResolve(_ => {
             Prometheus.StorageWrite.increment(
               ~storage=sink.name,
@@ -1652,7 +1667,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~allEntities,
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
-      ~updatedEntities,
+      ~updatedEntities=pgUpdates,
       ~sinkPromise,
     )
     Prometheus.StorageWrite.increment(
