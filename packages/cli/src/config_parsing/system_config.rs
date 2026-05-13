@@ -484,89 +484,78 @@ impl Storage {
 }
 
 /// Check per-entity `@storage` directives against the resolved global storage.
-/// Aggregates both failure classes (entity targets a disabled backend; entity
-/// missing the directive in multi-storage mode) into a single error so users
-/// fix everything in one pass. Malformed directives are raised earlier, during
-/// schema parsing.
+/// Malformed directives are raised earlier, during schema parsing.
+//
+// With two backends, the two failure modes are mutually exclusive: multi-storage
+// mode means both backends are on (so an entity can never target a disabled one),
+// and single-storage mode is exempt from the must-declare rule. If a third
+// backend lands the two checks could fire together — flag that here so a future
+// reader sees the simplification's premise.
 pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
-    let multi = storage.is_multi();
-
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let mut missing: Vec<String> = Vec::new();
-    let mut unsupported: Vec<(String, &'static str)> = Vec::new();
-
-    for entity in entities {
-        let has_directive = entity.has_storage_directive();
-
-        if multi && !has_directive {
-            missing.push(entity.name.clone());
-            continue;
+    if storage.is_multi() {
+        let missing: Vec<&str> = entities
+            .iter()
+            .filter(|e| !e.has_storage_directive())
+            .map(|e| e.name.as_str())
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
         }
-
-        if entity.postgres == Some(true) && !storage.postgres {
-            unsupported.push((entity.name.clone(), "postgres"));
-        }
-        if entity.clickhouse == Some(true) && !storage.clickhouse {
-            unsupported.push((entity.name.clone(), "clickhouse"));
-        }
+        let example = missing[0];
+        let listed = missing
+            .iter()
+            .map(|n| format!("  - {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(anyhow!(
+            "Schema validation failed:\n\
+             \n\
+             Entities missing the @storage directive (multi-storage mode requires it):\n\
+             {listed}\n\
+             \n\
+             Fixes:\n  \
+             - Add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
+             type {example} @storage(postgres: true) {{ ... }}\n      \
+             type {example} @storage(clickhouse: true) {{ ... }}\n      \
+             type {example} @storage(postgres: true, clickhouse: true) {{ ... }}"
+        ));
     }
 
-    if missing.is_empty() && unsupported.is_empty() {
+    let unsupported: Vec<(&str, &'static str)> = entities
+        .iter()
+        .flat_map(|e| {
+            let mut out: Vec<(&str, &'static str)> = Vec::new();
+            if e.postgres == Some(true) && !storage.postgres {
+                out.push((e.name.as_str(), "postgres"));
+            }
+            if e.clickhouse == Some(true) && !storage.clickhouse {
+                out.push((e.name.as_str(), "clickhouse"));
+            }
+            out
+        })
+        .collect();
+    if unsupported.is_empty() {
         return Ok(());
     }
-
-    let mut msg = String::from("Schema validation failed:\n");
-
-    if !missing.is_empty() {
-        msg.push_str(
-            "\nEntities missing the @storage directive (multi-storage mode requires it):\n",
-        );
-        for name in &missing {
-            msg.push_str(&format!("  - {}\n", name));
-        }
-    }
-
-    if !unsupported.is_empty() {
-        msg.push_str("\nEntities using storages not enabled in config.yaml:\n");
-        for (entity, backend) in &unsupported {
-            msg.push_str(&format!(
-                "  - `{}` uses `{}`, but `{}` is not enabled.\n",
-                entity, backend, backend
-            ));
-        }
-    }
-
-    msg.push_str("\nFixes:\n");
-    if !missing.is_empty() {
-        msg.push_str(
-            "  - Add @storage(postgres: true) and/or @storage(clickhouse: true) to the \
-             entities listed above. Example:\n",
-        );
-        if let Some(name) = missing.first() {
-            msg.push_str(&format!(
-                "      type {} @storage(postgres: true) {{ ... }}\n",
-                name
-            ));
-            msg.push_str(&format!(
-                "      type {} @storage(clickhouse: true) {{ ... }}\n",
-                name
-            ));
-            msg.push_str(&format!(
-                "      type {} @storage(postgres: true, clickhouse: true) {{ ... }}\n",
-                name
-            ));
-        }
-    }
-    if !unsupported.is_empty() {
-        msg.push_str(
-            "  - Remove the unsupported storage from @storage on these entities, or enable \
-             it under `storage:` in config.yaml.\n",
-        );
-    }
-
-    Err(anyhow!("{}", msg.trim_end()))
+    let listed = unsupported
+        .iter()
+        .map(|(name, backend)| {
+            format!("  - `{name}` uses `{backend}`, but `{backend}` is not enabled.")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Err(anyhow!(
+        "Schema validation failed:\n\
+         \n\
+         Entities using storages not enabled in config.yaml:\n\
+         {listed}\n\
+         \n\
+         Fixes:\n  \
+         - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml."
+    ))
 }
 
 //Getter methods for system config
@@ -2611,9 +2600,7 @@ mod test {
         use super::super::{validate_entity_storage, Storage};
         use crate::config_parsing::entity_parsing::{Entity, Schema};
 
-        /// Build a `Schema` containing the supplied entities (no enums).
-        /// Bypasses `Schema::new`'s extra validation since we are only
-        /// testing storage routing — the entities just need an id field.
+        // Bypass `Schema::new` validation: only storage routing matters here.
         fn make_schema(entities: Vec<Entity>) -> Schema {
             let mut schema = Schema::empty();
             for entity in entities {
@@ -2622,10 +2609,6 @@ mod test {
             schema
         }
 
-        /// Minimal entity with given name and storage flags. Fields are an
-        /// empty Vec — `validate_entity_storage` only inspects name +
-        /// storage. We construct via the public struct fields rather than
-        /// `Entity::new` to keep the helper trivial.
         fn entity(name: &str, postgres: Option<bool>, clickhouse: Option<bool>) -> Entity {
             Entity {
                 name: name.to_string(),
@@ -2720,10 +2703,10 @@ mod test {
             );
         }
 
+        // Insertion order is Zebra→Apple→Mango; the error must still list
+        // them alphabetically regardless of HashMap iteration order.
         #[test]
         fn entities_listed_alphabetically_in_error() {
-            // Iteration order over HashMap-backed entities must not leak
-            // into error messages — `validate_entity_storage` sorts by name.
             let schema = make_schema(vec![
                 entity("Zebra", None, None),
                 entity("Apple", None, None),
@@ -2734,9 +2717,6 @@ mod test {
                 clickhouse: true,
             };
             let err = validate_entity_storage(&storage, &schema).unwrap_err();
-            // Construction order above is Zebra→Apple→Mango; HashMap
-            // iteration is unspecified. Error message must list them
-            // alphabetically.
             assert!(
                 err.to_string().contains("- Apple\n  - Mango\n  - Zebra"),
                 "Entities not listed alphabetically. Got:\n{err}"

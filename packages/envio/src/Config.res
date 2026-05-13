@@ -89,11 +89,7 @@ type t = {
   isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
-  // Subset of `userEntities` whose resolved storage includes Postgres.
-  // In single-storage Postgres mode this is identical to `userEntities`.
-  // In multi-storage mode it only contains entities the user opted into
-  // Postgres for via `@storage(postgres: true)`. Hasura tracks tables from
-  // this list, since Hasura sits on top of Postgres.
+  // Postgres-backed subset of `userEntities`; what Hasura tracks.
   pgUserEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
@@ -773,9 +769,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   let entitiesJson = publicConfig["entities"]->Option.getOr([])
   let userEntities = entitiesJson->parseEntitiesFromJson(~enumConfigsByName)
 
-  // Filter to the subset whose resolved per-entity storage includes
-  // Postgres. Hasura tracks tables from this list. Indices align with
-  // `entitiesJson` since `parseEntitiesFromJson` maps 1:1.
+  // Index alignment with `entitiesJson` relies on `parseEntitiesFromJson`
+  // mapping 1:1 — keep it that way or this filter will desync.
   let pgUserEntities =
     userEntities->Belt.Array.keepWithIndex((_, i) =>
       (entitiesJson->Array.getUnsafe(i))["storage"]["postgres"]

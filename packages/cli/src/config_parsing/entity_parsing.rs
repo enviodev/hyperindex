@@ -323,8 +323,6 @@ pub struct Entity {
     pub name: String,
     pub fields: Vec<Field>,
     pub multi_field_indexes: Vec<MultiFieldIndex>,
-    // `None` = user did not name the backend in `@storage(...)` (or omitted
-    // the directive entirely). `Some(true)/Some(false)` = explicit.
     pub postgres: Option<bool>,
     pub clickhouse: Option<bool>,
 }
@@ -490,13 +488,11 @@ impl Entity {
         Ok(entity)
     }
 
-    /// Returns `true` if the user wrote an explicit `@storage(...)` directive
-    /// on this entity (either field set to `Some`).
     pub fn has_storage_directive(&self) -> bool {
         self.postgres.is_some() || self.clickhouse.is_some()
     }
 
-    /// Resolve an entity's storage backends against the global storage config.
+    /// Resolved storage assumes the entity has passed `validate_entity_storage`.
     /// In single-storage mode an entity without `@storage` inherits the global
     /// set; otherwise the explicit per-entity flags win, with unspecified
     /// fields defaulting to `false`.
@@ -600,14 +596,9 @@ impl Entity {
 }
 
 /// Parse the optional `@storage` directive on an entity. Returns the
-/// `(postgres, clickhouse)` flags as the user wrote them: `None` for an
-/// unmentioned backend, `Some(bool)` for an explicit value.
-///
-/// Errors are raised here (E3 malformed, E4 enables nothing) so the rest of
-/// the pipeline only deals with well-formed per-entity storage. The wider E1
-/// (entity uses a storage not configured globally) and E2 (multi-storage mode
-/// requires every entity to declare) checks live in `system_config.rs`,
-/// where the global storage is known.
+/// `(postgres, clickhouse)` flags as the user wrote them; `None` for an
+/// unmentioned backend. Cross-entity checks (backend-not-globally-enabled,
+/// missing-in-multi-storage-mode) happen later in `system_config.rs`.
 fn parse_storage_directive(
     obj: &ObjectType<String>,
 ) -> anyhow::Result<(Option<bool>, Option<bool>)> {
