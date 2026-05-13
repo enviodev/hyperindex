@@ -57,6 +57,15 @@ struct StorageConfig {
     clickhouse: bool,
 }
 
+impl From<&system_config::Storage> for StorageConfig {
+    fn from(s: &system_config::Storage) -> Self {
+        Self {
+            postgres: s.postgres,
+            clickhouse: s.clickhouse,
+        }
+    }
+}
+
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct EntityJson {
@@ -595,10 +604,7 @@ impl SystemConfig {
             rollback_on_reorg: cfg.rollback_on_reorg,
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
-            storage: StorageConfig {
-                postgres: cfg.storage.postgres,
-                clickhouse: cfg.storage.clickhouse,
-            },
+            storage: (&cfg.storage).into(),
             evm,
             fuel,
             svm,
@@ -608,4 +614,19 @@ impl SystemConfig {
 
         Ok(serde_json::to_string_pretty(&config)? + "\n")
     }
+
+    pub fn to_view_json(&self) -> Result<String> {
+        let view = ConfigView {
+            version: system_config::VERSION,
+            storage: (&self.storage).into(),
+        };
+        Ok(serde_json::to_string_pretty(&view)?)
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigView<'a> {
+    version: &'a str,
+    storage: StorageConfig,
 }
