@@ -66,6 +66,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install capnproto
+        run: sudo apt-get update -y && sudo apt-get install -y capnproto
+
       - uses: ./.github/actions/cargo-cache
 
       - uses: pnpm/action-setup@v5
@@ -130,6 +133,9 @@ jobs:
         with:
           components: clippy
 
+      - name: Install capnproto
+        run: sudo apt-get update -y && sudo apt-get install -y capnproto
+
       - uses: ./.github/actions/cargo-cache
 
       - name: Clippy
@@ -152,6 +158,9 @@ jobs:
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install capnproto
+        run: sudo apt-get update -y && sudo apt-get install -y capnproto
 
       - uses: ./.github/actions/cargo-cache
 
