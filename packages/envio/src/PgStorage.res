@@ -1724,6 +1724,7 @@ let makeStorageFromEnv = (
         let host = Env.ClickHouse.host()
         let username = Env.ClickHouse.username()
         let password = Env.ClickHouse.password()
+        let database = Env.ClickHouse.database()
         let missing = []
         let checkEnv = (opt, name) =>
           switch opt {
@@ -1733,6 +1734,7 @@ let makeStorageFromEnv = (
         host->checkEnv("ENVIO_CLICKHOUSE_HOST")
         username->checkEnv("ENVIO_CLICKHOUSE_USERNAME")
         password->checkEnv("ENVIO_CLICKHOUSE_PASSWORD")
+        database->checkEnv("ENVIO_CLICKHOUSE_DATABASE")
         if missing->Array.length > 0 {
           JsError.throwWithMessage(
             `ClickHouse storage is enabled but required env vars are not set: ${missing->Array.joinUnsafe(
@@ -1743,7 +1745,7 @@ let makeStorageFromEnv = (
         Some(
           Sink.makeClickHouse(
             ~host=host->Option.getUnsafe,
-            ~database=Env.ClickHouse.database(),
+            ~database=database->Option.getUnsafe,
             ~username=username->Option.getUnsafe,
             ~password=password->Option.getUnsafe,
           ),

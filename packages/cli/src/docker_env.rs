@@ -244,9 +244,14 @@ impl EnvConfig {
             hasura_enable_console: var("HASURA_GRAPHQL_ENABLE_CONSOLE", "true"),
             hasura_admin_secret: var("HASURA_GRAPHQL_ADMIN_SECRET", "testing"),
             ch_host: var_opt("ENVIO_CLICKHOUSE_HOST"),
+            // `envio dev` defaults to the out-of-the-box ClickHouse setup:
+            // the pre-existing `default` user with no password and the
+            // pre-existing `default` database, so opening the Playground
+            // requires no credentials. `envio start` reads these same vars
+            // but has no defaults and requires the user to set them.
             ch_user: var("ENVIO_CLICKHOUSE_USERNAME", "default"),
-            ch_password: var("ENVIO_CLICKHOUSE_PASSWORD", "testing"),
-            ch_database: var("ENVIO_CLICKHOUSE_DATABASE", "envio_indexer"),
+            ch_password: var("ENVIO_CLICKHOUSE_PASSWORD", ""),
+            ch_database: var("ENVIO_CLICKHOUSE_DATABASE", "default"),
         }
     }
 
@@ -1240,8 +1245,8 @@ mod tests {
             hasura_admin_secret: "testing".into(),
             ch_host: None,
             ch_user: "default".into(),
-            ch_password: "testing".into(),
-            ch_database: "envio_indexer".into(),
+            ch_password: "".into(),
+            ch_database: "default".into(),
         }
     }
 
