@@ -665,33 +665,69 @@ struct DriftInfo {
     env: HashMap<String, String>,
 }
 
-/// Inspect a named container and diff its stored config-hash against the
-/// expected one. `Some(info)` means the caller must halt: the container was
-/// built with different settings and silently recreating it would destroy
-/// data the user (or another project) may still want.
-async fn detect_drift(docker: &Docker, name: &str, expected_hash: &str) -> Option<DriftInfo> {
-    let info = docker.inspect_container(name, None).await.ok()?;
-    let cfg = info.config?;
-    let labels = cfg.labels.unwrap_or_default();
-    if labels.get(CONFIG_HASH_LABEL).map(String::as_str) == Some(expected_hash) {
-        return None;
+/// Outcome of comparing a managed container's labels against current config.
+enum DriftCheck {
+    /// Container's config-hash matches — safe to reuse without further probing.
+    Match,
+    /// Container exists but has no config-hash label at all. Predates the
+    /// drift-detection machinery (or was created outside envio). Reuse it and
+    /// let the auth probe surface any cred mismatch — refusing to run because
+    /// we can't prove ownership would force a `docker rm` on every upgrade.
+    Legacy,
+    /// Container's config-hash differs from what current config would produce.
+    /// Caller must halt: the data volume is shared and silently recreating
+    /// would drop data the user (or another project) may still want.
+    Drift(DriftInfo),
+}
+
+/// Pure label classification, factored out so it can be unit-tested without
+/// a Docker mock. The container's env vars are only needed for the Drift
+/// branch (to populate the error message); the live caller reads them off
+/// the inspect response.
+enum LabelClass {
+    Match,
+    Legacy,
+    Mismatch,
+}
+
+fn classify_drift_labels(labels: &HashMap<String, String>, expected_hash: &str) -> LabelClass {
+    match labels.get(CONFIG_HASH_LABEL).map(String::as_str) {
+        Some(h) if h == expected_hash => LabelClass::Match,
+        None => LabelClass::Legacy,
+        Some(_) => LabelClass::Mismatch,
     }
-    let project_name = labels.get(PROJECT_NAME_LABEL).cloned();
-    let project_path = labels.get(PROJECT_PATH_LABEL).cloned();
-    let env = cfg
-        .env
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|s| {
-            let (k, v) = s.split_once('=')?;
-            Some((k.to_string(), v.to_string()))
-        })
-        .collect();
-    Some(DriftInfo {
-        project_name,
-        project_path,
-        env,
-    })
+}
+
+async fn detect_drift(docker: &Docker, name: &str, expected_hash: &str) -> DriftCheck {
+    let Some(info) = docker.inspect_container(name, None).await.ok() else {
+        return DriftCheck::Match;
+    };
+    let Some(cfg) = info.config else {
+        return DriftCheck::Match;
+    };
+    let labels = cfg.labels.unwrap_or_default();
+    match classify_drift_labels(&labels, expected_hash) {
+        LabelClass::Match => DriftCheck::Match,
+        LabelClass::Legacy => DriftCheck::Legacy,
+        LabelClass::Mismatch => {
+            let project_name = labels.get(PROJECT_NAME_LABEL).cloned();
+            let project_path = labels.get(PROJECT_PATH_LABEL).cloned();
+            let env = cfg
+                .env
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|s| {
+                    let (k, v) = s.split_once('=')?;
+                    Some((k.to_string(), v.to_string()))
+                })
+                .collect();
+            DriftCheck::Drift(DriftInfo {
+                project_name,
+                project_path,
+                env,
+            })
+        }
+    }
 }
 
 /// Authenticated Postgres probe. `Ok(())` means the creds work against the
@@ -1316,30 +1352,52 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     // touches the container. Never auto-recreate: the data volume is shared
     // across projects and silently dropping another project's data is too
     // destructive to do without the user's confirmation.
-    if let Some(d) = docker.as_ref() {
-        if pg_ours {
-            if let Some(drift) = detect_drift(d, PG_CONTAINER, &pg_hash).await {
-                anyhow::bail!("{}", format_pg_drift(&env, pg_host_port, &drift));
+    //
+    // Legacy containers (no config-hash label — created before drift
+    // detection landed, or by hand) fall through to the auth probe so an
+    // envio upgrade doesn't force a `docker rm` when the existing creds
+    // still work.
+    let (pg_legacy, ch_legacy) = if let Some(d) = docker.as_ref() {
+        let pg_legacy = if pg_ours {
+            match detect_drift(d, PG_CONTAINER, &pg_hash).await {
+                DriftCheck::Drift(drift) => {
+                    anyhow::bail!("{}", format_pg_drift(&env, pg_host_port, &drift))
+                }
+                DriftCheck::Legacy => true,
+                DriftCheck::Match => false,
             }
-        }
+        } else {
+            false
+        };
         if hasura_ours {
-            if let Some(drift) = detect_drift(d, HASURA_CONTAINER, &hasura_hash).await {
+            if let DriftCheck::Drift(drift) = detect_drift(d, HASURA_CONTAINER, &hasura_hash).await
+            {
                 anyhow::bail!("{}", format_hasura_drift(&env, hasura_host_port, &drift));
             }
         }
-        if ch_ours {
-            if let Some(drift) = detect_drift(d, CH_CONTAINER, &ch_hash).await {
-                let url = ch_url_ref.expect("ch_ours implies ch_url_ref is Some");
-                anyhow::bail!("{}", format_ch_drift(&env, url, &drift));
+        let ch_legacy = if ch_ours {
+            match detect_drift(d, CH_CONTAINER, &ch_hash).await {
+                DriftCheck::Drift(drift) => {
+                    let url = ch_url_ref.expect("ch_ours implies ch_url_ref is Some");
+                    anyhow::bail!("{}", format_ch_drift(&env, url, &drift));
+                }
+                DriftCheck::Legacy => true,
+                DriftCheck::Match => false,
             }
-        }
-    }
+        } else {
+            false
+        };
+        (pg_legacy, ch_legacy)
+    } else {
+        (false, false)
+    };
 
-    // Auth preflight for services we won't manage: external (ENVIO_*_HOST
-    // set) or foreign (port is taken but the listener isn't our container).
-    // Catches the "service is up but creds don't match" case that used to
-    // surface only once the indexer subprocess failed to connect.
-    if pg_alive && (pg_external || !pg_ours) {
+    // Auth preflight for services we won't manage (external or foreign on
+    // the default port) and for legacy containers (config-hash label
+    // missing, so we can't prove the existing creds match). Catches the
+    // "service is up but creds don't match" case that used to surface only
+    // once the indexer subprocess failed to connect.
+    if pg_alive && (pg_external || !pg_ours || pg_legacy) {
         if let Err(e) = probe_pg_auth(
             pg_probe_host,
             pg_host_port,
@@ -1357,7 +1415,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         }
     }
     if let Some(url) = ch_url_ref {
-        if ch_alive && (ch_external || !ch_ours) {
+        if ch_alive && (ch_external || !ch_ours || ch_legacy) {
             if let Err(e) = probe_ch_auth(
                 &probe_client,
                 &url.scheme,
@@ -2052,6 +2110,32 @@ mod tests {
             ),
             (root, "my-indexer", true, root, "my-indexer", true)
         );
+    }
+
+    #[test]
+    fn classify_drift_labels_legacy_when_hash_absent() {
+        // Backward compat: containers from before the hash label existed
+        // (or created by hand) get reused instead of triggering a hard
+        // drift error that would force the user to `docker rm` their data.
+        let labels = HashMap::new();
+        assert!(matches!(
+            classify_drift_labels(&labels, "any-hash"),
+            LabelClass::Legacy
+        ));
+    }
+
+    #[test]
+    fn classify_drift_labels_match_and_mismatch() {
+        let mut labels = HashMap::new();
+        labels.insert(CONFIG_HASH_LABEL.to_string(), "h1".to_string());
+        assert!(matches!(
+            classify_drift_labels(&labels, "h1"),
+            LabelClass::Match
+        ));
+        assert!(matches!(
+            classify_drift_labels(&labels, "h2"),
+            LabelClass::Mismatch
+        ));
     }
 
     #[test]
