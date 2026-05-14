@@ -246,7 +246,7 @@ impl EnvConfig {
             ch_host: var_opt("ENVIO_CLICKHOUSE_HOST"),
             ch_user: var("ENVIO_CLICKHOUSE_USERNAME", "default"),
             ch_password: var("ENVIO_CLICKHOUSE_PASSWORD", "testing"),
-            ch_database: var("ENVIO_CLICKHOUSE_DATABASE", "envio_sink"),
+            ch_database: var("ENVIO_CLICKHOUSE_DATABASE", "envio_indexer"),
         }
     }
 
@@ -1241,7 +1241,7 @@ mod tests {
             ch_host: None,
             ch_user: "default".into(),
             ch_password: "testing".into(),
-            ch_database: "envio_sink".into(),
+            ch_database: "envio_indexer".into(),
         }
     }
 

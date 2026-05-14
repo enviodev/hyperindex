@@ -139,6 +139,16 @@ module ClickHouse = {
   let database = () => read("ENVIO_CLICKHOUSE_DATABASE")
   let username = () => read("ENVIO_CLICKHOUSE_USERNAME")
   let password = () => read("ENVIO_CLICKHOUSE_PASSWORD")
+  let replicated = () =>
+    switch read("ENVIO_CLICKHOUSE_REPLICATED") {
+    | None => false
+    | Some("true") => true
+    | Some(other) =>
+      JsError.throwWithMessage(
+        `Invalid ENVIO_CLICKHOUSE_REPLICATED value: "${other}". Only "true" is accepted.`,
+      )
+    }
+  let databaseEngine = () => read("ENVIO_CLICKHOUSE_DATABASE_ENGINE")
 }
 
 module Hasura = {

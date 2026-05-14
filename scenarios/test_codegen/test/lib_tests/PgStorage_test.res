@@ -974,7 +974,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
       setEnvVar("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123")
       setEnvVar("ENVIO_CLICKHOUSE_USERNAME", "default")
       setEnvVar("ENVIO_CLICKHOUSE_PASSWORD", "testing")
-      setEnvVar("ENVIO_CLICKHOUSE_DATABASE", "envio_sink")
+      setEnvVar("ENVIO_CLICKHOUSE_DATABASE", "envio_indexer")
       let config = {
         ...MockIndexer.config,
         storage: ({postgres: true, clickhouse: true}: Config.storage),

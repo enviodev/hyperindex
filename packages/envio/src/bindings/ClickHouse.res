@@ -299,7 +299,12 @@ let setUpdatesOrThrow = async (
 }
 
 // Generate CREATE TABLE query for entity history table
-let makeCreateHistoryTableQuery = (~entityConfig: Internal.entityConfig, ~database: string) => {
+let makeCreateHistoryTableQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~database: string,
+  ~replicated: bool=false,
+) => {
+  let tableEngine = replicated ? "ReplicatedMergeTree" : "MergeTree()"
   let fieldDefinitions = entityConfig.table.fields->Belt.Array.keepMap(field => {
     switch field {
     | Field(field) =>
@@ -332,12 +337,13 @@ let makeCreateHistoryTableQuery = (~entityConfig: Internal.entityConfig, ~databa
       ~isArray=false,
     )}
 )
-ENGINE = MergeTree()
+ENGINE = ${tableEngine}
 ORDER BY (${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
 }
 
 // Generate CREATE TABLE query for checkpoints
-let makeCreateCheckpointsTableQuery = (~database: string) => {
+let makeCreateCheckpointsTableQuery = (~database: string, ~replicated: bool=false) => {
+  let tableEngine = replicated ? "ReplicatedMergeTree" : "MergeTree()"
   let idField = (#id: InternalTable.Checkpoints.field :> string)
   let chainIdField = (#chain_id: InternalTable.Checkpoints.field :> string)
   let blockNumberField = (#block_number: InternalTable.Checkpoints.field :> string)
@@ -367,7 +373,7 @@ let makeCreateCheckpointsTableQuery = (~database: string) => {
       ~isArray=false,
     )}
 )
-ENGINE = MergeTree()
+ENGINE = ${tableEngine}
 ORDER BY (${idField})`
 }
 
@@ -414,16 +420,43 @@ let initialize = async (
   ~enums as _: array<Table.enumConfig<Table.enum>>,
 ) => {
   try {
+    let replicated = Env.ClickHouse.replicated()
+    let databaseEngine = Env.ClickHouse.databaseEngine()
+    let databaseEngineClause = switch databaseEngine {
+    | Some(engine) => ` ENGINE = ${engine}`
+    | None => ""
+    }
+
+    switch databaseEngine {
+    | Some(engineSpec) => {
+        let expectedEngineName = engineSpec->String.split("(")->Belt.Array.getUnsafe(0)->String.trim
+        let existingResult = await client->query({
+          query: `SELECT engine FROM system.databases WHERE name = '${database}'`,
+        })
+        let rows: array<{"engine": string}> = await existingResult->json
+        switch rows->Belt.Array.get(0) {
+        | Some(row) if row["engine"] !== expectedEngineName =>
+          JsError.throwWithMessage(
+            `ClickHouse database "${database}" exists with engine "${row["engine"]}" but ENVIO_CLICKHOUSE_DATABASE_ENGINE specifies "${expectedEngineName}". Drop the database manually to change its engine.`,
+          )
+        | _ => ()
+        }
+      }
+    | None => ()
+    }
+
     await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}`})
-    await client->exec({query: `CREATE DATABASE IF NOT EXISTS ${database}`})
+    await client->exec({
+      query: `CREATE DATABASE IF NOT EXISTS ${database}${databaseEngineClause}`,
+    })
     await client->exec({query: `USE ${database}`})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
-        client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database)})
+        client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database, ~replicated)})
       ),
     )->Utils.Promise.ignoreValue
-    await client->exec({query: makeCreateCheckpointsTableQuery(~database)})
+    await client->exec({query: makeCreateCheckpointsTableQuery(~database, ~replicated)})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
