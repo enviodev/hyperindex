@@ -23,22 +23,21 @@ const CLICKHOUSE_IMAGE: &str = "clickhouse/clickhouse-server:26.2.15.4";
 const CONFIG_HASH_LABEL: &str = "dev.envio.config-hash";
 const SOCKET_TIMEOUT: u64 = 120;
 
-/// Override file mounted over /etc/clickhouse-server/users.d/. The 26.x
-/// image ships its own default-user.xml that locks down the `default`
-/// user with a non-empty password element, so an empty-password Basic
-/// Auth request from the indexer or the Playground fails. Bind-mounting
-/// this content as the entire users.d/ directory hides the image's file
-/// and gives us a pristine no-password default user.
-const CH_NO_PASSWORD_USER_XML: &str = r#"<clickhouse>
+/// Replacement for `/etc/clickhouse-server/users.d/default-user.xml`. The
+/// 26.x image ships a users.d/ override that restricts the `default` user
+/// to loopback only (`::1`, `127.0.0.1`), so requests through the Docker
+/// bridge gateway get rejected as IP_NOT_ALLOWED (surfaced confusingly as
+/// "password is incorrect"). The base users.xml already configures
+/// `default` with `<no_password/>` and the other defaults; we only need to
+/// broaden `<networks>` to any IP via `replace="replace"`. Injected with
+/// docker cp into the created-but-not-started container so the image's
+/// own users.d/default-user.xml gets overwritten before ClickHouse boots.
+const CH_DEFAULT_USER_OVERRIDE_XML: &str = r#"<clickhouse>
     <users>
-        <default replace="replace">
-            <no_password/>
-            <networks>
+        <default>
+            <networks replace="replace">
                 <ip>::/0</ip>
             </networks>
-            <profile>default</profile>
-            <quota>default</quota>
-            <access_management>1</access_management>
         </default>
     </users>
 </clickhouse>
@@ -95,17 +94,48 @@ fn socket_path_from_uri(uri: &str) -> &str {
     uri.strip_prefix("unix://").unwrap_or(uri)
 }
 
-/// Write the no-password override file under `<project>/.envio/` and
-/// return the directory to bind-mount at /etc/clickhouse-server/users.d
-/// in the container. Idempotent — overwriting is fine since ClickHouse
-/// hot-reloads users.d/ files.
-fn ensure_clickhouse_users_override_dir(project_root: &Path) -> anyhow::Result<PathBuf> {
-    let dir = project_root.join(".envio").join("clickhouse-users.d");
-    std::fs::create_dir_all(&dir).with_context(|| format!("Failed to create {}", dir.display()))?;
-    let file = dir.join("default-user.xml");
-    std::fs::write(&file, CH_NO_PASSWORD_USER_XML)
-        .with_context(|| format!("Failed to write {}", file.display()))?;
-    Ok(dir)
+/// Build an in-memory tar archive containing the single override file
+/// `default-user.xml`. Suitable for uploading to a container's
+/// `/etc/clickhouse-server/users.d/` directory via Docker's
+/// `PUT /containers/.../archive` endpoint, which extracts the tar there.
+fn build_clickhouse_users_override_tar() -> anyhow::Result<Vec<u8>> {
+    let mut header = tar::Header::new_gnu();
+    let bytes = CH_DEFAULT_USER_OVERRIDE_XML.as_bytes();
+    header
+        .set_path("default-user.xml")
+        .context("Invalid tar entry path")?;
+    header.set_size(bytes.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+
+    let mut builder = tar::Builder::new(Vec::new());
+    builder
+        .append(&header, bytes)
+        .context("Failed appending override entry to tar")?;
+    builder.into_inner().context("Failed finalizing tar")
+}
+
+/// Inject the `default-user.xml` override into the given (created, not
+/// yet started) ClickHouse container. Targets the image's own override
+/// path so ClickHouse picks ours up on its first config load.
+async fn inject_clickhouse_users_override(
+    docker: &Docker,
+    container_name: &str,
+) -> anyhow::Result<()> {
+    let tar_bytes = build_clickhouse_users_override_tar()?;
+    let options = bollard::query_parameters::UploadToContainerOptionsBuilder::default()
+        .path("/etc/clickhouse-server/users.d")
+        .build();
+    docker
+        .upload_to_container(
+            container_name,
+            Some(options),
+            bollard::body_full(tar_bytes.into()),
+        )
+        .await
+        .with_context(|| {
+            format!("Failed to inject users.d override into container {container_name}")
+        })
 }
 
 /// Try connecting to a Docker-compatible socket, returning the client and a
@@ -348,6 +378,10 @@ impl EnvConfig {
 
     fn ch_config_hash(&self) -> String {
         let mut h = Sha256::new();
+        // Bump the version marker when the container creation shape
+        // changes (e.g. injected files, mounts) so stale containers from
+        // older CLI versions get recreated even when env values match.
+        h.update(b"v2");
         h.update(&self.ch_user);
         h.update(&self.ch_password);
         h.update(&self.ch_database);
@@ -693,6 +727,59 @@ async fn ensure_container(
         .create_container(Some(options), create_body)
         .await
         .with_context(|| format!("Failed creating container {name}"))?;
+
+    if let Err(e) = start_container(docker, name, host_port).await {
+        stop_and_remove(docker, name).await;
+        return Err(e);
+    }
+
+    println!("Started {name}");
+    Ok(true)
+}
+
+/// Like `ensure_container` but injects the ClickHouse users.d override
+/// into the container layer between create and start when
+/// `inject_default_user_override` is true. Mirrors the drift / reuse
+/// branches of `ensure_container`; the override only ships on a
+/// freshly-created container (existing ones already have it from their
+/// own first create, and reusing it costs nothing).
+async fn ensure_container_with_post_create(
+    docker: &Docker,
+    name: &str,
+    config_hash: &str,
+    host_port: u16,
+    create_body: ContainerCreateBody,
+    inject_default_user_override: bool,
+) -> anyhow::Result<bool> {
+    if container_exists(docker, name).await {
+        let existing_hash = get_container_config_hash(docker, name).await;
+        let drift = existing_hash.as_deref() != Some(config_hash);
+
+        if drift {
+            println!("Configuration changed for {name}, recreating...");
+            stop_and_remove(docker, name).await;
+        } else if is_container_running(docker, name).await {
+            return Ok(false);
+        } else {
+            start_container(docker, name, host_port).await?;
+            println!("Started {name}");
+            return Ok(false);
+        }
+    }
+
+    let options = CreateContainerOptionsBuilder::new().name(name).build();
+
+    docker
+        .create_container(Some(options), create_body)
+        .await
+        .with_context(|| format!("Failed creating container {name}"))?;
+
+    if inject_default_user_override {
+        if let Err(e) = inject_clickhouse_users_override(docker, name).await {
+            stop_and_remove(docker, name).await;
+            return Err(e);
+        }
+    }
 
     if let Err(e) = start_container(docker, name, host_port).await {
         stop_and_remove(docker, name).await;
@@ -1058,39 +1145,23 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             map
         };
 
-        // The 26.x image ships its own /etc/clickhouse-server/users.d/
-        // default-user.xml that requires a password — so even with no
-        // CLICKHOUSE_USER/PASSWORD env vars set the Playground and the
-        // indexer can't auth as `default` over Basic Auth with an empty
-        // password. When the user hasn't customized any ClickHouse env
-        // vars, bind-mount our own users.d/ directory over the image's
-        // one so a pristine `<no_password/>` default user wins.
-        let use_pristine_default =
+        // The 26.x image ships a /etc/clickhouse-server/users.d/
+        // default-user.xml that restricts `default` to loopback only,
+        // which our indexer and the Playground can't reach through the
+        // Docker bridge gateway. When the user hasn't customized any
+        // ClickHouse env vars, inject our own users.d/default-user.xml
+        // (broadens the network rule) into the container after creation
+        // but before start. Custom user/password/database setups go
+        // through the entrypoint untouched.
+        let use_dev_default_user =
             env.ch_user == "default" && env.ch_password.is_empty() && env.ch_database == "default";
-
-        let mut ch_mounts = vec![Mount {
-            target: Some("/var/lib/clickhouse".to_string()),
-            source: Some(CH_VOLUME.to_string()),
-            typ: Some(MountTypeEnum::VOLUME),
-            ..Default::default()
-        }];
-        if use_pristine_default {
-            let dir = ensure_clickhouse_users_override_dir(opts.project_root)?;
-            ch_mounts.push(Mount {
-                target: Some("/etc/clickhouse-server/users.d".to_string()),
-                source: Some(dir.to_string_lossy().to_string()),
-                typ: Some(MountTypeEnum::BIND),
-                read_only: Some(true),
-                ..Default::default()
-            });
-        }
 
         let ch_body = ContainerCreateBody {
             image: Some(CLICKHOUSE_IMAGE.to_string()),
             labels: Some(make_labels(&ch_hash)),
-            // Only forward env vars that diverge from the image's own
-            // defaults; when at defaults the override file above takes
-            // over and the entrypoint should leave user setup alone.
+            // Only forward env vars the user actually customized. When at
+            // image defaults the entrypoint leaves user setup alone and
+            // our injected override takes care of network rules.
             env: {
                 let mut vars = Vec::new();
                 if env.ch_user != "default" {
@@ -1106,7 +1177,12 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             },
             host_config: Some(HostConfig {
                 port_bindings: Some(ch_port_bindings),
-                mounts: Some(ch_mounts),
+                mounts: Some(vec![Mount {
+                    target: Some("/var/lib/clickhouse".to_string()),
+                    source: Some(CH_VOLUME.to_string()),
+                    typ: Some(MountTypeEnum::VOLUME),
+                    ..Default::default()
+                }]),
                 restart_policy: Some(RestartPolicy {
                     name: Some(RestartPolicyNameEnum::ALWAYS),
                     ..Default::default()
@@ -1117,7 +1193,15 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             ..Default::default()
         };
 
-        ensure_container(&docker, CH_CONTAINER, &ch_hash, url.port, ch_body).await?;
+        ensure_container_with_post_create(
+            &docker,
+            CH_CONTAINER,
+            &ch_hash,
+            url.port,
+            ch_body,
+            use_dev_default_user,
+        )
+        .await?;
         Ok(())
     };
 
@@ -1382,6 +1466,31 @@ mod tests {
             ch_password: "".into(),
             ch_database: "default".into(),
         }
+    }
+
+    #[test]
+    fn users_override_tar_round_trips_to_default_user_xml() {
+        let bytes = build_clickhouse_users_override_tar().expect("build tar");
+        let mut archive = tar::Archive::new(std::io::Cursor::new(&bytes));
+        let entries: Vec<(String, String)> = archive
+            .entries()
+            .expect("read entries")
+            .map(|e| {
+                let mut e = e.expect("entry");
+                let path = e.path().expect("entry path").to_string_lossy().into_owned();
+                let mut content = String::new();
+                std::io::Read::read_to_string(&mut e, &mut content).expect("read content");
+                (path, content)
+            })
+            .collect();
+        assert_eq!(
+            entries,
+            vec![(
+                "default-user.xml".to_string(),
+                CH_DEFAULT_USER_OVERRIDE_XML.to_string(),
+            )],
+            "tar should contain exactly the override XML at default-user.xml"
+        );
     }
 
     #[test]
