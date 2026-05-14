@@ -1208,6 +1208,12 @@ let make = (
     ~enums=[],
     ~envioInfo,
   ): Persistence.initialState => {
+    // Per-entity storage routing: PG owns tables only for entities that
+    // opted into Postgres; the sink mirrors only those that opted into
+    // ClickHouse.
+    let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
+    let chEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse)
+
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
     )
@@ -1235,14 +1241,14 @@ let make = (
 
     // Call sink.initialize before executing PG queries
     switch sink {
-    | Some(sink) => await sink.initialize(~chainConfigs, ~entities, ~enums)
+    | Some(sink) => await sink.initialize(~chainConfigs, ~entities=chEntities, ~enums)
     | None => ()
     }
 
     let queries = makeInitializeTransaction(
       ~pgSchema,
       ~pgUser,
-      ~entities,
+      ~entities=pgEntities,
       ~enums,
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
@@ -1620,12 +1626,25 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~updatedEffectsCache,
     ~updatedEntities,
   ) => {
+    let pgUpdates = []
+    let chUpdates = []
+    for i in 0 to updatedEntities->Array.length - 1 {
+      let update = updatedEntities->Array.getUnsafe(i)
+      let {entityConfig}: Persistence.updatedEntity = update
+      if entityConfig.storage.postgres {
+        pgUpdates->Array.push(update)
+      }
+      if entityConfig.storage.clickhouse {
+        chUpdates->Array.push(update)
+      }
+    }
+
     // Initialize sink if configured
     let sinkPromise = switch sink {
     | Some(sink) => {
         let timerRef = Hrtime.makeTimer()
         Some(
-          sink.writeBatch(~batch, ~updatedEntities)
+          sink.writeBatch(~batch, ~updatedEntities=chUpdates)
           ->Promise.thenResolve(_ => {
             Prometheus.StorageWrite.increment(
               ~storage=sink.name,
@@ -1652,7 +1671,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~allEntities,
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
-      ~updatedEntities,
+      ~updatedEntities=pgUpdates,
       ~sinkPromise,
     )
     Prometheus.StorageWrite.increment(
@@ -1744,7 +1763,7 @@ let makeStorageFromEnv = (
                 secret: Env.Hasura.secret,
               },
               ~pgSchema,
-              ~userEntities=config.userEntities,
+              ~userEntities=config->Config.getPgUserEntities,
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Schema.make(config.allEntities->Belt.Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,

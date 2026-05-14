@@ -523,12 +523,21 @@ let fuelTransferParamsSchema = S.schema(s => {
 type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
 
 type entity = private {id: string}
+
+// Per-entity storage resolved at parse time against the global storage
+// config. Downstream PG/CH consumers just check the matching boolean.
+type entityStorage = {
+  postgres: bool,
+  clickhouse: bool,
+}
+
 type genericEntityConfig<'entity> = {
   name: string,
   index: int,
   schema: S.t<'entity>,
   rowsSchema: S.t<array<'entity>>,
   table: Table.table,
+  storage: entityStorage,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"

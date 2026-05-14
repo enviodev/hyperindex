@@ -70,11 +70,25 @@ impl From<&system_config::Storage> for StorageConfig {
 #[serde(rename_all = "camelCase")]
 struct EntityJson {
     name: String,
+    // Mirrors the user's `@storage(...)` directive verbatim: only the args
+    // they wrote are emitted, and the whole field is omitted when the
+    // directive is absent. Resolution against the global storage happens
+    // on the ReScript side.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    storage: Option<EntityStorageJson>,
     properties: Vec<PropertyJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     derived_fields: Vec<DerivedFieldJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     composite_indices: Vec<Vec<CompositeIndexJson>>,
+}
+
+#[derive(Serialize, Debug)]
+struct EntityStorageJson {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    postgres: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clickhouse: Option<bool>,
 }
 
 #[derive(Serialize, Debug)]
@@ -584,8 +598,18 @@ impl SystemConfig {
                     })
                     .collect();
 
+                let storage = if entity.has_storage_directive() {
+                    Some(EntityStorageJson {
+                        postgres: entity.postgres,
+                        clickhouse: entity.clickhouse,
+                    })
+                } else {
+                    None
+                };
+
                 Ok(EntityJson {
                     name: entity.name.clone(),
+                    storage,
                     properties,
                     derived_fields,
                     composite_indices,

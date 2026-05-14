@@ -323,6 +323,8 @@ pub struct Entity {
     pub name: String,
     pub fields: Vec<Field>,
     pub multi_field_indexes: Vec<MultiFieldIndex>,
+    pub postgres: Option<bool>,
+    pub clickhouse: Option<bool>,
 }
 
 impl Entity {
@@ -381,6 +383,8 @@ impl Entity {
             name: name.to_string(),
             fields,
             multi_field_indexes,
+            postgres: None,
+            clickhouse: None,
         })
     }
 
@@ -474,11 +478,18 @@ impl Entity {
             .collect::<anyhow::Result<Vec<Field>>>()
             .context(format!("Failed parsing fields on entity {name}"))?;
 
-        let entity = Self::new(name, fields, multi_field_indexes)
+        let mut entity = Self::new(name, fields, multi_field_indexes)
             .context(format!("Failed constructing entity {name}",))?;
 
-        // Here, store indexed information somewhere within your entity structure or handle them accordingly
+        let (postgres, clickhouse) = parse_storage_directive(obj)?;
+        entity.postgres = postgres;
+        entity.clickhouse = clickhouse;
+
         Ok(entity)
+    }
+
+    pub fn has_storage_directive(&self) -> bool {
+        self.postgres.is_some() || self.clickhouse.is_some()
     }
 
     /// Returns the fields of this [`Entity`] in schema-defined order.
@@ -567,6 +578,89 @@ impl Entity {
             })
             .collect()
     }
+}
+
+/// Parse the optional `@storage` directive on an entity. Returns the
+/// `(postgres, clickhouse)` flags as the user wrote them; `None` for an
+/// unmentioned backend. Cross-entity checks (backend-not-globally-enabled,
+/// missing-in-multi-storage-mode) happen later in `system_config.rs`.
+fn parse_storage_directive(
+    obj: &ObjectType<String>,
+) -> anyhow::Result<(Option<bool>, Option<bool>)> {
+    let storage_directives: Vec<&Directive<'_, String>> = obj
+        .directives
+        .iter()
+        .filter(|directive| directive.name == "storage")
+        .collect();
+
+    if storage_directives.is_empty() {
+        return Ok((None, None));
+    }
+
+    if storage_directives.len() > 1 {
+        return Err(anyhow!(
+            "Invalid @storage directive on `{}`. Only one @storage directive \
+             is allowed per entity. Expected boolean args from {{postgres, \
+             clickhouse}}, e.g. @storage(postgres: true, clickhouse: true).",
+            obj.name
+        ));
+    }
+
+    let directive = storage_directives[0];
+    let mut postgres: Option<bool> = None;
+    let mut clickhouse: Option<bool> = None;
+
+    for (arg_name, arg_value) in &directive.arguments {
+        let slot = match arg_name.as_str() {
+            "postgres" => &mut postgres,
+            "clickhouse" => &mut clickhouse,
+            other => {
+                return Err(anyhow!(
+                    "Invalid @storage directive on `{}`. Unknown argument \
+                     `{}`. Expected boolean args from {{postgres, \
+                     clickhouse}}, e.g. @storage(postgres: true, clickhouse: \
+                     true).",
+                    obj.name,
+                    other
+                ));
+            }
+        };
+        let value = match arg_value {
+            Value::Boolean(b) => *b,
+            _ => {
+                return Err(anyhow!(
+                    "Invalid @storage directive on `{}`. Argument `{}` must \
+                     be a boolean. Expected boolean args from {{postgres, \
+                     clickhouse}}, e.g. @storage(postgres: true, clickhouse: \
+                     true).",
+                    obj.name,
+                    arg_name
+                ));
+            }
+        };
+        if slot.is_some() {
+            return Err(anyhow!(
+                "Invalid @storage directive on `{}`. Argument `{}` is \
+                 specified more than once. Expected boolean args from \
+                 {{postgres, clickhouse}}, e.g. @storage(postgres: true, \
+                 clickhouse: true).",
+                obj.name,
+                arg_name
+            ));
+        }
+        *slot = Some(value);
+    }
+
+    let enables_anything = matches!(postgres, Some(true)) || matches!(clickhouse, Some(true));
+    if !enables_anything {
+        return Err(anyhow!(
+            "@storage on `{}` enables no storage. At least one of {{postgres, \
+             clickhouse}} must be true.",
+            obj.name
+        ));
+    }
+
+    Ok((postgres, clickhouse))
 }
 
 ///  used to get the positive integers in the directives from the GraphQL schema.
@@ -2708,5 +2802,133 @@ type TestEntity
         // Single-field index should not appear in composite indices
         let composite = parsed_entity.get_composite_indices();
         assert_eq!(composite.len(), 0);
+    }
+
+    // --- @storage directive (per-entity storage routing) ---
+
+    #[test]
+    fn storage_directive_omitted_leaves_fields_none() {
+        let schema_str = r#"
+type TestEntity { id: ID! }
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        assert_eq!(
+            (
+                entity.postgres,
+                entity.clickhouse,
+                entity.has_storage_directive()
+            ),
+            (None, None, false)
+        );
+    }
+
+    #[test]
+    fn storage_directive_postgres_only() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: true) { id: ID! }
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        assert_eq!(
+            (
+                entity.postgres,
+                entity.clickhouse,
+                entity.has_storage_directive()
+            ),
+            (Some(true), None, true)
+        );
+    }
+
+    #[test]
+    fn storage_directive_both_backends() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        assert_eq!(
+            (entity.postgres, entity.clickhouse),
+            (Some(true), Some(true))
+        );
+    }
+
+    #[test]
+    fn storage_directive_unknown_arg_errors() {
+        let schema_str = r#"
+type TestEntity @storage(redis: true) { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Unknown argument `redis`. \
+             Expected boolean args from {postgres, clickhouse}, e.g. @storage(postgres: \
+             true, clickhouse: true)."
+        );
+    }
+
+    #[test]
+    fn storage_directive_non_bool_arg_errors() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: "yes") { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Argument `postgres` must be a \
+             boolean. Expected boolean args from {postgres, clickhouse}, e.g. \
+             @storage(postgres: true, clickhouse: true)."
+        );
+    }
+
+    #[test]
+    fn storage_directive_duplicate_directive_errors() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: true) @storage(clickhouse: true) { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Only one @storage directive is \
+             allowed per entity. Expected boolean args from {postgres, clickhouse}, e.g. \
+             @storage(postgres: true, clickhouse: true)."
+        );
+    }
+
+    #[test]
+    fn storage_directive_duplicate_arg_errors() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: true, postgres: false) { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Argument `postgres` is specified \
+             more than once. Expected boolean args from {postgres, clickhouse}, e.g. \
+             @storage(postgres: true, clickhouse: true)."
+        );
+    }
+
+    #[test]
+    fn storage_directive_all_false_errors() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: false) { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "@storage on `TestEntity` enables no storage. At least one of {postgres, \
+             clickhouse} must be true."
+        );
+    }
+
+    #[test]
+    fn storage_directive_empty_errors() {
+        let schema_str = r#"
+type TestEntity @storage { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "@storage on `TestEntity` enables no storage. At least one of {postgres, \
+             clickhouse} must be true."
+        );
     }
 }
