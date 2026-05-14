@@ -163,6 +163,11 @@ if (existingMint.length > 0) {
 
 ALL external calls (RPC, fetch, APIs) MUST use the Effect API. This is mandatory because handlers run twice (preload + sequential).
 
+`mode` is required. Use `"speculative"` for handler-driven calls — that
+covers every migration from a subgraph, since subgraph mappings only run
+from event handlers. Reserve `"read"` for non-indexer call sites (chat
+bots, stream consumers).
+
 ### Basic Effect Pattern
 
 ```typescript
