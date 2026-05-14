@@ -4,6 +4,13 @@ type contextParams = {
   item: Internal.item,
   checkpointId: Internal.checkpointId,
   inMemoryStore: InMemoryStore.t,
+  // The previous batch whose SQL commit is still in flight. loadById
+  // checks the staged store as a fallback so it sees writes that
+  // haven't landed in Postgres yet; loadByField awaits the commit
+  // first because the in-memory secondary index doesn't carry
+  // across batches. None on the first batch or when pipelining is
+  // disabled (e.g. during rollback replay).
+  transit: option<LoadLayer.transit>,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
   isPreload: bool,
@@ -143,6 +150,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
         ~fieldName=dbFieldName,
         ~fieldValueSchema=fieldSchema,
         ~inMemoryStore=params.inMemoryStore,
+        ~transit=?params.transit,
         ~shouldGroup=params.isPreload,
         ~item=params.item,
         ~fieldValue,
@@ -164,6 +172,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
         ~fieldName=dbFieldName,
         ~fieldValueSchema=fieldSchema,
         ~inMemoryStore=params.inMemoryStore,
+        ~transit=?params.transit,
         ~shouldGroup=params.isPreload,
         ~item=params.item,
         ~fieldValue,
@@ -193,6 +202,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
       ~fieldName=dbFieldName,
       ~fieldValueSchema=fieldSchema,
       ~inMemoryStore=params.inMemoryStore,
+      ~transit=?params.transit,
       ~shouldGroup=params.isPreload,
       ~item=params.item,
       ~fieldValue,
@@ -246,6 +256,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
               ~inMemoryStore=params.inMemoryStore,
+              ~transit=?params.transit,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId,
@@ -277,6 +288,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
               ~inMemoryStore=params.inMemoryStore,
+              ~transit=?params.transit,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId,
@@ -306,6 +318,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
               ~inMemoryStore=params.inMemoryStore,
+              ~transit=?params.transit,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId=entity.id,
@@ -377,6 +390,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
           item: params.item,
           isPreload: params.isPreload,
           inMemoryStore: params.inMemoryStore,
+          transit: params.transit,
           loadManager: params.loadManager,
           persistence: params.persistence,
           shouldSaveHistory: params.shouldSaveHistory,

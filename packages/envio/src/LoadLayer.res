@@ -1,14 +1,28 @@
+// The previous batch's writes whose SQL commit is still in flight.
+// Loaders consult `inMemoryStore` so they see staged entities instead
+// of pre-commit Postgres state. `commitPromise` lets callers that
+// query secondary indexes (loadByField) drain the write before
+// reading the database — the in-memory secondary index is not
+// reliable across batches.
+type transit = {
+  inMemoryStore: InMemoryStore.t,
+  commitPromise: promise<result<unit, ErrorHandling.t>>,
+}
+
 let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
+  ~transit: option<transit>=?,
   ~shouldGroup,
   ~item,
   ~entityId,
 ) => {
   let key = `${entityConfig.name}.get`
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+  let transitInMemTable =
+    transit->Belt.Option.map(({inMemoryStore: s}) => s->InMemoryStore.getInMemTable(~entityConfig))
 
   let load = async (idsToLoad, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
@@ -50,13 +64,37 @@ let loadById = (
     )
   }
 
+  // hasInMemory / getUnsafeInMemory check the active batch's table first
+  // and fall back to the transit table from the previous batch whose SQL
+  // commit is still in flight. Without the fallback, the next batch's
+  // loaders would query Postgres and miss writes from the prior batch.
+  let hasInMemory = switch transitInMemTable {
+  | Some(transit) =>
+    hash =>
+      inMemTable.table->InMemoryTable.hasByHash(hash) ||
+        transit.table->InMemoryTable.hasByHash(hash)
+  | None => hash => inMemTable.table->InMemoryTable.hasByHash(hash)
+  }
+  let getUnsafeInMemory = switch transitInMemTable {
+  | Some(transit) => {
+      let primary = inMemTable->InMemoryTable.Entity.getUnsafe
+      let secondary = transit->InMemoryTable.Entity.getUnsafe
+      key =>
+        switch inMemTable.table->InMemoryTable.hasByHash(key) {
+        | true => primary(key)
+        | false => secondary(key)
+        }
+    }
+  | None => inMemTable->InMemoryTable.Entity.getUnsafe
+  }
+
   loadManager->LoadManager.call(
     ~key,
     ~load,
     ~shouldGroup,
     ~hasher=LoadManager.noopHasher,
-    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafe,
-    ~hasInMemory=hash => inMemTable.table->InMemoryTable.hasByHash(hash),
+    ~getUnsafeInMemory,
+    ~hasInMemory,
     ~input=entityId,
   )
 }
@@ -346,6 +384,7 @@ let loadByField = (
   ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
+  ~transit: option<transit>=?,
   ~fieldName,
   ~fieldValueSchema,
   ~shouldGroup,
@@ -361,6 +400,24 @@ let loadByField = (
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (fieldValues: array<'fieldValue>, ~onError as _) => {
+    // Field queries hit the database, but the previous batch's writes
+    // may not have landed yet. Drain its commit before the SELECT or
+    // we'd return a stale set (missing entities the prior batch set
+    // and including ones it deleted). loadById can skip this because
+    // its lookup checks the transit in-memory table directly.
+    switch transit {
+    | Some({commitPromise}) =>
+      switch await commitPromise {
+      | Ok() => ()
+      | Error(errHandler) =>
+        errHandler.exn->ErrorHandling.mkLogAndRaise(
+          ~logger=item->Logging.getItemLogger,
+          ~msg="Previous batch commit failed; aborting field-load",
+        )
+      }
+    | None => ()
+    }
+
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
 

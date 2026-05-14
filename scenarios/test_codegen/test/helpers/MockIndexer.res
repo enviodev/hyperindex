@@ -379,6 +379,15 @@ module Indexer = {
           while before >= (gsManager->GlobalStateManager.getState).processedBatches {
             await Utils.delay(1)
           }
+          // The pipeline lets `processedBatches` tick once the CPU phase
+          // finishes, so the SQL commit may still be in flight. Tests
+          // expect the previous batch to be readable from Postgres by
+          // the time this resolves — drain the pending commit.
+          switch (gsManager->GlobalStateManager.getState).pipeline.pendingCommit {
+          | Some({commitPromise}) =>
+            let _ = await commitPromise
+          | None => ()
+          }
           // Skip extra microtasks for indexer to fire follow-up actions
           // (e.g. the NextQuery dispatch that schedules the next
           // getItemsOrThrow call). Without this, callers that immediately

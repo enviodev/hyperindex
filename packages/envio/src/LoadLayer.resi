@@ -1,8 +1,14 @@
+type transit = {
+  inMemoryStore: InMemoryStore.t,
+  commitPromise: promise<result<unit, ErrorHandling.t>>,
+}
+
 let loadById: (
   ~loadManager: LoadManager.t,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore: InMemoryStore.t,
+  ~transit: transit=?,
   ~shouldGroup: bool,
   ~item: Internal.item,
   ~entityId: string,
@@ -14,6 +20,7 @@ let loadByField: (
   ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore: InMemoryStore.t,
+  ~transit: transit=?,
   ~fieldName: string,
   ~fieldValueSchema: RescriptSchema.S.t<'fieldValue>,
   ~shouldGroup: bool,

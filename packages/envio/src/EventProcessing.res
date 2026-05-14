@@ -105,6 +105,7 @@ let runEventHandlerOrThrow = async (
   ~checkpointId,
   ~handler,
   ~inMemoryStore,
+  ~transit,
   ~loadManager,
   ~persistence,
   ~shouldSaveHistory,
@@ -121,6 +122,7 @@ let runEventHandlerOrThrow = async (
       item,
       checkpointId,
       inMemoryStore,
+      transit,
       loadManager,
       persistence,
       shouldSaveHistory,
@@ -160,6 +162,7 @@ let runHandlerOrThrow = async (
   item: Internal.item,
   ~checkpointId,
   ~inMemoryStore,
+  ~transit,
   ~loadManager,
   ~ctx: Ctx.t,
   ~shouldSaveHistory,
@@ -171,6 +174,7 @@ let runHandlerOrThrow = async (
       let contextParams: UserContext.contextParams = {
         item,
         inMemoryStore,
+        transit,
         loadManager,
         persistence: ctx.persistence,
         shouldSaveHistory,
@@ -205,6 +209,7 @@ let runHandlerOrThrow = async (
           ~handler,
           ~checkpointId,
           ~inMemoryStore,
+          ~transit,
           ~loadManager,
           ~persistence=ctx.persistence,
           ~shouldSaveHistory,
@@ -229,6 +234,7 @@ let preloadBatchOrThrow = async (
   ~persistence,
   ~config: Config.t,
   ~inMemoryStore,
+  ~transit,
   ~chains: Internal.chains,
 ) => {
   // On the first run of loaders, we don't care about the result,
@@ -261,6 +267,7 @@ let preloadBatchOrThrow = async (
                 context: UserContext.getHandlerContext({
                   item,
                   inMemoryStore,
+                  transit,
                   loadManager,
                   persistence,
                   checkpointId,
@@ -296,6 +303,7 @@ let preloadBatchOrThrow = async (
                 ~context=UserContext.getHandlerContext({
                   item,
                   inMemoryStore,
+                  transit,
                   loadManager,
                   persistence,
                   checkpointId,
@@ -323,6 +331,7 @@ let preloadBatchOrThrow = async (
 let runBatchHandlersOrThrow = async (
   batch: Batch.t,
   ~inMemoryStore,
+  ~transit,
   ~loadManager,
   ~ctx,
   ~shouldSaveHistory,
@@ -341,6 +350,7 @@ let runBatchHandlersOrThrow = async (
         item,
         ~checkpointId,
         ~inMemoryStore,
+        ~transit,
         ~loadManager,
         ~ctx,
         ~shouldSaveHistory,
@@ -374,9 +384,18 @@ type logPartitionInfo = {
   lastItemBlockNumber?: int,
 }
 
-let processEventBatch = async (
+type cpuPhaseResult = {
+  loaderDuration: float,
+  handlerDuration: float,
+}
+
+// Runs preload + handlers, but stops short of the SQL commit. Returns
+// the elapsed loader/handler durations so the caller can stitch metrics
+// after the deferred commit completes.
+let processEventBatchCpuOrThrow = async (
   ~batch: Batch.t,
   ~inMemoryStore: InMemoryStore.t,
+  ~transit: option<LoadLayer.transit>,
   ~isInReorgThreshold,
   ~loadManager,
   ~ctx: Ctx.t,
@@ -406,6 +425,7 @@ let processEventBatch = async (
         ~loadManager,
         ~persistence=ctx.persistence,
         ~inMemoryStore,
+        ~transit,
         ~chains,
         ~config=ctx.config,
       )
@@ -416,6 +436,7 @@ let processEventBatch = async (
     if batch.items->Utils.Array.notEmpty {
       await batch->runBatchHandlersOrThrow(
         ~inMemoryStore,
+        ~transit,
         ~loadManager,
         ~ctx,
         ~shouldSaveHistory=ctx.config->Config.shouldSaveHistory(~isInReorgThreshold),
@@ -425,34 +446,43 @@ let processEventBatch = async (
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    try {
-      await ctx.persistence->Persistence.writeBatch(
-        ~batch,
-        ~config=ctx.config,
-        ~inMemoryStore,
-        ~isInReorgThreshold,
-      )
-
-      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-      let loaderDuration = elapsedTimeAfterLoaders
-      let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
-      let dbWriteDuration = elapsedTimeAfterDbWrite -. elapsedTimeAfterProcessing
-      registerProcessEventBatchMetrics(
-        ~logger,
-        ~loadDuration=loaderDuration,
-        ~handlerDuration,
-        ~dbWriteDuration,
-      )
-      Ok()
-    } catch {
-    | Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.make(~msg=message, ~logger)->Error
-    | exn => exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
-    }
+    Ok({
+      loaderDuration: elapsedTimeAfterLoaders,
+      handlerDuration: elapsedTimeAfterProcessing -. elapsedTimeAfterLoaders,
+    })
   } catch {
   | ProcessingError({message, exn, item}) =>
     exn
     ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
     ->Error
+  }
+}
+
+// Performs the SQL commit for a batch whose handlers already ran. Designed
+// to run in the background while the next batch's CPU phase starts.
+let commitBatchOrThrow = async (
+  ~batch: Batch.t,
+  ~inMemoryStore: InMemoryStore.t,
+  ~isInReorgThreshold,
+  ~persistence,
+  ~config,
+  ~cpuResult: cpuPhaseResult,
+) => {
+  let logger = Logging.getLogger()
+  let timeRef = Hrtime.makeTimer()
+  try {
+    await persistence->Persistence.writeBatch(~batch, ~config, ~inMemoryStore, ~isInReorgThreshold)
+    let dbWriteDuration = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    registerProcessEventBatchMetrics(
+      ~logger,
+      ~loadDuration=cpuResult.loaderDuration,
+      ~handlerDuration=cpuResult.handlerDuration,
+      ~dbWriteDuration,
+    )
+    Ok()
+  } catch {
+  | Persistence.StorageError({message, reason}) =>
+    reason->ErrorHandling.make(~msg=message, ~logger)->Error
+  | exn => exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
   }
 }

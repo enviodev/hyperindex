@@ -37,6 +37,25 @@ module WriteThrottlers = {
   }
 }
 
+// Tracks the previous batch's SQL commit while the next batch's
+// CPU phase (decode + handlers + loaders) runs in parallel. The
+// next batch's LoadLayer consults `inMemoryStore` before hitting
+// Postgres so reads of entities still in-flight see the staged
+// writes. `commitPromise` resolves to Ok once the SQL transaction
+// has landed; the next batch must await it before starting its
+// own commit to keep SQL writes strictly ordered.
+type pendingCommit = {
+  inMemoryStore: InMemoryStore.t,
+  commitPromise: promise<result<unit, ErrorHandling.t>>,
+}
+
+// Stable holder for `pendingCommit`. Lives outside the spread-copied
+// record so mutations survive when actions return a fresh state via
+// `{...state, ...}`.
+type pipelineState = {
+  mutable pendingCommit: option<pendingCommit>,
+}
+
 type t = {
   ctx: Ctx.t,
   chainManager: ChainManager.t,
@@ -51,6 +70,7 @@ type t = {
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
+  pipeline: pipelineState,
 }
 
 let make = (
@@ -72,6 +92,7 @@ let make = (
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
     id: 0,
+    pipeline: {pendingCommit: None},
   }
 }
 
@@ -921,7 +942,17 @@ let injectedTaskReducer = (
           ~throttler=writeThrottlers.chainMetaData,
           ~persistence=state.ctx.persistence,
         )
-        dispatchAction(SuccessExit)
+        // The pipeline lets EventBatchProcessed fire while the last batch's
+        // SQL is still in flight. Drain it before exiting so the user's
+        // declared endblock state actually lands in Postgres.
+        switch state.pipeline.pendingCommit {
+        | Some({commitPromise}) =>
+          switch await commitPromise {
+          | Ok() => dispatchAction(SuccessExit)
+          | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+          }
+        | None => dispatchAction(SuccessExit)
+        }
       | ExitWithError(msg) =>
         dispatchAction(ErrorExit(ErrorHandling.make(JsError.throwWithMessage(msg))))
       | NoExit =>
@@ -1014,26 +1045,75 @@ let injectedTaskReducer = (
 
           inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
 
-          switch await EventProcessing.processEventBatch(
+          // Pipeline: run this batch's CPU phase (preload + handlers) in parallel
+          // with the previous batch's SQL commit. The transit handle exposes
+          // both the staged InMemoryStore (so loadById sees pending writes)
+          // and the commit promise (so loadByField can drain the write before
+          // querying the database). We don't pipeline during rollback — the
+          // diff store needs to be exclusively visible while we replay.
+          let transit: option<LoadLayer.transit> = switch (
+            rollbackInMemStore,
+            state.pipeline.pendingCommit,
+          ) {
+          | (None, Some({inMemoryStore: priorStore, commitPromise})) =>
+            Some({inMemoryStore: priorStore, commitPromise})
+          | _ => None
+          }
+
+          let cpuResult = switch await EventProcessing.processEventBatchCpuOrThrow(
             ~batch,
             ~inMemoryStore,
+            ~transit,
             ~isInReorgThreshold,
             ~loadManager=state.loadManager,
             ~ctx=state.ctx,
             ~chainFetchers=state.chainManager.chainFetchers,
           ) {
           | exception exn =>
-            //All casese should be handled/caught before this with better user messaging.
-            //This is just a safety in case something unexpected happens
             let errHandler =
               exn->ErrorHandling.make(
                 ~msg="A top level unexpected error occurred during processing",
               )
-            dispatchAction(ErrorExit(errHandler))
-          | res =>
-            switch res {
-            | Ok() => dispatchAction(EventBatchProcessed({batch: batch}))
-            | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+            Error(errHandler)
+          | res => res
+          }
+
+          switch cpuResult {
+          | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+          | Ok(cpuResult) => {
+              // Ordered commits: this batch's SQL must follow the prior one.
+              // If a prior commit is still in flight, await it now. If the
+              // prior commit failed, the indexer is shutting down — surface
+              // its error and skip queuing this batch.
+              let priorCommitOk = switch state.pipeline.pendingCommit {
+              | Some({commitPromise}) =>
+                switch await commitPromise {
+                | Ok() => true
+                | Error(errHandler) => {
+                    dispatchAction(ErrorExit(errHandler))
+                    false
+                  }
+                }
+              | None => true
+              }
+
+              if priorCommitOk {
+                // Fire this batch's SQL commit; track it so the next batch
+                // can both consult its entities (transit) and await it
+                // before kicking off its own commit.
+                let commitPromise = EventProcessing.commitBatchOrThrow(
+                  ~batch,
+                  ~inMemoryStore,
+                  ~isInReorgThreshold,
+                  ~persistence=state.ctx.persistence,
+                  ~config=state.ctx.config,
+                  ~cpuResult,
+                )
+
+                state.pipeline.pendingCommit = Some({inMemoryStore, commitPromise})
+
+                dispatchAction(EventBatchProcessed({batch: batch}))
+              }
             }
           }
         }
@@ -1060,168 +1140,186 @@ let injectedTaskReducer = (
       | {rollbackState: FoundReorgDepth(_), currentlyProcessingBatch: true} =>
         Logging.info("Waiting for batch to finish processing before executing rollback")
       | {rollbackState: FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber})} =>
-        let startTime = Hrtime.makeTimer()
-
-        let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
-
-        let logger = Logging.createChildFrom(
-          ~logger=chainFetcher.logger,
-          ~params={
-            "action": "Rollback",
-            "reorgChain": reorgChain,
-            "targetBlockNumber": rollbackTargetBlockNumber,
-          },
-        )
-        logger->Logging.childInfo("Started rollback on reorg")
-        Prometheus.RollbackTargetBlockNumber.set(
-          ~blockNumber=rollbackTargetBlockNumber,
-          ~chain=reorgChain,
-        )
-
-        let reorgChainId = reorgChain->ChainMap.Chain.toChainId
-
-        let rollbackTargetCheckpointId = {
-          switch await state.ctx.persistence.storage.getRollbackTargetCheckpoint(
-            ~reorgChainId,
-            ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
-          ) {
-          | Some(checkpointId) => checkpointId
-          | None => 0n
+        // Rollback queries Postgres for the diff between the in-memory
+        // chain progress and the target checkpoint. With the pipeline,
+        // the most recent batch's CPU has finished but its SQL may
+        // still be in flight — running the rollback queries against
+        // a half-written DB would compute the wrong diff. Drain it.
+        let pendingOk = switch state.pipeline.pendingCommit {
+        | Some({commitPromise}) =>
+          switch await commitPromise {
+          | Ok() => true
+          | Error(errHandler) => {
+              dispatchAction(ErrorExit(errHandler))
+              false
+            }
           }
+        | None => true
         }
+        if pendingOk {
+          let startTime = Hrtime.makeTimer()
 
-        let eventsProcessedDiffByChain = Dict.make()
-        let newProgressBlockNumberPerChain = Dict.make()
-        let rollbackedProcessedEvents = ref(0.)
+          let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
 
-        {
-          let rollbackProgressDiff = await state.ctx.persistence.storage.getRollbackProgressDiff(
-            ~rollbackTargetCheckpointId,
+          let logger = Logging.createChildFrom(
+            ~logger=chainFetcher.logger,
+            ~params={
+              "action": "Rollback",
+              "reorgChain": reorgChain,
+              "targetBlockNumber": rollbackTargetBlockNumber,
+            },
           )
-          for idx in 0 to rollbackProgressDiff->Array.length - 1 {
-            let diff = rollbackProgressDiff->Array.getUnsafe(idx)
-            eventsProcessedDiffByChain->Utils.Dict.setByInt(
-              diff["chain_id"],
-              {
-                let eventsProcessedDiff =
-                  Float.fromString(diff["events_processed_diff"])->Option.getOrThrow
-                rollbackedProcessedEvents :=
-                  rollbackedProcessedEvents.contents +. eventsProcessedDiff
-                eventsProcessedDiff
-              },
-            )
-            newProgressBlockNumberPerChain->Utils.Dict.setByInt(
-              diff["chain_id"],
-              if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChainId {
-                Pervasives.min(diff["new_progress_block_number"], rollbackTargetBlockNumber)
-              } else {
-                diff["new_progress_block_number"]
-              },
-            )
+          logger->Logging.childInfo("Started rollback on reorg")
+          Prometheus.RollbackTargetBlockNumber.set(
+            ~blockNumber=rollbackTargetBlockNumber,
+            ~chain=reorgChain,
+          )
+
+          let reorgChainId = reorgChain->ChainMap.Chain.toChainId
+
+          let rollbackTargetCheckpointId = {
+            switch await state.ctx.persistence.storage.getRollbackTargetCheckpoint(
+              ~reorgChainId,
+              ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
+            ) {
+            | Some(checkpointId) => checkpointId
+            | None => 0n
+            }
           }
-        }
 
-        let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
-          switch newProgressBlockNumberPerChain->Utils.Dict.dangerouslyGetByIntNonOption(
-            chain->ChainMap.Chain.toChainId,
-          ) {
-          | Some(newProgressBlockNumber) =>
-            let fetchState =
-              cf.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
-            let newTotalEventsProcessed =
-              cf.numEventsProcessed -.
-              eventsProcessedDiffByChain
-              ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
-              ->Option.getUnsafe
+          let eventsProcessedDiffByChain = Dict.make()
+          let newProgressBlockNumberPerChain = Dict.make()
+          let rollbackedProcessedEvents = ref(0.)
 
-            if cf.committedProgressBlockNumber !== newProgressBlockNumber {
-              Prometheus.ProgressBlockNumber.set(
-                ~blockNumber=newProgressBlockNumber,
-                ~chainId=chain->ChainMap.Chain.toChainId,
+          {
+            let rollbackProgressDiff = await state.ctx.persistence.storage.getRollbackProgressDiff(
+              ~rollbackTargetCheckpointId,
+            )
+            for idx in 0 to rollbackProgressDiff->Array.length - 1 {
+              let diff = rollbackProgressDiff->Array.getUnsafe(idx)
+              eventsProcessedDiffByChain->Utils.Dict.setByInt(
+                diff["chain_id"],
+                {
+                  let eventsProcessedDiff =
+                    Float.fromString(diff["events_processed_diff"])->Option.getOrThrow
+                  rollbackedProcessedEvents :=
+                    rollbackedProcessedEvents.contents +. eventsProcessedDiff
+                  eventsProcessedDiff
+                },
+              )
+              newProgressBlockNumberPerChain->Utils.Dict.setByInt(
+                diff["chain_id"],
+                if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChainId {
+                  Pervasives.min(diff["new_progress_block_number"], rollbackTargetBlockNumber)
+                } else {
+                  diff["new_progress_block_number"]
+                },
               )
             }
-            if cf.numEventsProcessed !== newTotalEventsProcessed {
-              Prometheus.ProgressEventsCount.set(
-                ~processedCount=newTotalEventsProcessed,
-                ~chainId=chain->ChainMap.Chain.toChainId,
-              )
-            }
+          }
 
-            {
-              ...cf,
-              reorgDetection: chain == reorgChain
-                ? cf.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(
-                    ~blockNumber=rollbackTargetBlockNumber,
-                  )
-                : cf.reorgDetection,
-              safeCheckpointTracking: switch cf.safeCheckpointTracking {
-              | Some(safeCheckpointTracking) =>
-                Some(
-                  safeCheckpointTracking->SafeCheckpointTracking.rollback(
-                    ~targetBlockNumber=newProgressBlockNumber,
-                  ),
+          let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
+            switch newProgressBlockNumberPerChain->Utils.Dict.dangerouslyGetByIntNonOption(
+              chain->ChainMap.Chain.toChainId,
+            ) {
+            | Some(newProgressBlockNumber) =>
+              let fetchState =
+                cf.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
+              let newTotalEventsProcessed =
+                cf.numEventsProcessed -.
+                eventsProcessedDiffByChain
+                ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
+                ->Option.getUnsafe
+
+              if cf.committedProgressBlockNumber !== newProgressBlockNumber {
+                Prometheus.ProgressBlockNumber.set(
+                  ~blockNumber=newProgressBlockNumber,
+                  ~chainId=chain->ChainMap.Chain.toChainId,
                 )
-              | None => None
-              },
-              fetchState,
-              committedProgressBlockNumber: newProgressBlockNumber,
-              numEventsProcessed: newTotalEventsProcessed,
-            }
+              }
+              if cf.numEventsProcessed !== newTotalEventsProcessed {
+                Prometheus.ProgressEventsCount.set(
+                  ~processedCount=newTotalEventsProcessed,
+                  ~chainId=chain->ChainMap.Chain.toChainId,
+                )
+              }
 
-          | None =>
-            // Even without a progress diff entry, the reorg chain must have its
-            // reorgDetection and fetchState rolled back. Otherwise the stale block hash
-            // stays in dataByBlockNumber and the same reorg is re-detected on the next
-            // fetch, causing an infinite reorg→rollback loop.
-            if chain == reorgChain {
               {
                 ...cf,
-                reorgDetection: cf.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(
-                  ~blockNumber=rollbackTargetBlockNumber,
-                ),
-                fetchState: cf.fetchState->FetchState.rollback(
-                  ~targetBlockNumber=rollbackTargetBlockNumber,
-                ),
+                reorgDetection: chain == reorgChain
+                  ? cf.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(
+                      ~blockNumber=rollbackTargetBlockNumber,
+                    )
+                  : cf.reorgDetection,
+                safeCheckpointTracking: switch cf.safeCheckpointTracking {
+                | Some(safeCheckpointTracking) =>
+                  Some(
+                    safeCheckpointTracking->SafeCheckpointTracking.rollback(
+                      ~targetBlockNumber=newProgressBlockNumber,
+                    ),
+                  )
+                | None => None
+                },
+                fetchState,
+                committedProgressBlockNumber: newProgressBlockNumber,
+                numEventsProcessed: newTotalEventsProcessed,
               }
-            } else {
-              cf
+
+            | None =>
+              // Even without a progress diff entry, the reorg chain must have its
+              // reorgDetection and fetchState rolled back. Otherwise the stale block hash
+              // stays in dataByBlockNumber and the same reorg is re-detected on the next
+              // fetch, causing an infinite reorg→rollback loop.
+              if chain == reorgChain {
+                {
+                  ...cf,
+                  reorgDetection: cf.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(
+                    ~blockNumber=rollbackTargetBlockNumber,
+                  ),
+                  fetchState: cf.fetchState->FetchState.rollback(
+                    ~targetBlockNumber=rollbackTargetBlockNumber,
+                  ),
+                }
+              } else {
+                cf
+              }
             }
+          })
+
+          // Construct in Memory store with rollback diff
+          let diff = await state.ctx.persistence->Persistence.prepareRollbackDiff(
+            ~rollbackTargetCheckpointId,
+            ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->BigInt.add(1n),
+          )
+
+          let chainManager = {
+            ...state.chainManager,
+            chainFetchers,
           }
-        })
 
-        // Construct in Memory store with rollback diff
-        let diff = await state.ctx.persistence->Persistence.prepareRollbackDiff(
-          ~rollbackTargetCheckpointId,
-          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->BigInt.add(1n),
-        )
+          logger->Logging.childTrace({
+            "msg": "Finished rollback on reorg",
+            "entityChanges": {
+              "deleted": diff["deletedEntities"],
+              "upserted": diff["setEntities"],
+            },
+            "rollbackedEvents": rollbackedProcessedEvents.contents,
+            "beforeCheckpointId": state.chainManager.committedCheckpointId,
+            "targetCheckpointId": rollbackTargetCheckpointId,
+          })
+          Prometheus.RollbackSuccess.increment(
+            ~timeSeconds=Hrtime.timeSince(startTime)->Hrtime.toSecondsFloat,
+            ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
+          )
 
-        let chainManager = {
-          ...state.chainManager,
-          chainFetchers,
+          dispatchAction(
+            SetRollbackState({
+              diffInMemoryStore: diff["inMemStore"],
+              rollbackedChainManager: chainManager,
+              eventsProcessedDiffByChain,
+            }),
+          )
         }
-
-        logger->Logging.childTrace({
-          "msg": "Finished rollback on reorg",
-          "entityChanges": {
-            "deleted": diff["deletedEntities"],
-            "upserted": diff["setEntities"],
-          },
-          "rollbackedEvents": rollbackedProcessedEvents.contents,
-          "beforeCheckpointId": state.chainManager.committedCheckpointId,
-          "targetCheckpointId": rollbackTargetCheckpointId,
-        })
-        Prometheus.RollbackSuccess.increment(
-          ~timeSeconds=Hrtime.timeSince(startTime)->Hrtime.toSecondsFloat,
-          ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
-        )
-
-        dispatchAction(
-          SetRollbackState({
-            diffInMemoryStore: diff["inMemStore"],
-            rollbackedChainManager: chainManager,
-            eventsProcessedDiffByChain,
-          }),
-        )
       }
     }
   }

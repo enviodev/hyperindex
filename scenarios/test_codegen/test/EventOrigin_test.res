@@ -54,6 +54,7 @@ describe("Chains State", () => {
             ~config=Config.loadWithoutRegistrations(),
           ),
           inMemoryStore,
+          transit: None,
           shouldSaveHistory: false,
           isPreload: false,
           checkpointId: 0n,
