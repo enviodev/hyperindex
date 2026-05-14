@@ -22,6 +22,7 @@ import { bytesToHex } from "viem";
 const noopEffect = createEffect(
   {
     name: "noopEffect",
+    mode: "speculative",
     input: undefined,
     output: undefined,
     rateLimit: false,
@@ -41,6 +42,7 @@ const noopEffect = createEffect(
 const getFiles = createEffect(
   {
     name: "getFiles",
+    mode: "speculative",
     input: {
       foo: S.string,
       bar: S.optional(S.string),
@@ -86,6 +88,7 @@ const getFiles = createEffect(
 const getBalance = createEffect(
   {
     name: "getBalance",
+    mode: "speculative",
     input: {
       address: S.address,
       blockNumber: S.optional(S.bigint),
@@ -522,6 +525,7 @@ indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async 
 const testEffectWithCache = createEffect(
   {
     name: "testEffectWithCache",
+    mode: "speculative",
     input: {
       id: S.string,
     },
@@ -554,6 +558,7 @@ const testEffectWithCache = createEffect(
 const throwingEffect = createEffect(
   {
     name: "throwingEffect",
+    mode: "speculative",
     input: {
       id: S.string,
     },

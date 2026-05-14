@@ -12,6 +12,7 @@ let _testGetChainById = (chainId: Indexer.chainId) => Indexer.getChainById(Index
 let noopEffect = Envio.createEffect(
   {
     name: "noopEffect",
+    mode: Speculative,
     input: S.literal(),
     output: S.literal(),
     rateLimit: Disable,

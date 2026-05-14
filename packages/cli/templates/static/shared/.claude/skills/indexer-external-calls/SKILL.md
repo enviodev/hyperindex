@@ -20,6 +20,7 @@ import { S, createEffect } from "envio";
 const getOwner = createEffect(
   {
     name: "getOwner",
+    mode: "speculative",
     input: { tokenId: S.bigint },
     output: S.union([S.string, null]),
     cache: true,
@@ -63,6 +64,7 @@ const client = createPublicClient({ transport: http(process.env.ENVIO_RPC_URL) }
 const getTokenMetadata = createEffect(
   {
     name: "getTokenMetadata",
+    mode: "speculative",
     input: S.string,
     output: { name: S.string, symbol: S.string, decimals: S.number },
     cache: true,
@@ -85,9 +87,14 @@ const getTokenMetadata = createEffect(
 | Option | Type | Default |
 |---|---|---|
 | `name` | `string` | — |
+| `mode` | `"speculative" \| "read"` | required |
 | `input` | `S.Schema` | — |
 | `output` | `S.Schema` | — |
 | `cache` | `boolean` | `false` |
 | `rateLimit` | `false \| { calls, per }` | required |
+
+`mode: "speculative"` is the right choice for handler-driven calls that are
+safe to replay during the parallel preload pass. Use `"read"` for read-only
+queries (chat bots, stream consumers) that should not be replayed.
 
 Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete

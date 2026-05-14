@@ -171,6 +171,7 @@ import { S, createEffect } from "envio";
 export const getSomething = createEffect(
   {
     name: "getSomething",
+    mode: "speculative",
     input: { address: S.string, blockNumber: S.number },
     output: S.union([S.string, null]),
     cache: true,
@@ -233,6 +234,7 @@ const publicClient = createPublicClient({
 export const getTokenMetadata = createEffect(
   {
     name: "getTokenMetadata",
+    mode: "speculative",
     input: S.string,
     output: S.object({
       name: S.string,
@@ -241,6 +243,7 @@ export const getTokenMetadata = createEffect(
       totalSupply: S.string,
     }),
     cache: true,
+    rateLimit: false,
   },
   async ({ input: tokenAddress, context }) => {
     try {

@@ -70,9 +70,17 @@ and rateLimitDuration =
 and rateLimit =
   | @as(false) Disable
   | Enable({calls: int, per: rateLimitDuration})
+@unboxed
+and effectMode =
+  | @as("speculative") Speculative
+  | @as("read") Read
 and effectOptions<'input, 'output> = {
   /** The name of the effect. Used for logging and debugging. */
   name: string,
+  /** Execution mode of the effect: "speculative" for handler-driven calls
+   * safe to replay during the preload pass, or "read" for read-only calls
+   * (chat bots, stream queries). Currently behaves the same for both modes. */
+  mode: effectMode,
   /** The input schema of the effect. */
   input: S.t<'input>,
   /** The output schema of the effect. */
@@ -112,6 +120,7 @@ let createEffect = (
   })
   {
     name: options.name,
+    mode: options.mode->(Utils.magic: effectMode => string),
     handler: handler->(
       Utils.magic: (effectArgs<'input> => promise<'output>) => Internal.effectArgs => promise<
         Internal.effectOutput,

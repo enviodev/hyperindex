@@ -40,6 +40,7 @@ The following effect fetches the **decimal of a token** using an RPC call:
 const fetchTokenDetails = createEffect(
   {
     name: "fetchTokenDetails", // Name used internally for the effect
+    mode: "speculative", // Speculative execution: safe to replay during preload
     input: {
       token: S.string, // Input: token address as string
       chainId: S.number, // Input: chain ID to select the right RPC client

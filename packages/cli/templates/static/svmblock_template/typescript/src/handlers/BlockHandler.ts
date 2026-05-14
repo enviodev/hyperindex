@@ -20,6 +20,7 @@ const getBlockDataSchema = S.schema({
 const getBlockEffect = createEffect(
   {
     name: "getBlock",
+    mode: "speculative",
     input: { slot: S.number },
     output: nullableBlockSchema,
     rateLimit: { calls: 3, per: "second" },

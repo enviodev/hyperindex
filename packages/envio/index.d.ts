@@ -69,10 +69,24 @@ export type RateLimit =
   | false
   | { readonly calls: number; readonly per: RateLimitDuration };
 
+/** Execution mode of an {@link Effect}.
+ *
+ * - `"speculative"` — handler-driven calls that are safe to replay during
+ *   the parallel preload pass. This is the default for most external calls
+ *   made from event handlers.
+ * - `"read"` — read-only calls (chat bots, stream queries) that should not
+ *   be speculatively replayed.
+ *
+ * Both modes behave the same today; the field exists to steer future
+ * scheduling and to make intent explicit at the call site. */
+export type EffectMode = "speculative" | "read";
+
 /** Options accepted by {@link createEffect}. */
 export type EffectOptions<Input, Output> = {
   /** The name of the effect. Used for logging and debugging. */
   readonly name: string;
+  /** Execution mode of the effect. See {@link EffectMode}. */
+  readonly mode: EffectMode;
   /** The input schema of the effect. */
   readonly input: Sury.Schema<Input>;
   /** The output schema of the effect. */
@@ -201,6 +215,8 @@ export function createEffect<
   options: {
     /** The name of the effect. Used for logging and debugging. */
     readonly name: string;
+    /** Execution mode of the effect. See {@link EffectMode}. */
+    readonly mode: EffectMode;
     /** The input schema of the effect. */
     readonly input: IS;
     /** The output schema of the effect. */

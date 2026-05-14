@@ -566,6 +566,7 @@ type rateLimitState = {
 }
 type effect = {
   name: string,
+  mode: string,
   handler: effectArgs => promise<effectOutput>,
   storageMeta: effectCacheStorageMeta,
   defaultShouldCache: bool,

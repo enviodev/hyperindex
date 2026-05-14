@@ -35,9 +35,11 @@ import { createEffect, S } from "envio";
 const getTraces = createEffect(
   {
     name: "getTraces",
+    mode: "speculative",
     input: S.schema({ blockNumber: S.number }),
     output: S.unknown,
     cache: true,
+    rateLimit: false,
   },
   async ({ input }) => {
     const res = await fetch(RPC_URL, {

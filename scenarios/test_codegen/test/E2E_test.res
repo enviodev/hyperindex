@@ -418,6 +418,7 @@ describe("E2E tests", () => {
     let testEffectWithCache = Envio.createEffect(
       {
         name: "testEffectWithCache",
+        mode: Speculative,
         input: S.string,
         output: S.string,
         rateLimit: Disable,
@@ -430,6 +431,7 @@ describe("E2E tests", () => {
     let testEffect = Envio.createEffect(
       {
         name: "testEffect",
+        mode: Speculative,
         input: S.string,
         output: S.string,
         rateLimit: Disable,
@@ -596,6 +598,7 @@ describe("E2E tests", () => {
     let testEffectWithCacheV2 = Envio.createEffect(
       {
         name: "testEffectWithCache",
+        mode: Speculative,
         input: S.string,
         output: S.string->S.refine(
           s =>
@@ -673,6 +676,7 @@ describe("E2E tests", () => {
     let probeEffect = Envio.createEffect(
       {
         name: "logProbeEffect",
+        mode: Speculative,
         input: S.string,
         output: S.string,
         rateLimit: Disable,
@@ -810,6 +814,7 @@ describe("E2E tests", () => {
     let testEffectMultiWindow = Envio.createEffect(
       {
         name: "testEffectMultiWindow",
+        mode: Speculative,
         input: S.string,
         output: S.string,
         rateLimit: Enable({calls: 2, per: Milliseconds(15)}),
@@ -913,6 +918,7 @@ describe("E2E tests", () => {
     let testEffectNested = Envio.createEffect(
       {
         name: "testEffectNested",
+        mode: Speculative,
         input: S.string,
         output: S.string,
         rateLimit: Enable({calls: 1, per: Milliseconds(15)}),
@@ -1021,6 +1027,7 @@ describe("E2E tests", () => {
     let testEffectWithCacheControl = Envio.createEffect(
       {
         name: "testEffectWithCacheControl",
+        mode: Speculative,
         input: S.string,
         output: S.string,
         rateLimit: Disable,
@@ -1095,6 +1102,7 @@ describe("E2E tests", () => {
     let throwingEffect = Envio.createEffect(
       {
         name: "throwingEffect",
+        mode: Speculative,
         input: S.string,
         output: S.string,
         rateLimit: Disable,
