@@ -421,9 +421,15 @@ let initialize = async (
 ) => {
   try {
     let replicated = Env.ClickHouse.replicated()
+    let databaseEngineClause = switch Env.ClickHouse.databaseEngine() {
+    | Some(engine) => ` ENGINE = ${engine}`
+    | None => ""
+    }
 
     await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}`})
-    await client->exec({query: `CREATE DATABASE IF NOT EXISTS ${database}`})
+    await client->exec({
+      query: `CREATE DATABASE IF NOT EXISTS ${database}${databaseEngineClause}`,
+    })
     await client->exec({query: `USE ${database}`})
 
     await Promise.all(

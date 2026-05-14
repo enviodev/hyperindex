@@ -148,6 +148,7 @@ module ClickHouse = {
         `Invalid ENVIO_CLICKHOUSE_REPLICATED value: "${other}". Only "true" is accepted.`,
       )
     }
+  let databaseEngine = () => read("ENVIO_CLICKHOUSE_DATABASE_ENGINE")
 }
 
 module Hasura = {
