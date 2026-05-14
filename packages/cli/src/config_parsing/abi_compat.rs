@@ -442,6 +442,38 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reproduces issue #1206 — remove once fixed"]
+    fn test_parse_event_with_named_nested_tuple_from_issue_1206() {
+        // Reproduces https://github.com/enviodev/hyperindex/issues/1206.
+        // User reports that a custom event signature with a named tuple
+        // parameter fails codegen when no `abi_file_path` is provided.
+        let sig = "event ConsumeBoostVial(address from, uint256 playerId, (uint40 a, uint24 b, uint16 c, uint16 d, uint8 e) playerBoostInfo)";
+        let event = parse_event(sig).expect("custom event signature with named tuple should parse");
+        let tuple_field = event
+            .inputs
+            .iter()
+            .find(|p| p.name == "playerBoostInfo")
+            .expect("playerBoostInfo input");
+        let tuple_fields = match &tuple_field.kind {
+            AbiType::Tuple(fields) => fields,
+            other => panic!("expected Tuple, got {:?}", other),
+        };
+        assert_eq!(
+            tuple_fields
+                .iter()
+                .map(|f| (f.name.as_deref(), f.kind.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (Some("a"), AbiType::Uint(40)),
+                (Some("b"), AbiType::Uint(24)),
+                (Some("c"), AbiType::Uint(16)),
+                (Some("d"), AbiType::Uint(16)),
+                (Some("e"), AbiType::Uint(8)),
+            ]
+        );
+    }
+
+    #[test]
     fn test_parse_param_type() {
         let uint_type = parse_param_type("uint256").unwrap();
         assert!(matches!(uint_type, DynSolType::Uint(256)));
