@@ -55,9 +55,9 @@ module FieldValue = {
 }
 
 module Operator = {
-  type t = Eq | Gt | Lt
+  type t = Eq | Gt | Lt | Gte | Lte
 
-  let values = [Eq, Gt, Lt]
+  let values = [Eq, Gt, Lt, Gte, Lte]
 }
 
 module SingleIndex = {
@@ -79,6 +79,10 @@ module SingleIndex = {
       | Eq => fieldValue->FieldValue.eq(self.fieldValue)
       | Gt => fieldValue->FieldValue.gt(self.fieldValue)
       | Lt => fieldValue->FieldValue.lt(self.fieldValue)
+      | Gte =>
+        fieldValue->FieldValue.gt(self.fieldValue) || fieldValue->FieldValue.eq(self.fieldValue)
+      | Lte =>
+        fieldValue->FieldValue.lt(self.fieldValue) || fieldValue->FieldValue.eq(self.fieldValue)
       }
 }
 

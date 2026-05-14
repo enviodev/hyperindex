@@ -356,6 +356,8 @@ let loadByField = (
   | Eq => "eq"
   | Gt => "gt"
   | Lt => "lt"
+  | Gte => "gte"
+  | Lte => "lte"
   }
   let key = `${entityConfig.name}.getWhere.${fieldName}.${operatorCallName}`
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
@@ -383,6 +385,8 @@ let loadByField = (
           | Single({operator: Gt}) => #">"
           | Single({operator: Eq}) => #"="
           | Single({operator: Lt}) => #"<"
+          | Single({operator: Gte}) => #">="
+          | Single({operator: Lte}) => #"<="
           },
           ~table=entityConfig.table,
           ~rowsSchema=entityConfig.rowsSchema,

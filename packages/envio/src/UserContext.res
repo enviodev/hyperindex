@@ -150,33 +150,13 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     )
     ->Promise.all
     ->Promise.thenResolve(results => results->Belt.Array.concatMany)
-  } else if operatorKey === "_gte" || operatorKey === "_lte" {
-    // _gte and _lte are composed from Eq + Gt/Lt
-    let rangeOperator: TableIndices.Operator.t = operatorKey === "_gte" ? Gt : Lt
-    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
-
-    let loadWithOperator = operator =>
-      LoadLayer.loadByField(
-        ~loadManager=params.loadManager,
-        ~persistence=params.persistence,
-        ~operator,
-        ~entityConfig,
-        ~fieldName=dbFieldName,
-        ~fieldValueSchema=fieldSchema,
-        ~inMemoryStore=params.inMemoryStore,
-        ~shouldGroup=params.isPreload,
-        ~item=params.item,
-        ~fieldValue,
-      )
-
-    [loadWithOperator(Eq), loadWithOperator(rangeOperator)]
-    ->Promise.all
-    ->Promise.thenResolve(results => results->Belt.Array.concatMany)
   } else {
     let operator: TableIndices.Operator.t = switch operatorKey {
     | "_eq" => Eq
     | "_gt" => Gt
     | "_lt" => Lt
+    | "_gte" => Gte
+    | "_lte" => Lte
     | _ =>
       JsError.throwWithMessage(
         `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,

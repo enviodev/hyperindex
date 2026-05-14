@@ -96,6 +96,12 @@ let handleLoadByField = (
         | #"=" => entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
         | #">" => entityFieldValue->TableIndices.FieldValue.gt(parsedFieldValue)
         | #"<" => entityFieldValue->TableIndices.FieldValue.lt(parsedFieldValue)
+        | #">=" =>
+          entityFieldValue->TableIndices.FieldValue.gt(parsedFieldValue) ||
+            entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
+        | #"<=" =>
+          entityFieldValue->TableIndices.FieldValue.lt(parsedFieldValue) ||
+            entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
         }
         if matches {
           // Serialize entity back to JSON for worker thread

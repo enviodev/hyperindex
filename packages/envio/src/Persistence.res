@@ -40,7 +40,7 @@ type initialState = {
   envioInfo: option<JSON.t>,
 }
 
-type operator = [#">" | #"=" | #"<"]
+type operator = [#">" | #"=" | #"<" | #">=" | #"<="]
 
 type updatedEffectCache = {
   effect: Internal.effect,
