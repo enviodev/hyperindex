@@ -1027,11 +1027,28 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         let ch_body = ContainerCreateBody {
             image: Some(CLICKHOUSE_IMAGE.to_string()),
             labels: Some(make_labels(&ch_hash)),
-            env: Some(vec![
-                format!("CLICKHOUSE_USER={}", env.ch_user),
-                format!("CLICKHOUSE_PASSWORD={}", env.ch_password),
-                format!("CLICKHOUSE_DB={}", env.ch_database),
-            ]),
+            // Only forward env vars that differ from the image's own
+            // defaults. The 26.x entrypoint writes
+            // `/etc/clickhouse-server/users.d/default-user.xml` whenever
+            // CLICKHOUSE_USER or CLICKHOUSE_PASSWORD is set at all,
+            // replacing the pristine `default` user (`<no_password/>`)
+            // with one whose `<password></password>` override doesn't
+            // match empty-password basic auth. Skipping the vars when
+            // they're at their out-of-the-box values keeps the image's
+            // own setup intact so the Playground opens auth-free.
+            env: {
+                let mut vars = Vec::new();
+                if env.ch_user != "default" {
+                    vars.push(format!("CLICKHOUSE_USER={}", env.ch_user));
+                }
+                if !env.ch_password.is_empty() {
+                    vars.push(format!("CLICKHOUSE_PASSWORD={}", env.ch_password));
+                }
+                if env.ch_database != "default" {
+                    vars.push(format!("CLICKHOUSE_DB={}", env.ch_database));
+                }
+                Some(vars)
+            },
             host_config: Some(HostConfig {
                 port_bindings: Some(ch_port_bindings),
                 mounts: Some(vec![Mount {
