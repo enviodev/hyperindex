@@ -188,10 +188,266 @@ impl EventParam {
 /// Parse an event signature string (e.g., "event Transfer(address indexed from, address indexed to, uint256 value)")
 /// into an Event struct.
 pub fn parse_event(sig: &str) -> Result<Event> {
-    let alloy_event =
-        AlloyEvent::parse(sig).map_err(|e| anyhow!("Failed to parse event signature: {}", e))?;
+    let alloy_event = parse_event_signature_to_alloy(sig)?;
     Event::try_from_alloy(&alloy_event)
         .with_context(|| format!("Failed to convert event '{}'", alloy_event.name))
+}
+
+/// Parse a human-readable event signature into an `AlloyEvent`.
+///
+/// Tries alloy's built-in parser first. Falls back to a permissive parser that
+/// accepts named tuple components (e.g. `event E((uint a, uint b) data)`),
+/// which alloy's signature parser rejects. The fallback populates
+/// `components` so downstream selector and ABI consumers see the named fields.
+pub fn parse_event_signature_to_alloy(sig: &str) -> Result<AlloyEvent> {
+    match AlloyEvent::parse(sig) {
+        Ok(ev) => Ok(ev),
+        Err(alloy_err) => sig_parser::parse(sig).map_err(|e| {
+            anyhow!(
+                "Failed to parse event signature: {}\n(strict parser error: {})",
+                e,
+                alloy_err
+            )
+        }),
+    }
+}
+
+/// Permissive human-readable event signature parser.
+///
+/// Differences from `alloy_json_abi::Event::parse`:
+/// - Accepts component names inside tuple types: `(uint40 a, uint24 b)` is valid.
+/// - Otherwise mirrors alloy's syntax: optional `event` prefix, optional
+///   `indexed` per top-level param, optional trailing `anonymous`.
+mod sig_parser {
+    use super::{AlloyEvent, AlloyEventParam, AlloyParam};
+    use anyhow::{anyhow, bail, Context, Result};
+
+    pub fn parse(sig: &str) -> Result<AlloyEvent> {
+        let mut p = Cursor::new(sig);
+        p.skip_ws();
+        if p.try_keyword("event") {
+            p.skip_ws();
+        }
+        let name = p
+            .ident()
+            .ok_or_else(|| anyhow!("expected event name in '{}'", sig))?
+            .to_string();
+        p.skip_ws();
+        p.expect('(', sig)?;
+        let mut inputs = Vec::new();
+        p.skip_ws();
+        if !p.peek_is(')') {
+            loop {
+                inputs.push(parse_event_param(&mut p, sig)?);
+                p.skip_ws();
+                if p.peek_is(',') {
+                    p.bump();
+                    p.skip_ws();
+                    continue;
+                }
+                break;
+            }
+        }
+        p.expect(')', sig)?;
+        p.skip_ws();
+        let anonymous = p.try_keyword("anonymous");
+        p.skip_ws();
+        if !p.eof() {
+            bail!(
+                "unexpected trailing input '{}' in event signature '{}'",
+                p.rest(),
+                sig
+            );
+        }
+        Ok(AlloyEvent {
+            name,
+            inputs,
+            anonymous,
+        })
+    }
+
+    fn parse_event_param(p: &mut Cursor, sig: &str) -> Result<AlloyEventParam> {
+        p.skip_ws();
+        let (ty, components) = parse_type(p, sig)?;
+        p.skip_ws();
+        let indexed = p.try_keyword("indexed");
+        if indexed {
+            p.skip_ws();
+        }
+        let name = p.ident().unwrap_or("").to_string();
+        Ok(AlloyEventParam {
+            name,
+            ty,
+            indexed,
+            components,
+            internal_type: None,
+        })
+    }
+
+    fn parse_param(p: &mut Cursor, sig: &str) -> Result<AlloyParam> {
+        p.skip_ws();
+        let (ty, components) = parse_type(p, sig)?;
+        p.skip_ws();
+        let name = p.ident().unwrap_or("").to_string();
+        Ok(AlloyParam {
+            name,
+            ty,
+            components,
+            internal_type: None,
+        })
+    }
+
+    fn parse_type(p: &mut Cursor, sig: &str) -> Result<(String, Vec<AlloyParam>)> {
+        p.skip_ws();
+        let (mut base_ty, components) = if p.peek_is('(') {
+            p.bump();
+            let mut comps = Vec::new();
+            p.skip_ws();
+            if !p.peek_is(')') {
+                loop {
+                    comps.push(parse_param(p, sig)?);
+                    p.skip_ws();
+                    if p.peek_is(',') {
+                        p.bump();
+                        p.skip_ws();
+                        continue;
+                    }
+                    break;
+                }
+            }
+            p.expect(')', sig)?;
+            ("tuple".to_string(), comps)
+        } else {
+            let leaf = p
+                .ident()
+                .ok_or_else(|| anyhow!("expected type in event signature '{}'", sig))?
+                .to_string();
+            (leaf, Vec::new())
+        };
+        loop {
+            p.skip_ws();
+            if !p.peek_is('[') {
+                break;
+            }
+            p.bump();
+            p.skip_ws();
+            if p.peek_is(']') {
+                p.bump();
+                base_ty.push_str("[]");
+            } else {
+                let n = p
+                    .digits()
+                    .ok_or_else(|| anyhow!("expected array size or ']' in '{}'", sig))?;
+                let size: usize = n
+                    .parse()
+                    .with_context(|| format!("invalid array size '{}' in '{}'", n, sig))?;
+                p.skip_ws();
+                p.expect(']', sig)?;
+                base_ty.push('[');
+                base_ty.push_str(&size.to_string());
+                base_ty.push(']');
+            }
+        }
+        Ok((base_ty, components))
+    }
+
+    struct Cursor<'a> {
+        src: &'a str,
+        pos: usize,
+    }
+
+    impl<'a> Cursor<'a> {
+        fn new(src: &'a str) -> Self {
+            Self { src, pos: 0 }
+        }
+        fn rest(&self) -> &'a str {
+            &self.src[self.pos..]
+        }
+        fn eof(&self) -> bool {
+            self.pos >= self.src.len()
+        }
+        fn peek(&self) -> Option<char> {
+            self.rest().chars().next()
+        }
+        fn peek_is(&self, c: char) -> bool {
+            self.peek() == Some(c)
+        }
+        fn bump(&mut self) -> Option<char> {
+            let c = self.peek()?;
+            self.pos += c.len_utf8();
+            Some(c)
+        }
+        fn skip_ws(&mut self) {
+            while matches!(self.peek(), Some(c) if c.is_whitespace()) {
+                self.bump();
+            }
+        }
+        fn expect(&mut self, c: char, sig: &str) -> Result<()> {
+            match self.peek() {
+                Some(actual) if actual == c => {
+                    self.bump();
+                    Ok(())
+                }
+                Some(actual) => bail!(
+                    "expected '{}' but found '{}' in event signature '{}'",
+                    c,
+                    actual,
+                    sig
+                ),
+                None => bail!(
+                    "expected '{}' but reached end of event signature '{}'",
+                    c,
+                    sig
+                ),
+            }
+        }
+        fn ident(&mut self) -> Option<&'a str> {
+            let s = self.rest();
+            let mut iter = s.char_indices();
+            let (_, first) = iter.next()?;
+            if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
+                return None;
+            }
+            let mut end = first.len_utf8();
+            for (_, c) in iter {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                    end += c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let out = &s[..end];
+            self.pos += end;
+            Some(out)
+        }
+        fn try_keyword(&mut self, kw: &str) -> bool {
+            let mark = self.pos;
+            if let Some(id) = self.ident() {
+                if id == kw {
+                    return true;
+                }
+            }
+            self.pos = mark;
+            false
+        }
+        fn digits(&mut self) -> Option<&'a str> {
+            let s = self.rest();
+            let mut end = 0;
+            for c in s.chars() {
+                if c.is_ascii_digit() {
+                    end += c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            if end == 0 {
+                return None;
+            }
+            let out = &s[..end];
+            self.pos += end;
+            Some(out)
+        }
+    }
 }
 
 /// An event with parsed parameters.
@@ -442,11 +698,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reproduces issue #1206 — remove once fixed"]
     fn test_parse_event_with_named_nested_tuple_from_issue_1206() {
-        // Reproduces https://github.com/enviodev/hyperindex/issues/1206.
-        // User reports that a custom event signature with a named tuple
-        // parameter fails codegen when no `abi_file_path` is provided.
+        // Regression test for https://github.com/enviodev/hyperindex/issues/1206.
+        // Custom event signatures with named tuple components were rejected by
+        // alloy's signature parser, so codegen failed when no `abi_file_path`
+        // was provided. The fallback parser in `parse_event_signature_to_alloy`
+        // accepts these and propagates the field names.
         let sig = "event ConsumeBoostVial(address from, uint256 playerId, (uint40 a, uint24 b, uint16 c, uint16 d, uint8 e) playerBoostInfo)";
         let event = parse_event(sig).expect("custom event signature with named tuple should parse");
         let tuple_field = event
@@ -471,6 +728,33 @@ mod tests {
                 (Some("e"), AbiType::Uint(8)),
             ]
         );
+    }
+
+    #[test]
+    fn test_parse_event_with_named_tuple_array_and_indexed() {
+        // Mixed: tuple[] with named components, plus indexed scalar.
+        let sig = "event Trade((uint128 amount, uint16 fee)[] items, address indexed trader)";
+        let event = parse_event(sig).expect("named tuple[] should parse");
+        assert_eq!(event.name, "Trade");
+        assert_eq!(event.inputs.len(), 2);
+        match &event.inputs[0].kind {
+            AbiType::Array(inner) => match inner.as_ref() {
+                AbiType::Tuple(fields) => assert_eq!(
+                    fields
+                        .iter()
+                        .map(|f| (f.name.as_deref(), f.kind.clone()))
+                        .collect::<Vec<_>>(),
+                    vec![
+                        (Some("amount"), AbiType::Uint(128)),
+                        (Some("fee"), AbiType::Uint(16)),
+                    ]
+                ),
+                other => panic!("expected tuple inside array, got {:?}", other),
+            },
+            other => panic!("expected array, got {:?}", other),
+        }
+        assert_eq!(event.inputs[1].name, "trader");
+        assert!(event.inputs[1].indexed);
     }
 
     #[test]
