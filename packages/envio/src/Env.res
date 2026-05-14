@@ -134,11 +134,14 @@ module ClickHouse = {
       const v = process.env[k];
       return v === undefined || v === "" ? undefined : v;
     }`)
+    // Empty password is a valid, passwordless ClickHouse user — distinguish
+    // "unset" (None) from "set but empty" (Some("")).
+    let readAllowEmpty: string => option<string> = %raw(`(k) => process.env[k]`)
   )
   let host = () => read("ENVIO_CLICKHOUSE_HOST")
   let database = () => read("ENVIO_CLICKHOUSE_DATABASE")
   let username = () => read("ENVIO_CLICKHOUSE_USERNAME")
-  let password = () => read("ENVIO_CLICKHOUSE_PASSWORD")
+  let password = () => readAllowEmpty("ENVIO_CLICKHOUSE_PASSWORD")
   let replicated = () =>
     switch read("ENVIO_CLICKHOUSE_REPLICATED") {
     | None => false

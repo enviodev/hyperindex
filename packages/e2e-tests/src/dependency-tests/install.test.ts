@@ -167,10 +167,14 @@ describe("Isolated dependency e2e", () => {
           ENVIO_TUI: "false",
           ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
           // e2e_test config.yaml declares `storage.clickhouse: true`, so
-          // PgStorage validates these env vars at indexer start.
+          // PgStorage validates these env vars at indexer start. The
+          // database must match what `test:e2e` wrote to in the prior job
+          // step, otherwise resume from the persisted Postgres checkpoint
+          // finds no corresponding ClickHouse row.
           ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
           ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
           ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+          ENVIO_CLICKHOUSE_DATABASE: "envio_indexer",
           // Fresh start (after the SQL reset above): handler check uses
           // the config endBlock as the source of truth.
           E2E_EXPECTED_END_BLOCK: "10861774",
