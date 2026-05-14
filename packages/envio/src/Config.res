@@ -145,11 +145,15 @@ module EnvioAddresses = {
   external castToInternal: t => Internal.entity = "%identity"
 
   let entityConfig = {
-    name,
+    Internal.name,
     index,
     schema,
     rowsSchema,
     table,
+    // Internal address tracking is Postgres-only; the global config is
+    // always required to have Postgres enabled (Storage::resolve forbids
+    // a Postgres-disabled global), so this is safe regardless of mode.
+    storage: {postgres: true, clickhouse: false},
   }->Internal.fromGenericEntityConfig
 }
 
@@ -269,9 +273,17 @@ let propertySchema = S.schema(s =>
   }
 )
 
+let entityStorageSchema = S.schema(s =>
+  {
+    "postgres": s.matches(S.option(S.bool)),
+    "clickhouse": s.matches(S.option(S.bool)),
+  }
+)
+
 let entityJsonSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
+    "storage": s.matches(S.option(entityStorageSchema)),
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
     "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
@@ -348,6 +360,7 @@ let parseEnumsFromJson = (enumsJson: dict<array<string>>): array<Table.enumConfi
 let parseEntitiesFromJson = (
   entitiesJson: array<'entityJson>,
   ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
+  ~globalStorage: storage,
 ): array<Internal.entityConfig> => {
   entitiesJson->Array.mapWithIndex((entityJson, index) => {
     let entityName = entityJson["name"]
@@ -416,6 +429,21 @@ let parseEntitiesFromJson = (
       dict
     })
 
+    // Resolve per-entity storage against the global config. The CLI
+    // validates that an entity never opts into a backend the global
+    // config didn't enable, and that at least one backend stays true
+    // for an annotated entity — so `getOr(false)` is safe here.
+    let storage: Internal.entityStorage = switch entityJson["storage"] {
+    | Some(s) => {
+        postgres: s["postgres"]->Option.getOr(false),
+        clickhouse: s["clickhouse"]->Option.getOr(false),
+      }
+    | None => {
+        postgres: globalStorage.postgres,
+        clickhouse: globalStorage.clickhouse,
+      }
+    }
+
     {
       Internal.name: entityName,
       index,
@@ -424,6 +452,7 @@ let parseEntitiesFromJson = (
         Utils.magic: S.t<array<dict<unknown>>> => S.t<array<Internal.entity>>
       ),
       table,
+      storage,
     }->Internal.fromGenericEntityConfig
   })
 }
@@ -756,10 +785,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   let enumConfigsByName =
     allEnums->Array.map(enumConfig => (enumConfig.name, enumConfig))->Dict.fromArray
 
+  let globalStorage: storage = {
+    postgres: publicConfig["storage"]["postgres"],
+    clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
+  }
+
   let userEntities =
     publicConfig["entities"]
     ->Option.getOr([])
-    ->parseEntitiesFromJson(~enumConfigsByName)
+    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage)
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 
@@ -791,10 +825,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
-    storage: {
-      postgres: publicConfig["storage"]["postgres"],
-      clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
-    },
+    storage: globalStorage,
     multichain: publicConfig["multichain"]->Option.getOr(Unordered),
     chainMap,
     defaultChain: chains->Array.get(0),
@@ -992,3 +1023,5 @@ let loadWithoutRegistrations = () =>
       c
     }
   }
+
+let getPgUserEntities = (config: t) => config.userEntities->Array.filter(e => e.storage.postgres)
