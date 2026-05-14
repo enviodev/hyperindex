@@ -1626,14 +1626,18 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~updatedEffectsCache,
     ~updatedEntities,
   ) => {
-    let pgUpdates =
-      updatedEntities->Array.filter(({entityConfig}: Persistence.updatedEntity) =>
-        entityConfig.storage.postgres
-      )
-    let chUpdates =
-      updatedEntities->Array.filter(({entityConfig}: Persistence.updatedEntity) =>
-        entityConfig.storage.clickhouse
-      )
+    let pgUpdates = []
+    let chUpdates = []
+    for i in 0 to updatedEntities->Array.length - 1 {
+      let update = updatedEntities->Array.getUnsafe(i)
+      let {entityConfig}: Persistence.updatedEntity = update
+      if entityConfig.storage.postgres {
+        pgUpdates->Array.push(update)
+      }
+      if entityConfig.storage.clickhouse {
+        chUpdates->Array.push(update)
+      }
+    }
 
     // Initialize sink if configured
     let sinkPromise = switch sink {

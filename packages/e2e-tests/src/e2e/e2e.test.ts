@@ -293,10 +293,10 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     `);
 
     const transferCount = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
-    expect(Number(transferCount[0]?.[0])).toBeGreaterThan(0);
+    expect(Number(transferCount[0]?.[0])).toMatchInlineSnapshot();
 
     const pgOnlyCount = await runPgSql(`SELECT count(*)::text FROM "TransferPgOnly"`);
-    expect(Number(pgOnlyCount[0]?.[0])).toBeGreaterThan(0);
+    expect(Number(pgOnlyCount[0]?.[0])).toMatchInlineSnapshot();
   });
 
   it("ClickHouse has tables for clickhouse-enabled entities only", async () => {
@@ -319,12 +319,12 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     const transferCh = await queryClickHouse<
       ClickHouseResult<{ c: string }>
     >(`SELECT count() as c FROM ${CH_DATABASE}.Transfer FORMAT JSON`);
-    expect(Number(transferCh.data[0]?.c)).toBeGreaterThan(0);
+    expect(Number(transferCh.data[0]?.c)).toMatchInlineSnapshot();
 
     const chOnly = await queryClickHouse<
       ClickHouseResult<{ c: string }>
     >(`SELECT count() as c FROM ${CH_DATABASE}.TransferChOnly FORMAT JSON`);
-    expect(Number(chOnly.data[0]?.c)).toBeGreaterThan(0);
+    expect(Number(chOnly.data[0]?.c)).toMatchInlineSnapshot();
   });
 
   it("Hasura GraphQL schema exposes only postgres-backed entities", async () => {

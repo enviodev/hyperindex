@@ -13,6 +13,22 @@ if (actual !== expected) {
   );
 }
 
+// Asserts that an error thrown by a context.<entity>.<op>() call carries
+// the friendly ClickHouse write-only message we install in UserContext.res.
+// If the call did not throw, or the message is wrong, this re-throws and
+// the indexer crashes the e2e test loudly.
+const expectClickHouseReadOnlyError = (op: string, err: unknown) => {
+  if (!(err instanceof Error)) {
+    throw new Error(`Expected Error from TransferChOnly.${op}, got ${typeof err}: ${err}`);
+  }
+  const expected = "ClickHouse storage is currently write-only";
+  if (!err.message.includes(expected)) {
+    throw new Error(
+      `Expected TransferChOnly.${op} error to contain "${expected}", got: ${err.message}`,
+    );
+  }
+};
+
 indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, context }) => {
   const id = `${event.chainId}-${event.block.number}-${event.logIndex}`;
 
@@ -32,6 +48,23 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
     from: event.params.from,
     value: event.params.value,
   });
+
+  // Verify the runtime blocks reads against ClickHouse-only entities with
+  // a friendly message. Each call is in its own try/catch so a regression
+  // surfaces against the offending operation, not as a single shared throw.
+  try {
+    await context.TransferChOnly.get(id);
+    throw new Error("Expected context.TransferChOnly.get to throw");
+  } catch (err) {
+    expectClickHouseReadOnlyError("get", err);
+  }
+
+  try {
+    await context.TransferChOnly.getWhere({ from: { _eq: event.params.from } });
+    throw new Error("Expected context.TransferChOnly.getWhere to throw");
+  } catch (err) {
+    expectClickHouseReadOnlyError("getWhere", err);
+  }
 
   // Mirror override: only ClickHouse receives this row.
   context.TransferChOnly.set({
