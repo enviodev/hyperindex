@@ -292,11 +292,16 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       ]
     `);
 
-    const transferCount = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
-    expect(Number(transferCount[0]?.[0])).toMatchInlineSnapshot();
+    // The handler writes one row to each entity per Transfer event. Anchor
+    // on the Transfer count being non-zero, then assert per-entity counts
+    // are exactly equal — that pins the row totals without needing the
+    // historical block range's magic number, and catches dropped writes.
+    const transferRows = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
+    const transferCount = Number(transferRows[0]?.[0]);
+    expect(transferCount).toBeGreaterThan(0);
 
-    const pgOnlyCount = await runPgSql(`SELECT count(*)::text FROM "TransferPgOnly"`);
-    expect(Number(pgOnlyCount[0]?.[0])).toMatchInlineSnapshot();
+    const pgOnlyRows = await runPgSql(`SELECT count(*)::text FROM "TransferPgOnly"`);
+    expect(Number(pgOnlyRows[0]?.[0])).toBe(transferCount);
   });
 
   it("ClickHouse has tables for clickhouse-enabled entities only", async () => {
@@ -316,15 +321,22 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       ]
     `);
 
+    // Same invariant as the Postgres side: one row per Transfer event on
+    // each ClickHouse-bound entity. Lock the row totals to the Postgres
+    // Transfer count so routing drops surface as a count mismatch.
+    const pgTransferRows = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
+    const transferCount = Number(pgTransferRows[0]?.[0]);
+    expect(transferCount).toBeGreaterThan(0);
+
     const transferCh = await queryClickHouse<
       ClickHouseResult<{ c: string }>
     >(`SELECT count() as c FROM ${CH_DATABASE}.Transfer FORMAT JSON`);
-    expect(Number(transferCh.data[0]?.c)).toMatchInlineSnapshot();
+    expect(Number(transferCh.data[0]?.c)).toBe(transferCount);
 
     const chOnly = await queryClickHouse<
       ClickHouseResult<{ c: string }>
     >(`SELECT count() as c FROM ${CH_DATABASE}.TransferChOnly FORMAT JSON`);
-    expect(Number(chOnly.data[0]?.c)).toMatchInlineSnapshot();
+    expect(Number(chOnly.data[0]?.c)).toBe(transferCount);
   });
 
   it("Hasura GraphQL schema exposes only postgres-backed entities", async () => {
