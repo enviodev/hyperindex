@@ -1431,12 +1431,10 @@ dependencies = [
  "convert_case 0.6.0",
  "dotenvy",
  "fuel-abi-types",
+ "fuel-source",
  "futures-util",
  "graphql-parser",
  "handlebars",
- "hyperfuel-client",
- "hyperfuel-format",
- "hyperfuel-net-types",
  "include_dir",
  "inquire",
  "insta",
@@ -1463,7 +1461,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing-subscriber",
- "url",
 ]
 
 [[package]]
@@ -1644,6 +1641,20 @@ dependencies = [
  "serde_json",
  "syn 2.0.117",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "fuel-source"
+version = "0.0.1-dev"
+dependencies = [
+ "anyhow",
+ "hyperfuel-client",
+ "hyperfuel-format",
+ "hyperfuel-net-types",
+ "napi",
+ "napi-derive",
+ "tokio",
+ "url",
 ]
 
 [[package]]

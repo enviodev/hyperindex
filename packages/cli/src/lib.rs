@@ -9,8 +9,9 @@ mod evm;
 pub mod executor;
 mod fuel;
 mod hbs_templating;
-mod hyperfuel;
 mod napi;
+
+pub use fuel_source::HyperfuelClient as _HyperfuelClient;
 mod project_paths;
 pub mod scripts;
 mod service_health;
