@@ -32,6 +32,14 @@ jobs:
         with:
           targets: ${{ matrix.job.target }}
 
+      - name: Install capnproto (Linux)
+        if: ${{ matrix.job.platform == 'linux' }}
+        run: sudo apt-get update -y && sudo apt-get install -y capnproto libcapnp-dev
+
+      - name: Install capnproto (macOS)
+        if: ${{ matrix.job.platform == 'darwin' }}
+        run: brew install capnp
+
       - uses: ./.github/actions/cargo-cache
         with:
           cache-suffix: ${{ matrix.job.target }}
