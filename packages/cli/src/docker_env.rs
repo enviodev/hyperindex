@@ -23,6 +23,27 @@ const CLICKHOUSE_IMAGE: &str = "clickhouse/clickhouse-server:26.2.15.4";
 const CONFIG_HASH_LABEL: &str = "dev.envio.config-hash";
 const SOCKET_TIMEOUT: u64 = 120;
 
+/// Override file mounted over /etc/clickhouse-server/users.d/. The 26.x
+/// image ships its own default-user.xml that locks down the `default`
+/// user with a non-empty password element, so an empty-password Basic
+/// Auth request from the indexer or the Playground fails. Bind-mounting
+/// this content as the entire users.d/ directory hides the image's file
+/// and gives us a pristine no-password default user.
+const CH_NO_PASSWORD_USER_XML: &str = r#"<clickhouse>
+    <users>
+        <default replace="replace">
+            <no_password/>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+            <access_management>1</access_management>
+        </default>
+    </users>
+</clickhouse>
+"#;
+
 const PG_CONTAINER: &str = "envio-postgres";
 const HASURA_CONTAINER: &str = "envio-hasura";
 const CH_CONTAINER: &str = "envio-clickhouse";
@@ -72,6 +93,19 @@ fn podman_socket_candidates() -> Vec<PathBuf> {
 /// Strip `unix://` prefix from a URI to get a filesystem path.
 fn socket_path_from_uri(uri: &str) -> &str {
     uri.strip_prefix("unix://").unwrap_or(uri)
+}
+
+/// Write the no-password override file under `<project>/.envio/` and
+/// return the directory to bind-mount at /etc/clickhouse-server/users.d
+/// in the container. Idempotent — overwriting is fine since ClickHouse
+/// hot-reloads users.d/ files.
+fn ensure_clickhouse_users_override_dir(project_root: &Path) -> anyhow::Result<PathBuf> {
+    let dir = project_root.join(".envio").join("clickhouse-users.d");
+    std::fs::create_dir_all(&dir).with_context(|| format!("Failed to create {}", dir.display()))?;
+    let file = dir.join("default-user.xml");
+    std::fs::write(&file, CH_NO_PASSWORD_USER_XML)
+        .with_context(|| format!("Failed to write {}", file.display()))?;
+    Ok(dir)
 }
 
 /// Try connecting to a Docker-compatible socket, returning the client and a
@@ -1024,18 +1058,39 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             map
         };
 
+        // The 26.x image ships its own /etc/clickhouse-server/users.d/
+        // default-user.xml that requires a password — so even with no
+        // CLICKHOUSE_USER/PASSWORD env vars set the Playground and the
+        // indexer can't auth as `default` over Basic Auth with an empty
+        // password. When the user hasn't customized any ClickHouse env
+        // vars, bind-mount our own users.d/ directory over the image's
+        // one so a pristine `<no_password/>` default user wins.
+        let use_pristine_default =
+            env.ch_user == "default" && env.ch_password.is_empty() && env.ch_database == "default";
+
+        let mut ch_mounts = vec![Mount {
+            target: Some("/var/lib/clickhouse".to_string()),
+            source: Some(CH_VOLUME.to_string()),
+            typ: Some(MountTypeEnum::VOLUME),
+            ..Default::default()
+        }];
+        if use_pristine_default {
+            let dir = ensure_clickhouse_users_override_dir(opts.project_root)?;
+            ch_mounts.push(Mount {
+                target: Some("/etc/clickhouse-server/users.d".to_string()),
+                source: Some(dir.to_string_lossy().to_string()),
+                typ: Some(MountTypeEnum::BIND),
+                read_only: Some(true),
+                ..Default::default()
+            });
+        }
+
         let ch_body = ContainerCreateBody {
             image: Some(CLICKHOUSE_IMAGE.to_string()),
             labels: Some(make_labels(&ch_hash)),
-            // Only forward env vars that differ from the image's own
-            // defaults. The 26.x entrypoint writes
-            // `/etc/clickhouse-server/users.d/default-user.xml` whenever
-            // CLICKHOUSE_USER or CLICKHOUSE_PASSWORD is set at all,
-            // replacing the pristine `default` user (`<no_password/>`)
-            // with one whose `<password></password>` override doesn't
-            // match empty-password basic auth. Skipping the vars when
-            // they're at their out-of-the-box values keeps the image's
-            // own setup intact so the Playground opens auth-free.
+            // Only forward env vars that diverge from the image's own
+            // defaults; when at defaults the override file above takes
+            // over and the entrypoint should leave user setup alone.
             env: {
                 let mut vars = Vec::new();
                 if env.ch_user != "default" {
@@ -1051,12 +1106,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             },
             host_config: Some(HostConfig {
                 port_bindings: Some(ch_port_bindings),
-                mounts: Some(vec![Mount {
-                    target: Some("/var/lib/clickhouse".to_string()),
-                    source: Some(CH_VOLUME.to_string()),
-                    typ: Some(MountTypeEnum::VOLUME),
-                    ..Default::default()
-                }]),
+                mounts: Some(ch_mounts),
                 restart_policy: Some(RestartPolicy {
                     name: Some(RestartPolicyNameEnum::ALWAYS),
                     ..Default::default()
