@@ -285,7 +285,12 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
         AND table_name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
       ORDER BY table_name
     `);
-    expect(tables.map((r) => r[0])).toMatchInlineSnapshot();
+    expect(tables.map((r) => r[0])).toMatchInlineSnapshot(`
+      [
+        "Transfer",
+        "TransferPgOnly",
+      ]
+    `);
 
     const transferCount = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
     expect(Number(transferCount[0]?.[0])).toBeGreaterThan(0);
@@ -304,7 +309,12 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
        ORDER BY name
        FORMAT JSON`
     );
-    expect(tables.data.map((r) => r.name)).toMatchInlineSnapshot();
+    expect(tables.data.map((r) => r.name)).toMatchInlineSnapshot(`
+      [
+        "Transfer",
+        "TransferChOnly",
+      ]
+    `);
 
     const transferCh = await queryClickHouse<
       ClickHouseResult<{ c: string }>
@@ -353,7 +363,39 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    expect({ entityQueries, entityObjectTypes }).toMatchInlineSnapshot();
+    expect({ entityQueries, entityObjectTypes }).toMatchInlineSnapshot(`
+      {
+        "entityObjectTypes": [
+          {
+            "fields": [
+              "blockNumber",
+              "from",
+              "id",
+              "to",
+              "transactionHash",
+              "value",
+            ],
+            "name": "Transfer",
+          },
+          {
+            "fields": [
+              "from",
+              "id",
+              "value",
+            ],
+            "name": "TransferPgOnly",
+          },
+        ],
+        "entityQueries": [
+          "Transfer",
+          "TransferPgOnly",
+          "TransferPgOnly_aggregate",
+          "TransferPgOnly_by_pk",
+          "Transfer_aggregate",
+          "Transfer_by_pk",
+        ],
+      }
+    `);
   });
 
   it("should resume with DB state on second start", async () => {
