@@ -1220,8 +1220,21 @@ pub async fn down() -> anyhow::Result<()> {
             Err(e) => return Err(e).with_context(|| format!("Failed to inspect network {name}")),
         };
 
+        // Only force-disconnect endpoints we can prove are ours via the
+        // CONFIG_HASH_LABEL — by this point our own containers have already
+        // been removed by stop_and_remove(), so anything left is either a
+        // stale Envio container from an aborted previous run, or someone
+        // else's container that happens to share this network. Touching the
+        // latter would be hostile (breaking a parallel dev session, etc.);
+        // leaving it attached drops us into the warning path below.
         if let Some(containers) = inspect.containers {
             for container_id in containers.keys() {
+                let is_envio_owned = get_container_config_hash(docker, container_id)
+                    .await
+                    .is_some();
+                if !is_envio_owned {
+                    continue;
+                }
                 let _ = docker
                     .disconnect_network(
                         name,
