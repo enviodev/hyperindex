@@ -67,7 +67,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install capnproto
-        run: sudo apt-get update -y && sudo apt-get install -y capnproto
+        run: sudo apt-get update -y && sudo apt-get install -y capnproto libcapnp-dev
 
       - uses: ./.github/actions/cargo-cache
 
@@ -134,7 +134,7 @@ jobs:
           components: clippy
 
       - name: Install capnproto
-        run: sudo apt-get update -y && sudo apt-get install -y capnproto
+        run: sudo apt-get update -y && sudo apt-get install -y capnproto libcapnp-dev
 
       - uses: ./.github/actions/cargo-cache
 
@@ -160,7 +160,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install capnproto
-        run: sudo apt-get update -y && sudo apt-get install -y capnproto
+        run: sudo apt-get update -y && sudo apt-get install -y capnproto libcapnp-dev
 
       - uses: ./.github/actions/cargo-cache
 
