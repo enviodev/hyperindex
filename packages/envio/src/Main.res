@@ -640,6 +640,12 @@ let start = async (
   ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
 ) => {
+  let perfMark = (label: string) =>
+    if %raw(`process.env.ENVIO_TEST_PROFILE`) {
+      let now: float = %raw(`performance.now()`)
+      Console.error(`PROFILE Main.start ${label} t=${now->Float.toString}`)
+    }
+  perfMark("entry")
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
   let explicitTui = switch mainArgs.tuiOff {
   | Some(off) => Some(!off)
@@ -653,6 +659,7 @@ let start = async (
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
   let configWithoutRegistrations = Config.loadWithoutRegistrations()
+  perfMark("config-loaded-2nd")
   // isDevelopmentMode controls whether the indexer stays alive after all
   // chains finish (keepProcessAlive) and whether the console API is exposed.
   // Set by `envio dev` via the public config's `isDev` field; `envio start`
@@ -669,6 +676,7 @@ let start = async (
     ~envioInfo=getEnvioInfo(),
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
   )
+  perfMark("persistence-init")
 
   // `Config.loadWithoutRegistrations` never sees registration state; handler,
   // contractRegister, and eventFilters are baked into each event config only
@@ -676,6 +684,7 @@ let start = async (
   let (config, registrations) = await HandlerLoader.registerAllHandlers(
     ~config=configWithoutRegistrations,
   )
+  perfMark("handlers-registered")
   let config = if isTest {
     {...config, shouldRollbackOnReorg: false}
   } else {
@@ -769,6 +778,7 @@ let start = async (
     let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)
   }
   globalGsManagerRef := Some(gsManager)
+  perfMark("before-dispatch")
   gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
   /*
     NOTE:

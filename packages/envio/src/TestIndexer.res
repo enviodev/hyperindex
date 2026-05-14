@@ -754,6 +754,10 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                 simulate: rawChainConfig.simulate,
                 initialState,
               }
+              if %raw(`process.env.ENVIO_TEST_PROFILE`) {
+                let now: float = %raw(`performance.now()`)
+                Console.error(`PROFILE main spawn-worker t=${now->Float.toString}`)
+              }
               let worker = try {
                 NodeJs.WorkerThreads.makeWorker(
                   workerPath,
@@ -816,6 +820,10 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
               })
 
               worker->NodeJs.WorkerThreads.onExit(code => {
+                if %raw(`process.env.ENVIO_TEST_PROFILE`) {
+                  let now: float = %raw(`performance.now()`)
+                  Console.error(`PROFILE main worker-exit t=${now->Float.toString}`)
+                }
                 if code !== 0 {
                   reject(Utils.Error.make(`Worker exited with code ${code->Int.toString}`))
                 } else {
@@ -889,15 +897,26 @@ let initTestWorker = () => {
     let processConfig =
       {"chains": resolvedChainsDict}->(Utils.magic: {"chains": dict<unknown>} => JSON.t)
 
+    let perfMark = (label: string) =>
+      if %raw(`process.env.ENVIO_TEST_PROFILE`) {
+        let now: float = %raw(`performance.now()`)
+        Console.error(`PROFILE worker [${chainIdStr}] ${label} t=${now->Float.toString}`)
+      }
+
+    perfMark("worker-entry")
+
     // Create proxy storage that communicates with main thread
     let proxy = TestIndexerProxyStorage.make(~parentPort, ~initialState)
     let storage = TestIndexerProxyStorage.makeStorage(proxy)
+    perfMark("proxy-ready")
     let config = Config.loadWithoutRegistrations()
+    perfMark("config-loaded")
     let persistence = Persistence.make(
       ~userEntities=config.userEntities,
       ~allEnums=config.allEnums,
       ~storage,
     )
+    perfMark("persistence-ready")
 
     // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
     switch Env.userLogLevel {
@@ -915,6 +934,7 @@ let initTestWorker = () => {
         config
       }
     }
+    perfMark("before-main-start")
     Main.start(~persistence, ~isTest=true, ~patchConfig, ~exitAfterFirstEventBlock)->ignore
   | None =>
     Logging.error("TestIndexerWorker: No worker data provided")

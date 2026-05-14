@@ -156,7 +156,12 @@ let getAddon = () =>
   switch addonRef.contents {
   | Some(a) => a
   | None => {
+      let t0: float = %raw(`performance.now()`)
       let a = loadAddon()
+      if %raw(`process.env.ENVIO_TEST_PROFILE`) {
+        let t1: float = %raw(`performance.now()`)
+        Console.error(`PROFILE loadAddon took ${(t1 -. t0)->Float.toString}ms`)
+      }
       addonRef := Some(a)
       a
     }
