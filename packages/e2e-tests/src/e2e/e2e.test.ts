@@ -27,7 +27,7 @@ import {
 import path from "path";
 
 const PROJECT_DIR = path.join(config.scenariosDir, "e2e_test");
-const CH_DATABASE = "envio_sink";
+const CH_DATABASE = "envio_indexer";
 
 interface ClickHouseResult<T> {
   data: T[];

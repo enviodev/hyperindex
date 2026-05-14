@@ -24,7 +24,7 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
   // Call USE database instead
   let database = switch database {
   | Some(database) => database
-  | None => "envio_sink"
+  | None => "envio_indexer"
   }
 
   let cache = Utils.WeakMap.make()
