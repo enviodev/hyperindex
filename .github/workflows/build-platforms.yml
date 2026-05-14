@@ -34,7 +34,7 @@ jobs:
 
       - name: Install capnproto (Linux)
         if: ${{ matrix.job.platform == 'linux' }}
-        run: sudo apt-get update -y && sudo apt-get install -y capnproto libcapnp-dev
+        run: sudo apt-get update -y && sudo apt-get install -y capnproto
 
       - name: Install capnproto (macOS)
         if: ${{ matrix.job.platform == 'darwin' }}
