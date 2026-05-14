@@ -421,9 +421,28 @@ let initialize = async (
 ) => {
   try {
     let replicated = Env.ClickHouse.replicated()
-    let databaseEngineClause = switch Env.ClickHouse.databaseEngine() {
+    let databaseEngine = Env.ClickHouse.databaseEngine()
+    let databaseEngineClause = switch databaseEngine {
     | Some(engine) => ` ENGINE = ${engine}`
     | None => ""
+    }
+
+    switch databaseEngine {
+    | Some(engineSpec) => {
+        let expectedEngineName = engineSpec->String.split("(")->Belt.Array.getUnsafe(0)->String.trim
+        let existingResult = await client->query({
+          query: `SELECT engine FROM system.databases WHERE name = '${database}'`,
+        })
+        let rows: array<{"engine": string}> = await existingResult->json
+        switch rows->Belt.Array.get(0) {
+        | Some(row) if row["engine"] !== expectedEngineName =>
+          JsError.throwWithMessage(
+            `ClickHouse database "${database}" exists with engine "${row["engine"]}" but ENVIO_CLICKHOUSE_DATABASE_ENGINE specifies "${expectedEngineName}". Drop the database manually to change its engine.`,
+          )
+        | _ => ()
+        }
+      }
+    | None => ()
     }
 
     await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}`})
