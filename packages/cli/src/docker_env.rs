@@ -12,7 +12,6 @@ use bollard::{Docker, API_DEFAULT_VERSION};
 use dotenvy::{EnvLoader, EnvMap, EnvSequence};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
-use sqlx::ConnectOptions;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::net::TcpStream;
@@ -694,41 +693,6 @@ async fn detect_drift(docker: &Docker, name: &str, expected_hash: &str) -> Optio
     })
 }
 
-/// Authenticated Postgres probe. `Ok(())` means the creds work against the
-/// database at `host:port`; any other return is an auth / connection failure
-/// suitable for display to the user.
-async fn probe_pg_auth(
-    host: &str,
-    port: u16,
-    user: &str,
-    password: &str,
-    database: &str,
-) -> Result<(), sqlx::Error> {
-    let opts = sqlx::postgres::PgConnectOptions::new()
-        .host(host)
-        .port(port)
-        .username(user)
-        .password(password)
-        .database(database);
-    use sqlx::Connection;
-    // Bound the probe: a stalled or misbehaving DB accepts TCP and then
-    // hangs during SCRAM, which would block `envio dev` indefinitely (sqlx
-    // sets no default connect timeout outside of pool usage). ClickHouse's
-    // probe_client already has a 2s HTTP timeout; 5s for PG accommodates
-    // slow-network external DBs without making preflight feel unresponsive.
-    match tokio::time::timeout(Duration::from_secs(5), opts.connect()).await {
-        Ok(Ok(conn)) => {
-            conn.close().await?;
-            Ok(())
-        }
-        Ok(Err(e)) => Err(e),
-        Err(_) => Err(sqlx::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            format!("connect to {host}:{port} timed out after 5s"),
-        ))),
-    }
-}
-
 /// Authenticated ClickHouse probe. Runs `SELECT 1` over HTTP with basic auth.
 /// ClickHouse probe outcome. The variant carries the cause directly so the
 /// classifier can branch on shape rather than scraping a formatted string —
@@ -986,29 +950,16 @@ fn format_ch_drift(env: &EnvConfig, url: &ClickHouseUrl, drift: &DriftInfo) -> S
     )
 }
 
-/// Why a probe failed. The two probes (`probe_pg_auth`, `probe_ch_auth`)
-/// can fail for credential reasons (server replied "no") or for transport
-/// reasons (timeout, connection refused, TLS, DNS). Classifying lets the
-/// formatter point the user at the right remediation rather than always
-/// suggesting credential fixes.
+/// Why a probe failed. `probe_ch_auth` can fail for credential reasons
+/// (server replied "no") or for transport reasons (timeout, connection
+/// refused, TLS, DNS). Classifying lets the formatter point the user at
+/// the right remediation rather than always suggesting credential fixes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProbeFailureKind {
     /// Server replied with an auth/permissions/database error.
     Auth,
     /// Couldn't reach or complete the handshake (timeout, refused, TLS, DNS).
     Connection,
-}
-
-fn classify_pg_failure(err: &sqlx::Error) -> ProbeFailureKind {
-    match err {
-        // Server replied → auth/db level (bad password, missing role, missing db).
-        sqlx::Error::Database(_) => ProbeFailureKind::Auth,
-        // Transport-level: TCP refused, SCRAM stalled (our 5s timeout), TLS handshake.
-        sqlx::Error::Io(_) | sqlx::Error::Tls(_) => ProbeFailureKind::Connection,
-        // Unknown variant — default to Auth so the user at least sees the
-        // existing detailed creds checklist; the raw error is also printed.
-        _ => ProbeFailureKind::Auth,
-    }
 }
 
 fn classify_ch_failure(err: &ChProbeError) -> ProbeFailureKind {
@@ -1018,67 +969,6 @@ fn classify_ch_failure(err: &ChProbeError) -> ProbeFailureKind {
         // Transport-level: timeout, refused, DNS, TLS handshake.
         ChProbeError::Transport(_) => ProbeFailureKind::Connection,
     }
-}
-
-fn format_pg_failure_error(
-    env: &EnvConfig,
-    port: u16,
-    external: bool,
-    kind: ProbeFailureKind,
-    err: &str,
-) -> String {
-    let source = if external {
-        "ENVIO_PG_HOST is set"
-    } else {
-        "something is already listening on the default Postgres port and it isn't an envio-managed container"
-    };
-    let (verb, ext_fix) = match (kind, external) {
-        (ProbeFailureKind::Auth, true) => (
-            "but authentication failed",
-            "  - Verify ENVIO_PG_USER / ENVIO_PG_PASSWORD / ENVIO_PG_DATABASE match \
-             the database you pointed ENVIO_PG_HOST at.\n  \
-             - Unset ENVIO_PG_HOST to let the CLI start a local Docker container \
-             instead.\n",
-        ),
-        (ProbeFailureKind::Auth, false) => (
-            "but authentication failed",
-            "  - Update ENVIO_PG_USER / ENVIO_PG_PASSWORD / ENVIO_PG_DATABASE in \
-             .env to match the running database.\n  \
-             - Or stop the other process on this port and re-run so envio can start \
-             its own container.\n",
-        ),
-        (ProbeFailureKind::Connection, true) => (
-            "but the connection failed (timeout or transport error)",
-            "  - Verify the host is reachable and the port is open (firewall, VPN, \
-             security group).\n  \
-             - Check that the server isn't overloaded or stalled — the probe times \
-             out after 5s.\n  \
-             - Confirm the URL scheme matches what the server expects (TLS vs. plain).\n  \
-             - Unset ENVIO_PG_HOST to let the CLI start a local Docker container \
-             instead.\n",
-        ),
-        (ProbeFailureKind::Connection, false) => (
-            "but the connection failed (timeout or transport error)",
-            "  - The other process holding the port may be stalled or unresponsive — \
-             stop it and re-run so envio can start its own container.\n  \
-             - Check `lsof -ti :PORT` to identify what's listening.\n",
-        ),
-    };
-    format!(
-        "Connected to Postgres at {host}:{port} ({source}), {verb}.\n\
-         \n\
-         Configured:\n\
-             ENVIO_PG_USER={user}\n\
-             ENVIO_PG_DATABASE={db}\n\
-             (password hidden)\n\
-         \n\
-         Error: {err}\n\
-         \n\
-         Fix:\n{ext_fix}",
-        host = env.pg_host_str(),
-        user = env.pg_user,
-        db = env.pg_database,
-    )
 }
 
 fn format_ch_failure_error(
@@ -1335,27 +1225,14 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         }
     }
 
-    // Auth preflight for services we won't manage: external (ENVIO_*_HOST
-    // set) or foreign (port is taken but the listener isn't our container).
-    // Catches the "service is up but creds don't match" case that used to
-    // surface only once the indexer subprocess failed to connect.
-    if pg_alive && (pg_external || !pg_ours) {
-        if let Err(e) = probe_pg_auth(
-            pg_probe_host,
-            pg_host_port,
-            &env.pg_user,
-            &env.pg_password,
-            &env.pg_database,
-        )
-        .await
-        {
-            let kind = classify_pg_failure(&e);
-            anyhow::bail!(
-                "{}",
-                format_pg_failure_error(&env, pg_host_port, pg_external, kind, &e.to_string())
-            );
-        }
-    }
+    // Auth preflight for ClickHouse when we won't manage it: external
+    // (ENVIO_CLICKHOUSE_HOST set) or foreign (port is taken but the listener
+    // isn't our container). Catches the "service is up but creds don't
+    // match" case that used to surface only once the indexer subprocess
+    // failed to connect. Postgres has no analogous probe here: it would
+    // require a real PG client (sqlx) which was dropped from the CLI
+    // alongside the persisted_state → envio_info migration. Misconfigured
+    // external Postgres still surfaces from the indexer's own connect call.
     if let Some(url) = ch_url_ref {
         if ch_alive && (ch_external || !ch_ours) {
             if let Err(e) = probe_ch_auth(
@@ -2243,91 +2120,6 @@ mod tests {
             !msg.contains(&env.pg_password),
         ];
         assert_eq!(checks, [true; 11]);
-    }
-
-    #[test]
-    fn pg_failure_error_external_vs_foreign_paths_differ_for_auth() {
-        let env = default_env();
-        let external = format_pg_failure_error(
-            &env,
-            5433,
-            true,
-            ProbeFailureKind::Auth,
-            "password authentication failed",
-        );
-        let foreign = format_pg_failure_error(
-            &env,
-            5433,
-            false,
-            ProbeFailureKind::Auth,
-            "password authentication failed",
-        );
-
-        let external_checks = [
-            external.contains("ENVIO_PG_HOST is set"),
-            external.contains("Unset ENVIO_PG_HOST"),
-            external.contains("authentication failed"),
-            external.contains("(password hidden)"),
-            !external.contains(&env.pg_password),
-        ];
-        let foreign_checks = [
-            foreign.contains("something is already listening"),
-            foreign.contains("match the running database"),
-            foreign.contains("authentication failed"),
-            !foreign.contains("ENVIO_PG_HOST is set"),
-        ];
-        assert_eq!((external_checks, foreign_checks), ([true; 5], [true; 4]));
-    }
-
-    #[test]
-    fn pg_failure_error_connection_kind_does_not_blame_credentials() {
-        // A timeout or transport failure must *not* tell the user to check
-        // their credentials — those are almost certainly fine. Previously
-        // this code path always said "authentication failed".
-        let env = default_env();
-        let msg = format_pg_failure_error(
-            &env,
-            5433,
-            true,
-            ProbeFailureKind::Connection,
-            "connect to localhost:5433 timed out after 5s",
-        );
-        let checks = [
-            msg.contains("the connection failed"),
-            msg.contains("timeout or transport error"),
-            msg.contains("timed out after 5s"),
-            msg.contains("firewall"),
-            msg.contains("Unset ENVIO_PG_HOST"),
-            !msg.contains("Verify ENVIO_PG_USER / ENVIO_PG_PASSWORD"),
-            !msg.contains("Update ENVIO_PG_USER / ENVIO_PG_PASSWORD"),
-            !msg.contains(&env.pg_password),
-        ];
-        assert_eq!(checks, [true; 8]);
-    }
-
-    #[test]
-    fn classify_pg_failure_maps_io_to_connection_and_db_to_auth() {
-        // Io covers our 5s timeout mapping plus TCP refused / broken pipe.
-        // Anything we don't recognize defaults to Auth so the user still
-        // gets the detailed creds checklist alongside the raw error.
-        let timeout = sqlx::Error::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "boom"));
-        let refused = sqlx::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::ConnectionRefused,
-            "nope",
-        ));
-        let unknown = sqlx::Error::RowNotFound;
-        assert_eq!(
-            (
-                classify_pg_failure(&timeout),
-                classify_pg_failure(&refused),
-                classify_pg_failure(&unknown),
-            ),
-            (
-                ProbeFailureKind::Connection,
-                ProbeFailureKind::Connection,
-                ProbeFailureKind::Auth,
-            )
-        );
     }
 
     #[test]
