@@ -10,7 +10,7 @@ let callEventTag = "call"
 type selectionConfig = {
   getRecieptsSelection: (
     ~addressesByContractName: dict<array<Address.t>>,
-  ) => array<HyperFuelClient.QueryTypes.receiptSelection>,
+  ) => array<HyperFuelClient.receiptSelection>,
   eventRouter: EventRouter.t<Internal.fuelEventConfig>,
 }
 
@@ -25,7 +25,7 @@ let makeGetNormalRecieptsSelection = (
   ~contractNames,
 ) => {
   (~addressesByContractName) => {
-    let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
+    let selection: array<HyperFuelClient.receiptSelection> = []
 
     //Instantiate each time to add new registered contract addresses
     contractNames->Utils.Set.forEach(contractName => {
@@ -68,7 +68,7 @@ let makeGetNormalRecieptsSelection = (
 }
 
 let makeWildcardRecieptsSelection = (~wildcardLogDataRbs, ~nonLogDataWildcardReceiptTypes) => {
-  let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
+  let selection: array<HyperFuelClient.receiptSelection> = []
 
   switch nonLogDataWildcardReceiptTypes {
   | [] => ()
@@ -79,7 +79,7 @@ let makeWildcardRecieptsSelection = (~wildcardLogDataRbs, ~nonLogDataWildcardRec
         {
           receiptType: nonLogDataWildcardReceiptTypes,
           txStatus: txStatusSelection,
-        }: HyperFuelClient.QueryTypes.receiptSelection
+        }: HyperFuelClient.receiptSelection
       ),
     )
     ->ignore
@@ -95,7 +95,7 @@ let makeWildcardRecieptsSelection = (~wildcardLogDataRbs, ~nonLogDataWildcardRec
           receiptType: logDataReceiptTypeSelection,
           txStatus: txStatusSelection,
           rb: wildcardLogDataRbs,
-        }: HyperFuelClient.QueryTypes.receiptSelection
+        }: HyperFuelClient.receiptSelection
       ),
     )
     ->ignore
@@ -207,10 +207,21 @@ let memoGetSelectionConfig = (~chain) => {
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
+  apiToken: option<string>,
 }
 
-let make = ({chain, endpointUrl}: options): t => {
+let make = ({chain, endpointUrl, apiToken}: options): t => {
   let name = "HyperFuel"
+
+  let apiToken = switch apiToken {
+  | Some(token) => token
+  | None =>
+    JsError.throwWithMessage(`An API token is required for using HyperFuel as a data-source.
+Set the ENVIO_API_TOKEN environment variable in your .env file.
+Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
+  }
+
+  let client = HyperFuelClient.make({url: endpointUrl, apiToken})
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
@@ -240,19 +251,18 @@ let make = ({chain, endpointUrl}: options): t => {
       ~method="getLogs",
     )
     let pageUnsafe = try await HyperFuel.GetLogs.query(
-      ~serverUrl=endpointUrl,
+      ~client,
       ~fromBlock,
       ~toBlock,
       ~recieptsSelection,
     ) catch {
-    | HyperSync.GetLogs.Error(error) =>
+    | HyperFuel.GetLogs.WrongInstance =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
-            retry: switch error {
-            | WrongInstance =>
+            retry: {
               let backoffMillis = switch retry {
               | 0 => 100
               | _ => 500 * retry
@@ -260,12 +270,6 @@ let make = ({chain, endpointUrl}: options): t => {
               WithBackoff({
                 message: `Block #${fromBlock->Int.toString} not found in HyperFuel. HyperFuel has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
                 backoffMillis,
-              })
-            | UnexpectedMissingParams({missingParams}) =>
-              ImpossibleForTheQuery({
-                message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
-                    ", ",
-                  )}`,
               })
             },
           }),
@@ -330,7 +334,7 @@ let make = ({chain, endpointUrl}: options): t => {
     | None =>
       //If there were no logs at all in the current page query then fetch the
       //timestamp of the heighest block accounted for
-      HyperFuel.queryBlockData(~serverUrl=endpointUrl, ~blockNumber=heighestBlockQueried, ~logger)
+      HyperFuel.queryBlockData(~client, ~blockNumber=heighestBlockQueried)
       ->Promise.thenResolve(res => {
         switch res {
         | Some(blockData) => blockData

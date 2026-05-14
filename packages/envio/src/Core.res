@@ -4,9 +4,13 @@
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
+type hyperfuelClientCtor
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
+  @as("HyperfuelClient")
+  hyperfuelClient: hyperfuelClientCtor,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"

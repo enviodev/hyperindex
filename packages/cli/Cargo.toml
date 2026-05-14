@@ -51,6 +51,10 @@ bollard = "0.20"
 futures-util = "0.3"
 napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
+hyperfuel-client = "2.2.1"
+hyperfuel-format = "3.0.0"
+hyperfuel-net-types = "3.0.0"
+url = "2"
 
 [features]
 integration_tests = []
