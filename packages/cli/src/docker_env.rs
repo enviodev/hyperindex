@@ -1188,13 +1188,67 @@ pub async fn down() -> anyhow::Result<()> {
 
     // 404 = network already gone (e.g. `up()` short-circuited when all
     // services were reachable externally, so `ensure_network` never ran).
-    // Treat it as success — mirrors the 409 tolerance in `ensure_network`.
+    // 403 = network still has active endpoints — typically a stray
+    // container (test harness, manual `docker run`, ...) that we don't own.
+    // Force-disconnect everything attached first so the second remove
+    // attempt succeeds; if it still doesn't, treat it as a warning rather
+    // than a hard failure since the volumes (the only state the user
+    // really wants nuked) have already been removed by this point.
     async fn remove_network_tolerant(docker: &Docker, name: &str) -> anyhow::Result<()> {
+        match docker.remove_network(name).await {
+            Ok(_) => return Ok(()),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => return Ok(()),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 403, ..
+            }) => {}
+            Err(e) => return Err(e).with_context(|| format!("Failed to remove network {name}")),
+        }
+
+        let inspect = match docker
+            .inspect_network(
+                name,
+                None::<bollard::query_parameters::InspectNetworkOptions>,
+            )
+            .await
+        {
+            Ok(n) => n,
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => return Ok(()),
+            Err(e) => return Err(e).with_context(|| format!("Failed to inspect network {name}")),
+        };
+
+        if let Some(containers) = inspect.containers {
+            for container_id in containers.keys() {
+                let _ = docker
+                    .disconnect_network(
+                        name,
+                        bollard::models::NetworkDisconnectRequest {
+                            container: container_id.clone(),
+                            force: Some(true),
+                        },
+                    )
+                    .await;
+            }
+        }
+
         match docker.remove_network(name).await {
             Ok(_) => Ok(()),
             Err(bollard::errors::Error::DockerResponseServerError {
                 status_code: 404, ..
             }) => Ok(()),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 403, ..
+            }) => {
+                eprintln!(
+                    "Warning: network {name} still has active endpoints after \
+                     force-disconnect; leaving it in place. Inspect with \
+                     `docker network inspect {name}` to see what's attached."
+                );
+                Ok(())
+            }
             Err(e) => Err(e).with_context(|| format!("Failed to remove network {name}")),
         }
     }
