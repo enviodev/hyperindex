@@ -12,6 +12,7 @@ import {
   type FuelEvent,
   type SvmChainId,
   type TestIndexer,
+  type Token,
   type EvmOnEventOptions,
   type EvmOnEventHandler,
   type EvmContractRegisterOptions,
@@ -590,6 +591,61 @@ describe("Use Envio test framework to test event handlers", () => {
       { id: "1", c: "1" },
       { id: "2", c: "2" },
     ]);
+  });
+
+  // Reproduction for https://github.com/enviodev/hyperindex/issues/1199.
+  // `context.Token.getWhere({ collection_id: { _eq: ... } })` filters by the
+  // FK db column (`collection_id`) of a `@derivedFrom`-style relation. The
+  // in-memory TestIndexer looked up the field by its logical name and threw
+  // "Field collection_id not found in entity Token" because the logical name
+  // is "collection". Production PgStorage queries by the db column directly,
+  // so the bug only manifested in tests.
+  it("getWhere filters Token by collection_id FK column (#1199)", async () => {
+    const indexer = createTestIndexer();
+    const collectionAddress =
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const ownerAddress =
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    const matchingToken: Token = {
+      id: collectionAddress + "-1",
+      tokenId: 1n,
+      collection_id: collectionAddress,
+      owner_id: ownerAddress,
+    };
+    const otherToken: Token = {
+      id: "0xcccccccccccccccccccccccccccccccccccccccc-1",
+      tokenId: 2n,
+      collection_id: "0xcccccccccccccccccccccccccccccccccccccccc",
+      owner_id: ownerAddress,
+    };
+    indexer.Token.set(matchingToken);
+    indexer.Token.set(otherToken);
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: {
+                contract: "0x1234567890123456789012345678901234567890",
+                testCase: "getWhereByLinkedEntityField",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    // Handler encodes the number of tokens returned by getWhere into the
+    // entity id so a single equality assertion covers it.
+    assert.deepEqual(result.changes[0]?.CustomSelectionTestPass, {
+      sets: [{ id: "issue-1199:1" }],
+    });
   });
 
   it("Throws when contract registered with invalid address", async () => {
