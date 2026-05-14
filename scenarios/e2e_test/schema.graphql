@@ -1,8 +1,24 @@
-type Transfer {
+type Transfer @storage(postgres: true, clickhouse: true) {
   id: ID!
   from: String! @index
   to: String! @index
   value: BigInt!
   blockNumber: Int!
   transactionHash: String!
+}
+
+# Override the global multi-storage default: this entity only lives in
+# Postgres. ClickHouse will not receive writes for it.
+type TransferPgOnly @storage(postgres: true) {
+  id: ID!
+  from: String!
+  value: BigInt!
+}
+
+# Mirror override: this entity only lives in ClickHouse, so it is
+# absent from the Postgres-backed `pgUserEntities` (and from Hasura).
+type TransferChOnly @storage(clickhouse: true) {
+  id: ID!
+  from: String!
+  value: BigInt!
 }
