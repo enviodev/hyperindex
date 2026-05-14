@@ -10,7 +10,7 @@ use url::Url;
 
 const HTTP_REQ_TIMEOUT_MILLIS: u64 = 30_000;
 
-const RETRY_MAX_ATTEMPTS: usize = 5;
+const RETRY_MAX_RETRIES: usize = 5;
 const RETRY_INITIAL_BACKOFF_MS: u64 = 100;
 const RETRY_BACKOFF_MULTIPLIER: u64 = 4;
 
@@ -334,7 +334,7 @@ where
 {
     let mut backoff = RETRY_INITIAL_BACKOFF_MS;
     let mut last_err: Option<anyhow::Error> = None;
-    for _ in 0..=RETRY_MAX_ATTEMPTS {
+    for _ in 0..=RETRY_MAX_RETRIES {
         match op().await {
             Ok(v) => return Ok(v),
             Err(e) => {
