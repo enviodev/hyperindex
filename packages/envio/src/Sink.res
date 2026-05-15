@@ -13,16 +13,21 @@ type t = {
 }
 
 let makeClickHouse = (~host, ~database, ~username, ~password): t => {
+  // The JS @clickhouse/client client is still used for DDL (initialize/resume).
+  // Write paths (entity history + checkpoints) go through the Rust addon over
+  // RowBinary; see ClickHouseStorage.res and packages/cli/src/clickhouse_storage.rs.
   let client = ClickHouse.createClient({
     url: host,
     username,
     password,
   })
 
-  // Don't pass database to the client; it would fail if the database doesn't
-  // exist yet. Each query qualifies the name explicitly or runs USE first.
-
-  let cache = Utils.WeakMap.make()
+  let endpoint: ClickHouseStorage.endpoint = {
+    url: host,
+    username,
+    password,
+    database,
+  }
 
   {
     name: "clickhouse",
@@ -33,12 +38,11 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
       ClickHouse.resume(client, ~database, ~checkpointId)
     },
     writeBatch: async (~batch, ~updatedEntities) => {
-      await Promise.all(
-        updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
-          ClickHouse.setUpdatesOrThrow(client, ~cache, ~updates, ~entityConfig, ~database)
-        }),
-      )->Utils.Promise.ignoreValue
-      await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)
+      let entityPromises = updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
+        ClickHouseStorage.setUpdatesOrThrow(~endpoint, ~updates, ~entityConfig)
+      })
+      let checkpointPromise = ClickHouseStorage.setCheckpointsOrThrow(~endpoint, ~batch)
+      let _ = await Promise.all(entityPromises->Array.concat([checkpointPromise]))
     },
   }
 }

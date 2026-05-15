@@ -4,9 +4,42 @@
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
+
+type clickHouseEndpoint = {
+  url: string,
+  username: string,
+  password: string,
+  database: string,
+}
+
+// Mirrors clickhouse_storage::FieldSpec / FieldType in packages/cli/src/clickhouse_storage.rs.
+// `ty` is one of: "Int32" | "UInt32" | "UInt64" | "Float64" | "Bool" | "Str" | "DateTimeMs" | "Enum".
+type clickHouseFieldSpec = {
+  name: string,
+  ty: string,
+  nullable: bool,
+  isArray: bool,
+  enumVariants: Null.t<array<string>>,
+}
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
+  clickhouseInsertCheckpoints: (
+    ~endpoint: clickHouseEndpoint,
+    ~table: string,
+    ~ids: array<string>,
+    ~chainIds: array<int>,
+    ~blockNumbers: array<int>,
+    ~blockHashes: array<Null.t<string>>,
+    ~eventsProcessed: array<int>,
+  ) => promise<unit>,
+  clickhouseInsertRows: (
+    ~endpoint: clickHouseEndpoint,
+    ~table: string,
+    ~schema: array<clickHouseFieldSpec>,
+    ~rows: array<JSON.t>,
+  ) => promise<unit>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"
@@ -173,4 +206,30 @@ let getConfigJson = (~configPath=?, ~directory=?) => {
 let runCli = args => {
   let addon = getAddon()
   addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
+}
+
+let clickhouseInsertCheckpoints = (
+  ~endpoint,
+  ~table,
+  ~ids,
+  ~chainIds,
+  ~blockNumbers,
+  ~blockHashes,
+  ~eventsProcessed,
+) => {
+  let addon = getAddon()
+  addon.clickhouseInsertCheckpoints(
+    ~endpoint,
+    ~table,
+    ~ids,
+    ~chainIds,
+    ~blockNumbers,
+    ~blockHashes,
+    ~eventsProcessed,
+  )
+}
+
+let clickhouseInsertRows = (~endpoint, ~table, ~schema, ~rows) => {
+  let addon = getAddon()
+  addon.clickhouseInsertRows(~endpoint, ~table, ~schema, ~rows)
 }
