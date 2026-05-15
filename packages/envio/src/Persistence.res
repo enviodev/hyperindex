@@ -212,12 +212,15 @@ let init = {
           | None => ["envio info is missing — storage initialized by an older envio"]
           | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
           }
+          // `storage.clickhouse` is serialized as a plain bool by the
+          // public config (see Rust `StorageConfig`), so probe for
+          // `Boolean(true)`, not an object.
           let hasClickhouse = switch envioInfo {
           | Object(d) =>
             switch d->Dict.get("storage") {
             | Some(Object(s)) =>
               switch s->Dict.get("clickhouse") {
-              | Some(Object(_)) => true
+              | Some(Boolean(true)) => true
               | _ => false
               }
             | _ => false

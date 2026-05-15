@@ -430,8 +430,8 @@ Pick one:
   })
 
   Async.it("Clickhouse: option 3 includes ENVIO_CLICKHOUSE_DATABASE line", async t => {
-    let stored = JSON.parseOrThrow(`{"name": "old", "storage": {"clickhouse": {"x": 1}}}`)
-    let current = JSON.parseOrThrow(`{"name": "new", "storage": {"clickhouse": {"x": 1}}}`)
+    let stored = JSON.parseOrThrow(`{"name": "old", "storage": {"clickhouse": true}}`)
+    let current = JSON.parseOrThrow(`{"name": "new", "storage": {"clickhouse": true}}`)
     let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
     t.expect(message, ~message="clickhouse env var line shown when storage.clickhouse set").toBe(
       `The following config changes are incompatible with the existing indexer data:
