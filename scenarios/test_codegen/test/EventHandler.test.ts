@@ -648,6 +648,51 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
+  // Regression: a `getWhere` on a nullable linkedEntity column (db column
+  // `<field>_id`) registers an in-memory index keyed by that column name.
+  // The next `set` of an entity whose JS object simply omits the FK (the
+  // natural shape for `nullableField === undefined`) used to throw
+  // `UndefinedKey("gravatar_id")` deep inside InMemoryTable.updateIndices.
+  // PgStorage stores the column as NULL, so the bug only surfaced for
+  // handlers that mix the two operations on the same entity table.
+  it("getWhere followed by set with omitted nullable FK does not crash", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: {
+                contract: "0x1234567890123456789012345678901234567890",
+                testCase: "getWhereThenSetNullableFk",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    assert.deepEqual(result.changes[0]?.User, {
+      sets: [
+        {
+          id: "user-with-null-gravatar",
+          address: "0x1111111111111111111111111111111111111111",
+          updatesCountOnUserForTesting: 0,
+          gravatar_id: undefined,
+          accountType: "USER",
+        },
+      ],
+    });
+    assert.deepEqual(result.changes[0]?.CustomSelectionTestPass, {
+      sets: [{ id: "getWhereThenSetNullableFk:ok" }],
+    });
+  });
+
   it("Throws when contract registered with invalid address", async () => {
     const indexer = createTestIndexer();
 

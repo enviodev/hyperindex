@@ -23,6 +23,26 @@ const CLICKHOUSE_IMAGE: &str = "clickhouse/clickhouse-server:26.2.15.4";
 const CONFIG_HASH_LABEL: &str = "dev.envio.config-hash";
 const SOCKET_TIMEOUT: u64 = 120;
 
+/// Replacement for `/etc/clickhouse-server/users.d/default-user.xml`. The
+/// 26.x image ships a users.d/ override that restricts the `default` user
+/// to loopback only (`::1`, `127.0.0.1`), so requests through the Docker
+/// bridge gateway get rejected as IP_NOT_ALLOWED (surfaced confusingly as
+/// "password is incorrect"). The base users.xml already configures
+/// `default` with `<no_password/>` and the other defaults; we only need to
+/// broaden `<networks>` to any IP via `replace="replace"`. Injected with
+/// docker cp into the created-but-not-started container so the image's
+/// own users.d/default-user.xml gets overwritten before ClickHouse boots.
+const CH_DEFAULT_USER_OVERRIDE_XML: &str = r#"<clickhouse>
+    <users>
+        <default>
+            <networks replace="replace">
+                <ip>::/0</ip>
+            </networks>
+        </default>
+    </users>
+</clickhouse>
+"#;
+
 const PG_CONTAINER: &str = "envio-postgres";
 const HASURA_CONTAINER: &str = "envio-hasura";
 const CH_CONTAINER: &str = "envio-clickhouse";
@@ -72,6 +92,50 @@ fn podman_socket_candidates() -> Vec<PathBuf> {
 /// Strip `unix://` prefix from a URI to get a filesystem path.
 fn socket_path_from_uri(uri: &str) -> &str {
     uri.strip_prefix("unix://").unwrap_or(uri)
+}
+
+/// Build an in-memory tar archive containing the single override file
+/// `default-user.xml`. Suitable for uploading to a container's
+/// `/etc/clickhouse-server/users.d/` directory via Docker's
+/// `PUT /containers/.../archive` endpoint, which extracts the tar there.
+fn build_clickhouse_users_override_tar() -> anyhow::Result<Vec<u8>> {
+    let mut header = tar::Header::new_gnu();
+    let bytes = CH_DEFAULT_USER_OVERRIDE_XML.as_bytes();
+    header
+        .set_path("default-user.xml")
+        .context("Invalid tar entry path")?;
+    header.set_size(bytes.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+
+    let mut builder = tar::Builder::new(Vec::new());
+    builder
+        .append(&header, bytes)
+        .context("Failed appending override entry to tar")?;
+    builder.into_inner().context("Failed finalizing tar")
+}
+
+/// Inject the `default-user.xml` override into the given (created, not
+/// yet started) ClickHouse container. Targets the image's own override
+/// path so ClickHouse picks ours up on its first config load.
+async fn inject_clickhouse_users_override(
+    docker: &Docker,
+    container_name: &str,
+) -> anyhow::Result<()> {
+    let tar_bytes = build_clickhouse_users_override_tar()?;
+    let options = bollard::query_parameters::UploadToContainerOptionsBuilder::default()
+        .path("/etc/clickhouse-server/users.d")
+        .build();
+    docker
+        .upload_to_container(
+            container_name,
+            Some(options),
+            bollard::body_full(tar_bytes.into()),
+        )
+        .await
+        .with_context(|| {
+            format!("Failed to inject users.d override into container {container_name}")
+        })
 }
 
 /// Try connecting to a Docker-compatible socket, returning the client and a
@@ -244,9 +308,14 @@ impl EnvConfig {
             hasura_enable_console: var("HASURA_GRAPHQL_ENABLE_CONSOLE", "true"),
             hasura_admin_secret: var("HASURA_GRAPHQL_ADMIN_SECRET", "testing"),
             ch_host: var_opt("ENVIO_CLICKHOUSE_HOST"),
+            // `envio dev` defaults to the out-of-the-box ClickHouse setup:
+            // the pre-existing `default` user with no password and the
+            // pre-existing `default` database, so opening the Playground
+            // requires no credentials. `envio start` reads these same vars
+            // but has no defaults and requires the user to set them.
             ch_user: var("ENVIO_CLICKHOUSE_USERNAME", "default"),
-            ch_password: var("ENVIO_CLICKHOUSE_PASSWORD", "testing"),
-            ch_database: var("ENVIO_CLICKHOUSE_DATABASE", "envio_indexer"),
+            ch_password: var("ENVIO_CLICKHOUSE_PASSWORD", ""),
+            ch_database: var("ENVIO_CLICKHOUSE_DATABASE", "default"),
         }
     }
 
@@ -309,6 +378,10 @@ impl EnvConfig {
 
     fn ch_config_hash(&self) -> String {
         let mut h = Sha256::new();
+        // Bump the version marker when the container creation shape
+        // changes (e.g. injected files, mounts) so stale containers from
+        // older CLI versions get recreated even when env values match.
+        h.update(b"v2");
         h.update(&self.ch_user);
         h.update(&self.ch_password);
         h.update(&self.ch_database);
@@ -654,6 +727,59 @@ async fn ensure_container(
         .create_container(Some(options), create_body)
         .await
         .with_context(|| format!("Failed creating container {name}"))?;
+
+    if let Err(e) = start_container(docker, name, host_port).await {
+        stop_and_remove(docker, name).await;
+        return Err(e);
+    }
+
+    println!("Started {name}");
+    Ok(true)
+}
+
+/// Like `ensure_container` but injects the ClickHouse users.d override
+/// into the container layer between create and start when
+/// `inject_default_user_override` is true. Mirrors the drift / reuse
+/// branches of `ensure_container`; the override only ships on a
+/// freshly-created container (existing ones already have it from their
+/// own first create, and reusing it costs nothing).
+async fn ensure_container_with_post_create(
+    docker: &Docker,
+    name: &str,
+    config_hash: &str,
+    host_port: u16,
+    create_body: ContainerCreateBody,
+    inject_default_user_override: bool,
+) -> anyhow::Result<bool> {
+    if container_exists(docker, name).await {
+        let existing_hash = get_container_config_hash(docker, name).await;
+        let drift = existing_hash.as_deref() != Some(config_hash);
+
+        if drift {
+            println!("Configuration changed for {name}, recreating...");
+            stop_and_remove(docker, name).await;
+        } else if is_container_running(docker, name).await {
+            return Ok(false);
+        } else {
+            start_container(docker, name, host_port).await?;
+            println!("Started {name}");
+            return Ok(false);
+        }
+    }
+
+    let options = CreateContainerOptionsBuilder::new().name(name).build();
+
+    docker
+        .create_container(Some(options), create_body)
+        .await
+        .with_context(|| format!("Failed creating container {name}"))?;
+
+    if inject_default_user_override {
+        if let Err(e) = inject_clickhouse_users_override(docker, name).await {
+            stop_and_remove(docker, name).await;
+            return Err(e);
+        }
+    }
 
     if let Err(e) = start_container(docker, name, host_port).await {
         stop_and_remove(docker, name).await;
@@ -1019,14 +1145,36 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             map
         };
 
+        // The 26.x image ships a /etc/clickhouse-server/users.d/
+        // default-user.xml that restricts `default` to loopback only,
+        // which our indexer and the Playground can't reach through the
+        // Docker bridge gateway. When the user hasn't customized any
+        // ClickHouse env vars, inject our own users.d/default-user.xml
+        // (broadens the network rule) into the container after creation
+        // but before start. Custom user/password/database setups go
+        // through the entrypoint untouched.
+        let use_dev_default_user =
+            env.ch_user == "default" && env.ch_password.is_empty() && env.ch_database == "default";
+
         let ch_body = ContainerCreateBody {
             image: Some(CLICKHOUSE_IMAGE.to_string()),
             labels: Some(make_labels(&ch_hash)),
-            env: Some(vec![
-                format!("CLICKHOUSE_USER={}", env.ch_user),
-                format!("CLICKHOUSE_PASSWORD={}", env.ch_password),
-                format!("CLICKHOUSE_DB={}", env.ch_database),
-            ]),
+            // Only forward env vars the user actually customized. When at
+            // image defaults the entrypoint leaves user setup alone and
+            // our injected override takes care of network rules.
+            env: {
+                let mut vars = Vec::new();
+                if env.ch_user != "default" {
+                    vars.push(format!("CLICKHOUSE_USER={}", env.ch_user));
+                }
+                if !env.ch_password.is_empty() {
+                    vars.push(format!("CLICKHOUSE_PASSWORD={}", env.ch_password));
+                }
+                if env.ch_database != "default" {
+                    vars.push(format!("CLICKHOUSE_DB={}", env.ch_database));
+                }
+                Some(vars)
+            },
             host_config: Some(HostConfig {
                 port_bindings: Some(ch_port_bindings),
                 mounts: Some(vec![Mount {
@@ -1045,7 +1193,15 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             ..Default::default()
         };
 
-        ensure_container(&docker, CH_CONTAINER, &ch_hash, url.port, ch_body).await?;
+        ensure_container_with_post_create(
+            &docker,
+            CH_CONTAINER,
+            &ch_hash,
+            url.port,
+            ch_body,
+            use_dev_default_user,
+        )
+        .await?;
         Ok(())
     };
 
@@ -1183,13 +1339,80 @@ pub async fn down() -> anyhow::Result<()> {
 
     // 404 = network already gone (e.g. `up()` short-circuited when all
     // services were reachable externally, so `ensure_network` never ran).
-    // Treat it as success — mirrors the 409 tolerance in `ensure_network`.
+    // 403 = network still has active endpoints — typically a stray
+    // container (test harness, manual `docker run`, ...) that we don't own.
+    // Force-disconnect everything attached first so the second remove
+    // attempt succeeds; if it still doesn't, treat it as a warning rather
+    // than a hard failure since the volumes (the only state the user
+    // really wants nuked) have already been removed by this point.
     async fn remove_network_tolerant(docker: &Docker, name: &str) -> anyhow::Result<()> {
+        match docker.remove_network(name).await {
+            Ok(_) => return Ok(()),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => return Ok(()),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 403, ..
+            }) => {}
+            Err(e) => return Err(e).with_context(|| format!("Failed to remove network {name}")),
+        }
+
+        let inspect = match docker
+            .inspect_network(
+                name,
+                None::<bollard::query_parameters::InspectNetworkOptions>,
+            )
+            .await
+        {
+            Ok(n) => n,
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => return Ok(()),
+            Err(e) => return Err(e).with_context(|| format!("Failed to inspect network {name}")),
+        };
+
+        // Only force-disconnect endpoints we can prove are ours via the
+        // CONFIG_HASH_LABEL — by this point our own containers have already
+        // been removed by stop_and_remove(), so anything left is either a
+        // stale Envio container from an aborted previous run, or someone
+        // else's container that happens to share this network. Touching the
+        // latter would be hostile (breaking a parallel dev session, etc.);
+        // leaving it attached drops us into the warning path below.
+        if let Some(containers) = inspect.containers {
+            for container_id in containers.keys() {
+                let is_envio_owned = get_container_config_hash(docker, container_id)
+                    .await
+                    .is_some();
+                if !is_envio_owned {
+                    continue;
+                }
+                let _ = docker
+                    .disconnect_network(
+                        name,
+                        bollard::models::NetworkDisconnectRequest {
+                            container: container_id.clone(),
+                            force: Some(true),
+                        },
+                    )
+                    .await;
+            }
+        }
+
         match docker.remove_network(name).await {
             Ok(_) => Ok(()),
             Err(bollard::errors::Error::DockerResponseServerError {
                 status_code: 404, ..
             }) => Ok(()),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 403, ..
+            }) => {
+                eprintln!(
+                    "Warning: network {name} still has active endpoints after \
+                     force-disconnect; leaving it in place. Inspect with \
+                     `docker network inspect {name}` to see what's attached."
+                );
+                Ok(())
+            }
             Err(e) => Err(e).with_context(|| format!("Failed to remove network {name}")),
         }
     }
@@ -1240,9 +1463,34 @@ mod tests {
             hasura_admin_secret: "testing".into(),
             ch_host: None,
             ch_user: "default".into(),
-            ch_password: "testing".into(),
-            ch_database: "envio_indexer".into(),
+            ch_password: "".into(),
+            ch_database: "default".into(),
         }
+    }
+
+    #[test]
+    fn users_override_tar_round_trips_to_default_user_xml() {
+        let bytes = build_clickhouse_users_override_tar().expect("build tar");
+        let mut archive = tar::Archive::new(std::io::Cursor::new(&bytes));
+        let entries: Vec<(String, String)> = archive
+            .entries()
+            .expect("read entries")
+            .map(|e| {
+                let mut e = e.expect("entry");
+                let path = e.path().expect("entry path").to_string_lossy().into_owned();
+                let mut content = String::new();
+                std::io::Read::read_to_string(&mut e, &mut content).expect("read content");
+                (path, content)
+            })
+            .collect();
+        assert_eq!(
+            entries,
+            vec![(
+                "default-user.xml".to_string(),
+                CH_DEFAULT_USER_OVERRIDE_XML.to_string(),
+            )],
+            "tar should contain exactly the override XML at default-user.xml"
+        );
     }
 
     #[test]

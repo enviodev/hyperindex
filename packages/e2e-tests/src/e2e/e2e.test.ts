@@ -64,6 +64,7 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
         ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
         ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
         ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+        ENVIO_CLICKHOUSE_DATABASE: CH_DATABASE,
         // First run: no DB state yet, fallback returns the config endBlock
         E2E_EXPECTED_END_BLOCK: "10861774",
         // Flush chain metadata immediately (no throttle) so isReady
@@ -441,6 +442,7 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
           ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
           ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
           ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+          ENVIO_CLICKHOUSE_DATABASE: CH_DATABASE,
           E2E_EXPECTED_END_BLOCK: String(patchedEndBlock),
         },
       });

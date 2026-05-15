@@ -464,10 +464,10 @@ let initialize = async (
       ),
     )->Utils.Promise.ignoreValue
 
-    Logging.trace("ClickHouse sink initialization completed successfully")
+    Logging.trace("ClickHouse storage initialization completed successfully")
   } catch {
   | exn => {
-      Logging.errorWithExn(exn, "Failed to initialize ClickHouse sink")
+      Logging.errorWithExn(exn, "Failed to initialize ClickHouse storage")
       JsError.throwWithMessage("ClickHouse initialization failed")
     }
   }
@@ -483,7 +483,7 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
     | exn =>
       Logging.errorWithExn(
         exn,
-        `ClickHouse sink database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
+        `ClickHouse storage database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
       )
       JsError.throwWithMessage("ClickHouse resume failed")
     }
@@ -511,7 +511,7 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
   } catch {
   | Persistence.StorageError(_) as exn => throw(exn)
   | exn => {
-      Logging.errorWithExn(exn, "Failed to resume ClickHouse sink")
+      Logging.errorWithExn(exn, "Failed to resume ClickHouse storage")
       JsError.throwWithMessage("ClickHouse resume failed")
     }
   }
