@@ -147,6 +147,16 @@ module QueryTypes = {
     contractAddress?: array<Address.t>,
   }
 
+  type traceSelection = {
+    from?: array<Address.t>,
+    @as("to") to_?: array<Address.t>,
+    address?: array<Address.t>,
+    callType?: array<string>,
+    rewardType?: array<string>,
+    @as("type") type_?: array<string>,
+    sighash?: array<string>,
+  }
+
   type blockSelection = {
     hash?: array<string>,
     miner?: array<Address.t>,
@@ -159,11 +169,13 @@ module QueryTypes = {
     @as("toBlock") toBlockExclusive?: int,
     logs?: array<logFilter>,
     transactions?: array<transactionFilter>,
+    traces?: array<traceSelection>,
     blocks?: array<blockSelection>,
     fieldSelection: fieldSelection,
     maxNumBlocks?: int,
     maxNumTransactions?: int,
     maxNumLogs?: int,
+    maxNumTraces?: int,
     joinMode?: joinMode,
     includeAllBlocks?: bool,
   }
@@ -348,6 +360,14 @@ let logLevelToString = (level: logLevel) =>
   | #warn => "warn"
   | #error => "error"
   }
+
+/**
+ * Set the log level for the underlying Rust logger.
+ * Must be called before creating any HypersyncClient.
+ */
+let setLogLevel = (level: logLevel) => {
+  Core.getAddon().setLogLevel(logLevelToString(level))
+}
 
 let make = (
   ~url,

@@ -215,6 +215,41 @@ pub struct Block {
     pub mix_hash: Option<String>,
 }
 
+/// Evm trace object
+///
+/// See ethereum rpc spec for the meaning of fields
+#[allow(dead_code)]
+#[napi(object)]
+#[derive(Default, Clone)]
+pub struct Trace {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub call_type: Option<String>,
+    pub gas: Option<BigInt>,
+    pub input: Option<String>,
+    pub init: Option<String>,
+    pub value: Option<BigInt>,
+    pub author: Option<String>,
+    pub reward_type: Option<String>,
+    pub block_hash: Option<String>,
+    pub block_number: Option<i64>,
+    pub address: Option<String>,
+    pub code: Option<String>,
+    pub gas_used: Option<BigInt>,
+    pub output: Option<String>,
+    pub subtraces: Option<i64>,
+    pub trace_address: Option<Vec<i64>>,
+    pub transaction_hash: Option<String>,
+    pub transaction_position: Option<i64>,
+    #[napi(js_name = "type")]
+    pub type_: Option<String>,
+    pub error: Option<String>,
+    pub action_address: Option<String>,
+    pub balance: Option<BigInt>,
+    pub refund_address: Option<String>,
+    pub sighash: Option<String>,
+}
+
 /// Decoded EVM log
 #[napi(object)]
 #[derive(Default)]
@@ -462,6 +497,60 @@ impl Log {
                 .iter()
                 .map(|t| t.as_ref().map(|v| v.encode_hex()))
                 .collect(),
+        })
+    }
+}
+
+#[allow(dead_code)]
+impl Trace {
+    pub fn from_simple(t: &simple_types::Trace, should_checksum: bool) -> Result<Self> {
+        Ok(Self {
+            from: map_address_string(&t.from, should_checksum),
+            to: map_address_string(&t.to, should_checksum),
+            call_type: t.call_type.clone(),
+            gas: map_bigint(&t.gas),
+            input: map_hex_string(&t.input),
+            init: map_hex_string(&t.init),
+            value: map_bigint(&t.value),
+            author: map_address_string(&t.author, should_checksum),
+            reward_type: t.reward_type.clone(),
+            block_hash: map_hex_string(&t.block_hash),
+            block_number: t
+                .block_number
+                .map(|n| n.try_into())
+                .transpose()
+                .context("mapping trace.block_number")?,
+            address: map_address_string(&t.address, should_checksum),
+            code: map_hex_string(&t.code),
+            gas_used: map_bigint(&t.gas_used),
+            output: map_hex_string(&t.output),
+            subtraces: t
+                .subtraces
+                .map(|n| n.try_into())
+                .transpose()
+                .context("mapping trace.subtraces")?,
+            trace_address: t
+                .trace_address
+                .as_ref()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|n| (*n).try_into())
+                        .collect::<std::result::Result<Vec<i64>, _>>()
+                })
+                .transpose()
+                .context("mapping trace.trace_address")?,
+            transaction_hash: map_hex_string(&t.transaction_hash),
+            transaction_position: t
+                .transaction_position
+                .map(|n| n.try_into())
+                .transpose()
+                .context("mapping trace.transaction_position")?,
+            type_: t.type_.clone(),
+            error: t.error.clone(),
+            action_address: map_address_string(&t.action_address, should_checksum),
+            balance: map_bigint(&t.balance),
+            refund_address: map_address_string(&t.refund_address, should_checksum),
+            sighash: map_hex_string(&t.sighash),
         })
     }
 }

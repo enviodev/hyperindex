@@ -84,6 +84,8 @@ pub struct FieldSelection {
     pub transaction: Option<Vec<TransactionField>>,
     /// Log fields to include in the response
     pub log: Option<Vec<LogField>>,
+    /// Trace fields to include in the response
+    pub trace: Option<Vec<TraceField>>,
 }
 
 /// Available fields for block data
@@ -190,6 +192,61 @@ pub enum LogField {
     Topic3,
 }
 
+/// Available fields for trace data
+#[napi(string_enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TraceField {
+    ActionAddress,
+    Balance,
+    RefundAddress,
+    Sighash,
+    From,
+    To,
+    CallType,
+    Gas,
+    Input,
+    Init,
+    Value,
+    Author,
+    RewardType,
+    BlockHash,
+    BlockNumber,
+    Address,
+    Code,
+    GasUsed,
+    Output,
+    Subtraces,
+    TraceAddress,
+    TransactionHash,
+    TransactionPosition,
+    Type,
+    Error,
+}
+
+/// Filter for selecting traces based on various criteria
+#[napi(object)]
+#[derive(Default, Clone, Debug)]
+pub struct TraceFilter {
+    pub from: Option<Vec<String>>,
+    pub to: Option<Vec<String>>,
+    pub address: Option<Vec<String>>,
+    pub call_type: Option<Vec<String>>,
+    pub reward_type: Option<Vec<String>>,
+    #[napi(js_name = "type")]
+    pub type_: Option<Vec<String>>,
+    pub sighash: Option<Vec<String>>,
+}
+
+/// Selection criteria for traces with include and exclude filters
+#[napi(object)]
+#[derive(Default, Clone, Debug)]
+pub struct TraceSelection {
+    /// Traces that match this filter will be included
+    pub include: TraceFilter,
+    /// Traces that match this filter will be excluded
+    pub exclude: Option<TraceFilter>,
+}
+
 /// Filter for selecting blocks based on hash and miner
 #[napi(object)]
 #[derive(Default, Clone, Debug)]
@@ -245,6 +302,9 @@ pub struct Query {
     /// List of transaction selections, the query will return transactions that match any of these selections and
     ///  it will return transactions that are related to the returned logs.
     pub transactions: Option<Vec<Either<TransactionSelection, TransactionFilter>>>,
+    /// List of trace selections, the query will return traces that match any of these selections and
+    ///  it will return traces that are related to the returned logs.
+    pub traces: Option<Vec<Either<TraceSelection, TraceFilter>>>,
     /// List of block selections, the query will return blocks that match any of these selections
     pub blocks: Option<Vec<Either<BlockSelection, BlockFilter>>>,
     /// Weather to include all blocks regardless of if they are related to a returned transaction or log. Normally
@@ -263,6 +323,9 @@ pub struct Query {
     /// Maximum number of logs that should be returned, the server might return more logs than this number but
     ///  it won't overshoot by too much.
     pub max_num_logs: Option<i64>,
+    /// Maximum number of traces that should be returned, the server might return more traces than this number but
+    ///  it won't overshoot by too much.
+    pub max_num_traces: Option<i64>,
     /// Selects join mode for the query,
     /// Default: join in this order logs -> transactions -> traces -> blocks
     /// JoinAll: join everything to everything. For example if logSelection matches log0, we get the
@@ -299,6 +362,21 @@ impl TryFrom<Query> for net_types::Query {
                     Either::B(filter) => {
                         let net_filter = net_types::TransactionFilter::try_from(filter)?;
                         Ok(net_types::TransactionSelection::new(net_filter))
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
+
+        let traces = if let Some(trace_filters) = query.traces {
+            trace_filters
+                .into_iter()
+                .map(|either| match either {
+                    Either::A(selection) => net_types::TraceSelection::try_from(selection),
+                    Either::B(filter) => {
+                        let net_filter = net_types::TraceFilter::try_from(filter)?;
+                        Ok(net_types::TraceSelection::new(net_filter))
                     }
                 })
                 .collect::<Result<Vec<_>>>()?
@@ -346,20 +424,24 @@ impl TryFrom<Query> for net_types::Query {
             .max_num_logs
             .map(|n| usize::try_from(n).context("max_num_logs must be >= 0"))
             .transpose()?;
+        let max_num_traces = query
+            .max_num_traces
+            .map(|n| usize::try_from(n).context("max_num_traces must be >= 0"))
+            .transpose()?;
 
         Ok(net_types::Query {
             from_block,
             to_block,
             logs,
             transactions,
-            traces: Vec::new(),
+            traces,
             blocks,
             include_all_blocks: query.include_all_blocks.unwrap_or(false),
             field_selection,
             max_num_blocks,
             max_num_transactions,
             max_num_logs,
-            max_num_traces: None,
+            max_num_traces,
             join_mode,
         })
     }
@@ -479,6 +561,86 @@ impl TryFrom<TransactionSelection> for net_types::TransactionSelection {
             .transpose()?;
 
         Ok(net_types::TransactionSelection { include, exclude })
+    }
+}
+
+impl TryFrom<TraceFilter> for net_types::TraceFilter {
+    type Error = anyhow::Error;
+
+    fn try_from(filter: TraceFilter) -> Result<net_types::TraceFilter> {
+        use hypersync_client::format::Address;
+        use hypersync_client::net_types::Sighash;
+
+        let from = if let Some(addresses) = filter.from {
+            addresses
+                .into_iter()
+                .map(|addr_str| Address::try_from(addr_str.as_str()))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("Failed to parse from address")?
+        } else {
+            Vec::new()
+        };
+
+        let to = if let Some(addresses) = filter.to {
+            addresses
+                .into_iter()
+                .map(|addr_str| Address::try_from(addr_str.as_str()))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("Failed to parse to address")?
+        } else {
+            Vec::new()
+        };
+
+        let address = if let Some(addresses) = filter.address {
+            addresses
+                .into_iter()
+                .map(|addr_str| Address::try_from(addr_str.as_str()))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("Failed to parse address")?
+        } else {
+            Vec::new()
+        };
+
+        let call_type = filter.call_type.unwrap_or_default();
+        let reward_type = filter.reward_type.unwrap_or_default();
+        let type_ = filter.type_.unwrap_or_default();
+
+        let sighash = if let Some(sighashes) = filter.sighash {
+            sighashes
+                .into_iter()
+                .map(|sig_str| Sighash::try_from(sig_str.as_str()))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("Failed to parse sighash")?
+        } else {
+            Vec::new()
+        };
+
+        Ok(net_types::TraceFilter {
+            from,
+            from_filter: None,
+            to,
+            to_filter: None,
+            address,
+            address_filter: None,
+            call_type,
+            reward_type,
+            type_,
+            sighash,
+        })
+    }
+}
+
+impl TryFrom<TraceSelection> for net_types::TraceSelection {
+    type Error = anyhow::Error;
+
+    fn try_from(selection: TraceSelection) -> Result<net_types::TraceSelection> {
+        let include = net_types::TraceFilter::try_from(selection.include)?;
+        let exclude = selection
+            .exclude
+            .map(net_types::TraceFilter::try_from)
+            .transpose()?;
+
+        Ok(net_types::TraceSelection { include, exclude })
     }
 }
 
@@ -648,6 +810,38 @@ field_enum_convert!(
     ]
 );
 
+field_enum_convert!(
+    TraceField,
+    net_types::TraceField,
+    [
+        ActionAddress,
+        Balance,
+        RefundAddress,
+        Sighash,
+        From,
+        To,
+        CallType,
+        Gas,
+        Input,
+        Init,
+        Value,
+        Author,
+        RewardType,
+        BlockHash,
+        BlockNumber,
+        Address,
+        Code,
+        GasUsed,
+        Output,
+        Subtraces,
+        TraceAddress,
+        TransactionHash,
+        TransactionPosition,
+        Type,
+        Error,
+    ]
+);
+
 impl TryFrom<FieldSelection> for net_types::FieldSelection {
     type Error = anyhow::Error;
 
@@ -672,12 +866,18 @@ impl TryFrom<FieldSelection> for net_types::FieldSelection {
             .into_iter()
             .map(net_types::LogField::from)
             .collect::<BTreeSet<_>>();
+        let trace = selection
+            .trace
+            .unwrap_or_default()
+            .into_iter()
+            .map(net_types::TraceField::from)
+            .collect::<BTreeSet<_>>();
 
         Ok(net_types::FieldSelection {
             block,
             transaction,
             log,
-            trace: BTreeSet::new(),
+            trace,
         })
     }
 }
@@ -719,6 +919,7 @@ impl From<net_types::Query> for Query {
             to_block: query.to_block.map(|b| b as i64),
             logs: map_selections(query.logs),
             transactions: map_selections(query.transactions),
+            traces: map_selections(query.traces),
             blocks: map_selections(query.blocks),
             include_all_blocks: if query.include_all_blocks {
                 Some(true)
@@ -729,6 +930,7 @@ impl From<net_types::Query> for Query {
             max_num_blocks: query.max_num_blocks.map(|n| n as i64),
             max_num_transactions: query.max_num_transactions.map(|n| n as i64),
             max_num_logs: query.max_num_logs.map(|n| n as i64),
+            max_num_traces: query.max_num_traces.map(|n| n as i64),
             join_mode,
         }
     }
@@ -834,6 +1036,47 @@ impl From<net_types::TransactionSelection> for TransactionSelection {
     }
 }
 
+impl From<net_types::TraceFilter> for TraceFilter {
+    fn from(filter: net_types::TraceFilter) -> TraceFilter {
+        let call_type = if filter.call_type.is_empty() {
+            None
+        } else {
+            Some(filter.call_type)
+        };
+
+        let reward_type = if filter.reward_type.is_empty() {
+            None
+        } else {
+            Some(filter.reward_type)
+        };
+
+        let type_ = if filter.type_.is_empty() {
+            None
+        } else {
+            Some(filter.type_)
+        };
+
+        TraceFilter {
+            from: map_maybe_hex_vec(filter.from),
+            to: map_maybe_hex_vec(filter.to),
+            address: map_maybe_hex_vec(filter.address),
+            call_type,
+            reward_type,
+            type_,
+            sighash: map_maybe_hex_vec(filter.sighash),
+        }
+    }
+}
+
+impl From<net_types::TraceSelection> for TraceSelection {
+    fn from(selection: net_types::TraceSelection) -> TraceSelection {
+        let include = TraceFilter::from(selection.include);
+        let exclude = selection.exclude.map(TraceFilter::from);
+
+        TraceSelection { include, exclude }
+    }
+}
+
 impl From<net_types::BlockFilter> for BlockFilter {
     fn from(filter: net_types::BlockFilter) -> BlockFilter {
         BlockFilter {
@@ -869,6 +1112,7 @@ impl From<net_types::FieldSelection> for FieldSelection {
             block: map_into(selection.block),
             transaction: map_into(selection.transaction),
             log: map_into(selection.log),
+            trace: map_into(selection.trace),
         }
     }
 }
