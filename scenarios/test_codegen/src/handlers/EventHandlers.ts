@@ -807,6 +807,27 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
       });
       break;
     }
+
+    // getWhere on a nullable linkedEntity column registers an InMemoryTable
+    // index for that field. A subsequent set whose entity omits the FK key
+    // (the common shape for nullable relations) used to crash inside
+    // updateIndices with `UndefinedKey("gravatar_id")`.
+    case "getWhereThenSetNullableFk": {
+      await context.User.getWhere({
+        gravatar_id: { _eq: "non-existent-gravatar" },
+      });
+      context.User.set({
+        id: "user-with-null-gravatar",
+        address: "0x1111111111111111111111111111111111111111",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      });
+      context.CustomSelectionTestPass.set({
+        id: "getWhereThenSetNullableFk:ok",
+      });
+      break;
+    }
   }
 });
 

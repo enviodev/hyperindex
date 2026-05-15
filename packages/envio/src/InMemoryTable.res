@@ -71,7 +71,6 @@ module Entity = {
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
   }
 
-  exception UndefinedKey(string)
   let updateIndices = (
     self: t<'entity>,
     ~entity: 'entity,
@@ -83,8 +82,7 @@ module Entity = {
       let fieldValue =
         entity
         ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
-        ->Dict.get(fieldName)
-        ->Option.getUnsafe
+        ->Dict.getUnsafe(fieldName)
       if !(index->TableIndices.Index.evaluate(~fieldName, ~fieldValue)) {
         entityIndices->Utils.Set.delete(index)->ignore
       }
@@ -93,27 +91,25 @@ module Entity = {
     self.fieldNameIndices.dict
     ->Dict.keysToArray
     ->Array.forEach(fieldName => {
-      switch (
-        entity->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)->Dict.get(fieldName),
-        self.fieldNameIndices.dict->Dict.get(fieldName),
-      ) {
-      | (Some(fieldValue), Some(indices)) =>
-        indices
-        ->values
-        ->Array.forEach(((index, relatedEntityIds)) => {
-          if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
-            //Add entity id to indices and add index to entity indicies
-            relatedEntityIds->Utils.Set.add(getEntityIdUnsafe(entity))->ignore
-            entityIndices->Utils.Set.add(index)->ignore
-          } else {
-            relatedEntityIds->Utils.Set.delete(getEntityIdUnsafe(entity))->ignore
-          }
-        })
-      | _ =>
-        UndefinedKey(fieldName)->ErrorHandling.mkLogAndRaise(
-          ~msg="Expected field name to exist on the referenced index and the provided entity",
-        )
-      }
+      let indices = self.fieldNameIndices.dict->Dict.getUnsafe(fieldName)
+      // A missing key reads as `undefined`, which matches the `None` arm of
+      // `FieldValue.t` (`option<...>`). Mirror `addEmptyIndex` so nullable
+      // FK columns that were omitted on the set entity don't crash.
+      let fieldValue =
+        entity
+        ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
+        ->Dict.getUnsafe(fieldName)
+      indices
+      ->values
+      ->Array.forEach(((index, relatedEntityIds)) => {
+        if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
+          //Add entity id to indices and add index to entity indicies
+          relatedEntityIds->Utils.Set.add(getEntityIdUnsafe(entity))->ignore
+          entityIndices->Utils.Set.add(index)->ignore
+        } else {
+          relatedEntityIds->Utils.Set.delete(getEntityIdUnsafe(entity))->ignore
+        }
+      })
     })
   }
 
