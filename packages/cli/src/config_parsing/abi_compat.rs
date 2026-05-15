@@ -195,29 +195,19 @@ pub fn parse_event(sig: &str) -> Result<Event> {
 
 /// Parse a human-readable event signature into an `AlloyEvent`.
 ///
-/// Tries alloy's built-in parser first. Falls back to a permissive parser that
-/// accepts named tuple components (e.g. `event E((uint a, uint b) data)`),
-/// which alloy's signature parser rejects. The fallback populates
-/// `components` so downstream selector and ABI consumers see the named fields.
+/// Accepts component names inside tuple types (`event E((uint a, uint b) data)`),
+/// which alloy's own signature parser rejects. `components` are populated so
+/// downstream selector and ABI consumers see the named fields.
 pub fn parse_event_signature_to_alloy(sig: &str) -> Result<AlloyEvent> {
-    match AlloyEvent::parse(sig) {
-        Ok(ev) => Ok(ev),
-        Err(alloy_err) => sig_parser::parse(sig).map_err(|e| {
-            anyhow!(
-                "Failed to parse event signature: {}\n(strict parser error: {})",
-                e,
-                alloy_err
-            )
-        }),
-    }
+    sig_parser::parse(sig)
 }
 
-/// Permissive human-readable event signature parser.
+/// Human-readable event signature parser.
 ///
-/// Differences from `alloy_json_abi::Event::parse`:
-/// - Accepts component names inside tuple types: `(uint40 a, uint24 b)` is valid.
-/// - Otherwise mirrors alloy's syntax: optional `event` prefix, optional
-///   `indexed` per top-level param, optional trailing `anonymous`.
+/// Grammar: `[event] Name(param,*)[ anonymous]` where each param is
+/// `type [indexed] [name]` and `type` is either a leaf identifier, a tuple
+/// `(component,*)`, or any of those followed by array suffixes.
+/// Tuple components allow names; top-level params allow `indexed`.
 mod sig_parser {
     use super::{AlloyEvent, AlloyEventParam, AlloyParam};
     use anyhow::{anyhow, bail, Context, Result};
