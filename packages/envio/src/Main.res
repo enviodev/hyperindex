@@ -621,7 +621,8 @@ let migrate = async (~reset) => {
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~envioInfo=getEnvioInfo(),
-    ~runCommand="envio dev",
+    ~resetCommand="envio local db-migrate setup",
+    ~runCommand=None,
   )
   await persistence.storage.close()
 }
@@ -667,7 +668,8 @@ let start = async (
     ~reset,
     ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
     ~envioInfo=getEnvioInfo(),
-    ~runCommand=isDevelopmentMode ? "envio dev" : "envio start",
+    ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
+    ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
   )
 
   // `Config.loadWithoutRegistrations` never sees registration state; handler,

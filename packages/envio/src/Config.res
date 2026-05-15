@@ -1050,29 +1050,35 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
 }
 
 // Throws an `incompatible config` error listing each path in `changedPaths`,
-// plus three remediation options. `~runCommand` is rendered inline (the
-// `-r` suffix is appended for option 2, the bare command is reused in
-// option 3's parallel-indexer recipe). `~hasClickhouse` adds the extra
-// env line so users running both Postgres and Clickhouse get a complete
-// override.
+// plus the remediation options. `~resetCommand` is rendered as-is for
+// option 2 (the wipe-and-redo). `~runCommand` controls option 3 (parallel
+// indexer recipe): when `None`, option 3 is omitted — the migrate flow
+// uses this because running a second indexer doesn't apply.
+// `~hasClickhouse` adds the extra env line so users running both
+// Postgres and Clickhouse get a complete override.
 let throwIfIncompatible = (
   changedPaths: array<string>,
-  ~runCommand: string,
+  ~resetCommand: string,
+  ~runCommand: option<string>,
   ~hasClickhouse: bool,
 ) => {
   if changedPaths->Array.length > 0 {
     let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
-    let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
     let option1 = "Revert the changes above"
-    let option2 = `${runCommand} -r`
     let padTo = (s, col) => s ++ " "->String.repeat(Math.Int.max(col - String.length(s), 1))
-    let col = Math.Int.max(String.length(option1), String.length(option2)) + 2
+    let col = Math.Int.max(String.length(option1), String.length(resetCommand)) + 2
+    let option3 = switch runCommand {
+    | None => ""
+    | Some(cmd) =>
+      let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
+      `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
+    }
     JsError.throwWithMessage(
-      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. ${option1->padTo(
+      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(
           col,
-        )}# resume indexing where it left off\n  2. ${option2->padTo(
+        )}# resume indexing where it left off\n  2. ${resetCommand->padTo(
           col,
-        )}# delete all indexed data and start over\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${runCommand}`,
+        )}# delete all indexed data and start over${option3}`,
     )
   }
 }

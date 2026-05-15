@@ -1,6 +1,7 @@
 open Vitest
 
-let devCmd = "envio dev"
+let resetCmd = "envio dev -r"
+let runCmd = Some("envio dev")
 
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async t => {
@@ -28,7 +29,7 @@ describe("Test Persistence layer init", () => {
 
     let envioInfo = JSON.Encode.object(Dict.make())
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~runCommand=devCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
 
     t.expect(
       storageMock.isInitializedCalls,
@@ -90,7 +91,7 @@ describe("Test Persistence layer init", () => {
     // Can resolve the promise now
     await p
 
-    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~runCommand=devCmd)
+    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -105,7 +106,7 @@ describe("Test Persistence layer init", () => {
         ~reset=true,
         ~chainConfigs=[],
         ~envioInfo,
-        ~runCommand=devCmd,
+        ~resetCommand=resetCmd, ~runCommand=runCmd,
       )
     t.expect(
       (
@@ -135,12 +136,12 @@ describe("Test Persistence layer init", () => {
     let envioInfo = JSON.Encode.object(Dict.make())
 
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~runCommand=devCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
     // Additional calls to init should not do anything
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~runCommand=devCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~runCommand=devCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
 
     storageMock.resolveIsInitialized(true)
     let _ = await Promise.resolve()
@@ -173,14 +174,20 @@ Although it should load effect caches metadata.`,
 
   // Drive a single resume against a mock that returns `~storedEnvioInfo` from
   // resumeInitialState, then capture whatever Persistence.init throws.
-  let resumeWith = async (~storedEnvioInfo: option<JSON.t>, ~current: JSON.t) => {
+  let resumeWith = async (
+    ~storedEnvioInfo: option<JSON.t>,
+    ~current: JSON.t,
+    ~resetCommand=resetCmd,
+    ~runCommand=runCmd,
+  ) => {
     let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState])
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
     let resumePromise =
       persistence->Persistence.init(
         ~chainConfigs=[],
         ~envioInfo=current,
-        ~runCommand=devCmd,
+        ~resetCommand,
+        ~runCommand,
       )
     storageMock.resolveIsInitialized(true)
     let _ = await Promise.resolve()
@@ -218,7 +225,6 @@ Although it should load effect caches metadata.`,
     - envio info is missing — storage initialized by an older envio
 
 Pick one:
-
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
@@ -238,7 +244,6 @@ Pick one:
     - name
 
 Pick one:
-
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
@@ -258,7 +263,6 @@ Pick one:
     - evm.chains.10
 
 Pick one:
-
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
@@ -278,7 +282,6 @@ Pick one:
     - evm.chains.10
 
 Pick one:
-
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
@@ -298,7 +301,6 @@ Pick one:
     - name
 
 Pick one:
-
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
@@ -318,7 +320,6 @@ Pick one:
     - storage.a
 
 Pick one:
-
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
@@ -342,7 +343,6 @@ Pick one:
     - evm.chains.1.id
 
 Pick one:
-
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
@@ -379,7 +379,6 @@ Pick one:
     - version
 
 Pick one:
-
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
@@ -401,13 +400,32 @@ Pick one:
     - customB.k
 
 Pick one:
-
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`,
+    )
+  })
+
+  Async.it("Migrate flow: option 3 hidden, option 2 shows db-migrate setup", async t => {
+    let stored = JSON.parseOrThrow(`{"name": "old"}`)
+    let current = JSON.parseOrThrow(`{"name": "new"}`)
+    let (_, message, _) = await resumeWith(
+      ~storedEnvioInfo=Some(stored),
+      ~current,
+      ~resetCommand="envio local db-migrate setup",
+      ~runCommand=None,
+    )
+    t.expect(message, ~message="migrate context: no option 3, option 2 is setup command").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - name
+
+Pick one:
+  1. Revert the changes above      # resume indexing where it left off
+  2. envio local db-migrate setup  # delete all indexed data and start over`,
     )
   })
 
@@ -421,7 +439,6 @@ Pick one:
     - name
 
 Pick one:
-
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:

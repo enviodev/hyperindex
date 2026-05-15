@@ -347,7 +347,8 @@ module Indexer = {
     await persistence->Persistence.init(
       ~chainConfigs=config.chainMap->ChainMap.values,
       ~envioInfo=JSON.Encode.object(Dict.make()),
-      ~runCommand="envio dev",
+      ~resetCommand="envio dev -r",
+      ~runCommand=Some("envio dev"),
       ~reset,
     )
 
