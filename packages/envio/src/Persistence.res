@@ -168,7 +168,7 @@ let make = (
 }
 
 let init = {
-  async (persistence, ~chainConfigs, ~envioInfo, ~resetCommand, ~reset=false) => {
+  async (persistence, ~chainConfigs, ~envioInfo, ~devCommand, ~reset=false) => {
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -212,7 +212,19 @@ let init = {
           | None => ["envio info is missing — storage initialized by an older envio"]
           | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
           }
-          Config.throwIfIncompatible(changedPaths, ~resetCommand)
+          let hasClickhouse = switch envioInfo {
+          | Object(d) =>
+            switch d->Dict.get("storage") {
+            | Some(Object(s)) =>
+              switch s->Dict.get("clickhouse") {
+              | Some(Object(_)) => true
+              | _ => false
+              }
+            | _ => false
+            }
+          | _ => false
+          }
+          Config.throwIfIncompatible(changedPaths, ~devCommand, ~hasClickhouse)
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

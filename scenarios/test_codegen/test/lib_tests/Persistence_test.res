@@ -1,6 +1,6 @@
 open Vitest
 
-let resetCmd = "envio dev -r"
+let devCmd = "envio dev"
 
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async t => {
@@ -28,7 +28,7 @@ describe("Test Persistence layer init", () => {
 
     let envioInfo = JSON.Encode.object(Dict.make())
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~devCommand=devCmd)
 
     t.expect(
       storageMock.isInitializedCalls,
@@ -90,7 +90,7 @@ describe("Test Persistence layer init", () => {
     // Can resolve the promise now
     await p
 
-    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
+    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~devCommand=devCmd)
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -105,7 +105,7 @@ describe("Test Persistence layer init", () => {
         ~reset=true,
         ~chainConfigs=[],
         ~envioInfo,
-        ~resetCommand=resetCmd,
+        ~devCommand=devCmd,
       )
     t.expect(
       (
@@ -135,12 +135,12 @@ describe("Test Persistence layer init", () => {
     let envioInfo = JSON.Encode.object(Dict.make())
 
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~devCommand=devCmd)
     // Additional calls to init should not do anything
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~devCommand=devCmd)
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~devCommand=devCmd)
 
     storageMock.resolveIsInitialized(true)
     let _ = await Promise.resolve()
@@ -180,7 +180,7 @@ Although it should load effect caches metadata.`,
       persistence->Persistence.init(
         ~chainConfigs=[],
         ~envioInfo=current,
-        ~resetCommand=resetCmd,
+        ~devCommand=devCmd,
       )
     storageMock.resolveIsInitialized(true)
     let _ = await Promise.resolve()
@@ -219,8 +219,12 @@ Although it should load effect caches metadata.`,
 
 Pick one:
 
-  1. Revert the changes above    # resume indexing where it left off
-  2. envio dev -r                # wipe the database and re-index from scratch`,
+  1. Revert the changes above              # resume indexing where it left off
+  2. envio dev -r                       # wipe the database and re-index from scratch
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
     )
   })
 
@@ -235,8 +239,12 @@ Pick one:
 
 Pick one:
 
-  1. Revert the changes above    # resume indexing where it left off
-  2. envio dev -r                # wipe the database and re-index from scratch`,
+  1. Revert the changes above              # resume indexing where it left off
+  2. envio dev -r                       # wipe the database and re-index from scratch
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
     )
   })
 
@@ -251,8 +259,12 @@ Pick one:
 
 Pick one:
 
-  1. Revert the changes above    # resume indexing where it left off
-  2. envio dev -r                # wipe the database and re-index from scratch`,
+  1. Revert the changes above              # resume indexing where it left off
+  2. envio dev -r                       # wipe the database and re-index from scratch
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
     )
   })
 
@@ -267,8 +279,135 @@ Pick one:
 
 Pick one:
 
-  1. Revert the changes above    # resume indexing where it left off
-  2. envio dev -r                # wipe the database and re-index from scratch`,
+  1. Revert the changes above              # resume indexing where it left off
+  2. envio dev -r                       # wipe the database and re-index from scratch
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
+    )
+  })
+
+  Async.it("Priority: name+entities diff → only name bullet shown", async t => {
+    let stored = JSON.parseOrThrow(`{"name": "old", "entities": [{"name": "A"}]}`)
+    let current = JSON.parseOrThrow(`{"name": "new", "entities": [{"name": "B"}]}`)
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="entities tier suppressed when name differs").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - name
+
+Pick one:
+
+  1. Revert the changes above              # resume indexing where it left off
+  2. envio dev -r                       # wipe the database and re-index from scratch
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
+    )
+  })
+
+  Async.it("Priority: storage+evm diff → only storage bullets shown", async t => {
+    let stored = JSON.parseOrThrow(`{"storage": {"a": 1}, "evm": {"chains": {"1": {"id": 1}}}}`)
+    let current = JSON.parseOrThrow(`{"storage": {"a": 2}, "evm": {"chains": {"1": {"id": 2}}}}`)
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="evm tier suppressed when storage differs").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - storage.a
+
+Pick one:
+
+  1. Revert the changes above              # resume indexing where it left off
+  2. envio dev -r                       # wipe the database and re-index from scratch
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
+    )
+  })
+
+  Async.it("Priority: evm+entities diff → only evm bullets shown", async t => {
+    let stored = JSON.parseOrThrow(
+      `{"evm": {"chains": {"1": {"id": 1}}}, "entities": [{"name": "A"}]}`,
+    )
+    let current = JSON.parseOrThrow(
+      `{"evm": {"chains": {"1": {"id": 2}}}, "entities": [{"name": "B"}]}`,
+    )
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="entities tier suppressed when evm differs").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - evm.chains.1.id
+
+Pick one:
+
+  1. Revert the changes above              # resume indexing where it left off
+  2. envio dev -r                       # wipe the database and re-index from scratch
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
+    )
+  })
+
+  Async.it(
+    "Priority: version bump with otherwise disjoint shape → only version bullet shown",
+    async t => {
+      let stored = JSON.parseOrThrow(`{
+        "version": "1.0",
+        "name": "old",
+        "storage": {"a": 1},
+        "evm": {"chains": {"1": {"id": 1}}},
+        "entities": [{"name": "A"}]
+      }`)
+      let current = JSON.parseOrThrow(`{
+        "version": "2.0",
+        "name": "new",
+        "storage": {"b": 2},
+        "fuel": {"chains": {"1": {"id": 1}}},
+        "entities": [{"name": "B"}, {"name": "C"}]
+      }`)
+      let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+      t.expect(
+        message,
+        ~message="lower tiers (name/storage/ecosystem/entities) suppressed by version diff",
+      ).toBe(
+        `The following config changes are incompatible with the existing indexer data:
+
+    - version
+
+Pick one:
+
+  1. Revert the changes above              # resume indexing where it left off
+  2. envio dev -r                       # wipe the database and re-index from scratch
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
+      )
+    },
+  )
+
+  Async.it("Clickhouse: option 3 includes ENVIO_CLICKHOUSE_DATABASE line", async t => {
+    let stored = JSON.parseOrThrow(`{"name": "old", "storage": {"clickhouse": {"x": 1}}}`)
+    let current = JSON.parseOrThrow(`{"name": "new", "storage": {"clickhouse": {"x": 1}}}`)
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="clickhouse env var line shown when storage.clickhouse set").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - name
+
+Pick one:
+
+  1. Revert the changes above              # resume indexing where it left off
+  2. envio dev -r                       # wipe the database and re-index from scratch
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
     )
   })
 

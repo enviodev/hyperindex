@@ -957,11 +957,18 @@ let rec canonicalJson = (json: JSON.t): JSON.t =>
   }
 
 // Returns dotted leaf paths (`a.b[i].c`) where `stored` differs from
-// `current`. Skips subtrees whose canonical JSON matches.
+// `current`, restricted to the highest-priority top-level tier with any
+// diff. Tiers in order: name → version → storage → ecosystem
+// (evm/fuel/svm) → entities → other top-level keys. The first tier
+// containing a diff is the only one rendered; lower tiers are silenced
+// so a single noisy section doesn't bury the actionable change.
 let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
+  let canonEq = (a: JSON.t, b: JSON.t) =>
+    JSON.stringify(canonicalJson(a)) === JSON.stringify(canonicalJson(b))
+
   let acc = []
   let rec go = (s: JSON.t, c: JSON.t, prefix: string) => {
-    if JSON.stringify(canonicalJson(s)) === JSON.stringify(canonicalJson(c)) {
+    if canonEq(s, c) {
       ()
     } else {
       switch (s, c) {
@@ -987,25 +994,69 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
           | (Some(sv), Some(cv)) => go(sv, cv, p)
           }
         }
-      | _ =>
-        // Type mismatch or scalar diff
-        acc->Array.push(prefix === "" ? "<root>" : prefix)->ignore
+      | _ => acc->Array.push(prefix === "" ? "<root>" : prefix)->ignore
       }
     }
   }
-  go(stored, current, "")
+
+  let getTopKey = (j: JSON.t, k: string) =>
+    switch j {
+    | Object(d) => d->Dict.get(k)
+    | _ => None
+    }
+  let topKeyDiffers = (k: string) =>
+    switch (getTopKey(stored, k), getTopKey(current, k)) {
+    | (None, None) => false
+    | (None, _) | (_, None) => true
+    | (Some(s), Some(c)) => !canonEq(s, c)
+    }
+  let runTier = (keys: array<string>) =>
+    keys->Array.forEach(k =>
+      switch (getTopKey(stored, k), getTopKey(current, k)) {
+      | (None, None) => ()
+      | (None, _) | (_, None) => acc->Array.push(k)->ignore
+      | (Some(s), Some(c)) => go(s, c, k)
+      }
+    )
+
+  switch (stored, current) {
+  | (Object(sObj), Object(cObj)) =>
+    let known = ["name", "version", "storage", "evm", "fuel", "svm", "entities"]
+    let tiers = [["version"], ["name"], ["storage"], ["evm", "fuel", "svm"], ["entities"]]
+    let picked = tiers->Array.find(tier => tier->Array.some(topKeyDiffers))
+    switch picked {
+    | Some(tier) => runTier(tier->Array.filter(topKeyDiffers))
+    | None =>
+      let knownSet = Utils.Set.fromArray(known)
+      let extras =
+        Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
+        ->Utils.Set.toArray
+        ->Array.filter(k => !(knownSet->Utils.Set.has(k)))
+        ->Array.toSorted(String.compare)
+        ->Array.filter(topKeyDiffers)
+      runTier(extras)
+    }
+  | _ => go(stored, current, "")
+  }
   acc
 }
 
 // Throws an `incompatible config` error listing each path in `changedPaths`,
-// plus the revert/reset remediation. `~resetCommand` lets each call site
-// (`envio dev -r` / `envio start -r` / `envio local db-migrate setup`)
-// surface the right wipe-and-restart command.
-let throwIfIncompatible = (changedPaths: array<string>, ~resetCommand: string) => {
+// plus three remediation options. `~devCommand` is rendered inline (the
+// `-r` suffix is appended for option 2, the bare command is reused in
+// option 3's parallel-indexer recipe). `~hasClickhouse` adds the extra
+// env line so users running both Postgres and Clickhouse get a complete
+// override.
+let throwIfIncompatible = (
+  changedPaths: array<string>,
+  ~devCommand: string,
+  ~hasClickhouse: bool,
+) => {
   if changedPaths->Array.length > 0 {
     let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
+    let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
     JsError.throwWithMessage(
-      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. Revert the changes above    # resume indexing where it left off\n  2. ${resetCommand}                # wipe the database and re-index from scratch`,
+      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. Revert the changes above              # resume indexing where it left off\n  2. ${devCommand} -r                       # wipe the database and re-index from scratch\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${devCommand}`,
     )
   }
 }
