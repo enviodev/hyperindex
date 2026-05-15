@@ -958,7 +958,7 @@ let rec canonicalJson = (json: JSON.t): JSON.t =>
 
 // Returns dotted leaf paths (`a.b[i].c`) where `stored` differs from
 // `current`, restricted to the highest-priority top-level tier with any
-// diff. Tiers in order: name → version → storage → ecosystem
+// diff. Tiers in order: version → name → storage → ecosystem
 // (evm/fuel/svm) → entities → other top-level keys. The first tier
 // containing a diff is the only one rendered; lower tiers are silenced
 // so a single noisy section doesn't bury the actionable change.
@@ -1021,13 +1021,21 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
 
   switch (stored, current) {
   | (Object(sObj), Object(cObj)) =>
-    let known = ["name", "version", "storage", "evm", "fuel", "svm", "entities"]
     let tiers = [["version"], ["name"], ["storage"], ["evm", "fuel", "svm"], ["entities"]]
-    let picked = tiers->Array.find(tier => tier->Array.some(topKeyDiffers))
-    switch picked {
-    | Some(tier) => runTier(tier->Array.filter(topKeyDiffers))
+    let firstHit = tiers->Array.reduce(None, (acc, tier) =>
+      switch acc {
+      | Some(_) => acc
+      | None =>
+        switch tier->Array.filter(topKeyDiffers) {
+        | [] => None
+        | hits => Some(hits)
+        }
+      }
+    )
+    switch firstHit {
+    | Some(hits) => runTier(hits)
     | None =>
-      let knownSet = Utils.Set.fromArray(known)
+      let knownSet = Utils.Set.fromArray(tiers->Belt.Array.concatMany)
       let extras =
         Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
         ->Utils.Set.toArray
@@ -1042,21 +1050,29 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
 }
 
 // Throws an `incompatible config` error listing each path in `changedPaths`,
-// plus three remediation options. `~devCommand` is rendered inline (the
+// plus three remediation options. `~runCommand` is rendered inline (the
 // `-r` suffix is appended for option 2, the bare command is reused in
 // option 3's parallel-indexer recipe). `~hasClickhouse` adds the extra
 // env line so users running both Postgres and Clickhouse get a complete
 // override.
 let throwIfIncompatible = (
   changedPaths: array<string>,
-  ~devCommand: string,
+  ~runCommand: string,
   ~hasClickhouse: bool,
 ) => {
   if changedPaths->Array.length > 0 {
     let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
     let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
+    let option1 = "Revert the changes above"
+    let option2 = `${runCommand} -r`
+    let padTo = (s, col) => s ++ " "->String.repeat(Math.Int.max(col - String.length(s), 1))
+    let col = Math.Int.max(String.length(option1), String.length(option2)) + 2
     JsError.throwWithMessage(
-      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. Revert the changes above              # resume indexing where it left off\n  2. ${devCommand} -r                       # wipe the database and re-index from scratch\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${devCommand}`,
+      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. ${option1->padTo(
+          col,
+        )}# resume indexing where it left off\n  2. ${option2->padTo(
+          col,
+        )}# delete all indexed data and start over\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${runCommand}`,
     )
   }
 }

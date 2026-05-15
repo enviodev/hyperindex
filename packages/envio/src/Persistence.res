@@ -168,7 +168,7 @@ let make = (
 }
 
 let init = {
-  async (persistence, ~chainConfigs, ~envioInfo, ~devCommand, ~reset=false) => {
+  async (persistence, ~chainConfigs, ~envioInfo, ~runCommand, ~reset=false) => {
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -224,7 +224,7 @@ let init = {
             }
           | _ => false
           }
-          Config.throwIfIncompatible(changedPaths, ~devCommand, ~hasClickhouse)
+          Config.throwIfIncompatible(changedPaths, ~runCommand, ~hasClickhouse)
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

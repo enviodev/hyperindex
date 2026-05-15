@@ -28,7 +28,7 @@ describe("Test Persistence layer init", () => {
 
     let envioInfo = JSON.Encode.object(Dict.make())
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~devCommand=devCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~runCommand=devCmd)
 
     t.expect(
       storageMock.isInitializedCalls,
@@ -90,7 +90,7 @@ describe("Test Persistence layer init", () => {
     // Can resolve the promise now
     await p
 
-    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~devCommand=devCmd)
+    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~runCommand=devCmd)
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -105,7 +105,7 @@ describe("Test Persistence layer init", () => {
         ~reset=true,
         ~chainConfigs=[],
         ~envioInfo,
-        ~devCommand=devCmd,
+        ~runCommand=devCmd,
       )
     t.expect(
       (
@@ -135,12 +135,12 @@ describe("Test Persistence layer init", () => {
     let envioInfo = JSON.Encode.object(Dict.make())
 
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~devCommand=devCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~runCommand=devCmd)
     // Additional calls to init should not do anything
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~devCommand=devCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~runCommand=devCmd)
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~devCommand=devCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~runCommand=devCmd)
 
     storageMock.resolveIsInitialized(true)
     let _ = await Promise.resolve()
@@ -180,7 +180,7 @@ Although it should load effect caches metadata.`,
       persistence->Persistence.init(
         ~chainConfigs=[],
         ~envioInfo=current,
-        ~devCommand=devCmd,
+        ~runCommand=devCmd,
       )
     storageMock.resolveIsInitialized(true)
     let _ = await Promise.resolve()
@@ -219,8 +219,8 @@ Although it should load effect caches metadata.`,
 
 Pick one:
 
-  1. Revert the changes above              # resume indexing where it left off
-  2. envio dev -r                       # wipe the database and re-index from scratch
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
@@ -239,8 +239,8 @@ Pick one:
 
 Pick one:
 
-  1. Revert the changes above              # resume indexing where it left off
-  2. envio dev -r                       # wipe the database and re-index from scratch
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
@@ -259,8 +259,8 @@ Pick one:
 
 Pick one:
 
-  1. Revert the changes above              # resume indexing where it left off
-  2. envio dev -r                       # wipe the database and re-index from scratch
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
@@ -279,8 +279,8 @@ Pick one:
 
 Pick one:
 
-  1. Revert the changes above              # resume indexing where it left off
-  2. envio dev -r                       # wipe the database and re-index from scratch
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
@@ -299,8 +299,8 @@ Pick one:
 
 Pick one:
 
-  1. Revert the changes above              # resume indexing where it left off
-  2. envio dev -r                       # wipe the database and re-index from scratch
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
@@ -319,8 +319,8 @@ Pick one:
 
 Pick one:
 
-  1. Revert the changes above              # resume indexing where it left off
-  2. envio dev -r                       # wipe the database and re-index from scratch
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
@@ -343,8 +343,8 @@ Pick one:
 
 Pick one:
 
-  1. Revert the changes above              # resume indexing where it left off
-  2. envio dev -r                       # wipe the database and re-index from scratch
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
@@ -380,8 +380,8 @@ Pick one:
 
 Pick one:
 
-  1. Revert the changes above              # resume indexing where it left off
-  2. envio dev -r                       # wipe the database and re-index from scratch
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
@@ -389,6 +389,27 @@ Pick one:
       )
     },
   )
+
+  Async.it("Fallback: unknown top-level keys are rendered when no known tier differs", async t => {
+    let stored = JSON.parseOrThrow(`{"name": "x", "customA": 1, "customB": {"k": 1}}`)
+    let current = JSON.parseOrThrow(`{"name": "x", "customA": 2, "customB": {"k": 2}}`)
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="extras fallback lists unknown top-level keys in sorted order").toBe(
+      `The following config changes are incompatible with the existing indexer data:
+
+    - customA
+    - customB.k
+
+Pick one:
+
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
+    )
+  })
 
   Async.it("Clickhouse: option 3 includes ENVIO_CLICKHOUSE_DATABASE line", async t => {
     let stored = JSON.parseOrThrow(`{"name": "old", "storage": {"clickhouse": {"x": 1}}}`)
@@ -401,8 +422,8 @@ Pick one:
 
 Pick one:
 
-  1. Revert the changes above              # resume indexing where it left off
-  2. envio dev -r                       # wipe the database and re-index from scratch
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
