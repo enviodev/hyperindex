@@ -33,18 +33,23 @@ impl From<ClientConfig> for hypersync_client::ClientConfig {
             api_token: config.api_token,
             http_req_timeout_millis: config
                 .http_req_timeout_millis
+                .filter(|v| *v >= 0)
                 .map_or(Cfg::default_http_req_timeout_millis(), |v| v as u64),
             max_num_retries: config
                 .max_num_retries
+                .filter(|v| *v >= 0)
                 .map_or(Cfg::default_max_num_retries(), |v| v as usize),
             retry_backoff_ms: config
                 .retry_backoff_ms
+                .filter(|v| *v >= 0)
                 .map_or(Cfg::default_retry_backoff_ms(), |v| v as u64),
             retry_base_ms: config
                 .retry_base_ms
+                .filter(|v| *v >= 0)
                 .map_or(Cfg::default_retry_base_ms(), |v| v as u64),
             retry_ceiling_ms: config
                 .retry_ceiling_ms
+                .filter(|v| *v >= 0)
                 .map_or(Cfg::default_retry_ceiling_ms(), |v| v as u64),
             serialization_format,
             proactive_rate_limit_sleep: Cfg::default_proactive_rate_limit_sleep(),
