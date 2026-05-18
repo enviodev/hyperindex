@@ -1489,7 +1489,7 @@ impl Event {
 
     fn get_abi_event(event_string: &str, opt_abi: &Option<EvmAbi>) -> Result<AlloyEvent> {
         let parse_event_sig = |sig: &str| -> Result<AlloyEvent> {
-            AlloyEvent::parse(sig).map_err(|err| {
+            crate::config_parsing::abi_compat::parse_event_signature_to_alloy(sig).map_err(|err| {
                 anyhow!(
                     "Unable to parse event signature {} due to the following error: {}. \
                      Please refer to our docs on how to correctly define a human readable ABI.",
@@ -2381,6 +2381,44 @@ mod test {
             parsed.selector().to_string(),
             expected.selector().to_string(),
             "Sighash should match regardless of formatting"
+        );
+    }
+
+    #[test]
+    fn parse_event_sig_with_named_tuple_components_issue_1206() {
+        // Regression for https://github.com/enviodev/hyperindex/issues/1206.
+        // A custom event signature whose tuple components are named must not
+        // require an ABI file. Selector should match the canonical tuple-only
+        // signature (component names stripped per ABI spec).
+        let event_string = "ConsumeBoostVial(address from, uint256 playerId, (uint40 a, uint24 b, uint16 c, uint16 d, uint8 e) playerBoostInfo)";
+        let parsed = Event::get_abi_event(event_string, &None).unwrap();
+
+        let canonical = "ConsumeBoostVial(address from, uint256 playerId, (uint40,uint24,uint16,uint16,uint8) playerBoostInfo)";
+        let canonical_parsed = Event::get_abi_event(canonical, &None).unwrap();
+
+        // Selector is computed from the canonical (unnamed) signature so the
+        // two forms must match.
+        assert_eq!(
+            parsed.selector().to_string(),
+            canonical_parsed.selector().to_string(),
+        );
+
+        // Component names must survive into our converted EventParam tree so
+        // codegen can emit named record fields.
+        let params = Event::convert_event_params(&parsed).unwrap();
+        let tuple_param = params
+            .iter()
+            .find(|p| p.name == "playerBoostInfo")
+            .expect("playerBoostInfo");
+        let names: Vec<Option<&str>> = match &tuple_param.kind {
+            crate::config_parsing::abi_compat::AbiType::Tuple(fields) => {
+                fields.iter().map(|f| f.name.as_deref()).collect()
+            }
+            other => panic!("expected Tuple, got {:?}", other),
+        };
+        assert_eq!(
+            names,
+            vec![Some("a"), Some("b"), Some("c"), Some("d"), Some("e")]
         );
     }
 

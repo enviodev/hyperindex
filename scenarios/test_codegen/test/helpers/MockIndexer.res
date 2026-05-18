@@ -348,6 +348,7 @@ module Indexer = {
       ~chainConfigs=config.chainMap->ChainMap.values,
       ~envioInfo=JSON.Encode.object(Dict.make()),
       ~resetCommand="envio dev -r",
+      ~runCommand=Some("envio dev"),
       ~reset,
     )
 
