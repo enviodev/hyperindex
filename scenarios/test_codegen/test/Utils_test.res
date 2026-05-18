@@ -7,17 +7,15 @@ describe("Merge Sorted", () => {
   it("sorts integers based on identity", t => {
     t.expect(
       Utils.Array.mergeSorted((a, b) => a <= b, [1, 3, 7, 13, 19], [2, 4, 6, 8, 10]),
-    ).toEqual(
-      [1, 2, 3, 4, 6, 7, 8, 10, 13, 19],
-    )
+    ).toEqual([1, 2, 3, 4, 6, 7, 8, 10, 13, 19])
   })
 
   it("sorts records based on a comparable key", t => {
-    t.expect(
-      Utils.Array.mergeSorted((x, y) => x.a <= y.a, [{a: 1}, {a: 3}], [{a: 2}]),
-    ).toEqual(
-      [{a: 1}, {a: 2}, {a: 3}],
-    )
+    t.expect(Utils.Array.mergeSorted((x, y) => x.a <= y.a, [{a: 1}, {a: 3}], [{a: 2}])).toEqual([
+      {a: 1},
+      {a: 2},
+      {a: 3},
+    ])
   })
 
   it("sorts log-like items", t => {
@@ -27,9 +25,7 @@ describe("Merge Sorted", () => {
         [{blockNum: 1, logIndex: 0}, {blockNum: 2, logIndex: 0}],
         [{blockNum: 1, logIndex: 2}],
       ),
-    ).toEqual(
-      [{blockNum: 1, logIndex: 0}, {blockNum: 1, logIndex: 2}, {blockNum: 2, logIndex: 0}],
-    )
+    ).toEqual([{blockNum: 1, logIndex: 0}, {blockNum: 1, logIndex: 2}, {blockNum: 2, logIndex: 0}])
   })
 
   it("does not allocate in degenerate cases", t => {
@@ -46,9 +42,7 @@ describe("Array removeIndex", () => {
     t.expect(
       arr->Utils.Array.removeAtIndex(0),
       ~message="Should have removed single value",
-    ).toEqual(
-      [],
-    )
+    ).toEqual([])
     t.expect(arr, ~message="Original array should not have changed").toEqual([1])
   })
 
@@ -102,9 +96,7 @@ describe("Hash", () => {
     t.expect(
       Utils.Hash.makeOrThrow(%raw(`{b:2,a:1,}`)),
       ~message="Order of keys should not matter",
-    ).toEqual(
-      `{"a":1,"b":2}`,
-    )
+    ).toEqual(`{"a":1,"b":2}`)
   })
 
   it("object with undefined field", t => {

@@ -1,5 +1,3 @@
-open Belt
-
 //A filter should return true if the event should be kept and isValid should return
 //false when the filter should be removed/cleaned up
 type processingFilter = {
@@ -13,18 +11,31 @@ type t = {
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
   isProgressAtHead: bool,
-  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   committedProgressBlockNumber: int,
-  numEventsProcessed: int,
-  numBatchesFetched: int,
+  numEventsProcessed: float,
   reorgDetection: ReorgDetection.t,
   safeCheckpointTracking: option<SafeCheckpointTracking.t>,
 }
 
 //CONSTRUCTION
+let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
+  let addresses = []
+  chainConfig.contracts->Array.forEach(contract => {
+    contract.addresses->Array.forEach(address => {
+      addresses->Array.push({
+        Internal.address,
+        contractName: contract.name,
+        registrationBlock: -1,
+      })
+    })
+  })
+  addresses
+}
+
 let make = (
   ~chainConfig: Config.chain,
-  ~dynamicContracts: array<Internal.indexingContract>,
+  ~indexingAddresses: array<Internal.indexingAddress>,
   ~startBlock,
   ~endBlock,
   ~firstEventBlock=None,
@@ -35,8 +46,8 @@ let make = (
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
-  ~numBatchesFetched,
   ~isInReorgThreshold,
+  ~isRealtime,
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
   ~knownHeight=0,
@@ -48,7 +59,6 @@ let make = (
   let eventRouter = EventRouter.empty()
 
   // Aggregate events we want to fetch
-  let contracts = []
   let eventConfigs: array<Internal.eventConfig> = []
 
   let notRegisteredEvents = []
@@ -82,7 +92,8 @@ let make = (
         isRegistered
       }
 
-      // Check if event has Static([]) filters (from eventFilters: false)
+      // Check if event has Static([]) filters (from a dynamic where
+      // callback returning `false` / SkipAll for this chain).
       // If so, skip it entirely - it should never be fetched
       let shouldSkip = try {
         let getEventFiltersOrThrow = (
@@ -90,7 +101,9 @@ let make = (
         ).getEventFiltersOrThrow
 
         // Check for non-evm chains
-        if getEventFiltersOrThrow->(Utils.magic: (ChainMap.Chain.t => Internal.eventFilters) => bool) {
+        if (
+          getEventFiltersOrThrow->(Utils.magic: (ChainMap.Chain.t => Internal.eventFilters) => bool)
+        ) {
           switch getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)) {
           | Static([]) => true
           | _ => false
@@ -111,26 +124,12 @@ let make = (
 
     switch contract.startBlock {
     | Some(startBlock) if startBlock < chainConfig.startBlock =>
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `The start block for contract "${contractName}" is less than the chain start block. This is not supported yet.`,
       )
     | _ => ()
     }
-
-    contract.addresses->Array.forEach(address => {
-      contracts->Array.push({
-        Internal.address,
-        contractName: contract.name,
-        startBlock: switch contract.startBlock {
-        | Some(startBlock) => startBlock
-        | None => chainConfig.startBlock
-        },
-        registrationBlock: None,
-      })
-    })
   })
-
-  dynamicContracts->Array.forEach(dc => contracts->Array.push(dc))
 
   if notRegisteredEvents->Utils.Array.notEmpty {
     logger->Logging.childInfo(
@@ -140,7 +139,7 @@ let make = (
           ""
         }} ${notRegisteredEvents
         ->Array.map(eventConfig => `${eventConfig.contractName}.${eventConfig.name}`)
-        ->Js.Array2.joinWith(", ")} don't have an event handler and skipped for indexing.`,
+        ->Array.joinUnsafe(", ")} don't have an event handler and skipped for indexing.`,
     )
   }
 
@@ -151,15 +150,15 @@ let make = (
     // TODO: Move it to the HandlerRegister module
     // so the error is thrown with better stack trace
     onBlockConfigs->Array.forEach(onBlockConfig => {
-      if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
-        Js.Exn.raiseError(
+      if onBlockConfig.startBlock->Option.getOr(startBlock) < startBlock {
+        JsError.throwWithMessage(
           `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Belt.Int.toString}). This is not supported yet.`,
         )
       }
       switch endBlock {
       | Some(chainEndBlock) =>
-        if onBlockConfig.endBlock->Option.getWithDefault(chainEndBlock) > chainEndBlock {
-          Js.Exn.raiseError(
+        if onBlockConfig.endBlock->Option.getOr(chainEndBlock) > chainEndBlock {
+          JsError.throwWithMessage(
             `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Belt.Int.toString}). This is not supported yet.`,
           )
         }
@@ -171,7 +170,7 @@ let make = (
 
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
-    ~contracts,
+    ~addresses=indexingAddresses,
     ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
@@ -188,7 +187,7 @@ let make = (
     ~firstEventBlock,
   )
 
-  let chainReorgCheckpoints = reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {
+  let chainReorgCheckpoints = reorgCheckpoints->Array.filterMap(reorgCheckpoint => {
     if reorgCheckpoint.chainId === chainConfig.id {
       Some(reorgCheckpoint)
     } else {
@@ -245,6 +244,7 @@ let make = (
     sourceManager: SourceManager.make(
       ~sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+      ~isRealtime,
     ),
     reorgDetection: ReorgDetection.make(
       ~chainReorgCheckpoints,
@@ -261,7 +261,6 @@ let make = (
     committedProgressBlockNumber: progressBlockNumber,
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
-    numBatchesFetched,
   }
 }
 
@@ -284,12 +283,12 @@ let makeFromConfig = (
     ~maxReorgDepth=chainConfig.maxReorgDepth,
     ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
-    ~numEventsProcessed=0,
-    ~numBatchesFetched=0,
+    ~numEventsProcessed=0.,
     ~targetBufferSize,
     ~logger,
-    ~dynamicContracts=[],
+    ~indexingAddresses=configAddresses(chainConfig),
     ~isInReorgThreshold=false,
+    ~isRealtime=false,
     ~knownHeight,
   )
 }
@@ -297,11 +296,12 @@ let makeFromConfig = (
 /**
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
-let makeFromDbState = async (
+let makeFromDbState = (
   chainConfig: Config.chain,
   ~resumedChainState: Persistence.initialChainState,
   ~reorgCheckpoints,
   ~isInReorgThreshold,
+  ~isRealtime,
   ~config,
   ~registrations,
   ~targetBufferSize,
@@ -318,7 +318,7 @@ let makeFromDbState = async (
       : resumedChainState.startBlock - 1
 
   make(
-    ~dynamicContracts=resumedChainState.dynamicContracts,
+    ~indexingAddresses=resumedChainState.indexingAddresses,
     ~chainConfig,
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock,
@@ -332,31 +332,16 @@ let makeFromDbState = async (
       ? None
       : resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
-    ~numBatchesFetched=0,
     ~logger,
     ~targetBufferSize,
     ~isInReorgThreshold,
+    ~isRealtime,
     ~knownHeight=resumedChainState.sourceBlockNumber,
   )
 }
 
-/**
- * Helper function to get the configured start block for a contract from config
- */
-let getContractStartBlock = (
-  config: Config.t,
-  ~chain: ChainMap.Chain.t,
-  ~contractName: string,
-): option<int> => {
-  let chainConfig = config.chainMap->ChainMap.get(chain)
-  chainConfig.contracts
-  ->Js.Array2.find(contract => contract.name === contractName)
-  ->Option.flatMap(contract => contract.startBlock)
-}
-
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
-  ~chain: ChainMap.Chain.t,
   ~config: Config.t,
 ) => {
   let itemsWithDcs = []
@@ -365,17 +350,10 @@ let runContractRegistersOrThrow = async (
     let eventItem = item->Internal.castUnsafeEventItem
     let {blockNumber} = eventItem
 
-    // Use contract-specific start block if configured, otherwise fall back to registration block
-    let contractStartBlock = switch getContractStartBlock(config, ~chain, ~contractName) {
-    | Some(configuredStartBlock) => configuredStartBlock
-    | None => blockNumber
-    }
-
-    let dc: Internal.indexingContract = {
+    let dc: Internal.indexingAddress = {
       address: contractAddress,
       contractName,
-      startBlock: contractStartBlock,
-      registrationBlock: Some(blockNumber),
+      registrationBlock: blockNumber,
     }
 
     switch item->Internal.getItemDcs {
@@ -395,7 +373,7 @@ let runContractRegistersOrThrow = async (
     | {eventConfig: {contractRegister: Some(contractRegister)}} => contractRegister
     | {eventConfig: {contractRegister: None, name: eventName}} =>
       // Unexpected case, since we should pass only events with contract register to this function
-      Js.Exn.raiseError("Contract register is not set for event " ++ eventName)
+      JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
     }
 
     let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
@@ -412,7 +390,7 @@ let runContractRegistersOrThrow = async (
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.
-      if result->Promise.isCatchable {
+      if result->Utils.Promise.isCatchable {
         promises->Array.push(
           result
           ->Promise.thenResolve(r => {
@@ -530,4 +508,4 @@ let getLastKnownValidBlock = async (
 
 let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing
 
-let isLive = (chainFetcher: t) => chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
+let isReady = (chainFetcher: t) => chainFetcher.timestampCaughtUpToHeadOrEndblock !== None

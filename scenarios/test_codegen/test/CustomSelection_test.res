@@ -1,68 +1,45 @@
 open Vitest
 
-open TestHelpers
-
-type expectedTransactionFields = {
-  to: option<Address.t>,
-  from: option<Address.t>,
-  hash: string,
+// Compile-time type assertions for custom field selection
+// Verify that selected fields have the expected types
+let _ = (event: Indexer.Gravatar.CustomSelection.event) => {
+  let _to: option<Address.t> = event.transaction.to
+  let _from: option<Address.t> = event.transaction.from
+  let _hash: string = event.transaction.hash
+  let _number: int = event.block.number
+  let _timestamp: int = event.block.timestamp
+  let _blockHash: string = event.block.hash
+  let _parentHash: string = event.block.parentHash
 }
 
-type expectedBlockFields = {
-  number: int,
-  timestamp: int,
-  hash: string,
-  parentHash: string,
+// Events without custom field selection should use the global one
+let _ = (event: Indexer.Gravatar.EmptyEvent.event) => {
+  let _transactionIndex: int = event.transaction.transactionIndex
+  let _hash: string = event.transaction.hash
+  let _number: int = event.block.number
+  let _timestamp: int = event.block.timestamp
+  let _blockHash: string = event.block.hash
 }
 
-type expectedGlobalTransactionFields = {
-  transactionIndex: int,
-  hash: string,
-}
-
-type expectedGlobalBlockFields = {
-  number: int,
-  timestamp: int,
-  hash: string,
-}
-
-// The same as for TS but in ReScript
 Async.it("Handles event with a custom field selection (in ReScript)", async t => {
-  // Initializing the mock database
-  let mockDbInitial = MockDb.createMockDb()
+  let indexer = Indexer.createTestIndexer()
 
-  // Every time use different hash to make sure the test data isn't stale
-  let hash = "0x" ++ Js.Math.random_int(0, 10000000)->Js.Int.toString
-
-  let event = Gravatar.CustomSelection.createMockEvent({
-    mockEventData: {
-      transaction: {
-        // Can pass transactionIndex event though it's not selected for the event
-        transactionIndex: 12,
-        hash,
-        to: None,
-        from: Some("0xfoo"->Address.unsafeFromString),
-      },
-      block: {
-        parentHash: "0xParentHash",
+  let processConfig: Indexer.testIndexerProcessConfig = {
+    "chains": {
+      "1337": {
+        "startBlock": 1,
+        "endBlock": 100,
+        "simulate": [
+          {
+            "contract": "Gravatar",
+            "event": "CustomSelection",
+            "transaction": {"from": "0xfoo"},
+            "block": {"parentHash": "0xParentHash"},
+          },
+        ],
       },
     },
-  })
-
-  // Test content of the generated record type
-  let _ = ((event.transaction: Indexer.Gravatar.CustomSelection.transaction :> expectedTransactionFields) :> Indexer.Gravatar.CustomSelection.transaction)
-  let _ = ((event.block: Indexer.Gravatar.CustomSelection.block :> expectedBlockFields) :> Indexer.Gravatar.CustomSelection.block)
-
-  // The event not used for the test, but we want to make sure
-  // that events without custom field selection use the global one
-  let anotherEvent = Gravatar.EmptyEvent.createMockEvent({})
-  let _ = ((anotherEvent.transaction: Indexer.Gravatar.EmptyEvent.transaction :> expectedGlobalTransactionFields) :> Indexer.Gravatar.EmptyEvent.transaction)
-  let _ = ((anotherEvent.block: Indexer.Gravatar.EmptyEvent.block :> expectedGlobalBlockFields) :> Indexer.Gravatar.EmptyEvent.block)
-
-  let updatedMockDb = await Gravatar.CustomSelection.processEvent({
-    event,
-    mockDb: mockDbInitial,
-  })
-
-  t.expect(updatedMockDb.entities.customSelectionTestPass.get(hash)).not.toBe(None)
+  }->Utils.magic
+  let result = await indexer.process(processConfig)
+  t.expect(result.changes->Array.length).toEqual(1)
 })

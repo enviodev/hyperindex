@@ -22,13 +22,6 @@
         "null"
       ]
     },
-    "output": {
-      "description": "Path where the generated directory will be placed. By default it's 'generated' relative to the current working directory. If set, it'll be a path relative to the config file location.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "handlers": {
       "description": "Optional relative path to handlers directory for auto-loading. Defaults to 'src/handlers' if not specified.",
       "type": [
@@ -44,6 +37,17 @@
       ],
       "format": "uint64",
       "minimum": 0
+    },
+    "storage": {
+      "description": "Configuration for the storage backends the indexer writes to. Defaults to `postgres: true` when omitted. ClickHouse requires Postgres to be enabled (it is not supported as a single storage yet), and at least one backend must be enabled.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StorageConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "ecosystem": {
       "description": "Ecosystem of the project.",
@@ -81,6 +85,62 @@
     "chains"
   ],
   "$defs": {
+    "StorageConfig": {
+      "type": "object",
+      "properties": {
+        "postgres": {
+          "description": "Whether to use Postgres as a storage backend (default: true).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "clickhouse": {
+          "description": "Whether to additionally sync the indexed data to ClickHouse. Requires Postgres to be enabled (default: false).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "properties": {
+              "postgres": {
+                "const": false
+              }
+            },
+            "required": [
+              "postgres"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "clickhouse": {
+                "const": true
+              }
+            },
+            "required": [
+              "clickhouse"
+            ]
+          },
+          "then": {
+            "properties": {
+              "postgres": {
+                "const": true
+              }
+            },
+            "required": [
+              "postgres"
+            ]
+          }
+        }
+      ]
+    },
     "EcosystemTag": {
       "type": "string",
       "enum": [

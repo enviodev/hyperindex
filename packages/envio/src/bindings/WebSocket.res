@@ -17,7 +17,7 @@ type readyState =
 @get external readyState: t => readyState = "readyState"
 
 @set external onopen: (t, unit => unit) => unit = "onopen"
-@set external onerror: (t, Js.Exn.t => unit) => unit = "onerror"
+@set external onerror: (t, JsExn.t => unit) => unit = "onerror"
 @set external onclose: (t, unit => unit) => unit = "onclose"
 
 type messageEvent = {data: string}

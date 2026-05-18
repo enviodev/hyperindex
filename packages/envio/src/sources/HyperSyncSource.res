@@ -1,5 +1,4 @@
 open Source
-open Belt
 
 type selectionConfig = {
   getLogSelectionOrThrow: (
@@ -16,9 +15,9 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
 
-  let staticTopicSelectionsByContract = Js.Dict.empty()
-  let dynamicEventFiltersByContract = Js.Dict.empty()
-  let dynamicWildcardEventFiltersByContract = Js.Dict.empty()
+  let staticTopicSelectionsByContract = Dict.make()
+  let dynamicEventFiltersByContract = Dict.make()
+  let dynamicWildcardEventFiltersByContract = Dict.make()
   let noAddressesTopicSelections = []
   let contractNames = Utils.Set.make()
 
@@ -28,20 +27,28 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     dependsOnAddresses,
     contractName,
     getEventFiltersOrThrow,
-    blockSchema,
-    transactionSchema,
+    selectedBlockFields,
+    selectedTransactionFields,
     isWildcard,
   }) => {
-    nonOptionalBlockFieldNames->Utils.Set.addMany(
-      blockSchema->Utils.Schema.getNonOptionalFieldNames,
-    )
-    nonOptionalTransactionFieldNames->Utils.Set.addMany(
-      transactionSchema->Utils.Schema.getNonOptionalFieldNames,
-    )
-    capitalizedBlockFields->Utils.Set.addMany(blockSchema->Utils.Schema.getCapitalizedFieldNames)
-    capitalizedTransactionFields->Utils.Set.addMany(
-      transactionSchema->Utils.Schema.getCapitalizedFieldNames,
-    )
+    selectedBlockFields
+    ->Utils.Set.toArray
+    ->Array.forEach(name => {
+      let nameStr = (name :> string)
+      if !(Internal.evmNullableBlockFields->Utils.Set.has(name)) {
+        nonOptionalBlockFieldNames->Utils.Set.add(nameStr)->ignore
+      }
+      capitalizedBlockFields->Utils.Set.add(nameStr->Utils.String.capitalize)->ignore
+    })
+    selectedTransactionFields
+    ->Utils.Set.toArray
+    ->Array.forEach(name => {
+      let nameStr = (name :> string)
+      if !(Internal.evmNullableTransactionFields->Utils.Set.has(name)) {
+        nonOptionalTransactionFieldNames->Utils.Set.add(nameStr)->ignore
+      }
+      capitalizedTransactionFields->Utils.Set.add(nameStr->Utils.String.capitalize)->ignore
+    })
 
     let eventFilters = getEventFiltersOrThrow(chain)
     if dependsOnAddresses {
@@ -56,7 +63,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       }
     } else {
       noAddressesTopicSelections
-      ->Js.Array2.pushMany(
+      ->Array.pushMany(
         switch eventFilters {
         | Static(s) => s
         | Dynamic(fn) => fn([])
@@ -100,10 +107,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         | None => ()
         | Some(fns) =>
           logSelections->Array.push(
-            LogSelection.make(
-              ~addresses,
-              ~topicSelections=fns->Array.flatMapU(fn => fn(addresses)),
-            ),
+            LogSelection.make(~addresses, ~topicSelections=fns->Array.flatMap(fn => fn(addresses))),
           )
         }
         switch dynamicWildcardEventFiltersByContract->Utils.Dict.dangerouslyGetNonOption(
@@ -114,7 +118,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
           logSelections->Array.push(
             LogSelection.make(
               ~addresses=[],
-              ~topicSelections=fns->Array.flatMapU(fn => fn(addresses)),
+              ~topicSelections=fns->Array.flatMap(fn => fn(addresses)),
             ),
           )
         }
@@ -168,7 +172,7 @@ let make = (
   let apiToken = switch apiToken {
   | Some(token) => token
   | None =>
-    Js.Exn.raiseError(`An API token is required for using HyperSync as a data-source.
+    JsError.throwWithMessage(`An API token is required for using HyperSync as a data-source.
 Set the ENVIO_API_TOKEN environment variable in your .env file.
 Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   }
@@ -221,6 +225,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       blockNumber: block.number->Belt.Option.getUnsafe,
       logIndex: log.logIndex,
       event: {
+        contractName: eventConfig.contractName,
+        eventName: eventConfig.name,
         chainId,
         params,
         transaction,
@@ -235,7 +241,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~indexingContracts,
+    ~indexingAddresses,
     ~knownHeight,
     ~partitionId as _,
     ~selection,
@@ -270,11 +276,11 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
-            attemptedToBlock: toBlock->Option.getWithDefault(knownHeight),
+            attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: switch error {
             | WrongInstance =>
               let backoffMillis = switch retry {
@@ -287,7 +293,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
               })
             | UnexpectedMissingParams({missingParams}) =>
               ImpossibleForTheQuery({
-                message: `Source returned invalid data with missing required fields: ${missingParams->Js.Array2.joinWith(
+                message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
                     ", ",
                   )}`,
               })
@@ -296,11 +302,11 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         ),
       )
     | exn =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn,
-            attemptedToBlock: toBlock->Option.getWithDefault(knownHeight),
+            attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: WithBackoff({
               message: `Unexpected issue while fetching events from HyperSync client. Attempt a retry.`,
               backoffMillis: switch retry {
@@ -313,8 +319,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       )
     }
 
-    let pageFetchTime =
-      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let pageFetchTime = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -358,8 +363,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         //If there were no logs at all in the current page query then fetch the
         //timestamp of the heighest block accounted for
         HyperSync.queryBlockData(
-          ~serverUrl=endpointUrl,
-          ~apiToken,
+          ~client,
           ~blockNumber=heighestBlockQueried,
           ~sourceName=name,
           ~chainId=chain->ChainMap.Chain.toChainId,
@@ -432,16 +436,16 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
             ~sighash=topic0->EvmTypes.Hex.toString,
             ~topicCount=log.topics->Array.length,
           ),
-          ~indexingContracts,
+          ~indexingAddresses,
           ~contractAddress=log.address,
           ~blockNumber=block.number->Belt.Option.getUnsafe,
         )
-      let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
+      let maybeDecodedEvent = parsedEvents->Array.getUnsafe(index)
 
       switch (maybeEventConfig, maybeDecodedEvent) {
       | (Some(eventConfig), Value(decoded)) =>
         parsedQueueItems
-        ->Js.Array2.push(
+        ->Array.push(
           makeEventBatchQueueItem(
             item,
             ~params=decoded->eventConfig.convertHyperSyncEventArgs,
@@ -461,7 +465,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }
     })
 
-    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let rangeLastBlock = await lastBlockQueriedPromise
 
@@ -473,7 +477,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }),
     }
 
-    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let stats = {
       totalTimeElapsed,
@@ -494,8 +498,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
 
   let getBlockHashes = (~blockNumbers, ~logger) =>
     HyperSync.queryBlockDataMulti(
-      ~serverUrl=endpointUrl,
-      ~apiToken,
+      ~client,
       ~blockNumbers,
       ~sourceName=name,
       ~chainId=chain->ChainMap.Chain.toChainId,
@@ -514,12 +517,11 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {
-      Prometheus.SourceRequestCount.increment(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="getHeight",
-      )
-      switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
+      let timerRef = Hrtime.makeTimer()
+      let result = switch await HyperSyncJsonApi.heightRoute->Rest.fetch(
+        apiToken,
+        ~client=jsonApiClient,
+      ) {
       | Value(height) => height
       | ErrorMessage(m) if m === malformedTokenMessage =>
         Logging.error(`Your ENVIO_API_TOKEN is malformed. The indexer will not be able to fetch events. Update the token and restart the indexer using 'pnpm envio start'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
@@ -527,8 +529,21 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         // So just block forever
         let _ = await Promise.make((_, _) => ())
         0
-      | ErrorMessage(m) => Js.Exn.raiseError(m)
+      | ErrorMessage(m) => JsError.throwWithMessage(m)
       }
+      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+      Prometheus.SourceRequestCount.increment(
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~method="getHeight",
+      )
+      Prometheus.SourceRequestCount.addSeconds(
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~method="getHeight",
+        ~seconds,
+      )
+      result
     },
     getItemsOrThrow,
     createHeightSubscription: (~onHeight) =>

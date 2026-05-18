@@ -21,8 +21,18 @@ let noopEffect = Envio.createEffect(
   },
 )
 
-Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
+Indexer.indexer.onEvent({event: Indexer.Gravatar(NewGravatar)}, async ({event, context}) => {
   let () = await context.effect(noopEffect, ())
+
+  // Compile-time type check: contractName and eventName fields are accessible as strings
+  // Runtime check: verify the discriminant fields have correct values
+  let contractName: string = event.contractName
+  let eventName: string = event.eventName
+  if contractName !== "Gravatar" || eventName !== "NewGravatar" {
+    JsError.throwWithMessage(
+      `Expected contractName="Gravatar" eventName="NewGravatar", got contractName="${contractName}" eventName="${eventName}"`,
+    )
+  }
 
   let gravatarSize: Indexer.Enums.GravatarSize.t = SMALL
   let gravatarObject: Indexer.Entities.Gravatar.t = {
@@ -34,11 +44,11 @@ Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
     size: gravatarSize,
   }
 
-  context.gravatar.set(gravatarObject)
+  context.\"Gravatar".set(gravatarObject)
 })
 
-Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
-  let maybeGravatar = await context.gravatar.get(event.params.id->BigInt.toString)
+Indexer.indexer.onEvent({event: Indexer.Gravatar(UpdatedGravatar)}, async ({event, context}) => {
+  let maybeGravatar = await context.\"Gravatar".get(event.params.id->BigInt.toString)
 
   /// Some examples of user logging
   context.log.debug(`We are processing the event, ${event.block.hash} (debug)`)
@@ -85,7 +95,7 @@ Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
     ~params={
       "type": "error",
       "data": {"blockHash": event.block.hash},
-      "err": ExampleException("some error processing the event")->Js.Exn.asJsExn,
+      "err": ExampleException("some error processing the event")->JsExn.fromException,
     },
   )
 
@@ -106,57 +116,60 @@ Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
 
   if event.params.id->BigInt.toString == "1001" {
     context.log.info("id matched, deleting gravatar 1004")
-    context.gravatar.deleteUnsafe("1004")
+    context.\"Gravatar".deleteUnsafe("1004")
   }
 
-  context.gravatar.set(gravatar)
+  context.\"Gravatar".set(gravatar)
 })
 
 let aIdWithGrandChildC = "aIdWithGrandChildC"
 let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
-Indexer.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
-  let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Indexer.id) =>
-    switch await context.a.get(idOfGrandparent) {
-    | Some(a) =>
-      let optB = await context.b.get(a.b_id)
+Indexer.indexer.onEvent(
+  {event: Indexer.Gravatar(TestEventThatCopiesBigIntViaLinkedEntities)},
+  async ({context}) => {
+    let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: string) =>
+      switch await context.\"A".get(idOfGrandparent) {
+      | Some(a) =>
+        let optB = await context.\"B".get(a.b_id)
 
-      switch optB->Belt.Option.flatMap(b => b.c_id) {
-      | Some(c_id) =>
-        switch await context.c.get(c_id) {
-        | Some(cWithText) =>
-          context.a.set({
-            ...a,
-            optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
-          })
+        switch optB->Belt.Option.flatMap(b => b.c_id) {
+        | Some(c_id) =>
+          switch await context.\"C".get(c_id) {
+          | Some(cWithText) =>
+            context.\"A".set({
+              ...a,
+              optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
+            })
+          | None => ()
+          }
         | None => ()
         }
       | None => ()
       }
-    | None => ()
-    }
 
-  await copyStringFromGrandchildIfAvailable(aIdWithGrandChildC)
-  await copyStringFromGrandchildIfAvailable(aIdWithNoGrandChildC)
-})
+    await copyStringFromGrandchildIfAvailable(aIdWithGrandChildC)
+    await copyStringFromGrandchildIfAvailable(aIdWithNoGrandChildC)
+  },
+)
 
 // Generates modules for both TestEvent and TestEventWithCustomName
-Indexer.Gravatar.TestEventWithCustomName.handler(async _ => {
+Indexer.indexer.onEvent({event: Indexer.Gravatar(TestEventWithCustomName)}, async _ => {
   ()
 })
-Indexer.Gravatar.TestEvent.handler(async _ => {
+Indexer.indexer.onEvent({event: Indexer.Gravatar(TestEvent)}, async _ => {
   ()
 })
 
 // Test chain accessibility - exposed for testing
 let lastEmptyEventChain: ref<option<Internal.chainInfo>> = ref(None)
 
-Indexer.Gravatar.EmptyEvent.handler(async ({context}) => {
+Indexer.indexer.onEvent({event: Indexer.Gravatar(EmptyEvent)}, async ({context}) => {
   // This handler tests that chain state is accessible in the context
-  // Chain will have isLive: false during sync and isLive: true during live indexing
+  // Chain will have isRealtime: false during sync and isRealtime: true once all chains caught up
   lastEmptyEventChain := Some(context.chain)
 
   // Log chain state for verification
-  let status = context.chain.isLive ? "ready (live)" : "syncing (historical)"
+  let status = context.chain.isRealtime ? "ready (realtime)" : "syncing (historical)"
   context.log.debug(`Chain ${context.chain.id->Belt.Int.toString} status: ${status}`)
 })

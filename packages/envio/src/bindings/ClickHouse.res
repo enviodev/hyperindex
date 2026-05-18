@@ -46,7 +46,10 @@ let getClickHouseFieldType = (
   let baseType = switch fieldType {
   | Int32 => "Int32"
   | Uint32 => "UInt32"
+  | UInt52 => "UInt64"
+  | UInt64 => "UInt64"
   | Serial => "Int32"
+  | BigSerial => "Int64"
   | BigInt({?precision}) =>
     switch precision {
     | None => "String" // Fallback for unbounded BigInt
@@ -54,7 +57,7 @@ let getClickHouseFieldType = (
       if precision > 38 {
         "String"
       } else {
-        `Decimal(${precision->Js.Int.toString},0)`
+        `Decimal(${precision->Int.toString},0)`
       }
     }
   | BigDecimal({?config}) =>
@@ -64,7 +67,7 @@ let getClickHouseFieldType = (
       if precision > 38 || scale > precision {
         "String"
       } else {
-        `Decimal(${precision->Js.Int.toString},${scale->Js.Int.toString})`
+        `Decimal(${precision->Int.toString},${scale->Int.toString})`
       }
     }
   | Boolean => "Bool"
@@ -83,7 +86,7 @@ let getClickHouseFieldType = (
           let variantStr = variant->(Utils.magic: 'a => string)
           `'${variantStr}'`
         })
-        ->Js.Array2.joinWith(", ")
+        ->Array.joinUnsafe(", ")
       `${enumType}(${enumValues})`
     }
   | Entity(_) => "String"
@@ -101,7 +104,7 @@ let getClickHouseFieldType = (
 // Creates an entity schema from table definition, using clickHouseDate for Date fields
 let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
   S.schema(s => {
-    let dict = Js.Dict.empty()
+    let dict = Dict.make()
     table.fields->Belt.Array.forEach(field => {
       switch field {
       | Field(f) => {
@@ -117,15 +120,77 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
                 dateSchema
               }
             }
+          // ClickHouse returns UInt64 values as strings, need to parse to float
+          | UInt52 => {
+              let uint52Schema =
+                S.float
+                ->S.preprocess(
+                  _ => {
+                    parser: unknown => unknown->(Utils.magic: unknown => string)->Float.parseFloat,
+                  },
+                )
+                ->S.toUnknown
+              if f.isNullable {
+                S.null(uint52Schema)->S.toUnknown
+              } else if f.isArray {
+                S.array(uint52Schema)->S.toUnknown
+              } else {
+                uint52Schema
+              }
+            }
           | _ => f.fieldSchema
           }
-          dict->Js.Dict.set(fieldName, s.matches(fieldSchema))
+          dict->Dict.set(fieldName, s.matches(fieldSchema))
         }
       | DerivedFrom(_) => () // Skip derived fields
       }
     })
-    dict->(Utils.magic: Js.Dict.t<unknown> => Internal.entity)
+    dict->(Utils.magic: dict<unknown> => Internal.entity)
   })
+}
+
+let logger = Logging.createChild(~params={"context": "ClickHouse"})
+
+// On transient failure, split values in half and retry each half.
+// If only 1 row remains, retry with delay.
+// Delay scales from 100ms to 1000ms as retries decrease.
+let rec insertWithRetry = async (
+  client,
+  ~table: string,
+  ~values: array<'a>,
+  ~format: string,
+  ~retries=8,
+) => {
+  try {
+    await client->insert({table, values, format})
+  } catch {
+  | exn if retries > 0 =>
+    let delayMs = Math.Int.min(1000, 100 + 900 * (8 - retries) / 7)
+    if Array.length(values) > 1 {
+      logger->Logging.childWarn({
+        "msg": "ClickHouse insert failed, splitting batch in half and retrying",
+        "table": table,
+        "batchSize": Array.length(values),
+        "retriesLeft": retries,
+        "err": exn->Utils.prettifyExn,
+      })
+      await Utils.delay(delayMs)
+      let mid = Array.length(values) / 2
+      let first = values->Array.slice(~start=0, ~end=mid)
+      let second = values->Array.slice(~start=mid)
+      await insertWithRetry(client, ~table, ~values=first, ~format, ~retries=retries - 1)
+      await insertWithRetry(client, ~table, ~values=second, ~format, ~retries=retries - 1)
+    } else {
+      logger->Logging.childWarn({
+        "msg": "ClickHouse insert failed, retrying after delay",
+        "table": table,
+        "retriesLeft": retries,
+        "err": exn->Utils.prettifyExn,
+      })
+      await Utils.delay(delayMs)
+      await insertWithRetry(client, ~table, ~values, ~format, ~retries=retries - 1)
+    }
+  }
 }
 
 let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) => {
@@ -137,8 +202,8 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
     let checkpointRows = []
     for idx in 0 to checkpointsCount - 1 {
       checkpointRows
-      ->Js.Array2.push((
-        batch.checkpointIds->Belt.Array.getUnsafe(idx),
+      ->Array.push((
+        batch.checkpointIds->Belt.Array.getUnsafe(idx)->BigInt.toString,
         batch.checkpointChainIds->Belt.Array.getUnsafe(idx),
         batch.checkpointBlockNumbers->Belt.Array.getUnsafe(idx),
         batch.checkpointBlockHashes->Belt.Array.getUnsafe(idx),
@@ -148,14 +213,15 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
     }
 
     try {
-      await client->insert({
-        table: `${database}.\`${InternalTable.Checkpoints.table.tableName}\``,
-        values: checkpointRows,
-        format: "JSONCompactEachRow",
-      })
+      await insertWithRetry(
+        client,
+        ~table=`${database}.\`${InternalTable.Checkpoints.table.tableName}\``,
+        ~values=checkpointRows,
+        ~format="JSONCompactEachRow",
+      )
     } catch {
     | exn =>
-      raise(
+      throw(
         Persistence.StorageError({
           message: `Failed to insert checkpoints into ClickHouse table "${InternalTable.Checkpoints.table.tableName}"`,
           reason: exn->Utils.prettifyExn,
@@ -165,8 +231,14 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
   }
 }
 
+type setUpdatesCache = {
+  tableName: string,
+  convertOrThrow: Change.t<Internal.entity> => JSON.t,
+}
+
 let setUpdatesOrThrow = async (
   client,
+  ~cache: Utils.WeakMap.t<Internal.entityConfig, setUpdatesCache>,
   ~updates: array<Internal.inMemoryStoreEntityUpdate<Internal.entity>>,
   ~entityConfig: Internal.entityConfig,
   ~database: string,
@@ -174,10 +246,10 @@ let setUpdatesOrThrow = async (
   if updates->Array.length === 0 {
     ()
   } else {
-    let {convertOrThrow, tableName} = switch entityConfig.clickHouseSetUpdatesCache {
-    | Some(cache) => cache
+    let {convertOrThrow, tableName} = switch cache->Utils.WeakMap.get(entityConfig) {
+    | Some(cached) => cached
     | None =>
-      let cache: Internal.clickHouseSetUpdatesCache = {
+      let cached: setUpdatesCache = {
         tableName: `${database}.\`${EntityHistory.historyTableName(
             ~entityName=entityConfig.name,
             ~entityIndex=entityConfig.index,
@@ -203,24 +275,20 @@ let setUpdatesOrThrow = async (
         ),
       }
 
-      entityConfig.clickHouseSetUpdatesCache = Some(cache)
-      cache
+      cache->Utils.WeakMap.set(entityConfig, cached)->ignore
+      cached
     }
 
     try {
       // Convert entity updates to ClickHouse row format
-      let values = updates->Js.Array2.map(update => {
+      let values = updates->Array.map(update => {
         update.latestChange->convertOrThrow
       })
 
-      await client->insert({
-        table: tableName,
-        values,
-        format: "JSONEachRow",
-      })
+      await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
     } catch {
     | exn =>
-      raise(
+      throw(
         Persistence.StorageError({
           message: `Failed to insert items into ClickHouse table "${tableName}"`,
           reason: exn->Utils.prettifyExn,
@@ -231,7 +299,12 @@ let setUpdatesOrThrow = async (
 }
 
 // Generate CREATE TABLE query for entity history table
-let makeCreateHistoryTableQuery = (~entityConfig: Internal.entityConfig, ~database: string) => {
+let makeCreateHistoryTableQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~database: string,
+  ~replicated: bool=false,
+) => {
+  let tableEngine = replicated ? "ReplicatedMergeTree" : "MergeTree()"
   let fieldDefinitions = entityConfig.table.fields->Belt.Array.keepMap(field => {
     switch field {
     | Field(field) =>
@@ -252,9 +325,9 @@ let makeCreateHistoryTableQuery = (~entityConfig: Internal.entityConfig, ~databa
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
     )}\` (
-  ${fieldDefinitions->Js.Array2.joinWith(",\n  ")},
+  ${fieldDefinitions->Array.joinUnsafe(",\n  ")},
   \`${EntityHistory.checkpointIdFieldName}\` ${getClickHouseFieldType(
-      ~fieldType=Uint32,
+      ~fieldType=UInt64,
       ~isNullable=false,
       ~isArray=false,
     )},
@@ -264,12 +337,13 @@ let makeCreateHistoryTableQuery = (~entityConfig: Internal.entityConfig, ~databa
       ~isArray=false,
     )}
 )
-ENGINE = MergeTree()
+ENGINE = ${tableEngine}
 ORDER BY (${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
 }
 
 // Generate CREATE TABLE query for checkpoints
-let makeCreateCheckpointsTableQuery = (~database: string) => {
+let makeCreateCheckpointsTableQuery = (~database: string, ~replicated: bool=false) => {
+  let tableEngine = replicated ? "ReplicatedMergeTree" : "MergeTree()"
   let idField = (#id: InternalTable.Checkpoints.field :> string)
   let chainIdField = (#chain_id: InternalTable.Checkpoints.field :> string)
   let blockNumberField = (#block_number: InternalTable.Checkpoints.field :> string)
@@ -277,7 +351,7 @@ let makeCreateCheckpointsTableQuery = (~database: string) => {
   let eventsProcessedField = (#events_processed: InternalTable.Checkpoints.field :> string)
 
   `CREATE TABLE IF NOT EXISTS ${database}.\`${InternalTable.Checkpoints.table.tableName}\` (
-  \`${idField}\` ${getClickHouseFieldType(~fieldType=Int32, ~isNullable=false, ~isArray=false)},
+  \`${idField}\` ${getClickHouseFieldType(~fieldType=UInt64, ~isNullable=false, ~isArray=false)},
   \`${chainIdField}\` ${getClickHouseFieldType(
       ~fieldType=Int32,
       ~isNullable=false,
@@ -294,12 +368,12 @@ let makeCreateCheckpointsTableQuery = (~database: string) => {
       ~isArray=false,
     )},
   \`${eventsProcessedField}\` ${getClickHouseFieldType(
-      ~fieldType=Int32,
+      ~fieldType=UInt64,
       ~isNullable=false,
       ~isArray=false,
     )}
 )
-ENGINE = MergeTree()
+ENGINE = ${tableEngine}
 ORDER BY (${idField})`
 }
 
@@ -324,7 +398,7 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
       | DerivedFrom(_) => None
       }
     })
-    ->Js.Array2.joinWith(", ")
+    ->Array.joinUnsafe(", ")
 
   `CREATE VIEW IF NOT EXISTS ${database}.\`${entityConfig.name}\` AS
 SELECT ${entityFields}
@@ -346,34 +420,61 @@ let initialize = async (
   ~enums as _: array<Table.enumConfig<Table.enum>>,
 ) => {
   try {
+    let replicated = Env.ClickHouse.replicated()
+    let databaseEngine = Env.ClickHouse.databaseEngine()
+    let databaseEngineClause = switch databaseEngine {
+    | Some(engine) => ` ENGINE = ${engine}`
+    | None => ""
+    }
+
+    switch databaseEngine {
+    | Some(engineSpec) => {
+        let expectedEngineName = engineSpec->String.split("(")->Belt.Array.getUnsafe(0)->String.trim
+        let existingResult = await client->query({
+          query: `SELECT engine FROM system.databases WHERE name = '${database}'`,
+        })
+        let rows: array<{"engine": string}> = await existingResult->json
+        switch rows->Belt.Array.get(0) {
+        | Some(row) if row["engine"] !== expectedEngineName =>
+          JsError.throwWithMessage(
+            `ClickHouse database "${database}" exists with engine "${row["engine"]}" but ENVIO_CLICKHOUSE_DATABASE_ENGINE specifies "${expectedEngineName}". Drop the database manually to change its engine.`,
+          )
+        | _ => ()
+        }
+      }
+    | None => ()
+    }
+
     await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}`})
-    await client->exec({query: `CREATE DATABASE IF NOT EXISTS ${database}`})
+    await client->exec({
+      query: `CREATE DATABASE IF NOT EXISTS ${database}${databaseEngineClause}`,
+    })
     await client->exec({query: `USE ${database}`})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
-        client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database)})
+        client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database, ~replicated)})
       ),
-    )->Promise.ignoreValue
-    await client->exec({query: makeCreateCheckpointsTableQuery(~database)})
+    )->Utils.Promise.ignoreValue
+    await client->exec({query: makeCreateCheckpointsTableQuery(~database, ~replicated)})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
         client->exec({query: makeCreateViewQuery(~entityConfig, ~database)})
       ),
-    )->Promise.ignoreValue
+    )->Utils.Promise.ignoreValue
 
-    Logging.trace("ClickHouse sink initialization completed successfully")
+    Logging.trace("ClickHouse storage initialization completed successfully")
   } catch {
   | exn => {
-      Logging.errorWithExn(exn, "Failed to initialize ClickHouse sink")
-      Js.Exn.raiseError("ClickHouse initialization failed")
+      Logging.errorWithExn(exn, "Failed to initialize ClickHouse storage")
+      JsError.throwWithMessage("ClickHouse initialization failed")
     }
   }
 }
 
 // Resume ClickHouse sink after reorg by deleting rows with checkpoint IDs higher than target
-let resume = async (client, ~database: string, ~checkpointId: float) => {
+let resume = async (client, ~database: string, ~checkpointId: Internal.checkpointId) => {
   try {
     // Try to use the database - will throw if it doesn't exist
     try {
@@ -382,9 +483,9 @@ let resume = async (client, ~database: string, ~checkpointId: float) => {
     | exn =>
       Logging.errorWithExn(
         exn,
-        `ClickHouse sink database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
+        `ClickHouse storage database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
       )
-      Js.Exn.raiseError("ClickHouse resume failed")
+      JsError.throwWithMessage("ClickHouse resume failed")
     }
 
     // Get all history tables
@@ -398,20 +499,20 @@ let resume = async (client, ~database: string, ~checkpointId: float) => {
       tables->Belt.Array.map(table => {
         let tableName = table["name"]
         client->exec({
-          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->Belt.Float.toString}`,
+          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString}`,
         })
       }),
-    )->Promise.ignoreValue
+    )->Utils.Promise.ignoreValue
 
     // Delete stale checkpoints
     await client->exec({
-      query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->Belt.Float.toString}`,
+      query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->BigInt.toString}`,
     })
   } catch {
-  | Persistence.StorageError(_) as exn => raise(exn)
+  | Persistence.StorageError(_) as exn => throw(exn)
   | exn => {
-      Logging.errorWithExn(exn, "Failed to resume ClickHouse sink")
-      Js.Exn.raiseError("ClickHouse resume failed")
+      Logging.errorWithExn(exn, "Failed to resume ClickHouse storage")
+      JsError.throwWithMessage("ClickHouse resume failed")
     }
   }
 }

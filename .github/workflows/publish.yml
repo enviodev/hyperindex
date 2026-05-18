@@ -5,6 +5,14 @@ on:
     tags:
       - "v*.*.*"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
 jobs:
   # Determine npm tag from release tag name:
   #   v1.2.3, v1.2.3-alpha.1, v1.2.3-rc.1 → next
@@ -46,7 +54,7 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "Found run: $run_id"
 
-  # Build the 3 remaining platform packages (linux-x64 is reused from Build & Verify)
+  # Build all 4 platform packages with the release version baked into the binary
   build-platforms:
     needs: prepare
     uses: ./.github/workflows/build-platforms.yml
@@ -59,30 +67,16 @@ jobs:
     needs: [prepare, build-platforms]
     strategy:
       matrix:
-        pkg: [envio-linux-x64, envio-linux-arm64, envio-darwin-x64, envio-darwin-arm64]
+        pkg: [envio-linux-x64, envio-linux-x64-musl, envio-linux-arm64, envio-darwin-x64, envio-darwin-arm64]
     steps:
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
 
-      - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@latest --activate
-
-      # linux-x64 comes from the Build & Verify workflow, others from build-platforms
-      - name: Download platform package (linux-x64 from Build & Verify)
-        if: matrix.pkg == 'envio-linux-x64'
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: ./pkg
-          run-id: ${{ needs.prepare.outputs.build_run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download platform package (from Build Platforms)
-        if: matrix.pkg != 'envio-linux-x64'
-        uses: actions/download-artifact@v4
+      - name: Download platform package
+        uses: actions/download-artifact@v8
         with:
           name: npm-pkg-${{ matrix.pkg }}
           path: ./pkg
@@ -90,9 +84,12 @@ jobs:
       - name: Patch version and publish
         working-directory: ./pkg
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
+          if [ ! -f envio.node ]; then
+            echo "ERROR: envio.node not found in platform package"
+            exit 1
+          fi
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));
@@ -100,7 +97,7 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           echo "Publishing $(node -p "require('./package.json').name")@${VERSION}"
-          pnpm publish --access public --tag latest --no-git-checks
+          npm publish --access public --tag latest
 
   # Publish the base envio package to npm
   publish-envio-package:
@@ -108,16 +105,13 @@ jobs:
     needs: [prepare, publish-platform-packages]
     steps:
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
 
-      - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@latest --activate
-
       - name: Download envio base package from Build & Verify
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: npm-pkg-envio
           path: ./pkg
@@ -127,7 +121,6 @@ jobs:
       - name: Patch version and publish
         working-directory: ./pkg
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
           NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
         run: |
@@ -144,4 +137,4 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           echo "Publishing envio@${VERSION} with tag ${NPM_TAG}"
-          pnpm publish --access public --tag "$NPM_TAG" --no-git-checks
+          npm publish --access public --tag "$NPM_TAG"

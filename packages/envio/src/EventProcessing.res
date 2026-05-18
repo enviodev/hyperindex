@@ -1,5 +1,3 @@
-open Belt
-
 let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {
   chainFetchers
   ->ChainMap.values
@@ -7,19 +5,19 @@ let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher
 }
 
 let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.chains => {
-  let chains = Js.Dict.empty()
+  let chains = Dict.make()
+
+  let isRealtime = chainFetchers->ChainMap.values->Array.every(cf => cf->ChainFetcher.isReady)
 
   chainFetchers
-  ->ChainMap.entries
-  ->Array.forEach(((chain, chainFetcher)) => {
-    let chainId = chain->ChainMap.Chain.toChainId->Int.toString
-    let isLive = chainFetcher->ChainFetcher.isLive
-
-    chains->Js.Dict.set(
-      chainId,
+  ->ChainMap.keys
+  ->Array.forEach(chain => {
+    let chainId = chain->ChainMap.Chain.toChainId
+    chains->Dict.set(
+      chainId->Int.toString,
       {
-        Internal.id: chain->ChainMap.Chain.toChainId,
-        isLive,
+        Internal.id: chainId,
+        isRealtime,
       },
     )
   })
@@ -30,23 +28,19 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
 let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   switch fields {
   | None => %raw(`{}`)
-  | Some(fields) => {
-      let keys = fields->Js.Dict.keys
-      let new = Js.Dict.empty()
-      for i in 0 to keys->Js.Array2.length - 1 {
-        let key = keys->Js.Array2.unsafe_get(i)
-        let value = fields->Js.Dict.unsafeGet(key)
-        // Skip `undefined` values and convert bigint fields to string
-        // There are not fields with nested bigints, so this is safe
-        new->Js.Dict.set(
-          key,
-          Js.typeof(value) === "bigint"
-            ? value->(Utils.magic: unknown => bigint)->BigInt.toString->(Utils.magic: string => unknown)
-            : value,
-        )
-      }
-      new->(Utils.magic: dict<unknown> => Js.Json.t)
-    }
+  | Some(fields) =>
+    // Convert bigint fields to string. There are no fields with nested
+    // bigints, so iterating only the top level is safe.
+    fields
+    ->Utils.Dict.mapValues(value =>
+      typeof(value) === #bigint
+        ? value
+          ->(Utils.magic: unknown => bigint)
+          ->BigInt.toString
+          ->(Utils.magic: string => unknown)
+        : value
+    )
+    ->(Utils.magic: dict<unknown> => JSON.t)
   }
 }
 
@@ -74,7 +68,7 @@ let addItemToRawEvents = (
   let params =
     params
     ->S.reverseConvertOrThrow(eventConfig.paramsRawEventSchema)
-    ->(Utils.magic: unknown => Js.Json.t)
+    ->(Utils.magic: unknown => JSON.t)
   let params = if params === %raw(`null`) {
     // Should probably make the params field nullable
     // But this is currently needed to make events
@@ -114,7 +108,6 @@ let runEventHandlerOrThrow = async (
   ~loadManager,
   ~persistence,
   ~shouldSaveHistory,
-  ~shouldBenchmark,
   ~chains: Internal.chains,
   ~config: Config.t,
 ) => {
@@ -147,7 +140,7 @@ let runEventHandlerOrThrow = async (
     contextParams.isResolved = true
   } catch {
   | exn =>
-    raise(
+    throw(
       ProcessingError({
         message: "Unexpected error in the event handler. Please handle the error to keep the indexer running smoothly.",
         item,
@@ -155,15 +148,12 @@ let runEventHandlerOrThrow = async (
       }),
     )
   }
-  if shouldBenchmark {
-    let timeEnd = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
-    Benchmark.addSummaryData(
-      ~group="Handlers Per Event",
-      ~label=`${eventItem.eventConfig.contractName} ${eventItem.eventConfig.name} Handler (ms)`,
-      ~value=timeEnd,
-      ~decimalPlaces=4,
-    )
-  }
+  let handlerDuration = timeBeforeHandler->Hrtime.timeSince->Hrtime.toSecondsFloat
+  Prometheus.ProcessingHandler.increment(
+    ~contract=eventItem.eventConfig.contractName,
+    ~event=eventItem.eventConfig.name,
+    ~duration=handlerDuration,
+  )
 }
 
 let runHandlerOrThrow = async (
@@ -173,7 +163,6 @@ let runHandlerOrThrow = async (
   ~loadManager,
   ~ctx: Ctx.t,
   ~shouldSaveHistory,
-  ~shouldBenchmark,
   ~chains: Internal.chains,
 ) => {
   switch item {
@@ -201,7 +190,7 @@ let runHandlerOrThrow = async (
       contextParams.isResolved = true
     } catch {
     | exn =>
-      raise(
+      throw(
         ProcessingError({
           message: "Unexpected error in the block handler. Please handle the error to keep the indexer running smoothly.",
           item,
@@ -219,7 +208,6 @@ let runHandlerOrThrow = async (
           ~loadManager,
           ~persistence=ctx.persistence,
           ~shouldSaveHistory,
-          ~shouldBenchmark,
           ~chains,
           ~config=ctx.config,
         )
@@ -252,18 +240,21 @@ let preloadBatchOrThrow = async (
   let itemIdx = ref(0)
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
-    let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpointIdx)
-    let checkpointEventsProcessed =
-      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
+    let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpointIdx)
+    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpointIdx)
 
     for idx in 0 to checkpointEventsProcessed - 1 {
-      let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
+      let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
-      | Event({eventConfig: {handler}, event}) =>
+      | Event({eventConfig: {handler, contractName, name: eventName}, event}) =>
         switch handler {
         | None => ()
         | Some(handler) =>
           try {
+            let timerRef = Prometheus.PreloadHandler.startOperation(
+              ~contract=contractName,
+              ~event=eventName,
+            )
             promises->Array.push(
               handler({
                 event,
@@ -279,7 +270,14 @@ let preloadBatchOrThrow = async (
                   isResolved: false,
                   config,
                 }),
-              })->Promise.silentCatch,
+              })
+              ->Promise.thenResolve(_ => {
+                timerRef->Prometheus.PreloadHandler.endOperation(
+                  ~contract=contractName,
+                  ~event=eventName,
+                )
+              })
+              ->Utils.Promise.silentCatch,
               // Must have Promise.catch as well as normal catch,
               // because if user throws an error before await in the handler,
               // it won't create a rejected promise
@@ -308,7 +306,7 @@ let preloadBatchOrThrow = async (
                   config,
                 }),
               )
-            })->Promise.silentCatch,
+            })->Utils.Promise.silentCatch,
           )
         } catch {
         | _ => ()
@@ -328,18 +326,16 @@ let runBatchHandlersOrThrow = async (
   ~loadManager,
   ~ctx,
   ~shouldSaveHistory,
-  ~shouldBenchmark,
   ~chains: Internal.chains,
 ) => {
   let itemIdx = ref(0)
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
-    let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpointIdx)
-    let checkpointEventsProcessed =
-      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
+    let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpointIdx)
+    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpointIdx)
 
     for idx in 0 to checkpointEventsProcessed - 1 {
-      let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
+      let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
 
       await runHandlerOrThrow(
         item,
@@ -348,7 +344,6 @@ let runBatchHandlersOrThrow = async (
         ~loadManager,
         ~ctx,
         ~shouldSaveHistory,
-        ~shouldBenchmark,
         ~chains,
       )
     }
@@ -369,11 +364,7 @@ let registerProcessEventBatchMetrics = (
     "write_time_elapsed": dbWriteDuration,
   })
 
-  Prometheus.incrementLoadEntityDurationCounter(~duration=loadDuration)
-  Prometheus.incrementEventRouterDurationCounter(~duration=handlerDuration)
-  Prometheus.incrementExecuteBatchDurationCounter(~duration=dbWriteDuration)
-  Prometheus.incrementStorageWriteTimeCounter(~duration=dbWriteDuration)
-  Prometheus.incrementStorageWriteCounter()
+  Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration)
 }
 
 type logPartitionInfo = {
@@ -420,7 +411,7 @@ let processEventBatch = async (
       )
     }
 
-    let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     if batch.items->Utils.Array.notEmpty {
       await batch->runBatchHandlersOrThrow(
@@ -428,13 +419,11 @@ let processEventBatch = async (
         ~loadManager,
         ~ctx,
         ~shouldSaveHistory=ctx.config->Config.shouldSaveHistory(~isInReorgThreshold),
-        ~shouldBenchmark=Env.Benchmark.shouldSaveData,
         ~chains,
       )
     }
 
-    let elapsedTimeAfterProcessing =
-      timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     try {
       await ctx.persistence->Persistence.writeBatch(
@@ -444,25 +433,16 @@ let processEventBatch = async (
         ~isInReorgThreshold,
       )
 
-      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
       let loaderDuration = elapsedTimeAfterLoaders
-      let handlerDuration = elapsedTimeAfterProcessing - loaderDuration
-      let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcessing
+      let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
+      let dbWriteDuration = elapsedTimeAfterDbWrite -. elapsedTimeAfterProcessing
       registerProcessEventBatchMetrics(
         ~logger,
         ~loadDuration=loaderDuration,
         ~handlerDuration,
         ~dbWriteDuration,
       )
-      if Env.Benchmark.shouldSaveData {
-        Benchmark.addEventProcessing(
-          ~batchSize=totalBatchSize,
-          ~loadDuration=loaderDuration,
-          ~handlerDuration,
-          ~dbWriteDuration,
-          ~totalTimeElapsed=elapsedTimeAfterDbWrite,
-        )
-      }
       Ok()
     } catch {
     | Persistence.StorageError({message, reason}) =>

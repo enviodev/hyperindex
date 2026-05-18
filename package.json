@@ -7,5 +7,10 @@
     "test:e2e": "pnpm --filter e2e-tests test:e2e",
     "test": "pnpm --filter e2e-tests test"
   },
-  "devDependencies": {}
+  "devDependencies": {},
+  "pnpm": {
+    "overrides": {
+      "react-dom": "19.2.3"
+    }
+  }
 }

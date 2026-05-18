@@ -8,13 +8,14 @@ Blockchain event indexer built with [Envio HyperIndex](https://docs.envio.dev). 
 
 - Node.js v22+ (v24 recommended), pnpm, Docker
 - `ENVIO_API_TOKEN` env var (required for HyperSync data source)
+- **All environment variables MUST use the `ENVIO_` prefix** (e.g., `ENVIO_RPC_URL`, `ENVIO_API_KEY`). The hosted service only exposes variables with this prefix at runtime.
 
 ## Commands
 
 ```bash
 pnpm codegen          # Regenerate types from schema.graphql + config.yaml
 pnpm tsc --noEmit     # Type-check without emitting
-TUI_OFF=true pnpm dev # Run indexer (TUI_OFF for CI/AI-friendly output)
+pnpm dev              # Run indexer
 pnpm test             # Run tests (Vitest)
 ```
 
@@ -24,13 +25,13 @@ pnpm test             # Run tests (Vitest)
 2. Run `pnpm codegen` (required after any schema/config change)
 3. Edit handlers in `src/handlers/`
 4. Run `pnpm tsc --noEmit` to type-check
-5. Run `TUI_OFF=true pnpm dev` to verify at runtime
+5. Run `pnpm dev` to verify at runtime
 
 ## Key Rules
 
 - **Spread operator for updates** — Entities returned by `context.Entity.get()` are read-only. Always spread: `context.Entity.set({ ...existing, field: newValue })`
 - **Effect API for external calls** — All `fetch`, RPC, or other async I/O must use `createEffect` + `context.effect()`. Never call external services directly in handlers.
-- **`entity_id` for relationships** — Use `token_id: String!` not `token: Token!`. No entity arrays without `@derivedFrom`.
+- **Entity references in schema, `_id` in handlers** — Schema uses `collection: NftCollection!` (entity reference, no `_id`). Handlers use `collection_id: value` (codegen adds `_id`). `@derivedFrom(field: "collection")` matches the schema field name, not the handler field name. No entity arrays without `@derivedFrom`.
 - **No `@entity` decorator** — Unlike TheGraph, schema types have no decorators.
 - **Codegen after schema/config changes** — Generated types go stale otherwise. Always `pnpm codegen` first.
 

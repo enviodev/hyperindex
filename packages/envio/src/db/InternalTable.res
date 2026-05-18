@@ -5,7 +5,7 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-module DynamicContractRegistry = Config.DynamicContractRegistry
+module EnvioAddresses = Config.EnvioAddresses
 
 module Chains = {
   type progressFields = [
@@ -24,7 +24,6 @@ module Chains = {
     | #first_event_block
     | #buffer_block
     | #ready_at
-    | #_num_batches_fetched
     | #_is_hyper_sync
   ]
 
@@ -40,26 +39,30 @@ module Chains = {
     #ready_at,
     #events_processed,
     #_is_hyper_sync,
-    #_num_batches_fetched,
   ]
 
   type metaFields = {
-    @as("first_event_block") firstEventBlockNumber: Js.null<int>,
+    @as("first_event_block")
+    firstEventBlockNumber: Null.t<
+      // Push id first (for WHERE clause)
+
+      // Then push all updateable field values (for SET clause)
+      int,
+    >,
     @as("buffer_block") latestFetchedBlockNumber: int,
     @as("ready_at")
-    timestampCaughtUpToHeadOrEndblock: Js.null<Js.Date.t>,
+    timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     @as("_is_hyper_sync") isHyperSync: bool,
-    @as("_num_batches_fetched") numBatchesFetched: int,
   }
 
   type t = {
     @as("id") id: int,
     @as("start_block") startBlock: int,
-    @as("end_block") endBlock: Js.null<int>,
+    @as("end_block") endBlock: Null.t<int>,
     @as("max_reorg_depth") maxReorgDepth: int,
     @as("source_block") blockHeight: int,
     @as("progress_block") progressBlockNumber: int,
-    @as("events_processed") numEventsProcessed: int,
+    @as("events_processed") numEventsProcessed: float,
     ...metaFields,
   }
 
@@ -90,13 +93,11 @@ module Chains = {
         ~fieldSchema=S.null(Utils.Schema.dbDate),
         ~isNullable,
       ),
-      mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
+      mkField((#events_processed: field :> string), UInt52, ~fieldSchema=S.float),
       // TODO: In the future it should reference a table with sources
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // Fully processed block number
       mkField((#progress_block: field :> string), Int32, ~fieldSchema=S.int),
-      // TODO: Should deprecate after changing the ETA calculation logic
-      mkField((#_num_batches_fetched: field :> string), Int32, ~fieldSchema=S.int),
     ],
   )
 
@@ -104,16 +105,15 @@ module Chains = {
     {
       id: chainConfig.id,
       startBlock: chainConfig.startBlock,
-      endBlock: chainConfig.endBlock->Js.Null.fromOption,
+      endBlock: chainConfig.endBlock->Null.fromOption,
       maxReorgDepth: chainConfig.maxReorgDepth,
       blockHeight: 0,
-      firstEventBlockNumber: Js.Null.empty,
+      firstEventBlockNumber: Null.null,
       latestFetchedBlockNumber: -1,
-      timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
+      timestampCaughtUpToHeadOrEndblock: Null.null,
       progressBlockNumber: -1,
       isHyperSync: false,
-      numEventsProcessed: 0,
-      numBatchesFetched: 0,
+      numEventsProcessed: 0.,
     }
   }
 
@@ -128,34 +128,28 @@ module Chains = {
       let valuesRows = chainConfigs->Belt.Array.map(chainConfig => {
         let initialValues = initialFromConfig(chainConfig)
         let values = fields->Belt.Array.map((field: field) => {
-          let value =
-            initialValues->(Utils.magic: t => dict<unknown>)->Js.Dict.get((field :> string))
-          switch Js.typeof(value) {
-          | "object" => "NULL"
-          | "number" => value->(Utils.magic: option<unknown> => int)->Belt.Int.toString
-          | "boolean" => value->(Utils.magic: option<unknown> => bool) ? "true" : "false"
-          | _ => Js.Exn.raiseError("Invalid envio_chains value type")
+          let value = initialValues->(Utils.magic: t => dict<unknown>)->Dict.get((field :> string))
+          switch typeof(value) {
+          | #object => "NULL"
+          | #number => value->(Utils.magic: option<unknown> => int)->Belt.Int.toString
+          | #bigint => value->(Utils.magic: option<unknown> => bigint)->BigInt.toString
+          | #boolean => value->(Utils.magic: option<unknown> => bool) ? "true" : "false"
+          | _ => JsError.throwWithMessage("Invalid envio_chains value type")
           }
         })
 
-        `(${values->Js.Array2.joinWith(", ")})`
+        `(${values->Array.joinUnsafe(", ")})`
       })
 
       Some(
-        `INSERT INTO "${pgSchema}"."${table.tableName}" (${columnNames->Js.Array2.joinWith(", ")})
-VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
+        `INSERT INTO "${pgSchema}"."${table.tableName}" (${columnNames->Array.joinUnsafe(", ")})
+VALUES ${valuesRows->Array.joinUnsafe(",\n       ")};`,
       )
     }
   }
 
   // Fields that can be updated outside of the batch transaction
-  let metaFields: array<field> = [
-    #buffer_block,
-    #first_event_block,
-    #ready_at,
-    #_is_hyper_sync,
-    #_num_batches_fetched,
-  ]
+  let metaFields: array<field> = [#buffer_block, #first_event_block, #ready_at, #_is_hyper_sync]
 
   let makeMetaFieldsUpdateQuery = (~pgSchema) => {
     // Generate SET clauses with parameter placeholders
@@ -166,27 +160,23 @@ VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
     })
 
     `UPDATE "${pgSchema}"."${table.tableName}"
-SET ${setClauses->Js.Array2.joinWith(",\n    ")}
+SET ${setClauses->Array.joinUnsafe(",\n    ")}
 WHERE "${(#id: field :> string)}" = $1;`
   }
 
   type rawInitialState = {
     id: int,
     startBlock: int,
-    endBlock: Js.Null.t<int>,
+    endBlock: Null.t<int>,
     maxReorgDepth: int,
-    firstEventBlockNumber: Js.Null.t<int>,
-    timestampCaughtUpToHeadOrEndblock: Js.Null.t<Js.Date.t>,
-    numEventsProcessed: int,
+    firstEventBlockNumber: Null.t<int>,
+    timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
+    numEventsProcessed: float,
     progressBlockNumber: int,
-    dynamicContracts: array<Internal.indexingContract>,
+    indexingAddresses: array<Internal.indexingAddress>,
     sourceBlockNumber: int,
   }
 
-  // FIXME: Using registering_event_block_number for startBlock
-  // seems incorrect, since there might be a custom start block
-  // for the contract.
-  // TODO: Write a repro test where it might break something and fix
   let makeGetInitialStateQuery = (~pgSchema) => {
     `SELECT "${(#id: field :> string)}" as "id",
 "${(#start_block: field :> string)}" as "startBlock",
@@ -194,19 +184,21 @@ WHERE "${(#id: field :> string)}" = $1;`
 "${(#max_reorg_depth: field :> string)}" as "maxReorgDepth",
 "${(#first_event_block: field :> string)}" as "firstEventBlockNumber",
 "${(#ready_at: field :> string)}" as "timestampCaughtUpToHeadOrEndblock",
-"${(#events_processed: field :> string)}" as "numEventsProcessed",
+"${(#events_processed: field :> string)}"::float8 as "numEventsProcessed",
 "${(#progress_block: field :> string)}" as "progressBlockNumber",
 "${(#source_block: field :> string)}" as "sourceBlockNumber",
 (
+  -- envio_addresses.id is a composite "{chainId}-{address}" string produced by
+  -- Config.EnvioAddresses.makeId; extract the address by taking everything
+  -- after the first '-'. Keep in sync with makeId / getAddress.
   SELECT COALESCE(json_agg(json_build_object(
-    'address', "contract_address",
+    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
     'contractName', "contract_name",
-    'startBlock', "registering_event_block_number",
-    'registrationBlock', "registering_event_block_number"
+    'registrationBlock', "registration_block"
   )), '[]'::json)
-  FROM "${pgSchema}"."${DynamicContractRegistry.table.tableName}"
+  FROM "${pgSchema}"."${EnvioAddresses.table.tableName}"
   WHERE "chain_id" = chains."${(#id: field :> string)}"
-) as "dynamicContracts"
+) as "indexingAddresses"
 FROM "${pgSchema}"."${table.tableName}" as chains;`
   }
 
@@ -226,7 +218,7 @@ FROM "${pgSchema}"."${table.tableName}" as chains;`
     })
 
     `UPDATE "${pgSchema}"."${table.tableName}"
-SET ${setClauses->Js.Array2.joinWith(",\n    ")}
+SET ${setClauses->Array.joinUnsafe(",\n    ")}
 WHERE "id" = $1;`
   }
 
@@ -239,16 +231,16 @@ WHERE "id" = $1;`
       let params = []
 
       // Push id first (for WHERE clause)
-      params->Js.Array2.push(chainId->(Utils.magic: string => unknown))->ignore
+      params->Array.push(chainId->(Utils.magic: string => unknown))->ignore
 
       // Then push all updateable field values (for SET clause)
-      metaFields->Js.Array2.forEach(field => {
+      metaFields->Array.forEach(field => {
         let value =
-          data->(Utils.magic: metaFields => dict<unknown>)->Js.Dict.unsafeGet((field :> string))
-        params->Js.Array2.push(value)->ignore
+          data->(Utils.magic: metaFields => dict<unknown>)->Dict.getUnsafe((field :> string))
+        params->Array.push(value)->ignore
       })
 
-      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Array.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
     Promise.all(promises)
@@ -258,7 +250,7 @@ WHERE "id" = $1;`
     chainId: int,
     progressBlockNumber: int,
     sourceBlockNumber: int,
-    totalEventsProcessed: int,
+    totalEventsProcessed: float,
   }
 
   let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<progressedChain>) => {
@@ -266,51 +258,79 @@ WHERE "id" = $1;`
 
     let promises = []
 
-    progressedChains->Js.Array2.forEach(data => {
+    progressedChains->Array.forEach(data => {
       let params = []
 
-      // Push id first (for WHERE clause)
-      params->Js.Array2.push(data.chainId->(Utils.magic: int => unknown))->ignore
+      params->Array.push(data.chainId->(Utils.magic: int => unknown))->ignore
 
-      // Then push all updateable field values (for SET clause)
-      progressFields->Js.Array2.forEach(field => {
+      progressFields->Array.forEach(field => {
         params
-        ->Js.Array2.push(
+        ->Array.push(
           switch field {
           | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
-          | #events_processed => data.totalEventsProcessed->(Utils.magic: int => unknown)
+          | #events_processed => data.totalEventsProcessed->(Utils.magic: float => unknown)
           | #source_block => data.sourceBlockNumber->(Utils.magic: int => unknown)
           },
         )
         ->ignore
       })
 
-      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Array.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
-    Promise.all(promises)->Promise.ignoreValue
+    Promise.all(promises)->Utils.Promise.ignoreValue
   }
 }
 
-module PersistedState = {
-  type t = {
-    id: int,
-    envio_version: string,
-    config_hash: string,
-    schema_hash: string,
-    abi_files_hash: string,
-  }
-
+module EnvioInfo = {
+  // Singleton table — written by `initialize` inside the schema-setup
+  // transaction, read on resume for the config compat check. The `id`
+  // column has a fixed default of 1 plus a primary key, so the table can
+  // hold at most one row; `write` upserts on conflict.
+  //
+  // `config` is TEXT (not JSONB) so the round-trip is byte-stable: jsonb
+  // re-serializes numbers/escapes which made the diff produce false
+  // positives on harmless format differences.
   let table = mkTable(
-    "persisted_state",
+    "envio_info",
     ~fields=[
-      mkField("id", Serial, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField("envio_version", String, ~fieldSchema=S.string),
-      mkField("config_hash", String, ~fieldSchema=S.string),
-      mkField("schema_hash", String, ~fieldSchema=S.string),
-      mkField("abi_files_hash", String, ~fieldSchema=S.string),
+      mkField("id", Int32, ~fieldSchema=S.int, ~isPrimaryKey, ~default="1"),
+      mkField("config", String, ~fieldSchema=S.string),
     ],
   )
+
+  // Postgres SQLSTATE for "undefined_table" — what we get when the schema
+  // was initialized by an older envio that didn't have `envio_info`.
+  let undefinedTableSqlState = "42P01"
+
+  @get external getCode: JsExn.t => option<string> = "code"
+
+  let read = async (sql, ~pgSchema): option<JSON.t> => {
+    let rows: array<{
+      "config": string,
+    }> = try await sql->Postgres.unsafe(
+      `SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`,
+    ) catch {
+    | exn =>
+      switch exn->JsExn.anyToExnInternal {
+      | JsExn(e) if e->getCode === Some(undefinedTableSqlState) => []
+      | _ => throw(exn)
+      }
+    }
+    rows->Belt.Array.get(0)->Belt.Option.map(row => row["config"]->JSON.parseOrThrow)
+  }
+
+  // Upsert keyed on the fixed id so the table stays a singleton even if
+  // `initialize` runs against a non-empty schema (shouldn't happen, but
+  // protects against a partially-applied prior run).
+  let write = (sql, ~pgSchema, ~envioInfo: JSON.t) => {
+    sql
+    ->Postgres.preparedUnsafe(
+      `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "config") VALUES (1, $1) ON CONFLICT ("id") DO UPDATE SET "config" = EXCLUDED."config";`,
+      [envioInfo->JSON.stringify]->(Utils.magic: array<string> => unknown),
+    )
+    ->Utils.Promise.ignoreValue
+  }
 }
 
 module Checkpoints = {
@@ -323,23 +343,38 @@ module Checkpoints = {
   ]
 
   type t = {
-    id: float,
+    id: bigint,
     @as("chain_id")
     chainId: int,
     @as("block_number")
     blockNumber: int,
     @as("block_hash")
-    blockHash: Js.null<string>,
+    blockHash: Null.t<string>,
     @as("events_processed")
     eventsProcessed: int,
   }
 
-  let initialCheckpointId = 0.
+  // Schema for parsing DB results where BIGINT columns come back as strings
+  let dbSchema = S.object(s => {
+    id: s.field("id", Utils.BigInt.schema),
+    chainId: s.field("chain_id", S.int),
+    blockNumber: s.field("block_number", S.int),
+    blockHash: s.field(
+      "block_hash",
+      S.union([
+        S.string->(Utils.magic: S.t<string> => S.t<Null.t<string>>),
+        S.literal(%raw(`null`)),
+      ]),
+    ),
+    eventsProcessed: s.field("events_processed", S.int),
+  })
+
+  let initialCheckpointId = 0n
 
   let table = mkTable(
     "envio_checkpoints",
     ~fields=[
-      mkField((#id: field :> string), Int32, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
       mkField((#chain_id: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#block_hash: field :> string), String, ~fieldSchema=S.null(S.string), ~isNullable),
@@ -374,12 +409,12 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
   }
 
   let makeCommitedCheckpointIdQuery = (~pgSchema) => {
-    `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->Belt.Float.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
+    `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->BigInt.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
   }
 
   let makeInsertCheckpointQuery = (~pgSchema) => {
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
-SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
+SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
   }
 
   let insert = (
@@ -393,44 +428,46 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
   ) => {
     let query = makeInsertCheckpointQuery(~pgSchema)
 
+    // Convert bigint arrays to string arrays for postgres driver compatibility
+    let checkpointIdStrings = checkpointIds->Utils.BigInt.arrayToStringArray
     sql
     ->Postgres.preparedUnsafe(
       query,
       (
-        checkpointIds,
+        checkpointIdStrings,
         checkpointChainIds,
         checkpointBlockNumbers,
         checkpointBlockHashes,
         checkpointEventsProcessed,
       )->(
         Utils.magic: (
-          (array<float>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
+          (array<string>, array<int>, array<int>, array<Null.t<string>>, array<int>)
         ) => unknown
       ),
     )
-    ->Promise.ignoreValue
+    ->Utils.Promise.ignoreValue
   }
 
   let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
     sql
     ->Postgres.preparedUnsafe(
       `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
-      [rollbackTargetCheckpointId]->(Utils.magic: array<Internal.checkpointId> => unknown),
+      [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
     )
-    ->Promise.ignoreValue
+    ->Utils.Promise.ignoreValue
   }
 
   let makePruneStaleCheckpointsQuery = (~pgSchema) => {
     `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1;`
   }
 
-  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: float) => {
+  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: bigint) => {
     sql
     ->Postgres.preparedUnsafe(
       makePruneStaleCheckpointsQuery(~pgSchema),
-      [safeCheckpointId]->Obj.magic,
+      [safeCheckpointId->BigInt.toString]->Obj.magic,
     )
-    ->Promise.ignoreValue
+    ->Utils.Promise.ignoreValue
   }
 
   let makeGetRollbackTargetCheckpointQuery = (~pgSchema) => {
@@ -448,12 +485,16 @@ LIMIT 1;`
     ~reorgChainId: int,
     ~lastKnownValidBlockNumber: int,
   ) => {
-    sql
-    ->Postgres.preparedUnsafe(
-      makeGetRollbackTargetCheckpointQuery(~pgSchema),
-      (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
-    )
-    ->(Utils.magic: promise<unknown> => promise<array<{"id": Internal.checkpointId}>>)
+    let rawResult: promise<array<{"id": string}>> =
+      sql
+      ->Postgres.preparedUnsafe(
+        makeGetRollbackTargetCheckpointQuery(~pgSchema),
+        (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
+      )
+      ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>)
+    rawResult->Promise.thenResolve(rows => {
+      rows->Belt.Array.get(0)->Belt.Option.map(row => row["id"]->BigInt.fromStringOrThrow)
+    })
   }
 
   let makeGetRollbackProgressDiffQuery = (~pgSchema) => {
@@ -474,7 +515,7 @@ GROUP BY "${(#chain_id: field :> string)}";`
     sql
     ->Postgres.preparedUnsafe(
       makeGetRollbackProgressDiffQuery(~pgSchema),
-      [rollbackTargetCheckpointId]->Obj.magic,
+      [rollbackTargetCheckpointId->BigInt.toString]->Obj.magic,
     )
     ->(
       Utils.magic: promise<unknown> => promise<
@@ -489,8 +530,6 @@ GROUP BY "${(#chain_id: field :> string)}";`
 }
 
 module RawEvents = {
-  // @genType Used for Test DB and internal tests
-  @genType
   type t = {
     @as("chain_id") chainId: int,
     @as("event_id") eventId: bigint,
@@ -501,9 +540,9 @@ module RawEvents = {
     @as("src_address") srcAddress: Address.t,
     @as("block_hash") blockHash: string,
     @as("block_timestamp") blockTimestamp: int,
-    @as("block_fields") blockFields: Js.Json.t,
-    @as("transaction_fields") transactionFields: Js.Json.t,
-    params: Js.Json.t,
+    @as("block_fields") blockFields: JSON.t,
+    @as("transaction_fields") transactionFields: JSON.t,
+    params: JSON.t,
   }
 
   let schema = S.schema(s => {
@@ -525,7 +564,7 @@ module RawEvents = {
     "raw_events",
     ~fields=[
       mkField("chain_id", Int32, ~fieldSchema=S.int),
-      mkField("event_id", BigInt({}), ~fieldSchema=S.bigint),
+      mkField("event_id", UInt64, ~fieldSchema=S.bigint),
       mkField("event_name", String, ~fieldSchema=S.string),
       mkField("contract_name", String, ~fieldSchema=S.string),
       mkField("block_number", Int32, ~fieldSchema=S.int),
@@ -536,7 +575,7 @@ module RawEvents = {
       mkField("block_fields", Json, ~fieldSchema=S.json(~validate=false)),
       mkField("transaction_fields", Json, ~fieldSchema=S.json(~validate=false)),
       mkField("params", Json, ~fieldSchema=S.json(~validate=false)),
-      mkField("serial", Serial, ~isNullable, ~isPrimaryKey, ~fieldSchema=S.null(S.int)),
+      mkField("serial", BigSerial, ~isNullable, ~isPrimaryKey, ~fieldSchema=S.null(S.bigint)),
     ],
   )
 }
@@ -555,7 +594,7 @@ SELECT
   "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
   "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
   "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
-  "${(#events_processed: Chains.field :> string)}" AS "eventsProcessed",
+  "${(#events_processed: Chains.field :> string)}"::float4 AS "eventsProcessed",
   "${(#source_block: Chains.field :> string)}" AS "sourceBlock",
   "${(#ready_at: Chains.field :> string)}" AS "readyAt",
   ("${(#ready_at: Chains.field :> string)}" IS NOT NULL) AS "isReady"
@@ -573,8 +612,8 @@ SELECT
   "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",
   "${(#buffer_block: Chains.field :> string)}" AS "latest_fetched_block_number",
   "${(#progress_block: Chains.field :> string)}" AS "latest_processed_block",
-  "${(#_num_batches_fetched: Chains.field :> string)}" AS "num_batches_fetched",
-  "${(#events_processed: Chains.field :> string)}" AS "num_events_processed",
+  0 AS "num_batches_fetched",
+  "${(#events_processed: Chains.field :> string)}"::float4 AS "num_events_processed",
   "${(#start_block: Chains.field :> string)}" AS "start_block",
   "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "${pgSchema}"."${Chains.table.tableName}";`

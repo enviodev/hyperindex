@@ -46,7 +46,7 @@ const README_PATH = path.join(REPO_ROOT, "packages/cli/README.md");
 
 /** Files/dirs to copy from envio package into dist. */
 const PUBLISH_FILES = [
-  "bin.js",
+  "bin.mjs",
   "evm.schema.json",
   "fuel.schema.json",
   "svm.schema.json",
@@ -73,13 +73,16 @@ export function buildPackageJson(
   pkg.version = version;
   delete pkg.private;
   delete pkg.scripts;
+  delete pkg.devDependencies;
 
-  // Switch bin to the production entry point
-  pkg.bin = "./bin.js";
+  pkg.bin = "./bin.mjs";
 
-  // Add optional platform-specific dependencies
+  // Add optional platform-specific dependencies. npm/pnpm use the `libc`
+  // field in each platform package's package.json to skip the wrong flavor
+  // on Linux (glibc vs musl).
   pkg.optionalDependencies = {
     "envio-linux-x64": platformPkgVersion,
+    "envio-linux-x64-musl": platformPkgVersion,
     "envio-linux-arm64": platformPkgVersion,
     "envio-darwin-x64": platformPkgVersion,
     "envio-darwin-arm64": platformPkgVersion,
@@ -93,7 +96,8 @@ export function buildPackageJson(
  */
 export function compileRescript(envioDir: string): void {
   console.log("Compiling ReScript...");
-  // Use the rescript binary directly to avoid pnpm workspace detection issues
+  // Use the rescript binary directly to avoid pnpm workspace detection issues.
+  // With pnpm's default isolated layout, the bin is in envio's own node_modules.
   execSync("./node_modules/.bin/rescript", {
     cwd: envioDir,
     stdio: "inherit",
@@ -169,7 +173,7 @@ export function build(opts: BuildOptions): void {
   );
   console.log(`Wrote publish package.json (version=${opts.version})`);
 
-  // 4. Copy README
+  // 5. Copy README
   copyReadme(readmePath, outDir);
 
   console.log("Build complete.");

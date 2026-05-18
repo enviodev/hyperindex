@@ -1,128 +1,159 @@
 name: Build & Verify
 
 on:
-  pull_request:
+  # pull_request_target for ALL PRs (same-repo and forks). Runs with
+  # secrets. Fork PRs are gated by the `fork-ci` environment which
+  # requires manual approval from a reviewer before jobs proceed.
+  # Same-repo PRs use the `internal` environment (no restrictions).
+  pull_request_target:
   push:
     branches:
       - main
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # ── Authorize ──────────────────────────────────────────────────────
+
+  # Routes to the right GitHub Environment:
+  #   - push to main          → `internal` (no restrictions)
+  #   - same-repo PR          → `internal` (no restrictions)
+  #   - fork PR               → `fork-ci`  (requires reviewer approval)
+  #
+  # Setup (one-time):
+  #   Settings → Environments → create `internal` (no rules) and
+  #   `fork-ci` (add required reviewers: your team).
+  #
+  # This replaces the entire /ok-to-test slash-command gate: no
+  # issue_comment trigger, no SHA validation, no author_association
+  # check, no reaction code. GitHub's environment approval handles
+  # authorization natively. Each new fork push triggers a new run
+  # that requires fresh approval.
+  authorize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    environment: >-
+      ${{
+        github.event_name == 'pull_request_target' &&
+        github.event.pull_request.head.repo.full_name != github.repository &&
+        'fork-ci' || 'internal'
+      }}
+    steps:
+      - run: echo "Authorized"
+
   # ── Build ───────────────────────────────────────────────────────────
 
-  # Build envio CLI binary for linux-x64 and wrap it in a platform npm package
-  build-linux-package:
+  # Build envio NAPI addon + wrap it as envio-linux-x64, and build the base
+  # envio npm package (ReScript compilation). Fused so we pay for toolchain
+  # setup + checkout once — the addon build dominates total time, and the
+  # envio package build has no Rust dependency.
+  build-envio-package:
     runs-on: ubuntu-22.04
     timeout-minutes: 9
+    needs: authorize
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Install toolchain
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - uses: ./.github/actions/cargo-cache
+
+      - uses: pnpm/action-setup@v5
         with:
-          targets: x86_64-unknown-linux-musl
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: musl-tools
-
-      - name: Build envio CLI
-        env:
-          SVM_TARGET_PLATFORM: linux-amd64
-        run: cargo build --release --bins --target x86_64-unknown-linux-musl
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Build platform npm package
-        run: |
-          node packages/build-envio/build-platform-package.ts \
-            --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
-          mkdir -p envio-linux-x64/bin
-          cp target/x86_64-unknown-linux-musl/release/envio envio-linux-x64/bin/
-          chmod +x envio-linux-x64/bin/envio
-
-      - name: Upload linux-x64 platform npm package
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: envio-linux-x64
-
-  # Build envio base npm package (ReScript compilation, package.json rewrite)
-  build-envio-package:
-    runs-on: ubuntu-latest
-    timeout-minutes: 9
-    needs: build-linux-package
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download linux-x64 platform package
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: ./npm-pkg-envio-linux-x64
-
-      - name: Add envio to PATH
-        run: |
-          chmod +x ./npm-pkg-envio-linux-x64/bin/envio
-          echo "${{ github.workspace }}/npm-pkg-envio-linux-x64/bin" >> $GITHUB_PATH
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+          version: 10
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: "pnpm"
 
+      - name: Build envio NAPI addon
+        env:
+          SVM_TARGET_PLATFORM: linux-amd64
+        run: cargo build --release --lib
+
       - name: Install dependencies
         run: pnpm install
+
+      - name: Build linux-x64 platform npm package
+        run: |
+          node packages/build-envio/build-platform-package.ts \
+            --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
+          mkdir -p envio-linux-x64
+          cp target/release/libenvio.so envio-linux-x64/envio.node
 
       - name: Build envio package
         run: node packages/build-envio/src/build-artifact.ts --version 0.0.1-dev --out envio-dist
 
-      - name: Verify artifact
+      - name: Verify envio artifact
         run: node packages/build-envio/src/verify-artifact.ts envio-dist
 
+      - name: Upload linux-x64 platform npm package
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: envio-linux-x64
+
       - name: Upload envio npm package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npm-pkg-envio
           path: envio-dist
 
   # ── Verify ──────────────────────────────────────────────────────────
 
-  # Cargo unit tests - no artifacts needed, independent compilation
+  # Cargo lint and unit tests - no artifacts needed, independent compilation
   cargo-test:
     runs-on: ubuntu-latest
     timeout-minutes: 9
+    needs: authorize
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: ./.github/actions/cargo-cache
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Cargo Test
+        run: cargo test --no-default-features
+
+  # Hypersync endpoint health check - non-blocking, external dependency
+  hypersync-health-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    continue-on-error: true
+    needs: authorize
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Cargo Test
-        run: cargo test --no-default-features
+      - uses: ./.github/actions/cargo-cache
 
       - name: Hypersync Health Test
         run: cargo test --features integration_tests
@@ -134,42 +165,10 @@ jobs:
     timeout-minutes: 9
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download linux-x64 platform package
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
         with:
-          name: npm-pkg-envio-linux-x64
-          path: ./npm-pkg-envio-linux-x64
-
-      - name: Add envio to PATH
-        run: |
-          chmod +x ./npm-pkg-envio-linux-x64/bin/envio
-          echo "${{ github.workspace }}/npm-pkg-envio-linux-x64/bin" >> $GITHUB_PATH
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Download pre-built envio package
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio
-          path: ./envio-dist
-
-      # Overlay pre-built dist (compiled ReScript etc.) on top of installed packages/envio
-      - name: Install pre-built envio package
-        run: cp -r envio-dist/* packages/envio/
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Run template tests
         working-directory: packages/e2e-tests
@@ -212,42 +211,10 @@ jobs:
           - 8080:8080
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download linux-x64 platform package
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
         with:
-          name: npm-pkg-envio-linux-x64
-          path: ./npm-pkg-envio-linux-x64
-
-      - name: Add envio to PATH
-        run: |
-          chmod +x ./npm-pkg-envio-linux-x64/bin/envio
-          echo "${{ github.workspace }}/npm-pkg-envio-linux-x64/bin" >> $GITHUB_PATH
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Download pre-built envio package
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio
-          path: ./envio-dist
-
-      # Overlay pre-built dist (compiled ReScript etc.) on top of installed packages/envio
-      - name: Install pre-built envio package
-        run: cp -r envio-dist/* packages/envio/
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
         run: |
@@ -259,20 +226,37 @@ jobs:
       - name: test_codegen
         working-directory: scenarios/test_codegen
         run: |
-          envio codegen
+          # scenarios/test_codegen has its own pnpm-workspace.yaml, so the root
+          # .pnpmfile.cjs isn't picked up when codegen triggers nested `pnpm install`.
+          # Symlink (not copy) so __dirname still resolves to the repo root.
+          ln -sf ../../.pnpmfile.cjs .pnpmfile.cjs
+          pnpm exec envio codegen
           pnpm test
 
       - name: fuel_test
         working-directory: scenarios/fuel_test
         run: |
-          envio codegen
+          pnpm exec envio codegen
+          pnpm test
+
+      - name: svm_test
+        working-directory: scenarios/svm_test
+        run: |
+          pnpm exec envio codegen
           pnpm test
 
       - name: Test Failure Notification
-        uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
-        if: failure() && github.ref == 'refs/heads/main'
+        uses: rjstone/discord-webhook-notify@c2597273488aeda841dd1e891321952b51f7996f # v2.2.1
+        if: failure() && github.event_name == 'push'
         with:
           severity: error
+          description: |
+            - **Repository:** [${{ github.repository }}](${{ github.server_url }}/${{ github.repository }})
+            - **Workflow:** [${{ github.workflow }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            - **Event:** ${{ github.event_name }}
+            - **Branch:** ${{ github.ref_name }}
+            - **Commit:** [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            - **Triggering Actor:** ${{ github.triggering_actor }}
           details: "Tests Failed on main!"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
 
@@ -311,43 +295,23 @@ jobs:
         ports:
           - 8080:8080
 
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.2.15.4
+        env:
+          CLICKHOUSE_PASSWORD: testing
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 8123:8123
+
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download linux-x64 platform package
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
         with:
-          name: npm-pkg-envio-linux-x64
-          path: ./npm-pkg-envio-linux-x64
-
-      - name: Add envio to PATH
-        run: |
-          chmod +x ./npm-pkg-envio-linux-x64/bin/envio
-          echo "${{ github.workspace }}/npm-pkg-envio-linux-x64/bin" >> $GITHUB_PATH
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Download pre-built envio package
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio
-          path: ./envio-dist
-
-      # Overlay pre-built dist (compiled ReScript etc.) on top of installed packages/envio
-      - name: Install pre-built envio package
-        run: cp -r envio-dist/* packages/envio/
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
         run: |
@@ -355,6 +319,12 @@ jobs:
             if curl -sSf http://localhost:8080/healthz >/dev/null; then
               echo "Hasura is up"; exit 0; fi; sleep 1; done
           echo "Hasura did not become ready"; exit 1
+
+      - name: Run smoke test
+        working-directory: scenarios/e2e_test
+        run: |
+          pnpm exec envio codegen
+          pnpm test
 
       - name: Run E2E test
         working-directory: packages/e2e-tests
@@ -365,9 +335,16 @@ jobs:
         run: pnpm test:deps
 
       - name: E2E Test Failure Notification
-        uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
-        if: failure() && github.ref == 'refs/heads/main'
+        uses: rjstone/discord-webhook-notify@c2597273488aeda841dd1e891321952b51f7996f # v2.2.1
+        if: failure() && github.event_name == 'push'
         with:
           severity: error
+          description: |
+            - **Repository:** [${{ github.repository }}](${{ github.server_url }}/${{ github.repository }})
+            - **Workflow:** [${{ github.workflow }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            - **Event:** ${{ github.event_name }}
+            - **Branch:** ${{ github.ref_name }}
+            - **Commit:** [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            - **Triggering Actor:** ${{ github.triggering_actor }}
           details: "E2E Tests Failed on main!"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}

@@ -1,0 +1,23 @@
+name: Cargo cache
+description: Cache Cargo registry and build artifacts using actions/cache v5 (Node.js 24).
+
+inputs:
+  cache-suffix:
+    description: Extra string appended to the cache key (e.g. a cross-compile target).
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ inputs.cache-suffix }}${{ inputs.cache-suffix && '-' || '' }}${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-${{ inputs.cache-suffix }}${{ inputs.cache-suffix && '-' || '' }}

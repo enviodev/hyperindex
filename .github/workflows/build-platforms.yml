@@ -7,6 +7,9 @@ on:
         required: true
         type: string
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-platform-package:
     name: Build ${{ matrix.job.name }}
@@ -14,22 +17,28 @@ jobs:
     strategy:
       matrix:
         job:
-          - { os: "ubuntu-22.04", target: "aarch64-unknown-linux-gnu", arch: "arm64", svm_target_platform: "linux-aarch64", name: "linux-arm64" }
-          - { os: "macos-latest", target: "x86_64-apple-darwin", arch: "x64", svm_target_platform: "macosx-amd64", name: "darwin-x64" }
-          - { os: "macos-latest", target: "aarch64-apple-darwin", arch: "arm64", svm_target_platform: "macosx-aarch64", name: "darwin-arm64" }
+          - { os: "ubuntu-22.04", target: "x86_64-unknown-linux-gnu", platform: "linux", arch: "x64", libc: "glibc", svm_target_platform: "linux-amd64", name: "linux-x64" }
+          - { os: "ubuntu-22.04", target: "x86_64-unknown-linux-musl", platform: "linux", arch: "x64", libc: "musl", svm_target_platform: "linux-amd64", name: "linux-x64-musl" }
+          - { os: "ubuntu-22.04", target: "aarch64-unknown-linux-gnu", platform: "linux", arch: "arm64", libc: "glibc", svm_target_platform: "linux-aarch64", name: "linux-arm64" }
+          - { os: "macos-latest", target: "x86_64-apple-darwin", platform: "darwin", arch: "x64", svm_target_platform: "macosx-amd64", name: "darwin-x64" }
+          - { os: "macos-latest", target: "aarch64-apple-darwin", platform: "darwin", arch: "arm64", svm_target_platform: "macosx-aarch64", name: "darwin-arm64" }
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.job.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/cargo-cache
         with:
-          cache-on-failure: true
+          cache-suffix: ${{ matrix.job.target }}
+
+      - name: Patch Cargo.toml version
+        shell: bash
+        run: sed -i.bak "s/^version = .*/version = \"${{ inputs.version }}\"/" packages/cli/Cargo.toml
 
       - name: Apple M1 setup
         if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
@@ -44,13 +53,22 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
-      - name: Build binaries
+      # musl defaults to crt-static, which makes cargo silently drop the
+      # cdylib crate type. Disable crt-static so the NAPI .so is produced
+      # and dlopen-able by Node on Alpine/musl hosts.
+      - name: Linux musl setup
+        if: ${{ matrix.job.libc == 'musl' }}
+        run: |
+          sudo apt-get install -y musl-tools
+          echo "RUSTFLAGS=-C target-feature=-crt-static" >> $GITHUB_ENV
+
+      - name: Build NAPI addon
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
-        run: cargo build --release --bins --target ${{ matrix.job.target }}
+        run: cargo build --release --lib --target ${{ matrix.job.target }}
 
       - name: Install node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
 
@@ -59,18 +77,26 @@ jobs:
         env:
           TARGET: ${{ matrix.job.target }}
           NAME: ${{ matrix.job.name }}
+          PLATFORM: ${{ matrix.job.platform }}
+          ARCH: ${{ matrix.job.arch }}
+          LIBC: ${{ matrix.job.libc }}
           VERSION: ${{ inputs.version }}
         run: |
-          node_os=$(echo "${NAME}" | cut -d '-' -f1)
-          node_arch=$(echo "${NAME}" | cut -d '-' -f2)
-          node_pkg="packages/cli/npm/envio-${node_os}-${node_arch}"
+          node_pkg="packages/cli/npm/envio-${NAME}"
+          libc_flag=""
+          if [ -n "${LIBC}" ]; then libc_flag="--libc ${LIBC}"; fi
           node packages/build-envio/build-platform-package.ts \
-            --version "${VERSION}" --platform "${node_os}" --arch "${node_arch}" --out "${node_pkg}"
-          mkdir -p "${node_pkg}/bin"
-          cp "target/${TARGET}/release/envio" "${node_pkg}/bin"
+            --version "${VERSION}" --platform "${PLATFORM}" --arch "${ARCH}" ${libc_flag} --out "${node_pkg}"
+          # Copy the platform-specific cdylib as envio.node (matches package.json main)
+          case "${PLATFORM}" in
+            linux)  lib_name="libenvio.so" ;;
+            darwin) lib_name="libenvio.dylib" ;;
+            *) echo "Unsupported OS: ${PLATFORM}"; exit 1 ;;
+          esac
+          cp "target/${TARGET}/release/${lib_name}" "${node_pkg}/envio.node"
 
       - name: Upload platform npm package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npm-pkg-envio-${{ matrix.job.name }}
           path: packages/cli/npm/envio-${{ matrix.job.name }}

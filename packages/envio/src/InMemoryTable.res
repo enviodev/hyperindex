@@ -1,31 +1,29 @@
-open Belt
-
 type t<'key, 'val> = {
   dict: dict<'val>,
   hash: 'key => string,
 }
 
 let make = (~hash): t<'key, 'val> => {
-  dict: Js.Dict.empty(),
+  dict: Dict.make(),
   hash,
 }
 
-let set = (self: t<'key, 'val>, key, value) => self.dict->Js.Dict.set(key->self.hash, value)
+let set = (self: t<'key, 'val>, key, value) => self.dict->Dict.set(key->self.hash, value)
 
-let setByHash = (self: t<'key, 'val>, hash, value) => self.dict->Js.Dict.set(hash, value)
+let setByHash = (self: t<'key, 'val>, hash, value) => self.dict->Dict.set(hash, value)
 
 let hasByHash = (self: t<'key, 'val>, hash) => {
   self.dict->Utils.Dict.has(hash)
 }
 
 let getUnsafeByHash = (self: t<'key, 'val>, hash) => {
-  self.dict->Js.Dict.unsafeGet(hash)
+  self.dict->Dict.getUnsafe(hash)
 }
 
 let get = (self: t<'key, 'val>, key: 'key) =>
   self.dict->Utils.Dict.dangerouslyGetNonOption(key->self.hash)
 
-let values = (self: t<'key, 'val>) => self.dict->Js.Dict.values
+let values = (self: t<'key, 'val>) => self.dict->Dict.valuesToArray
 
 let clone = (self: t<'key, 'val>) => {
   ...self,
@@ -73,7 +71,6 @@ module Entity = {
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
   }
 
-  exception UndefinedKey(string)
   let updateIndices = (
     self: t<'entity>,
     ~entity: 'entity,
@@ -85,39 +82,34 @@ module Entity = {
       let fieldValue =
         entity
         ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
-        ->Js.Dict.get(fieldName)
-        ->Option.getUnsafe
+        ->Dict.getUnsafe(fieldName)
       if !(index->TableIndices.Index.evaluate(~fieldName, ~fieldValue)) {
         entityIndices->Utils.Set.delete(index)->ignore
       }
     })
 
     self.fieldNameIndices.dict
-    ->Js.Dict.keys
+    ->Dict.keysToArray
     ->Array.forEach(fieldName => {
-      switch (
+      let indices = self.fieldNameIndices.dict->Dict.getUnsafe(fieldName)
+      // A missing key reads as `undefined`, which matches the `None` arm of
+      // `FieldValue.t` (`option<...>`). Mirror `addEmptyIndex` so nullable
+      // FK columns that were omitted on the set entity don't crash.
+      let fieldValue =
         entity
         ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
-        ->Js.Dict.get(fieldName),
-        self.fieldNameIndices.dict->Js.Dict.get(fieldName),
-      ) {
-      | (Some(fieldValue), Some(indices)) =>
-        indices
-        ->values
-        ->Array.forEach(((index, relatedEntityIds)) => {
-          if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
-            //Add entity id to indices and add index to entity indicies
-            relatedEntityIds->Utils.Set.add(getEntityIdUnsafe(entity))->ignore
-            entityIndices->Utils.Set.add(index)->ignore
-          } else {
-            relatedEntityIds->Utils.Set.delete(getEntityIdUnsafe(entity))->ignore
-          }
-        })
-      | _ =>
-        UndefinedKey(fieldName)->ErrorHandling.mkLogAndRaise(
-          ~msg="Expected field name to exist on the referenced index and the provided entity",
-        )
-      }
+        ->Dict.getUnsafe(fieldName)
+      indices
+      ->values
+      ->Array.forEach(((index, relatedEntityIds)) => {
+        if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
+          //Add entity id to indices and add index to entity indicies
+          relatedEntityIds->Utils.Set.add(getEntityIdUnsafe(entity))->ignore
+          entityIndices->Utils.Set.add(index)->ignore
+        } else {
+          relatedEntityIds->Utils.Set.delete(getEntityIdUnsafe(entity))->ignore
+        }
+      })
     })
   }
 
@@ -142,7 +134,7 @@ module Entity = {
   ) => {
     let shouldWriteEntity =
       allowOverWriteEntity ||
-      inMemTable.table.dict->Js.Dict.get(key->inMemTable.table.hash)->Option.isNone
+      inMemTable.table.dict->Dict.get(key->inMemTable.table.hash)->Option.isNone
 
     //Only initialize a row in the case where it is none
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
@@ -155,7 +147,7 @@ module Entity = {
         inMemTable->updateIndices(~entity, ~entityIndices)
       | None => ()
       }
-      inMemTable.table.dict->Js.Dict.set(
+      inMemTable.table.dict->Dict.set(
         key->inMemTable.table.hash,
         {
           latest: entity,
@@ -234,25 +226,23 @@ module Entity = {
   that the entity is not set to the in memory store,
   and the second option means that the entity doesn't esist/deleted.
   It's needed to prevent an additional round trips to the database for deleted entities. */
-  let getUnsafe = (inMemTable: t<'entity>) => (key: string) =>
-    inMemTable.table.dict
-    ->Js.Dict.unsafeGet(key)
-    ->rowToEntity
+  let getUnsafe = (inMemTable: t<'entity>) =>
+    (key: string) =>
+      inMemTable.table.dict
+      ->Dict.getUnsafe(key)
+      ->rowToEntity
 
-  let hasIndex = (
-    inMemTable: t<'entity>,
-    ~fieldName,
-    ~operator: TableIndices.Operator.t,
-  ) => fieldValueHash => {
-    switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
-    | None => false
-    | Some(indicesSerializedToValue) => {
-        // Should match TableIndices.toString logic
-        let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
-        indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) !== None
+  let hasIndex = (inMemTable: t<'entity>, ~fieldName, ~operator: TableIndices.Operator.t) =>
+    fieldValueHash => {
+      switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+      | None => false
+      | Some(indicesSerializedToValue) => {
+          // Should match TableIndices.toString logic
+          let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
+          indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) !== None
+        }
       }
     }
-  }
 
   let getUnsafeOnIndex = (
     inMemTable: t<'entity>,
@@ -262,20 +252,21 @@ module Entity = {
     let getEntity = inMemTable->getUnsafe
     fieldValueHash => {
       switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
-      | None => Js.Exn.raiseError(`Unexpected error. Must have an index on field ${fieldName}`)
+      | None =>
+        JsError.throwWithMessage(`Unexpected error. Must have an index on field ${fieldName}`)
       | Some(indicesSerializedToValue) => {
           // Should match TableIndices.toString logic
           let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
           switch indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) {
           | None =>
-            Js.Exn.raiseError(
+            JsError.throwWithMessage(
               `Unexpected error. Must have an index for the value ${fieldValueHash} on field ${fieldName}`,
             )
           | Some((_index, relatedEntityIds)) => {
               let res =
                 relatedEntityIds
                 ->Utils.Set.toArray
-                ->Array.keepMap(entityId => {
+                ->Array.filterMap(entityId => {
                   switch hasByHash(inMemTable.table, entityId) {
                   | true => getEntity(entityId)
                   | false => None
@@ -301,7 +292,7 @@ module Entity = {
         let fieldValue =
           entity
           ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
-          ->Js.Dict.unsafeGet(fieldName)
+          ->Dict.getUnsafe(fieldName)
         if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
           let _ = row.entityIndices->Utils.Set.add(index)
           let _ = relatedEntityIds->Utils.Set.add(entity->getEntityIdUnsafe)
@@ -344,7 +335,7 @@ module Entity = {
   let updates = (inMemTable: t<'entity>) => {
     inMemTable.table
     ->values
-    ->Array.keepMapU(v =>
+    ->Array.filterMap(v =>
       switch v.status {
       | Updated(update) => Some(update)
       | Loaded => None
@@ -355,7 +346,7 @@ module Entity = {
   let values = (inMemTable: t<'entity>) => {
     inMemTable.table
     ->values
-    ->Array.keepMap(rowToEntity)
+    ->Array.filterMap(rowToEntity)
   }
 
   let clone = ({table, fieldNameIndices}: t<'entity>) => {
@@ -363,9 +354,9 @@ module Entity = {
     fieldNameIndices: {
       ...fieldNameIndices,
       dict: fieldNameIndices.dict
-      ->Js.Dict.entries
+      ->Dict.toArray
       ->Array.map(((k, v)) => (k, v->clone))
-      ->Js.Dict.fromArray,
+      ->Dict.fromArray,
     },
   }
 }

@@ -1,5 +1,4 @@
 open Ink
-open Belt
 
 module ChainLine = {
   @react.component
@@ -26,7 +25,7 @@ module ChainLine = {
       }
       let progressBlockStr = progressBlock->TuiData.formatLocaleString
       let toBlockStr = toBlock->TuiData.formatLocaleString
-      let eventsStr = eventsProcessed->TuiData.formatLocaleString
+      let eventsStr = eventsProcessed->TuiData.formatFloatLocaleString
 
       let blocksText =
         `Blocks: ${progressBlockStr} / ${toBlockStr}` ++
@@ -79,15 +78,52 @@ module ChainLine = {
   }
 }
 
+module EventsPerSecond = {
+  type sample = {time: float, events: float}
+
+  let windowMs = 60_000.
+
+  let computeEps = (samples: array<sample>) => {
+    let len = samples->Array.length
+    switch (samples->Array.get(0), samples->Array.get(len - 1)) {
+    | (Some(first), Some(last)) if last.time > first.time =>
+      Some((last.events -. first.events) /. ((last.time -. first.time) /. 1000.))
+    | _ => None
+    }
+  }
+
+  let use = (~totalEventsProcessed: float) => {
+    let (samples, setSamples) = React.useState((): array<sample> => [])
+
+    React.useEffect1(() => {
+      let now = Date.now()
+      let cutoff = now -. windowMs
+      setSamples(prev => {
+        let kept = prev->Array.filter(s => s.time >= cutoff)
+        kept->Array.concat([{time: now, events: totalEventsProcessed}])
+      })
+      None
+    }, [totalEventsProcessed])
+
+    computeEps(samples)
+  }
+}
+
 module TotalEventsProcessed = {
   @react.component
-  let make = (~totalEventsProcessed) => {
-    let label = "Total Events: "
+  let make = (~totalEventsProcessed, ~eventsPerSecond: option<float>) => {
     <Text>
-      <Text bold=true> {label->React.string} </Text>
+      <Text bold=true> {"Total Events: "->React.string} </Text>
       <Text color={Secondary}>
-        {`${totalEventsProcessed->TuiData.formatLocaleString}`->React.string}
+        {`${totalEventsProcessed->TuiData.formatFloatLocaleString}`->React.string}
       </Text>
+      {switch eventsPerSecond {
+      | Some(eps) =>
+        <Text color={Gray}>
+          {` (${Math.round(eps)->TuiData.formatFloatLocaleString} events/sec)`->React.string}
+        </Text>
+      | None => React.null
+      }}
     </Text>
   }
 }
@@ -100,13 +136,13 @@ module App = {
 
     // useEffect to refresh state every 500ms
     React.useEffect(() => {
-      let intervalId = Js.Global.setInterval(() => {
+      let intervalId = setInterval(() => {
         setState(_ => getState())
       }, 500)
 
       Some(
         () => {
-          Js.Global.clearInterval(intervalId)
+          clearInterval(intervalId)
         },
       )
     }, [getState])
@@ -115,12 +151,12 @@ module App = {
       state.chainManager.chainFetchers
       ->ChainMap.values
       ->Array.map(cf => {
-        let {numEventsProcessed, fetchState, numBatchesFetched} = cf
+        let {numEventsProcessed, fetchState} = cf
         let latestFetchedBlockNumber = Pervasives.max(fetchState->FetchState.bufferBlockNumber, 0)
         let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
         let knownHeight =
           cf->ChainFetcher.hasProcessedToEndblock
-            ? cf.fetchState.endBlock->Option.getWithDefault(cf.fetchState.knownHeight)
+            ? cf.fetchState.endBlock->Option.getOr(cf.fetchState.knownHeight)
             : cf.fetchState.knownHeight
 
         let firstEventBlock = cf.fetchState.firstEventBlock
@@ -130,10 +166,10 @@ module App = {
           // it's possible there are no events in that block  range (ie firstEventBlock = None)
           // This ensures TUI still displays synced in this case
           Synced({
-            firstEventBlockNumber: firstEventBlock->Option.getWithDefault(0),
+            firstEventBlockNumber: firstEventBlock->Option.getOr(0),
             latestProcessedBlock: cf.committedProgressBlockNumber,
-            timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Option.getWithDefault(
-              Js.Date.now()->Js.Date.fromFloat,
+            timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Option.getOr(
+              Date.now()->Date.fromTime,
             ),
             numEventsProcessed,
           })
@@ -161,7 +197,6 @@ module App = {
             progress,
             knownHeight,
             latestFetchedBlockNumber,
-            numBatchesFetched,
             eventsProcessed: numEventsProcessed,
             chainId: cf.chainConfig.id->Int.toString,
             progressBlock: cf.committedProgressBlockNumber < cf.fetchState.startBlock
@@ -179,8 +214,8 @@ module App = {
         )
       })
 
-    let totalEventsProcessed = chains->Array.reduce(0, (acc, chain) => {
-      acc + chain.eventsProcessed
+    let totalEventsProcessed = chains->Array.reduce(0., (acc, chain) => {
+      acc +. chain.eventsProcessed
     })
     let maxChainIdLength = chains->Array.reduce(0, (acc, chain) => {
       let chainIdLength = chain.chainId->String.length
@@ -190,6 +225,7 @@ module App = {
         acc
       }
     })
+    let eventsPerSecond = EventsPerSecond.use(~totalEventsProcessed)
 
     <Box flexDirection={Column}>
       <BigText
@@ -200,7 +236,7 @@ module App = {
       />
       <Newline />
       {chains
-      ->Array.mapWithIndex((i, chainData) => {
+      ->Array.mapWithIndex((chainData, i) => {
         <ChainLine
           key={i->Int.toString}
           chainId={chainData.chainId}
@@ -216,7 +252,10 @@ module App = {
         />
       })
       ->React.array}
-      <TotalEventsProcessed totalEventsProcessed />
+      <TotalEventsProcessed
+        totalEventsProcessed
+        eventsPerSecond={SyncETA.isIndexerFullySynced(chains) ? None : eventsPerSecond}
+      />
       <SyncETA chains indexerStartTime=state.indexerStartTime />
       <Newline />
       <Box flexDirection={Row}>
@@ -231,10 +270,22 @@ module App = {
           }
         }
       </Box>
-      <Box flexDirection={Row}>
-        <Text> {"Dev Console: "->React.string} </Text>
-        <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
-      </Box>
+      {if state.ctx.config.isDev {
+        <Box flexDirection={Row}>
+          <Text> {"Dev Console: "->React.string} </Text>
+          <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
+        </Box>
+      } else {
+        React.null
+      }}
+      {switch (state.ctx.config.storage.clickhouse, Env.ClickHouse.host()) {
+      | (true, Some(host)) =>
+        <Box flexDirection={Row}>
+          <Text> {"ClickHouse: "->React.string} </Text>
+          <Text color={Info} underline=true> {`${host}/play`->React.string} </Text>
+        </Box>
+      | _ => React.null
+      }}
       <Messages config=state.ctx.config />
     </Box>
   }

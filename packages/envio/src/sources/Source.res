@@ -2,9 +2,9 @@
 A set of stats for logging about the block range fetch
 */
 type blockRangeFetchStats = {
-  @as("total time elapsed (ms)") totalTimeElapsed: int,
-  @as("parsing time (ms)") parsingTimeElapsed?: int,
-  @as("page fetch time (ms)") pageFetchTime?: int,
+  @as("total time elapsed (s)") totalTimeElapsed: float,
+  @as("parsing time (s)") parsingTimeElapsed?: float,
+  @as("page fetch time (s)") pageFetchTime?: float,
 }
 
 /**
@@ -32,7 +32,8 @@ type getItemsError =
 
 exception GetItemsError(getItemsError)
 
-type sourceFor = Sync | Fallback | Live
+type sourceFor = Sync | Fallback | Realtime
+
 type t = {
   name: string,
   sourceFor: sourceFor,
@@ -49,7 +50,7 @@ type t = {
     ~fromBlock: int,
     ~toBlock: option<int>,
     ~addressesByContractName: dict<array<Address.t>>,
-    ~indexingContracts: dict<Internal.indexingContract>,
+    ~indexingAddresses: dict<FetchState.indexingAddress>,
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,

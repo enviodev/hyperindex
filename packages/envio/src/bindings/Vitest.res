@@ -24,7 +24,7 @@ type rec expectation<'a> = {
   toBeNaN: unit => unit,
   // String matchers
   toContain: string => unit,
-  toMatch: Js.Re.t => unit,
+  toMatch: RegExp.t => unit,
   toMatchString: string => unit,
   // Array matchers
   toContainItem: 'a => unit,
@@ -35,6 +35,8 @@ type rec expectation<'a> = {
   // Exception matchers
   toThrow: unit => unit,
   toThrowError: string => unit,
+  // Snapshot matchers
+  toMatchSnapshot: unit => unit,
   // Negation
   not: expectation<'a>,
 }
@@ -101,7 +103,7 @@ type options = {retry?: int}
 
 module Async = {
   @module("vitest")
-  external it: (string, testContext => promise<unit>) => unit = "it"
+  external it: (string, testContext => promise<unit>, ~timeout: int=?) => unit = "it"
 
   @module("vitest")
   external itWithOptions: (string, options, testContext => promise<unit>) => unit = "it"
@@ -111,6 +113,12 @@ module Async = {
 
   @module("vitest") @scope("it")
   external it_skip: (string, testContext => promise<unit>) => unit = "skip"
+
+  @module("vitest") @scope("it")
+  external it_skipIf: bool => (string, testContext => promise<unit>) => unit = "skipIf"
+
+  let isClaudeCloud: bool = %raw(`process.env.CLAUDE_CODE_CONTAINER_ID != null`)
+  let itSkipInClaudeCloud = (name, fn) => it_skipIf(isClaudeCloud)(name, fn)
 
   @module("vitest")
   external test: (string, testContext => promise<unit>) => unit = "test"

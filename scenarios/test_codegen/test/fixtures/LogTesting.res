@@ -1,7 +1,7 @@
 // Guard: only allow execution from test runner
-switch NodeJs.Process.process.env->Js.Dict.get("ENVIO_TEST_LOGGING_FORMAT") {
+switch NodeJs.Process.process.env->Dict.get("ENVIO_TEST_LOGGING_FORMAT") {
 | None =>
-  Js.Exn.raiseError(
+  JsError.throwWithMessage(
     "LogTesting.res should only be run via Logging.test.ts. " ++ "Set ENVIO_TEST_LOGGING_FORMAT=1 to run directly.",
   )
 | Some(_) => ()

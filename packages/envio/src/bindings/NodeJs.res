@@ -3,6 +3,11 @@ type t
 @send external exit: (t, unit) => unit = "exit"
 type exitCode = | @as(0) Success | @as(1) Failure
 @send external exitWithCode: (t, exitCode) => unit = "exit"
+// Use @val to access the global `process` object for EventEmitter methods like `on`.
+// The @module binding above compiles to `import * as Process from "process"` (a namespace import),
+// which exposes named exports (exit, cwd) but not EventEmitter prototype methods (on, off, emit).
+@val external globalProcess: t = "process"
+@send external onUnhandledRejection: (t, @as("unhandledRejection") _, exn => unit) => unit = "on"
 
 module Util = {
   @unboxed
@@ -36,9 +41,10 @@ module Util = {
 }
 
 module Process = {
-  type t = {env: Js.Dict.t<string>, execArgv: array<string>}
+  type t = {env: dict<string>, execArgv: array<string>}
   @module external process: t = "process"
   @module("process") external cwd: unit => string = "cwd"
+  @get external execPath: t => string = "execPath"
 }
 
 module ChildProcess = {
@@ -48,7 +54,7 @@ module ChildProcess = {
     shell?: string,
   }
 
-  type callback = (~error: Js.null<exn>, ~stdout: string, ~stderr: string) => unit
+  type callback = (~error: Null.t<exn>, ~stdout: string, ~stderr: string) => unit
 
   @module("child_process")
   external exec: (string, callback) => unit = "exec"
@@ -100,17 +106,21 @@ module WorkerThreads = {
   @module("worker_threads") external isMainThread: bool = "isMainThread"
 
   // Worker data passed from main thread
-  @module("worker_threads") external workerData: Js.Nullable.t<'a> = "workerData"
+  @module("worker_threads") external workerData: Nullable.t<'a> = "workerData"
 
   // MessagePort for communication with parent
   type messagePort
-  @module("worker_threads") external parentPort: Js.Nullable.t<messagePort> = "parentPort"
+  @module("worker_threads") external parentPort: Nullable.t<messagePort> = "parentPort"
   @send external postMessage: (messagePort, 'a) => unit = "postMessage"
   @send external onPortMessage: (messagePort, @as("message") _, 'a => unit) => unit = "on"
 
   // Worker class for spawning workers
   type worker
-  type workerOptions = {workerData?: Js.Json.t, execArgv?: array<string>}
+  type workerOptions = {
+    workerData?: JSON.t,
+    execArgv?: array<string>,
+    env?: dict<string>,
+  }
 
   @new @module("worker_threads")
   external makeWorker: (string, workerOptions) => worker = "Worker"
@@ -147,10 +157,10 @@ module Fs = {
       ~filepath: Path.t,
       ~content: string,
       ~options: writeFileOptions=?,
-    ) => Js.Promise.t<unit> = "appendFile"
+    ) => promise<unit> = "appendFile"
 
     @module("fs") @scope("promises")
-    external access: Path.t => Js.Promise.t<unit> = "access"
+    external access: Path.t => promise<unit> = "access"
 
     type encoding = | @as("utf8") Utf8
 
@@ -158,9 +168,9 @@ module Fs = {
     external readFile: (~filepath: Path.t, ~encoding: encoding) => promise<string> = "readFile"
 
     @module("fs") @scope("promises")
-    external mkdir: (~path: Path.t, ~options: mkdirOptions=?) => Js.Promise.t<unit> = "mkdir"
+    external mkdir: (~path: Path.t, ~options: mkdirOptions=?) => promise<unit> = "mkdir"
 
     @module("fs") @scope("promises")
-    external readdir: Path.t => Js.Promise.t<array<string>> = "readdir"
+    external readdir: Path.t => promise<array<string>> = "readdir"
   }
 }

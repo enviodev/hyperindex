@@ -1,8 +1,8 @@
 use crate::{
     cli_args::clap_definitions::{DbMigrateSubcommands, LocalCommandTypes, LocalDockerSubcommands},
-    commands,
     config_parsing::system_config::SystemConfig,
-    persisted_state::PersistedState,
+    docker_env,
+    executor::{public_config_value, Command},
     project_paths::ParsedProjectPaths,
 };
 use anyhow::{Context, Result};
@@ -10,44 +10,44 @@ use anyhow::{Context, Result};
 pub async fn run_local(
     local_commands: &LocalCommandTypes,
     project_paths: &ParsedProjectPaths,
-) -> Result<()> {
+) -> Result<Option<Command>> {
     let config =
         SystemConfig::parse_from_project_files(project_paths).context("Failed parsing config")?;
 
     match local_commands {
         LocalCommandTypes::Docker(subcommand) => match subcommand {
             LocalDockerSubcommands::Up => {
-                commands::docker::docker_compose_up_d(&config).await?;
+                // local docker up intentionally doesn't propagate indexer_env
+                // since it doesn't spawn the indexer — callers are expected
+                // to run `envio start`/`envio dev` afterwards, which will
+                // compute the indexer_env fresh.
+                docker_env::up(docker_env::UpOptions {
+                    project_root: &config.parsed_project_paths.project_root,
+                    clickhouse: config.storage.clickhouse,
+                })
+                .await
+                .map(|_| ())?;
+                Ok(None)
             }
             LocalDockerSubcommands::Down => {
-                commands::docker::docker_compose_down_v(&config).await?;
+                docker_env::down().await?;
+                Ok(None)
             }
         },
-        LocalCommandTypes::DbMigrate(subcommand) => {
-            //Use a closure just so running local dow doesn't need to construct persisted state
-            let get_persisted_state = || -> Result<PersistedState> {
-                let persisted_state = PersistedState::get_current_state(&config)
-                    .context("Failed constructing persisted state")?;
+        LocalCommandTypes::DbMigrate(subcommand) => match subcommand {
+            DbMigrateSubcommands::Up => Ok(Some(Command::Migrate {
+                reset: false,
+                config: public_config_value(&config, false)?,
+            })),
 
-                Ok(persisted_state)
-            };
+            DbMigrateSubcommands::Down => Ok(Some(Command::DropSchema {
+                config: public_config_value(&config, false)?,
+            })),
 
-            match subcommand {
-                DbMigrateSubcommands::Up => {
-                    let persisted_state = get_persisted_state()?;
-                    commands::db_migrate::run_up_migrations(&config, &persisted_state).await?;
-                }
-
-                DbMigrateSubcommands::Down => {
-                    commands::db_migrate::run_drop_schema(&config).await?;
-                }
-
-                DbMigrateSubcommands::Setup => {
-                    let persisted_state = get_persisted_state()?;
-                    commands::db_migrate::run_db_setup(&config, &persisted_state).await?;
-                }
-            }
-        }
+            DbMigrateSubcommands::Setup => Ok(Some(Command::Migrate {
+                reset: true,
+                config: public_config_value(&config, false)?,
+            })),
+        },
     }
-    Ok(())
 }

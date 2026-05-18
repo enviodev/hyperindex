@@ -1,5 +1,4 @@
 module FieldValue = {
-  open Belt
   @unboxed
   type rec tNonOptional =
     | String(string)
@@ -16,7 +15,7 @@ module FieldValue = {
     | Int(v) => v->Int.toString
     | BigDecimal(v) => v->BigDecimal.toString
     | Bool(v) => v ? "true" : "false"
-    | Array(v) => `[${v->Array.joinWith(",", toString)}]`
+    | Array(v) => `[${v->Belt.Array.joinWith(",", toString)}]`
     }
 
   //This needs to be a castable type from any type that we
@@ -107,4 +106,3 @@ module Index = {
     | Single(index) => SingleIndex.evaluate(index, ~fieldName, ~fieldValue)
     }
 }
-

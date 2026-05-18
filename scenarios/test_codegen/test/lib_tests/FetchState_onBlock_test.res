@@ -1,9 +1,8 @@
-open Belt
 open Vitest
 
 let chainId = 0
 
-let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
+let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 
@@ -12,7 +11,7 @@ let getBlockData = (~blockNumber): FetchState.blockNumberAndTimestamp => {
   blockTimestamp: getTimestamp(~blockNumber),
 }
 
-let baseEventConfig = (Mock.evmEventConfig(
+let baseEventConfig = (MockIndexer.evmEventConfig(
   ~id="0",
   ~contractName="Gravatar",
 ) :> Internal.eventConfig)
@@ -36,12 +35,11 @@ let makeOnBlockConfig = (
 let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
   FetchState.make(
     ~eventConfigs=[baseEventConfig],
-    ~contracts=[
+    ~addresses=[
       {
         Internal.address: mockAddress0,
         contractName: "Gravatar",
-        startBlock,
-        registrationBlock: None,
+        registrationBlock: -1,
       },
     ],
     ~startBlock,
@@ -79,9 +77,9 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -126,9 +124,9 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -174,9 +172,9 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -226,9 +224,9 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -281,9 +279,9 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
-      indexingContracts: fetchState.indexingContracts,
+      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =

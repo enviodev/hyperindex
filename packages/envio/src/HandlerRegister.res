@@ -1,7 +1,7 @@
 type eventRegistration = {
   handler: option<Internal.handler>,
   contractRegister: option<Internal.contractRegister>,
-  eventOptions: option<Internal.eventOptions<Internal.eventFilters>>,
+  eventOptions: option<Internal.eventOptions<JSON.t>>,
 }
 
 let empty = {
@@ -10,7 +10,59 @@ let empty = {
   eventOptions: None,
 }
 
-let eventRegistrations: Js.Dict.t<eventRegistration> = Js.Dict.empty()
+type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
+
+type activeRegistration = {
+  ecosystem: Ecosystem.t,
+  multichain: Internal.multichain,
+  registrations: registrations,
+  mutable finished: bool,
+}
+
+// Stashed on `globalThis` so a duplicate envio module instance — e.g. when the
+// CLI's `bin.mjs` resolves envio from one path but the user's handlers resolve
+// it from `node_modules/envio` — shares one registry. Without this, each copy
+// keeps its own dict and `applyRegistrations` reads empty state.
+//
+// Version-gated: the record shapes below can evolve between envio versions,
+// so the guard uses strict full-version equality. On mismatch we throw with
+// a deduplication hint instead of silently mixing shapes across builds.
+type registryShape = {
+  version: string,
+  eventRegistrations: dict<eventRegistration>,
+  activeRegistration: ref<option<activeRegistration>>,
+  preRegistered: array<activeRegistration => unit>,
+}
+
+// Record type with `mutable` so assignment typechecks; ReScript keeps the
+// field name verbatim in the generated JS so the globalThis slot is
+// `__envioRegistry`.
+type globalThis = {mutable __envioRegistry: Nullable.t<registryShape>}
+@val external globalThis: globalThis = "globalThis"
+
+%%private(
+  let registry: registryShape = {
+    let version = Utils.EnvioPackage.value.version
+    switch globalThis.__envioRegistry->Nullable.toOption {
+    | Some(existing) if existing.version === version => existing
+    | Some(existing) =>
+      JsError.throwWithMessage(
+        `Multiple incompatible envio versions loaded in the same process: ${existing.version} and ${version}. Deduplicate the 'envio' dependency in your project.`,
+      )
+    | None =>
+      let fresh = {
+        version,
+        eventRegistrations: Dict.make(),
+        activeRegistration: ref(None),
+        preRegistered: [],
+      }
+      globalThis.__envioRegistry = Nullable.make(fresh)
+      fresh
+    }
+  }
+)
+
+let eventRegistrations = registry.eventRegistrations
 
 let getKey = (~contractName, ~eventName) => contractName ++ "." ++ eventName
 
@@ -22,21 +74,10 @@ let get = (~contractName, ~eventName) => {
 }
 
 let set = (~contractName, ~eventName, registration) => {
-  eventRegistrations->Js.Dict.set(getKey(~contractName, ~eventName), registration)
+  eventRegistrations->Dict.set(getKey(~contractName, ~eventName), registration)
 }
 
-type registrations = {
-  onBlockByChainId: dict<array<Internal.onBlockConfig>>,
-}
-
-type activeRegistration = {
-  ecosystem: Ecosystem.t,
-  multichain: Config.multichain,
-  registrations: registrations,
-  mutable finished: bool,
-}
-
-let activeRegistration = ref(None)
+let activeRegistration = registry.activeRegistration
 
 // Might happen for tests when the handler file
 // is imported by a non-envio process (eg mocha)
@@ -45,14 +86,14 @@ let activeRegistration = ref(None)
 // Theoretically we could keep preRegistration without an explicit start
 // but I want it to be this way, so for the actual indexer run
 // an error is thrown with the exact stack trace where the handler was registered.
-let preRegistered = []
+let preRegistered = registry.preRegistered
 
 let withRegistration = (fn: activeRegistration => unit) => {
   switch activeRegistration.contents {
   | None => preRegistered->Belt.Array.push(fn)
   | Some(r) =>
     if r.finished {
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
       )
     } else {
@@ -66,14 +107,14 @@ let startRegistration = (~ecosystem, ~multichain) => {
     ecosystem,
     multichain,
     registrations: {
-      onBlockByChainId: Js.Dict.empty(),
+      onBlockByChainId: Dict.make(),
     },
     finished: false,
   }
   activeRegistration.contents = Some(r)
-  while preRegistered->Js.Array2.length > 0 {
+  while preRegistered->Array.length > 0 {
     // Loop + cleanup in one go
-    switch preRegistered->Js.Array2.pop {
+    switch preRegistered->Array.pop {
     | Some(fn) => fn(r)
     | None => ()
     }
@@ -87,7 +128,9 @@ let finishRegistration = () => {
       r.registrations
     }
   | None =>
-    Js.Exn.raiseError("The indexer has not started registering handlers, so can't finish it.")
+    JsError.throwWithMessage(
+      "The indexer has not started registering handlers, so can't finish it.",
+    )
   }
 }
 
@@ -98,84 +141,67 @@ let isPendingRegistration = () => {
   }
 }
 
-let onBlockOptionsSchema = S.schema(s =>
-  {
-    "name": s.matches(S.string),
-    "chain": s.matches(S.int),
-    "interval": s.matches(S.option(S.int->S.intMin(1))->S.Option.getOr(1)),
-    "startBlock": s.matches(S.option(S.int)),
-    "endBlock": s.matches(S.option(S.int)),
+// Early guard called from `indexer.onEvent` / `.contractRegister` / `.onBlock` /
+// `.onSlot` so the user sees a method-specific error at the call site, instead
+// of hitting the generic `withRegistration` throw deep inside `setHandler` etc.
+let throwIfFinishedRegistration = (~methodName) => {
+  switch activeRegistration.contents {
+  | Some({finished: true}) =>
+    JsError.throwWithMessage(
+      `Cannot call \`indexer.${methodName}\` after the indexer has started. Make sure all handlers are registered at the top level of your handler module.`,
+    )
+  | _ => ()
   }
-)
+}
 
-let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<unit>) => {
+let registerOnBlock = (
+  ~name,
+  ~chainId,
+  ~interval,
+  ~startBlock,
+  ~endBlock,
+  ~handler: Internal.onBlockArgs => promise<unit>,
+) => {
   withRegistration(registration => {
     // We need to get timestamp for ordered multichain mode
     switch registration.multichain {
     | Unordered => ()
     | Ordered =>
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         "Block Handlers are not supported for ordered multichain mode. Please reach out to the Envio team if you need this feature. Or enable unordered multichain mode by removing `multichain: ordered` from the config.yaml file.",
       )
     }
 
-    let options = rawOptions->S.parseOrThrow(onBlockOptionsSchema)
-    let chainId = switch options["chain"] {
-    | chainId => chainId
-    // Dmitry: I want to add names for chains in the future
-    // and to be able to use them as a lookup.
-    // To do so, we'll need to pass a config during reigstration
-    // instead of isInitialized check.
-    }
-
     let onBlockByChainId = registration.registrations.onBlockByChainId
-
-    switch onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainId->Belt.Int.toString) {
-    | None =>
-      onBlockByChainId->Utils.Dict.setByInt(
-        chainId,
-        [
-          (
-            {
-              index: 0,
-              name: options["name"],
-              startBlock: options["startBlock"],
-              endBlock: options["endBlock"],
-              interval: options["interval"],
-              chainId,
-              handler,
-            }: Internal.onBlockConfig
-          ),
-        ],
-      )
-    | Some(onBlockConfigs) =>
-      onBlockConfigs->Belt.Array.push(
-        (
-          {
-            index: onBlockConfigs->Belt.Array.length,
-            name: options["name"],
-            startBlock: options["startBlock"],
-            endBlock: options["endBlock"],
-            interval: options["interval"],
-            chainId,
-            handler,
-          }: Internal.onBlockConfig
-        ),
-      )
-    }
+    let key = chainId->Belt.Int.toString
+    let index =
+      onBlockByChainId
+      ->Utils.Dict.dangerouslyGetNonOption(key)
+      ->Belt.Option.mapWithDefault(0, configs => configs->Belt.Array.length)
+    onBlockByChainId->Utils.Dict.push(
+      key,
+      (
+        {
+          index,
+          name,
+          startBlock,
+          endBlock,
+          interval,
+          chainId,
+          handler,
+        }: Internal.onBlockConfig
+      ),
+    )
   })
 }
 
-let getHandler = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).handler
+let getHandler = (~contractName, ~eventName) => get(~contractName, ~eventName).handler
 
 let getContractRegister = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).contractRegister
 
-let getEventFilters = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).eventOptions
-  ->Belt.Option.flatMap(value => value.eventFilters)
-  ->(Utils.magic: option<Internal.eventFilters> => option<Js.Json.t>)
+let getOnEventWhere = (~contractName, ~eventName) =>
+  get(~contractName, ~eventName).eventOptions->Belt.Option.flatMap(value => value.where)
 
 let isWildcard = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).eventOptions
@@ -192,26 +218,34 @@ type eventNamespace = {contractName: string, eventName: string}
 let raiseDuplicateRegistration = (~contractName, ~eventName, ~msg, ~logger) => {
   let fullMsg = msg ++ " for " ++ contractName ++ "." ++ eventName
   Logging.createChildFrom(~logger, ~params={contractName, eventName})->Logging.childError(fullMsg)
-  Js.Exn.raiseError(fullMsg)
+  JsError.throwWithMessage(fullMsg)
 }
 
-let eventFiltersMatch = (a: option<Internal.eventFilters>, b: option<Internal.eventFilters>) => {
+// Compare two raw `where` configs as the user passed them (object/array/bool/function).
+// At registration time we haven't parsed the config into `Internal.eventFilters` yet,
+// so structural equality on the raw JSON shape is what users actually wrote. For a
+// dynamic callback (a function value) structural equality is meaningless, so fall
+// back to referential equality on the function reference.
+let whereMatch = (a: option<JSON.t>, b: option<JSON.t>) => {
   switch (a, b) {
   | (None, None) => true
-  | (Some(Static(a)), Some(Static(b))) => a == b
-  | (Some(Dynamic(a)), Some(Dynamic(b))) => a === b
+  | (Some(a), Some(b)) =>
+    if typeof(a) === #function || typeof(b) === #function {
+      a === b
+    } else {
+      a == b
+    }
   | _ => false
   }
 }
 
 let eventOptionsMatch = (
-  existing: option<Internal.eventOptions<Internal.eventFilters>>,
-  incoming: option<Internal.eventOptions<Internal.eventFilters>>,
+  existing: option<Internal.eventOptions<JSON.t>>,
+  incoming: option<Internal.eventOptions<JSON.t>>,
 ) => {
   switch (existing, incoming) {
   | (None, None) => true
-  | (Some(a), Some(b)) =>
-    a.wildcard === b.wildcard && eventFiltersMatch(a.eventFilters, b.eventFilters)
+  | (Some(a), Some(b)) => a.wildcard === b.wildcard && whereMatch(a.where, b.where)
   | _ => false
   }
 }
@@ -219,8 +253,7 @@ let eventOptionsMatch = (
 let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging.getLogger()) => {
   switch eventOptions {
   | Some(value) =>
-    let value =
-      value->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Internal.eventFilters>)
+    let value = value->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
     let t = get(~contractName, ~eventName)
     switch t.eventOptions {
     | None => set(~contractName, ~eventName, {...t, eventOptions: Some(value)})
@@ -229,7 +262,7 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
         raiseDuplicateRegistration(
           ~contractName,
           ~eventName,
-          ~msg="Cannot register handler with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~msg="Cannot register handler with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
           ~logger,
         )
       }
@@ -238,7 +271,13 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
   }
 }
 
-let setHandler = (~contractName, ~eventName, handler, ~eventOptions, ~logger=Logging.getLogger()) => {
+let setHandler = (
+  ~contractName,
+  ~eventName,
+  handler,
+  ~eventOptions,
+  ~logger=Logging.getLogger(),
+) => {
   withRegistration(_registration => {
     let t = get(~contractName, ~eventName)
     let newHandler = handler->(Utils.magic: Internal.genericHandler<'args> => Internal.handler)
@@ -246,29 +285,37 @@ let setHandler = (~contractName, ~eventName, handler, ~eventOptions, ~logger=Log
     | None =>
       setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
       let t = get(~contractName, ~eventName)
-      set(~contractName, ~eventName, {
-        ...t,
-        handler: Some(newHandler),
-      })
+      set(
+        ~contractName,
+        ~eventName,
+        {
+          ...t,
+          handler: Some(newHandler),
+        },
+      )
     | Some(prevHandler) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
-          v->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Internal.eventFilters>)
+          v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
         let composedHandler: Internal.handler = async args => {
           await prevHandler(args)
           await newHandler(args)
         }
-        set(~contractName, ~eventName, {
-          ...t,
-          handler: Some(composedHandler),
-        })
+        set(
+          ~contractName,
+          ~eventName,
+          {
+            ...t,
+            handler: Some(composedHandler),
+          },
+        )
       } else {
         raiseDuplicateRegistration(
           ~contractName,
           ~eventName,
-          ~msg="Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~msg="Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
           ~logger,
         )
       }
@@ -276,41 +323,56 @@ let setHandler = (~contractName, ~eventName, handler, ~eventOptions, ~logger=Log
   })
 }
 
-let setContractRegister = (~contractName, ~eventName, contractRegister, ~eventOptions, ~logger=Logging.getLogger()) => {
+let setContractRegister = (
+  ~contractName,
+  ~eventName,
+  contractRegister,
+  ~eventOptions,
+  ~logger=Logging.getLogger(),
+) => {
   withRegistration(_registration => {
     let t = get(~contractName, ~eventName)
-    let newContractRegister = contractRegister->(
-      Utils.magic: Internal.genericContractRegister<
-        Internal.genericContractRegisterArgs<'event, 'context>,
-      > => Internal.contractRegister
-    )
+    let newContractRegister =
+      contractRegister->(
+        Utils.magic: Internal.genericContractRegister<
+          Internal.genericContractRegisterArgs<'event, 'context>,
+        > => Internal.contractRegister
+      )
     switch t.contractRegister {
     | None =>
       setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
       let t = get(~contractName, ~eventName)
-      set(~contractName, ~eventName, {
-        ...t,
-        contractRegister: Some(newContractRegister),
-      })
+      set(
+        ~contractName,
+        ~eventName,
+        {
+          ...t,
+          contractRegister: Some(newContractRegister),
+        },
+      )
     | Some(prevContractRegister) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
-          v->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Internal.eventFilters>)
+          v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
         let composedContractRegister: Internal.contractRegister = async args => {
           await prevContractRegister(args)
           await newContractRegister(args)
         }
-        set(~contractName, ~eventName, {
-          ...t,
-          contractRegister: Some(composedContractRegister),
-        })
+        set(
+          ~contractName,
+          ~eventName,
+          {
+            ...t,
+            contractRegister: Some(composedContractRegister),
+          },
+        )
       } else {
         raiseDuplicateRegistration(
           ~contractName,
           ~eventName,
-          ~msg="Cannot register a second contractRegister with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~msg="Cannot register a second contractRegister with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
           ~logger,
         )
       }

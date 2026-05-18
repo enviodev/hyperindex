@@ -2,7 +2,7 @@
 @get external getTimestamp: Internal.eventBlock => int = "time"
 @get external getId: Internal.eventBlock => string = "hash"
 
-let cleanUpRawEventFieldsInPlace: Js.Json.t => unit = %raw(`fields => {
+let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
     delete fields.height
     delete fields.time
@@ -19,6 +19,13 @@ let ecosystem: Ecosystem.t = {
   getTimestamp,
   getId,
   cleanUpRawEventFieldsInPlace,
+  onBlockMethodName: "onSlot",
+  // SVM filter shape: `{slot: {_gte?, _lte?, _every?}}`.
+  // Inner range chunk parsed by `blockRangeSchema` in `Main.res`.
+  onBlockFilterSchema: S.object(s => s.field("slot", S.option(S.unknown))),
+  // SVM has no event handlers, so there is no `onEvent` `where` value to
+  // parse. The schema is a no-op object that always surfaces `None`.
+  onEventBlockFilterSchema: S.object(_ => None),
 }
 
 module GetFinalizedSlot = {
@@ -38,7 +45,7 @@ let makeRPCSource = (~chain, ~rpc: string): Source.t => {
 
   let urlHost = switch Utils.Url.getHostFromUrl(rpc) {
   | None =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `The RPC url for chain ${chainId->Belt.Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
@@ -52,21 +59,30 @@ let makeRPCSource = (~chain, ~rpc: string): Source.t => {
     poweredByHyperSync: false,
     pollingInterval: 10_000,
     getBlockHashes: (~blockNumbers as _, ~logger as _) =>
-      Js.Exn.raiseError("Svm does not support getting block hashes"),
-    getHeightOrThrow: () => {
+      JsError.throwWithMessage("Svm does not support getting block hashes"),
+    getHeightOrThrow: async () => {
+      let timerRef = Hrtime.makeTimer()
+      let height = await GetFinalizedSlot.route->Rest.fetch((), ~client)
+      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getSlot")
-      GetFinalizedSlot.route->Rest.fetch((), ~client)
+      Prometheus.SourceRequestCount.addSeconds(
+        ~sourceName=name,
+        ~chainId,
+        ~method="getSlot",
+        ~seconds,
+      )
+      height
     },
     getItemsOrThrow: (
       ~fromBlock as _,
       ~toBlock as _,
       ~addressesByContractName as _,
-      ~indexingContracts as _,
+      ~indexingAddresses as _,
       ~knownHeight as _,
       ~partitionId as _,
       ~selection as _,
       ~retry as _,
       ~logger as _,
-    ) => Js.Exn.raiseError("Svm does not support getting items"),
+    ) => JsError.throwWithMessage("Svm does not support getting items"),
   }
 }

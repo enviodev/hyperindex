@@ -1,0 +1,35 @@
+---
+source: packages/cli/src/hbs_templating/codegen_templates.rs
+expression: event_template.module_code
+---
+
+let name = "NewGravatar"
+let contractName = contractName
+type params = unit
+/** Event params with all fields optional. Missing fields use default values. */
+type paramsConstructor = unit
+type block = Block.t
+type transaction = Transaction.t
+
+type event = {
+  /** The name of the contract that emitted this event. */
+  contractName: string,
+  /** The name of the event. */
+  eventName: string,
+  /** The parameters or arguments associated with this event. */
+  params: params,
+  /** The unique identifier of the blockchain network where this event occurred. */
+  chainId: chainId,
+  /** The address of the contract that emitted this event. */
+  srcAddress: Address.t,
+  /** The index of this event's log within the block. */
+  logIndex: int,
+  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+  transaction: transaction,
+  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+  block: block,
+}
+
+type whereParams = {}
+
+type onEventWhere = Internal.noOnEventWhere

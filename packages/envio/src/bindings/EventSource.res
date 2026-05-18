@@ -13,7 +13,9 @@ type options = {fetch?: Fetch.t}
 external create: (~url: string, ~options: options=?) => t = "EventSource"
 
 @set external onopen: (t, unit => unit) => unit = "onopen"
-@set external onerror: (t, Js.Exn.t => unit) => unit = "onerror"
+
+type errorEvent = {status: option<int>, message: option<string>}
+@set external onerror: (t, errorEvent => unit) => unit = "onerror"
 
 type event = {data: string}
 @send external addEventListener: (t, string, event => unit) => unit = "addEventListener"

@@ -1,24 +1,23 @@
-open Belt
 open Vitest
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
-  let config = Indexer.Generated.configWithoutRegistrations
+  let config = Config.loadWithoutRegistrations()
   let allEvents = []
   let numberOfMockEventsCreated = ref(0)
 
   let chainFetchers = config.chainMap->ChainMap.map(({id}) => {
     let getCurrentTimestamp = () => {
-      let timestampMillis = Js.Date.now()
+      let timestampMillis = Date.now()
       // Convert milliseconds to seconds
       Belt.Int.fromFloat(timestampMillis /. 1000.0)
     }
     /// Generates a random number between two ints inclusive
     let getRandomInt = (min, max) => {
-      Belt.Int.fromFloat(Js.Math.random() *. float_of_int(max - min + 1) +. float_of_int(min))
+      Belt.Int.fromFloat(Math.random() *. Int.toFloat(max - min + 1) +. Int.toFloat(min))
     }
 
     let eventConfigs = [
-      (Mock.evmEventConfig(
+      (MockIndexer.evmEventConfig(
         ~id="0",
         ~contractName="Gravatar",
         ~isWildcard=true,
@@ -28,7 +27,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~eventConfigs,
-      ~contracts=[],
+      ~addresses=[],
       ~startBlock=0,
       ~targetBufferSize=5000,
       ~chainId=1,
@@ -59,11 +58,11 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           blockNumber: currentBlockNumber.contents,
           logIndex,
           eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
-          event: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
+          event: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->Utils.magic,
         })
         let eventItem = batchItem->Internal.castUnsafeEventItem
 
-        allEvents->Js.Array2.push(batchItem)->ignore
+        allEvents->Array.push(batchItem)->ignore
 
         let query: FetchState.query = {
           partitionId: "0",
@@ -74,8 +73,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             dependsOnAddresses: false,
             eventConfigs,
           },
-          addressesByContractName: Js.Dict.empty(),
-          indexingContracts: fetchState.contents.indexingContracts,
+          addressesByContractName: Dict.make(),
+          indexingAddresses: fetchState.contents.indexingAddresses,
         }
 
         fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
@@ -100,18 +99,18 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let chainConfig = config.defaultChain->Option.getUnsafe
     // For this test we don't need real sources - just testing ChainManager event ordering
     // Create a mock source that satisfies SourceManager requirements (chain ID doesn't matter here)
-    let mockSource = Mock.Source.make([], ~chain=#1)
+    let mockSource = MockIndexer.Source.make([], ~chain=#1)
     let sources = [mockSource.source]
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,
       committedProgressBlockNumber: -1,
-      numEventsProcessed: 0,
-      numBatchesFetched: 0,
+      numEventsProcessed: 0.,
       fetchState: fetchState.contents,
       logger: Logging.getLogger(),
       sourceManager: SourceManager.make(
         ~sources,
         ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+        ~isRealtime=false,
       ),
       chainConfig,
       // This is quite a hack - but it works!
@@ -131,8 +130,9 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     {
       ChainManager.chainFetchers,
       multichain: Ordered,
-      committedCheckpointId: 0.,
+      committedCheckpointId: 0n,
       isInReorgThreshold: false,
+      isRealtime: false,
     },
     numberOfMockEventsCreated.contents,
     allEvents,
@@ -175,13 +175,13 @@ describe("ChainManager", () => {
           } else {
             items->Array.forEach(
               item => {
-                allEventsRead->Js.Array2.push(item)->ignore
+                allEventsRead->Array.push(item)->ignore
               },
             )
             numberOfMockEventsReadFromQueues :=
               numberOfMockEventsReadFromQueues.contents + totalBatchSize
 
-            let firstEventInBlock = items[0]->Option.getExn
+            let firstEventInBlock = items[0]->Option.getOrThrow
 
             t.expect(
               firstEventInBlock->EventUtils.getOrderedBatchItemComparator >

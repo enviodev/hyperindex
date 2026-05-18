@@ -7,7 +7,7 @@ pub mod validation;
 
 use super::{
     clap_definitions::{self, InitArgs, ProjectPaths},
-    init_config::{InitConfig, Language},
+    init_config::{self, InitConfig, Language},
 };
 use crate::{
     clap_definitions::InitFlow,
@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use inquire::{Select, Text};
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
-    contains_no_whitespace_validator, is_directory_new_validator,
+    contains_no_whitespace_validator, is_directory_new_validator, is_valid_folder_name,
     is_valid_foldername_inquire_validator,
 };
 
@@ -40,6 +40,8 @@ enum EvmInitOption {
     TemplateErc20,
     #[strum(serialize = "Template: Greeter")]
     TemplateGreeter,
+    #[strum(serialize = "Feature: External Calls")]
+    FeatureExternalCalls,
     #[strum(serialize = "Feature: Factory Contract")]
     FeatureFactory,
 }
@@ -54,6 +56,7 @@ impl EvmInitOption {
                 Self::ContractImportLocal,
                 Self::TemplateErc20,
                 Self::TemplateGreeter,
+                Self::FeatureExternalCalls,
                 Self::FeatureFactory,
             ],
         }
@@ -205,25 +208,34 @@ async fn prompt_evm_init_option(language: &Language) -> Result<Ecosystem> {
 
     let init_flow = match selected {
         EvmInitOption::ContractImportExplorer => {
-            evm_prompts::prompt_contract_import_init_flow(clap_definitions::evm::ContractImportArgs {
-                local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Explorer(
-                    clap_definitions::evm::ExplorerImportArgs::default(),
-                )),
-                ..Default::default()
-            })
+            evm_prompts::prompt_contract_import_init_flow(
+                clap_definitions::evm::ContractImportArgs {
+                    local_or_explorer: Some(
+                        clap_definitions::evm::LocalOrExplorerImport::Explorer(
+                            clap_definitions::evm::ExplorerImportArgs::default(),
+                        ),
+                    ),
+                    ..Default::default()
+                },
+            )
             .await?
         }
         EvmInitOption::ContractImportLocal => {
-            evm_prompts::prompt_contract_import_init_flow(clap_definitions::evm::ContractImportArgs {
-                local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Local(
-                    clap_definitions::evm::LocalImportArgs::default(),
-                )),
-                ..Default::default()
-            })
+            evm_prompts::prompt_contract_import_init_flow(
+                clap_definitions::evm::ContractImportArgs {
+                    local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Local(
+                        clap_definitions::evm::LocalImportArgs::default(),
+                    )),
+                    ..Default::default()
+                },
+            )
             .await?
         }
         EvmInitOption::TemplateErc20 => evm::InitFlow::Template(evm::Template::Erc20),
         EvmInitOption::TemplateGreeter => evm::InitFlow::Template(evm::Template::Greeter),
+        EvmInitOption::FeatureExternalCalls => {
+            evm::InitFlow::Template(evm::Template::FeatureExternalCalls)
+        }
         EvmInitOption::FeatureFactory => evm::InitFlow::Template(evm::Template::FeatureFactory),
     };
 
@@ -265,15 +277,33 @@ pub async fn prompt_missing_init_args(
     project_paths: &ProjectPaths,
 ) -> Result<InitConfig> {
     let directory: String = match &project_paths.directory {
-        Some(args_directory) => args_directory.clone(),
-        None => {
-            Text::new("Specify a folder name (ENTER to skip): ")
-                .with_default(DEFAULT_PROJECT_ROOT_PATH)
-                .with_validator(is_valid_foldername_inquire_validator)
-                .with_validator(is_directory_new_validator)
-                .with_validator(contains_no_whitespace_validator)
-                .prompt()?
+        Some(args_directory) => {
+            // `--directory` can be a path (e.g. `/tmp/foo/bar`); validate each
+            // segment against the per-folder rules so an apostrophe or other
+            // shell-unsafe char in any component fails fast.
+            let has_invalid_component =
+                std::path::Path::new(args_directory)
+                    .components()
+                    .any(|c| match c {
+                        std::path::Component::Normal(s) => {
+                            s.to_str().is_none_or(|s| !is_valid_folder_name(s))
+                        }
+                        _ => false,
+                    });
+            if has_invalid_component {
+                anyhow::bail!(
+                    "Invalid --directory value {args_directory:?}: folder names cannot \
+                     contain any of: / \\ : * ? \" ' < > |, and cannot be empty."
+                );
+            }
+            args_directory.clone()
         }
+        None => Text::new("Specify a folder name (ENTER to skip): ")
+            .with_default(DEFAULT_PROJECT_ROOT_PATH)
+            .with_validator(is_valid_foldername_inquire_validator)
+            .with_validator(is_directory_new_validator)
+            .with_validator(contains_no_whitespace_validator)
+            .prompt()?,
     };
 
     let name: String = match init_args.name {
@@ -325,11 +355,16 @@ pub async fn prompt_missing_init_args(
     }
     .context("Prompting for API Token")?;
 
+    let package_manager = init_args
+        .package_manager
+        .unwrap_or_else(init_config::PackageManager::resolve_default);
+
     Ok(InitConfig {
         name,
         directory,
         ecosystem,
         language,
         api_token,
+        package_manager,
     })
 }

@@ -2,9 +2,218 @@ type eventParams
 type eventBlock
 type eventTransaction
 
-// Shared EVM transaction fields type used by both RPC and HyperSync sources
-// Field names match HyperSyncClient.ResponseTypes.transaction for consistency
-type evmTransactionFields = {
+// Field name variants for type-safe field selection.
+// @unboxed compiles to plain strings at runtime, matching JS property names.
+@unboxed
+type evmBlockField =
+  | @as("number") Number
+  | @as("timestamp") Timestamp
+  | @as("hash") Hash
+  | @as("parentHash") ParentHash
+  | @as("nonce") Nonce
+  | @as("sha3Uncles") Sha3Uncles
+  | @as("logsBloom") LogsBloom
+  | @as("transactionsRoot") TransactionsRoot
+  | @as("stateRoot") StateRoot
+  | @as("receiptsRoot") ReceiptsRoot
+  | @as("miner") Miner
+  | @as("difficulty") Difficulty
+  | @as("totalDifficulty") TotalDifficulty
+  | @as("extraData") ExtraData
+  | @as("size") Size
+  | @as("gasLimit") GasLimit
+  | @as("gasUsed") GasUsed
+  | @as("uncles") Uncles
+  | @as("baseFeePerGas") BaseFeePerGas
+  | @as("blobGasUsed") BlobGasUsed
+  | @as("excessBlobGas") ExcessBlobGas
+  | @as("parentBeaconBlockRoot") ParentBeaconBlockRoot
+  | @as("withdrawalsRoot") WithdrawalsRoot
+  | @as("l1BlockNumber") L1BlockNumber
+  | @as("sendCount") SendCount
+  | @as("sendRoot") SendRoot
+  | @as("mixHash") MixHash
+
+@unboxed
+type evmTransactionField =
+  | @as("transactionIndex") TransactionIndex
+  | @as("hash") Hash
+  | @as("from") From
+  | @as("to") To
+  | @as("gas") Gas
+  | @as("gasPrice") GasPrice
+  | @as("maxPriorityFeePerGas") MaxPriorityFeePerGas
+  | @as("maxFeePerGas") MaxFeePerGas
+  | @as("cumulativeGasUsed") CumulativeGasUsed
+  | @as("effectiveGasPrice") EffectiveGasPrice
+  | @as("gasUsed") GasUsed
+  | @as("input") Input
+  | @as("nonce") Nonce
+  | @as("value") Value
+  | @as("v") V
+  | @as("r") R
+  | @as("s") S
+  | @as("contractAddress") ContractAddress
+  | @as("logsBloom") LogsBloom
+  | @as("root") Root
+  | @as("status") Status
+  | @as("yParity") YParity
+  | @as("accessList") AccessList
+  | @as("maxFeePerBlobGas") MaxFeePerBlobGas
+  | @as("blobVersionedHashes") BlobVersionedHashes
+  | @as("type") Type
+  | @as("l1Fee") L1Fee
+  | @as("l1GasPrice") L1GasPrice
+  | @as("l1GasUsed") L1GasUsed
+  | @as("l1FeeScalar") L1FeeScalar
+  | @as("gasUsedForL1") GasUsedForL1
+  | @as("authorizationList") AuthorizationList
+
+let allEvmBlockFields: array<evmBlockField> = [
+  Number,
+  Timestamp,
+  Hash,
+  ParentHash,
+  Nonce,
+  Sha3Uncles,
+  LogsBloom,
+  TransactionsRoot,
+  StateRoot,
+  ReceiptsRoot,
+  Miner,
+  Difficulty,
+  TotalDifficulty,
+  ExtraData,
+  Size,
+  GasLimit,
+  GasUsed,
+  Uncles,
+  BaseFeePerGas,
+  BlobGasUsed,
+  ExcessBlobGas,
+  ParentBeaconBlockRoot,
+  WithdrawalsRoot,
+  L1BlockNumber,
+  SendCount,
+  SendRoot,
+  MixHash,
+]
+let evmBlockFieldSchema = S.enum(allEvmBlockFields)
+
+let allEvmTransactionFields: array<evmTransactionField> = [
+  TransactionIndex,
+  Hash,
+  From,
+  To,
+  Gas,
+  GasPrice,
+  MaxPriorityFeePerGas,
+  MaxFeePerGas,
+  CumulativeGasUsed,
+  EffectiveGasPrice,
+  GasUsed,
+  Input,
+  Nonce,
+  Value,
+  V,
+  R,
+  S,
+  ContractAddress,
+  LogsBloom,
+  Root,
+  Status,
+  YParity,
+  AccessList,
+  MaxFeePerBlobGas,
+  BlobVersionedHashes,
+  Type,
+  L1Fee,
+  L1GasPrice,
+  L1GasUsed,
+  L1FeeScalar,
+  GasUsedForL1,
+  AuthorizationList,
+]
+let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
+
+// Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
+let evmNullableBlockFields = Utils.Set.fromArray(
+  (
+    [
+      Nonce,
+      Difficulty,
+      TotalDifficulty,
+      Uncles,
+      BaseFeePerGas,
+      BlobGasUsed,
+      ExcessBlobGas,
+      ParentBeaconBlockRoot,
+      WithdrawalsRoot,
+      L1BlockNumber,
+      SendCount,
+      SendRoot,
+      MixHash,
+    ]: array<evmBlockField>
+  ),
+)
+let evmNullableTransactionFields = Utils.Set.fromArray(
+  (
+    [
+      GasPrice,
+      V,
+      R,
+      S,
+      YParity,
+      MaxPriorityFeePerGas,
+      MaxFeePerGas,
+      MaxFeePerBlobGas,
+      BlobVersionedHashes,
+      ContractAddress,
+      Root,
+      Status,
+      L1Fee,
+      L1GasPrice,
+      L1GasUsed,
+      L1FeeScalar,
+      GasUsedForL1,
+      From,
+      To,
+      Type,
+    ]: array<evmTransactionField>
+  ),
+)
+
+type evmBlockInput = {
+  number?: int,
+  timestamp?: int,
+  hash?: string,
+  parentHash?: string,
+  nonce?: bigint,
+  sha3Uncles?: string,
+  logsBloom?: string,
+  transactionsRoot?: string,
+  stateRoot?: string,
+  receiptsRoot?: string,
+  miner?: Address.t,
+  difficulty?: bigint,
+  totalDifficulty?: bigint,
+  extraData?: string,
+  size?: bigint,
+  gasLimit?: bigint,
+  gasUsed?: bigint,
+  uncles?: array<string>,
+  baseFeePerGas?: bigint,
+  blobGasUsed?: bigint,
+  excessBlobGas?: bigint,
+  parentBeaconBlockRoot?: string,
+  withdrawalsRoot?: string,
+  l1BlockNumber?: int,
+  sendCount?: string,
+  sendRoot?: string,
+  mixHash?: string,
+}
+
+type evmTransactionInput = {
   from?: Address.t,
   to?: Address.t,
   gas?: bigint,
@@ -35,16 +244,19 @@ type evmTransactionFields = {
   type_?: int,
   root?: string,
   status?: int,
+  accessList?: JSON.t,
   // L2 specific fields (Optimism, Arbitrum, etc.)
   l1Fee?: bigint,
   l1GasPrice?: bigint,
   l1GasUsed?: bigint,
   l1FeeScalar?: float,
   gasUsedForL1?: bigint,
+  authorizationList?: JSON.t,
 }
 
-@genType
 type genericEvent<'params, 'block, 'transaction> = {
+  contractName: string,
+  eventName: string,
   params: 'params,
   chainId: int,
   srcAddress: Address.t,
@@ -57,35 +269,28 @@ type event = genericEvent<eventParams, eventBlock, eventTransaction>
 
 external fromGenericEvent: genericEvent<'a, 'b, 'c> => event = "%identity"
 
-@genType
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
 }
-@genType
 type genericLoader<'args, 'loaderReturn> = 'args => promise<'loaderReturn>
 
-@genType
 type genericContractRegisterArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
 }
-@genType.import(("./Types.ts", "GenericContractRegister"))
 type genericContractRegister<'args> = 'args => promise<unit>
 
 type contractRegisterContext
 type contractRegisterArgs = genericContractRegisterArgs<event, contractRegisterContext>
 type contractRegister = genericContractRegister<contractRegisterArgs>
 
-@genType
 type genericHandlerArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
 }
-@genType
 type genericHandler<'args> = 'args => promise<unit>
 
-@genType
 type entityHandlerContext<'entity> = {
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
@@ -96,9 +301,9 @@ type entityHandlerContext<'entity> = {
 
 type chainInfo = {
   id: int,
-  // true when the chain has completed initial sync and is processing live events
-  // false during historical synchronization
-  isLive: bool,
+  // True once every chain has caught up to head/endBlock and entered real-time
+  // indexing mode. False while any chain is still backfilling.
+  isRealtime: bool,
 }
 
 type chains = dict<chainInfo>
@@ -114,12 +319,28 @@ type handlerArgs = {
 }
 type handler = genericHandler<handlerArgs>
 
-@genType
-type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
+type genericHandlerWithLoader<'loader, 'handler, 'where> = {
   loader: 'loader,
   handler: 'handler,
   wildcard?: bool,
-  eventFilters?: 'eventFilters,
+  where?: 'where,
+}
+
+// Recursive tuple/struct component metadata emitted by the CLI when an event
+// param (or any nested field) is a Solidity struct. `name` is always non-empty —
+// the CLI fills in `"0"`, `"1"`, ... for anonymous components in mixed-name
+// tuples — so the runtime can always rebuild a keyed object.
+type rec eventParamComponent = {
+  name: string,
+  abiType: string,
+  components?: array<eventParamComponent>,
+}
+
+type eventParam = {
+  name: string,
+  abiType: string,
+  indexed: bool,
+  components?: array<eventParamComponent>,
 }
 
 // This is private so it's not manually constructed internally
@@ -139,6 +360,8 @@ type eventConfig = private {
   handler: option<handler>,
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
+  simulateParamsSchema: S.schema<eventParams>,
+  startBlock: option<int>,
 }
 
 type fuelEventKind =
@@ -147,7 +370,6 @@ type fuelEventKind =
   | Burn
   | Transfer
   | Call
-@genType.opaque
 type fuelEventConfig = {
   ...eventConfig,
   kind: fuelEventKind,
@@ -164,36 +386,51 @@ type topicSelection = {
   topic3: array<EvmTypes.Hex.t>,
 }
 
-type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}
+// Per-event, per-invocation arguments passed to a `where` callback. The
+// concrete `chain` shape (which contract key it exposes) is generated per
+// event in user-project codegen — here it's an open record so codegen'd
+// types subtype-coerce into it cleanly.
+type onEventWhereArgs<'chain> = {chain: 'chain}
 
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
 
-@genType.opaque
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
-  blockSchema: S.schema<eventBlock>,
-  transactionSchema: S.schema<eventTransaction>,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
+  selectedBlockFields: Utils.Set.t<evmBlockField>,
+  selectedTransactionFields: Utils.Set.t<evmTransactionField>,
+  // Retained so `HandlerLoader.applyRegistrations` can re-run
+  // `LogSelection.parseEventFiltersOrThrow` after handler modules register
+  // with a `where:` filter. Only indexed params are kept — they're all the
+  // filter parser needs for topic-getter construction + key validation.
+  sighash: string,
+  indexedParams: array<eventParam>,
 }
+
+// Shared formula for `eventConfig.dependsOnAddresses`. Kept here so
+// `EventConfigBuilder.build{Evm,Fuel}EventConfig` and
+// `HandlerLoader.applyRegistrations` stay in sync when handler state flips
+// the value. Fuel events always have `filterByAddresses=false`, so callers
+// there simply pass it through as `false`.
+let dependsOnAddresses = (~isWildcard, ~filterByAddresses) => !isWildcard || filterByAddresses
+
 type evmContractConfig = {
   name: string,
   abi: EvmTypes.Abi.t,
   events: array<evmEventConfig>,
 }
 
-type indexingContract = {
+type indexingAddress = {
   address: Address.t,
   contractName: string,
-  startBlock: int,
-  // Needed for rollback
-  // If not set, assume the contract comes from config
-  // and shouldn't be rolled back
-  registrationBlock: option<int>,
+  // Needed for rollback.
+  // -1 for config addresses that shouldn't be rolled back.
+  registrationBlock: int,
 }
 
-type dcs = array<indexingContract>
+type dcs = array<indexingAddress>
 
 // Duplicate the type from item
 // to make item properly unboxed
@@ -259,22 +496,19 @@ external getItemDcs: item => option<dcs> = "dcs"
 @set
 external setItemDcs: (item, dcs) => unit = "dcs"
 
-@genType
-type eventOptions<'eventFilters> = {
+type eventOptions<'where> = {
   wildcard?: bool,
-  eventFilters?: 'eventFilters,
+  where?: 'where,
 }
 
-@genType
 type fuelSupplyParams = {
   subId: string,
   amount: bigint,
 }
 let fuelSupplyParamsSchema = S.schema(s => {
   subId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(Utils.BigInt.schema),
 })
-@genType
 type fuelTransferParams = {
   to: Address.t,
   assetId: string,
@@ -283,22 +517,27 @@ type fuelTransferParams = {
 let fuelTransferParamsSchema = S.schema(s => {
   to: s.matches(Address.schema),
   assetId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(Utils.BigInt.schema),
 })
 
+type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
+
 type entity = private {id: string}
-type clickHouseSetUpdatesCache = {
-  tableName: string,
-  convertOrThrow: Change.t<entity> => Js.Json.t,
+
+// Per-entity storage resolved at parse time against the global storage
+// config. Downstream PG/CH consumers just check the matching boolean.
+type entityStorage = {
+  postgres: bool,
+  clickhouse: bool,
 }
+
 type genericEntityConfig<'entity> = {
   name: string,
   index: int,
   schema: S.t<'entity>,
   rowsSchema: S.t<array<'entity>>,
   table: Table.table,
-  mutable clickHouseSetUpdatesCache?: clickHouseSetUpdatesCache,
-  mutable pgEntityHistoryCache?: EntityHistory.pgEntityHistory<'entity>,
+  storage: entityStorage,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"
@@ -338,7 +577,7 @@ type effect = {
   rateLimit: option<rateLimitState>,
 }
 let cacheTablePrefix = "envio_effect_"
-let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<effectOutput>)
+let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
 let effectCacheItemRowsSchema = S.array(
   S.schema(s => {id: s.matches(S.string), output: s.matches(cacheOutputSchema)}),
 )
@@ -352,14 +591,13 @@ let makeCacheTable = (~effectName) => {
   )
 }
 
-@genType.import(("./Types.ts", "Invalid"))
-type noEventFilters
+type noOnEventWhere
 
-type checkpointId = float
+type checkpointId = bigint
 
 type reorgCheckpoint = {
   @as("id")
-  checkpointId: float,
+  checkpointId: bigint,
   @as("chain_id")
   chainId: int,
   @as("block_number")

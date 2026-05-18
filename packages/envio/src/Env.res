@@ -22,7 +22,7 @@ let serverPort =
     ~fallback=envSafe->EnvSafe.get("METRICS_PORT", S.int->S.port, ~fallback=9898),
   )
 
-let tuiOffEnvVar = envSafe->EnvSafe.get("TUI_OFF", S.bool, ~fallback=false)
+let tuiEnvVar = envSafe->EnvSafe.get("ENVIO_TUI", S.option(S.bool))
 
 let logLevelSchema = S.enum([
   #trace,
@@ -64,49 +64,9 @@ let hypersyncClientSerializationFormat =
 let hypersyncClientEnableQueryCaching =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_ENABLE_QUERY_CACHING", S.bool, ~fallback=true)
 
-module Benchmark = {
-  module SaveDataStrategy: {
-    type t
-    let schema: S.t<t>
-    let default: t
-    let shouldSaveJsonFile: t => bool
-    let shouldSavePrometheus: t => bool
-    let shouldSaveData: t => bool
-  } = {
-    @unboxed
-    type t = Bool(bool) | @as("json-file") JsonFile | @as("prometheus") Prometheus
-
-    let schema = S.enum([Bool(true), Bool(false), JsonFile, Prometheus])
-    let default = Bool(false)
-
-    let shouldSaveJsonFile = self =>
-      switch self {
-      | JsonFile | Bool(true) => true
-      | _ => false
-      }
-
-    let shouldSavePrometheus = _ => true
-
-    let shouldSaveData = self => self->shouldSavePrometheus || self->shouldSaveJsonFile
-  }
-
-  let saveDataStrategy =
-    envSafe->EnvSafe.get(
-      "ENVIO_SAVE_BENCHMARK_DATA",
-      SaveDataStrategy.schema,
-      ~fallback=SaveDataStrategy.default,
-    )
-
-  let shouldSaveData = saveDataStrategy->SaveDataStrategy.shouldSaveData
-
-  /**
-  StdDev involves saving sum of squares of data points, which could get very large.
-
-  Currently only do this for local runs on json-file and not prometheus.
-  */
-  let shouldSaveStdDev =
-    saveDataStrategy->SaveDataStrategy.shouldSaveJsonFile
-}
+let hypersyncLogLevel =
+  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_LOG_LEVEL", HyperSyncClient.logLevelSchema, ~fallback=#info)
+HyperSyncClient.setLogLevel(hypersyncLogLevel)
 
 let logStrategy =
   envSafe->EnvSafe.get(
@@ -144,7 +104,13 @@ module Db = {
     },
   )
   let database = envSafe->EnvSafe.get("ENVIO_PG_DATABASE", S.string, ~devFallback="envio-dev")
-  let publicSchema = envSafe->EnvSafe.get("ENVIO_PG_PUBLIC_SCHEMA", S.string, ~fallback="public")
+  let publicSchema = envSafe->EnvSafe.get(
+    "ENVIO_PG_SCHEMA",
+    S.string,
+    ~fallback={
+      envSafe->EnvSafe.get("ENVIO_PG_PUBLIC_SCHEMA", S.string, ~fallback="public")
+    },
+  )
   let ssl = envSafe->EnvSafe.get(
     "ENVIO_PG_SSL_MODE",
     Postgres.sslOptionsSchema,
@@ -155,17 +121,37 @@ module Db = {
   let maxConnections = envSafe->EnvSafe.get("ENVIO_PG_MAX_CONNECTIONS", S.int, ~fallback=2)
 }
 
-module ClickHouseSink = {
-  let host = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_HOST", S.option(S.string))
-  let database = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_DATABASE", S.option(S.string))
-  let username = switch host {
-  | None => ""
-  | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_USERNAME", S.string)
-  }
-  let password = switch host {
-  | None => ""
-  | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_PASSWORD", S.string)
-  }
+// Required env vars are validated lazily in PgStorage when the user
+// opts into ClickHouse via `storage.clickhouse: true` in config.yaml.
+//
+// Reads run at call time instead of module load. `envio dev` injects these
+// vars into `process.env` after booting its ClickHouse container, and that
+// happens strictly after this module has already been evaluated — caching
+// at module load would lock in `None` and defeat the injection.
+module ClickHouse = {
+  %%private(
+    let read: string => option<string> = %raw(`(k) => {
+      const v = process.env[k];
+      return v === undefined || v === "" ? undefined : v;
+    }`)
+    // Empty password is a valid, passwordless ClickHouse user — distinguish
+    // "unset" (None) from "set but empty" (Some("")).
+    let readAllowEmpty: string => option<string> = %raw(`(k) => process.env[k]`)
+  )
+  let host = () => read("ENVIO_CLICKHOUSE_HOST")
+  let database = () => read("ENVIO_CLICKHOUSE_DATABASE")
+  let username = () => read("ENVIO_CLICKHOUSE_USERNAME")
+  let password = () => readAllowEmpty("ENVIO_CLICKHOUSE_PASSWORD")
+  let replicated = () =>
+    switch read("ENVIO_CLICKHOUSE_REPLICATED") {
+    | None => false
+    | Some("true") => true
+    | Some(other) =>
+      JsError.throwWithMessage(
+        `Invalid ENVIO_CLICKHOUSE_REPLICATED value: "${other}". Only "true" is accepted.`,
+      )
+    }
+  let databaseEngine = () => read("ENVIO_CLICKHOUSE_DATABASE_ENGINE")
 }
 
 module Hasura = {
@@ -185,7 +171,7 @@ module Hasura = {
       ~devFallback="http://localhost:8080/v1/metadata",
     )
 
-  let url = graphqlEndpoint->Js.String2.slice(~from=0, ~to_=-("/v1/metadata"->Js.String2.length))
+  let url = graphqlEndpoint->String.slice(~start=0, ~end=-("/v1/metadata"->String.length))
 
   let role = envSafe->EnvSafe.get("HASURA_GRAPHQL_ROLE", S.string, ~devFallback="admin")
 
@@ -199,7 +185,7 @@ module Hasura = {
       // Will be removed once comma support is added — don't rely on this.
       S.string->S.transform(s => {
         parser: string =>
-          switch string->Js.String2.split("&") {
+          switch string->String.split("&") {
           | []
           | [_] =>
             s.fail(`Provide an array of entities in the JSON format.`)
@@ -231,20 +217,6 @@ module ThrottleWrites = {
       "ENVIO_THROTTLE_PRUNE_STALE_DATA_INTERVAL_MILLIS",
       S.int,
       ~devFallback=30_000,
-    )
-
-  let liveMetricsBenchmarkIntervalMillis =
-    envSafe->EnvSafe.get(
-      "ENVIO_THROTTLE_LIVE_METRICS_BENCHMARK_INTERVAL_MILLIS",
-      S.int,
-      ~devFallback=1_000,
-    )
-
-  let jsonFileBenchmarkIntervalMillis =
-    envSafe->EnvSafe.get(
-      "ENVIO_THROTTLE_JSON_FILE_BENCHMARK_INTERVAL_MILLIS",
-      S.int,
-      ~devFallback=500,
     )
 }
 

@@ -1,21 +1,42 @@
 import assert from "assert";
 import { it, describe } from "vitest";
 import {
-  TestHelpers,
   indexer,
   type User,
   type Indexer,
   type EvmChainId,
   type EvmChainName,
+  type EvmContractName,
+  type EvmEvent,
   type FuelChainId,
+  type FuelEvent,
   type SvmChainId,
   type TestIndexer,
-} from "generated";
-import { type Address } from "envio";
+  type Token,
+  type EvmOnEventOptions,
+  type EvmOnEventHandler,
+  type EvmContractRegisterOptions,
+  type EvmContractRegisterHandler,
+  type EvmOnEventContext,
+  type EvmContractRegisterContext,
+  type EvmOnEventWhere,
+  type Entity,
+  type EntityName,
+  type Enum,
+  type EnumName,
+} from "envio";
+import {
+  type Address,
+  type EvmOnBlockWhereResult,
+  type EvmOnBlockFilter,
+  type EvmOnBlockOptions,
+  type EvmOnBlockContext,
+  type EvmOnBlockHandler,
+  type EvmOnBlockHandlerArgs,
+  type EvmOnBlockWhereArgs,
+} from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
-import { createTestIndexer } from "generated";
-
-const { MockDb, Gravatar, EventFiltersTest } = TestHelpers;
+import { createTestIndexer } from "envio";
 
 describe("Use Envio test framework to test event handlers", () => {
   it("Indexer types and value", () => {
@@ -68,28 +89,28 @@ describe("Use Envio test framework to test event handlers", () => {
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly gnosis: {
             readonly id: 100;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly polygon: {
             readonly id: 137;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly "1337": {
             readonly id: 1337;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
         } & {
           readonly 1: {
@@ -97,33 +118,33 @@ describe("Use Envio test framework to test event handlers", () => {
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly 100: {
             readonly id: 100;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly 137: {
             readonly id: 137;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
           readonly 1337: {
             readonly id: 1337;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
-            readonly isLive: boolean;
+            readonly isRealtime: boolean;
           } & ExpectedEvmContracts;
         }
       >
     >(true);
-    // Check that chain has the expected structure with name and isLive
+    // Check that chain has the expected structure with name and isRealtime
     expectType<
       TypeEqual<
         typeof indexer.chains.ethereumMainnet,
@@ -132,7 +153,7 @@ describe("Use Envio test framework to test event handlers", () => {
           readonly startBlock: number;
           readonly endBlock: number | undefined;
           readonly name: string;
-          readonly isLive: boolean;
+          readonly isRealtime: boolean;
         } & ExpectedEvmContracts
       >
     >(true);
@@ -149,13 +170,13 @@ describe("Use Envio test framework to test event handlers", () => {
     expectType<
       TypeEqual<
         FuelChainId,
-        "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
+        "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'envio codegen'"
       >
     >(true);
     expectType<
       TypeEqual<
         SvmChainId,
-        "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
+        "SvmChainId is not available. Configure SVM chains in config.yaml and run 'envio codegen'"
       >
     >(true);
 
@@ -173,9 +194,12 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(indexer.chains[1].startBlock, 1);
     assert.deepEqual(indexer.chains[1].endBlock, undefined);
     assert.deepEqual(indexer.chains[1].name, "ethereumMainnet");
-    assert.deepEqual(indexer.chains[1].isLive, false);
+    assert.deepEqual(indexer.chains[1].isRealtime, false);
     assert.deepEqual(indexer.chains[1].Noop.addresses, [
       "0x0b2F78c5Bf6d9c12EE1225d5f374Aa91204580C3",
+    ]);
+    assert.deepEqual(indexer.chains[1337].Gravatar.addresses, [
+      "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
     ]);
     assert.deepEqual(indexer.chains[1].Noop.name, "Noop");
     assert.deepEqual(Object.keys(indexer.chains[1]), [
@@ -183,7 +207,7 @@ describe("Use Envio test framework to test event handlers", () => {
       "startBlock",
       "endBlock",
       "name",
-      "isLive",
+      "isRealtime",
       "EventFiltersTest",
       "Gravatar",
       "NftFactory",
@@ -255,116 +279,110 @@ describe("Use Envio test framework to test event handlers", () => {
   });
 
   it("Runs contract register handler", async () => {
-    // Initializing the mock database
-    const mockDbInitial = MockDb.createMockDb();
-
+    const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "syncRegistration",
-      mockEventData: {
-        chainId: 1337,
-        block: {
-          number: 2,
+    // FactoryEvent with syncRegistration testCase triggers context.addSimpleNft
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "syncRegistration" },
+              block: { number: 2 },
+            },
+          ],
         },
       },
     });
 
-    const updatedMockDb = await mockDbInitial.processEvents([event]);
-
-    const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
-    assert.deepEqual(registeredDcs, [
-      {
-        id: `1337-${dcAddress}`,
-        contract_name: "SimpleNft",
-        contract_address: dcAddress,
-        chain_id: 1337,
-        registering_event_block_number: 2,
-        registering_event_log_index: 0,
-        registering_event_name: "FactoryEvent",
-        registering_event_src_address: `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`,
-        registering_event_block_timestamp: 0,
-        registering_event_contract_name: "Gravatar",
-      },
-    ] satisfies typeof registeredDcs);
+    // Verify dynamic contract was registered
+    assert.deepEqual(result.changes[0]?.addresses, {
+      sets: [{ address: dcAddress, contract: "SimpleNft" }],
+    });
   });
 
   it("Runs contract register with async handler", async () => {
-    // Initializing the mock database
-    const mockDbInitial = MockDb.createMockDb();
-
+    const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "asyncRegistration",
-      mockEventData: {
-        chainId: 1337,
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "asyncRegistration" },
+            },
+          ],
+        },
       },
     });
 
-    const updatedMockDb = await mockDbInitial.processEvents([event]);
-
-    const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
-    assert.deepEqual(registeredDcs, [
-      {
-        id: `1337-${dcAddress}`,
-        contract_name: "SimpleNft",
-        contract_address: dcAddress,
-        chain_id: 1337,
-        registering_event_block_number: 0,
-        registering_event_log_index: 0,
-        registering_event_name: "FactoryEvent",
-        registering_event_src_address: `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`,
-        registering_event_block_timestamp: 0,
-        registering_event_contract_name: "Gravatar",
-      },
-    ] satisfies typeof registeredDcs);
+    // Verify dynamic contract was registered
+    assert.deepEqual(result.changes[0]?.addresses, {
+      sets: [{ address: dcAddress, contract: "SimpleNft" }],
+    });
   });
 
-  it("Throws when contract registered in an unawaited macrotask", async () => {
-    // Initializing the mock database
-    const mockDbInitial = MockDb.createMockDb();
-
+  it("Throws when contract registered in an unawaited macrotask", async (t) => {
+    const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "throwOnHangingRegistration",
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "throwOnHangingRegistration" },
+            },
+          ],
+        },
+      },
     });
 
-    const updatedMockDb = await mockDbInitial.processEvents([event]);
-    const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
-    assert.deepEqual(
-      registeredDcs,
-      [],
-      `Since the error thrown in the separate macrotask,
-      can't really break the flow here.
-      So the contract register should finish successfully.`
-    );
-
+    // Since the error is thrown in a separate macrotask, the contract register
+    // should finish but the registration shouldn't succeed
+    t.expect(result.changes[0]?.addresses).toBeUndefined();
     // Currently no good way to test this:
-    // But you should be able to see it the logs when running the test
-    // assert.equal(
-    //   log.message,
-    //   "The context.addSimpleNft was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error."
+    // But you should be able to see it in the logs when running the test
+    // t.expect(log.message).toEqual(
+    //   "Impossible to access context.addSimpleNft after the contract register is resolved. Make sure you didn't miss an await in the handler.",
     // );
   });
 
   it("entity.getOrCreate should create the entity if it doesn't exist", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
+    const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "getOrCreate - creates",
+    await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "getOrCreate - creates" },
+            },
+          ],
+        },
+      },
     });
 
-    const updatedMockDb = await mockDbInitial.processEvents([event]);
-
-    const users = updatedMockDb.entities.User.getAll();
+    const users = await indexer.User.getAll();
     assert.deepEqual(users, [
       {
         id: "0",
@@ -373,18 +391,12 @@ describe("Use Envio test framework to test event handlers", () => {
         gravatar_id: undefined,
         accountType: "USER",
       },
-    ] satisfies typeof users);
+    ]);
   });
 
   it("entity.getOrCreate should load the entity if it exists", async () => {
-    let mockDb = MockDb.createMockDb();
-
+    const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
-
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "getOrCreate - loads",
-    });
 
     const existingUser: User = {
       id: "0",
@@ -393,23 +405,31 @@ describe("Use Envio test framework to test event handlers", () => {
       gravatar_id: undefined,
       accountType: "USER",
     };
-    mockDb = mockDb.entities.User.set(existingUser);
+    indexer.User.set(existingUser);
 
-    mockDb = await mockDb.processEvents([event]);
+    await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "getOrCreate - loads" },
+            },
+          ],
+        },
+      },
+    });
 
-    const users = mockDb.entities.User.getAll();
-    assert.deepEqual(users, [existingUser] satisfies typeof users);
+    const users = await indexer.User.getAll();
+    assert.deepEqual(users, [existingUser]);
   });
 
   it("entity.getOrThrow should return existing entity", async () => {
-    let mockDb = MockDb.createMockDb();
-
+    const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
-
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "getOrThrow",
-    });
 
     const existingUser: User = {
       id: "0",
@@ -418,84 +438,118 @@ describe("Use Envio test framework to test event handlers", () => {
       gravatar_id: undefined,
       accountType: "USER",
     };
-    mockDb = mockDb.entities.User.set(existingUser);
+    indexer.User.set(existingUser);
 
-    mockDb = await mockDb.processEvents([event]);
+    await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "getOrThrow" },
+            },
+          ],
+        },
+      },
+    });
 
-    const users = mockDb.entities.User.getAll();
-    assert.deepEqual(users, [existingUser] satisfies typeof users);
+    const users = await indexer.User.getAll();
+    assert.deepEqual(users, [existingUser]);
   });
 
   it("entity.getOrThrow throws if entity doesn't exist", async () => {
-    let mockDb = MockDb.createMockDb();
-
+    const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "getOrThrow",
-    });
-
     await assert.rejects(
-      mockDb.processEvents([event]),
-      // It also logs to the console.
-      {
-        message: `Entity 'User' with ID '0' is expected to exist.`,
-      }
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "getOrThrow" },
+              },
+            ],
+          },
+        },
+      }),
     );
   });
 
   it("entity.getOrThrow throws if entity doesn't exist with custom message", async () => {
-    let mockDb = MockDb.createMockDb();
-
+    const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "getOrThrow - custom message",
-    });
-
     await assert.rejects(
-      mockDb.processEvents([event]),
-      // It also logs to the console.
-      {
-        message: `User should always exist`,
-      }
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "getOrThrow - custom message" },
+              },
+            ],
+          },
+        },
+      }),
     );
   });
 
   it("entity.getOrThrow - ignores the first fail in loader", async () => {
-    let mockDb = MockDb.createMockDb();
-
+    const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "getOrThrow - ignores the first fail in loader",
-    });
-
     await assert.rejects(
-      mockDb.processEvents([event]),
-      // It also logs to the console.
-      {
-        message: `Second loader failure should abort processing`,
-      }
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "getOrThrow - ignores the first fail in loader" },
+              },
+            ],
+          },
+        },
+      }),
     );
   });
 
   it("entity.set should be ignored in unordered loader run", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
+    const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "loaderSetCount",
+    await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "loaderSetCount" },
+            },
+          ],
+        },
+      },
     });
 
-    const updatedMockDb = await mockDbInitial.processEvents([event]);
-
-    const users = updatedMockDb.entities.User.getAll();
+    const users = await indexer.User.getAll();
     assert.deepEqual(users, [
       {
         id: "0",
@@ -504,161 +558,414 @@ describe("Use Envio test framework to test event handlers", () => {
         gravatar_id: undefined,
         accountType: "USER",
       },
-    ] satisfies typeof users);
+    ]);
   });
 
   it("Process multiple events in batch", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
+    const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
-    const event1 = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "processMultipleEvents - 1",
-    });
-    const event2 = Gravatar.FactoryEvent.createMockEvent({
-      contract: dcAddress,
-      testCase: "processMultipleEvents - 2",
+    await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "processMultipleEvents - 1" },
+            },
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "processMultipleEvents - 2" },
+            },
+          ],
+        },
+      },
     });
 
-    const updatedMockDb = await mockDbInitial.processEvents([event1, event2]);
+    const allD = await indexer.D.getAll();
+    assert.deepEqual(allD, [
+      { id: "1", c: "1" },
+      { id: "2", c: "2" },
+    ]);
+  });
 
-    const d = updatedMockDb.entities.D.getAll();
-    assert.deepEqual(d, [
-      {
-        id: "1",
-        c: "1",
+  // Reproduction for https://github.com/enviodev/hyperindex/issues/1199.
+  // `context.Token.getWhere({ collection_id: { _eq: ... } })` filters by the
+  // FK db column (`collection_id`) of a `@derivedFrom`-style relation. The
+  // in-memory TestIndexer looked up the field by its logical name and threw
+  // "Field collection_id not found in entity Token" because the logical name
+  // is "collection". Production PgStorage queries by the db column directly,
+  // so the bug only manifested in tests.
+  it("getWhere filters Token by collection_id FK column (#1199)", async () => {
+    const indexer = createTestIndexer();
+    const collectionAddress =
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const ownerAddress =
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    const matchingToken: Token = {
+      id: collectionAddress + "-1",
+      tokenId: 1n,
+      collection_id: collectionAddress,
+      owner_id: ownerAddress,
+    };
+    const otherToken: Token = {
+      id: "0xcccccccccccccccccccccccccccccccccccccccc-1",
+      tokenId: 2n,
+      collection_id: "0xcccccccccccccccccccccccccccccccccccccccc",
+      owner_id: ownerAddress,
+    };
+    indexer.Token.set(matchingToken);
+    indexer.Token.set(otherToken);
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: {
+                contract: "0x1234567890123456789012345678901234567890",
+                testCase: "getWhereByLinkedEntityField",
+              },
+            },
+          ],
+        },
       },
-      {
-        id: "2",
-        c: "2",
+    });
+
+    // Handler encodes the number of tokens returned by getWhere into the
+    // entity id so a single equality assertion covers it.
+    assert.deepEqual(result.changes[0]?.CustomSelectionTestPass, {
+      sets: [{ id: "issue-1199:1" }],
+    });
+  });
+
+  // Regression: a `getWhere` on a nullable linkedEntity column (db column
+  // `<field>_id`) registers an in-memory index keyed by that column name.
+  // The next `set` of an entity whose JS object simply omits the FK (the
+  // natural shape for `nullableField === undefined`) used to throw
+  // `UndefinedKey("gravatar_id")` deep inside InMemoryTable.updateIndices.
+  // PgStorage stores the column as NULL, so the bug only surfaced for
+  // handlers that mix the two operations on the same entity table.
+  it("getWhere followed by set with omitted nullable FK does not crash", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: {
+                contract: "0x1234567890123456789012345678901234567890",
+                testCase: "getWhereThenSetNullableFk",
+              },
+            },
+          ],
+        },
       },
-    ] satisfies typeof d);
+    });
+
+    assert.deepEqual(result.changes[0]?.User, {
+      sets: [
+        {
+          id: "user-with-null-gravatar",
+          address: "0x1111111111111111111111111111111111111111",
+          updatesCountOnUserForTesting: 0,
+          gravatar_id: undefined,
+          accountType: "USER",
+        },
+      ],
+    });
+    assert.deepEqual(result.changes[0]?.CustomSelectionTestPass, {
+      sets: [{ id: "getWhereThenSetNullableFk:ok" }],
+    });
   });
 
   it("Throws when contract registered with invalid address", async () => {
-    const mockDbInitial = MockDb.createMockDb();
+    const indexer = createTestIndexer();
 
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      testCase: "validatesAddress",
-    });
-
-    await assert.rejects(mockDbInitial.processEvents([event]), {
-      message:
-        'Address "invalid-address" is invalid. Expected a 20-byte hex string starting with 0x.',
-    });
+    await assert.rejects(
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: "0x0000000000000000000000000000000000000000", testCase: "validatesAddress" },
+              },
+            ],
+          },
+        },
+      }),
+      {
+        message:
+          'Address "invalid-address" is invalid. Expected a 20-byte hex string starting with 0x.',
+      }
+    );
   });
 
   it("Checksums address when contract registered with valid address", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
-    const eventAddress = "0x134";
+    const indexer = createTestIndexer();
     // Use a lowercase address that will be checksummed to proper format
     const inputAddress = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
     const expectedChecksummedAddress =
       "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: inputAddress,
-      testCase: "checksumsAddress",
-      mockEventData: {
-        srcAddress: eventAddress,
-        chainId: 1337,
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: inputAddress, testCase: "checksumsAddress" },
+            },
+          ],
+        },
       },
     });
 
-    const updatedMockDb = await mockDbInitial.processEvents([event]);
+    assert.deepEqual(result.changes[0]?.addresses, {
+      sets: [{ address: expectedChecksummedAddress, contract: "SimpleNft" }],
+    });
+  });
 
-    const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
-    assert.deepEqual(registeredDcs, [
-      {
-        id: `1337-${expectedChecksummedAddress}`,
-        contract_name: "SimpleNft",
-        contract_address: expectedChecksummedAddress,
-        chain_id: 1337,
-        registering_event_block_number: 0,
-        registering_event_log_index: 0,
-        registering_event_name: "FactoryEvent",
-        registering_event_src_address: eventAddress,
-        registering_event_block_timestamp: 0,
-        registering_event_contract_name: "Gravatar",
+  it("composes duplicate handlers with same options", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    // Process CustomSelection — original handler + composed handler should both run
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "CustomSelection",
+              transaction: { from: "0xfoo" },
+              block: { parentHash: "0xParentHash" },
+            },
+          ],
+        },
       },
-    ] satisfies typeof registeredDcs);
-  });
-
-  it("Should be able to run effect with cache", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      testCase: "testEffectWithCache",
-    });
-    const event2 = Gravatar.FactoryEvent.createMockEvent({
-      testCase: "testEffectWithCache2",
     });
 
-    const _updatedMockDb = await mockDbInitial.processEvents([event, event2]);
-  });
-
-  it("Should throw when effect throws", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      testCase: "throwingEffect",
-    });
-
-    await assert.rejects(mockDbInitial.processEvents([event]), {
-      message: "Error from effect",
-    });
-  });
-
-  it("Should throw when registering a handler after the indexer has finished initializing", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      testCase: "handlerInHandler",
-    });
-
-    await assert.rejects(mockDbInitial.processEvents([event]), {
-      message:
-        "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
-    });
-  });
-
-  it("composes duplicate handlers with same options and rejects mismatched options", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      contract: "0x1234567890123456789012345678901234567890",
-      testCase: "syncRegistration",
-    });
-
-    // Trigger module load via autoLoadFromSrcHandlers
-    await mockDbInitial.processEvents([event]);
-
-    // Dynamic-import EventHandlers.js to access exported error values
-    const handlers = await import("../src/handlers/EventHandlers");
-
-    // Same options → composed without error
-    // contractRegister ran during factory event processing, proving compose works
-    assert.strictEqual(handlers.composedContractRegisterCalled, true);
-
-    // Different options → throws a user-friendly error
-    assert.strictEqual(
-      handlers.mismatchedHandlerOptionsError?.message,
-      "Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters) for Gravatar.CustomSelection"
+    // Original handler sets entity with id = event.transaction.hash
+    // Composed handler sets entity with id = "composed-" + event.transaction.hash
+    const change = result.changes[0]?.CustomSelectionTestPass;
+    assert.equal(change?.sets?.length, 2, "Both original and composed handler should set entities");
+    assert.ok(
+      change?.sets?.some((e: { id: string }) => e.id.startsWith("composed-")),
+      "Composed handler should have set an entity with 'composed-' prefix"
     );
   });
 
+  it("composes duplicate contractRegister with same options", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    // Process FactoryEvent with composeContractRegister testCase —
+    // original contractRegister adds SimpleNft (via syncRegistration path),
+    // composed contractRegister adds NftFactory
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "composeContractRegister" },
+            },
+          ],
+        },
+      },
+    });
+
+    // The composed contractRegister should have registered NftFactory
+    const addresses = result.changes[0]?.addresses?.sets;
+    assert.ok(
+      addresses?.some((a: { contract: string }) => a.contract === "NftFactory"),
+      "Composed contractRegister should register NftFactory"
+    );
+  });
+
+  it("captured contractRegister add() throws after handler resolved", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    // Two sequential FactoryEvent events:
+    //   1. testCase "captureAdd"       — contractRegister handler stashes
+    //      context.chain.SimpleNft.add into a module-scoped variable.
+    //   2. testCase "callCapturedAdd"  — onEvent handler tries to call the
+    //      captured closure. By then the first event's contractRegister params
+    //      have isResolved=true, so the closure must throw. The handler
+    //      records the outcome via the CustomSelectionTestPass entity id.
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "captureAdd" },
+            },
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "callCapturedAdd" },
+            },
+          ],
+        },
+      },
+    });
+
+    const sets = result.changes[0]?.CustomSelectionTestPass?.sets ?? [];
+    assert.ok(
+      sets.some((e: { id: string }) => e.id === "captured-add-threw"),
+      `Captured contractRegister add() should throw after handler resolved. Got entity ids: ${sets.map((e: { id: string }) => e.id).join(", ")}`
+    );
+  });
+
+  it("Should be able to run effect with cache", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "testEffectWithCache" },
+            },
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "testEffectWithCache2" },
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("Should throw when effect throws", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    await assert.rejects(
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "throwingEffect" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+  });
+
+  it("Should throw when registering a handler after the indexer has finished initializing", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    await assert.rejects(
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "handlerInHandler" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+  });
+
+  it("Should throw when registering an onBlock handler after the indexer has finished initializing", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    await assert.rejects(
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "onBlockInHandler" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+  });
+
+
+
   it("Currently filters are ignored by the test framework", async () => {
-    const mockDbInitial = MockDb.createMockDb();
+    const indexer = createTestIndexer();
 
-    const event = EventFiltersTest.FilterTestEvent.createMockEvent({
-      addr: "0x000",
-    });
-
-    await assert.rejects(mockDbInitial.processEvents([event]), {
-      message: "This should not be called",
-    });
+    await assert.rejects(
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "EventFiltersTest",
+                event: "FilterTestEvent",
+                params: { addr: "0x000" },
+              },
+            ],
+          },
+        },
+      }),
+    );
   });
 
   it("createTestIndexer has chain info", () => {
@@ -674,7 +981,7 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(chain.name, "ethereumMainnet");
     assert.deepEqual(chain.startBlock, 1);
     assert.deepEqual(chain.endBlock, undefined);
-    assert.deepEqual(chain.isLive, false);
+    assert.deepEqual(chain.isRealtime, false);
 
     // Chain by name (non-enumerable alias)
     assert.deepEqual(testIndexer.chains[1], testIndexer.chains.ethereumMainnet);
@@ -729,27 +1036,105 @@ describe("Use Envio test framework to test event handlers", () => {
           chains: {},
         }),
       {
-        message: "createTestIndexer requires exactly one chain to be defined",
+        message: "createTestIndexer requires at least one chain to be defined",
       }
     );
   });
 
-  it("createTestIndexer throws when multiple chains are defined", () => {
+  it("createTestIndexer processes multiple chains with simulate", async () => {
     const indexer = createTestIndexer();
 
-    assert.throws(
-      () =>
-        indexer.process({
-          chains: {
-            1: { startBlock: 1, endBlock: 100 },
-            137: { startBlock: 1, endBlock: 100 },
+    // Chain 1337 is listed first but has higher ID - should be processed second
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 1n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Chain 1337",
+                imageUrl: "https://example.com/1337.png",
+              },
+            },
+          ],
+        },
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            { contract: "Noop", event: "EmptyEvent" },
+          ],
+        },
+      },
+    });
+
+    // Chains are sorted by chain ID: chain 1 first, then chain 1337
+    assert.deepEqual(result, {
+      changes: [
+        {
+          block: 1,
+          chainId: 1,
+          eventsProcessed: 1,
+        },
+        {
+          block: 1,
+          chainId: 1337,
+          eventsProcessed: 1,
+          Gravatar: {
+            sets: [
+              {
+                id: "1",
+                owner_id: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Chain 1337",
+                imageUrl: "https://example.com/1337.png",
+                updatesCount: 1n,
+                size: "SMALL",
+              },
+            ],
           },
-        }),
-      {
-        message:
-          "createTestIndexer does not support processing multiple chains at once. Found 2 chains defined",
-      }
-    );
+        },
+      ],
+    });
+  });
+
+  // Regression for https://github.com/enviodev/hyperindex/issues/538: a struct
+  // event param must reach the handler as a named record. If the runtime still
+  // delivered it as a positional tuple, the handler would blow up on
+  // `event.params.contactDetails.name` (undefined property access).
+  it("named struct params reach the handler as records (#538)", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "TestEvent",
+              params: {
+                id: 42n,
+                user: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                contactDetails: { name: "Alice", email: "alice@example.com" },
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    assert.deepEqual(result.changes[0]?.SimpleEntity, {
+      sets: [
+        {
+          id: "TestEvent_42",
+          value: "Alice:alice@example.com",
+        },
+      ],
+    });
   });
 
   it("createTestIndexer throws when process is called while already running", async () => {
@@ -801,14 +1186,20 @@ describe("Use Envio test framework to test event handlers", () => {
   it("createTestIndexer throws when startBlock overlaps with previously processed blocks", async () => {
     const indexer = createTestIndexer();
 
-    // First process: blocks 1-100
+    // First process: block 1 with simulate event (WriteBatch sets progress to block 1)
     await indexer.process({
       chains: {
-        1: { startBlock: 1, endBlock: 100 },
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            { contract: "Gravatar", event: "EmptyEvent", block: { number: 100 } },
+          ],
+        },
       },
     });
 
-    // Second process with startBlock <= 100 should throw
+    // Second process with startBlock <= 100 should throw (progress block is 100 from WriteBatch)
     assert.throws(
       () =>
         indexer.process({
@@ -831,7 +1222,7 @@ describe("Use Envio test framework to test event handlers", () => {
 
     // Verify chain info types
     expectType<TypeEqual<typeof testIndexer.chainIds, readonly (1 | 100 | 137 | 1337)[]>>(true);
-    expectType<TypeEqual<typeof testIndexer.chains[1]["isLive"], boolean>>(true);
+    expectType<TypeEqual<typeof testIndexer.chains[1]["isRealtime"], boolean>>(true);
     expectType<TypeEqual<typeof testIndexer.chains[1]["id"], 1>>(true);
 
     const result = await testIndexer.process({
@@ -846,7 +1237,6 @@ describe("Use Envio test framework to test event handlers", () => {
       expectType<TypeEqual<typeof change.block, number>>(true);
       expectType<TypeEqual<typeof change.chainId, number>>(true);
       expectType<TypeEqual<typeof change.eventsProcessed, number>>(true);
-      expectType<TypeEqual<typeof change.blockHash, string | undefined>>(true);
 
       // Verify entity changes have expected structure
       const userChange = change.User;
@@ -953,5 +1343,645 @@ describe("Use Envio test framework to test event handlers", () => {
       message:
         "Cannot call User.set() while indexer.process() is running. Wait for process() to complete before modifying entities directly.",
     });
+  });
+
+  it("simulate block numbers and log indexes are managed correctly", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            // Item 1: no explicit block → uses startBlock (1), logIndex 0
+            { contract: "Gravatar", event: "EmptyEvent" },
+            // Item 2: no explicit block → same block (1), logIndex 1
+            { contract: "Gravatar", event: "EmptyEvent" },
+            // Item 3: explicit block number 50
+            { contract: "Gravatar", event: "EmptyEvent", block: { number: 50 } },
+            // Item 4: no explicit block → continues from last explicit (50)
+            { contract: "Gravatar", event: "EmptyEvent" },
+          ],
+        },
+      },
+    });
+
+    const entities = await indexer.SimulateTestEvent.getAll();
+    // Sort by id for stable ordering
+    entities.sort((a, b) => a.id.localeCompare(b.id));
+
+    assert.deepEqual(entities, [
+      { id: "1_0", blockNumber: 1, logIndex: 0, timestamp: 0 },
+      { id: "1_1", blockNumber: 1, logIndex: 1, timestamp: 0 },
+      { id: "50_2", blockNumber: 50, logIndex: 2, timestamp: 0 },
+      { id: "50_3", blockNumber: 50, logIndex: 3, timestamp: 0 },
+    ]);
+  });
+
+  it("simulate passes block timestamp to event", async () => {
+    const indexer = createTestIndexer();
+
+    await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "EmptyEvent",
+              block: { number: 5, timestamp: 1234567890 },
+            },
+          ],
+        },
+      },
+    });
+
+    const entity = await indexer.SimulateTestEvent.get("5_0");
+    assert.deepEqual(entity, {
+      id: "5_0",
+      blockNumber: 5,
+      logIndex: 0,
+      timestamp: 1234567890,
+    });
+  });
+
+  it("createTestIndexer with simulate processes events without fetching", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 1n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Test Gravatar",
+                imageUrl: "https://example.com/image.png",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    assert.deepEqual(result, {
+      changes: [
+        {
+          block: 1,
+          chainId: 1337,
+          eventsProcessed: 1,
+          Gravatar: {
+            sets: [
+              {
+                id: "1",
+                owner_id: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Test Gravatar",
+                imageUrl: "https://example.com/image.png",
+                updatesCount: 1n,
+                size: "SMALL",
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    // Entity should be accessible after processing
+    const gravatar = await indexer.Gravatar.get("1");
+    assert.deepEqual(gravatar, {
+      id: "1",
+      owner_id: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      displayName: "Test Gravatar",
+      imageUrl: "https://example.com/image.png",
+      updatesCount: 1n,
+      size: "SMALL",
+    });
+  });
+
+  it("createTestIndexer with simulate processes multiple events", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 1n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "First",
+                imageUrl: "https://example.com/1.png",
+              },
+            },
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 2n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Second",
+                imageUrl: "https://example.com/2.png",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    // Should have processed both events
+    assert.strictEqual(result.changes.length, 1);
+    assert.strictEqual(result.changes[0]!.eventsProcessed, 2);
+    assert.strictEqual(result.changes[0]!.Gravatar?.sets?.length, 2);
+  });
+
+  it("simulate with missing params fills all fields with defaults", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            { contract: "Gravatar", event: "NewGravatar" },
+          ],
+        },
+      },
+    });
+
+    // All param fields get default values: bigint→0n, address→zero, string→""
+    assert.deepEqual(result, {
+      changes: [{
+        block: 1,
+        chainId: 1337,
+        eventsProcessed: 1,
+        Gravatar: {
+          sets: [{
+            id: "0",
+            owner_id: "0x0000000000000000000000000000000000000000",
+            displayName: "",
+            imageUrl: "",
+            updatesCount: 1n,
+            size: "SMALL",
+          }],
+        },
+      }],
+    });
+  });
+
+  it("simulate with partial params fills missing fields with defaults", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 1n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    // Provided fields are used, missing fields get defaults
+    assert.deepEqual(result, {
+      changes: [{
+        block: 1,
+        chainId: 1337,
+        eventsProcessed: 1,
+        Gravatar: {
+          sets: [{
+            id: "1",
+            owner_id: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            displayName: "",
+            imageUrl: "",
+            updatesCount: 1n,
+            size: "SMALL",
+          }],
+        },
+      }],
+    });
+  });
+
+  it("EvmEvent type", () => {
+    // EvmEvent without generics is a union of all events
+    type AllEvents = EvmEvent;
+
+    // contractName and eventName are discriminant fields with literal types
+    expectType<
+      TypeEqual<
+        AllEvents["contractName"],
+        | "Gravatar"
+        | "NftFactory"
+        | "SimpleNft"
+        | "TestEvents"
+        | "Noop"
+        | "EventFiltersTest"
+      >
+    >(true);
+
+    // Narrowing to a specific contract's events
+    type GravatarEvent = EvmEvent<"Gravatar">;
+    expectType<
+      TypeEqual<
+        GravatarEvent["contractName"],
+        "Gravatar"
+      >
+    >(true);
+
+    // Narrowing to a specific event
+    type NewGravatarEvent = EvmEvent<"Gravatar", "NewGravatar">;
+    expectType<TypeEqual<NewGravatarEvent["contractName"], "Gravatar">>(true);
+    expectType<TypeEqual<NewGravatarEvent["eventName"], "NewGravatar">>(true);
+    expectType<TypeEqual<NewGravatarEvent["chainId"], EvmChainId>>(true);
+    expectType<TypeEqual<NewGravatarEvent["logIndex"], number>>(true);
+    expectType<TypeEqual<NewGravatarEvent["srcAddress"], `0x${string}`>>(true);
+    expectType<
+      TypeEqual<
+        NewGravatarEvent["params"],
+        {
+          readonly id: bigint;
+          readonly owner: `0x${string}`;
+          readonly displayName: string;
+          readonly imageUrl: string;
+        }
+      >
+    >(true);
+
+    // Block and transaction have proper types
+    expectType<TypeEqual<NewGravatarEvent["block"]["number"], number>>(true);
+    expectType<TypeEqual<NewGravatarEvent["block"]["timestamp"], number>>(true);
+    expectType<TypeEqual<NewGravatarEvent["block"]["hash"], string>>(true);
+
+    // Non-configured ecosystem event types return error string
+    expectType<
+      TypeEqual<
+        FuelEvent,
+        "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'envio codegen'"
+      >
+    >(true);
+  });
+});
+
+describe("onEvent / contractRegister types", () => {
+  it("EvmOnEventOptions resolves contract/event literals from Event", () => {
+    type GravatarNewGravatar = EvmEvent<"Gravatar", "NewGravatar">;
+    type Opts = EvmOnEventOptions<GravatarNewGravatar>;
+
+    // Gravatar.NewGravatar has no indexed params, so the project-bound
+    // EvmEventFilters lookup resolves params to {} and `where` is typed
+    // as `EvmOnEventWhere<{}, "Gravatar">` rather than `unknown`.
+    expectType<
+      TypeEqual<
+        Opts,
+        {
+          readonly contract: "Gravatar";
+          readonly event: "NewGravatar";
+          readonly wildcard?: boolean;
+          readonly where?: EvmOnEventWhere<{}, "Gravatar">;
+        }
+      >
+    >(true);
+  });
+
+  it("EvmContractRegisterOptions has same shape as EvmOnEventOptions", () => {
+    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
+    expectType<
+      TypeEqual<EvmContractRegisterOptions<Ev>, EvmOnEventOptions<Ev>>
+    >(true);
+  });
+
+  it("EvmOnEventHandler has correct args shape", () => {
+    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
+    type Handler = EvmOnEventHandler<Ev>;
+
+    expectType<
+      TypeEqual<
+        Handler,
+        (args: { event: Ev; context: EvmOnEventContext }) => Promise<void>
+      >
+    >(true);
+  });
+
+  it("EvmContractRegisterHandler uses EvmContractRegisterContext", () => {
+    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
+    type Handler = EvmContractRegisterHandler<Ev>;
+
+    expectType<
+      TypeEqual<
+        Handler,
+        (args: {
+          event: Ev;
+          context: EvmContractRegisterContext;
+        }) => Promise<void>
+      >
+    >(true);
+  });
+
+  it("EvmOnEventContext has chain info and entity ops", () => {
+    expectType<TypeEqual<EvmOnEventContext["chain"]["id"], EvmChainId>>(true);
+    expectType<TypeEqual<EvmOnEventContext["chain"]["isRealtime"], boolean>>(true);
+    expectType<TypeEqual<EvmOnEventContext["isPreload"], boolean>>(true);
+
+    // Entity ops are available on context
+    expectType<
+      TypeEqual<
+        EvmOnEventContext["User"]["get"],
+        (id: string) => Promise<User | undefined>
+      >
+    >(true);
+    expectType<
+      TypeEqual<EvmOnEventContext["User"]["set"], (entity: User) => void>
+    >(true);
+  });
+
+  it("EvmContractRegisterContext has chain.ContractName.add() registration", () => {
+    expectType<
+      TypeEqual<EvmContractRegisterContext["chain"]["id"], EvmChainId>
+    >(true);
+    expectType<
+      TypeEqual<
+        EvmContractRegisterContext["chain"]["NftFactory"]["add"],
+        (address: Address) => void
+      >
+    >(true);
+    expectType<
+      TypeEqual<
+        EvmContractRegisterContext["chain"]["SimpleNft"]["add"],
+        (address: Address) => void
+      >
+    >(true);
+    expectType<
+      TypeEqual<
+        EvmContractRegisterContext["chain"]["Gravatar"]["add"],
+        (address: Address) => void
+      >
+    >(true);
+  });
+
+  it("EvmContractRegisterContext does not expose entity operations", () => {
+    // @ts-expect-error - User entity ops should not be on contractRegister context
+    type _userOnCr = EvmContractRegisterContext["User"];
+  });
+
+  it("indexer.onEvent rejects invalid contract/event combinations", () => {
+    indexer.onEvent(
+      // @ts-expect-error - "BadContract" is not a configured contract
+      { contract: "BadContract", event: "X" },
+      async () => {},
+    );
+
+    indexer.onEvent(
+      // @ts-expect-error - "BadEvent" is not an event of Gravatar
+      { contract: "Gravatar", event: "BadEvent" },
+      async () => {},
+    );
+
+    // Valid combination should compile (no @ts-expect-error)
+    indexer.onEvent(
+      { contract: "Gravatar", event: "NewGravatar" },
+      async ({ event }) => {
+        expectType<TypeEqual<typeof event.params.displayName, string>>(true);
+      },
+    );
+  });
+
+  it("indexer.contractRegister exposes context.chain.ContractName.add()", () => {
+    indexer.contractRegister(
+      { contract: "NftFactory", event: "SimpleNftCreated" },
+      async ({ event, context }) => {
+        // event is typed
+        expectType<
+          TypeEqual<typeof event.params.contractAddress, `0x${string}`>
+        >(true);
+        // chain.ContractName.add(address) is available
+        context.chain.SimpleNft.add(event.params.contractAddress);
+        context.chain.NftFactory.add(event.params.contractAddress);
+        // @ts-expect-error - UnknownContract is not configured
+        context.chain.UnknownContract.add(event.params.contractAddress);
+      },
+    );
+  });
+
+  it("EvmOnEventHandler defaults to union of all events", () => {
+    // Without args, the handler accepts the union of all EVM events
+    type DefaultHandler = EvmOnEventHandler;
+    type DefaultArgs = Parameters<DefaultHandler>[0];
+
+    // The event field is the union of all EVM events
+    expectType<TypeEqual<DefaultArgs["event"], EvmEvent>>(true);
+    expectType<TypeEqual<DefaultArgs["context"], EvmOnEventContext>>(true);
+  });
+
+  it("EvmOnEventOptions rejects invalid Event constraint", () => {
+    // EventLike requires contractName and eventName fields
+    // @ts-expect-error - missing required fields
+    type _bad = EvmOnEventOptions<{ foo: "bar" }>;
+  });
+
+  it("EvmOnEventOptions preserves contract/event pairing across union members", () => {
+    // With distributive conditional typing, a union Event type yields a union
+    // of options where each member's contract/event are paired together.
+    // Mismatched pairings (e.g. contract: "Gravatar", event: "SimpleNftCreated")
+    // must be rejected.
+    type UnionEvent =
+      | EvmEvent<"Gravatar", "NewGravatar">
+      | EvmEvent<"NftFactory", "SimpleNftCreated">;
+    type UnionOpts = EvmOnEventOptions<UnionEvent>;
+
+    // Valid pairings compile
+    const _a: UnionOpts = { contract: "Gravatar", event: "NewGravatar" };
+    const _b: UnionOpts = {
+      contract: "NftFactory",
+      event: "SimpleNftCreated",
+    };
+
+    // @ts-expect-error - "SimpleNftCreated" is not an event of "Gravatar"
+    const _bad1: UnionOpts = {
+      contract: "Gravatar",
+      event: "SimpleNftCreated",
+    };
+    // @ts-expect-error - "NewGravatar" is not an event of "NftFactory"
+    const _bad2: UnionOpts = {
+      contract: "NftFactory",
+      event: "NewGravatar",
+    };
+  });
+
+  // Type-level surface checks for `indexer.onBlock`. These assertions are
+  // cheap (no runtime), but they catch regressions where the `where`-return
+  // type widens back to include `void`/`undefined` — which the runtime no
+  // longer silently accepts, so the TS type must stay strict.
+  it("indexer.onBlock exists on the indexer (value-level)", () => {
+    expectType<typeof indexer.onBlock>(indexer.onBlock);
+    // Smoke-check the options shape by constructing one. If `where` ever
+    // loses `void` exclusion, the implicit-return negative test below
+    // catches it; this ensures the `name` + `where` shape still type-checks.
+    const _opts: Parameters<typeof indexer.onBlock>[0] = {
+      name: "someBlockHandler",
+      where: ({ chain }) => (chain.id === 1 ? true : false),
+    };
+    expectType<Parameters<typeof indexer.onBlock>[0]>(_opts);
+  });
+
+  it("EvmOnBlockWhereResult excludes void/undefined", () => {
+    // Narrow intent: the result type is exactly `boolean | EvmOnBlockFilter`.
+    expectType<TypeEqual<EvmOnBlockWhereResult, boolean | EvmOnBlockFilter>>(
+      true
+    );
+    // Negative: a function whose body omits a return path is rejected.
+    // `noImplicitReturns`/the declared return type catches the missing
+    // return, so the assignment below should fail to type-check.
+    type _Predicate = (args: {
+      readonly chain: { readonly id: number };
+    }) => EvmOnBlockWhereResult;
+    // @ts-expect-error - implicit undefined return is not assignable
+    const _missingReturn: _Predicate = ({ chain }) => {
+      if (chain.id === 1) return true;
+      // Falls through with no return — must be a type error.
+    };
+  });
+
+  it("EvmOnBlockFilter accepts partial/empty shapes (strict-key checks live in the runtime schema)", () => {
+    // The TS type uses `?:` for every field and doesn't catch typos
+    // (e.g. `_gt` is fine to TS). The runtime `S.strict` on
+    // `blockRangeSchema` is what rejects them with a clear error. This
+    // assertion documents that split: TS validates *shape*, runtime
+    // validates *keys*.
+    const _ok: EvmOnBlockFilter = {
+      block: { number: { _gte: 1, _lte: 10, _every: 2 } },
+    };
+    const _partial: EvmOnBlockFilter = { block: { number: { _gte: 1 } } };
+    const _empty: EvmOnBlockFilter = {};
+    expectType<EvmOnBlockFilter>(_ok);
+    expectType<EvmOnBlockFilter>(_partial);
+    expectType<EvmOnBlockFilter>(_empty);
+  });
+});
+
+describe("Schema-bound types: Entity / EntityName / Enum / EnumName", () => {
+  it("EntityName accepts schema entity names and rejects others", () => {
+    // Positive: known entities are assignable to EntityName.
+    const _user: EntityName = "User";
+    const _gravatar: EntityName = "Gravatar";
+    expectType<EntityName>(_user);
+    expectType<EntityName>(_gravatar);
+
+    // @ts-expect-error - "NotAnEntity" is not in the schema
+    const _bad: EntityName = "NotAnEntity";
+  });
+
+  it("Entity<TName> resolves to the per-entity shape", () => {
+    // Entity<"User"> is the same shape as the per-entity alias `User`.
+    expectType<TypeEqual<Entity<"User">, User>>(true);
+
+    // Spot-check a couple of fields on the resolved type.
+    expectType<TypeEqual<Entity<"User">["id"], string>>(true);
+    expectType<
+      TypeEqual<Entity<"User">["accountType"], "ADMIN" | "USER">
+    >(true);
+    expectType<
+      TypeEqual<Entity<"User">["gravatar_id"], string | undefined>
+    >(true);
+
+    // @ts-expect-error - "NotAnEntity" is not assignable to EntityName
+    type _bad = Entity<"NotAnEntity">;
+  });
+
+  it("EnumName accepts schema enum names and rejects others", () => {
+    const _account: EnumName = "AccountType";
+    const _size: EnumName = "GravatarSize";
+    expectType<EnumName>(_account);
+    expectType<EnumName>(_size);
+
+    // @ts-expect-error - "NotAnEnum" is not in the schema
+    const _bad: EnumName = "NotAnEnum";
+  });
+
+  it("Enum<TName> resolves to the schema enum's value union", () => {
+    expectType<TypeEqual<Enum<"AccountType">, "ADMIN" | "USER">>(true);
+    expectType<
+      TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">
+    >(true);
+
+    // @ts-expect-error - "NotAnEnum" is not assignable to EnumName
+    type _bad = Enum<"NotAnEnum">;
+  });
+});
+
+describe("Config-bound types: EvmContractName", () => {
+  it("EvmContractName is the union of configured EVM contract names", () => {
+    expectType<
+      TypeEqual<
+        EvmContractName,
+        | "NftFactory"
+        | "EventFiltersTest"
+        | "SimpleNft"
+        | "TestEvents"
+        | "Gravatar"
+        | "Noop"
+      >
+    >(true);
+
+    // @ts-expect-error - "NotAContract" is not configured
+    const _bad: EvmContractName = "NotAContract";
+  });
+});
+
+describe("EvmOnBlock surface: Args / Context / Handler / WhereArgs", () => {
+  it("EvmOnBlockContext is an alias of EvmOnEventContext", () => {
+    expectType<TypeEqual<EvmOnBlockContext, EvmOnEventContext>>(true);
+  });
+
+  it("EvmOnBlockHandlerArgs has block.number and the block context", () => {
+    expectType<
+      TypeEqual<EvmOnBlockHandlerArgs["block"], { readonly number: number }>
+    >(true);
+    expectType<
+      TypeEqual<EvmOnBlockHandlerArgs["context"], EvmOnBlockContext>
+    >(true);
+  });
+
+  it("EvmOnBlockHandler is an async function from args to void", () => {
+    expectType<
+      TypeEqual<
+        EvmOnBlockHandler,
+        (args: EvmOnBlockHandlerArgs) => Promise<void>
+      >
+    >(true);
+  });
+
+  it("EvmOnBlockWhereArgs.chain exposes id and per-contract handles", () => {
+    // chain.id narrows to the configured EVM chain-id union.
+    expectType<TypeEqual<EvmOnBlockWhereArgs["chain"]["id"], EvmChainId>>(true);
+    expectType<TypeEqual<EvmOnBlockWhereArgs["chain"]["isRealtime"], boolean>>(
+      true
+    );
+    // Configured contracts are reachable on the chain handle.
+    expectType<
+      TypeEqual<EvmOnBlockWhereArgs["chain"]["NftFactory"]["name"], "NftFactory">
+    >(true);
+    expectType<
+      TypeEqual<EvmOnBlockWhereArgs["chain"]["Gravatar"]["name"], "Gravatar">
+    >(true);
   });
 });

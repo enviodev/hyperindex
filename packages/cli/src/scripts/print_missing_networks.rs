@@ -1,5 +1,5 @@
 use crate::config_parsing::chain_helpers::{
-    ChainTier, GraphNetwork, HypersyncNetwork, NetworkWithExplorer,
+    ChainTier, GraphNetwork, HypersyncChain, NetworkWithExplorer,
 };
 use anyhow::Result;
 use convert_case::{Case, Casing};
@@ -72,9 +72,9 @@ impl Diff {
 
             api_chain_ids.insert(chain_id);
 
-            let Some(hypersync_network) = HypersyncNetwork::from_repr(chain_id) else {
+            let Some(hypersync_chain) = HypersyncChain::from_repr(chain_id) else {
                 let subenums = vec![
-                    Some("HypersyncNetwork"),
+                    Some("HypersyncChain"),
                     NetworkWithExplorer::from_repr(chain_id).map(|_| "NetworkWithExplorer"),
                     GraphNetwork::from_repr(chain_id).map(|_| "GraphNetwork"),
                 ]
@@ -98,15 +98,15 @@ impl Diff {
                 continue;
             };
 
-            if tier != hypersync_network.get_tier() {
-                let network_name = hypersync_network.get_plain_name();
-                let current_tier = hypersync_network.get_tier();
+            if tier != hypersync_chain.get_tier() {
+                let network_name = hypersync_chain.get_plain_name();
+                let current_tier = hypersync_chain.get_tier();
                 incorrect_tiers.push(format!("{network_name}: {current_tier} -> {tier}",));
             }
         }
 
         let mut extra_chains = Vec::new();
-        for network in HypersyncNetwork::iter() {
+        for network in HypersyncChain::iter() {
             let network_id = network as u64;
             if !api_chain_ids.contains(&network_id) {
                 extra_chains.push(format!(
@@ -147,7 +147,7 @@ impl Diff {
         } = self;
         if self.is_empty() {
             println!(
-                "All chains from the API are present in the HypersyncNetwork enum, and vice \
+                "All chains from the API are present in the HypersyncChain enum, and vice \
                  versa. Nothing to update."
             );
         } else {
@@ -160,8 +160,8 @@ impl Diff {
 
             if !extra_chains.is_empty() {
                 println!(
-                    "\nThe following chains are in the HypersyncNetwork enum but not in the API \
-                     (remove the HypersyncNetwork subEnum from the chain_helpers.rs file):"
+                    "\nThe following chains are in the HypersyncChain enum but not in the API \
+                     (remove the HypersyncChain subEnum from the chain_helpers.rs file):"
                 );
                 for chain in extra_chains {
                     println!("- {}", chain);

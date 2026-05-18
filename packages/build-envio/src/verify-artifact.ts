@@ -11,7 +11,7 @@ import * as path from "node:path";
 
 const REQUIRED_FILES = [
   "package.json",
-  "bin.js",
+  "bin.mjs",
   "evm.schema.json",
   "fuel.schema.json",
   "svm.schema.json",
@@ -27,6 +27,7 @@ const REQUIRED_COMPILED = [
   "src/Envio.res.mjs",
   "src/Config.res.mjs",
   "src/Main.res.mjs",
+  "src/Bin.res.mjs",
 ];
 
 function verify(dir: string): void {
@@ -39,7 +40,9 @@ function verify(dir: string): void {
     }
   }
 
-  // Check no unexpected top-level files/dirs leaked in
+  // Check no unexpected top-level files/dirs leaked in.
+  // The native addon ships via the envio-{os}-{arch} platform package,
+  // never bundled in the envio package itself.
   const allowed = new Set(REQUIRED_FILES);
   for (const entry of fs.readdirSync(dir)) {
     if (!allowed.has(entry)) {
@@ -65,9 +68,14 @@ function verify(dir: string): void {
     }
     if (pkg) {
       if (pkg.private) errors.push("package.json still has private: true");
-      if (pkg.bin !== "./bin.js") errors.push(`package.json bin is "${pkg.bin}", expected "./bin.js"`);
+      if (pkg.bin !== "./bin.mjs") errors.push(`package.json bin is "${pkg.bin}", expected "./bin.mjs"`);
       if (!pkg.optionalDependencies) errors.push("package.json missing optionalDependencies");
       if (!pkg.dependencies) errors.push("package.json missing dependencies");
+      if (pkg.devDependencies) errors.push("package.json still has devDependencies");
+      const deps = pkg.dependencies as Record<string, unknown> | undefined;
+      if (deps && "rescript" in deps) {
+        errors.push("package.json dependencies must not include 'rescript' (compiler is build-time only)");
+      }
     }
   }
 

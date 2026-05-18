@@ -1,0 +1,19 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+import { describe, it } from "vitest";
+import { createTestIndexer } from "envio";
+
+describe("Indexer smoke test", () => {
+  it("processes the first block with events on chain 0", async (t) => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({ chains: { 0: {} } });
+
+    t.expect(result.changes.length, "Should have at least one change").toBeGreaterThan(0);
+    const firstChange = result.changes[0]!;
+    t.expect(firstChange.chainId).toBe(0);
+    t.expect(firstChange.eventsProcessed).toBeGreaterThan(0);
+  }, 60_000);
+});

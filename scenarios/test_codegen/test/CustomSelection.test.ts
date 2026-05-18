@@ -1,81 +1,68 @@
 import { expectType, type TypeEqual } from "ts-expect";
 import assert from "assert";
-import { it, describe } from "vitest";
-import { TestHelpers } from "generated";
-const { MockDb, Gravatar } = TestHelpers;
+import { it } from "vitest";
+import { createTestIndexer, type EvmEvent } from "envio";
 
-// The same as for ReScript but in TS
+type CustomSelectionEvent = EvmEvent<"Gravatar", "CustomSelection">;
+type EmptyEventEvent = EvmEvent<"Gravatar", "EmptyEvent">;
+
+// Compile-time type assertions for custom field selection
+// CustomSelection event has custom block_fields: [parentHash]
+// Default fields (number, timestamp, hash) are always included
+expectType<TypeEqual<CustomSelectionEvent["block"]["number"], number>>(true);
+expectType<TypeEqual<CustomSelectionEvent["block"]["timestamp"], number>>(true);
+expectType<TypeEqual<CustomSelectionEvent["block"]["hash"], string>>(true);
+expectType<TypeEqual<CustomSelectionEvent["block"]["parentHash"], string>>(true);
+// Unselected block fields are never
+expectType<TypeEqual<CustomSelectionEvent["block"]["nonce"], never>>(true);
+expectType<TypeEqual<CustomSelectionEvent["block"]["gasUsed"], never>>(true);
+
+// CustomSelection event has custom transaction_fields: [to, from, hash]
+expectType<TypeEqual<CustomSelectionEvent["transaction"]["to"], `0x${string}` | undefined>>(true);
+expectType<TypeEqual<CustomSelectionEvent["transaction"]["from"], `0x${string}` | undefined>>(true);
+expectType<TypeEqual<CustomSelectionEvent["transaction"]["hash"], string>>(true);
+// Unselected transaction fields are never
+expectType<TypeEqual<CustomSelectionEvent["transaction"]["transactionIndex"], never>>(true);
+expectType<TypeEqual<CustomSelectionEvent["transaction"]["gas"], never>>(true);
+
+// Events without custom field selection should use the global one
+// Global has transactionIndex + hash
+expectType<TypeEqual<EmptyEventEvent["transaction"]["transactionIndex"], number>>(true);
+expectType<TypeEqual<EmptyEventEvent["transaction"]["hash"], string>>(true);
+// Fields not in global selection are never
+expectType<TypeEqual<EmptyEventEvent["transaction"]["from"], never>>(true);
+expectType<TypeEqual<EmptyEventEvent["transaction"]["to"], never>>(true);
+
+// Global block has defaults only (number, timestamp, hash)
+expectType<TypeEqual<EmptyEventEvent["block"]["number"], number>>(true);
+expectType<TypeEqual<EmptyEventEvent["block"]["timestamp"], number>>(true);
+expectType<TypeEqual<EmptyEventEvent["block"]["hash"], string>>(true);
+// parentHash not in global selection — never
+expectType<TypeEqual<EmptyEventEvent["block"]["parentHash"], never>>(true);
+
 it("Handles event with a custom field selection (in TS)", async () => {
-  // Initializing the mock database
-  const mockDbInitial = MockDb.createMockDb();
+  const indexer = createTestIndexer();
 
-  // Every time use different hash to make sure the test data isn't stale
-  let hash = "0x" + Math.random() * 10 ** 18;
-
-  const event = Gravatar.CustomSelection.createMockEvent({
-    mockEventData: {
-      transaction: {
-        // Can pass transactionIndex event though it's not selected for the event
-        transactionIndex: 12,
-        hash: hash,
-        to: undefined,
-        from: "0xfoo",
-      },
-      block: {
-        parentHash: "0xParentHash",
+  const result = await indexer.process({
+    chains: {
+      1337: {
+        startBlock: 1,
+        endBlock: 100,
+        simulate: [
+          {
+            contract: "Gravatar",
+            event: "CustomSelection",
+            transaction: {
+              from: "0xfoo",
+            },
+            block: {
+              parentHash: "0xParentHash",
+            },
+          },
+        ],
       },
     },
   });
 
-  expectType<
-    TypeEqual<
-      typeof event.transaction,
-      {
-        readonly to: `0x${string}` | undefined;
-        readonly from: `0x${string}` | undefined;
-        readonly hash: string;
-      }
-    >
-  >(true);
-  expectType<
-    TypeEqual<
-      typeof event.block,
-      {
-        readonly number: number;
-        readonly timestamp: number;
-        readonly hash: string;
-        readonly parentHash: string;
-      }
-    >
-  >(true);
-
-  // The event not used for the test, but we want to make sure
-  // that events without custom field selection use the global one
-  const anotherEvent = Gravatar.EmptyEvent.createMockEvent({});
-  expectType<
-    TypeEqual<
-      typeof anotherEvent.transaction,
-      { readonly transactionIndex: number; readonly hash: string }
-    >
-  >(true);
-  expectType<
-    TypeEqual<
-      typeof anotherEvent.block,
-      {
-        readonly number: number;
-        readonly timestamp: number;
-        readonly hash: string;
-      }
-    >
-  >(true);
-
-  const updatedMockDb = await Gravatar.CustomSelection.processEvent({
-    event: event,
-    mockDb: mockDbInitial,
-  });
-
-  assert.notEqual(
-    updatedMockDb.entities.CustomSelectionTestPass.get(hash),
-    undefined
-  );
+  assert.equal(result.changes.length, 1);
 });

@@ -36,6 +36,6 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
       ~nonOptionalTransactionFieldNames=["hash"],
     )
 
-    Js.log(page)
+    Console.log(page)
   })
 })

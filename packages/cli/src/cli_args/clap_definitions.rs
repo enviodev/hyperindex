@@ -1,4 +1,4 @@
-use crate::constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH};
+use crate::constants::project_paths::DEFAULT_CONFIG_PATH;
 
 use clap::{Args, Parser, Subcommand};
 use clap_markdown::MarkdownOptions;
@@ -31,12 +31,8 @@ pub struct ProjectPaths {
     #[arg(global = true, short, long)]
     pub directory: Option<String>,
 
-    ///The directory for generated code output. We recommend configuring this using the `output` field in your config.yaml instead
-    #[arg(global = true, short, long, default_value_t=String::from(DEFAULT_GENERATED_PATH))]
-    pub output_directory: String,
-
-    ///The file in the project containing config.
-    #[arg(global = true, long, default_value_t=String::from(DEFAULT_CONFIG_PATH))]
+    ///The file in the project containing the configuration. It can also be set via the `ENVIO_CONFIG` environment variable.
+    #[arg(global = true, long, env = "ENVIO_CONFIG", default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
 }
 
@@ -45,8 +41,8 @@ pub enum CommandType {
     ///Initialize an indexer with one of the initialization options
     Init(InitArgs),
 
-    /// Development commands for starting, stopping, and restarting the indexer with automatic codegen for any changed files
-    Dev,
+    /// Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching.
+    Dev(DevArgs),
 
     /// Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
     Stop,
@@ -54,21 +50,42 @@ pub enum CommandType {
     ///Generate indexing code from user-defined configuration & schema files
     Codegen,
 
-    ///Prints a summary of the benchmark data after running the indexer
-    ///with envio start --bench flag or setting 'ENVIO_SAVE_BENCHMARK_DATA=true'
-    BenchmarkSummary,
-
     ///Prepare local environment for envio testing
     // #[clap(hide = true)]
     #[command(subcommand)]
     Local(LocalCommandTypes),
 
-    ///Start the indexer without any automatic codegen
+    ///Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`.
     Start(StartArgs),
+
+    ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
+    Metrics,
+
+    ///Manage Envio-provided Claude Code skills under `.claude/skills/`
+    #[command(subcommand)]
+    Skills(SkillsSubcommand),
+
+    ///Inspect the indexer config
+    #[command(subcommand)]
+    Config(ConfigSubcommand),
 
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigSubcommand {
+    ///Print the resolved indexer config as JSON
+    View,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SkillsSubcommand {
+    ///Re-extract every skill shipped by this CLI version, overwriting the
+    ///matching directories under `<cwd>/.claude/skills/`. Skills not shipped
+    ///by envio are left untouched.
+    Update,
 }
 
 #[derive(Debug, Subcommand)]
@@ -90,13 +107,17 @@ pub enum JsonSchema {
 }
 
 #[derive(Debug, Args)]
+pub struct DevArgs {
+    ///Force restart: clear the database and re-index from scratch. Required when config/schema/ABI changes are incompatible with the existing indexer state.
+    #[arg(short = 'r', long, action)]
+    pub restart: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct StartArgs {
     ///Clear your database and restart indexing from scratch
     #[arg(short = 'r', long, action)]
     pub restart: bool,
-    ///Saves benchmark data to a file during indexing
-    #[arg(short = 'b', long, action)]
-    pub bench: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -111,9 +132,9 @@ pub enum LocalCommandTypes {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum LocalDockerSubcommands {
-    ///Create docker images required for local environment
+    ///Start Docker containers (Postgres + Hasura) for local environment
     Up,
-    ///Delete existing docker images on local environment
+    ///Stop and remove Docker containers for local environment
     Down,
 }
 
@@ -141,6 +162,11 @@ pub struct InitArgs {
     #[arg(global = true, short = 'l', long = "language")]
     #[clap(value_enum)]
     pub language: Option<init_config::Language>,
+
+    ///The package manager used for `install` and post-init build steps (default: pnpm)
+    #[arg(global = true, long = "package-manager")]
+    #[clap(value_enum)]
+    pub package_manager: Option<init_config::PackageManager>,
 
     ///The hypersync API key to be initialized in your templates .env file
     #[arg(global = true, long)]
@@ -376,6 +402,15 @@ pub mod fuel {
         ///The name of the contract
         #[arg(long)]
         pub contract_name: Option<String>,
+        ///Which Fuel network to use
+        #[arg(short, long)]
+        pub blockchain: Option<crate::init_config::fuel::Network>,
+        ///If selected, prompt will not ask for additional contracts/addresses/chains
+        #[arg(long, action)]
+        pub single_contract: bool,
+        ///If selected, prompt will not ask to confirm selection of events on a contract
+        #[arg(long, action)]
+        pub all_events: bool,
     }
 
     #[derive(Args, Debug, Default, Clone)]

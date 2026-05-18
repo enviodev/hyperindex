@@ -1,11 +1,57 @@
-import { Greeter, type User } from "generated";
+import { indexer, type User } from "envio";
+
+// Type-level regression guards for `where.block` on Fuel. Declared as an
+// unreached function so `tsc --noEmit` checks the types without runtime
+// re-registering events. The `@ts-expect-error` assertions catch the
+// class of bug where `FuelOnEventWhere` was previously aliased to
+// `EvmOnEventWhere`, bypassing `FuelOnEventWhereFilter` and typing Fuel
+// users against EVM's `block.number` shape — a silent runtime no-op.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _typeCheckFuelWhereBlockShape() {
+  indexer.onEvent(
+    {
+      contract: "Greeter",
+      event: "NewGreeting",
+      where: { block: { height: { _gte: 1 } } },
+    },
+    async () => {},
+  );
+  indexer.onEvent(
+    {
+      contract: "Greeter",
+      event: "NewGreeting",
+      where: {
+        block: {
+          // @ts-expect-error Fuel keys block by `height`, not `number`.
+          number: { _gte: 1 },
+        },
+      },
+    },
+    async () => {},
+  );
+  indexer.onEvent(
+    {
+      contract: "Greeter",
+      event: "NewGreeting",
+      where: {
+        block: {
+          height: {
+            // @ts-expect-error Only `_gte` is supported on event filters.
+            _lte: 1,
+          },
+        },
+      },
+    },
+    async () => {},
+  );
+}
 
 /**
 Registers a handler that handles any values from the
 NewGreeting event on the Greeter contract and index these values into
 the DB.
 */
-Greeter.NewGreeting.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "Greeter", event: "NewGreeting" }, async ({ event, context }) => {
   //The id for the "User" entity
   const userId = event.params.user.bits;
   //The greeting string that was added.
@@ -46,7 +92,7 @@ Registers a handler that handles any values from the
 ClearGreeting event on the Greeter contract and index these values into
 the DB.
 */
-Greeter.ClearGreeting.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "Greeter", event: "ClearGreeting" }, async ({ event, context }) => {
   //The id for the "User" entity derived from params of the ClearGreeting event
   const userId = event.params.user.bits;
   //The optional User entity that may exist already at "userId"

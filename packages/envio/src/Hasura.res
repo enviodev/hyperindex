@@ -27,7 +27,14 @@ let clearMetadataRoute = Rest.route(() => {
   path: "",
   input: s => {
     let _ = s.field("type", S.literal("clear_metadata"))
-    let _ = s.field("args", S.literal(Js.Obj.empty()))
+    let _ = s.field(
+      "args",
+      S.literal(
+        Object.make(),
+
+        // Otherwise the entity in gql will be prefixed with the schema name (when it's not public)
+      ),
+    )
     s->auth
   },
   responses,
@@ -38,19 +45,6 @@ let trackTablesRoute = Rest.route(() => {
   path: "",
   input: s => {
     let _ = s.field("type", S.literal("pg_track_tables"))
-    {
-      "args": s.field("args", S.json(~validate=false)),
-      "auth": s->auth,
-    }
-  },
-  responses,
-})
-
-let createSelectPermissionRoute = Rest.route(() => {
-  method: Post,
-  path: "",
-  input: s => {
-    let _ = s.field("type", S.literal("pg_create_select_permission"))
     {
       "args": s.field("args", S.json(~validate=false)),
       "auth": s->auth,
@@ -71,36 +65,33 @@ let rawBodyRoute = Rest.route(() => {
   responses,
 })
 
-let bulkKeepGoingRoute = Rest.route(() => {
-  method: Post,
-  path: "",
-  input: s => {
-    let _ = s.field("type", S.literal("bulk_keep_going"))
-    {
-      "args": s.field("args", S.json(~validate=false)),
-      "auth": s->auth,
+let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t) => {
+  let maxRetries = 3
+  let rec retry = async (~attempt) => {
+    try {
+      let _ = await rawBodyRoute->Rest.fetch(
+        {
+          "bodyString": operation->JSON.stringify,
+          "auth": auth,
+        },
+        ~client=Rest.client(endpoint),
+      )
+    } catch {
+    | exn =>
+      if attempt < maxRetries {
+        let backoffMs = Math.pow(2.0, ~exp=attempt->Belt.Int.toFloat)->Belt.Float.toInt * 1000
+        await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMs)
+        await retry(~attempt=attempt + 1)
+      } else {
+        Logging.warn({
+          "msg": "Hasura configuration request failed. Indexing will still work - but you may have issues querying data via GraphQL.",
+          "err": exn->Utils.prettifyExn,
+        })
+      }
     }
-  },
-  responses: [
-    (s: Rest.Response.s) => {
-      s.status(200)
-      s.data(S.json(~validate=false))
-    },
-  ],
-})
-let bulkKeepGoingErrorsSchema = S.array(
-  S.union([
-    S.object(s => {
-      s.tag("message", "success")
-      None
-    }),
-    S.object(s => {
-      Some(s.field("error", S.string))
-    }),
-  ]),
-)->S.transform(_ => {
-  parser: a => Belt.Array.keepMapU(a, a => a),
-})
+  }
+  await retry(~attempt=0)
+}
 
 let clearHasuraMetadata = async (~endpoint, ~auth) => {
   try {
@@ -127,19 +118,18 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>
         "args": {
           // If set to false, any warnings will cause the API call to fail and no new tables to be tracked. Otherwise tables that fail to track will be raised as warnings. (default: true)
           "allow_warnings": false,
-          "tables": tableNames->Js.Array2.map(tableName =>
+          "tables": tableNames->Array.map(tableName =>
             {
               "table": {
                 "name": tableName,
                 "schema": pgSchema,
               },
               "configuration": {
-                // Otherwise the entity in gql will be prefixed with the schema name (when it's not public)
                 "custom_name": tableName,
               },
             }
           ),
-        }->(Utils.magic: 'a => Js.Json.t),
+        }->(Utils.magic: 'a => JSON.t),
       },
       ~client=Rest.client(endpoint),
     )
@@ -161,37 +151,40 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>
   }
 }
 
-type bulkOperation = {
-  \"type": string,
-  args: Js.Json.t,
-}
-
-let createSelectPermissionOperation = (
+let createSelectPermission = async (
+  ~endpoint,
+  ~auth,
   ~tableName: string,
   ~pgSchema,
   ~responseLimit,
   ~aggregateEntities,
-): bulkOperation => {
-  {
-    \"type": "pg_create_select_permission",
-    args: {
-      "table": {
-        "schema": pgSchema,
-        "name": tableName,
+) => {
+  await sendOperation(
+    ~endpoint,
+    ~auth,
+    ~operation={
+      "type": "pg_create_select_permission",
+      "args": {
+        "table": {
+          "schema": pgSchema,
+          "name": tableName,
+        },
+        "role": "public",
+        "source": "default",
+        "permission": {
+          "columns": "*",
+          "filter": Object.make(),
+          "limit": responseLimit,
+          "allow_aggregations": aggregateEntities->Array.includes(tableName),
+        },
       },
-      "role": "public",
-      "source": "default",
-      "permission": {
-        "columns": "*",
-        "filter": Js.Obj.empty(),
-        "limit": responseLimit,
-        "allow_aggregations": aggregateEntities->Js.Array2.includes(tableName),
-      },
-    }->(Utils.magic: 'a => Js.Json.t),
-  }
+    }->(Utils.magic: 'a => JSON.t),
+  )
 }
 
-let createEntityRelationshipOperation = (
+let createEntityRelationship = async (
+  ~endpoint,
+  ~auth,
   ~pgSchema,
   ~tableName: string,
   ~relationshipType: string,
@@ -199,73 +192,33 @@ let createEntityRelationshipOperation = (
   ~objectName: string,
   ~mappedEntity: string,
   ~isDerivedFrom: bool,
-): bulkOperation => {
+) => {
   let derivedFromTo = isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}_id" : "id"`
 
-  {
-    \"type": `pg_create_${relationshipType}_relationship`,
-    args: {
-      "table": {
-        "schema": pgSchema,
-        "name": tableName,
-      },
-      "name": objectName,
-      "source": "default",
-      "using": {
-        "manual_configuration": {
-          "remote_table": {
-            "schema": pgSchema,
-            "name": mappedEntity,
+  await sendOperation(
+    ~endpoint,
+    ~auth,
+    ~operation={
+      "type": `pg_create_${relationshipType}_relationship`,
+      "args": {
+        "table": {
+          "schema": pgSchema,
+          "name": tableName,
+        },
+        "name": objectName,
+        "source": "default",
+        "using": {
+          "manual_configuration": {
+            "remote_table": {
+              "schema": pgSchema,
+              "name": mappedEntity,
+            },
+            "column_mapping": JSON.parseOrThrow(`{${derivedFromTo}}`),
           },
-          "column_mapping": Js.Json.parseExn(`{${derivedFromTo}}`),
         },
       },
-    }->(Utils.magic: 'a => Js.Json.t),
-  }
-}
-
-let executeBulkKeepGoing = async (~endpoint, ~auth, ~operations: array<bulkOperation>) => {
-  if operations->Js.Array2.length === 0 {
-    Logging.trace("No hasura bulk configuration operations to execute")
-  } else {
-    try {
-      let result = await bulkKeepGoingRoute->Rest.fetch(
-        {
-          "auth": auth,
-          "args": operations->(Utils.magic: 'a => Js.Json.t),
-        },
-        ~client=Rest.client(endpoint),
-      )
-
-      let errors = try {
-        result->S.parseJsonOrThrow(bulkKeepGoingErrorsSchema)
-      } catch {
-      | S.Raised(error) => [error->S.Error.message]
-      | exn => [exn->Utils.prettifyExn->(Utils.magic: exn => string)]
-      }
-
-      switch errors {
-      | [] =>
-        Logging.trace({
-          "msg": "Hasura configuration completed",
-          "operations": operations->Js.Array2.length,
-        })
-      | _ =>
-        Logging.warn({
-          "msg": "Hasura configuration completed with errors. Indexing will still work - but you may have issues querying data via GraphQL.",
-          "errors": errors,
-          "operations": operations->Js.Array2.length,
-        })
-      }
-    } catch {
-    | exn =>
-      Logging.error({
-        "msg": `There was an issue executing bulk operations in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
-        "operations": operations->Js.Array2.length,
-        "err": exn->Utils.prettifyExn,
-      })
-    }
-  }
+    }->(Utils.magic: 'a => JSON.t),
+  )
 }
 
 let trackDatabase = async (
@@ -282,7 +235,7 @@ let trackDatabase = async (
     InternalTable.Views.metaViewName,
     InternalTable.Views.chainMetadataViewName,
   ]
-  let userTableNames = userEntities->Js.Array2.map(entity => entity.table.tableName)
+  let userTableNames = userEntities->Array.map(entity => entity.table.tableName)
   let tableNames = [exposedInternalTableNames, userTableNames]->Belt.Array.concatMany
 
   Logging.info("Tracking tables in Hasura")
@@ -291,64 +244,60 @@ let trackDatabase = async (
 
   await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames)
 
-  // Collect all operations for bulk execution
-  let allOperations = []
-
-  // Add select permission operations
-  tableNames->Js.Array2.forEach(tableName => {
-    allOperations
-    ->Js.Array2.push(
-      createSelectPermissionOperation(~tableName, ~pgSchema, ~responseLimit, ~aggregateEntities),
+  for i in 0 to tableNames->Array.length - 1 {
+    let tableName = tableNames->Array.getUnsafe(i)
+    await createSelectPermission(
+      ~endpoint,
+      ~auth,
+      ~tableName,
+      ~pgSchema,
+      ~responseLimit,
+      ~aggregateEntities,
     )
-    ->ignore
-  })
+  }
 
-  // Add relationship operations
-  userEntities->Js.Array2.forEach(entityConfig => {
+  for i in 0 to userEntities->Array.length - 1 {
+    let entityConfig = userEntities->Array.getUnsafe(i)
     let {tableName} = entityConfig.table
 
     //Set array relationships
-    entityConfig.table
-    ->Table.getDerivedFromFields
-    ->Js.Array2.forEach(derivedFromField => {
+    let derivedFromFields = entityConfig.table->Table.getDerivedFromFields
+    for j in 0 to derivedFromFields->Array.length - 1 {
+      let derivedFromField = derivedFromFields->Array.getUnsafe(j)
       //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
       let relationalFieldName =
         schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
 
-      allOperations
-      ->Js.Array2.push(
-        createEntityRelationshipOperation(
-          ~pgSchema,
-          ~tableName,
-          ~relationshipType="array",
-          ~isDerivedFrom=true,
-          ~objectName=derivedFromField.fieldName,
-          ~relationalKey=relationalFieldName,
-          ~mappedEntity=derivedFromField.derivedFromEntity,
-        ),
+      await createEntityRelationship(
+        ~endpoint,
+        ~auth,
+        ~pgSchema,
+        ~tableName,
+        ~relationshipType="array",
+        ~isDerivedFrom=true,
+        ~objectName=derivedFromField.fieldName,
+        ~relationalKey=relationalFieldName,
+        ~mappedEntity=derivedFromField.derivedFromEntity,
       )
-      ->ignore
-    })
+    }
 
     //Set object relationships
-    entityConfig.table
-    ->Table.getLinkedEntityFields
-    ->Js.Array2.forEach(((field, linkedEntityName)) => {
-      allOperations
-      ->Js.Array2.push(
-        createEntityRelationshipOperation(
-          ~pgSchema,
-          ~tableName,
-          ~relationshipType="object",
-          ~isDerivedFrom=false,
-          ~objectName=field.fieldName,
-          ~relationalKey=field.fieldName,
-          ~mappedEntity=linkedEntityName,
-        ),
+    let linkedEntityFields = entityConfig.table->Table.getLinkedEntityFields
+    for j in 0 to linkedEntityFields->Array.length - 1 {
+      let (field, linkedEntityName) = linkedEntityFields->Array.getUnsafe(j)
+      await createEntityRelationship(
+        ~endpoint,
+        ~auth,
+        ~pgSchema,
+        ~tableName,
+        ~relationshipType="object",
+        ~isDerivedFrom=false,
+        ~objectName=field.fieldName,
+        ~relationalKey=field.fieldName,
+        ~mappedEntity=linkedEntityName,
       )
-      ->ignore
-    })
-  })
+    }
+  }
 
-  await executeBulkKeepGoing(~endpoint, ~auth, ~operations=allOperations)
+  Logging.info("Hasura configuration completed")
 }

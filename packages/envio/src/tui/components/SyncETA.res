@@ -1,5 +1,4 @@
 open Ink
-open Belt
 
 let isIndexerFullySynced = (chains: array<TuiData.chain>) => {
   chains->Array.reduce(true, (accum, current) => {
@@ -25,12 +24,12 @@ let getTotalRemainingBlocks = (chains: array<TuiData.chain>) => {
   })
 }
 
-let getLatestTimeCaughtUpToHead = (chains: array<TuiData.chain>, indexerStartTime: Js.Date.t) => {
+let getLatestTimeCaughtUpToHead = (chains: array<TuiData.chain>, indexerStartTime: Date.t) => {
   let latesttimestampCaughtUpToHeadOrEndblockFloat = chains->Array.reduce(0.0, (accum, current) => {
     switch current.progress {
     | Synced({timestampCaughtUpToHeadOrEndblock}) =>
-      timestampCaughtUpToHeadOrEndblock->Js.Date.valueOf > accum
-        ? timestampCaughtUpToHeadOrEndblock->Js.Date.valueOf
+      timestampCaughtUpToHeadOrEndblock->Date.getTime > accum
+        ? timestampCaughtUpToHeadOrEndblock->Date.getTime
         : accum
     | Syncing(_)
     | SearchingForEvents => accum
@@ -39,7 +38,7 @@ let getLatestTimeCaughtUpToHead = (chains: array<TuiData.chain>, indexerStartTim
 
   DateFns.formatDistanceWithOptions(
     indexerStartTime,
-    latesttimestampCaughtUpToHeadOrEndblockFloat->Js.Date.fromFloat,
+    latesttimestampCaughtUpToHeadOrEndblockFloat->Date.fromTime,
     {includeSeconds: true},
   )
 }
@@ -58,32 +57,13 @@ let getTotalBlocksProcessed = (chains: array<TuiData.chain>) => {
 let useShouldDisplayEta = (~chains: array<TuiData.chain>) => {
   let (shouldDisplayEta, setShouldDisplayEta) = React.useState(_ => false)
   React.useEffect(() => {
-    //Only compute this while it is not displaying eta
     if !shouldDisplayEta {
-      //Each chain should have fetched at least one batch
-      let (allChainsHaveFetchedABatch, totalNumBatchesFetched) = chains->Array.reduce((true, 0), (
-        (allChainsHaveFetchedABatch, totalNumBatchesFetched),
-        chain,
-      ) => {
-        (
-          allChainsHaveFetchedABatch && chain.numBatchesFetched >= 1,
-          totalNumBatchesFetched + chain.numBatchesFetched,
-        )
+      // Display ETA once all chains have a known height and some blocks have been fetched
+      let allChainsStartedFetching = chains->Array.every(chain => {
+        chain.knownHeight > 0 && chain.latestFetchedBlockNumber > 0
       })
 
-      //Min num fetched batches is num of chains + 2. All
-      // Chains should have fetched at least 1 batch. (They
-      // could then be blocked from fetching if they are past
-      //the max queue size on first batch)
-      // Only display once an additinal 2 batches have been fetched to allow
-      // eta to realistically stabalize
-      let numChains = chains->Array.length
-      let minTotalBatches = numChains + 2
-      let hasMinNumBatches = totalNumBatchesFetched >= minTotalBatches
-
-      let shouldDisplayEta = allChainsHaveFetchedABatch && hasMinNumBatches
-
-      if shouldDisplayEta {
+      if allChainsStartedFetching {
         setShouldDisplayEta(_ => true)
       }
     }
@@ -100,14 +80,14 @@ let useEta = (~chains, ~indexerStartTime) => {
   let (timeSinceStart, setTimeSinceStart) = React.useState(_ => 0.)
 
   React.useEffect2(() => {
-    setTimeSinceStart(_ => Js.Date.now() -. indexerStartTime->Js.Date.valueOf)
+    setTimeSinceStart(_ => Date.now() -. indexerStartTime->Date.getTime)
     setSecondsToSub(_ => 0.)
 
-    let intervalId = Js.Global.setInterval(() => {
+    let intervalId = setInterval(() => {
       setSecondsToSub(prev => prev +. 1.)
     }, 1000)
 
-    Some(() => Js.Global.clearInterval(intervalId))
+    Some(() => clearInterval(intervalId))
   }, (chains, indexerStartTime))
 
   //blocksProcessed/remainingBlocks = timeSoFar/eta
@@ -115,13 +95,13 @@ let useEta = (~chains, ~indexerStartTime) => {
 
   let blocksProcessed = getTotalBlocksProcessed(chains)->Int.toFloat
   if shouldDisplayEta && blocksProcessed > 0. {
-    let nowDate = Js.Date.now()
+    let nowDate = Date.now()
     let remainingBlocks = getTotalRemainingBlocks(chains)->Int.toFloat
     let etaFloat = timeSinceStart /. blocksProcessed *. remainingBlocks
     let millisToSub = secondsToSub *. 1000.
     let etaFloat = Pervasives.max(etaFloat -. millisToSub, 0.0) //template this
-    let eta = (etaFloat +. nowDate)->Js.Date.fromFloat
-    let interval: DateFns.interval = {start: nowDate->Js.Date.fromFloat, end: eta}
+    let eta = (etaFloat +. nowDate)->Date.fromTime
+    let interval: DateFns.interval = {start: nowDate->Date.fromTime, end: eta}
     let duration = DateFns.intervalToDuration(interval)
     let formattedDuration = DateFns.formatDuration(
       duration,

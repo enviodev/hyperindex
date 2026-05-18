@@ -19,10 +19,10 @@ type initialChainState = {
   endBlock: option<int>,
   maxReorgDepth: int,
   progressBlockNumber: int,
-  numEventsProcessed: int,
+  numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
-  dynamicContracts: array<Internal.indexingContract>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  indexingAddresses: array<Internal.indexingAddress>,
   sourceBlockNumber: int,
 }
 
@@ -33,6 +33,11 @@ type initialState = {
   checkpointId: Internal.checkpointId,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
+  // Public config snapshot read from envio_info, used by `Persistence.init`
+  // to compat-check a resume against the running config. None when the
+  // schema pre-dates envio_info or the row is missing — `init` treats that
+  // as a version mismatch.
+  envioInfo: option<JSON.t>,
 }
 
 type operator = [#">" | #"=" | #"<"]
@@ -49,15 +54,20 @@ type updatedEntity = {
 }
 
 type storage = {
+  // Identifier used as the `storage` label on Prometheus metrics.
+  name: string,
   // Should return true if we already have persisted data
   // and we can skip initialization
   isInitialized: unit => promise<bool>,
   // Should initialize the storage so we can start interacting with it
-  // Eg create connection, schema, tables, etc.
+  // Eg create connection, schema, tables, etc. `envioInfo` is opaque JSON
+  // persisted as part of the same transaction so a fresh schema always
+  // carries a matching row — storage doesn't interpret it.
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
+    ~envioInfo: JSON.t,
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
   @raises("StorageError")
@@ -75,22 +85,9 @@ type storage = {
     ~table: Table.table,
     ~rowsSchema: S.t<array<'item>>,
   ) => promise<array<'item>>,
-  @raises("StorageError")
-  setOrThrow: 'item. (
-    ~items: array<'item>,
-    ~table: Table.table,
-    ~itemSchema: S.t<'item>,
-  ) => promise<unit>,
-  @raises("StorageError")
-  setEffectCacheOrThrow: (
-    ~effect: Internal.effect,
-    ~items: array<Internal.effectCacheItem>,
-    ~initialize: bool,
-  ) => promise<unit>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
-  // Execute raw SQL query
-  executeUnsafe: string => promise<unknown>,
+  reset: unit => promise<unit>,
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
@@ -105,7 +102,7 @@ type storage = {
   getRollbackTargetCheckpoint: (
     ~reorgChainId: int,
     ~lastKnownValidBlockNumber: int,
-  ) => promise<array<{"id": Internal.checkpointId}>>,
+  ) => promise<option<Internal.checkpointId>>,
   // Get rollback progress diff
   getRollbackProgressDiff: (
     ~rollbackTargetCheckpointId: Internal.checkpointId,
@@ -132,6 +129,9 @@ type storage = {
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
   ) => promise<unit>,
+  // Release any long-lived resources (e.g. the postgres connection pool) so
+  // short-lived CLI commands like `db-migrate setup` can exit cleanly.
+  close: unit => promise<unit>,
 }
 
 type storageStatus =
@@ -155,9 +155,9 @@ let make = (
   ~allEnums,
   ~storage,
 ) => {
-  let allEntities = userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.entityConfig])
+  let allEntities = userEntities->Array.concat([InternalTable.EnvioAddresses.entityConfig])
   let allEnums =
-    allEnums->Js.Array2.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
+    allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
     userEntities,
     allEntities,
@@ -168,7 +168,7 @@ let make = (
 }
 
 let init = {
-  async (persistence, ~chainConfigs, ~reset=false) => {
+  async (persistence, ~chainConfigs, ~envioInfo, ~resetCommand, ~runCommand, ~reset=false) => {
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -190,6 +190,7 @@ let init = {
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,
             ~chainConfigs,
+            ~envioInfo,
           )
           Logging.info(`The indexer storage is ready. Starting indexing!`)
           persistence.storageStatus = Ready(initialState)
@@ -203,9 +204,33 @@ let init = {
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState()
+          // Compat-check the running config against what was stored on the
+          // last successful initialize. None means the schema pre-dates
+          // envio_info (or the row was wiped out-of-band) and we can't
+          // compare — treat it as a version mismatch.
+          let changedPaths = switch initialState.envioInfo {
+          | None => ["envio info is missing — storage initialized by an older envio"]
+          | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
+          }
+          // `storage.clickhouse` is serialized as a plain bool by the
+          // public config (see Rust `StorageConfig`), so probe for
+          // `Boolean(true)`, not an object.
+          let hasClickhouse = switch envioInfo {
+          | Object(d) =>
+            switch d->Dict.get("storage") {
+            | Some(Object(s)) =>
+              switch s->Dict.get("clickhouse") {
+              | Some(Boolean(true)) => true
+              | _ => false
+              }
+            | _ => false
+            }
+          | _ => false
+          }
+          Config.throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
           persistence.storageStatus = Ready(initialState)
-          let progress = Js.Dict.empty()
-          initialState.chains->Js.Array2.forEach(c => {
+          let progress = Dict.make()
+          initialState.chains->Array.forEach(c => {
             progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
           })
           Logging.info({
@@ -216,8 +241,7 @@ let init = {
         resolveRef.contents()
       }
     } catch {
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
+    | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
     }
   }
 }
@@ -226,7 +250,7 @@ let getInitializedStorageOrThrow = persistence => {
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
-    Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
+    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready(_) => persistence.storage
   }
 }
@@ -235,7 +259,7 @@ let getInitializedState = persistence => {
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
-    Js.Exn.raiseError(`Failed to access the initial state. The Persistence layer is not initialized.`)
+    JsError.throwWithMessage(`Failed to access the initial state. The Persistence layer is not initialized.`)
   | Ready(initialState) => initialState
   }
 }
@@ -250,9 +274,9 @@ let writeBatch = (
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
-    Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
+    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
-    let updatedEntities = persistence.allEntities->Belt.Array.keepMapU(entityConfig => {
+    let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
       let updates =
         inMemoryStore
         ->InMemoryStore.getInMemTable(~entityConfig)
@@ -272,47 +296,40 @@ let writeBatch = (
       ~allEntities=persistence.allEntities,
       ~updatedEntities,
       ~updatedEffectsCache={
-        inMemoryStore.effects
-        ->Js.Dict.keys
-        ->Belt.Array.keepMapU(effectName => {
-          let inMemTable = inMemoryStore.effects->Js.Dict.unsafeGet(effectName)
+        let acc = []
+        inMemoryStore.effects->Utils.Dict.forEach(inMemTable => {
           let {idsToStore, dict, effect, invalidationsCount} = inMemTable
           switch idsToStore {
-          | [] => None
-          | ids => {
-              let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
-              ids->Belt.Array.forEachWithIndex((index, id) => {
-                items->Js.Array2.unsafe_set(
-                  index,
-                  (
-                    {
-                      id,
-                      output: dict->Js.Dict.unsafeGet(id),
-                    }: Internal.effectCacheItem
-                  ),
-                )
-              })
-              Some({
-                let effectName = effect.name
-                let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(
-                  effectName,
-                ) {
-                | Some(c) => c
-                | None => {
-                    let c = {effectName, count: 0}
-                    cache->Js.Dict.set(effectName, c)
-                    c
-                  }
-                }
-                let shouldInitialize = effectCacheRecord.count === 0
-                effectCacheRecord.count =
-                  effectCacheRecord.count + items->Js.Array2.length - invalidationsCount
-                Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
-                {effect, items, shouldInitialize}
-              })
+          | [] => ()
+          | ids =>
+            let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+            ids->Belt.Array.forEachWithIndex((index, id) => {
+              items->Array.setUnsafe(
+                index,
+                (
+                  {
+                    id,
+                    output: dict->Dict.getUnsafe(id),
+                  }: Internal.effectCacheItem
+                ),
+              )
+            })
+            let effectName = effect.name
+            let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
+            | Some(c) => c
+            | None =>
+              let c = {effectName, count: 0}
+              cache->Dict.set(effectName, c)
+              c
             }
+            let shouldInitialize = effectCacheRecord.count === 0
+            effectCacheRecord.count =
+              effectCacheRecord.count + items->Array.length - invalidationsCount
+            Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
+            acc->Array.push({effect, items, shouldInitialize})->ignore
           }
         })
+        acc
       },
     )
   }
@@ -327,49 +344,48 @@ let prepareRollbackDiff = async (
     ~rollbackTargetCheckpointId,
   )
 
-  let deletedEntities = Js.Dict.empty()
-  let setEntities = Js.Dict.empty()
+  let deletedEntities = Dict.make()
+  let setEntities = Dict.make()
 
-  let _ =
-    await persistence.allEntities
-    ->Belt.Array.map(async entityConfig => {
-      let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
+  let _ = await persistence.allEntities
+  ->Belt.Array.map(async entityConfig => {
+    let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
 
-      let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
-        ~entityConfig,
-        ~rollbackTargetCheckpointId,
+    let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+      ~entityConfig,
+      ~rollbackTargetCheckpointId,
+    )
+
+    // Process removed IDs
+    removedIdsResult->Array.forEach(data => {
+      deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
+      entityTable->InMemoryTable.Entity.set(
+        Delete({
+          entityId: data["id"],
+          checkpointId: rollbackDiffCheckpointId,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
       )
-
-      // Process removed IDs
-      removedIdsResult->Js.Array2.forEach(data => {
-        deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
-        entityTable->InMemoryTable.Entity.set(
-          Delete({
-            entityId: data["id"],
-            checkpointId: rollbackDiffCheckpointId,
-          }),
-          ~shouldSaveHistory=false,
-          ~containsRollbackDiffChange=true,
-        )
-      })
-
-      let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
-
-      // Process restored entities
-      restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
-        setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-        entityTable->InMemoryTable.Entity.set(
-          Set({
-            entityId: entity.id,
-            checkpointId: rollbackDiffCheckpointId,
-            entity,
-          }),
-          ~shouldSaveHistory=false,
-          ~containsRollbackDiffChange=true,
-        )
-      })
     })
-    ->Promise.all
+
+    let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
+
+    // Process restored entities
+    restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
+      setEntities->Utils.Dict.push(entityConfig.name, entity.id)
+      entityTable->InMemoryTable.Entity.set(
+        Set({
+          entityId: entity.id,
+          checkpointId: rollbackDiffCheckpointId,
+          entity,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
+      )
+    })
+  })
+  ->Promise.all
 
   {
     "inMemStore": inMemStore,

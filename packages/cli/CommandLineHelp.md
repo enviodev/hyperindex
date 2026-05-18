@@ -19,7 +19,6 @@ This document contains the help content for the `envio` command-line program.
 * [`envio dev`↴](#envio-dev)
 * [`envio stop`↴](#envio-stop)
 * [`envio codegen`↴](#envio-codegen)
-* [`envio benchmark-summary`↴](#envio-benchmark-summary)
 * [`envio local`↴](#envio-local)
 * [`envio local docker`↴](#envio-local-docker)
 * [`envio local docker up`↴](#envio-local-docker-up)
@@ -29,6 +28,11 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate down`↴](#envio-local-db-migrate-down)
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
 * [`envio start`↴](#envio-start)
+* [`envio metrics`↴](#envio-metrics)
+* [`envio skills`↴](#envio-skills)
+* [`envio skills update`↴](#envio-skills-update)
+* [`envio config`↴](#envio-config)
+* [`envio config view`↴](#envio-config-view)
 
 ## `envio`
 
@@ -37,20 +41,19 @@ This document contains the help content for the `envio` command-line program.
 ###### **Subcommands:**
 
 * `init` — Initialize an indexer with one of the initialization options
-* `dev` — Development commands for starting, stopping, and restarting the indexer with automatic codegen for any changed files
+* `dev` — Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching
 * `stop` — Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
 * `codegen` — Generate indexing code from user-defined configuration & schema files
-* `benchmark-summary` — Prints a summary of the benchmark data after running the indexer with envio start --bench flag or setting 'ENVIO_SAVE_BENCHMARK_DATA=true'
 * `local` — Prepare local environment for envio testing
-* `start` — Start the indexer without any automatic codegen
+* `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
+* `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
+* `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
+* `config` — Inspect the indexer config
 
 ###### **Options:**
 
 * `-d`, `--directory <DIRECTORY>` — The directory of the project. Defaults to current dir ("./")
-* `-o`, `--output-directory <OUTPUT_DIRECTORY>` — The directory for generated code output. We recommend configuring this using the `output` field in your config.yaml instead
-
-  Default value: `generated`
-* `--config <CONFIG>` — The file in the project containing config
+* `--config <CONFIG>` — The file in the project containing the configuration. It can also be set via the `ENVIO_CONFIG` environment variable
 
   Default value: `config.yaml`
 
@@ -75,6 +78,10 @@ Initialize an indexer with one of the initialization options
 * `-l`, `--language <LANGUAGE>` — The language used to write handlers
 
   Possible values: `typescript`, `rescript`
+
+* `--package-manager <PACKAGE_MANAGER>` — The package manager used for `install` and post-init build steps (default: pnpm)
+
+  Possible values: `pnpm`, `npm`, `yarn`, `bun`
 
 * `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file
 
@@ -145,7 +152,7 @@ Initialize Evm indexer from an example template
 
 * `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
 
-  Possible values: `greeter`, `erc20`, `feature-factory`
+  Possible values: `greeter`, `erc20`, `feature-external-calls`, `feature-factory`
 
 
 
@@ -218,6 +225,12 @@ Initialize from a local json ABI file
 
 * `-a`, `--abi-file <ABI_FILE>` — The path to a json abi file
 * `--contract-name <CONTRACT_NAME>` — The name of the contract
+* `-b`, `--blockchain <BLOCKCHAIN>` — Which Fuel network to use
+
+  Possible values: `mainnet`, `testnet`
+
+* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/chains
+* `--all-events` — If selected, prompt will not ask to confirm selection of events on a contract
 
 
 
@@ -238,9 +251,13 @@ Initialize Fuel indexer from an example template
 
 ## `envio dev`
 
-Development commands for starting, stopping, and restarting the indexer with automatic codegen for any changed files
+Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching
 
-**Usage:** `envio dev`
+**Usage:** `envio dev [OPTIONS]`
+
+###### **Options:**
+
+* `-r`, `--restart` — Force restart: clear the database and re-index from scratch. Required when config/schema/ABI changes are incompatible with the existing indexer state
 
 
 
@@ -257,14 +274,6 @@ Stop the local environment - delete the database and stop all processes (includi
 Generate indexing code from user-defined configuration & schema files
 
 **Usage:** `envio codegen`
-
-
-
-## `envio benchmark-summary`
-
-Prints a summary of the benchmark data after running the indexer with envio start --bench flag or setting 'ENVIO_SAVE_BENCHMARK_DATA=true'
-
-**Usage:** `envio benchmark-summary`
 
 
 
@@ -289,14 +298,14 @@ Local Envio environment commands
 
 ###### **Subcommands:**
 
-* `up` — Create docker images required for local environment
-* `down` — Delete existing docker images on local environment
+* `up` — Start Docker containers (Postgres + Hasura) for local environment
+* `down` — Stop and remove Docker containers for local environment
 
 
 
 ## `envio local docker up`
 
-Create docker images required for local environment
+Start Docker containers (Postgres + Hasura) for local environment
 
 **Usage:** `envio local docker up`
 
@@ -304,7 +313,7 @@ Create docker images required for local environment
 
 ## `envio local docker down`
 
-Delete existing docker images on local environment
+Stop and remove Docker containers for local environment
 
 **Usage:** `envio local docker down`
 
@@ -350,14 +359,61 @@ Setup database by dropping schema and then running migrations
 
 ## `envio start`
 
-Start the indexer without any automatic codegen
+Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 
 **Usage:** `envio start [OPTIONS]`
 
 ###### **Options:**
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
-* `-b`, `--bench` — Saves benchmark data to a file during indexing
+
+
+
+## `envio metrics`
+
+Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
+
+**Usage:** `envio metrics`
+
+
+
+## `envio skills`
+
+Manage Envio-provided Claude Code skills under `.claude/skills/`
+
+**Usage:** `envio skills <COMMAND>`
+
+###### **Subcommands:**
+
+* `update` — Re-extract every skill shipped by this CLI version, overwriting the matching directories under `<cwd>/.claude/skills/`. Skills not shipped by envio are left untouched
+
+
+
+## `envio skills update`
+
+Re-extract every skill shipped by this CLI version, overwriting the matching directories under `<cwd>/.claude/skills/`. Skills not shipped by envio are left untouched
+
+**Usage:** `envio skills update`
+
+
+
+## `envio config`
+
+Inspect the indexer config
+
+**Usage:** `envio config <COMMAND>`
+
+###### **Subcommands:**
+
+* `view` — Print the resolved indexer config as JSON
+
+
+
+## `envio config view`
+
+Print the resolved indexer config as JSON
+
+**Usage:** `envio config view`
 
 
 

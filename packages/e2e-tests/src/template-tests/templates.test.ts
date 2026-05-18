@@ -19,7 +19,9 @@ interface TemplateConfig {
   hasTests?: boolean;
 }
 
-// All available templates to test (TypeScript only)
+const fuelGreeterAbi = path.join(config.rootDir, "packages/e2e-tests/fixtures/fuel-greeter-abi.json");
+
+// All available templates and contract imports to test
 const TEMPLATES: TemplateConfig[] = [
   // EVM Templates
   {
@@ -37,6 +39,10 @@ const TEMPLATES: TemplateConfig[] = [
     initArgs: ["template", "-t", "feature-factory", "-l", "typescript"],
     hasTests: true,
   },
+  {
+    name: "evm-external-calls",
+    initArgs: ["template", "-t", "feature-external-calls", "-l", "typescript"],
+  },
   // Fuel Templates
   {
     name: "fuel-greeter",
@@ -48,13 +54,89 @@ const TEMPLATES: TemplateConfig[] = [
     name: "svm-block-handler",
     initArgs: ["svm", "template", "-t", "feature-block-handler", "-l", "typescript"],
   },
+  // EVM Contract Import (explorer)
+  {
+    name: "evm-contract-import-ts",
+    hasTests: true,
+    initArgs: [
+      "contract-import",
+      "-c",
+      "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "explorer",
+      "-b",
+      "ethereum-mainnet",
+      "--single-contract",
+      "--all-events",
+      "-l",
+      "typescript",
+    ],
+  },
+  {
+    name: "evm-contract-import-rescript",
+    hasTests: true,
+    initArgs: [
+      "contract-import",
+      "-c",
+      "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "explorer",
+      "-b",
+      "ethereum-mainnet",
+      "--single-contract",
+      "--all-events",
+      "-l",
+      "rescript",
+    ],
+  },
+  // Fuel Contract Import (local ABI)
+  // Smoke tests disabled: scans from block 0 on Fuel testnet, can timeout in CI.
+  {
+    name: "fuel-contract-import-ts",
+    hasTests: false,
+    initArgs: [
+      "fuel",
+      "contract-import",
+      "-c",
+      "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b",
+      "local",
+      "-a",
+      fuelGreeterAbi,
+      "--contract-name",
+      "Greeter",
+      "-b",
+      "testnet",
+      "--single-contract",
+      "--all-events",
+      "-l",
+      "typescript",
+    ],
+  },
+  {
+    name: "fuel-contract-import-rescript",
+    hasTests: false,
+    initArgs: [
+      "fuel",
+      "contract-import",
+      "-c",
+      "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b",
+      "local",
+      "-a",
+      fuelGreeterAbi,
+      "--contract-name",
+      "Greeter",
+      "-b",
+      "testnet",
+      "--single-contract",
+      "--all-events",
+      "-l",
+      "rescript",
+    ],
+  },
 ];
 
-describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
+function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
   let projectDir: string;
 
   beforeAll(async () => {
-    // Create a unique temp directory for this test
     const tempBase = path.join(os.tmpdir(), "envio-template-tests");
     fs.mkdirSync(tempBase, { recursive: true });
     projectDir = path.join(tempBase, `${name}-${Date.now()}`);
@@ -62,7 +144,6 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
   });
 
   afterAll(async () => {
-    // Clean up the temp directory
     if (projectDir && fs.existsSync(projectDir)) {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
@@ -71,44 +152,34 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
   it("initializes successfully", async () => {
     const apiToken = process.env.ENVIO_API_TOKEN ?? "";
     const result = await runCommand(
-      config.envioBin,
-      ["init", "-n", name, "-d", projectDir, "--api-token", apiToken, ...initArgs],
+      config.envioCommand,
+      [...config.envioArgs, "init", "-n", name, "-d", projectDir, "--api-token", apiToken, ...initArgs],
       {
         cwd: projectDir,
         timeout: config.timeouts.install,
       }
     );
 
-    if (result.exitCode !== 0) {
-      console.error(`[${name}] init failed:`, result.stderr);
-      console.error(`[${name}] stdout:`, result.stdout);
-    }
-    expect(result.exitCode).toBe(0);
-  });
+    expect(result.exitCode, `[${name}] init failed (exit ${result.exitCode}):\n${result.stderr}\n${result.stdout}`).toBe(0);
+  }, config.timeouts.install + 10_000);
 
   it("installs dependencies", async () => {
     const result = await runCommand("pnpm", ["install"], {
       cwd: projectDir,
-      timeout: config.timeouts.test,
+      timeout: config.timeouts.install,
     });
 
-    if (result.exitCode !== 0) {
-      console.error(`[${name}] pnpm install failed:`, result.stderr);
-    }
-    expect(result.exitCode).toBe(0);
-  });
+    expect(result.exitCode, `[${name}] pnpm install failed (exit ${result.exitCode}):\n${result.stderr}`).toBe(0);
+  }, config.timeouts.install + 10_000);
 
   it("runs codegen successfully", async () => {
-    const result = await runCommand(config.envioBin, ["codegen"], {
+    const result = await runCommand(config.envioCommand, [...config.envioArgs, "codegen"], {
       cwd: projectDir,
       timeout: config.timeouts.codegen,
     });
 
-    if (result.exitCode !== 0) {
-      console.error(`[${name}] codegen failed:`, result.stderr);
-    }
-    expect(result.exitCode).toBe(0);
-  });
+    expect(result.exitCode, `[${name}] codegen failed (exit ${result.exitCode}):\n${result.stderr}`).toBe(0);
+  }, config.timeouts.codegen + 10_000);
 
   it.skipIf(!hasTests)("runs tests successfully", async () => {
     const result = await runCommand("pnpm", ["test"], {
@@ -116,10 +187,10 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
       timeout: config.timeouts.test,
     });
 
-    if (result.exitCode !== 0) {
-      console.error(`[${name}] test failed:`, result.stderr);
-      console.error(`[${name}] stdout:`, result.stdout);
-    }
-    expect(result.exitCode).toBe(0);
-  });
-});
+    expect(result.exitCode, `[${name}] test failed (exit ${result.exitCode}):\n${result.stderr}\n${result.stdout}`).toBe(0);
+  }, config.timeouts.test + 10_000);
+}
+
+for (const template of TEMPLATES) {
+  describe(`Template: '${template.name}'`, () => templateTest(template));
+}

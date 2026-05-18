@@ -5,7 +5,7 @@ type t = {
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
   ) => promise<unit>,
-  resume: (~checkpointId: float) => promise<unit>,
+  resume: (~checkpointId: Internal.checkpointId) => promise<unit>,
   writeBatch: (
     ~batch: Batch.t,
     ~updatedEntities: array<Persistence.updatedEntity>,
@@ -19,16 +19,13 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
     password,
   })
 
-  // Don't assign it to client immediately,
-  // since it will fail if the database doesn't exist
-  // Call USE database instead
-  let database = switch database {
-  | Some(database) => database
-  | None => "envio_sink"
-  }
+  // Don't pass database to the client; it would fail if the database doesn't
+  // exist yet. Each query qualifies the name explicitly or runs USE first.
+
+  let cache = Utils.WeakMap.make()
 
   {
-    name: "ClickHouse",
+    name: "clickhouse",
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
       ClickHouse.initialize(client, ~database, ~entities, ~enums)
     },
@@ -38,9 +35,9 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
     writeBatch: async (~batch, ~updatedEntities) => {
       await Promise.all(
         updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
-          ClickHouse.setUpdatesOrThrow(client, ~updates, ~entityConfig, ~database)
+          ClickHouse.setUpdatesOrThrow(client, ~cache, ~updates, ~entityConfig, ~database)
         }),
-      )->Promise.ignoreValue
+      )->Utils.Promise.ignoreValue
       await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)
     },
   }

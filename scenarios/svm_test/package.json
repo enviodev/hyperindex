@@ -1,0 +1,26 @@
+{
+  "name": "svm_test",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "res:clean": "rescript clean",
+    "res:build": "rescript",
+    "res:watch": "rescript watch",
+    "codegen": "envio codegen",
+    "dev": "envio dev",
+    "test": "rescript && tsc --noEmit && vitest run",
+    "start": "envio start"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.0"
+  },
+  "dependencies": {
+    "envio": "file:../../packages/envio",
+    "rescript": "12.2.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

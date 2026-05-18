@@ -6,28 +6,28 @@
   {{#if is_rescript}}
     "clean": "rescript clean",
     "build": "rescript",
-    "watch": "rescript -w",
+    "watch": "rescript watch",
   {{/if}}
     "codegen": "envio codegen",
     "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
     "start": "{{#if is_rescript}}pnpm build && {{/if}}envio start",
-    "test": "{{#if is_rescript}}pnpm build && {{/if}}vitest run"
+    "test": "{{#if is_rescript}}pnpm build && {{/if}}vitest run --test-timeout=10000"
   },
   "devDependencies": {
   {{#if is_rescript}}
-    "rescript": "11.1.3",
+    "rescript": "12.2.0",
+    "@rescript/runtime": "12.2.0",
   {{/if}}
   {{#if is_typescript}}
-    "@types/node": "^24.10.1",
-    "typescript": "5.9.3",
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3",
   {{/if}}
-    "vitest": "4.0.18"
+    "vitest": "4.1.0"
   },
   "dependencies": {
-    "envio": "{{envio_version}}"
-  },
-  "optionalDependencies": {
-    "generated": "{{relative_path_from_root_to_generated}}"
+    "envio": "{{envio_version}}"{{#if extra_dependencies}},
+    {{#each extra_dependencies}}"{{this.[0]}}": "{{this.[1]}}"{{#unless @last}},
+    {{/unless}}{{/each}}{{/if}}
   },
   "engines": {
     "node": ">=22.0.0"

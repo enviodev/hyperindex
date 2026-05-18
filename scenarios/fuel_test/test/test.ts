@@ -1,29 +1,31 @@
 import { describe, it, expect } from "vitest";
-import { TestHelpers, type User } from "generated";
-const { MockDb, Greeter, Addresses } = TestHelpers;
+import { createTestIndexer, type User } from "envio";
+import { TestHelpers } from "envio";
+const { Addresses } = TestHelpers;
 
 describe("Greeter template tests", () => {
   it("A NewGreeting event creates a User entity", async () => {
-    // Initializing the mock database
-    const mockDbInitial = MockDb.createMockDb();
-
-    // Initializing values for mock event
+    const indexer = createTestIndexer();
     const userAddress = Addresses.defaultAddress;
     const greeting = "Hi there";
 
-    // Creating a mock event
-    const mockNewGreetingEvent = Greeter.NewGreeting.mockData({
-      greeting: { value: greeting },
-      user: { bits: userAddress },
+    await indexer.process({
+      chains: {
+        0: {
+          simulate: [
+            {
+              contract: "Greeter",
+              event: "NewGreeting",
+              params: {
+                greeting: { value: greeting },
+                user: { bits: userAddress },
+              },
+            },
+          ],
+        },
+      },
     });
 
-    // Processing the mock event on the mock database
-    const updatedMockDb = await Greeter.NewGreeting.processEvent({
-      event: mockNewGreetingEvent,
-      mockDb: mockDbInitial,
-    });
-
-    // Expected entity that should be created
     const expectedUserEntity: User = {
       id: userAddress,
       latestGreeting: greeting,
@@ -31,89 +33,106 @@ describe("Greeter template tests", () => {
       greetings: [greeting],
     };
 
-    // Getting the entity from the mock database
-    const actualUserEntity = updatedMockDb.entities.User.get(userAddress);
-
-    // Asserting that the entity in the mock database is the same as the expected entity
+    const actualUserEntity = await indexer.User.getOrThrow(userAddress);
     expect(actualUserEntity).toEqual(expectedUserEntity);
   });
 
   it("2 Greetings from the same users results in that user having a greeter count of 2", async () => {
-    // Initializing the mock database
-    const mockDbInitial = MockDb.createMockDb();
-    // Initializing values for mock event
+    const indexer = createTestIndexer();
     const userAddress = Addresses.defaultAddress;
     const greeting = "Hi there";
 
-    // Creating a mock event
-    const mockNewGreetingEvent = Greeter.NewGreeting.mockData({
-      greeting: { value: greeting },
-      user: { bits: userAddress },
+    await indexer.process({
+      chains: {
+        0: {
+          simulate: [
+            {
+              contract: "Greeter",
+              event: "NewGreeting",
+              params: {
+                greeting: { value: greeting },
+                user: { bits: userAddress },
+              },
+            },
+            {
+              contract: "Greeter",
+              event: "NewGreeting",
+              params: {
+                greeting: { value: greeting },
+                user: { bits: userAddress },
+              },
+            },
+          ],
+        },
+      },
     });
 
-    // Creating a mock event
-    const mockNewGreetingEvent2 = Greeter.NewGreeting.mockData({
-      greeting: { value: greeting },
-      user: { bits: userAddress },
-    });
-
-    // Processing the mock event on the mock database
-    const updatedMockDb = await Greeter.NewGreeting.processEvent({
-      event: mockNewGreetingEvent,
-      mockDb: mockDbInitial,
-    });
-
-    // Processing the mock event on the updated mock database
-    const updatedMockDb2 = await Greeter.NewGreeting.processEvent({
-      event: mockNewGreetingEvent2,
-      mockDb: updatedMockDb,
-    });
-
-    // Getting the entity from the mock database
-    const actualUserEntity = updatedMockDb2.entities.User.get(userAddress);
-
-    // Asserting that the field value of the entity in the mock database is the same as the expected field value
-    expect(actualUserEntity?.numberOfGreetings).toBe(2);
+    const actualUserEntity = await indexer.User.getOrThrow(userAddress);
+    expect(actualUserEntity.numberOfGreetings).toBe(2);
   });
 
   it("2 Greetings from the same users results in the latest greeting being the greeting from the second event", async () => {
-    // Initializing the mock database
-    const mockDbInitial = MockDb.createMockDb();
-    // Initializing values for mock event
+    const indexer = createTestIndexer();
     const userAddress = Addresses.defaultAddress;
     const greeting = "Hi there";
     const greetingAgain = "Oh hello again";
 
-    // Creating a mock event
-    const mockNewGreetingEvent = Greeter.NewGreeting.mockData({
-      greeting: { value: greeting },
-      user: { bits: userAddress },
+    await indexer.process({
+      chains: {
+        0: {
+          simulate: [
+            {
+              contract: "Greeter",
+              event: "NewGreeting",
+              params: {
+                greeting: { value: greeting },
+                user: { bits: userAddress },
+              },
+            },
+            {
+              contract: "Greeter",
+              event: "NewGreeting",
+              params: {
+                greeting: { value: greetingAgain },
+                user: { bits: userAddress },
+              },
+            },
+          ],
+        },
+      },
     });
 
-    // Creating a mock event
-    const mockNewGreetingEvent2 = Greeter.NewGreeting.mockData({
-      greeting: { value: greetingAgain },
-      user: { bits: userAddress },
+    const actualUserEntity = await indexer.User.getOrThrow(userAddress);
+    expect(actualUserEntity.latestGreeting).toBe(greetingAgain);
+  });
+
+  it("endBlock defaults to max simulate block height when omitted", async () => {
+    const indexer = createTestIndexer();
+    const userAddress = Addresses.defaultAddress;
+    const greeting = "Hi there";
+
+    // Omit endBlock — should default to block height 50 from the simulate item
+    const result = await indexer.process({
+      chains: {
+        0: {
+          simulate: [
+            {
+              contract: "Greeter",
+              event: "NewGreeting",
+              params: {
+                greeting: { value: greeting },
+                user: { bits: userAddress },
+              },
+              block: { height: 50 },
+            },
+          ],
+        },
+      },
     });
 
-    // Processing the mock event on the mock database
-    const updatedMockDb = await Greeter.NewGreeting.processEvent({
-      event: mockNewGreetingEvent,
-      mockDb: mockDbInitial,
-    });
-
-    // Processing the mock event on the updated mock database
-    const updatedMockDb2 = await Greeter.NewGreeting.processEvent({
-      event: mockNewGreetingEvent2,
-      mockDb: updatedMockDb,
-    });
-
-    // Getting the entity from the mock database
-    const actualUserEntity = updatedMockDb2.entities.User.get(userAddress);
-
-    const expectedGreeting: string = greetingAgain;
-
-    // Asserting that the field value of the entity in the mock database is the same as the expected field value
-    expect(actualUserEntity?.latestGreeting).toBe(expectedGreeting);
+    // Verify the event at block 50 was processed (endBlock inferred from block height)
+    expect(result.changes).toEqual([
+      expect.objectContaining({ block: 50, chainId: 0, eventsProcessed: 1 }),
+    ]);
   });
 });

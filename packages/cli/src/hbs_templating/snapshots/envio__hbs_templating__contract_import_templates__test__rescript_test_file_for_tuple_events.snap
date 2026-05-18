@@ -1,0 +1,78 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+open Vitest
+open Indexer
+
+describe("SablierLockupTranched contract CreateLockupTranchedStream event tests", () => {
+  Async.it("CreateLockupTranchedStream handler creates SablierLockupTranched_CreateLockupTranchedStream entity", async t => {
+    let indexer = createTestIndexer()
+
+    let _ = await indexer.process({
+      chains: {
+        \"1": {
+          simulate: [
+            makeSimulateItem(
+              OnEvent({
+                event: SablierLockupTranched(CreateLockupTranchedStream),
+                params: {
+                  streamId: 0n,
+                  funder: Envio.TestHelpers.Addresses.defaultAddress,
+                  sender: Envio.TestHelpers.Addresses.defaultAddress,
+                  recipient: Envio.TestHelpers.Addresses.defaultAddress,
+                  amounts: {"deposit": 0n, "brokerFee": 0n},
+                  asset: Envio.TestHelpers.Addresses.defaultAddress,
+                  cancelable: false,
+                  transferable: false,
+                  tranches: [],
+                  timestamps: {"start": 0n, "end": 0n},
+                  broker: Envio.TestHelpers.Addresses.defaultAddress,
+              },
+            }),
+          ),
+          ],
+        },
+      },
+    })
+
+    let actualSablierLockupTranchedCreateLockupTranchedStream = await indexer.\"SablierLockupTranched_CreateLockupTranchedStream".getOrThrow("1_0_0")
+
+    let expectedSablierLockupTranchedCreateLockupTranchedStream: Entities.SablierLockupTranched_CreateLockupTranchedStream.t = {
+      id: "1_0_0",
+      streamId: 0n,
+      funder: Envio.TestHelpers.Addresses.defaultAddress->Address.toString,
+      sender: Envio.TestHelpers.Addresses.defaultAddress->Address.toString,
+      recipient: Envio.TestHelpers.Addresses.defaultAddress->Address.toString,
+      amounts: {"deposit": 0n, "brokerFee": 0n}->(Utils.magic: _ => JSON.t),
+      asset: Envio.TestHelpers.Addresses.defaultAddress->Address.toString,
+      cancelable: false,
+      transferable: false,
+      tranches: []->(Utils.magic: _ => JSON.t),
+      timestamps: {"start": 0n, "end": 0n}->(Utils.magic: _ => JSON.t),
+      broker: Envio.TestHelpers.Addresses.defaultAddress->Address.toString,
+    }
+
+    t.expect(
+      actualSablierLockupTranchedCreateLockupTranchedStream,
+      ~message="Actual SablierLockupTranched_CreateLockupTranchedStream should be the same as the expected SablierLockupTranched_CreateLockupTranchedStream",
+    ).toEqual(expectedSablierLockupTranchedCreateLockupTranchedStream)
+  })
+})
+
+describe("Indexer smoke test", () => {
+  Async.it("processes the first block with events on chain 1", async t => {
+    let indexer = createTestIndexer()
+
+    let result = await indexer.process({
+      chains: {
+        \"1": ({} : TestIndexer.evmChainConfig),
+      },
+    })
+
+    t.expect(
+      result.changes->Array.length,
+      ~message="Should have at least one change",
+    ).toBeGreaterThan(0)
+  }, ~timeout=60_000)
+})

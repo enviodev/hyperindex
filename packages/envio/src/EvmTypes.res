@@ -10,6 +10,5 @@ module Hex = {
 }
 
 module Abi = {
-  @genType
   type t
 }

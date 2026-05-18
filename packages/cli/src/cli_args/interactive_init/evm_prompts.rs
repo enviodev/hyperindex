@@ -12,7 +12,7 @@ use crate::{
     clap_definitions::evm::NetworkOrChainId,
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::{
-        chain_helpers::{HypersyncNetwork, Network, NetworkWithExplorer},
+        chain_helpers::{HypersyncChain, Network, NetworkWithExplorer},
         contract_import::{
             contract_import,
             converters::{self, ContractImportNetworkSelection, SelectedContract},
@@ -199,7 +199,7 @@ impl ContractImportArgs {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 enum NetworkSelection {
     EnterNetworkId,
-    Network(HypersyncNetwork),
+    Network(HypersyncChain),
 }
 
 impl fmt::Display for NetworkSelection {
@@ -222,7 +222,7 @@ fn prompt_for_network_id(
     already_selected_ids: Vec<u64>,
 ) -> Result<converters::NetworkKind> {
     //Select one of our supported networks
-    let networks = HypersyncNetwork::iter()
+    let networks = HypersyncChain::iter()
         //Don't allow selection of networks that have been previously
         //selected.
         .filter(|n| {
@@ -273,7 +273,7 @@ fn get_converter_network_u64(
     start_block: &Option<u64>,
 ) -> Result<converters::NetworkKind> {
     let maybe_supported_network =
-        Network::from_network_id(network_id).and_then(|n| Ok(HypersyncNetwork::try_from(n)?));
+        Network::from_network_id(network_id).and_then(|n| Ok(HypersyncChain::try_from(n)?));
 
     let network = match maybe_supported_network {
         Ok(s) => converters::NetworkKind::Supported(s),

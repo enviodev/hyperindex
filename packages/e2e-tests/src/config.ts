@@ -4,7 +4,8 @@
 
 import path from "path";
 import fs from "fs";
-import { execSync } from "child_process";
+import { createRequire } from "node:module";
+
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,45 +34,56 @@ const rootDir = path.resolve(__dirname, "../../..");
 loadEnvFile(path.join(rootDir, ".env"));
 
 /**
- * Resolve the envio binary path.
- * Priority: ENVIO_BIN env var → local debug binary → `envio` on PATH (CI).
+ * Resolve the envio command and base args.
+ * Priority: ENVIO_BIN → installed bin.mjs via require.resolve.
+ *
+ * We resolve the *installed* envio's bin.mjs (via createRequire) rather
+ * than the source checkout's, because in CI the source checkout has
+ * uncompiled .res files — only the artifact installed into node_modules
+ * has the compiled .res.mjs output that Core.res.mjs imports.
+ *
+ * We use `node <absolute-path>` instead of `pnpm exec envio` because
+ * template tests run from temp directories with no node_modules.
+ *
+ * e2e-tests declares envio as a devDependency so createRequire resolves
+ * to the installed package (CI artifact or workspace link).
  */
-function resolveEnvioBin(): string {
+function resolveEnvio(): { command: string; args: string[] } {
   if (process.env.ENVIO_BIN) {
-    return process.env.ENVIO_BIN;
+    return { command: process.env.ENVIO_BIN, args: [] };
   }
 
-  // Check release first (CI builds --release), then debug (local dev)
-  for (const profile of ["release", "debug"]) {
-    const bin = path.join(rootDir, `target/${profile}/envio`);
-    if (fs.existsSync(bin)) {
-      return bin;
-    }
-  }
-
+  const req = createRequire(import.meta.url);
   try {
-    const whichResult = execSync("which envio", { encoding: "utf-8" }).trim();
-    if (whichResult) return whichResult;
-  } catch {
-    // not on PATH
-  }
+    const pkgJsonPath = req.resolve("envio/package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
+    const binRel = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.envio;
+    if (binRel) {
+      const binAbs = path.resolve(path.dirname(pkgJsonPath), binRel);
+      if (fs.existsSync(binAbs)) {
+        return { command: "node", args: [binAbs] };
+      }
+    }
+  } catch {}
 
   throw new Error(
-    "envio binary not found. Either:\n" +
+    "envio not found. Either:\n" +
       "  - Set ENVIO_BIN env var\n" +
-      "  - Run `cargo build` in packages/cli first\n" +
-      "  - Add envio to PATH"
+      "  - Run `pnpm install` to install the envio package"
   );
 }
 
-const envioBin = resolveEnvioBin();
+const envio = resolveEnvio();
 
 export const config = {
   /** Root directory of the hyperindex project */
   rootDir,
 
-  /** Resolved path to the envio binary */
-  envioBin,
+  /** Command to invoke envio (e.g. path to binary, or "pnpm") */
+  envioCommand: envio.command,
+
+  /** Base args prepended to every envio invocation (e.g. ["exec", "envio"]) */
+  envioArgs: envio.args,
 
   /** Scenarios directory */
   get scenariosDir() {
@@ -96,6 +108,16 @@ export const config = {
 
   /** Default Hasura admin secret */
   hasuraAdminSecret: "testing",
+
+  /** ClickHouse settings */
+  clickhousePort: 8123,
+  clickhouseContainer: "envio-clickhouse-test",
+  clickhouseUsername: "default",
+  clickhousePassword: "testing",
+
+  get clickhouseUrl() {
+    return `http://localhost:${this.clickhousePort}`;
+  },
 
   /** Timeouts (ms) */
   timeouts: {

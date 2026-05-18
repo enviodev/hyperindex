@@ -1,6 +1,3 @@
-// Only needed for some old tests
-// Remove @genType in the future
-@genType.import(("postgres", "Sql"))
 type sql
 
 type undefinedTransform = | @as(undefined) Undefined | @as(null) Null
@@ -21,7 +18,7 @@ type buffer
 type secureContext
 
 type onread = {
-  buffer: Js.Nullable.t<array<int>> => array<int>,
+  buffer: Nullable.t<array<int>> => array<int>,
   callback: (int, array<int>) => unit,
 }
 
@@ -36,7 +33,7 @@ type tlsConnectOptions = {
   pskCallback?: unit => unit,
   @as("ALPNProtocols") alpnProtocols?: array<string>, //| array<Buffer> | array<typedArray> | array<DataView> | Buffer | typedArray | DataView,
   servername?: string,
-  checkServerIdentity?: 'a. (string, 'a) => option<Js.Exn.t>,
+  checkServerIdentity?: 'a. (string, 'a) => option<JsExn.t>,
   session?: buffer,
   minDHSize?: int /* Default: 1024 */,
   highWaterMark?: int /* Default: 16 * 1024 */,
@@ -78,7 +75,6 @@ type poolConfig = {
   idleTimeout?: int, // Idle connection timeout in seconds (default: 0)
   connectTimeout?: int, // Connect timeout in seconds (default: 30)
   prepare?: bool, // Automatic creation of prepared statements (default: true)
-  // types?: array<'a>, // Array of custom types, see more below (default: [])
   onnotice?: string => unit, // Default console.log, set false to silence NOTICE (default: fn)
   onParameter?: (string, string) => unit, // (key, value) when server param change (default: fn)
   debug?: (~connection: unknown, ~query: unknown, ~params: unknown, ~types: unknown) => unit, // Is called with (connection, query, params, types)
@@ -94,11 +90,17 @@ external makeSql: (~config: poolConfig) => sql = "default"
 
 @send external beginSql: (sql, sql => promise<'result>) => promise<'result> = "begin"
 
+// Graceful pool shutdown — drains in-flight queries, then closes connections.
+// Without this the pool's idle TCP sockets keep Node's event loop alive after
+// short-lived commands (db-migrate, drop-schema) finish their work.
+@send external endSql: sql => promise<unit> = "end"
+
 // TODO: can explore this approach (https://forum.rescript-lang.org/t/rfc-support-for-tagged-template-literals/3744)
 // @send @variadic
 // external sql:  array<string>  => (sql, array<string>) => int = "sql"
 
 @send external unsafe: (sql, string) => promise<'a> = "unsafe"
+@send external unpreparedUnsafe: (sql, string, unknown) => promise<'a> = "unsafe"
 @send
 external preparedUnsafe: (sql, string, unknown, @as(json`{prepare: true}`) _) => promise<'a> =
   "unsafe"
@@ -112,6 +114,7 @@ type columnType =
   | @as("DOUBLE PRECISION") DoublePrecision
   | @as("TEXT") Text
   | @as("SERIAL") Serial
+  | @as("BIGSERIAL") BigSerial
   | @as("JSONB") JsonB
   | @as("TIMESTAMP WITH TIME ZONE") TimestampWithTimezone
   | @as("TIMESTAMP WITH TIME ZONE NULL") TimestampWithTimezoneNull

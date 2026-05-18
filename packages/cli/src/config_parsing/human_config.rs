@@ -71,13 +71,6 @@ pub struct BaseConfig {
     pub schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Path where the generated directory will be placed. By default it's \
-                       'generated' relative to the current working directory. If set, it'll \
-                       be a path relative to the config file location."
-    )]
-    pub output: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(
         description = "Optional relative path to handlers directory for auto-loading. Defaults \
                    to 'src/handlers' if not specified."
     )]
@@ -87,6 +80,81 @@ pub struct BaseConfig {
         description = "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)"
     )]
     pub full_batch_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Configuration for the storage backends the indexer writes to. Defaults to \
+                       `postgres: true` when omitted. ClickHouse requires Postgres to be enabled \
+                       (it is not supported as a single storage yet), and at least one backend \
+                       must be enabled."
+    )]
+    pub storage: Option<StorageConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct StorageConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub postgres: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clickhouse: Option<bool>,
+}
+
+// Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
+// constraints Storage::resolve enforces at codegen time: ClickHouse requires
+// Postgres, and at least one backend must be enabled. Without this, an IDE
+// validating against the schema would accept configs the CLI later rejects.
+impl JsonSchema for StorageConfig {
+    fn schema_name() -> Cow<'static, str> {
+        "StorageConfig".into()
+    }
+
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "properties": {
+                "postgres": {
+                    "description": "Whether to use Postgres as a storage backend (default: true).",
+                    "type": ["boolean", "null"]
+                },
+                "clickhouse": {
+                    "description": "Whether to additionally sync the indexed data to ClickHouse. \
+                                    Requires Postgres to be enabled (default: false).",
+                    "type": ["boolean", "null"]
+                }
+            },
+            "additionalProperties": false,
+            // Storage::resolve rejects two shapes:
+            //   1. `postgres: false` (with any clickhouse value) — either
+            //      fails as "ClickHouse not supported as a single storage
+            //      yet" or resolves to all-backends-disabled.
+            //   2. `clickhouse: true` without an explicit `postgres: true` —
+            //      the user must opt in to Postgres alongside ClickHouse.
+            "allOf": [
+                {
+                    "not": {
+                        "properties": {
+                            "postgres": { "const": false }
+                        },
+                        "required": ["postgres"]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "clickhouse": { "const": true }
+                        },
+                        "required": ["clickhouse"]
+                    },
+                    "then": {
+                        "properties": {
+                            "postgres": { "const": true }
+                        },
+                        "required": ["postgres"]
+                    }
+                }
+            ]
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -129,6 +197,50 @@ pub struct ChainContract<T> {
 #[derive(Deserialize)]
 pub struct ConfigDiscriminant {
     pub ecosystem: Option<String>,
+}
+
+/// `serde_yaml::to_string` emits hex strings unquoted. yaml-language-server
+/// and Prettier then resolve the unquoted scalar as a YAML 1.1 hex integer
+/// and round-trip through f64 on save — silently truncating the address.
+/// Subsequent runs query HyperSync for a contract that doesn't exist and
+/// every event is dropped.
+///
+/// Must only run on the init write path — `Display` feeds the persisted
+/// `config_hash` and quoting there would force a spurious re-migration
+/// on every existing user.
+pub fn quote_known_addresses(yaml: String, addresses: impl IntoIterator<Item = String>) -> String {
+    let mut unique: Vec<String> = addresses.into_iter().collect();
+    unique.sort();
+    unique.dedup();
+
+    let mut out = yaml;
+    for addr in &unique {
+        out = replace_address_at_scalar_boundary(&out, addr);
+    }
+    out
+}
+
+fn replace_address_at_scalar_boundary(yaml: &str, addr: &str) -> String {
+    let bytes = yaml.as_bytes();
+    let quoted = format!("\"{addr}\"");
+    let mut result = String::with_capacity(yaml.len());
+    let mut last = 0;
+    while let Some(rel) = yaml[last..].find(addr) {
+        let start = last + rel;
+        let end = start + addr.len();
+        let before_ok = start == 0 || matches!(bytes[start - 1], b' ' | b'\t');
+        let after_ok =
+            end == bytes.len() || matches!(bytes[end], b'\n' | b'\r' | b' ' | b'\t' | b'#');
+        if before_ok && after_ok {
+            result.push_str(&yaml[last..start]);
+            result.push_str(&quoted);
+        } else {
+            result.push_str(&yaml[last..end]);
+        }
+        last = end;
+    }
+    result.push_str(&yaml[last..]);
+    result
 }
 
 #[derive(Debug)]
@@ -269,8 +381,20 @@ pub mod evm {
     }
 
     #[subenum(RpcTransactionField)]
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[derive(
+        Debug,
+        Serialize,
+        Deserialize,
+        PartialEq,
+        Eq,
+        Hash,
+        Clone,
+        Display,
+        JsonSchema,
+        strum::EnumIter,
+    )]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[strum(serialize_all = "camelCase")]
     pub enum TransactionField {
         #[subenum(RpcTransactionField)]
         TransactionIndex,
@@ -323,8 +447,20 @@ pub mod evm {
     }
 
     #[subenum(RpcBlockField)]
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[derive(
+        Debug,
+        Serialize,
+        Deserialize,
+        PartialEq,
+        Eq,
+        Hash,
+        Clone,
+        Display,
+        JsonSchema,
+        strum::EnumIter,
+    )]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[strum(serialize_all = "camelCase")]
     pub enum BlockField {
         #[subenum(RpcBlockField)]
         ParentHash,
@@ -399,7 +535,7 @@ pub mod evm {
                            historical sync, then automatically switch to this RPC once synced \
                            for lower latency."
         )]
-        Live,
+        Realtime,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -938,6 +1074,88 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     }
 
     #[test]
+    fn quote_known_addresses_quotes_each_occurrence() {
+        let a = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string();
+        let b = "0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74".to_string();
+        let yaml = format!("address:\n- {a}\nsingle: {b}\n");
+        let out = super::quote_known_addresses(yaml, [a.clone(), b.clone()]);
+        assert_eq!(out, format!("address:\n- \"{a}\"\nsingle: \"{b}\"\n"));
+    }
+
+    #[test]
+    fn quote_known_addresses_dedups_repeats() {
+        let a = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string();
+        let yaml = format!("address: {a}\n");
+        let out = super::quote_known_addresses(yaml, [a.clone(), a.clone()]);
+        assert_eq!(out, format!("address: \"{a}\"\n"));
+    }
+
+    #[test]
+    fn quote_known_addresses_is_idempotent() {
+        let a = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string();
+        let yaml = format!("address: {a}\n");
+        let once = super::quote_known_addresses(yaml, [a.clone()]);
+        let twice = super::quote_known_addresses(once.clone(), [a.clone()]);
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn quote_known_addresses_skips_substring_matches() {
+        let a = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string();
+        let yaml = format!("description: see {a}-deployed\naddress: {a}\n");
+        let out = super::quote_known_addresses(yaml, [a.clone()]);
+        assert_eq!(
+            out,
+            format!("description: see {a}-deployed\naddress: \"{a}\"\n")
+        );
+    }
+
+    // Display feeds PersistedState::config_hash; any drift from raw
+    // serde_yaml output flips the hash for every existing user on
+    // upgrade and triggers a spurious re-migration.
+    #[test]
+    fn evm_human_config_display_does_not_alter_serde_yaml_output() {
+        let yaml = "name: t\nschema: ./s.graphql\ncontracts:\n  - name: C\n    handler: ./h.js\n    events:\n      - event: E\nchains:\n  - id: 1\n    rpc:\n      url: https://x\n    start_block: 0\n    contracts:\n      - name: C\n        address: \"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\"\n";
+        let cfg: super::evm::HumanConfig = serde_yaml::from_str(yaml).unwrap();
+        let out = cfg.to_string();
+        let raw = serde_yaml::to_string(&cfg).unwrap();
+        let expected =
+            format!("# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{raw}");
+        assert_eq!(
+            out, expected,
+            "Display output must remain byte-identical for config_hash stability — header and body both."
+        );
+    }
+
+    // libyaml tags unquoted `0x…` as int. A 20-byte address overflows u64
+    // but serde_yaml hands the raw scalar text to the String visitor
+    // unchanged — locking that contract guards against a future YAML
+    // library that would coerce through f64 instead.
+    #[test]
+    fn deserialize_unquoted_hex_address_yaml() {
+        let single = "address: 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n";
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            address: NormalizedList<String>,
+        }
+        let de: Wrap = serde_yaml::from_str(single).unwrap();
+        assert_eq!(
+            Vec::<String>::from(de.address),
+            vec!["0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string()]
+        );
+
+        let list = "address:\n  - 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n  - 0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74\n";
+        let de: Wrap = serde_yaml::from_str(list).unwrap();
+        assert_eq!(
+            Vec::<String>::from(de.address),
+            vec![
+                "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string(),
+                "0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn deserializes_factory_contract_config() {
         let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("test/configs/factory-contract-config.yaml");
@@ -985,9 +1203,9 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 name: "Fuel indexer".to_string(),
                 description: None,
                 schema: None,
-                output: None,
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -1036,9 +1254,9 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 name: "Fuel indexer".to_string(),
                 description: None,
                 schema: None,
-                output: None,
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -1049,6 +1267,63 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         assert_eq!(
             serde_yaml::to_string(&cfg).unwrap(),
             "name: Fuel indexer\necosystem: fuel\nchains: []\n"
+        );
+    }
+
+    #[test]
+    fn deserialize_storage_config() {
+        use super::StorageConfig;
+
+        // Both fields present
+        let yaml = "postgres: true\nclickhouse: true\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: Some(true),
+                clickhouse: Some(true),
+            }
+        );
+
+        // Only clickhouse set
+        let yaml = "clickhouse: true\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: None,
+                clickhouse: Some(true),
+            }
+        );
+
+        // Unknown field should fail (deny_unknown_fields)
+        let yaml = "postgres: true\nbigquery: true\n";
+        let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown field `bigquery`"),
+            "Unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn deserialize_evm_config_with_storage() {
+        use super::evm::HumanConfig as EvmConfig;
+        let yaml = r#"
+name: storage-test
+storage:
+  postgres: true
+  clickhouse: true
+chains:
+  - id: 1
+    start_block: 0
+"#;
+        let cfg: EvmConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            cfg.base.storage,
+            Some(super::StorageConfig {
+                postgres: Some(true),
+                clickhouse: Some(true),
+            })
         );
     }
 

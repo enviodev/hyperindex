@@ -9,7 +9,7 @@ use crate::{
     constants::project_paths::DEFAULT_SCHEMA_PATH,
     hbs_templating::codegen_templates::DerivedFieldTemplate,
     project_paths::{path_utils, ParsedProjectPaths},
-    type_schema::{SchemaMode, TypeIdent},
+    type_schema::TypeIdent,
     utils::{text::Capitalize, unique_hashmap},
 };
 use alloy_dyn_abi::DynSolType;
@@ -323,6 +323,8 @@ pub struct Entity {
     pub name: String,
     pub fields: Vec<Field>,
     pub multi_field_indexes: Vec<MultiFieldIndex>,
+    pub postgres: Option<bool>,
+    pub clickhouse: Option<bool>,
 }
 
 impl Entity {
@@ -381,6 +383,8 @@ impl Entity {
             name: name.to_string(),
             fields,
             multi_field_indexes,
+            postgres: None,
+            clickhouse: None,
         })
     }
 
@@ -474,11 +478,18 @@ impl Entity {
             .collect::<anyhow::Result<Vec<Field>>>()
             .context(format!("Failed parsing fields on entity {name}"))?;
 
-        let entity = Self::new(name, fields, multi_field_indexes)
+        let mut entity = Self::new(name, fields, multi_field_indexes)
             .context(format!("Failed constructing entity {name}",))?;
 
-        // Here, store indexed information somewhere within your entity structure or handle them accordingly
+        let (postgres, clickhouse) = parse_storage_directive(obj)?;
+        entity.postgres = postgres;
+        entity.clickhouse = clickhouse;
+
         Ok(entity)
+    }
+
+    pub fn has_storage_directive(&self) -> bool {
+        self.postgres.is_some() || self.clickhouse.is_some()
     }
 
     /// Returns the fields of this [`Entity`] in schema-defined order.
@@ -569,13 +580,94 @@ impl Entity {
     }
 }
 
+/// Parse the optional `@storage` directive on an entity. Returns the
+/// `(postgres, clickhouse)` flags as the user wrote them; `None` for an
+/// unmentioned backend. Cross-entity checks (backend-not-globally-enabled,
+/// missing-in-multi-storage-mode) happen later in `system_config.rs`.
+fn parse_storage_directive(
+    obj: &ObjectType<String>,
+) -> anyhow::Result<(Option<bool>, Option<bool>)> {
+    let storage_directives: Vec<&Directive<'_, String>> = obj
+        .directives
+        .iter()
+        .filter(|directive| directive.name == "storage")
+        .collect();
+
+    if storage_directives.is_empty() {
+        return Ok((None, None));
+    }
+
+    if storage_directives.len() > 1 {
+        return Err(anyhow!(
+            "Invalid @storage directive on `{}`. Only one @storage directive \
+             is allowed per entity. Expected boolean args from {{postgres, \
+             clickhouse}}, e.g. @storage(postgres: true, clickhouse: true).",
+            obj.name
+        ));
+    }
+
+    let directive = storage_directives[0];
+    let mut postgres: Option<bool> = None;
+    let mut clickhouse: Option<bool> = None;
+
+    for (arg_name, arg_value) in &directive.arguments {
+        let slot = match arg_name.as_str() {
+            "postgres" => &mut postgres,
+            "clickhouse" => &mut clickhouse,
+            other => {
+                return Err(anyhow!(
+                    "Invalid @storage directive on `{}`. Unknown argument \
+                     `{}`. Expected boolean args from {{postgres, \
+                     clickhouse}}, e.g. @storage(postgres: true, clickhouse: \
+                     true).",
+                    obj.name,
+                    other
+                ));
+            }
+        };
+        let value = match arg_value {
+            Value::Boolean(b) => *b,
+            _ => {
+                return Err(anyhow!(
+                    "Invalid @storage directive on `{}`. Argument `{}` must \
+                     be a boolean. Expected boolean args from {{postgres, \
+                     clickhouse}}, e.g. @storage(postgres: true, clickhouse: \
+                     true).",
+                    obj.name,
+                    arg_name
+                ));
+            }
+        };
+        if slot.is_some() {
+            return Err(anyhow!(
+                "Invalid @storage directive on `{}`. Argument `{}` is \
+                 specified more than once. Expected boolean args from \
+                 {{postgres, clickhouse}}, e.g. @storage(postgres: true, \
+                 clickhouse: true).",
+                obj.name,
+                arg_name
+            ));
+        }
+        *slot = Some(value);
+    }
+
+    let enables_anything = matches!(postgres, Some(true)) || matches!(clickhouse, Some(true));
+    if !enables_anything {
+        return Err(anyhow!(
+            "@storage on `{}` enables no storage. At least one of {{postgres, \
+             clickhouse}} must be true.",
+            obj.name
+        ));
+    }
+
+    Ok((postgres, clickhouse))
+}
+
 ///  used to get the positive integers in the directives from the GraphQL schema.
 fn get_positive_integer(arg_value: &Value<String>) -> anyhow::Result<u32> {
     match arg_value {
         Value::Int(i) => {
-            let val = i
-                .as_i64()
-                .context("Failed to convert value to i64")?;
+            let val = i.as_i64().context("Failed to convert value to i64")?;
             if val < 0 {
                 return Err(anyhow!("Value must be a positive integer"));
             }
@@ -867,23 +959,15 @@ impl Field {
             FieldType::RegularField {
                 field_type: gql_field_type,
                 ..
-            } => {
-                let res_type = self
-                    .field_type
-                    .to_rescript_type(schema)
-                    .context("Failed getting rescript type")?;
-
-                Ok(Some(PGField {
-                    field_name: self.name.clone(),
-                    field_type: gql_field_type.to_underlying_postgres_primitive(schema)?,
-                    is_array: gql_field_type.is_array(),
-                    is_index: self.is_indexed_field(entity),
-                    linked_entity: gql_field_type.get_linked_entity(schema)?,
-                    is_primary_key: self.is_primary_key(),
-                    is_nullable: gql_field_type.is_optional(),
-                    res_schema_code: res_type.to_rescript_schema(&SchemaMode::ForDb),
-                }))
-            }
+            } => Ok(Some(PGField {
+                field_name: self.name.clone(),
+                field_type: gql_field_type.to_underlying_postgres_primitive(schema)?,
+                is_array: gql_field_type.is_array(),
+                is_index: self.is_indexed_field(entity),
+                linked_entity: gql_field_type.get_linked_entity(schema)?,
+                is_primary_key: self.is_primary_key(),
+                is_nullable: gql_field_type.is_optional(),
+            })),
         }
     }
 
@@ -1220,37 +1304,38 @@ impl UserDefinedFieldType {
                 Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::String))))
             }
             DynSolType::Function => Err(anyhow!("Unsupported contract import type 'function'")),
+            // Tuples (structs), `tuple[]`, and `tuple[N]` all flow through as
+            // JSON entity columns so the contract-import path handles every
+            // ABI shape uniformly — the handler assigns the structured event
+            // value directly, and the entity row stores the nested object as
+            // JSON without needing invented column names for nested fields.
+            DynSolType::Tuple(_) => Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Json)))),
             DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
-                // Validate no nested arrays or tuples
                 match inner.as_ref() {
                     DynSolType::Tuple(_) => {
-                        Err(anyhow!("Unhandled contract import type 'array of tuple'"))?
+                        Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Json))))
                     }
                     DynSolType::Array(_) | DynSolType::FixedArray(_, _) => {
-                        Err(anyhow!("Unhandled contract import type 'array of array'"))?
+                        Err(anyhow!("Unhandled contract import type 'array of array'"))
                     }
-                    // Explicitly allow all supported inner types
+                    // Primitive-element arrays map to `[Scalar!]!`.
                     DynSolType::Bool
                     | DynSolType::Int(_)
                     | DynSolType::Uint(_)
                     | DynSolType::FixedBytes(_)
                     | DynSolType::Address
                     | DynSolType::Bytes
-                    | DynSolType::String => (),
+                    | DynSolType::String => {
+                        let inner_type = Self::from_dyn_sol_type(inner)
+                            .context("Unhandled contract import nested type in array")?;
+                        Ok(Self::NonNullType(Box::new(Self::ListType(Box::new(
+                            inner_type,
+                        )))))
+                    }
                     DynSolType::Function => {
-                        Err(anyhow!("Unsupported contract import type 'function'"))?
+                        Err(anyhow!("Unsupported contract import type 'function'"))
                     }
                 }
-                let inner_type = Self::from_dyn_sol_type(inner)
-                    .context("Unhandled contract import nested type in array")?;
-                Ok(Self::NonNullType(Box::new(Self::ListType(Box::new(
-                    inner_type,
-                )))))
-            }
-            DynSolType::Tuple(_) =>
-            // This case should be flattened out unless it is nested inside an array
-            {
-                Err(anyhow!("Unhandled contract import type 'tuple'"))
             }
         }
     }
@@ -1561,8 +1646,7 @@ mod tests {
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
 
     fn setup_document(schema: &str) -> anyhow::Result<Document<'_, String>> {
-        parse_schema::<String>(schema)
-            .map_err(|e| anyhow!("Failed to parse schema: {:?}", e))
+        parse_schema::<String>(schema).map_err(|e| anyhow!("Failed to parse schema: {:?}", e))
     }
 
     fn get_entities_from_document(gql_doc: Document<String>) -> Vec<ObjectType<String>> {
@@ -2349,7 +2433,8 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("The config directive is only applicable to BigInt and BigDecimal"));
+        assert!(err_message
+            .contains("The config directive is only applicable to BigInt and BigDecimal"));
     }
 
     #[test]
@@ -2717,5 +2802,133 @@ type TestEntity
         // Single-field index should not appear in composite indices
         let composite = parsed_entity.get_composite_indices();
         assert_eq!(composite.len(), 0);
+    }
+
+    // --- @storage directive (per-entity storage routing) ---
+
+    #[test]
+    fn storage_directive_omitted_leaves_fields_none() {
+        let schema_str = r#"
+type TestEntity { id: ID! }
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        assert_eq!(
+            (
+                entity.postgres,
+                entity.clickhouse,
+                entity.has_storage_directive()
+            ),
+            (None, None, false)
+        );
+    }
+
+    #[test]
+    fn storage_directive_postgres_only() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: true) { id: ID! }
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        assert_eq!(
+            (
+                entity.postgres,
+                entity.clickhouse,
+                entity.has_storage_directive()
+            ),
+            (Some(true), None, true)
+        );
+    }
+
+    #[test]
+    fn storage_directive_both_backends() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        assert_eq!(
+            (entity.postgres, entity.clickhouse),
+            (Some(true), Some(true))
+        );
+    }
+
+    #[test]
+    fn storage_directive_unknown_arg_errors() {
+        let schema_str = r#"
+type TestEntity @storage(redis: true) { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Unknown argument `redis`. \
+             Expected boolean args from {postgres, clickhouse}, e.g. @storage(postgres: \
+             true, clickhouse: true)."
+        );
+    }
+
+    #[test]
+    fn storage_directive_non_bool_arg_errors() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: "yes") { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Argument `postgres` must be a \
+             boolean. Expected boolean args from {postgres, clickhouse}, e.g. \
+             @storage(postgres: true, clickhouse: true)."
+        );
+    }
+
+    #[test]
+    fn storage_directive_duplicate_directive_errors() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: true) @storage(clickhouse: true) { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Only one @storage directive is \
+             allowed per entity. Expected boolean args from {postgres, clickhouse}, e.g. \
+             @storage(postgres: true, clickhouse: true)."
+        );
+    }
+
+    #[test]
+    fn storage_directive_duplicate_arg_errors() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: true, postgres: false) { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid @storage directive on `TestEntity`. Argument `postgres` is specified \
+             more than once. Expected boolean args from {postgres, clickhouse}, e.g. \
+             @storage(postgres: true, clickhouse: true)."
+        );
+    }
+
+    #[test]
+    fn storage_directive_all_false_errors() {
+        let schema_str = r#"
+type TestEntity @storage(postgres: false) { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "@storage on `TestEntity` enables no storage. At least one of {postgres, \
+             clickhouse} must be true."
+        );
+    }
+
+    #[test]
+    fn storage_directive_empty_errors() {
+        let schema_str = r#"
+type TestEntity @storage { id: ID! }
+        "#;
+        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "@storage on `TestEntity` enables no storage. At least one of {postgres, \
+             clickhouse} must be true."
+        );
     }
 }

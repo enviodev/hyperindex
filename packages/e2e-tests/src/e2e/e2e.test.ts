@@ -1,10 +1,12 @@
 /**
  * E2E Indexer Test
  *
- * Tests the full indexer flow with database:
- * 1. Start `envio dev` in background
- * 2. Wait for "All chains are caught up to end blocks" in stdout
- * 3. Verify GraphQL queries return expected data
+ * Tests the full indexer flow with database and ClickHouse sink:
+ * 1. Ensure ClickHouse is running (CI service or local container)
+ * 2. Start `envio dev` in background with ClickHouse sink enabled
+ * 3. Wait for "All chains are caught up to end blocks" in stdout
+ * 4. Verify GraphQL queries return expected data
+ * 5. Verify ClickHouse sink received the indexed data
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -17,13 +19,32 @@ import {
   runCommand,
 } from "../utils/process.js";
 import { GraphQLClient } from "../utils/graphql.js";
+import {
+  ensureClickHouse,
+  stopClickHouse,
+  queryClickHouse,
+} from "../utils/clickhouse.js";
+import { runPgSql } from "../utils/postgres.js";
 import path from "path";
 
 const PROJECT_DIR = path.join(config.scenariosDir, "e2e_test");
+const CH_DATABASE = "envio_indexer";
 
-describe("E2E: Indexer with GraphQL", () => {
+interface ClickHouseResult<T> {
+  data: T[];
+  rows: number;
+}
+
+interface MetricsResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
   let indexerProcess: ChildProcess | null = null;
   let graphql: GraphQLClient;
+  let metricsWhileRunning: MetricsResult | null = null;
 
   beforeAll(async () => {
     graphql = new GraphQLClient({
@@ -31,14 +52,24 @@ describe("E2E: Indexer with GraphQL", () => {
       adminSecret: config.hasuraAdminSecret,
     });
 
+    await ensureClickHouse();
     await killProcessOnPort(config.indexerPort);
 
     // envio dev handles codegen, pnpm install, rescript build, migrations, and indexer start
-    indexerProcess = startBackground(config.envioBin, ["dev"], {
+    indexerProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
       cwd: PROJECT_DIR,
       env: {
-        TUI_OFF: "true",
+        ENVIO_TUI: "false",
         ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
+        ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
+        ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
+        ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+        ENVIO_CLICKHOUSE_DATABASE: CH_DATABASE,
+        // First run: no DB state yet, fallback returns the config endBlock
+        E2E_EXPECTED_END_BLOCK: "10861774",
+        // Flush chain metadata immediately (no throttle) so isReady
+        // is in the DB before the test kills the process.
+        ENVIO_THROTTLE_CHAIN_METADATA_INTERVAL_MILLIS: "0",
       },
     });
 
@@ -48,10 +79,48 @@ describe("E2E: Indexer with GraphQL", () => {
       120_000
     );
 
-    // Kill immediately so envio dev doesn't tear down docker before tests query it.
-    // The "Exiting with success" → process.exit(0) path runs docker compose down.
+    // Poll Hasura until `_meta.isReady` lands in the DB — avoids the prior
+    // hard `setTimeout(3000)` that was tuned to CI throttle flushes and went
+    // flaky under load. Throttle is disabled via env above, so isReady
+    // should appear within a few seconds; we allow up to 30s for slow CI.
+    const readiness = await graphql.poll<{
+      _meta: Array<{ chainId: number; isReady: boolean }>;
+    }>({
+      query: `{ _meta { chainId isReady } }`,
+      validate: (data) =>
+        data._meta?.length > 0 && data._meta.every((m) => m.isReady),
+      maxAttempts: 60,
+      timeoutMs: 30_000,
+    });
+    if (!readiness.success) {
+      throw new Error(
+        `_meta.isReady did not become true before kill: ${readiness.error}, last response: ${JSON.stringify(readiness.lastResponse)}`
+      );
+    }
+
+    // Capture metrics output here (must run before SIGKILL); assertions
+    // live in dedicated `it` blocks below so failures surface as test
+    // failures rather than aborting the suite.
+    metricsWhileRunning = await runCommand(
+      config.envioCommand,
+      [...config.envioArgs, "metrics"],
+      { cwd: PROJECT_DIR, timeout: 10_000 }
+    );
+
+    // Kill so envio dev doesn't tear down docker before tests query it.
     indexerProcess.kill("SIGKILL");
     indexerProcess = null;
+
+    // Verify Hasura is still responsive after killing the indexer
+    const health = await graphql.poll<{ __typename: string }>({
+      query: `{ __typename }`,
+      validate: (data) => data.__typename === "query_root",
+      maxAttempts: 20,
+      timeoutMs: 10_000,
+    });
+    if (!health.success) {
+      throw new Error(`Hasura not responsive after indexer kill: ${health.error}`);
+    }
   }, 300_000); // 5 min for codegen + install + build + indexer startup
 
   afterAll(async () => {
@@ -60,25 +129,43 @@ describe("E2E: Indexer with GraphQL", () => {
       indexerProcess = null;
     }
     await killProcessOnPort(config.indexerPort);
-    await runCommand(config.envioBin, ["stop"], {
+    await runCommand(config.envioCommand, [...config.envioArgs, "stop"], {
       cwd: PROJECT_DIR,
       timeout: 30000,
     }).catch(() => {});
+    await stopClickHouse();
   }, 30_000);
 
+  it("envio metrics returns Prometheus output while indexer is running", () => {
+    expect({
+      exitCode: metricsWhileRunning?.exitCode,
+      hasEnvioTypeLine: /^# TYPE envio_/m.test(metricsWhileRunning?.stdout ?? ""),
+    }).toEqual({ exitCode: 0, hasEnvioTypeLine: true });
+  });
+
+  it("envio metrics exits 1 when indexer is not running", async () => {
+    const result = await runCommand(
+      config.envioCommand,
+      [...config.envioArgs, "metrics"],
+      { cwd: PROJECT_DIR, timeout: 15_000 }
+    );
+    expect(result.exitCode).toBe(1);
+  });
+
   it("should have _meta with isReady true", async () => {
-    // Chain metadata uses a throttled DB write, so poll briefly
+    // After SIGKILL, Hasura is still running but may need a moment.
+    // Use generous polling to avoid flaky failures.
     const result = await graphql.poll<{
       _meta: Array<{ chainId: number; isReady: boolean }>;
     }>({
       query: `{ _meta { chainId isReady } }`,
       validate: (data) =>
         data._meta?.length > 0 && data._meta.every((m) => m.isReady),
-      maxAttempts: 10,
-      timeoutMs: 5_000,
+      maxAttempts: 30,
+      timeoutMs: 30_000,
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success, `_meta poll failed: ${result.error}, last response: ${JSON.stringify(result.lastResponse)}`).toBe(true);
     expect(result.data?._meta).toEqual([{ chainId: 1, isReady: true }]);
   });
 
@@ -121,4 +208,256 @@ describe("E2E: Indexer with GraphQL", () => {
 
     expect(result.data?.__schema.queryType.name).toBe("query_root");
   });
+
+  it("should have Transfer data in ClickHouse sink view", async () => {
+    const result = await queryClickHouse<
+      ClickHouseResult<{
+        id: string;
+        from: string;
+        to: string;
+        value: string;
+        blockNumber: number;
+        transactionHash: string;
+      }>
+    >(`SELECT * FROM ${CH_DATABASE}.Transfer LIMIT 10`);
+
+    expect(result.rows).toBeGreaterThan(0);
+    expect(result.data[0]).toMatchObject({
+      id: expect.any(String),
+      from: expect.any(String),
+      to: expect.any(String),
+      blockNumber: expect.any(Number),
+      transactionHash: expect.any(String),
+    });
+  });
+
+  it("should have checkpoints in ClickHouse sink", async () => {
+    const result = await queryClickHouse<
+      ClickHouseResult<{
+        id: string;
+        chain_id: number;
+        block_number: number;
+      }>
+    >(`SELECT * FROM ${CH_DATABASE}.envio_checkpoints`);
+
+    expect(result.rows).toBeGreaterThan(0);
+    expect(result.data[0]).toMatchObject({
+      chain_id: 1,
+      block_number: expect.any(Number),
+    });
+
+    const maxBlock = Math.max(...result.data.map((r) => r.block_number));
+    expect(maxBlock).toBeGreaterThan(0);
+  });
+
+  it("should have entity history in ClickHouse sink", async () => {
+    const result = await queryClickHouse<
+      ClickHouseResult<{
+        id: string;
+        envio_change: string;
+        envio_checkpoint_id: string;
+      }>
+    >(
+      `SELECT * FROM ${CH_DATABASE}.\`envio_history_Transfer\` LIMIT 10`
+    );
+
+    expect(result.rows).toBeGreaterThan(0);
+    expect(result.data[0]).toMatchObject({
+      id: expect.any(String),
+      envio_change: "SET",
+    });
+  });
+
+  // --- Per-entity @storage routing ---
+  //
+  // The e2e_test schema declares:
+  //   Transfer        @storage(postgres: true, clickhouse: true)
+  //   TransferPgOnly  @storage(postgres: true)
+  //   TransferChOnly  @storage(clickhouse: true)
+  //
+  // Each backend should host exactly the entities that opted into it, with
+  // at least one row each. Hasura sits on top of Postgres so it must
+  // expose Transfer and TransferPgOnly only.
+
+  it("Postgres has tables for postgres-enabled entities only", async () => {
+    const tables = await runPgSql(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
+      ORDER BY table_name
+    `);
+    expect(tables.map((r) => r[0])).toMatchInlineSnapshot(`
+      [
+        "Transfer",
+        "TransferPgOnly",
+      ]
+    `);
+
+    // The handler writes one row to each entity per Transfer event. Anchor
+    // on the Transfer count being non-zero, then assert per-entity counts
+    // are exactly equal — that pins the row totals without needing the
+    // historical block range's magic number, and catches dropped writes.
+    const transferRows = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
+    const transferCount = Number(transferRows[0]?.[0]);
+    expect(transferCount).toBeGreaterThan(0);
+
+    const pgOnlyRows = await runPgSql(`SELECT count(*)::text FROM "TransferPgOnly"`);
+    expect(Number(pgOnlyRows[0]?.[0])).toBe(transferCount);
+  });
+
+  it("ClickHouse has tables for clickhouse-enabled entities only", async () => {
+    const tables = await queryClickHouse<
+      ClickHouseResult<{ name: string }>
+    >(
+      `SELECT name FROM system.tables
+       WHERE database = '${CH_DATABASE}'
+         AND name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
+       ORDER BY name
+       FORMAT JSON`
+    );
+    expect(tables.data.map((r) => r.name)).toMatchInlineSnapshot(`
+      [
+        "Transfer",
+        "TransferChOnly",
+      ]
+    `);
+
+    // Same invariant as the Postgres side: one row per Transfer event on
+    // each ClickHouse-bound entity. Lock the row totals to the Postgres
+    // Transfer count so routing drops surface as a count mismatch.
+    const pgTransferRows = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
+    const transferCount = Number(pgTransferRows[0]?.[0]);
+    expect(transferCount).toBeGreaterThan(0);
+
+    const transferCh = await queryClickHouse<
+      ClickHouseResult<{ c: string }>
+    >(`SELECT count() as c FROM ${CH_DATABASE}.Transfer FORMAT JSON`);
+    expect(Number(transferCh.data[0]?.c)).toBe(transferCount);
+
+    const chOnly = await queryClickHouse<
+      ClickHouseResult<{ c: string }>
+    >(`SELECT count() as c FROM ${CH_DATABASE}.TransferChOnly FORMAT JSON`);
+    expect(Number(chOnly.data[0]?.c)).toBe(transferCount);
+  });
+
+  it("Hasura GraphQL schema exposes only postgres-backed entities", async () => {
+    const result = await graphql.query<{
+      __schema: {
+        queryType: { fields: Array<{ name: string }> };
+        types: Array<{
+          name: string;
+          kind: string;
+          fields: Array<{ name: string }> | null;
+        }>;
+      };
+    }>(`{
+      __schema {
+        queryType { fields { name } }
+        types { name kind fields { name } }
+      }
+    }`);
+
+    const userEntityNames = ["Transfer", "TransferPgOnly", "TransferChOnly"];
+    const isEntityQuery = (name: string) =>
+      userEntityNames.some((p) => name === p || name.startsWith(`${p}_`));
+
+    const entityQueries = result
+      .data!.__schema.queryType.fields.filter((f) => isEntityQuery(f.name))
+      .map((f) => f.name)
+      .sort();
+
+    const entityObjectTypes = result
+      .data!.__schema.types.filter(
+        (t) => t.kind === "OBJECT" && userEntityNames.includes(t.name)
+      )
+      .map((t) => ({
+        name: t.name,
+        fields: t.fields?.map((f) => f.name).sort() ?? [],
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    expect({ entityQueries, entityObjectTypes }).toMatchInlineSnapshot(`
+      {
+        "entityObjectTypes": [
+          {
+            "fields": [
+              "blockNumber",
+              "from",
+              "id",
+              "to",
+              "transactionHash",
+              "value",
+            ],
+            "name": "Transfer",
+          },
+          {
+            "fields": [
+              "from",
+              "id",
+              "value",
+            ],
+            "name": "TransferPgOnly",
+          },
+        ],
+        "entityQueries": [
+          "Transfer",
+          "TransferPgOnly",
+          "TransferPgOnly_aggregate",
+          "TransferPgOnly_by_pk",
+          "Transfer_aggregate",
+          "Transfer_by_pk",
+        ],
+      }
+    `);
+  });
+
+  it("should resume with DB state on second start", async () => {
+    const patchedEndBlock = 10861775; // original 10861774 + 1
+
+    // Patch envio_chains.end_block via Hasura run_sql
+    const sqlRes = await fetch(`http://localhost:${config.hasuraPort}/v2/query`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-hasura-admin-secret": config.hasuraAdminSecret,
+      },
+      body: JSON.stringify({
+        type: "run_sql",
+        args: {
+          sql: `UPDATE public.envio_chains SET end_block = ${patchedEndBlock} WHERE id = 1`,
+        },
+      }),
+    });
+    expect(sqlRes.ok).toBe(true);
+
+    await killProcessOnPort(config.indexerPort);
+
+    let secondProcess: ChildProcess | null = null;
+    try {
+      secondProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
+        cwd: PROJECT_DIR,
+        env: {
+          ENVIO_TUI: "false",
+          ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
+          ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
+          ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
+          ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+          ENVIO_CLICKHOUSE_DATABASE: CH_DATABASE,
+          E2E_EXPECTED_END_BLOCK: String(patchedEndBlock),
+        },
+      });
+
+      // If the handler's endBlock check fails, the indexer crashes and
+      // waitForOutput rejects. Success means DB state was used.
+      await waitForOutput(
+        secondProcess,
+        "All chains are caught up to end blocks",
+        120_000
+      );
+    } finally {
+      if (secondProcess) {
+        secondProcess.kill("SIGKILL");
+      }
+    }
+  }, 180_000);
 });

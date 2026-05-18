@@ -2,7 +2,7 @@ let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema
 
 type contextParams = {
   item: Internal.item,
-  checkpointId: float,
+  checkpointId: Internal.checkpointId,
   inMemoryStore: InMemoryStore.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
@@ -23,9 +23,10 @@ Utils.Object.defineProperty(
   effectContextPrototype,
   "log",
   {
-    get: () => {
+    // Wrap with toMethod so `this` binds to the EffectContext instance.
+    get: Utils.toMethod(() => {
       (paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))).item->Logging.getUserLogger
-    },
+    }),
   },
 )
 %%raw(`
@@ -74,49 +75,53 @@ type entityContextParams = {
   entityConfig: Internal.entityConfig,
 }
 
-let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<unknown>>) => {
+let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
   let entityConfig = params.entityConfig
-  let filterKeys = filter->Js.Dict.keys
+  let filterKeys = filter->Dict.keysToArray
 
   if filterKeys->Array.length === 0 {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Empty filter passed to context.${entityConfig.name}.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
     )
   }
   if filterKeys->Array.length > 1 {
-    Js.Exn.raiseError(
-      `Multiple filter fields passed to context.${entityConfig.name}.getWhere(). Currently only one filter field per call is supported. Received fields: ${filterKeys->Js.Array2.joinWith(", ")}.`,
+    JsError.throwWithMessage(
+      `Multiple filter fields passed to context.${entityConfig.name}.getWhere(). Currently only one filter field per call is supported. Received fields: ${filterKeys->Array.joinUnsafe(
+          ", ",
+        )}.`,
     )
   }
 
-  let dbFieldName = filterKeys->Js.Array2.unsafe_get(0)
-  let operatorObj = filter->Js.Dict.unsafeGet(dbFieldName)
-  let operatorKeys = operatorObj->Js.Dict.keys
+  let dbFieldName = filterKeys->Array.getUnsafe(0)
+  let operatorObj = filter->Dict.getUnsafe(dbFieldName)
+  let operatorKeys = operatorObj->Dict.keysToArray
 
   if operatorKeys->Array.length === 0 {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Empty operator passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
     )
   }
   if operatorKeys->Array.length > 1 {
-    Js.Exn.raiseError(
-      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Js.Array2.joinWith(", ")}.`,
+    JsError.throwWithMessage(
+      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Array.joinUnsafe(
+          ", ",
+        )}.`,
     )
   }
 
-  let operatorKey = operatorKeys->Js.Array2.unsafe_get(0)
+  let operatorKey = operatorKeys->Array.getUnsafe(0)
 
   let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
   | None =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Invalid field "${dbFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
     )
   | Some(DerivedFrom(_)) =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `The field "${dbFieldName}" on entity "${entityConfig.name}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
     )
   | Some(Field({isIndex: false, linkedEntity: None})) =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `The field "${dbFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${dbFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
     )
   | Some(Field({fieldSchema})) => fieldSchema
@@ -125,11 +130,11 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
   if operatorKey === "_in" {
     let fieldValues =
       operatorObj
-      ->Js.Dict.unsafeGet(operatorKey)
+      ->Dict.getUnsafe(operatorKey)
       ->(Utils.magic: unknown => array<unknown>)
 
     fieldValues
-    ->Js.Array2.map(fieldValue =>
+    ->Array.map(fieldValue =>
       LoadLayer.loadByField(
         ~loadManager=params.loadManager,
         ~persistence=params.persistence,
@@ -148,7 +153,7 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
   } else if operatorKey === "_gte" || operatorKey === "_lte" {
     // _gte and _lte are composed from Eq + Gt/Lt
     let rangeOperator: TableIndices.Operator.t = operatorKey === "_gte" ? Gt : Lt
-    let fieldValue = operatorObj->Js.Dict.unsafeGet(operatorKey)
+    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
 
     let loadWithOperator = operator =>
       LoadLayer.loadByField(
@@ -173,12 +178,12 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
     | "_gt" => Gt
     | "_lt" => Lt
     | _ =>
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
       )
     }
 
-    let fieldValue = operatorObj->Js.Dict.unsafeGet(operatorKey)
+    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
 
     LoadLayer.loadByField(
       ~loadManager=params.loadManager,
@@ -198,9 +203,19 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
 let noopSet = (_entity: Internal.entity) => ()
 let noopDeleteUnsafe = (_entityId: string) => ()
 
+// Reads against ClickHouse-only entities have no Postgres table to hit;
+// surface a friendly error instead of letting the SQL layer fail with
+// "relation does not exist".
+let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) =>
+  JsError.throwWithMessage(
+    `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
+  )
+
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
+
+    let isClickHouseOnly = !params.entityConfig.storage.postgres
 
     let set = params.isPreload
       ? noopSet
@@ -219,64 +234,92 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
 
     switch prop {
     | "get" =>
-      (
-        entityId =>
-          LoadLayer.loadById(
-            ~loadManager=params.loadManager,
-            ~persistence=params.persistence,
-            ~entityConfig=params.entityConfig,
-            ~inMemoryStore=params.inMemoryStore,
-            ~shouldGroup=params.isPreload,
-            ~item=params.item,
-            ~entityId,
-          )
-      )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
+      if isClickHouseOnly {
+        ((_entityId: string) => throwClickHouseReadOnly(params.entityConfig, "get"))->(
+          Utils.magic: (string => promise<option<Internal.entity>>) => unknown
+        )
+      } else {
+        (
+          entityId =>
+            LoadLayer.loadById(
+              ~loadManager=params.loadManager,
+              ~persistence=params.persistence,
+              ~entityConfig=params.entityConfig,
+              ~inMemoryStore=params.inMemoryStore,
+              ~shouldGroup=params.isPreload,
+              ~item=params.item,
+              ~entityId,
+            )
+        )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
+      }
     | "getWhere" =>
-      ((filter) => getWhereHandler(params, filter->(Utils.magic: unknown => Js.Dict.t<Js.Dict.t<unknown>>)))->(Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown)
+      if isClickHouseOnly {
+        ((_filter: unknown) => throwClickHouseReadOnly(params.entityConfig, "getWhere"))->(
+          Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown
+        )
+      } else {
+        (
+          filter => getWhereHandler(params, filter->(Utils.magic: unknown => dict<dict<unknown>>))
+        )->(Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown)
+      }
+
     | "getOrThrow" =>
-      (
-        (entityId, ~message=?) =>
-          LoadLayer.loadById(
-            ~loadManager=params.loadManager,
-            ~persistence=params.persistence,
-            ~entityConfig=params.entityConfig,
-            ~inMemoryStore=params.inMemoryStore,
-            ~shouldGroup=params.isPreload,
-            ~item=params.item,
-            ~entityId,
-          )->Promise.thenResolve(entity => {
-            switch entity {
-            | Some(entity) => entity
-            | None =>
-              Js.Exn.raiseError(
-                message->Belt.Option.getWithDefault(
-                  `Entity '${params.entityConfig.name}' with ID '${entityId}' is expected to exist.`,
-                ),
-              )
-            }
-          })
-      )->(Utils.magic: ((string, ~message: string=?) => promise<Internal.entity>) => unknown)
-    | "getOrCreate" =>
-      (
-        (entity: Internal.entity) =>
-          LoadLayer.loadById(
-            ~loadManager=params.loadManager,
-            ~persistence=params.persistence,
-            ~entityConfig=params.entityConfig,
-            ~inMemoryStore=params.inMemoryStore,
-            ~shouldGroup=params.isPreload,
-            ~item=params.item,
-            ~entityId=entity.id,
-          )->Promise.thenResolve(storageEntity => {
-            switch storageEntity {
-            | Some(entity) => entity
-            | None => {
-                set(entity)
-                entity
+      if isClickHouseOnly {
+        (
+          (_entityId: string, ~message as _=?) =>
+            throwClickHouseReadOnly(params.entityConfig, "getOrThrow")
+        )->(Utils.magic: ((string, ~message: string=?) => promise<Internal.entity>) => unknown)
+      } else {
+        (
+          (entityId, ~message=?) =>
+            LoadLayer.loadById(
+              ~loadManager=params.loadManager,
+              ~persistence=params.persistence,
+              ~entityConfig=params.entityConfig,
+              ~inMemoryStore=params.inMemoryStore,
+              ~shouldGroup=params.isPreload,
+              ~item=params.item,
+              ~entityId,
+            )->Promise.thenResolve(entity => {
+              switch entity {
+              | Some(entity) => entity
+              | None =>
+                JsError.throwWithMessage(
+                  message->Belt.Option.getWithDefault(
+                    `Entity '${params.entityConfig.name}' with ID '${entityId}' is expected to exist.`,
+                  ),
+                )
               }
-            }
-          })
-      )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
+            })
+        )->(Utils.magic: ((string, ~message: string=?) => promise<Internal.entity>) => unknown)
+      }
+    | "getOrCreate" =>
+      if isClickHouseOnly {
+        (
+          (_entity: Internal.entity) => throwClickHouseReadOnly(params.entityConfig, "getOrCreate")
+        )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
+      } else {
+        (
+          (entity: Internal.entity) =>
+            LoadLayer.loadById(
+              ~loadManager=params.loadManager,
+              ~persistence=params.persistence,
+              ~entityConfig=params.entityConfig,
+              ~inMemoryStore=params.inMemoryStore,
+              ~shouldGroup=params.isPreload,
+              ~item=params.item,
+              ~entityId=entity.id,
+            )->Promise.thenResolve(storageEntity => {
+              switch storageEntity {
+              | Some(entity) => entity
+              | None => {
+                  set(entity)
+                  entity
+                }
+              }
+            })
+        )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
+      }
     | "set" => set->(Utils.magic: (Internal.entity => unit) => unknown)
     | "deleteUnsafe" =>
       if params.isPreload {
@@ -294,7 +337,8 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           )
         }
       }->(Utils.magic: (string => unit) => unknown)
-    | _ => Js.Exn.raiseError(`Invalid context.${params.entityConfig.name}.${prop} operation.`)
+    | _ =>
+      JsError.throwWithMessage(`Invalid context.${params.entityConfig.name}.${prop} operation.`)
     }
   },
 }
@@ -309,7 +353,10 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
     }
     switch prop {
     | "log" =>
-      (params.isPreload ? Logging.noopLogger : params.item->Logging.getUserLogger)->(Utils.magic: Envio.logger => unknown)
+      (params.isPreload ? Logging.noopLogger : params.item->Logging.getUserLogger)->(
+        Utils.magic: Envio.logger => unknown
+      )
+
     | "effect" =>
       initEffect((params :> contextParams))->(
         Utils.magic: (
@@ -320,7 +367,9 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
     | "isPreload" => params.isPreload->(Utils.magic: bool => unknown)
     | "chain" =>
       let chainId = params.item->Internal.getItemChainId
-      params.chains->Utils.Dict.dangerouslyGetByIntNonOption(chainId)->(Utils.magic: option<Internal.chainInfo> => unknown)
+      params.chains
+      ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
+      ->(Utils.magic: option<Internal.chainInfo> => unknown)
     | _ =>
       switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
       | Some(entityConfig) =>
@@ -340,7 +389,9 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         ->Utils.Proxy.make(entityTraps)
         ->(Utils.magic: entityContextParams => unknown)
       | None =>
-        Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
+        JsError.throwWithMessage(
+          `Invalid context access by '${prop}' property. ${codegenHelpMessage}`,
+        )
       }
     }
   },
@@ -358,6 +409,63 @@ type contractRegisterParams = {
   mutable isResolved: bool,
 }
 
+// Helper to create a validated add function for contract registration.
+// The isResolved check has to live inside the returned closure (not just in the
+// outer proxy trap) because users can capture `const add = context.chain.X.add`
+// before awaiting — a later call would otherwise bypass the resolved guard.
+let makeAddFunction = (~params: contractRegisterParams, ~contractName: string): (
+  Address.t => unit
+) => {
+  (contractAddress: Address.t) => {
+    if params.isResolved {
+      Utils.Error.make(`Impossible to access context.chain after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->ErrorHandling.mkLogAndRaise(
+        ~logger=params.item->Logging.getItemLogger,
+      )
+    }
+    let validatedAddress = if params.config.ecosystem.name === Evm {
+      // The value is passed from the user-land,
+      // so we need to validate and checksum/lowercase the address.
+      if params.config.lowercaseAddresses {
+        contractAddress->Address.Evm.fromAddressLowercaseOrThrow
+      } else {
+        contractAddress->Address.Evm.fromAddressOrThrow
+      }
+    } else {
+      // TODO: Ideally we should do the same for other ecosystems
+      contractAddress
+    }
+
+    params.onRegister(~item=params.item, ~contractAddress=validatedAddress, ~contractName)
+  }
+}
+
+// Chain proxy for contractRegister context: context.chain.ContractName.add(address)
+let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
+  get: (~target as params, ~prop: unknown) => {
+    let prop = prop->(Utils.magic: unknown => string)
+    switch prop {
+    | "id" =>
+      let eventItem = params.item->Internal.castUnsafeEventItem
+      eventItem.chain->ChainMap.Chain.toChainId->(Utils.magic: int => unknown)
+    | _ =>
+      // Look up the contract name directly in config contracts across all chains.
+      let contractName = prop
+      let isValidContract =
+        params.config.chainMap
+        ->ChainMap.values
+        ->Array.some(chain => chain.contracts->Array.some(c => c.name === contractName))
+      if isValidContract {
+        let addFn = makeAddFunction(~params, ~contractName)
+        {"add": addFn}->(Utils.magic: {"add": Address.t => unit} => unknown)
+      } else {
+        JsError.throwWithMessage(
+          `Invalid contract name '${prop}' on context.chain. ${codegenHelpMessage}`,
+        )
+      }
+    }
+  },
+}
+
 let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
@@ -368,34 +476,14 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
     }
     switch prop {
     | "log" => params.item->Logging.getUserLogger->(Utils.magic: Envio.logger => unknown)
+    | "chain" =>
+      params
+      ->Utils.Proxy.make(contractRegisterChainTraps)
+      ->(Utils.magic: contractRegisterParams => unknown)
     | _ =>
-      // Use the pre-built mapping for efficient lookup
-      switch params.config.addContractNameToContractNameMapping->Utils.Dict.dangerouslyGetNonOption(
-        prop,
-      ) {
-      | Some(contractName) => {
-          let addFunction = (contractAddress: Address.t) => {
-            let validatedAddress = if params.config.ecosystem.name === Evm {
-              // The value is passed from the user-land,
-              // so we need to validate and checksum/lowercase the address.
-              if params.config.lowercaseAddresses {
-                contractAddress->Address.Evm.fromAddressLowercaseOrThrow
-              } else {
-                contractAddress->Address.Evm.fromAddressOrThrow
-              }
-            } else {
-              // TODO: Ideally we should do the same for other ecosystems
-              contractAddress
-            }
-
-            params.onRegister(~item=params.item, ~contractAddress=validatedAddress, ~contractName)
-          }
-
-          addFunction->(Utils.magic: (Address.t => unit) => unknown)
-        }
-      | None =>
-        Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
-      }
+      JsError.throwWithMessage(
+        `Invalid context access by '${prop}' property. Use context.chain.ContractName.add(address) to register contracts. ${codegenHelpMessage}`,
+      )
     }
   },
 }

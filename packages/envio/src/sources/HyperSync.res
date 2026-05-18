@@ -1,5 +1,3 @@
-open Belt
-
 module Log = {
   type t = {
     address: Address.t,
@@ -43,7 +41,7 @@ let queryErrorToMsq = (e: queryError): string => {
   switch e {
   | UnexpectedMissingParams({queryName, missingParams}) =>
     `${queryName} query failed due to unexpected missing params on response:
-      ${missingParams->Js.Array2.joinWith(", ")}`
+      ${missingParams->Array.joinUnsafe(", ")}`
   }
 }
 
@@ -85,7 +83,7 @@ module GetLogs = {
         for idx in 0 to fieldNames->Array.length - 1 {
           let fieldName = fieldNames->Array.getUnsafe(idx)
           switch returnedObj
-          ->(Utils.magic: 'a => Js.Dict.t<unknown>)
+          ->(Utils.magic: 'a => dict<unknown>)
           ->Utils.Dict.dangerouslyGetNonOption(fieldName) {
           | Some(_) => ()
           | None => acc->Array.push(prefix ++ "." ++ fieldName)->ignore
@@ -110,12 +108,12 @@ module GetLogs = {
       ~prefix="transaction",
     )
     if missingParams->Array.length > 0 {
-      raise(Error(UnexpectedMissingParams({missingParams: missingParams})))
+      throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
     }
 
     //Topics can be nullable and still need to be filtered
     let logUnsanitized: Log.t = event.log->(Utils.magic: HyperSyncClient.ResponseTypes.log => Log.t)
-    let topics = event.log.topics->Option.getUnsafe->Array.keepMap(Js.Nullable.toOption)
+    let topics = event.log.topics->Option.getUnsafe->Array.filterMap(Nullable.toOption)
     let address = event.log.address->Option.getUnsafe
     let log = {
       ...logUnsanitized,
@@ -125,8 +123,14 @@ module GetLogs = {
 
     {
       log,
-      block: event.block->(Utils.magic: option<HyperSyncClient.ResponseTypes.block> => HyperSyncClient.ResponseTypes.block),
-      transaction: event.transaction->(Utils.magic: option<HyperSyncClient.ResponseTypes.transaction> => Internal.eventTransaction),
+      block: event.block->(
+        Utils.magic: option<
+          HyperSyncClient.ResponseTypes.block,
+        > => HyperSyncClient.ResponseTypes.block
+      ),
+      transaction: event.transaction->(
+        Utils.magic: option<HyperSyncClient.ResponseTypes.transaction> => Internal.eventTransaction
+      ),
     }
   }
 
@@ -143,7 +147,7 @@ module GetLogs = {
     let page: logsQueryPage = {
       items,
       nextBlock,
-      archiveHeight: archiveHeight->Option.getWithDefault(0), //Archive Height is only None if height is 0
+      archiveHeight: archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
       events: res.data,
       rollbackGuard,
     }
@@ -181,7 +185,7 @@ module GetLogs = {
     let res = await client.getEvents(~query)
     if res.nextBlock <= fromBlock {
       // Might happen when /height response was from another instance of HyperSync
-      raise(Error(WrongInstance))
+      throw(Error(WrongInstance))
     }
 
     res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
@@ -189,7 +193,7 @@ module GetLogs = {
 }
 
 module BlockData = {
-  let makeRequestBody = (~fromBlock, ~toBlock): HyperSyncJsonApi.QueryTypes.postQueryBody => {
+  let makeRequestBody = (~fromBlock, ~toBlock): HyperSyncClient.QueryTypes.query => {
     fromBlock,
     toBlockExclusive: toBlock + 1,
     fieldSelection: {
@@ -198,51 +202,43 @@ module BlockData = {
     includeAllBlocks: true,
   }
 
-  let convertResponse = (res: HyperSyncJsonApi.ResponseTypes.queryResponse): queryResponse<
+  let convertResponse = (res: HyperSyncClient.queryResponse): queryResponse<
     array<ReorgDetection.blockDataWithTimestamp>,
   > => {
-    res.data
-    ->Array.flatMap(item => {
-      item.blocks->Option.mapWithDefault([], blocks => {
-        blocks->Array.map(
-          block => {
-            switch block {
-            | {number: blockNumber, timestamp, hash: blockHash} =>
-              let blockTimestamp = timestamp->BigInt.toInt->Option.getExn
-              Ok(
-                (
-                  {
-                    blockTimestamp,
-                    blockNumber,
-                    blockHash,
-                  }: ReorgDetection.blockDataWithTimestamp
-                ),
-              )
-            | _ =>
-              let missingParams =
-                [
-                  block.number->Utils.Option.mapNone("block.number"),
-                  block.timestamp->Utils.Option.mapNone("block.timestamp"),
-                  block.hash->Utils.Option.mapNone("block.hash"),
-                ]->Array.keepMap(p => p)
-
-              Error(
-                UnexpectedMissingParams({
-                  queryName: "query block data HyperSync",
-                  missingParams,
-                }),
-              )
-            }
-          },
+    res.data.blocks
+    ->Array.map(block => {
+      switch block {
+      | {number: blockNumber, hash: blockHash, timestamp: blockTimestamp} =>
+        Ok(
+          (
+            {
+              blockTimestamp,
+              blockNumber,
+              blockHash,
+            }: ReorgDetection.blockDataWithTimestamp
+          ),
         )
-      })
+      | _ =>
+        let missingParams =
+          [
+            block.number->Utils.Option.mapNone("block.number"),
+            block.timestamp->Utils.Option.mapNone("block.timestamp"),
+            block.hash->Utils.Option.mapNone("block.hash"),
+          ]->Array.filterMap(p => p)
+
+        Error(
+          UnexpectedMissingParams({
+            queryName: "query block data HyperSync",
+            missingParams,
+          }),
+        )
+      }
     })
     ->Utils.Array.transposeResults
   }
 
   let rec queryBlockData = async (
-    ~serverUrl,
-    ~apiToken,
+    ~client: HyperSyncClient.t,
     ~fromBlock,
     ~toBlock,
     ~sourceName,
@@ -261,38 +257,28 @@ module BlockData = {
     )
 
     Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="getBlockHashes")
-    let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(() =>
-      HyperSyncJsonApi.queryRoute->Rest.fetch(
-        {
-          "query": body,
-          "token": apiToken,
-        },
-        ~client=Rest.client(serverUrl),
-      )
-    , ~logger) {
+    let maybeSuccessfulRes = switch await client.get(~query=body) {
     | exception _ => None
     | res if res.nextBlock <= fromBlock => None
     | res => Some(res)
     }
 
-    // If the block is not found, retry the query. This can occur since replicas of hypersync might not hack caught up yet
+    // If the block is not found, retry the query. This can occur since replicas of hypersync might not have caught up yet
     switch maybeSuccessfulRes {
     | None => {
-        let logger = Logging.createChild(~params={"url": serverUrl})
         let delayMilliseconds = 100
         logger->Logging.childInfo(
           `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
         )
         await Time.resolvePromiseAfterDelay(~delayMilliseconds)
-        await queryBlockData(~serverUrl, ~apiToken, ~fromBlock, ~toBlock, ~sourceName, ~chainId, ~logger)
+        await queryBlockData(~client, ~fromBlock, ~toBlock, ~sourceName, ~chainId, ~logger)
       }
     | Some(res) =>
       switch res->convertResponse {
       | Error(_) as err => err
       | Ok(datas) if res.nextBlock <= toBlock => {
           let restRes = await queryBlockData(
-            ~serverUrl,
-            ~apiToken,
+            ~client,
             ~fromBlock=res.nextBlock,
             ~toBlock,
             ~sourceName,
@@ -306,7 +292,13 @@ module BlockData = {
     }
   }
 
-  let queryBlockDataMulti = async (~serverUrl, ~apiToken, ~blockNumbers, ~sourceName, ~chainId, ~logger) => {
+  let queryBlockDataMulti = async (
+    ~client: HyperSyncClient.t,
+    ~blockNumbers,
+    ~sourceName,
+    ~chainId,
+    ~logger,
+  ) => {
     switch blockNumbers->Array.get(0) {
     | None => Ok([])
     | Some(firstBlock) => {
@@ -324,27 +316,26 @@ module BlockData = {
           set->Utils.Set.add(blockNumber)->ignore
         }
         if toBlock.contents - fromBlock.contents > 1000 {
-          Js.Exn.raiseError(
+          JsError.throwWithMessage(
             `Invalid block data request. Range of block numbers is too large. Max range is 1000. Requested range: ${fromBlock.contents->Int.toString}-${toBlock.contents->Int.toString}`,
           )
         }
         let res = await queryBlockData(
           ~fromBlock=fromBlock.contents,
           ~toBlock=toBlock.contents,
-          ~serverUrl,
-          ~apiToken,
+          ~client,
           ~sourceName,
           ~chainId,
           ~logger,
         )
         let filtered = res->Result.map(datas => {
-          datas->Array.keep(data => set->Utils.Set.delete(data.blockNumber))
+          datas->Array.filter(data => set->Utils.Set.delete(data.blockNumber))
         })
         if set->Utils.Set.size > 0 {
-          Js.Exn.raiseError(
+          JsError.throwWithMessage(
             `Invalid response. Failed to get block data for block numbers: ${set
               ->Utils.Set.toArray
-              ->Js.Array2.joinWith(", ")}`,
+              ->Array.joinUnsafe(", ")}`,
           )
         }
         filtered
@@ -353,10 +344,9 @@ module BlockData = {
   }
 }
 
-let queryBlockData = (~serverUrl, ~apiToken, ~blockNumber, ~sourceName, ~chainId, ~logger) =>
+let queryBlockData = (~client, ~blockNumber, ~sourceName, ~chainId, ~logger) =>
   BlockData.queryBlockData(
-    ~serverUrl,
-    ~apiToken,
+    ~client,
     ~fromBlock=blockNumber,
     ~toBlock=blockNumber,
     ~sourceName,

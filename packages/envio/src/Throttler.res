@@ -19,13 +19,13 @@ let make = (~intervalMillis: int, ~logger) => {
 let rec startInternal = async (throttler: t) => {
   switch throttler {
   | {scheduled: Some(fn), isRunning: false, isAwaitingInterval: false} =>
-    let timeSinceLastRun = Js.Date.now() -. throttler.lastRunTimeMillis
+    let timeSinceLastRun = Date.now() -. throttler.lastRunTimeMillis
 
     //Only execute if we are passed the interval
     if timeSinceLastRun >= throttler.intervalMillis {
       throttler.isRunning = true
       throttler.scheduled = None
-      throttler.lastRunTimeMillis = Js.Date.now()
+      throttler.lastRunTimeMillis = Date.now()
 
       switch await fn() {
       | exception exn =>
@@ -43,7 +43,7 @@ let rec startInternal = async (throttler: t) => {
     } else {
       //Store isAwaitingInterval in state so that timers don't continuously get created
       throttler.isAwaitingInterval = true
-      let _ = Js.Global.setTimeout(() => {
+      let _ = setTimeout(() => {
         throttler.isAwaitingInterval = false
         throttler->startInternal->ignore
       }, Belt.Int.fromFloat(throttler.intervalMillis -. timeSinceLastRun))

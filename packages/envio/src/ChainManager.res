@@ -1,10 +1,10 @@
-open Belt
-
 type t = {
-  committedCheckpointId: float,
+  committedCheckpointId: bigint,
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   multichain: Config.multichain,
   isInReorgThreshold: bool,
+  // True once every chain has caught up to head/endBlock. Monotonic during a run.
+  isRealtime: bool,
 }
 
 // Check if progress is past the reorg threshold (safe block).
@@ -21,16 +21,17 @@ let calculateTargetBufferSize = (~activeChainsCount) => {
   | Some(size) => size
   | None =>
     switch activeChainsCount {
-    | 1 => 50_000
+    | 1 => 60_000
     | 2 => 30_000
     | 3 => 20_000
     | 4 => 15_000
-    | _ => 10_000
+    | 5 => 10_000
+    | _ => 5_000
     }
   }
 }
 
-let makeFromDbState = async (
+let makeFromDbState = (
   ~initialState: Persistence.initialState,
   ~config: Config.t,
   ~registrations,
@@ -58,33 +59,57 @@ let makeFromDbState = async (
     Prometheus.EffectCacheCount.set(~count, ~effectName)
   })
 
+  // updateSyncTimeOnRestart wipes the saved timestamp so a restart re-enters
+  // backfill mode for all chains.
+  let isRealtime =
+    !Env.updateSyncTimeOnRestart &&
+    initialState.chains->Array.length > 0 &&
+    initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
+
   let chainFetchersArr =
-    await initialState.chains
-    ->Array.map(async (resumedChainState: Persistence.initialChainState) => {
+    initialState.chains->Array.map((resumedChainState: Persistence.initialChainState) => {
       let chain = Config.getChain(config, ~chainId=resumedChainState.id)
       let chainConfig = config.chainMap->ChainMap.get(chain)
 
       (
         chain,
-        await chainConfig->ChainFetcher.makeFromDbState(
+        chainConfig->ChainFetcher.makeFromDbState(
           ~resumedChainState,
           ~reorgCheckpoints=initialState.reorgCheckpoints,
           ~isInReorgThreshold,
+          ~isRealtime,
           ~targetBufferSize,
           ~config,
           ~registrations,
         ),
       )
     })
-    ->Promise.all
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
+
+  // Set initial progress metrics from DB state so dashboards reflect
+  // the persisted state immediately on restart
+  let allChainsReady = ref(chainFetchersArr->Array.length > 0)
+  chainFetchersArr->Array.forEach(((chain, cf)) => {
+    let chainId = chain->ChainMap.Chain.toChainId
+    Prometheus.ProgressBlockNumber.set(~blockNumber=cf.committedProgressBlockNumber, ~chainId)
+    Prometheus.ProgressReady.init(~chainId)
+    if cf->ChainFetcher.isReady {
+      Prometheus.ProgressReady.set(~chainId)
+    } else {
+      allChainsReady := false
+    }
+  })
+  if allChainsReady.contents {
+    Prometheus.ProgressReady.setAllReady()
+  }
 
   {
     committedCheckpointId: initialState.checkpointId,
     multichain: config.multichain,
     chainFetchers,
     isInReorgThreshold,
+    isRealtime,
   }
 }
 
@@ -113,11 +138,11 @@ let nextItemIsNone = (chainManager: t): bool => {
 
 let createBatch = (chainManager: t, ~batchSizeTarget: int, ~isRollback: bool): Batch.t => {
   Batch.make(
-    ~checkpointIdBeforeBatch=chainManager.committedCheckpointId +. (
+    ~checkpointIdBeforeBatch=chainManager.committedCheckpointId->BigInt.add(
       // Since for rollback we have a diff checkpoint id.
       // This is needed to currectly overwrite old state
       // in an append-only ClickHouse insert.
-      isRollback ? 1. : 0.
+      isRollback ? 1n : 0n,
     ),
     ~chainsBeforeBatch=chainManager.chainFetchers->ChainMap.map((cf): Batch.chainBeforeBatch => {
       fetchState: cf.fetchState,
@@ -133,20 +158,15 @@ let createBatch = (chainManager: t, ~batchSizeTarget: int, ~isRollback: bool): B
 }
 
 let isProgressAtHead = chainManager =>
-  chainManager.chainFetchers
-  ->ChainMap.values
-  ->Js.Array2.every(cf => cf.isProgressAtHead)
+  chainManager.chainFetchers->ChainMap.values->Array.every(cf => cf.isProgressAtHead)
 
 let isActivelyIndexing = chainManager =>
-  chainManager.chainFetchers
-  ->ChainMap.values
-  ->Js.Array2.every(ChainFetcher.isActivelyIndexing)
+  chainManager.chainFetchers->ChainMap.values->Array.every(ChainFetcher.isActivelyIndexing)
 
 let getSafeCheckpointId = (chainManager: t) => {
   let chainFetchers = chainManager.chainFetchers->ChainMap.values
 
-  let infinity = (%raw(`Infinity`): float)
-  let result = ref(infinity)
+  let result: ref<option<bigint>> = ref(None)
 
   for idx in 0 to chainFetchers->Array.length - 1 {
     let chainFetcher = chainFetchers->Array.getUnsafe(idx)
@@ -157,16 +177,17 @@ let getSafeCheckpointId = (chainManager: t) => {
           safeCheckpointTracking->SafeCheckpointTracking.getSafeCheckpointId(
             ~sourceBlockNumber=chainFetcher.fetchState.knownHeight,
           )
-        if safeCheckpointId < result.contents {
-          result := safeCheckpointId
+        switch result.contents {
+        | None => result := Some(safeCheckpointId)
+        | Some(current) if safeCheckpointId < current => result := Some(safeCheckpointId)
+        | _ => ()
         }
       }
     }
   }
 
-  if result.contents === infinity || result.contents === 0. {
-    None // No safe checkpoint found
-  } else {
-    Some(result.contents)
+  switch result.contents {
+  | Some(id) if id > 0n => Some(id)
+  | _ => None // No safe checkpoint found
   }
 }

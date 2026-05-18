@@ -6,7 +6,7 @@
 
 [HH:MM:SS.mmm] [31mERROR[39m: [36mThis is an error message.[39m
     err: {
-      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "RE_EXN_ID": "LogTesting.SomethingWrong",
       "myMessage": "example exception"
     }
 
@@ -22,7 +22,7 @@
 
 [HH:MM:SS.mmm] [31mERROR[39m: [36mThis is an error message.[39m
     err: {
-      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "RE_EXN_ID": "LogTesting.SomethingWrong",
       "myMessage": "example exception"
     }
 
@@ -36,7 +36,7 @@
 
 [HH:MM:SS.mmm] [31mERROR[39m: [36mThis is an error message.[39m
     err: {
-      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "RE_EXN_ID": "LogTesting.SomethingWrong",
       "myMessage": "example exception"
     }
 
@@ -117,7 +117,7 @@
     [35mlogIndex[39m: 11
     [35maddress[39m: "0xabc0000000000000000000000000000000000000"
     err: {
-      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "RE_EXN_ID": "LogTesting.SomethingWrong",
       "myMessage": "example exception"
     }
 
@@ -152,7 +152,7 @@
 
 [HH:MM:SS.mmm] [31mERROR[39m: [36mThis is an error message.[39m
     err: {
-      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "RE_EXN_ID": "LogTesting.SomethingWrong",
       "myMessage": "example exception"
     }
 
@@ -160,7 +160,7 @@
 
 [HH:MM:SS.mmm] [31mERROR[39m: [36mThis is an error message.[39m
     err: {
-      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "RE_EXN_ID": "LogTesting.SomethingWrong",
       "myMessage": "example exception"
     }
 

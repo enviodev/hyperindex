@@ -54,7 +54,7 @@ pub async fn fetch_hasura_healthz_with_retry() -> EndpointHealth {
                     first_run = false;
                 }
                 println!(
-                    "Waiting for the docker services to become available. {} seconds.",
+                    "Waiting for Docker containers to become available. {} seconds.",
                     refetch_delay.as_secs()
                 );
             }
