@@ -275,6 +275,73 @@ describe("EventConfigBuilder", () => {
     t.expect(json).toEqual(%raw(`{"id": "42", "contactDetails": ["Alice", "alice@example.com"]}`))
   })
 
+  it(
+    "issue #1213 — paramsRawEventSchema serializes struct/tuple params decoded as named dicts",
+    t => {
+      // Reproduces https://github.com/enviodev/hyperindex/issues/1213
+      //
+      // When an event has a tuple/struct param with `components`, the
+      // HyperSync decoder turns the positional tuple into a named dict
+      // (componentsToRemapper). With raw_events: true, addItemToRawEvents
+      // calls S.reverseConvertOrThrow(event.params, paramsRawEventSchema).
+      // buildParamsSchema must therefore mirror the decoder shape — keyed by
+      // component names — otherwise the reverse-convert reads index N from a
+      // dict, gets undefined, and throws
+      // `TypeError: Cannot read properties of undefined (reading 'length')`.
+      let params: array<EventConfigBuilder.eventParam> = [
+        {name: "deployer", abiType: "address", indexed: true},
+        {name: "vehicle", abiType: "address", indexed: false},
+        {
+          name: "params",
+          abiType: "(address,address,address[],uint256,address)",
+          indexed: false,
+          components: [
+            {name: "asset", abiType: "address"},
+            {name: "poolAddressesProvider", abiType: "address"},
+            {name: "forbiddenAddresses", abiType: "address[]"},
+            {name: "initialExpectedSupply", abiType: "uint256"},
+            {name: "registry", abiType: "address"},
+          ],
+        },
+      ]
+
+      let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
+      let schema = EventConfigBuilder.buildParamsSchema(params)
+
+      let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
+        indexed: ["0xdeployer"->Utils.magic],
+        body: [
+          "0xvehicle"->Utils.magic,
+          (
+            "0xasset",
+            "0xpap",
+            ["0xforbidden1", "0xforbidden2"],
+            1000n,
+            "0xregistry",
+          )->Utils.magic,
+        ],
+      }
+
+      let decoded = decoder(mockDecodedEvent)
+
+      let json = decoded->S.reverseConvertToJsonOrThrow(schema)
+
+      t.expect(json).toEqual(
+        %raw(`{
+          "deployer": "0xdeployer",
+          "vehicle": "0xvehicle",
+          "params": {
+            "asset": "0xasset",
+            "poolAddressesProvider": "0xpap",
+            "forbiddenAddresses": ["0xforbidden1", "0xforbidden2"],
+            "initialExpectedSupply": "1000",
+            "registry": "0xregistry"
+          }
+        }`),
+      )
+    },
+  )
+
   it("buildHyperSyncDecoder remaps mixed-name tuple components using index keys", t => {
     // Issue #538 follow-up: when a tuple has some named and some unnamed
     // components, the CLI emits `"0"`, `"1"`, ... for unnamed slots. The
