@@ -256,7 +256,7 @@ let make = (
           clientMaxRetries: Env.hyperSyncClientMaxRetries,
           clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         }),
-        Svm.makeRPCSource(~chain, ~rpc),
+        Svm.makeRPCSource(~chain, ~rpc, ~sourceFor=Fallback),
       ]
     }
   // For tests: use ready-to-use sources directly
