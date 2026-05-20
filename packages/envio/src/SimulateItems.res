@@ -320,21 +320,34 @@ let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
       let chainIdStr = chain->ChainMap.Chain.toChainId->Int.toString
       switch chainsDict->Dict.get(chainIdStr) {
       | Some(processChainJson) =>
-        let simulateRaw: option<array<JSON.t>> =
-          (processChainJson->(Utils.magic: JSON.t => {..}))["simulate"]->Nullable.toOption
+        let raw = processChainJson->(Utils.magic: JSON.t => {..})
+        let simulateRaw: option<array<JSON.t>> = raw["simulate"]->Nullable.toOption
         switch simulateRaw {
         | Some(simulateItems) =>
           let items = parse(~simulateItems, ~config, ~chainConfig)
-          // Use endBlock from processConfig (the user-specified range)
-          let startBlock: int =
-            (processChainJson->(Utils.magic: JSON.t => {..}))["startBlock"]->(
-              Utils.magic: 'a => int
-            )
-          let endBlock: int =
-            (processChainJson->(Utils.magic: JSON.t => {..}))["endBlock"]->(Utils.magic: 'a => int)
+          let startBlock: int = raw["startBlock"]->(Utils.magic: 'a => int)
+          let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
           let source = SimulateSource.make(~items, ~endBlock, ~chain)
           {...chainConfig, startBlock, endBlock, sourceConfig: Config.CustomSources([source])}
-        | None => chainConfig
+        | None =>
+          // No simulate items: still honor `startBlock` / `endBlock` overrides
+          // so non-EVM/Fuel ecosystems (notably SVM `indexer.onInstruction`,
+          // which doesn't support simulate items) can bound the run window
+          // via `testIndexer.process({chains: { id: {startBlock, endBlock} }})`.
+          let startBlockOpt: option<int> =
+            raw["startBlock"]
+            ->(Utils.magic: 'a => Nullable.t<int>)
+            ->Nullable.toOption
+          let endBlockOpt: option<int> =
+            raw["endBlock"]->(Utils.magic: 'a => Nullable.t<int>)->Nullable.toOption
+          let withStart = switch startBlockOpt {
+          | Some(sb) => {...chainConfig, startBlock: sb}
+          | None => chainConfig
+          }
+          switch endBlockOpt {
+          | Some(eb) => {...withStart, endBlock: eb}
+          | None => withStart
+          }
         }
       | None => chainConfig
       }
