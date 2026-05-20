@@ -30,6 +30,9 @@ type chain = {
   progress: progress,
   latestFetchedBlockNumber: int,
   knownHeight: int,
+  /** Localized unit noun for this chain's progress. `"Slots"` on SVM,
+   `"Blocks"` everywhere else. Drives the per-chain progress label. */
+  blockUnit: string,
 }
 
 let minOfOption: (int, option<int>) => int = (a: int, b: option<int>) => {
