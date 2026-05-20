@@ -364,7 +364,10 @@ impl SystemConfig {
                     system_config::DataSource::Fuel {
                         hypersync_endpoint_url,
                     } => (Some(hypersync_endpoint_url.clone()), vec![], None),
-                    system_config::DataSource::Svm { rpc } => (None, vec![], Some(rpc.clone())),
+                    system_config::DataSource::Svm {
+                        rpc,
+                        hypersync_endpoint_url,
+                    } => (hypersync_endpoint_url.clone(), vec![], Some(rpc.clone())),
                 };
 
                 let chain_contracts: BTreeMap<String, ChainContractConfig> = network
