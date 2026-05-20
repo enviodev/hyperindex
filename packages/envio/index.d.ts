@@ -961,6 +961,83 @@ export type SvmOnSlotOptions<Config extends IndexerConfigTypes = GlobalConfig> =
   readonly where?: (args: SvmOnSlotWhereArgs<Config>) => SvmOnSlotWhereResult;
 };
 
+// ============== SVM onInstruction types ==============
+
+/** A single Solana instruction matched by the indexer.
+ *
+ * Stage 4 ships raw shapes: `data` and discriminator prefixes are
+ * `0x`-prefixed hex strings; accounts are base58 strings. Borsh-decoded args
+ * and named accounts land in a future stage and will surface on
+ * `instruction.decoded` without changing the fields below. */
+export type SvmInstruction = {
+  readonly programId: string;
+  readonly data: string;
+  readonly accounts: readonly string[];
+  readonly instructionAddress: readonly number[];
+  readonly isInner: boolean;
+  readonly d1?: string;
+  readonly d2?: string;
+  readonly d4?: string;
+  readonly d8?: string;
+};
+
+/** Parent transaction surfaced when an instruction's
+ * `include_transaction` flag is `true`. */
+export type SvmTransaction = {
+  readonly signatures: readonly string[];
+  readonly feePayer?: string;
+  readonly success?: boolean;
+  readonly err?: string;
+  /** Lamports. */
+  readonly fee?: bigint;
+  readonly computeUnitsConsumed?: bigint;
+  readonly accountKeys: readonly string[];
+  readonly recentBlockhash?: string;
+  readonly version?: string;
+};
+
+export type SvmLog = {
+  readonly kind: string;
+  readonly message: string;
+};
+
+export type SvmInstructionEvent = {
+  readonly contractName: string;
+  readonly eventName: string;
+  readonly instruction: SvmInstruction;
+  /** Present when the instruction's `include_transaction` is `true`. */
+  readonly transaction?: SvmTransaction;
+  /** Present when the instruction's `include_logs` is `true`; only logs
+   * scoped to this exact instruction (matching `instruction_address`). */
+  readonly logs?: readonly SvmLog[];
+  readonly slot: number;
+  readonly blockTime?: number;
+};
+
+/** Arguments passed to handlers registered via `indexer.onInstruction`. */
+export type SvmOnInstructionHandlerArgs<
+  Config extends IndexerConfigTypes = GlobalConfig,
+  Event extends SvmInstructionEvent = SvmInstructionEvent,
+> = {
+  readonly event: Event;
+  readonly context: SvmOnSlotContext<Config>;
+};
+
+/** Options for an SVM `indexer.onInstruction` registration. */
+export type SvmOnInstructionOptions<P extends string = string, I extends string = string> = {
+  /** Program name as declared under `chains[].programs[].name` in
+   * `config.yaml`. */
+  readonly program: P;
+  /** Instruction name as declared under
+   * `chains[].programs[].instructions[].name` in `config.yaml`. */
+  readonly instruction: I;
+};
+
+/** Handler function for an SVM `indexer.onInstruction` registration. */
+export type SvmOnInstructionHandler<
+  Config extends IndexerConfigTypes = GlobalConfig,
+> = (args: SvmOnInstructionHandlerArgs<Config>) => Promise<void>;
+
 // ============== Indexer Types ==============
 
 // Helper: Check if an ecosystem is configured. Single-ecosystem indexers only
@@ -1138,7 +1215,7 @@ type FuelEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
       : never
     : never;
 
-// SVM ecosystem type — chains plus onSlot handler method. SVM has no onEvent yet.
+// SVM ecosystem type — chains plus instruction + slot handler methods.
 type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
   "svm" extends keyof Config
     ? Config["svm"] extends { chains: infer Chains }
@@ -1152,6 +1229,16 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
             } & {
               readonly [K in keyof Chains]: SvmChain<Chains[K]["id"]>;
             };
+            /**
+             * Register an instruction handler. Dispatch matches on
+             * `(programId, discriminator)` from the YAML config. Stage 4
+             * exposes raw instruction data + accounts; Borsh-decoded args
+             * arrive in a future stage on `event.instruction.decoded`.
+             */
+            readonly onInstruction: (
+              options: SvmOnInstructionOptions,
+              handler: SvmOnInstructionHandler<Config>,
+            ) => void;
             /**
              * Register a slot handler. `where` is evaluated once per configured
              * chain at registration time; return `false` to skip a chain, `true`
@@ -1178,6 +1265,7 @@ type CodegenRequiredHint =
   "Run 'envio codegen' to generate handler types from config.yaml. Without codegen, the indexer has no contracts, chains, or events to register handlers for.";
 type CodegenRequiredFallback = {
   readonly onEvent: (...hint: CodegenRequiredHint[]) => void;
+  readonly onInstruction: (...hint: CodegenRequiredHint[]) => void;
   readonly onBlock: (...hint: CodegenRequiredHint[]) => void;
   readonly onSlot: (...hint: CodegenRequiredHint[]) => void;
   readonly contractRegister: (...hint: CodegenRequiredHint[]) => void;
