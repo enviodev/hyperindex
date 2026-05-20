@@ -8,7 +8,6 @@ mod query;
 mod types;
 
 use config::SolanaClientConfig;
-use hypersync_client_solana::config::StreamConfig;
 use query::SolanaQuery;
 use types::QueryResponse;
 
@@ -45,6 +44,10 @@ impl HypersyncSolanaClient {
             .map_err(map_err)
     }
 
+    /// Single-window query (no client-side pagination). The hyperindex source
+    /// layer paginates by chunking the slot range itself, so the napi binding
+    /// must NOT call `collect` (which spins up parallel batched requests under
+    /// `StreamConfig::default()` and can DoS the server on multi-day windows).
     #[napi]
     pub async fn get(&self, query: SolanaQuery) -> napi::Result<QueryResponse> {
         let q: hypersync_solana_net_types::query::SolanaQuery = query
@@ -53,9 +56,9 @@ impl HypersyncSolanaClient {
             .map_err(map_err)?;
         let resp = self
             .inner
-            .collect(q, StreamConfig::default())
+            .get(&q)
             .await
-            .context("solana collect")
+            .context("solana get")
             .map_err(map_err)?;
         QueryResponse::try_from(resp)
             .context("convert solana response")
