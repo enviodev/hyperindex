@@ -987,9 +987,14 @@ impl SystemConfig {
                 })
             }
             HumanConfig::Svm(ref svm_config) => {
+                validation::validate_deserialized_svm_config_yaml(svm_config)?;
                 for network in &svm_config.chains {
                     let sync_source = DataSource::Svm {
                         rpc: network.rpc.clone(),
+                        hypersync_endpoint_url: network
+                            .hypersync_config
+                            .as_ref()
+                            .map(|h| h.url.clone()),
                     };
 
                     let chain = Chain {
@@ -1125,6 +1130,7 @@ pub enum DataSource {
     },
     Svm {
         rpc: ServerUrl,
+        hypersync_endpoint_url: Option<ServerUrl>,
     },
 }
 

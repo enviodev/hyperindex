@@ -4,7 +4,7 @@ use crate::constants::reserved_keywords::{
     ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
     TYPESCRIPT_RESERVED_WORDS,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use regex::Regex;
 use std::collections::HashSet;
 
@@ -209,6 +209,109 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     }
 
     validate_names_valid_rescript(&contract_names, "contract".to_string())?;
+
+    Ok(())
+}
+
+pub fn is_valid_solana_pubkey(s: &str) -> bool {
+    // Base58 alphabet: 1-9, A-H, J-N, P-Z, a-k, m-z (no 0, O, I, l).
+    // Encoded 32-byte values are 32-44 chars (typically 43-44).
+    let len = s.len();
+    if !(32..=44).contains(&len) {
+        return false;
+    }
+    s.bytes().all(|b| {
+        matches!(b,
+            b'1'..=b'9'
+            | b'A'..=b'H'
+            | b'J'..=b'N'
+            | b'P'..=b'Z'
+            | b'a'..=b'k'
+            | b'm'..=b'z'
+        )
+    })
+}
+
+pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
+    let hex = s.strip_prefix("0x").unwrap_or(s);
+    if !matches!(hex.len(), 2 | 4 | 8 | 16) {
+        return Err(anyhow!(
+            "discriminator {:?} must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits \
+             after stripping a `0x` prefix), got {} digits",
+            s,
+            hex.len()
+        ));
+    }
+    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(anyhow!("discriminator {:?} contains non-hex characters", s));
+    }
+    Ok(())
+}
+
+pub fn validate_deserialized_svm_config_yaml(
+    svm_config: &super::human_config::svm::HumanConfig,
+) -> anyhow::Result<()> {
+    let mut all_program_names: Vec<String> = Vec::new();
+
+    for chain in &svm_config.chains {
+        for program in chain.programs.as_ref().unwrap_or(&vec![]) {
+            if !is_valid_solana_pubkey(&program.program_id) {
+                return Err(anyhow!(
+                    "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
+                     32-byte Solana pubkey",
+                    program.name,
+                    program.program_id
+                ));
+            }
+            all_program_names.push(program.name.clone());
+
+            let mut instruction_names = std::collections::HashSet::new();
+            for instr in &program.instructions {
+                if !instruction_names.insert(instr.name.clone()) {
+                    return Err(anyhow!(
+                        "Program {:?} declares the instruction {:?} more than once",
+                        program.name,
+                        instr.name
+                    ));
+                }
+                if let Some(discriminator) = &instr.discriminator {
+                    validate_svm_discriminator(discriminator).with_context(|| {
+                        format!("instruction {:?} in program {:?}", instr.name, program.name)
+                    })?;
+                }
+                for filter in instr.account_filters.as_ref().unwrap_or(&vec![]) {
+                    if filter.position > 9 {
+                        return Err(anyhow!(
+                            "Account filter position {} in instruction {:?} (program {:?}) \
+                             must be in 0..=9",
+                            filter.position,
+                            instr.name,
+                            program.name
+                        ));
+                    }
+                    for value in &filter.values {
+                        if !is_valid_solana_pubkey(value) {
+                            return Err(anyhow!(
+                                "Account filter on instruction {:?} (program {:?}) has an \
+                                 invalid base58 pubkey {:?}",
+                                instr.name,
+                                program.name,
+                                value
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !are_contract_names_unique(&all_program_names) {
+        return Err(anyhow!(
+            "Duplicate program names detected. All program names must be unique across all \
+             chains and are case-insensitive."
+        ));
+    }
+    validate_names_valid_rescript(&all_program_names, "program".to_string())?;
 
     Ok(())
 }
@@ -440,5 +543,168 @@ mod tests {
              They are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."
         );
+    }
+
+    mod svm {
+        use crate::config_parsing::human_config::svm::HumanConfig;
+        use crate::config_parsing::validation::{
+            is_valid_solana_pubkey, validate_deserialized_svm_config_yaml,
+            validate_svm_discriminator,
+        };
+
+        const TOKEN_METADATA: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+
+        #[test]
+        fn pubkey_accepts_real_program_ids() {
+            assert!(is_valid_solana_pubkey(TOKEN_METADATA));
+            // System program (32 ones; base58 lower bound).
+            assert!(is_valid_solana_pubkey("11111111111111111111111111111111"));
+        }
+
+        #[test]
+        fn pubkey_rejects_garbage() {
+            assert!(!is_valid_solana_pubkey(""));
+            assert!(!is_valid_solana_pubkey("short"));
+            // Contains '0' which is not in the base58 alphabet.
+            assert!(!is_valid_solana_pubkey(
+                "0mp02000000000000000000000000000000000000000"
+            ));
+            // Too long.
+            assert!(!is_valid_solana_pubkey(&"1".repeat(64)));
+        }
+
+        #[test]
+        fn discriminator_accepts_valid_lengths() {
+            for s in ["0x0f", "0x0fff", "0x0fffffff", "0x0fffffffffffffff"] {
+                assert!(
+                    validate_svm_discriminator(s).is_ok(),
+                    "expected {s:?} to be valid"
+                );
+            }
+            // Prefix is optional.
+            assert!(validate_svm_discriminator("0f").is_ok());
+        }
+
+        #[test]
+        fn discriminator_rejects_invalid_lengths_and_chars() {
+            for s in ["0x", "0x0", "0x012", "0xggggggg"] {
+                assert!(
+                    validate_svm_discriminator(s).is_err(),
+                    "expected {s:?} to be rejected"
+                );
+            }
+        }
+
+        fn parse(yaml: &str) -> HumanConfig {
+            serde_yaml::from_str(yaml).unwrap()
+        }
+
+        #[test]
+        fn validation_accepts_a_minimal_program() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: r
+    start_block: 0
+    programs:
+      - name: TokenMetadata
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        instructions:
+          - name: UpdateMetadataAccountV2
+            discriminator: "0x0f"
+"#,
+            );
+            validate_deserialized_svm_config_yaml(&cfg).unwrap();
+        }
+
+        #[test]
+        fn validation_rejects_duplicate_instruction_names() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: r
+    start_block: 0
+    programs:
+      - name: P
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        instructions:
+          - { name: Foo, discriminator: "0x0f" }
+          - { name: Foo, discriminator: "0x21" }
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("more than once"), "{err}");
+        }
+
+        #[test]
+        fn validation_rejects_duplicate_program_names_across_chains() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: r
+    start_block: 0
+    programs:
+      - name: shared
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        instructions: []
+  - rpc: r2
+    start_block: 0
+    programs:
+      - name: SHARED
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        instructions: []
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("Duplicate program names"), "{err}");
+        }
+
+        #[test]
+        fn validation_rejects_account_filter_position_out_of_range() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: r
+    start_block: 0
+    programs:
+      - name: P
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        instructions:
+          - name: I
+            account_filters:
+              - position: 10
+                values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("0..=9"), "{err}");
+        }
+
+        #[test]
+        fn validation_rejects_bad_program_id() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: r
+    start_block: 0
+    programs:
+      - name: P
+        program_id: not_a_pubkey
+        instructions: []
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("invalid program_id"), "{err}");
+        }
     }
 }

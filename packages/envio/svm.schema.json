@@ -137,6 +137,17 @@
           "description": "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data.",
           "type": "string"
         },
+        "hypersync_config": {
+          "description": "Optional HyperSync Config for fetching historical instructions.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HypersyncConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "start_block": {
           "description": "The slot number at which the indexer should start ingesting data",
           "type": "integer",
@@ -160,12 +171,143 @@
           ],
           "format": "uint32",
           "minimum": 0
+        },
+        "programs": {
+          "description": "Solana programs to index on this chain.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Program"
+          }
         }
       },
       "additionalProperties": false,
       "required": [
         "rpc",
         "start_block"
+      ]
+    },
+    "HypersyncConfig": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "URL of the HyperSync endpoint (default: the public Solana HyperSync endpoint at https://solana.hypersync.xyz)",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ]
+    },
+    "Program": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "A unique project-wide name for this program (used in generated code).",
+          "type": "string"
+        },
+        "program_id": {
+          "description": "Base58-encoded program id (32 bytes).",
+          "type": "string"
+        },
+        "handler": {
+          "description": "Optional relative path to a file where handlers are registered for the given program. If not provided, handlers can be auto-loaded from the src directory.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "instructions": {
+          "description": "A list of instructions that should be indexed on this program.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Instruction"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "program_id",
+        "instructions"
+      ]
+    },
+    "Instruction": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name of the instruction in the HyperIndex generated code. Should be unique per program.",
+          "type": "string"
+        },
+        "discriminator": {
+          "description": "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" optional). Must be 1, 2, 4, or 8 bytes after decoding. An 8-byte value matches the standard Anchor discriminator.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_inner": {
+          "description": "Filter on inner-vs-outer instructions. None / absent matches both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "account_filters": {
+          "description": "Optional positional account filters. Each entry pins a particular account position (0..=9) to one of a set of base58 pubkeys.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/AccountFilter"
+          }
+        },
+        "include_transaction": {
+          "description": "When true, also fetch the parent transaction for each matched instruction. Defaults to true so handlers can read tx signatures.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "include_logs": {
+          "description": "When true, also fetch program logs for each matched instruction.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "AccountFilter": {
+      "type": "object",
+      "properties": {
+        "position": {
+          "description": "Account position within the instruction (0..=9).",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "values": {
+          "description": "Allowed base58 pubkeys for this account position.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "position",
+        "values"
       ]
     }
   }
