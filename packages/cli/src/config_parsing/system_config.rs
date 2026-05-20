@@ -997,6 +997,62 @@ impl SystemConfig {
                             .map(|h| h.url.clone()),
                     };
 
+                    let mut chain_contracts = Vec::new();
+                    for program in network.programs.as_deref().unwrap_or(&[]) {
+                        let events = program
+                            .instructions
+                            .iter()
+                            .map(|instr| -> Result<Event> {
+                                let (normalized_discriminator, byte_len) =
+                                    match &instr.discriminator {
+                                        Some(d) => {
+                                            let hex = d.strip_prefix("0x").unwrap_or(d);
+                                            let byte_len = (hex.len() / 2) as u8;
+                                            (Some(format!("0x{hex}")), byte_len)
+                                        }
+                                        None => (None, 0u8),
+                                    };
+                                let svm_kind = SvmEventKind {
+                                    discriminator: normalized_discriminator.clone(),
+                                    discriminator_byte_len: byte_len,
+                                    include_transaction: instr.include_transaction.unwrap_or(true),
+                                    include_logs: instr.include_logs.unwrap_or(false),
+                                    account_filters: instr
+                                        .account_filters
+                                        .as_deref()
+                                        .unwrap_or(&[])
+                                        .iter()
+                                        .map(|af| SvmAccountFilter {
+                                            position: af.position,
+                                            values: af.values.clone(),
+                                        })
+                                        .collect(),
+                                    is_inner: instr.is_inner,
+                                };
+                                Ok(Event {
+                                    name: instr.name.clone(),
+                                    kind: EventKind::Svm(svm_kind),
+                                    sighash: normalized_discriminator.clone().unwrap_or_default(),
+                                    event_signature: String::new(),
+                                    field_selection: None,
+                                })
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+
+                        let contract = Contract::new(
+                            program.name.clone(),
+                            program.handler.clone(),
+                            events,
+                            Abi::Svm,
+                        )?;
+                        contracts.insert(contract.name.clone(), contract.clone());
+                        chain_contracts.push(ChainContract {
+                            name: program.name.clone(),
+                            addresses: vec![program.program_id.clone()],
+                            start_block: None,
+                        });
+                    }
+
                     let chain = Chain {
                         id: 0, //network.id,
                         start_block: network.start_block,
@@ -1004,7 +1060,7 @@ impl SystemConfig {
                         max_reorg_depth: None,
                         block_lag: network.block_lag,
                         sync_source,
-                        contracts: vec![],
+                        contracts: chain_contracts,
                     };
 
                     unique_hashmap::try_insert(&mut chains, chain.id, chain)
@@ -1369,6 +1425,10 @@ impl EvmAbi {
 pub enum Abi {
     Evm(EvmAbi),
     Fuel(Box<FuelAbi>),
+    /// Solana doesn't ship an ABI artifact today. The variant keeps the
+    /// `Contract.abi` field uniform across ecosystems; future Borsh schemas
+    /// (per the Stage 7 roadmap) would attach here.
+    Svm,
 }
 
 impl Abi {
@@ -1376,6 +1436,7 @@ impl Abi {
         match self {
             Abi::Evm(abi) => abi.path.clone(),
             Abi::Fuel(abi) => Some(abi.path_buf.clone()),
+            Abi::Svm => None,
         }
     }
 
@@ -1438,9 +1499,32 @@ pub enum FuelEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct SvmAccountFilter {
+    pub position: u8,
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SvmEventKind {
+    /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
+    /// instruction in the program.
+    pub discriminator: Option<String>,
+    /// Length of the decoded discriminator in bytes (0 / 1 / 2 / 4 / 8). The
+    /// router precomputes a per-program ordering on this so dispatch tries
+    /// longest first.
+    pub discriminator_byte_len: u8,
+    pub include_transaction: bool,
+    pub include_logs: bool,
+    pub account_filters: Vec<SvmAccountFilter>,
+    /// `None` matches both outer and inner (CPI-invoked) instructions.
+    pub is_inner: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
     Params(Vec<EventParam>),
     Fuel(FuelEventKind),
+    Svm(SvmEventKind),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2122,6 +2206,7 @@ mod test {
         {
             super::Abi::Evm(abi) => abi.typed.clone(),
             super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
+            super::Abi::Svm => panic!("Svm abi should not be parsed"),
         };
 
         let expected_abi_string = r#"
@@ -2209,6 +2294,7 @@ mod test {
         {
             super::Abi::Evm(abi) => abi.typed.clone(),
             super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
+            super::Abi::Svm => panic!("Svm abi should not be parsed"),
         };
 
         let expected_abi_string = r#"
@@ -2727,6 +2813,75 @@ mod test {
                 err.to_string().contains("- Apple\n  - Mango\n  - Zebra"),
                 "Entities not listed alphabetically. Got:\n{err}"
             );
+        }
+    }
+
+    mod svm_translation {
+        use super::SystemConfig;
+        use crate::config_parsing::system_config::{Abi, DataSource, EventKind};
+        use crate::project_paths::ParsedProjectPaths;
+        use pretty_assertions::assert_eq;
+
+        /// End-to-end: the Metaplex YAML fixture deserializes, validates, and
+        /// translates into a single Contract whose two Events carry the
+        /// expected discriminator + flags. Guards Stage 3 + Stage 4 plumbing
+        /// from drifting out of sync.
+        #[test]
+        fn translates_metaplex_yaml_into_contract_events() {
+            let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+            let project_paths =
+                ParsedProjectPaths::new(&test_dir, "configs/svm-metaplex-config.yaml")
+                    .expect("paths");
+            let config = SystemConfig::parse_from_project_files(&project_paths).expect("parse");
+
+            // Single chain, single program -> one contract with two events.
+            let contracts = config.contracts.values().collect::<Vec<_>>();
+            assert_eq!(contracts.len(), 1);
+            let token_metadata = contracts[0];
+            assert_eq!(token_metadata.name, "TokenMetadata");
+            assert!(matches!(token_metadata.abi, Abi::Svm));
+            assert_eq!(token_metadata.events.len(), 2);
+
+            let kinds: Vec<_> = token_metadata
+                .events
+                .iter()
+                .map(|e| match &e.kind {
+                    EventKind::Svm(k) => (
+                        e.name.as_str(),
+                        k.discriminator.as_deref(),
+                        k.discriminator_byte_len,
+                        k.include_transaction,
+                        k.include_logs,
+                        k.account_filters.len(),
+                    ),
+                    _ => panic!("expected Svm event kind, got {:?}", e.kind),
+                })
+                .collect();
+            assert_eq!(
+                kinds,
+                vec![
+                    ("CreateMetadataAccountV3", Some("0x21"), 1, true, false, 0),
+                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, true, false, 1),
+                ],
+            );
+
+            // Chain data carries the program_id on the contract-side address,
+            // and the HyperSync URL flows through to the source config.
+            let chains = config.get_chains();
+            assert_eq!(chains.len(), 1);
+            let chain = chains[0];
+            assert_eq!(chain.contracts.len(), 1);
+            assert_eq!(
+                chain.contracts[0].addresses,
+                vec!["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string()],
+            );
+            assert!(matches!(
+                &chain.sync_source,
+                DataSource::Svm {
+                    hypersync_endpoint_url: Some(url),
+                    ..
+                } if url == "https://solana.hypersync.xyz"
+            ));
         }
     }
 }

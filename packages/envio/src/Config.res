@@ -606,6 +606,53 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               `Fuel event ${contractName}.${eventName} is missing "kind" in internal config`,
             )
           }
+        | Ecosystem.Svm =>
+          // The real `programId` lives on the chain-side contract entry, not on
+          // the event item. Wiring it onto each instruction's event config (so
+          // the EventRouter can dispatch on `(programId, discriminator)`) is
+          // Stage 4 C2 work. C1 stamps a placeholder so the types line up.
+          let widenedEventItem =
+            eventItem->(
+              Utils.magic: _ => {
+                "svm": option<{
+                  "discriminator": option<string>,
+                  "discriminatorByteLen": int,
+                  "includeTransaction": bool,
+                  "includeLogs": bool,
+                  "accountFilters": option<
+                    array<{"position": int, "values": array<string>}>,
+                  >,
+                  "isInner": option<bool>,
+                }>,
+              }
+            )
+          let svm = switch widenedEventItem["svm"] {
+          | Some(s) => s
+          | None =>
+            JsError.throwWithMessage(
+              `SVM instruction ${contractName}.${eventName} is missing the "svm" descriptor in internal config`,
+            )
+          }
+          let accountFilters =
+            (svm["accountFilters"]->Option.getOr([]))->Array.map(af => {
+              Internal.position: af["position"],
+              values: af["values"]->SvmTypes.Pubkey.fromStringsUnsafe,
+            })
+          (EventConfigBuilder.buildSvmInstructionEventConfig(
+            ~contractName,
+            ~instructionName=eventName,
+            ~programId=""->SvmTypes.Pubkey.fromStringUnsafe,
+            ~discriminator=svm["discriminator"],
+            ~discriminatorByteLen=svm["discriminatorByteLen"],
+            ~includeTransaction=svm["includeTransaction"],
+            ~includeLogs=svm["includeLogs"],
+            ~accountFilters,
+            ~isInner=svm["isInner"],
+            ~isWildcard=false,
+            ~handler=None,
+            ~contractRegister=None,
+            ~startBlock?,
+          ) :> Internal.eventConfig)
         | _ =>
           (EventConfigBuilder.buildEvmEventConfig(
             ~contractName,
