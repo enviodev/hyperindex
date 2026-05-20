@@ -37,7 +37,10 @@ impl Decoder {
     }
 
     #[napi]
-    pub async fn decode_events(&self, events: Vec<Event>) -> Vec<Option<DecodedEvent>> {
+    pub async fn decode_events(
+        &self,
+        events: Vec<Event>,
+    ) -> napi::Result<Vec<Option<DecodedEvent>>> {
         let decoder = self.clone();
         tokio::task::spawn_blocking(move || {
             events
@@ -46,7 +49,7 @@ impl Decoder {
                 .collect::<Vec<_>>()
         })
         .await
-        .unwrap()
+        .map_err(|e| map_err(anyhow::anyhow!("decode_events worker join failure: {e}")))
     }
 
     fn decode_impl(&self, log: &Log) -> Result<Option<DecodedEvent>> {

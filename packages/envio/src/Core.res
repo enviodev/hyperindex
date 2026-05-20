@@ -4,14 +4,6 @@
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
-//
-// `hypersyncClient` / `decoder` are opaque JS class constructors — they
-// carry their static factories (`newWithAgent`, `fromSignatures`) as
-// methods. Instance methods are then called on the values returned from
-// those factories (see `HyperSyncClient.res`).
-// Opaque carriers for the NAPI class constructors. Static factories
-// (`newWithAgent`, `fromSignatures`) hang off these via `@send` in
-// `HyperSyncClient.res`.
 type hypersyncClientCtor
 type decoderCtor
 

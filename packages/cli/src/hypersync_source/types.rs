@@ -157,23 +157,25 @@ pub struct Authorization {
     pub s: String,
 }
 
-impl From<&format::Authorization> for Authorization {
-    fn from(a: &format::Authorization) -> Self {
-        Self {
+impl TryFrom<&format::Authorization> for Authorization {
+    type Error = anyhow::Error;
+
+    fn try_from(a: &format::Authorization) -> Result<Self> {
+        Ok(Self {
             chain_id: convert_bigint_unsigned(
                 ruint::aliases::U256::try_from_be_slice(&a.chain_id)
-                    .expect("convert chain_id bytes to U256"),
+                    .context("convert authorization chain_id bytes to U256")?,
             ),
             address: a.address.encode_hex(),
             nonce: alloy_primitives::I64::try_from_be_slice(&a.nonce)
-                .expect("convert nonce bytes to I64")
+                .context("convert authorization nonce bytes to I64")?
                 .as_i64(),
             y_parity: alloy_primitives::I64::try_from_be_slice(&a.y_parity)
-                .expect("convert y_parity bytes to I64")
+                .context("convert authorization y_parity bytes to I64")?
                 .as_i64(),
             r: a.r.encode_hex(),
             s: a.s.encode_hex(),
-        }
+        })
     }
 }
 
@@ -426,7 +428,9 @@ impl Transaction {
             authorization_list: t
                 .authorization_list
                 .as_ref()
-                .map(|al| al.iter().map(Authorization::from).collect()),
+                .map(|al| al.iter().map(Authorization::try_from).collect::<Result<_>>())
+                .transpose()
+                .context("mapping transaction.authorization_list")?,
             max_fee_per_blob_gas: map_bigint(&t.max_fee_per_blob_gas),
             blob_versioned_hashes: t
                 .blob_versioned_hashes

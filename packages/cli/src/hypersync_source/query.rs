@@ -98,10 +98,7 @@ pub struct FieldSelection {
     Eq,
     PartialOrd,
     Ord,
-    strum_macros::EnumIter,
-    strum_macros::AsRefStr,
 )]
-#[strum(serialize_all = "snake_case")]
 pub enum BlockField {
     Number,
     Hash,
@@ -143,10 +140,7 @@ pub enum BlockField {
     Eq,
     PartialOrd,
     Ord,
-    strum_macros::EnumIter,
-    strum_macros::AsRefStr,
 )]
-#[strum(serialize_all = "snake_case")]
 pub enum TransactionField {
     BlockHash,
     BlockNumber,
@@ -206,10 +200,7 @@ pub enum TransactionField {
     Eq,
     PartialOrd,
     Ord,
-    strum_macros::EnumIter,
-    strum_macros::AsRefStr,
 )]
-#[strum(serialize_all = "snake_case")]
 pub enum LogField {
     Removed,
     LogIndex,
@@ -235,10 +226,7 @@ pub enum LogField {
     Eq,
     PartialOrd,
     Ord,
-    strum_macros::EnumIter,
-    strum_macros::AsRefStr,
 )]
-#[strum(serialize_all = "snake_case")]
 pub enum TraceField {
     ActionAddress,
     Balance,
@@ -413,6 +401,12 @@ impl TryFrom<Query> for net_types::Query {
             Vec::new()
         };
 
+        if query.traces.as_ref().is_some_and(|t| !t.is_empty()) {
+            anyhow::bail!(
+                "trace selections are not supported by the envio NAPI hypersync bridge; \
+                 returned traces would be dropped before reaching the indexer"
+            );
+        }
         let traces = if let Some(trace_filters) = query.traces {
             trace_filters
                 .into_iter()
