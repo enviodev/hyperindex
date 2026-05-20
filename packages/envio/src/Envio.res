@@ -54,6 +54,20 @@ type svmLog = {
   message: string,
 }
 
+/** Inner block record on `svmInstructionEvent`. Field names follow EVM/Fuel
+ (`height`, `time`, `hash`) so the shared `Ecosystem.t` getters in
+ `Svm.res` work uniformly across ecosystems — `height` carries the slot. */
+type svmInstructionEventBlock = {
+  /** Slot number. Named `height` so the shared ecosystem getter reads it. */
+  height: int,
+  /** Unix block time (seconds). `0` when HyperSync didn't return a block
+   for this instruction's slot. */
+  time: int,
+  /** Block hash. Currently always empty — populated by the future
+   reorg-guard `queryBlockHash(slot)` route. */
+  hash: string,
+}
+
 /** The per-instruction payload handlers receive on `.event`. Mirrors the
  EVM `type event` shape inside generated per-event modules. */
 type svmInstructionEvent = {
@@ -66,8 +80,11 @@ type svmInstructionEvent = {
   /** Program log entries scoped to this instruction. `None` when the
    per-instruction `include_logs` flag is `false`. */
   logs: option<array<svmLog>>,
+  /** Convenience alias for `block.height`. */
   slot: int,
+  /** Convenience alias for `block.time`. */
   blockTime: option<int>,
+  block: svmInstructionEventBlock,
 }
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */
