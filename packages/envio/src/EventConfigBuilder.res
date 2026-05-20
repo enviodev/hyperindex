@@ -386,6 +386,50 @@ let buildEvmEventConfig = (
 
 // ============== Build Fuel event config ==============
 
+let buildSvmInstructionEventConfig = (
+  ~contractName: string,
+  ~instructionName: string,
+  ~programId: SvmTypes.Pubkey.t,
+  ~discriminator: option<string>,
+  ~discriminatorByteLen: int,
+  ~includeTransaction: bool,
+  ~includeLogs: bool,
+  ~accountFilters: array<Internal.svmAccountFilter>,
+  ~isInner: option<bool>,
+  ~isWildcard: bool,
+  ~handler: option<Internal.handler>,
+  ~contractRegister: option<Internal.contractRegister>,
+  ~startBlock: option<int>=?,
+): Internal.svmInstructionEventConfig => {
+  let paramsSchema =
+    S.json(~validate=false)
+    ->Utils.Schema.coerceToJsonPgType
+    ->(Utils.magic: S.t<JSON.t> => S.t<Internal.eventParams>)
+  {
+    id: switch discriminator {
+    | Some(d) => d
+    | None => "none"
+    },
+    name: instructionName,
+    contractName,
+    isWildcard,
+    handler,
+    contractRegister,
+    paramsRawEventSchema: paramsSchema,
+    simulateParamsSchema: paramsSchema,
+    filterByAddresses: false,
+    dependsOnAddresses: !isWildcard,
+    startBlock,
+    programId,
+    discriminator,
+    discriminatorByteLen,
+    includeTransaction,
+    includeLogs,
+    accountFilters,
+    isInner,
+  }
+}
+
 let buildFuelEventConfig = (
   ~contractName: string,
   ~eventName: string,

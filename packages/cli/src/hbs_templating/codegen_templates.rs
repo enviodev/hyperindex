@@ -608,6 +608,34 @@ impl EventTemplate {
                     }
                 }
             }
+            EventKind::Svm(_) => Ok(Self::from_svm_instruction_event(
+                config_event,
+                contract_name,
+            )),
+        }
+    }
+
+    /// Per-instruction ReScript module for SVM. Minimal surface for C1: enough
+    /// shape so the GADT `eventIdentity<event, paramsConstructor, onEventWhere>`
+    /// machinery still type-checks. Concrete `indexer.onInstruction(...)`
+    /// registration arrives in C2 alongside dispatch.
+    fn from_svm_instruction_event(
+        config_event: &system_config::Event,
+        _contract_name: &CapitalizedOptions,
+    ) -> Self {
+        let event_name = config_event.name.capitalize();
+        let module_code = format!(
+            r#"
+let name = "{event_name}"
+let contractName = contractName
+type params = Envio.svmInstruction
+type paramsConstructor = unit
+type event = Envio.svmInstructionEvent
+type onEventWhere = Internal.noOnEventWhere"#
+        );
+        EventTemplate {
+            name: event_name,
+            module_code,
         }
     }
 }
@@ -654,6 +682,8 @@ impl ContractTemplate {
                     abi.path_relative_to_root, all_abi_type_declarations,
                 )
             }
+            // Solana programs ship no ABI artifact today.
+            Abi::Svm => String::new(),
         };
 
         Ok(ContractTemplate {
@@ -1398,6 +1428,11 @@ type indexer = {{
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
+  /** Register an instruction handler. */
+  onInstruction: 'event 'paramsConstructor 'where. (
+    onInstructionOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
+    Internal.genericHandler<Internal.genericHandlerArgs<'event, handlerContext>>,
+  ) => unit,
   /** Register a Slot Handler. Evaluates `where` once per configured chain at registration time. */
   onSlot: (
     Envio.onBlockOptions<indexerChain>,
@@ -1692,6 +1727,12 @@ module SingleOrMultiple: {{
 type onEventOptions<'eventIdentity, 'where> = {{
   event: 'eventIdentity,
   wildcard?: bool,
+  where?: 'where,
+}}
+
+/** Options for `indexer.onInstruction` (SVM). */
+type onInstructionOptions<'eventIdentity, 'where> = {{
+  instruction: 'eventIdentity,
   where?: 'where,
 }}
 
