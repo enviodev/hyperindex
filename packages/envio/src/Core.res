@@ -5,14 +5,11 @@
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
 //
-// `hypersyncClient` / `decoder` are opaque JS class constructors — they
-// carry their static factories (`newWithAgent`, `fromSignatures`) as
-// methods. Instance methods are then called on the values returned from
-// those factories (see `HyperSyncClient.res`).
 // Opaque carriers for the NAPI class constructors. Static factories
-// (`newWithAgent`, `fromSignatures`) hang off these via `@send` in
-// `HyperSyncClient.res`.
+// (`newWithAgent`, `fromConfig`, `fromSignatures`) hang off these via `@send`
+// in `HyperSyncClient.res` / `HyperSyncSolanaClient.res`.
 type hypersyncClientCtor
+type hypersyncSolanaClientCtor
 type decoderCtor
 
 type addon = {
@@ -20,6 +17,8 @@ type addon = {
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
   @as("HypersyncClient")
   hypersyncClient: hypersyncClientCtor,
+  @as("HypersyncSolanaClient")
+  hypersyncSolanaClient: hypersyncSolanaClientCtor,
   @as("Decoder")
   decoder: decoderCtor,
   setLogLevel: string => unit,
