@@ -316,6 +316,15 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
           logs: eventConfig.includeLogs ? maybeLogs : None,
           slot: instr.slot,
           blockTime: None,
+          // Mirror EVM/Fuel: the shared ecosystem getter reads `block.height`
+          // / `block.time` / `block.hash`. C2 doesn't fetch block data, so
+          // `time` is 0 and `hash` is "" — populated by the future
+          // reorg-guard `queryBlockHash(slot)` route.
+          block: {
+            height: instr.slot,
+            time: 0,
+            hash: "",
+          },
         }
 
         parsedQueueItems
