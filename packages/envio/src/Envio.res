@@ -20,6 +20,62 @@ type svmOnSlotArgs<'context> = {
   context: 'context,
 }
 
+type svmInstruction = {
+  programId: SvmTypes.Pubkey.t,
+  /** Raw instruction bytes as `0x`-prefixed hex. */
+  data: string,
+  accounts: array<SvmTypes.Pubkey.t>,
+  /** Path through the call tree: `[outerIndex]` for top-level instructions,
+   appended child indices for inner CPI calls. */
+  instructionAddress: array<int>,
+  isInner: bool,
+  /** Discriminator prefixes pre-extracted by HyperSync. Each is `Some` only
+   when the underlying instruction is at least that long. */
+  d1?: string,
+  d2?: string,
+  d4?: string,
+  d8?: string,
+}
+
+type svmTransaction = {
+  signatures: array<string>,
+  feePayer?: SvmTypes.Pubkey.t,
+  success?: bool,
+  err?: string,
+  fee?: bigint,
+  computeUnitsConsumed?: bigint,
+  accountKeys: array<SvmTypes.Pubkey.t>,
+  recentBlockhash?: string,
+  version?: string,
+}
+
+type svmLog = {
+  kind: string,
+  message: string,
+}
+
+/** The per-instruction payload handlers receive on `.event`. Mirrors the
+ EVM `type event` shape inside generated per-event modules. */
+type svmInstructionEvent = {
+  contractName: string,
+  eventName: string,
+  instruction: svmInstruction,
+  /** Parent transaction. `None` when the per-instruction
+   `include_transaction` flag is `false`. */
+  transaction: option<svmTransaction>,
+  /** Program log entries scoped to this instruction. `None` when the
+   per-instruction `include_logs` flag is `false`. */
+  logs: option<array<svmLog>>,
+  slot: int,
+  blockTime: option<int>,
+}
+
+/** Arguments passed to handlers registered via `indexer.onInstruction`. */
+type svmOnInstructionArgs<'context> = {
+  event: svmInstructionEvent,
+  context: 'context,
+}
+
 // Internal-only type for the `indexer.onBlock` (and SVM `onSlot`) `where`
 // callback argument. The canonical TypeScript shape lives in
 // `packages/envio/index.d.ts`; the ReScript declaration here is free to

@@ -422,6 +422,34 @@ type evmContractConfig = {
   events: array<evmEventConfig>,
 }
 
+type svmAccountFilter = {
+  position: int,
+  values: array<SvmTypes.Pubkey.t>,
+}
+
+type svmInstructionEventConfig = {
+  ...eventConfig,
+  /** Base58 Solana program id this instruction belongs to. */
+  programId: SvmTypes.Pubkey.t,
+  /** Hex-encoded discriminator. `None` matches every instruction in the program. */
+  discriminator: option<string>,
+  /** Length of the discriminator in bytes (0 / 1 / 2 / 4 / 8). Drives the
+   `dN` selector at query time and the dispatch-key precomputation in the
+   router. */
+  discriminatorByteLen: int,
+  includeTransaction: bool,
+  includeLogs: bool,
+  accountFilters: array<svmAccountFilter>,
+  /** `None` matches both outer and inner (CPI-invoked) instructions. */
+  isInner: option<bool>,
+}
+
+type svmProgramConfig = {
+  name: string,
+  programId: SvmTypes.Pubkey.t,
+  instructions: array<svmInstructionEventConfig>,
+}
+
 type indexingAddress = {
   address: Address.t,
   contractName: string,

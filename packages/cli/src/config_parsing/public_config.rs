@@ -42,7 +42,7 @@ pub(crate) struct PublicConfigJson<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     fuel: Option<FuelConfig<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    svm: Option<SvmConfig>,
+    svm: Option<SvmConfig<'a>>,
     enums: BTreeMap<String, Vec<String>>,
     entities: Vec<EntityJson>,
 }
@@ -158,8 +158,17 @@ struct FuelConfig<'a> {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct SvmConfig {
+struct SvmConfig<'a> {
     chains: BTreeMap<String, ChainConfig>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    programs: BTreeMap<&'a str, ContractConfig>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SvmAccountFilterJson {
+    position: u8,
+    values: Vec<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -288,6 +297,22 @@ struct ContractEventItem {
     block_fields: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     transaction_fields: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    svm: Option<SvmEventItem>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SvmEventItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    discriminator: Option<String>,
+    discriminator_byte_len: u8,
+    include_transaction: bool,
+    include_logs: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    account_filters: Vec<SvmAccountFilterJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    is_inner: Option<bool>,
 }
 
 #[derive(Serialize, Debug)]
@@ -406,19 +431,25 @@ impl SystemConfig {
             cfg.contracts
                 .values()
                 .map(|contract| -> Result<(&str, ContractConfig)> {
-                    let abi_str = match &contract.abi {
-                        Abi::Evm(abi) => &abi.raw,
-                        Abi::Fuel(abi) => &abi.raw,
+                    let abi_raw = match &contract.abi {
+                        Abi::Evm(abi) => {
+                            let abi_value: serde_json::Value = serde_json::from_str(&abi.raw)?;
+                            let abi_compact = serde_json::to_string(&abi_value)?;
+                            serde_json::value::RawValue::from_string(abi_compact)?
+                        }
+                        Abi::Fuel(abi) => {
+                            let abi_value: serde_json::Value = serde_json::from_str(&abi.raw)?;
+                            let abi_compact = serde_json::to_string(&abi_value)?;
+                            serde_json::value::RawValue::from_string(abi_compact)?
+                        }
+                        Abi::Svm => serde_json::value::RawValue::from_string("null".into())?,
                     };
-                    let abi_value: serde_json::Value = serde_json::from_str(abi_str)?;
-                    let abi_compact = serde_json::to_string(&abi_value)?;
-                    let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
 
                     let events: Vec<ContractEventItem> = contract
                         .events
                         .iter()
                         .map(|e| {
-                            let (params, kind) = match &e.kind {
+                            let (params, kind, svm) = match &e.kind {
                                 EventKind::Params(event_params) => {
                                     let params = event_params
                                         .iter()
@@ -438,7 +469,7 @@ impl SystemConfig {
                                             },
                                         })
                                         .collect();
-                                    (params, None)
+                                    (params, None, None)
                                 }
                                 EventKind::Fuel(fuel_kind) => {
                                     let kind_str = match fuel_kind {
@@ -448,7 +479,25 @@ impl SystemConfig {
                                         FuelEventKind::Transfer => "transfer",
                                         FuelEventKind::Call => "call",
                                     };
-                                    (vec![], Some(kind_str.to_string()))
+                                    (vec![], Some(kind_str.to_string()), None)
+                                }
+                                EventKind::Svm(svm_kind) => {
+                                    let svm_item = SvmEventItem {
+                                        discriminator: svm_kind.discriminator.clone(),
+                                        discriminator_byte_len: svm_kind.discriminator_byte_len,
+                                        include_transaction: svm_kind.include_transaction,
+                                        include_logs: svm_kind.include_logs,
+                                        account_filters: svm_kind
+                                            .account_filters
+                                            .iter()
+                                            .map(|af| SvmAccountFilterJson {
+                                                position: af.position,
+                                                values: af.values.clone(),
+                                            })
+                                            .collect(),
+                                        is_inner: svm_kind.is_inner,
+                                    };
+                                    (vec![], Some("svmInstruction".to_string()), Some(svm_item))
                                 }
                             };
                             ContractEventItem {
@@ -466,6 +515,7 @@ impl SystemConfig {
                                         .map(|f| f.name.clone())
                                         .collect()
                                 }),
+                                svm,
                             }
                         })
                         .collect();
@@ -508,7 +558,14 @@ impl SystemConfig {
                 None,
             ),
             Ecosystem::Fuel => (None, Some(FuelConfig { chains, contracts }), None),
-            Ecosystem::Svm => (None, None, Some(SvmConfig { chains })),
+            Ecosystem::Svm => (
+                None,
+                None,
+                Some(SvmConfig {
+                    chains,
+                    programs: contracts,
+                }),
+            ),
         };
 
         let enums_json: BTreeMap<String, Vec<String>> = cfg

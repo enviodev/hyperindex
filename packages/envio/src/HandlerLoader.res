@@ -142,7 +142,18 @@ let applyRegistrations = (~config: Config.t): Config.t => {
               dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
             } :> Internal.eventConfig)
           | Svm =>
-            JsError.throwWithMessage(`SVM does not support indexer.onEvent or indexer.contractRegister. Use indexer.onSlot for per-slot handlers.`)
+            let svmEv =
+              ev->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+            ({
+              ...svmEv,
+              isWildcard,
+              handler,
+              contractRegister,
+              dependsOnAddresses: Internal.dependsOnAddresses(
+                ~isWildcard,
+                ~filterByAddresses=false,
+              ),
+            } :> Internal.eventConfig)
           }
         },
       )
