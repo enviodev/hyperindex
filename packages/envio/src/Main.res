@@ -296,6 +296,57 @@ let getGlobalIndexer = (): 'indexer => {
     )
   }
 
+  // SVM identity: `{program, instruction}` from TS or
+  // `{instruction: GADT{contract, _0}}` from ReScript. Same two-format dance
+  // as the EVM `parseIdentityConfig`, but reading the SVM-native field names.
+  let parseSvmIdentityConfig = (identityConfig: 'a) => {
+    let raw =
+      identityConfig->(
+        Utils.magic: 'a => {
+          "program": unknown,
+          "instruction": unknown,
+          "where": option<JSON.t>,
+        }
+      )
+    let (programName, instructionName) = if typeof(raw["program"]) === #string {
+      (
+        raw["program"]->(Utils.magic: unknown => string),
+        raw["instruction"]->(Utils.magic: unknown => string),
+      )
+    } else {
+      let inst =
+        raw["instruction"]->(Utils.magic: unknown => {"contract": string, "_0": string})
+      (inst["contract"], inst["_0"])
+    }
+    let where = raw["where"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch where {
+    | None => None
+    | Some(_) =>
+      Some({
+        where: ?(where->(Utils.magic: option<JSON.t> => option<_>)),
+      })
+    }
+    (programName, instructionName, eventOptions)
+  }
+
+  // onInstruction: delegates to HandlerRegister.setHandler. The SVM analog of
+  // onEvent; the registration store keys on `(contractName, eventName)` which
+  // for SVM is `(programName, instructionName)`.
+  let onInstructionFn = (identityConfig: 'a, handler: 'b) => {
+    HandlerRegister.throwIfFinishedRegistration(~methodName="onInstruction")
+    let (programName, instructionName, eventOptions) = parseSvmIdentityConfig(identityConfig)
+    HandlerRegister.setHandler(
+      ~contractName=programName,
+      ~eventName=instructionName,
+      handler->(
+        Utils.magic: 'b => Internal.genericHandler<
+          Internal.genericHandlerArgs<Internal.event, Internal.handlerContext>,
+        >
+      ),
+      ~eventOptions,
+    )
+  }
+
   // contractRegister: delegates to HandlerRegister.setContractRegister
   let contractRegisterFn = (identityConfig: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="contractRegister")
@@ -454,7 +505,7 @@ let getGlobalIndexer = (): 'indexer => {
             "contractRegister",
             "onBlock",
           ]
-        | Svm => ["name", "description", "chainIds", "chains", "onSlot"]
+        | Svm => ["name", "description", "chainIds", "chains", "onInstruction", "onSlot"]
         }
         keysMemo := Some(keys)
         keys
@@ -475,6 +526,7 @@ let getGlobalIndexer = (): 'indexer => {
         chains->(Utils.magic: {..} => unknown)
       }
     | "onEvent" => onEventFn->Utils.magic
+    | "onInstruction" => onInstructionFn->Utils.magic
     | "contractRegister" => contractRegisterFn->Utils.magic
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
     | _ =>

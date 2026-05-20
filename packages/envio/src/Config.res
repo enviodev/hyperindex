@@ -30,7 +30,7 @@ type evmRpcConfig = {
 type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
-  | SvmSourceConfig({rpc: string})
+  | SvmSourceConfig({hypersync: option<string>, rpc: string})
   // For tests: pass custom sources directly
   | CustomSources(array<Source.t>)
 
@@ -567,13 +567,20 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => ()
   }
 
-  // Build event configs for a contract from JSON event items
+  // Build event configs for a contract from JSON event items.
+  //
+  // `~addresses` is the chain-side address list. For SVM programs it's the
+  // single base58 program_id — wired onto each instruction's event config so
+  // the source can build `(programId, discriminator)`-keyed InstructionSelections.
+  // EVM and Fuel ignore it (the address lives in `ChainContract.addresses` and
+  // is looked up at dispatch time, not stamped on the event).
   let buildContractEvents = (
     ~contractName,
     ~events: option<array<_>>,
     ~abi,
     ~chainId: int,
     ~startBlock: option<int>,
+    ~addresses: array<string>,
   ) => {
     switch events {
     | None => []
@@ -605,10 +612,17 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             )
           }
         | Ecosystem.Svm =>
-          // The real `programId` lives on the chain-side contract entry, not on
-          // the event item. Wiring it onto each instruction's event config (so
-          // the EventRouter can dispatch on `(programId, discriminator)`) is
-          // Stage 4 C2 work. C1 stamps a placeholder so the types line up.
+          let programId = switch addresses {
+          | [pid] => pid->SvmTypes.Pubkey.fromStringUnsafe
+          | [] =>
+            JsError.throwWithMessage(
+              `SVM program ${contractName} on chain ${chainId->Int.toString} is missing a program_id`,
+            )
+          | _ =>
+            JsError.throwWithMessage(
+              `SVM program ${contractName} on chain ${chainId->Int.toString} has multiple addresses; a program is uniquely identified by a single program_id`,
+            )
+          }
           let widenedEventItem =
             eventItem->(
               Utils.magic: _ => {
@@ -639,7 +653,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
           (EventConfigBuilder.buildSvmInstructionEventConfig(
             ~contractName,
             ~instructionName=eventName,
-            ~programId=""->SvmTypes.Pubkey.fromStringUnsafe,
+            ~programId,
             ~discriminator=svm["discriminator"],
             ~discriminatorByteLen=svm["discriminatorByteLen"],
             ~includeTransaction=svm["includeTransaction"],
@@ -710,11 +724,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         ->Dict.toArray
         ->Array.map(((capitalizedName, contractData)) => {
           let chainContract = chainContracts->Dict.get(capitalizedName)
-          let addresses =
+          let rawAddresses =
             chainContract
             ->Option.flatMap(cc => cc["addresses"])
             ->Option.getOr([])
-            ->Array.map(parseAddress)
+          let addresses = rawAddresses->Array.map(parseAddress)
           let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
 
           // Build event configs from JSON (field selections resolved inline)
@@ -728,6 +742,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~abi=contractData["abi"],
             ~chainId,
             ~startBlock,
+            ~addresses=rawAddresses,
           )
 
           {
@@ -793,7 +808,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         }
       | Ecosystem.Svm =>
         switch publicChainConfig["rpc"] {
-        | Some(rpc) => SvmSourceConfig({rpc: rpc})
+        | Some(rpc) =>
+          SvmSourceConfig({
+            hypersync: publicChainConfig["hypersync"],
+            rpc,
+          })
         | None => JsError.throwWithMessage(`Chain ${chainName} is missing rpc endpoint in config`)
         }
       }
