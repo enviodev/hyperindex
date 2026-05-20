@@ -141,8 +141,12 @@ let fromSvmEventConfigsOrThrow = (
 ): (t<Internal.svmInstructionEventConfig>, array<svmProgramOrdering>) => {
   let router = empty()
   events->Belt.Array.forEach(config => {
+    // The router tag must include the programId so two programs declaring the
+    // same discriminator coexist. The source-side lookup uses the same shape
+    // via `getSvmEventId(~programId, ~discriminator)`.
+    let routerTag = getSvmEventId(~programId=config.programId, ~discriminator=config.discriminator)
     router->addOrThrow(
-      config.id,
+      routerTag,
       config,
       ~contractName=config.contractName,
       ~eventName=config.name,

@@ -201,6 +201,28 @@ let publicConfigChainSchema = S.schema(s =>
   }
 )
 
+let svmEventDescriptorSchema = S.schema(s =>
+  {
+    "discriminator": s.matches(S.option(S.string)),
+    "discriminatorByteLen": s.matches(S.int),
+    "includeTransaction": s.matches(S.bool),
+    "includeLogs": s.matches(S.bool),
+    "accountFilters": s.matches(
+      S.option(
+        S.array(
+          S.schema(
+            s => {
+              "position": s.matches(S.int),
+              "values": s.matches(S.array(S.string)),
+            },
+          ),
+        ),
+      ),
+    ),
+    "isInner": s.matches(S.option(S.bool)),
+  }
+)
+
 let contractEventItemSchema = S.schema(s =>
   {
     "event": s.matches(S.string),
@@ -210,6 +232,7 @@ let contractEventItemSchema = S.schema(s =>
     "kind": s.matches(S.option(S.string)),
     "blockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
     "transactionFields": s.matches(S.option(S.array(Internal.evmTransactionFieldSchema))),
+    "svm": s.matches(S.option(svmEventDescriptorSchema)),
   }
 )
 
@@ -226,6 +249,10 @@ let publicConfigEcosystemSchema = S.schema(s =>
   {
     "chains": s.matches(S.dict(publicConfigChainSchema)),
     "contracts": s.matches(S.option(S.dict(contractConfigSchema))),
+    // SVM-only alias: programs are the SVM analog of EVM/Fuel contracts.
+    // Parsed via the same `contractConfigSchema` and read in `fromPublic`'s
+    // `publicContractsConfig` switch.
+    "programs": s.matches(S.option(S.dict(contractConfigSchema))),
   }
 )
 
@@ -523,10 +550,19 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => false
   }
 
-  // Parse contract configs (ABIs, events, handlers)
-  let publicContractsConfig = switch (ecosystemName, publicConfig["evm"], publicConfig["fuel"]) {
-  | (Ecosystem.Evm, Some(evm), _) => evm["contracts"]
-  | (Ecosystem.Fuel, _, Some(fuel)) => fuel["contracts"]
+  // Parse contract configs (ABIs, events, handlers).
+  // SVM stores them under `svm.programs` in the public JSON — the per-program
+  // events drive `indexer.onInstruction` registration the same way EVM/Fuel
+  // contracts drive `onEvent`.
+  let publicContractsConfig = switch (
+    ecosystemName,
+    publicConfig["evm"],
+    publicConfig["fuel"],
+    publicConfig["svm"],
+  ) {
+  | (Ecosystem.Evm, Some(evm), _, _) => evm["contracts"]
+  | (Ecosystem.Fuel, _, Some(fuel), _) => fuel["contracts"]
+  | (Ecosystem.Svm, _, _, Some(svm)) => svm["programs"]
   | _ => None
   }
 
