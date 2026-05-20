@@ -224,6 +224,32 @@ let rec componentsToRemapper = (
 
 // ============== Build paramsRawEventSchema ==============
 
+// Mirror of `componentsToSimulateSchema` for the raw-event serializer: when a
+// param has components, build an object keyed by component names (recursively
+// walking arrays of structs) so the schema shape matches what
+// `componentsToRemapper` produces at decode time.
+let rec componentsToRawEventSchema = (abiType: string, components: array<eventParamComponent>): S.t<
+  unknown,
+> => {
+  if abiType->String.endsWith("]") {
+    let bracketIdx = abiType->String.lastIndexOf("[")
+    let baseType = abiType->String.slice(~start=0, ~end=bracketIdx)
+    S.array(componentsToRawEventSchema(baseType, components))->S.toUnknown
+  } else {
+    S.object(s => {
+      let dict = Dict.make()
+      components->Array.forEach(c => {
+        let childSchema = switch c.components {
+        | Some(sub) => componentsToRawEventSchema(c.abiType, sub)
+        | None => abiTypeToSchema(c.abiType)
+        }
+        dict->Dict.set(c.name, s.field(c.name, childSchema))
+      })
+      dict
+    })->S.toUnknown
+  }
+}
+
 let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> => {
   if params->Array.length == 0 {
     S.literal(%raw(`null`))
@@ -233,7 +259,11 @@ let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> =
     S.object(s => {
       let dict = Dict.make()
       params->Array.forEach(p => {
-        dict->Dict.set(p.name, s.field(p.name, abiTypeToSchema(p.abiType)))
+        let paramSchema = switch p.components {
+        | Some(components) if !p.indexed => componentsToRawEventSchema(p.abiType, components)
+        | _ => abiTypeToSchema(p.abiType)
+        }
+        dict->Dict.set(p.name, s.field(p.name, paramSchema))
       })
       dict
     })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.eventParams>)
