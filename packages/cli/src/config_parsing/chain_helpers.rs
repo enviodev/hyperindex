@@ -155,6 +155,9 @@ pub enum Network {
     )]
     EthereumMainnet = 1,
 
+    #[subenum(HypersyncChain)]
+    Etherlink = 42793,
+
     #[subenum(NetworkWithExplorer)]
     Evmos = 9001,
 
@@ -212,6 +215,9 @@ pub enum Network {
 
     #[subenum(HypersyncChain)]
     Ink = 57073,
+
+    #[subenum(HypersyncChain)]
+    Katana = 747474,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Kroma = 255,
@@ -398,6 +404,9 @@ pub enum Network {
     #[subenum(HypersyncChain)]
     Taraxa = 841,
 
+    #[subenum(HypersyncChain)]
+    Tempo = 4217,
+
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Unichain = 130,
 
@@ -501,6 +510,7 @@ impl Network {
             | Network::Darwinia
             | Network::Evmos
             | Network::EthereumMainnet
+            | Network::Etherlink
             | Network::Fantom
             | Network::FantomTestnet
             | Network::FhenixHelium
@@ -515,6 +525,7 @@ impl Network {
             | Network::Harmony
             | Network::Holesky
             | Network::IncoGentryTestnet
+            | Network::Katana
             | Network::Kroma
             | Network::Linea
             | Network::LineaSepolia
@@ -598,7 +609,8 @@ impl Network {
             | Network::Injective
             | Network::Megaeth
             | Network::SeiTestnet
-            | Network::StatusSepolia => None,
+            | Network::StatusSepolia
+            | Network::Tempo => None,
         }
     }
 }
@@ -650,7 +662,9 @@ impl HypersyncChain {
             }
 
             Linea | Berachain | Blast | Amoy | ZksyncEra | ArbitrumNova | Avalanche | Bsc
-            | Taraxa | Plasma | Lukso | CitreaTestnet | Injective | Citrea => Bronze,
+            | Taraxa | Plasma | Lukso | CitreaTestnet | Injective | Citrea | Katana | Etherlink => {
+                Bronze
+            }
 
             Curtis | PolygonZkevm | Abstract | Zora | Unichain | Aurora | Zeta | Manta | Kroma
             | Flare | Mantle | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet | BscTestnet
@@ -659,7 +673,7 @@ impl HypersyncChain {
             | Merlin | Mode | XdcTestnet | Morph | Harmony | Saakuru | Cyber | Superseed
             | Worldchain | Sophon | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid
             | Swell | Moonbeam | Plume | Scroll | Ab | ArcTestnet | SonicTestnet | SeiTestnet
-            | Hoodi | StatusSepolia => Stone,
+            | Hoodi | StatusSepolia | Tempo => Stone,
         }
     }
 
