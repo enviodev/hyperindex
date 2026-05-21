@@ -40,6 +40,7 @@ mod test {
 #[cfg(feature = "integration_tests")]
 mod integration_tests {
     use super::{network_to_hypersync_url, HypersyncChain};
+    use crate::scripts::print_missing_networks::Diff;
     use strum::IntoEnumIterator;
 
     async fn fetch_hypersync_health(hypersync_endpoint: &str) -> anyhow::Result<bool> {
@@ -53,6 +54,20 @@ mod integration_tests {
 
     #[tokio::test]
     async fn all_supported_endpoints_are_healthy() {
+        // Iterating HypersyncChain::iter() alone only covers chains already in
+        // the enum, so chains added to the HyperSync API but missing from the
+        // enum slip through. Fail the test in that case before probing
+        // endpoints.
+        let diff = Diff::get()
+            .await
+            .expect("Failed to fetch chain diff from HyperSync API");
+        if !diff.missing_chains.is_empty() {
+            panic!(
+                "HyperSync API has chains absent from the Network enum:\n{}",
+                diff.missing_chains.join("\n")
+            );
+        }
+
         for network in HypersyncChain::iter() {
             let url = network_to_hypersync_url(&network);
             let mut last_err = None;
