@@ -1,0 +1,21 @@
+---
+source: packages/cli/src/executor/init.rs
+expression: agentic_init_prompt(true)
+---
+Welcome to Envio agentic initialization. The goal is to set up an indexer to power the user's next Blockchain Backend.
+
+  1. Prompt the user for the project intent if it is missing from context (what should the indexer track and surface?).
+  2. Determine the chain, contract, and addresses needed to produce that result. Use web search or block-explorer tool calls when the user hasn't supplied them.
+  3. To continue, call:
+
+       pnpx envio init contract-import explorer \
+         -n ${indexer-name} \
+         -c ${address} \
+         -b ${chainId} \
+         --single-contract \
+         --all-events \
+         -l typescript \
+         -d ${directory} \
+         --api-token=$ENVIO_API_TOKEN
+
+After that command finishes, run the generated `pnpm test` to confirm the indexer compiles, then hand off the project directory to the user.

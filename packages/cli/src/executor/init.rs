@@ -19,8 +19,9 @@ use crate::{
     template_dirs::TemplateDirs,
     utils::file_system,
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 
+use std::io::IsTerminal;
 use std::path::Path;
 
 pub async fn run_init_args(
@@ -29,6 +30,18 @@ pub async fn run_init_args(
     envio_package_dir: Option<&str>,
 ) -> Result<()> {
     let template_dirs = TemplateDirs::new();
+
+    // When no subcommand is given and we detect we're being driven by an AI
+    // agent (or otherwise running non-interactively), short-circuit with an
+    // agent-readable prompt instead of stalling on an `inquire` Select that
+    // can't be answered.
+    if init_args.init_commands.is_none() && is_agentic_init_mode(&AgenticEnv::from_process()) {
+        return Err(anyhow!(
+            "{}",
+            agentic_init_prompt(std::env::var("ENVIO_API_TOKEN").is_ok())
+        ));
+    }
+
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
     let init_config = prompt_missing_init_args(init_args, project_paths)
@@ -361,6 +374,88 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
     out
 }
 
+/// Inputs that decide whether `envio init` should print an agentic prompt
+/// instead of opening interactive selects. Pulled into a struct so tests can
+/// drive the logic without touching the real process env / TTY.
+struct AgenticEnv {
+    envio_tui: Option<String>,
+    stdout_is_tty: bool,
+    claudecode: bool,
+    cursor: bool,
+    aider: bool,
+}
+
+impl AgenticEnv {
+    fn from_process() -> Self {
+        Self {
+            envio_tui: std::env::var("ENVIO_TUI").ok(),
+            stdout_is_tty: std::io::stdout().is_terminal(),
+            claudecode: std::env::var("CLAUDECODE").is_ok(),
+            cursor: std::env::var("CURSOR").is_ok(),
+            aider: std::env::var("AIDER").is_ok(),
+        }
+    }
+}
+
+fn is_agentic_init_mode(env: &AgenticEnv) -> bool {
+    // Explicit user override wins in either direction.
+    match env.envio_tui.as_deref() {
+        Some("true") | Some("1") => return false,
+        Some("false") | Some("0") => return true,
+        _ => {}
+    }
+    !env.stdout_is_tty || env.claudecode || env.cursor || env.aider
+}
+
+fn agentic_init_prompt(has_api_token: bool) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    out.push_str(
+        "Welcome to Envio agentic initialization. The goal is to set up an indexer to power \
+         the user's next Blockchain Backend.\n\n",
+    );
+
+    let mut step = 1;
+    if !has_api_token {
+        let _ = writeln!(
+            out,
+            "  {step}. ENVIO_API_TOKEN is not set. Ask the user to create one at \
+             https://envio.dev/app/api-tokens and export it before continuing."
+        );
+        step += 1;
+    }
+    let _ = writeln!(
+        out,
+        "  {step}. Prompt the user for the project intent if it is missing from context \
+         (what should the indexer track and surface?)."
+    );
+    step += 1;
+    let _ = writeln!(
+        out,
+        "  {step}. Determine the chain, contract, and addresses needed to produce that result. \
+         Use web search or block-explorer tool calls when the user hasn't supplied them."
+    );
+    step += 1;
+    let _ = writeln!(out, "  {step}. To continue, call:");
+    out.push('\n');
+    out.push_str("       pnpx envio init contract-import explorer \\\n");
+    out.push_str("         -n ${indexer-name} \\\n");
+    out.push_str("         -c ${address} \\\n");
+    out.push_str("         -b ${chainId} \\\n");
+    out.push_str("         --single-contract \\\n");
+    out.push_str("         --all-events \\\n");
+    out.push_str("         -l typescript \\\n");
+    out.push_str("         -d ${directory} \\\n");
+    out.push_str("         --api-token=$ENVIO_API_TOKEN\n");
+    out.push('\n');
+    out.push_str(
+        "After that command finishes, run the generated `pnpm test` to confirm the indexer \
+         compiles, then hand off the project directory to the user.\n",
+    );
+    out
+}
+
 /// Leave alphanumeric paths unquoted; single-quote anything containing chars
 /// the shell would interpret (spaces, `$`, backticks, `&`, `;`, etc.) so the
 /// printed `cd <path>` is safe to paste. Folder name validation rejects `'`,
@@ -413,5 +508,77 @@ mod tests {
     #[test]
     fn next_steps_in_current_dir_alias() {
         insta::assert_snapshot!(next_steps_message(Path::new("./"), PackageManager::Npm));
+    }
+
+    fn env(
+        envio_tui: Option<&str>,
+        stdout_is_tty: bool,
+        claudecode: bool,
+        cursor: bool,
+        aider: bool,
+    ) -> AgenticEnv {
+        AgenticEnv {
+            envio_tui: envio_tui.map(str::to_string),
+            stdout_is_tty,
+            claudecode,
+            cursor,
+            aider,
+        }
+    }
+
+    #[test]
+    fn agentic_mode_detection_matrix() {
+        let cases = vec![
+            (
+                "plain interactive tty",
+                env(None, true, false, false, false),
+                false,
+            ),
+            ("piped stdout", env(None, false, false, false, false), true),
+            ("claudecode set", env(None, true, true, false, false), true),
+            ("cursor set", env(None, true, false, true, false), true),
+            ("aider set", env(None, true, false, false, true), true),
+            (
+                "envio_tui=false overrides tty",
+                env(Some("false"), true, false, false, false),
+                true,
+            ),
+            (
+                "envio_tui=true overrides agent",
+                env(Some("true"), false, true, false, false),
+                false,
+            ),
+            (
+                "envio_tui=1 forces interactive",
+                env(Some("1"), false, true, false, false),
+                false,
+            ),
+            (
+                "envio_tui=0 forces agentic",
+                env(Some("0"), true, false, false, false),
+                true,
+            ),
+        ];
+
+        let report: String = cases
+            .into_iter()
+            .map(|(label, env, expected)| {
+                let got = is_agentic_init_mode(&env);
+                assert_eq!(got, expected, "case {label}");
+                format!("{label}: {got}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        insta::assert_snapshot!(report);
+    }
+
+    #[test]
+    fn agentic_prompt_without_api_token() {
+        insta::assert_snapshot!(agentic_init_prompt(false));
+    }
+
+    #[test]
+    fn agentic_prompt_with_api_token() {
+        insta::assert_snapshot!(agentic_init_prompt(true));
     }
 }
