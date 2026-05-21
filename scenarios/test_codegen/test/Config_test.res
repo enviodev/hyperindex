@@ -324,6 +324,20 @@ describe("EventConfigBuilder", () => {
 
       let decoded = decoder(mockDecodedEvent)
 
+      t.expect(decoded).toEqual(
+        {
+          "deployer": "0xdeployer",
+          "vehicle": "0xvehicle",
+          "params": {
+            "asset": "0xasset",
+            "poolAddressesProvider": "0xpap",
+            "forbiddenAddresses": ["0xforbidden1", "0xforbidden2"],
+            "initialExpectedSupply": 1000n,
+            "registry": "0xregistry",
+          },
+        }->(Utils.magic: {..} => Internal.eventParams),
+      )
+
       let json = decoded->S.reverseConvertToJsonOrThrow(schema)
 
       t.expect(json).toEqual(
