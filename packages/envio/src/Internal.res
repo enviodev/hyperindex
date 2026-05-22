@@ -432,6 +432,16 @@ type svmInstructionEventConfig = {
   accountFilters: array<svmAccountFilter>,
   /** `None` matches both outer and inner (CPI-invoked) instructions. */
   isInner: option<bool>,
+  /** Positional account names from the Borsh schema, in declared order.
+   `[]` means no schema is attached for this instruction. */
+  accounts: array<string>,
+  /** Borsh args layout as `Vec<ArgDef>` JSON (see `human_config::svm::ArgDef`
+   on the Rust side). `JSON.Null` means no schema is attached. */
+  args: JSON.t,
+  /** Program-level nominal-type registry (`BTreeMap<String, ArgType>` JSON).
+   Duplicated on every event of the same program — the runtime dedups by
+   `programId` when registering. `JSON.Null` when empty. */
+  definedTypes: JSON.t,
 }
 
 type svmProgramConfig = {

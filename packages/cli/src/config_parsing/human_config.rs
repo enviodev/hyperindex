@@ -907,6 +907,14 @@ pub mod svm {
                            the src directory."
         )]
         pub handler: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON \
+                           file. When present, codegen parses the IDL and derives \
+                           `accounts`/`args` for every named instruction. Mutually \
+                           exclusive with per-instruction `accounts`/`args` overrides."
+        )]
+        pub idl: Option<String>,
         #[schemars(description = "A list of instructions that should be indexed on this program.")]
         pub instructions: Vec<Instruction>,
     }
@@ -948,6 +956,110 @@ pub mod svm {
             description = "When true, also fetch program logs for each matched instruction."
         )]
         pub include_logs: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional positional account names. The Nth entry names \
+                           account slot N on the dispatched instruction; surfaces as \
+                           `event.instruction.decoded.accounts.<name>`. Accounts beyond \
+                           the named list become `extra_accounts`."
+        )]
+        pub accounts: Option<Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional Borsh argument schema. Each entry names one arg and \
+                           gives its type; the decoder walks the instruction data after \
+                           the discriminator in declared order. Mutually exclusive with \
+                           the program-level `idl` field."
+        )]
+        pub args: Option<Vec<ArgDef>>,
+    }
+
+    /// One named argument of an instruction. Mirrors
+    /// `hypersync_client_solana::decode::NamedField`.
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct ArgDef {
+        #[schemars(description = "Field name as it appears on the decoded args object.")]
+        pub name: String,
+        #[serde(rename = "type")]
+        #[schemars(description = "Borsh type of this field.")]
+        pub ty: ArgType,
+    }
+
+    /// User-facing Borsh type grammar. Mirrors
+    /// `hypersync_client_solana::decode::FieldType`. The YAML accepts either:
+    /// - A bare string for primitives (`"u64"`, `"pubkey"`, `"bool"`, ...).
+    /// - A tagged object for composites (`{ vec: u8 }`, `{ option: pubkey }`,
+    ///   `{ array: [u8, 32] }`, `{ defined: "DataV2" }`).
+    /// - An object with `kind: struct` or `kind: enum` for nominal types
+    ///   declared inline on this field. Most users will use `defined` and
+    ///   declare the nominal types under the program's `types:` block (Anchor
+    ///   IDL shape) once that lands; for now inline `struct` / `enum` is the
+    ///   only way to express nominal shapes ad-hoc.
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum ArgType {
+        Primitive(ArgPrimitive),
+        Composite(ArgComposite),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(rename_all = "lowercase")]
+    pub enum ArgPrimitive {
+        Bool,
+        U8,
+        U16,
+        U32,
+        U64,
+        U128,
+        I8,
+        I16,
+        I32,
+        I64,
+        I128,
+        F32,
+        F64,
+        String,
+        Bytes,
+        Pubkey,
+        #[serde(rename = "publicKey")]
+        PublicKey,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub enum ArgComposite {
+        #[serde(rename = "option")]
+        Option(Box<ArgType>),
+        #[serde(rename = "vec")]
+        Vec(Box<ArgType>),
+        /// `[ <element type>, <length> ]` — same shape Anchor IDLs use.
+        #[serde(rename = "array")]
+        Array(Box<ArgType>, usize),
+        /// Reference to a nominal type defined in the program-level
+        /// `defined_types` registry (populated from an Anchor IDL `types:`
+        /// block or the bundled-Metaplex registry).
+        #[serde(rename = "defined")]
+        Defined(String),
+        /// Inline-or-registry struct. Used as a nominal type definition in
+        /// the `defined_types` registry; rarely seen at the field level.
+        #[serde(rename = "struct")]
+        Struct(Vec<ArgDef>),
+        /// Inline-or-registry enum. Same role as `Struct`: a nominal type
+        /// definition in the `defined_types` registry.
+        #[serde(rename = "enum")]
+        Enum(Vec<ArgEnumVariant>),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct ArgEnumVariant {
+        pub name: String,
+        /// `None` for unit variants; `Some([])` for struct variants with no
+        /// fields. The Borsh wire format is identical in both cases (the
+        /// 1-byte tag), but the distinction is preserved for round-tripping.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub fields: Option<Vec<ArgDef>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -1495,6 +1607,7 @@ chains:
                     name: "TokenMetadata".to_string(),
                     program_id: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
                     handler: None,
+                    idl: None,
                     instructions: vec![
                         Instruction {
                             name: "CreateMetadataAccountV3".to_string(),
@@ -1503,6 +1616,8 @@ chains:
                             account_filters: None,
                             include_transaction: None,
                             include_logs: None,
+                            accounts: None,
+                            args: None,
                         },
                         Instruction {
                             name: "UpdateMetadataAccountV2".to_string(),
@@ -1516,6 +1631,8 @@ chains:
                             }]),
                             include_transaction: Some(true),
                             include_logs: Some(false),
+                            accounts: None,
+                            args: None,
                         },
                     ],
                 }

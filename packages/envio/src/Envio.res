@@ -20,6 +20,25 @@ type svmOnSlotArgs<'context> = {
   context: 'context,
 }
 
+/** Borsh-decoded instruction view. Present whenever a `ProgramSchema` was
+ attached to the program (bundled schema, Anchor IDL, or hand-written YAML
+ `accounts`/`args`). Absent (`None`) when no schema applied or the
+ discriminator didn't match any registered instruction. */
+type svmDecodedInstruction = {
+  /** Schema-declared instruction name (matches the codegen module suffix). */
+  name: string,
+  /** Borsh-decoded args. `JSON.Object({})` for no-arg instructions
+   (e.g. `VerifyCollection`). POC types this as raw `JSON.t`; cast at the
+   handler with `(json :> MyArgsType)` until typed codegen lands. */
+  args: JSON.t,
+  /** Named accounts in schema order. Keys are exactly the schema-declared
+   names; values are base58 pubkey strings. */
+  accounts: dict<string>,
+  /** Accounts beyond the schema's named list (Anchor `remaining_accounts`,
+   IDL drift). `[]` when counts match. */
+  extraAccounts: array<string>,
+}
+
 type svmInstruction = {
   programId: SvmTypes.Pubkey.t,
   /** Raw instruction bytes as `0x`-prefixed hex. */
@@ -35,6 +54,8 @@ type svmInstruction = {
   d2?: string,
   d4?: string,
   d8?: string,
+  /** Borsh-decoded view. See [[svmDecodedInstruction]]. */
+  decoded?: svmDecodedInstruction,
 }
 
 type svmTransaction = {

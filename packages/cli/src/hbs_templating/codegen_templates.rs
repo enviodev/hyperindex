@@ -683,7 +683,7 @@ impl ContractTemplate {
                 )
             }
             // Solana programs ship no ABI artifact today.
-            Abi::Svm => String::new(),
+            Abi::Svm(_) => String::new(),
         };
 
         Ok(ContractTemplate {

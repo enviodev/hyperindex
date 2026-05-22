@@ -399,6 +399,9 @@ let buildSvmInstructionEventConfig = (
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
+  ~accounts: array<string>=[],
+  ~args: JSON.t=JSON.Null,
+  ~definedTypes: JSON.t=JSON.Null,
   ~startBlock: option<int>=?,
 ): Internal.svmInstructionEventConfig => {
   let paramsSchema =
@@ -427,6 +430,9 @@ let buildSvmInstructionEventConfig = (
     includeLogs,
     accountFilters,
     isInner,
+    accounts,
+    args,
+    definedTypes,
   }
 }
 

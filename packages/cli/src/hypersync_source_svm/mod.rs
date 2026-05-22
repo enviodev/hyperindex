@@ -3,9 +3,30 @@ use std::sync::Arc;
 use anyhow::Context;
 use napi_derive::napi;
 
+mod borsh_decoder;
 mod config;
 mod query;
 mod types;
+
+/// Local hex helpers. Lives here so `decoder.rs` can pull them via
+/// `super::mod_helpers::hex_to_bytes` without crossing the crate boundary
+/// and without exposing a public hex parser at the napi surface.
+pub(crate) mod mod_helpers {
+    use anyhow::{anyhow, Result};
+    pub fn hex_to_bytes(input: &str) -> Result<Vec<u8>> {
+        let s = input.strip_prefix("0x").unwrap_or(input);
+        if !s.len().is_multiple_of(2) {
+            return Err(anyhow!("hex string has odd length: '{input}'"));
+        }
+        (0..s.len())
+            .step_by(2)
+            .map(|i| {
+                u8::from_str_radix(&s[i..i + 2], 16)
+                    .map_err(|_| anyhow!("invalid hex byte at offset {i} in '{input}'"))
+            })
+            .collect()
+    }
+}
 
 use config::SolanaClientConfig;
 use query::SolanaQuery;
