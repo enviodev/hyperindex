@@ -44,7 +44,14 @@ itertools = "0.11.0"
 colored = "2.0.4"
 thiserror = "1.0.50"
 fuel-abi-types = "0.7.0"
-schemars = { version = "=1.0.0-alpha.2", features = ["preserve_order"] }
+hypersync-client = "1.1.4"
+hypersync-client-solana = "0.0.3-rc.1"
+hypersync-solana-net-types = "0.0.3-rc.1"
+faster-hex = "0.9"
+ruint = "1"
+env_logger = "0.11"
+arrayvec = "0.7"
+schemars = { version = "1.2", features = ["preserve_order"] }
 convert_case = "0.6.0"
 dotenvy = { git = "https://github.com/enviodev/dotenvy", rev = "e2da110668572cf2d67178f192eb1fc285224040" }
 bollard = "0.20"

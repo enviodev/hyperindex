@@ -1,8 +1,11 @@
 use super::{
     entity_parsing::IndexFieldDirection,
     field_types,
-    human_config::evm::For,
-    system_config::{self, Abi, Ecosystem, EventKind, FuelEventKind, SystemConfig},
+    human_config::{self, evm::For},
+    system_config::{
+        self, field_type_to_arg_type, named_field_to_arg_def, Abi, Ecosystem, EventKind,
+        FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
+    },
 };
 use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
 use anyhow::Result;
@@ -44,7 +47,7 @@ pub(crate) struct PublicConfigJson<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     fuel: Option<FuelConfig<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    svm: Option<SvmConfig>,
+    svm: Option<SvmConfig<'a>>,
     enums: BTreeMap<String, Vec<String>>,
     entities: Vec<EntityJson>,
 }
@@ -154,8 +157,17 @@ struct FuelConfig<'a> {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct SvmConfig {
+struct SvmConfig<'a> {
     chains: BTreeMap<String, ChainConfig>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    programs: BTreeMap<&'a str, ContractConfig>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SvmAccountFilterJson {
+    position: u8,
+    values: Vec<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -284,6 +296,46 @@ struct ContractEventItem {
     block_fields: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     transaction_fields: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    svm: Option<SvmEventItem>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SvmEventItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    discriminator: Option<String>,
+    discriminator_byte_len: u8,
+    include_transaction: bool,
+    include_logs: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    account_filters: Vec<SvmAccountFilterJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    is_inner: Option<bool>,
+    /// Positional account names, in the order the on-chain program expects.
+    /// `[]` means the runtime won't expose `decoded.accounts.<name>`; the
+    /// raw `instruction.accounts[i]` array is still available.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    accounts: Vec<String>,
+    /// Borsh args layout. `[]` means the runtime won't expose
+    /// `decoded.args`; the raw `instruction.data` hex is still available.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    args: Vec<human_config::svm::ArgDef>,
+}
+
+/// Program-level Borsh schema metadata. Emitted onto `ContractConfig.svm_abi`
+/// when at least one instruction in the program has a resolved schema.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SvmAbiJson {
+    program_id: String,
+    /// Nominal-type registry referenced by `ArgComposite::Defined`. The
+    /// runtime resolves these once per program at startup.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    defined_types: std::collections::BTreeMap<String, human_config::svm::ArgType>,
+    /// `"anchorIdl"`, `"bundled"`, or `"inline"`. Carried for diagnostics; the
+    /// runtime treats all three identically.
+    source: &'static str,
 }
 
 #[derive(Serialize, Debug)]
@@ -294,6 +346,8 @@ struct ContractConfig {
     handler: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     events: Vec<ContractEventItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    svm_abi: Option<SvmAbiJson>,
 }
 
 fn chain_id_to_name(chain_id: u64, ecosystem: &Ecosystem) -> String {
@@ -353,7 +407,10 @@ impl SystemConfig {
                     system_config::DataSource::Fuel {
                         hypersync_endpoint_url,
                     } => (Some(hypersync_endpoint_url.clone()), vec![], None),
-                    system_config::DataSource::Svm { rpc } => (None, vec![], Some(rpc.clone())),
+                    system_config::DataSource::Svm {
+                        rpc,
+                        hypersync_endpoint_url,
+                    } => (hypersync_endpoint_url.clone(), vec![], Some(rpc.clone())),
                 };
 
                 let chain_contracts: BTreeMap<String, ChainContractConfig> = network
@@ -392,19 +449,25 @@ impl SystemConfig {
             cfg.contracts
                 .values()
                 .map(|contract| -> Result<(&str, ContractConfig)> {
-                    let abi_str = match &contract.abi {
-                        Abi::Evm(abi) => &abi.raw,
-                        Abi::Fuel(abi) => &abi.raw,
+                    let abi_raw = match &contract.abi {
+                        Abi::Evm(abi) => {
+                            let abi_value: serde_json::Value = serde_json::from_str(&abi.raw)?;
+                            let abi_compact = serde_json::to_string(&abi_value)?;
+                            serde_json::value::RawValue::from_string(abi_compact)?
+                        }
+                        Abi::Fuel(abi) => {
+                            let abi_value: serde_json::Value = serde_json::from_str(&abi.raw)?;
+                            let abi_compact = serde_json::to_string(&abi_value)?;
+                            serde_json::value::RawValue::from_string(abi_compact)?
+                        }
+                        Abi::Svm(_) => serde_json::value::RawValue::from_string("null".into())?,
                     };
-                    let abi_value: serde_json::Value = serde_json::from_str(abi_str)?;
-                    let abi_compact = serde_json::to_string(&abi_value)?;
-                    let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
 
                     let events: Vec<ContractEventItem> = contract
                         .events
                         .iter()
                         .map(|e| {
-                            let (params, kind) = match &e.kind {
+                            let (params, kind, svm) = match &e.kind {
                                 EventKind::Params(event_params) => {
                                     let params = event_params
                                         .iter()
@@ -424,7 +487,7 @@ impl SystemConfig {
                                             },
                                         })
                                         .collect();
-                                    (params, None)
+                                    (params, None, None)
                                 }
                                 EventKind::Fuel(fuel_kind) => {
                                     let kind_str = match fuel_kind {
@@ -434,7 +497,31 @@ impl SystemConfig {
                                         FuelEventKind::Transfer => "transfer",
                                         FuelEventKind::Call => "call",
                                     };
-                                    (vec![], Some(kind_str.to_string()))
+                                    (vec![], Some(kind_str.to_string()), None)
+                                }
+                                EventKind::Svm(svm_kind) => {
+                                    let svm_item = SvmEventItem {
+                                        discriminator: svm_kind.discriminator.clone(),
+                                        discriminator_byte_len: svm_kind.discriminator_byte_len,
+                                        include_transaction: svm_kind.include_transaction,
+                                        include_logs: svm_kind.include_logs,
+                                        account_filters: svm_kind
+                                            .account_filters
+                                            .iter()
+                                            .map(|af| SvmAccountFilterJson {
+                                                position: af.position,
+                                                values: af.values.clone(),
+                                            })
+                                            .collect(),
+                                        is_inner: svm_kind.is_inner,
+                                        accounts: svm_kind.accounts.clone(),
+                                        args: svm_kind
+                                            .args
+                                            .iter()
+                                            .map(named_field_to_arg_def)
+                                            .collect(),
+                                    };
+                                    (vec![], Some("svmInstruction".to_string()), Some(svm_item))
                                 }
                             };
                             ContractEventItem {
@@ -452,15 +539,37 @@ impl SystemConfig {
                                         .map(|f| f.name.clone())
                                         .collect()
                                 }),
+                                svm,
                             }
                         })
                         .collect();
+                    let svm_abi = match &contract.abi {
+                        Abi::Svm(SvmAbi {
+                            program_id,
+                            defined_types,
+                            source,
+                        }) => Some(SvmAbiJson {
+                            program_id: program_id.clone(),
+                            defined_types: defined_types
+                                .iter()
+                                .map(|(name, ty)| (name.clone(), field_type_to_arg_type(ty)))
+                                .collect(),
+                            source: match source {
+                                SvmSchemaSource::AnchorIdl { .. } => "anchorIdl",
+                                SvmSchemaSource::Bundled { .. } => "bundled",
+                                SvmSchemaSource::Inline => "inline",
+                            },
+                        }),
+                        _ => None,
+                    };
+
                     Ok((
                         contract.name.as_str(),
                         ContractConfig {
                             abi: abi_raw,
                             handler: contract.handler_path.clone(),
                             events,
+                            svm_abi,
                         },
                     ))
                 })
@@ -494,7 +603,14 @@ impl SystemConfig {
                 None,
             ),
             Ecosystem::Fuel => (None, Some(FuelConfig { chains, contracts }), None),
-            Ecosystem::Svm => (None, None, Some(SvmConfig { chains })),
+            Ecosystem::Svm => (
+                None,
+                None,
+                Some(SvmConfig {
+                    chains,
+                    programs: contracts,
+                }),
+            ),
         };
 
         // Build multichain value

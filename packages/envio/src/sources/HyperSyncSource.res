@@ -192,18 +192,15 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     switch hscDecoder.contents {
     | Some(decoder) => decoder
     | None =>
-      switch HyperSyncClient.Decoder.fromSignatures(allEventSignatures) {
+      switch HyperSyncClient.Decoder.fromSignatures(
+        allEventSignatures,
+        ~checksumAddresses=!lowercaseAddresses,
+      ) {
       | exception exn =>
         exn->ErrorHandling.mkLogAndRaise(
           ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI",
         )
-      | decoder =>
-        if lowercaseAddresses {
-          decoder.disableChecksummedAddresses()
-        } else {
-          decoder.enableChecksummedAddresses()
-        }
-        decoder
+      | decoder => decoder
       }
     }
   }

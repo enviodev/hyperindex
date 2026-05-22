@@ -21,7 +21,7 @@ impl<T: Clone + JsonSchema> JsonSchema for SingleOrList<T> {
         })
     }
 
-    fn always_inline_schema() -> bool {
+    fn inline_schema() -> bool {
         true
     }
 }
@@ -841,15 +841,26 @@ pub mod svm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
+    pub struct HypersyncConfig {
+        #[schemars(
+            description = "URL of the HyperSync endpoint (default: the public Solana HyperSync \
+                           endpoint at https://solana.hypersync.xyz)"
+        )]
+        pub url: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Chain {
-        // #[schemars(
-        //     description = "The cluster's genesis hash used to identify the Svm blockchain."
-        // )]
-        // pub id: String,
         #[schemars(
             description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data."
         )]
         pub rpc: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional HyperSync Config for fetching historical instructions."
+        )]
+        pub hypersync_config: Option<HypersyncConfig>,
         #[schemars(
             description = "The slot number at which the indexer should start ingesting data"
         )]
@@ -863,6 +874,189 @@ pub mod svm {
                            Useful for avoiding reorg issues by indexing slightly behind the tip."
         )]
         pub block_lag: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Solana programs to index on this chain.")]
+        pub programs: Option<Vec<Program>>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Program {
+        #[schemars(
+            description = "A unique project-wide name for this program (used in generated code)."
+        )]
+        pub name: String,
+        #[schemars(description = "Base58-encoded program id (32 bytes).")]
+        pub program_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional relative path to a file where handlers are registered for \
+                           the given program. If not provided, handlers can be auto-loaded from \
+                           the src directory."
+        )]
+        pub handler: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON \
+                           file. When present, codegen parses the IDL and derives \
+                           `accounts`/`args` for every named instruction. Mutually \
+                           exclusive with per-instruction `accounts`/`args` overrides."
+        )]
+        pub idl: Option<String>,
+        #[schemars(description = "A list of instructions that should be indexed on this program.")]
+        pub instructions: Vec<Instruction>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Instruction {
+        #[schemars(
+            description = "Name of the instruction in the HyperIndex generated code. Should be \
+                           unique per program."
+        )]
+        pub name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Hex-encoded instruction-data prefix used as the discriminator \
+                           (\"0x\" optional). Must be 1, 2, 4, or 8 bytes after decoding. \
+                           An 8-byte value matches the standard Anchor discriminator."
+        )]
+        pub discriminator: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Filter on inner-vs-outer instructions. None / absent matches both."
+        )]
+        pub is_inner: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional positional account filters. Each entry pins a particular \
+                           account position (0..=9) to one of a set of base58 pubkeys."
+        )]
+        pub account_filters: Option<Vec<AccountFilter>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "When true, also fetch the parent transaction for each matched \
+                           instruction. Defaults to true so handlers can read tx signatures."
+        )]
+        pub include_transaction: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "When true, also fetch program logs for each matched instruction."
+        )]
+        pub include_logs: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional positional account names. The Nth entry names \
+                           account slot N on the dispatched instruction; surfaces as \
+                           `event.instruction.decoded.accounts.<name>`. Accounts beyond \
+                           the named list become `extra_accounts`."
+        )]
+        pub accounts: Option<Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional Borsh argument schema. Each entry names one arg and \
+                           gives its type; the decoder walks the instruction data after \
+                           the discriminator in declared order. Mutually exclusive with \
+                           the program-level `idl` field."
+        )]
+        pub args: Option<Vec<ArgDef>>,
+    }
+
+    /// One named argument of an instruction. Mirrors
+    /// `hypersync_client_solana::decode::NamedField`.
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct ArgDef {
+        #[schemars(description = "Field name as it appears on the decoded args object.")]
+        pub name: String,
+        #[serde(rename = "type")]
+        #[schemars(description = "Borsh type of this field.")]
+        pub ty: ArgType,
+    }
+
+    /// User-facing Borsh type grammar. Mirrors
+    /// `hypersync_client_solana::decode::FieldType`. The YAML accepts either:
+    /// - A bare string for primitives (`"u64"`, `"pubkey"`, `"bool"`, ...).
+    /// - A tagged object for composites (`{ vec: u8 }`, `{ option: pubkey }`,
+    ///   `{ array: [u8, 32] }`, `{ defined: "DataV2" }`).
+    /// - An object with `kind: struct` or `kind: enum` for nominal types
+    ///   declared inline on this field. Most users will use `defined` and
+    ///   declare the nominal types under the program's `types:` block (Anchor
+    ///   IDL shape) once that lands; for now inline `struct` / `enum` is the
+    ///   only way to express nominal shapes ad-hoc.
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum ArgType {
+        Primitive(ArgPrimitive),
+        Composite(ArgComposite),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(rename_all = "lowercase")]
+    pub enum ArgPrimitive {
+        Bool,
+        U8,
+        U16,
+        U32,
+        U64,
+        U128,
+        I8,
+        I16,
+        I32,
+        I64,
+        I128,
+        F32,
+        F64,
+        String,
+        Bytes,
+        Pubkey,
+        #[serde(rename = "publicKey")]
+        PublicKey,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub enum ArgComposite {
+        #[serde(rename = "option")]
+        Option(Box<ArgType>),
+        #[serde(rename = "vec")]
+        Vec(Box<ArgType>),
+        /// `[ <element type>, <length> ]` — same shape Anchor IDLs use.
+        #[serde(rename = "array")]
+        Array(Box<ArgType>, usize),
+        /// Reference to a nominal type defined in the program-level
+        /// `defined_types` registry (populated from an Anchor IDL `types:`
+        /// block or the bundled-Metaplex registry).
+        #[serde(rename = "defined")]
+        Defined(String),
+        /// Inline-or-registry struct. Used as a nominal type definition in
+        /// the `defined_types` registry; rarely seen at the field level.
+        #[serde(rename = "struct")]
+        Struct(Vec<ArgDef>),
+        /// Inline-or-registry enum. Same role as `Struct`: a nominal type
+        /// definition in the `defined_types` registry.
+        #[serde(rename = "enum")]
+        Enum(Vec<ArgEnumVariant>),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct ArgEnumVariant {
+        pub name: String,
+        /// `None` for unit variants; `Some([])` for struct variants with no
+        /// fields. The Borsh wire format is identical in both cases (the
+        /// 1-byte tag), but the distinction is preserved for round-tripping.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub fields: Option<Vec<ArgDef>>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct AccountFilter {
+        #[schemars(description = "Account position within the instruction (0..=9).")]
+        pub position: u8,
+        #[schemars(description = "Allowed base58 pubkeys for this account position.")]
+        pub values: Vec<String>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -1352,5 +1546,100 @@ chains:
             },
             de
         );
+    }
+
+    mod svm_yaml {
+        use crate::config_parsing::human_config::svm::*;
+        use pretty_assertions::assert_eq;
+
+        const METAPLEX_YAML: &str = r#"
+name: metaplex-token-metadata
+ecosystem: svm
+chains:
+  - rpc: https://api.mainnet-beta.solana.com
+    hypersync_config:
+      url: https://solana.hypersync.xyz
+    start_block: 200000000
+    programs:
+      - name: TokenMetadata
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        instructions:
+          - name: CreateMetadataAccountV3
+            discriminator: "0x21"
+          - name: UpdateMetadataAccountV2
+            discriminator: "0x0f"
+            account_filters:
+              - position: 0
+                values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+            include_transaction: true
+            include_logs: false
+"#;
+
+        #[test]
+        fn deserialize_metaplex_yaml() {
+            let cfg: HumanConfig = serde_yaml::from_str(METAPLEX_YAML).unwrap();
+            assert_eq!(cfg.chains.len(), 1);
+            let chain = &cfg.chains[0];
+            assert_eq!(
+                chain.hypersync_config.as_ref().map(|h| h.url.as_str()),
+                Some("https://solana.hypersync.xyz")
+            );
+            let programs = chain.programs.as_ref().unwrap();
+            assert_eq!(programs.len(), 1);
+            let program = &programs[0];
+            assert_eq!(
+                program,
+                &Program {
+                    name: "TokenMetadata".to_string(),
+                    program_id: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
+                    handler: None,
+                    idl: None,
+                    instructions: vec![
+                        Instruction {
+                            name: "CreateMetadataAccountV3".to_string(),
+                            discriminator: Some("0x21".to_string()),
+                            is_inner: None,
+                            account_filters: None,
+                            include_transaction: None,
+                            include_logs: None,
+                            accounts: None,
+                            args: None,
+                        },
+                        Instruction {
+                            name: "UpdateMetadataAccountV2".to_string(),
+                            discriminator: Some("0x0f".to_string()),
+                            is_inner: None,
+                            account_filters: Some(vec![AccountFilter {
+                                position: 0,
+                                values: vec![
+                                    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
+                                ],
+                            }]),
+                            include_transaction: Some(true),
+                            include_logs: Some(false),
+                            accounts: None,
+                            args: None,
+                        },
+                    ],
+                }
+            );
+        }
+
+        #[test]
+        fn rejects_unknown_fields() {
+            let bad = r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: r
+    start_block: 1
+    programs:
+      - name: P
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        bogus_extra: true
+        instructions: []
+"#;
+            assert!(serde_yaml::from_str::<HumanConfig>(bad).is_err());
+        }
     }
 }

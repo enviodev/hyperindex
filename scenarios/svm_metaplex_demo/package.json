@@ -1,0 +1,24 @@
+{
+  "name": "svm_metaplex_demo",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "codegen": "envio codegen",
+    "dev": "envio dev",
+    "start": "envio start",
+    "test": "vitest run",
+    "docker-up": "envio local docker up",
+    "docker-down": "envio local docker down"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.0"
+  },
+  "dependencies": {
+    "envio": "file:../../packages/envio"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

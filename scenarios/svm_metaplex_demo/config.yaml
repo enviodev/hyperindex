@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=../../packages/envio/svm.schema.json
+name: svm-metaplex-demo
+description: |
+  HyperIndex Stage 4 demo. Indexes Metaplex Token Metadata
+  `CreateMetadataAccountV3` and `UpdateMetadataAccountV2` instructions on
+  Solana mainnet via HyperSync.
+ecosystem: svm
+chains:
+  - rpc: https://api.mainnet-beta.solana.com
+    hypersync_config:
+      url: https://solana.hypersync.xyz
+    # Adjust this just before the demo: pick a slot ~30-60k below current
+    # mainnet height for a quick backfill (~30s) followed by live tailing.
+    # Query current height with:
+    #   cargo run --example script ... or `curl https://solana.hypersync.xyz/height`.
+    start_block: 417995000
+    programs:
+      - name: TokenMetadata
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        handler: ./src/handlers/TokenMetadataHandlers.ts
+        instructions:
+          - name: CreateMetadataAccountV3
+            discriminator: "0x21"
+            include_transaction: true
+          - name: UpdateMetadataAccountV2
+            discriminator: "0x0f"
+            include_transaction: true
