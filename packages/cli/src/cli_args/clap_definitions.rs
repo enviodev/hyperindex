@@ -65,7 +65,7 @@ pub enum CommandType {
     #[command(subcommand)]
     Skills(SkillsSubcommand),
 
-    ///Query Envio documentation from the command line (subcommands: `search-docs`, `fetch-docs`)
+    ///Read-only queries for AI agents. `search-docs <query>`: full-text search over Envio docs, returns titles+URLs+snippets. `fetch-docs <url>`: full page markdown for a search hit.
     #[command(subcommand)]
     Tools(ToolsSubcommand),
 
@@ -86,9 +86,9 @@ pub enum ConfigSubcommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ToolsSubcommand {
-    ///Full-text search across the Envio documentation
+    ///Full-text search over Envio docs; prints matching titles, URLs, and snippets. Pair with `fetch-docs` to read a hit in full.
     SearchDocs(SearchDocsArgs),
-    ///Fetch the full markdown content of a documentation page
+    ///Print the full markdown of a docs page by URL. Use a URL returned by `search-docs`.
     FetchDocs(FetchDocsArgs),
 }
 
