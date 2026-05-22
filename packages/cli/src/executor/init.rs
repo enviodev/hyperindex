@@ -388,12 +388,16 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
 /// Inputs that decide whether `envio init` should print an agentic prompt
 /// instead of opening interactive selects. Pulled into a struct so tests can
 /// drive the logic without touching the real process env / TTY.
+///
+/// Mirrors the predicate `Envio.isNonInteractive` in
+/// `packages/envio/src/Envio.res` so a project picks up the same TUI/agent
+/// classification at init time as it will at runtime.
 struct AgenticEnv {
     envio_tui: Option<String>,
     stdout_is_tty: bool,
     claudecode: bool,
-    cursor: bool,
-    aider: bool,
+    ci: bool,
+    term: Option<String>,
 }
 
 impl AgenticEnv {
@@ -402,20 +406,21 @@ impl AgenticEnv {
             envio_tui: std::env::var("ENVIO_TUI").ok(),
             stdout_is_tty: std::io::stdout().is_terminal(),
             claudecode: std::env::var("CLAUDECODE").is_ok(),
-            cursor: std::env::var("CURSOR").is_ok(),
-            aider: std::env::var("AIDER").is_ok(),
+            ci: std::env::var("CI").is_ok(),
+            term: std::env::var("TERM").ok(),
         }
     }
 }
 
 fn is_agentic_init_mode(env: &AgenticEnv) -> bool {
-    // Explicit user override wins in either direction.
+    // ENVIO_TUI mirrors the runtime override in `Main.res`: an explicit value
+    // wins in either direction.
     match env.envio_tui.as_deref() {
         Some("true") | Some("1") => return false,
         Some("false") | Some("0") => return true,
         _ => {}
     }
-    !env.stdout_is_tty || env.claudecode || env.cursor || env.aider
+    !env.stdout_is_tty || env.claudecode || env.ci || env.term.as_deref() == Some("dumb")
 }
 
 fn agentic_init_prompt(has_api_token: bool) -> String {
@@ -423,9 +428,10 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
 
     let mut out = String::new();
     out.push_str(
-        "Welcome to Envio agentic initialization. The goal is to set up an indexer to power \
-         the user's next Blockchain Backend.\n\n",
+        "Welcome to Envio Indexer! Let's set up an indexer that will become a reliable \
+         blockchain backend you trust, love, and own.\n\n",
     );
+    out.push_str("Leave the rest to your favorite agent:\n\n");
 
     let mut step = 1;
     if !has_api_token {
@@ -461,8 +467,9 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
     out.push_str("         --api-token=$ENVIO_API_TOKEN\n");
     out.push('\n');
     out.push_str(
-        "After that command finishes, run the generated `pnpm test` to confirm the indexer \
-         compiles, then hand off the project directory to the user.\n",
+        "Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep \
+         iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until \
+         the user's goal is met.\n",
     );
     out
 }
@@ -525,15 +532,15 @@ mod tests {
         envio_tui: Option<&str>,
         stdout_is_tty: bool,
         claudecode: bool,
-        cursor: bool,
-        aider: bool,
+        ci: bool,
+        term: Option<&str>,
     ) -> AgenticEnv {
         AgenticEnv {
             envio_tui: envio_tui.map(str::to_string),
             stdout_is_tty,
             claudecode,
-            cursor,
-            aider,
+            ci,
+            term: term.map(str::to_string),
         }
     }
 
@@ -542,31 +549,47 @@ mod tests {
         let cases = vec![
             (
                 "plain interactive tty",
-                env(None, true, false, false, false),
+                env(None, true, false, false, Some("xterm-256color")),
                 false,
             ),
-            ("piped stdout", env(None, false, false, false, false), true),
-            ("claudecode set", env(None, true, true, false, false), true),
-            ("cursor set", env(None, true, false, true, false), true),
-            ("aider set", env(None, true, false, false, true), true),
+            (
+                "piped stdout",
+                env(None, false, false, false, Some("xterm-256color")),
+                true,
+            ),
+            (
+                "claudecode set",
+                env(None, true, true, false, Some("xterm-256color")),
+                true,
+            ),
+            (
+                "ci set",
+                env(None, true, false, true, Some("xterm-256color")),
+                true,
+            ),
+            (
+                "term=dumb",
+                env(None, true, false, false, Some("dumb")),
+                true,
+            ),
             (
                 "envio_tui=false overrides tty",
-                env(Some("false"), true, false, false, false),
+                env(Some("false"), true, false, false, Some("xterm-256color")),
                 true,
             ),
             (
                 "envio_tui=true overrides agent",
-                env(Some("true"), false, true, false, false),
+                env(Some("true"), false, true, false, Some("dumb")),
                 false,
             ),
             (
                 "envio_tui=1 forces interactive",
-                env(Some("1"), false, true, false, false),
+                env(Some("1"), false, true, true, Some("dumb")),
                 false,
             ),
             (
                 "envio_tui=0 forces agentic",
-                env(Some("0"), true, false, false, false),
+                env(Some("0"), true, false, false, Some("xterm-256color")),
                 true,
             ),
         ];
