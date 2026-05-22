@@ -220,6 +220,13 @@
             "null"
           ]
         },
+        "idl": {
+          "description": "Optional path (relative to config.yaml) to an Anchor IDL JSON file. When present, codegen parses the IDL and derives `accounts`/`args` for every named instruction. Mutually exclusive with per-instruction `accounts`/`args` overrides.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "instructions": {
           "description": "A list of instructions that should be indexed on this program.",
           "type": "array",
@@ -279,6 +286,26 @@
             "boolean",
             "null"
           ]
+        },
+        "accounts": {
+          "description": "Optional positional account names. The Nth entry names account slot N on the dispatched instruction; surfaces as `event.instruction.decoded.accounts.<name>`. Accounts beyond the named list become `extra_accounts`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "args": {
+          "description": "Optional Borsh argument schema. Each entry names one arg and gives its type; the decoder walks the instruction data after the discriminator in declared order. Mutually exclusive with the program-level `idl` field.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ArgDef"
+          }
         }
       },
       "additionalProperties": false,
@@ -308,6 +335,178 @@
       "required": [
         "position",
         "values"
+      ]
+    },
+    "ArgDef": {
+      "description": "One named argument of an instruction. Mirrors\n`hypersync_client_solana::decode::NamedField`.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Field name as it appears on the decoded args object.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Borsh type of this field.",
+          "$ref": "#/$defs/ArgType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "ArgType": {
+      "description": "User-facing Borsh type grammar. Mirrors\n`hypersync_client_solana::decode::FieldType`. The YAML accepts either:\n- A bare string for primitives (`\"u64\"`, `\"pubkey\"`, `\"bool\"`, ...).\n- A tagged object for composites (`{ vec: u8 }`, `{ option: pubkey }`,\n  `{ array: [u8, 32] }`, `{ defined: \"DataV2\" }`).\n- An object with `kind: struct` or `kind: enum` for nominal types\n  declared inline on this field. Most users will use `defined` and\n  declare the nominal types under the program's `types:` block (Anchor\n  IDL shape) once that lands; for now inline `struct` / `enum` is the\n  only way to express nominal shapes ad-hoc.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArgPrimitive"
+        },
+        {
+          "$ref": "#/$defs/ArgComposite"
+        }
+      ]
+    },
+    "ArgPrimitive": {
+      "type": "string",
+      "enum": [
+        "bool",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "u128",
+        "i8",
+        "i16",
+        "i32",
+        "i64",
+        "i128",
+        "f32",
+        "f64",
+        "string",
+        "bytes",
+        "pubkey",
+        "publicKey"
+      ]
+    },
+    "ArgComposite": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "option": {
+              "$ref": "#/$defs/ArgType"
+            }
+          },
+          "required": [
+            "option"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "vec": {
+              "$ref": "#/$defs/ArgType"
+            }
+          },
+          "required": [
+            "vec"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "`[ <element type>, <length> ]` — same shape Anchor IDLs use.",
+          "type": "object",
+          "properties": {
+            "array": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/ArgType"
+                },
+                {
+                  "type": "integer",
+                  "format": "uint",
+                  "minimum": 0
+                }
+              ],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "required": [
+            "array"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Reference to a nominal type defined in the program-level\n`defined_types` registry (populated from an Anchor IDL `types:`\nblock or the bundled-Metaplex registry).",
+          "type": "object",
+          "properties": {
+            "defined": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "defined"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Inline-or-registry struct. Used as a nominal type definition in\nthe `defined_types` registry; rarely seen at the field level.",
+          "type": "object",
+          "properties": {
+            "struct": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ArgDef"
+              }
+            }
+          },
+          "required": [
+            "struct"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Inline-or-registry enum. Same role as `Struct`: a nominal type\ndefinition in the `defined_types` registry.",
+          "type": "object",
+          "properties": {
+            "enum": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ArgEnumVariant"
+              }
+            }
+          },
+          "required": [
+            "enum"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ArgEnumVariant": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "fields": {
+          "description": "`None` for unit variants; `Some([])` for struct variants with no\nfields. The Borsh wire format is identical in both cases (the\n1-byte tag), but the distinction is preserved for round-tripping.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ArgDef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
       ]
     }
   }

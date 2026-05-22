@@ -853,6 +853,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "borsh"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfd1e3f8955a5d7de9fab72fc8373fade9fb8a703968cb200ae3dc6cf08e185a"
+dependencies = [
+ "bytes",
+ "cfg_aliases",
+]
+
+[[package]]
 name = "brotli"
 version = "8.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -871,6 +881,15 @@ checksum = "874bb8112abecc98cbd6d81ea4fa7e94fb9449648c93cc89aa40c81c24d7de03"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
+]
+
+[[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
 ]
 
 [[package]]
@@ -2354,18 +2373,22 @@ dependencies = [
 
 [[package]]
 name = "hypersync-client-solana"
-version = "0.0.2-rc.1"
+version = "0.0.3-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6188a0daecf08031dddf0dd93bb98ef818e8f72b37e7faff67057cf9dd0a5469"
+checksum = "2aa93d6ff4e9762eec970287b8490e6d1eb8f68448bd2000e5eb8e4be3494d98"
 dependencies = [
  "anyhow",
  "arrow",
+ "borsh",
+ "bs58",
  "futures",
  "hypersync-solana-net-types",
  "hypersync-solana-schema",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
 ]
@@ -2416,9 +2439,9 @@ dependencies = [
 
 [[package]]
 name = "hypersync-solana-net-types"
-version = "0.0.2-rc.1"
+version = "0.0.3-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4775134e22e9fc6b1e1fd763e697921ca91666e44151fc91ebe40f1950058a9"
+checksum = "6a7857f66e8e8e525e93621885e922e7d11258cf336addaee384cfbe40e355c3"
 dependencies = [
  "schemars",
  "serde",
@@ -2428,9 +2451,9 @@ dependencies = [
 
 [[package]]
 name = "hypersync-solana-schema"
-version = "0.0.2-rc.1"
+version = "0.0.3-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bd7a0d9a2ee705b3cdc0aa72589eb4dafde82ea95e19b75ae0b43342ecdc88f"
+checksum = "d0888b9349b6de9f1ff2e0c10db6d6fab5723b09e30d06003cbb308597810cee"
 dependencies = [
  "arrow",
 ]

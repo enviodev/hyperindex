@@ -963,12 +963,30 @@ export type SvmOnSlotOptions<Config extends IndexerConfigTypes = GlobalConfig> =
 
 // ============== SVM onInstruction types ==============
 
+/** Borsh-decoded view of an instruction. Present whenever a `ProgramSchema`
+ * was attached to the program (bundled, Anchor IDL, or hand-written
+ * `accounts`/`args` in YAML). Absent when no schema applies or the
+ * discriminator didn't match any registered instruction. */
+export type SvmDecodedInstruction = {
+  /** Schema-declared instruction name. */
+  readonly name: string;
+  /** Borsh-decoded args object. POC types this as `unknown`; narrow with a
+   * locally-declared type until the typed-args codegen lands. */
+  readonly args: unknown;
+  /** Named accounts in schema order. Keys are exactly the schema-declared
+   * names; values are base58 pubkeys. */
+  readonly accounts: Readonly<Record<string, string>>;
+  /** Accounts beyond the schema's named list (Anchor `remaining_accounts`,
+   * IDL drift). Empty when counts match the schema. */
+  readonly extraAccounts: readonly string[];
+};
+
 /** A single Solana instruction matched by the indexer.
  *
- * Stage 4 ships raw shapes: `data` and discriminator prefixes are
- * `0x`-prefixed hex strings; accounts are base58 strings. Borsh-decoded args
- * and named accounts land in a future stage and will surface on
- * `instruction.decoded` without changing the fields below. */
+ * `data` and discriminator prefixes are `0x`-prefixed hex strings; accounts
+ * are base58 strings. When a Borsh schema is configured (bundled, Anchor
+ * IDL, or hand-written YAML), `decoded` carries the named-accounts +
+ * decoded-args view. */
 export type SvmInstruction = {
   readonly programId: string;
   readonly data: string;
@@ -979,6 +997,7 @@ export type SvmInstruction = {
   readonly d2?: string;
   readonly d4?: string;
   readonly d8?: string;
+  readonly decoded?: SvmDecodedInstruction;
 };
 
 /** Parent transaction surfaced when an instruction's

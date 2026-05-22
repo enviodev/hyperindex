@@ -220,6 +220,16 @@ let svmEventDescriptorSchema = S.schema(s =>
       ),
     ),
     "isInner": s.matches(S.option(S.bool)),
+    "accounts": s.matches(S.option(S.array(S.string))),
+    "args": s.matches(S.option(S.json(~validate=false))),
+  }
+)
+
+let svmAbiSchema = S.schema(s =>
+  {
+    "programId": s.matches(S.string),
+    "definedTypes": s.matches(S.json(~validate=false)),
+    "source": s.matches(S.string),
   }
 )
 
@@ -242,6 +252,8 @@ let contractConfigSchema = S.schema(s =>
     "handler": s.matches(S.option(S.string)),
     // EVM-specific: event signatures for HyperSync queries
     "events": s.matches(S.option(S.array(contractEventItemSchema))),
+    // SVM-only: program-level Borsh schema (defined-types registry, source).
+    "svmAbi": s.matches(S.option(svmAbiSchema)),
   }
 )
 
@@ -585,6 +597,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     "abi": EvmTypes.Abi.t,
     "eventSignatures": array<string>,
     "events": option<array<_>>,
+    "svmAbi": option<{"programId": string, "definedTypes": JSON.t, "source": string}>,
   }> = Dict.make()
   switch publicContractsConfig {
   | Some(contractsDict) =>
@@ -597,9 +610,20 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       | Some(events) => events->Array.map(eventItem => eventItem["event"])
       | None => []
       }
+      let widened =
+        contractConfig->(
+          Utils.magic: _ => {
+            "svmAbi": option<{"programId": string, "definedTypes": JSON.t, "source": string}>,
+          }
+        )
       contractDataByName->Dict.set(
         capitalizedName,
-        {"abi": abi, "eventSignatures": eventSignatures, "events": contractConfig["events"]},
+        {
+          "abi": abi,
+          "eventSignatures": eventSignatures,
+          "events": contractConfig["events"],
+          "svmAbi": widened["svmAbi"],
+        },
       )
     })
   | None => ()
@@ -619,6 +643,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ~chainId: int,
     ~startBlock: option<int>,
     ~addresses: array<string>,
+    ~svmDefinedTypes: JSON.t=JSON.Null,
   ) => {
     switch events {
     | None => []
@@ -673,6 +698,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
                     array<{"position": int, "values": array<string>}>,
                   >,
                   "isInner": option<bool>,
+                  "accounts": option<array<string>>,
+                  "args": option<JSON.t>,
                 }>,
               }
             )
@@ -701,6 +728,9 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~isWildcard=false,
             ~handler=None,
             ~contractRegister=None,
+            ~accounts=svm["accounts"]->Option.getOr([]),
+            ~args=svm["args"]->Option.getOr(JSON.Null),
+            ~definedTypes=svmDefinedTypes,
             ~startBlock?,
           ) :> Internal.eventConfig)
         | _ =>
@@ -781,6 +811,9 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~chainId,
             ~startBlock,
             ~addresses=rawAddresses,
+            ~svmDefinedTypes=contractData["svmAbi"]
+            ->Option.map(a => a["definedTypes"])
+            ->Option.getOr(JSON.Null),
           )
 
           {
