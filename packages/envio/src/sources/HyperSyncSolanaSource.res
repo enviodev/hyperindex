@@ -90,8 +90,111 @@ let synthLogIndex = (instr: HyperSyncSolanaClient.ResponseTypes.instruction) => 
 let serializeInstructionAddress = (addr: array<int>) =>
   addr->Array.map(n => n->Int.toString)->Array.joinUnsafe(",")
 
+// Build per-program schema descriptors by grouping eventConfigs by programId.
+// One `addon.registerProgramSchema` call per program at startup; the returned
+// handle goes into `schemaHandlesByProgram` and gets reused for every
+// matching instruction we decode.
+let buildSchemaHandles = (
+  eventConfigs: array<Internal.svmInstructionEventConfig>,
+): dict<int> => {
+  // Group by programId base58 string. Skip events that carry no schema
+  // (accounts == [] && args is JSON.Null && definedTypes is JSON.Null —
+  // the resolved-empty case from system_config.rs).
+  let descriptorsByProgram: dict<{
+    "programId": string,
+    "definedTypes": JSON.t,
+    "instructions": array<{
+      "name": string,
+      "discriminator": string,
+      "accounts": array<string>,
+      "args": JSON.t,
+    }>,
+  }> = Dict.make()
+
+  eventConfigs->Belt.Array.forEach(ec => {
+    let programIdString = ec.programId->SvmTypes.Pubkey.toString
+    if programIdString === "" {
+      // Stage 4 placeholder pattern: skip empty program ids.
+      ()
+    } else {
+      let hasSchema = ec.accounts->Array.length > 0 || ec.args !== JSON.Null
+      let discriminator = ec.discriminator->Option.getOr("")
+      if hasSchema && discriminator !== "" {
+        let existing = descriptorsByProgram->Dict.get(programIdString)
+        let descriptor = switch existing {
+        | Some(d) => d
+        | None => {
+            "programId": programIdString,
+            "definedTypes": ec.definedTypes,
+            "instructions": [],
+          }
+        }
+        let instruction = {
+          "name": ec.name,
+          "discriminator": discriminator,
+          "accounts": ec.accounts,
+          "args": ec.args,
+        }
+        descriptorsByProgram->Dict.set(
+          programIdString,
+          {
+            "programId": descriptor["programId"],
+            "definedTypes": descriptor["definedTypes"],
+            "instructions": descriptor["instructions"]->Array.concat([instruction]),
+          },
+        )
+      }
+    }
+  })
+
+  let handles = Dict.make()
+  descriptorsByProgram
+  ->Dict.toArray
+  ->Belt.Array.forEach(((programIdString, descriptor)) => {
+    let json = descriptor->(Utils.magic: _ => JSON.t)->JSON.stringify
+    let handle = Core.getAddon().registerProgramSchema(~descriptorJson=json)
+    handles->Dict.set(programIdString, handle)
+  })
+  handles
+}
+
+let decodeIfPossible = (
+  instr: HyperSyncSolanaClient.ResponseTypes.instruction,
+  schemaHandlesByProgram: dict<int>,
+): option<Envio.svmDecodedInstruction> => {
+  switch schemaHandlesByProgram->Dict.get(instr.programId) {
+  | None => None
+  | Some(handle) =>
+    let decoded = Core.getAddon().decodeInstruction(
+      ~schemaHandle=handle,
+      ~dataHex=instr.data,
+      ~accounts=instr.accounts,
+    )
+    switch decoded->Null.toOption {
+    | None => None
+    | Some(d) =>
+      let args = try JSON.parseOrThrow(d.argsJson) catch {
+      | _ => JSON.Object(Dict.make())
+      }
+      let accounts = try {
+        let parsed = JSON.parseOrThrow(d.accountsJson)
+        parsed->(Utils.magic: JSON.t => dict<string>)
+      } catch {
+      | _ => Dict.make()
+      }
+      Some({
+        name: d.name,
+        args,
+        accounts,
+        extraAccounts: d.extraAccounts,
+      })
+    }
+  }
+}
+
 let toSvmInstruction = (
   instr: HyperSyncSolanaClient.ResponseTypes.instruction,
+  ~schemaHandlesByProgram: dict<int>,
 ): Envio.svmInstruction => {
   programId: instr.programId->SvmTypes.Pubkey.fromStringUnsafe,
   data: instr.data,
@@ -102,6 +205,7 @@ let toSvmInstruction = (
   d2: ?instr.d2,
   d4: ?instr.d4,
   d8: ?instr.d8,
+  decoded: ?decodeIfPossible(instr, schemaHandlesByProgram),
 }
 
 let toSvmTransaction = (
@@ -187,6 +291,10 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
       o.byteLengthsDesc,
     )
   )
+
+  // programId.toString -> Rust-side schema registry handle. Built once at
+  // startup; reused on every decoded instruction.
+  let schemaHandlesByProgram = buildSchemaHandles(eventConfigs)
 
   let getItemsOrThrow = async (
     ~fromBlock,
@@ -311,7 +419,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
         let payload: Envio.svmInstructionEvent = {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,
-          instruction: toSvmInstruction(instr),
+          instruction: toSvmInstruction(instr, ~schemaHandlesByProgram),
           transaction: eventConfig.includeTransaction ? maybeTx : None,
           logs: eventConfig.includeLogs ? maybeLogs : None,
           slot: instr.slot,
