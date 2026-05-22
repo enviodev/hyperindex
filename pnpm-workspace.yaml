@@ -1,6 +1,8 @@
 packages:
   - "packages/*"
   - "scenarios/*"
+allowBuilds:
+  esbuild: false
 onlyBuiltDependencies:
   - rescript
   - esbuild

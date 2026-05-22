@@ -4,9 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  react-dom: 19.2.3
-
 pnpmfileChecksum: sha256-68GiYU4nGd1kYnAW+nvoKGsEuNkxbotxkJJ/6uzWq80=
 
 importers:
@@ -195,6 +192,22 @@ importers:
       rescript-schema:
         specifier: 9.5.1
         version: 9.5.1(rescript@12.2.0)
+
+  scenarios/svm_metaplex_demo:
+    dependencies:
+      envio:
+        specifier: file:../../packages/envio
+        version: link:../../packages/envio
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 4.1.0
+        version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
 
   scenarios/svm_test:
     dependencies:
@@ -798,7 +811,7 @@ packages:
     resolution: {integrity: sha512-tCdzMnzSEuEfWs/A6wq6kLx/E5nBkVJmFST+MwU01W9hzFwQi2JpvE82Fl66ets+oaC5UVpFf3vy4KvXRN+jPA==}
     peerDependencies:
       react: '>=19.1.0'
-      react-dom: 19.2.3
+      react-dom: '>=19.1.0'
 
   '@rescript/runtime@12.2.0':
     resolution: {integrity: sha512-NwfljDRq1rjFPHUaca1nzFz13xsa9ZGkBkLvMhvVgavJT5+A4rMcLu8XAaVTi/oAhO/tlHf9ZDoOTF1AfyAk9Q==}
