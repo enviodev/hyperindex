@@ -10,12 +10,12 @@ Leave the rest to your favorite agent:
   2. Determine the chain, contract, and addresses needed to produce that result. Use web search or block-explorer tool calls when the user hasn't supplied them.
   3. To continue, call:
 
-       pnpx envio init contract-import explorer \
-         -n ${indexer-name} \
-         -c ${address} \
-         -b ${chainId} \
-         --single-contract \
-         --all-events \
-         -d ${directory}
+pnpx envio init contract-import explorer \
+  -n ${indexer-name} \
+  -c ${address} \
+  -b ${chainId} \
+  --single-contract \
+  --all-events \
+  -d ${directory}
 
 Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until the user's goal is met.

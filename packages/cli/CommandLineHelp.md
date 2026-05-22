@@ -51,7 +51,7 @@ This document contains the help content for the `envio` command-line program.
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 * `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
-* `tools` — Read-only queries for AI agents. `search-docs <query>`: full-text search over Envio docs, returns titles+URLs+snippets. `fetch-docs <url>`: full page markdown for a search hit
+* `tools` — Tools for people and AI agents
 * `config` — Inspect the indexer config
 
 ###### **Options:**
@@ -403,7 +403,11 @@ Re-extract every skill shipped by this CLI version, overwriting the matching dir
 
 ## `envio tools`
 
-Read-only queries for AI agents. `search-docs <query>`: full-text search over Envio docs, returns titles+URLs+snippets. `fetch-docs <url>`: full page markdown for a search hit
+Tools for people and AI agents.
+
+* `search-docs <query>`: full-text search over Envio docs, returns titles+URLs+snippets.
+
+* `fetch-docs <url>`: full page markdown for a search hit
 
 **Usage:** `envio tools <COMMAND>`
 
