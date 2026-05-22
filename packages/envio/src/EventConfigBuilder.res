@@ -142,25 +142,28 @@ let rec abiTypeToDefaultValue = (abiType: string): unknown => {
 
 // ============== Named-tuple (struct) schema helpers ==============
 
-// Build a simulate schema that honours component names: whenever an event param
-// (or nested field) has components, we decode it as an object with named fields
-// rather than a positional tuple. Walks through array wrappers so `struct[]`
-// still produces `array<{...}>`.
-let rec componentsToSimulateSchema = (abiType: string, components: array<eventParamComponent>): S.t<
-  unknown,
-> => {
+// Build an object schema that honours component names: whenever an event param
+// (or nested field) has components, decode/serialize it as an object with
+// named fields rather than a positional tuple. Walks through array wrappers so
+// `struct[]` still produces `array<{...}>`. `~leafSchema` picks the per-ABI
+// schema for non-tuple leaves (raw-event vs simulate variants differ in how
+// they accept primitives — string-encoded numbers vs native bigints).
+let rec componentsToObjectSchema = (
+  ~leafSchema: string => S.t<unknown>,
+  abiType: string,
+  components: array<eventParamComponent>,
+): S.t<unknown> => {
   if abiType->String.endsWith("]") {
     let bracketIdx = abiType->String.lastIndexOf("[")
     let baseType = abiType->String.slice(~start=0, ~end=bracketIdx)
-    S.array(componentsToSimulateSchema(baseType, components))->S.toUnknown
+    S.array(componentsToObjectSchema(~leafSchema, baseType, components))->S.toUnknown
   } else {
-    // Must be a tuple at this level: build a record keyed by component names.
     S.object(s => {
       let dict = Dict.make()
       components->Array.forEach(c => {
         let childSchema = switch c.components {
-        | Some(sub) => componentsToSimulateSchema(c.abiType, sub)
-        | None => abiTypeToSimulateSchema(c.abiType)
+        | Some(sub) => componentsToObjectSchema(~leafSchema, c.abiType, sub)
+        | None => leafSchema(c.abiType)
         }
         dict->Dict.set(c.name, s.field(c.name, childSchema))
       })
@@ -233,7 +236,16 @@ let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> =
     S.object(s => {
       let dict = Dict.make()
       params->Array.forEach(p => {
-        dict->Dict.set(p.name, s.field(p.name, abiTypeToSchema(p.abiType)))
+        // Indexed structs arrive as keccak256 topic hashes (single hex
+        // strings), so they keep the positional/leaf path; only non-indexed
+        // tuple params get the named-object shape that the HyperSync decoder
+        // (componentsToRemapper) produces.
+        let paramSchema = switch p.components {
+        | Some(components) if !p.indexed =>
+          componentsToObjectSchema(~leafSchema=abiTypeToSchema, p.abiType, components)
+        | _ => abiTypeToSchema(p.abiType)
+        }
+        dict->Dict.set(p.name, s.field(p.name, paramSchema))
       })
       dict
     })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.eventParams>)
@@ -255,7 +267,7 @@ let buildSimulateParamsSchema = (params: array<eventParam>): S.t<Internal.eventP
       params->Array.forEach(p => {
         let (paramSchema, paramDefault) = switch p.components {
         | Some(components) => (
-            componentsToSimulateSchema(p.abiType, components),
+            componentsToObjectSchema(~leafSchema=abiTypeToSimulateSchema, p.abiType, components),
             componentsToDefaultValue(p.abiType, components),
           )
         | None => (abiTypeToSimulateSchema(p.abiType), abiTypeToDefaultValue(p.abiType))

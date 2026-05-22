@@ -1,6 +1,9 @@
 open Vitest
 
-let testApiToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
+let testApiToken =
+  Env.envioApiToken->Option.getOrThrow(
+    ~message="ENVIO_API_TOKEN env var must be set to run HyperSync tests",
+  )
 
 describe_skip("Test Hyperliquid broken transaction response", () => {
   Async.it("should handle broken transaction response", async _t => {
