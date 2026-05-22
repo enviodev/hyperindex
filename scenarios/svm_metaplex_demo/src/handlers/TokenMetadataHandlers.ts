@@ -2,25 +2,6 @@ import { indexer, type TokenMetadataAccount, type ProgramStats } from "envio";
 
 const STATS_ID = "metaplex-token-metadata";
 
-// Shapes of the Borsh-decoded args we expect. Until the typed-args codegen
-// lands (Stage 7b chunk 4), `event.instruction.decoded.args` is `unknown`
-// and we narrow with these.
-type DataV2 = {
-  name: string;
-  symbol: string;
-  uri: string;
-  seller_fee_basis_points: number;
-  creators: Array<{ address: string; verified: boolean; share: number }> | null;
-};
-type CreateMetadataAccountV3Args = {
-  data: DataV2;
-  is_mutable: boolean;
-};
-type UpdateMetadataAccountV2Args = {
-  data: DataV2 | null;
-  update_authority: string | null;
-};
-
 async function bumpStats(
   context: { ProgramStats: { get: (id: string) => Promise<ProgramStats | undefined>; set: (e: ProgramStats) => void } },
   kind: "create" | "update",
@@ -53,11 +34,11 @@ indexer.onInstruction(
       console.warn("CreateMetadataAccountV3: no decoded payload");
       return;
     }
-    const args = decoded.args as CreateMetadataAccountV3Args;
-    const metadataPda = decoded.accounts.metadata;
+    const { args, accounts } = decoded;
+    const metadataPda = accounts.metadata;
     if (metadataPda === undefined) return;
-    const mint = decoded.accounts.mint ?? "";
-    const updateAuthority = decoded.accounts.update_authority;
+    const mint = accounts.mint ?? "";
+    const updateAuthority = accounts.update_authority;
     const txSig = event.transaction?.signatures[0];
 
     console.log(
@@ -85,10 +66,10 @@ indexer.onInstruction(
       console.warn("UpdateMetadataAccountV2: no decoded payload");
       return;
     }
-    const args = decoded.args as UpdateMetadataAccountV2Args;
-    const metadataPda = decoded.accounts.metadata;
+    const { args, accounts } = decoded;
+    const metadataPda = accounts.metadata;
     if (metadataPda === undefined) return;
-    const updateAuthority = args.update_authority ?? decoded.accounts.update_authority;
+    const updateAuthority = args.update_authority ?? accounts.update_authority;
     const txSig = event.transaction?.signatures[0];
 
     console.log(
