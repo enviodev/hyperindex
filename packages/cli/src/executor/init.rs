@@ -46,7 +46,7 @@ pub async fn run_init_args(
     // `Logging.error`, which wraps the message in pino's JSON envelope and
     // buries the steps the agent needs to read.
     if init_args.init_commands.is_none() && is_agentic_init_mode(&AgenticEnv::from_process()) {
-        let prompt = agentic_init_prompt(std::env::var("ENVIO_API_TOKEN").is_ok());
+        let prompt = agentic_init_prompt(init_args.api_token.is_some());
         let mut stderr = std::io::stderr().lock();
         let _ = stderr.write_all(prompt.as_bytes());
         let _ = stderr.flush();
