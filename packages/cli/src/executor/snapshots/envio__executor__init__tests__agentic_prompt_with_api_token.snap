@@ -16,8 +16,6 @@ Leave the rest to your favorite agent:
          -b ${chainId} \
          --single-contract \
          --all-events \
-         -l typescript \
-         -d ${directory} \
-         --api-token=$ENVIO_API_TOKEN
+         -d ${directory}
 
 Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until the user's goal is met.

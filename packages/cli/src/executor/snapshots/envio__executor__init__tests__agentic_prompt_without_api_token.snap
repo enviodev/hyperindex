@@ -6,7 +6,7 @@ Welcome to Envio Indexer! Let's set up an indexer that will become a reliable bl
 
 Leave the rest to your favorite agent:
 
-  1. ENVIO_API_TOKEN is not set. Ask the user to create one at https://envio.dev/app/api-tokens and export it before continuing.
+  1. ENVIO_API_TOKEN is not set. Ask the user to create one at https://envio.dev/app/api-tokens and provide it to the session before continuing.
   2. Prompt the user for the project intent if it is missing from context (what should the indexer track and surface?).
   3. Determine the chain, contract, and addresses needed to produce that result. Use web search or block-explorer tool calls when the user hasn't supplied them.
   4. To continue, call:
@@ -17,8 +17,6 @@ Leave the rest to your favorite agent:
          -b ${chainId} \
          --single-contract \
          --all-events \
-         -l typescript \
-         -d ${directory} \
-         --api-token=$ENVIO_API_TOKEN
+         -d ${directory}
 
 Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until the user's goal is met.

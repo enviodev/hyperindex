@@ -438,7 +438,7 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
         let _ = writeln!(
             out,
             "  {step}. ENVIO_API_TOKEN is not set. Ask the user to create one at \
-             https://envio.dev/app/api-tokens and export it before continuing."
+             https://envio.dev/app/api-tokens and provide it to the session before continuing."
         );
         step += 1;
     }
@@ -462,9 +462,7 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
     out.push_str("         -b ${chainId} \\\n");
     out.push_str("         --single-contract \\\n");
     out.push_str("         --all-events \\\n");
-    out.push_str("         -l typescript \\\n");
-    out.push_str("         -d ${directory} \\\n");
-    out.push_str("         --api-token=$ENVIO_API_TOKEN\n");
+    out.push_str("         -d ${directory}\n");
     out.push('\n');
     out.push_str(
         "Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep \
