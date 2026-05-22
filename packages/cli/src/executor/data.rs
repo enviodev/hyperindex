@@ -81,7 +81,7 @@ pub async fn run(args: DataArgs) -> Result<()> {
         eprintln!("  envio data {} \\", args.fields.join(" "));
         eprintln!("    --chain={} \\", chain.display);
         eprintln!(
-            "    --where=\"\n{body}\n  \"",
+            "    --where='{body}'",
             body = render_where_hint(chain.kind, &filter, next_block),
         );
     }
@@ -89,6 +89,7 @@ pub async fn run(args: DataArgs) -> Result<()> {
     Ok(())
 }
 
+/// JSON5-style one-liner that the user can copy-paste back into `--where`.
 fn render_where_hint(
     kind: crate::data::chain::ChainKind,
     filter: &WhereFilter,
@@ -99,37 +100,49 @@ fn render_where_hint(
         ChainKind::Evm => "number",
         ChainKind::Fuel => "height",
     };
-    let mut out = String::new();
-    out.push_str("      block:\n");
-    out.push_str(&format!("        {range_field}:\n"));
-    out.push_str(&format!("          _gte: {next_block}\n"));
+
+    let mut parts: Vec<String> = Vec::new();
+
+    let mut range = format!("{range_field}: {{ _gte: {next_block}");
     if let Some(end_excl) = filter.to_block_exclusive {
         let lte = end_excl.saturating_sub(1);
-        out.push_str(&format!("          _lte: {lte}\n"));
+        range.push_str(&format!(", _lte: {lte}"));
     }
-    render_section_block(&mut out, "log", &filter.log_filters);
-    render_section_block(&mut out, "transaction", &filter.transaction_filters);
-    render_section_block(&mut out, "receipt", &filter.receipt_filters);
-    out.trim_end().to_string()
+    range.push_str(" }");
+    parts.push(format!("block: {{ {range} }}"));
+
+    if let Some(s) = section_part("log", &filter.log_filters) {
+        parts.push(s);
+    }
+    if let Some(s) = section_part("transaction", &filter.transaction_filters) {
+        parts.push(s);
+    }
+    if let Some(s) = section_part("receipt", &filter.receipt_filters) {
+        parts.push(s);
+    }
+
+    format!("{{ {} }}", parts.join(", "))
 }
 
-fn render_section_block(
-    out: &mut String,
+fn section_part(
     section: &str,
     filters: &[crate::data::where_filter::FieldFilter],
-) {
+) -> Option<String> {
     if filters.is_empty() {
-        return;
+        return None;
     }
-    out.push_str(&format!("      {section}:\n"));
-    for f in filters {
-        let v = if f.values.len() == 1 {
-            short_value(&f.values[0])
-        } else {
-            short_value(&Value::Array(f.values.clone()))
-        };
-        out.push_str(&format!("        {name}: {v}\n", name = f.indexer_name));
-    }
+    let body: Vec<String> = filters
+        .iter()
+        .map(|f| {
+            let v = if f.values.len() == 1 {
+                short_value(&f.values[0])
+            } else {
+                short_value(&Value::Array(f.values.clone()))
+            };
+            format!("{name}: {v}", name = f.indexer_name)
+        })
+        .collect();
+    Some(format!("{section}: {{ {} }}", body.join(", ")))
 }
 
 fn missing_token_error() -> anyhow::Error {

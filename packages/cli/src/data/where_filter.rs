@@ -33,7 +33,7 @@ impl WhereFilter {
             return Ok(Self::default());
         }
 
-        let value: Value = parse_yaml_or_json(trimmed)?;
+        let value: Value = parse_where(trimmed)?;
         let root = match value {
             Value::Object(map) => map,
             _ => bail!("`--where` must be an object/mapping at the top level."),
@@ -146,17 +146,13 @@ fn build_log_selection(filters: &[FieldFilter]) -> Map<String, Value> {
     out
 }
 
-fn parse_yaml_or_json(raw: &str) -> Result<Value> {
-    // Heuristic: leading `{` or `[` → JSON; else YAML.
-    let looks_like_json = matches!(raw.chars().next(), Some('{') | Some('['));
-    let parsed = if looks_like_json {
-        serde_json::from_str::<Value>(raw)
-            .context("--where looked like JSON but failed to parse")?
-    } else {
-        serde_yaml::from_str::<Value>(raw)
-            .context("--where failed to parse as YAML (also try JSON syntax)")?
-    };
-    Ok(parsed)
+/// Parse `--where` as JSON5 — same braces/brackets as JSON but with relaxed
+/// quoting (unquoted keys, single quotes), trailing commas, and comments.
+fn parse_where(raw: &str) -> Result<Value> {
+    json5::from_str::<Value>(raw).context(
+        "Failed to parse --where. Expected JSON-like object, e.g.\n\
+         --where='{ block: { number: { _gte: 1000, _lte: 2000 } }, log: { srcAddress: \"0xabc\" } }'",
+    )
 }
 
 fn type_name(v: &Value) -> &'static str {
@@ -320,9 +316,10 @@ mod tests {
     }
 
     #[test]
-    fn yaml_block_range_and_address() {
+    fn json5_block_range_and_address() {
+        // Unquoted keys, single quotes — JSON5 lenience.
         let body = body_for(
-            "block:\n  number:\n    _gte: 1000\n    _lte: 2000\nlog:\n  srcAddress: \"0xa0b8\"\n",
+            "{ block: { number: { _gte: 1000, _lte: 2000 } }, log: { srcAddress: '0xa0b8' } }",
         );
         assert_eq!(
             body,
@@ -336,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn json_passthrough_for_in_and_eq() {
+    fn strict_json_still_parses() {
         let body = body_for(
             "{\"log\": {\"srcAddress\": {\"_in\": [\"0x1\", \"0x2\"]}, \"topic0\": {\"_eq\": \"0xabc\"}}}",
         );
@@ -354,20 +351,34 @@ mod tests {
     }
 
     #[test]
+    fn trailing_commas_and_comments() {
+        let body = body_for(
+            "{ // page over USDC transfers\n  block: { number: { _gte: 100, } },\n  log: { srcAddress: '0xa', }, }",
+        );
+        assert_eq!(
+            (
+                body["from_block"].clone(),
+                body["logs"][0]["address"].clone()
+            ),
+            (json!(100), json!(["0xa"])),
+        );
+    }
+
+    #[test]
     fn topic_slots_populate_correctly() {
-        let body = body_for("log:\n  topic0: [\"0xa\"]\n  topic2: \"0xc\"\n");
+        let body = body_for("{ log: { topic0: ['0xa'], topic2: '0xc' } }");
         assert_eq!(body["logs"][0]["topics"], json!([["0xa"], [], ["0xc"]]),);
     }
 
     #[test]
     fn array_value_becomes_in() {
-        let body = body_for("log:\n  srcAddress: [\"0xa\", \"0xb\"]\n");
+        let body = body_for("{ log: { srcAddress: ['0xa', '0xb'] } }");
         assert_eq!(body["logs"][0]["address"], json!(["0xa", "0xb"]));
     }
 
     #[test]
     fn transaction_filters() {
-        let body = body_for("transaction:\n  from: \"0xa0b8\"\n  sighash: \"0xdead\"\n");
+        let body = body_for("{ transaction: { from: '0xa0b8', sighash: '0xdead' } }");
         assert_eq!(
             body["transactions"][0],
             json!({"from": ["0xa0b8"], "sighash": ["0xdead"]}),
@@ -376,7 +387,7 @@ mod tests {
 
     #[test]
     fn gt_and_lt_off_by_one_translation() {
-        let body = body_for("block:\n  number:\n    _gt: 100\n    _lt: 200\n");
+        let body = body_for("{ block: { number: { _gt: 100, _lt: 200 } } }");
         assert_eq!(
             (body["from_block"].clone(), body["to_block"].clone()),
             (json!(101), json!(200)),
@@ -396,7 +407,7 @@ mod tests {
 
     #[test]
     fn known_height_in_where_errors() {
-        let err = WhereFilter::parse(ChainKind::Evm, Some("knownHeight: 100"))
+        let err = WhereFilter::parse(ChainKind::Evm, Some("{ knownHeight: 100 }"))
             .unwrap_err()
             .to_string();
         assert!(err.contains("positional"), "{err}");
@@ -406,7 +417,7 @@ mod tests {
     fn fuel_uses_block_height_for_range() {
         let f = WhereFilter::parse(
             ChainKind::Fuel,
-            Some("block:\n  height:\n    _gte: 5\n    _lte: 9\n"),
+            Some("{ block: { height: { _gte: 5, _lte: 9 } } }"),
         )
         .unwrap();
         assert_eq!((f.from_block, f.to_block_exclusive), (Some(5), Some(10)),);
@@ -414,7 +425,7 @@ mod tests {
 
     #[test]
     fn unknown_field_errors_with_hint() {
-        let err = WhereFilter::parse(ChainKind::Evm, Some("log:\n  foo: \"x\"\n"))
+        let err = WhereFilter::parse(ChainKind::Evm, Some("{ log: { foo: 'x' } }"))
             .unwrap_err()
             .to_string();
         assert!(
@@ -427,10 +438,18 @@ mod tests {
     fn empty_block_range_errors() {
         let err = WhereFilter::parse(
             ChainKind::Evm,
-            Some("block:\n  number:\n    _gte: 100\n    _lt: 100\n"),
+            Some("{ block: { number: { _gte: 100, _lt: 100 } } }"),
         )
         .unwrap_err()
         .to_string();
         assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn malformed_input_has_friendly_error() {
+        let err = WhereFilter::parse(ChainKind::Evm, Some("{ block: }"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("--where"), "{err}");
     }
 }

@@ -78,7 +78,7 @@ async fn base_usdc_transfers_round_trip() {
     let filter = WhereFilter::parse(
         chain.kind,
         Some(
-            "block:\n  number:\n    _gte: 25000000\n    _lte: 25000020\nlog:\n  srcAddress: \"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913\"\n",
+            "{ block: { number: { _gte: 25000000, _lte: 25000020 } }, log: { srcAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' } }",
         ),
     )
     .unwrap();
