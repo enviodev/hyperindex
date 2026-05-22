@@ -61,6 +61,38 @@ pub enum CommandType {
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
     Metrics,
 
+    ///Query raw HyperSync data from the CLI. Wraps the HyperSync `/query`
+    ///REST endpoint with the same `where` syntax as indexer filters and
+    ///prints results in TOON (token-oriented) tabular form.
+    ///
+    ///Examples:
+    ///
+    ///  # EVM — first 1000 USDC transfers on Base
+    ///  envio data block.number log.srcAddress log.transactionHash \
+    ///    --chain=base \
+    ///    --where="
+    ///      block:
+    ///        number:
+    ///          _gte: 0
+    ///      log:
+    ///        srcAddress: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+    ///    "
+    ///
+    ///  # Fuel mainnet — receipts from a contract
+    ///  envio data block.height receipt.contractId receipt.receiptIndex \
+    ///    --chain=fuel \
+    ///    --where="
+    ///      block:
+    ///        height:
+    ///          _gte: 0
+    ///      receipt:
+    ///        contractId: 0xf8134f388...
+    ///    "
+    ///
+    ///  # Fuel testnet — just the current archive height
+    ///  envio data knownHeight --chain=fuel-testnet
+    Data(DataArgs),
+
     ///Manage Envio-provided Claude Code skills under `.claude/skills/`
     #[command(subcommand)]
     Skills(SkillsSubcommand),
@@ -128,6 +160,35 @@ pub enum JsonSchema {
     Evm,
     Fuel,
     Svm,
+}
+
+#[derive(Debug, Args)]
+pub struct DataArgs {
+    ///Indexer-style fields to fetch (e.g. `block.number`, `log.srcAddress`,
+    ///`transaction.transactionIndex`). The special positional
+    ///`knownHeight` returns the chain's archive height alongside the data
+    ///(or alone, hits `/height` directly).
+    #[arg(value_name = "FIELD")]
+    pub fields: Vec<String>,
+
+    ///Chain id (e.g. `8453`), kebab-case name (e.g. `base`,
+    ///`arbitrum-one`), or one of the special values `fuel`, `fuel-testnet`.
+    ///Solana is not supported yet.
+    #[arg(long)]
+    pub chain: String,
+
+    ///Filter in indexer `where` form, as YAML (default) or JSON. Examples:
+    ///
+    ///  --where="
+    ///    block:
+    ///      number:
+    ///        _gte: 1000
+    ///        _lte: 2000
+    ///    log:
+    ///      srcAddress: 0xa0b8...
+    ///  "
+    #[arg(long = "where")]
+    pub where_filter: Option<String>,
 }
 
 #[derive(Debug, Args)]

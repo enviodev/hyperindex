@@ -10,6 +10,7 @@ use crate::{
 
 mod codegen;
 mod config;
+mod data;
 mod dev;
 pub mod init;
 mod local;
@@ -84,6 +85,11 @@ pub async fn execute(
 
         CommandType::Metrics => {
             metrics::run().await?;
+            Ok(None)
+        }
+
+        CommandType::Data(args) => {
+            data::run(args).await?;
             Ok(None)
         }
 

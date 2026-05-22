@@ -4,6 +4,7 @@ pub use cli_args::init_config;
 mod commands;
 pub mod config_parsing;
 pub mod constants;
+pub mod data;
 pub mod docker_env;
 mod evm;
 pub mod executor;
