@@ -1452,11 +1452,18 @@ impl EvmAbi {
 /// table without leaking strings across the module boundary.
 const METAPLEX_TOKEN_METADATA_PROGRAM_ID: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
+/// One row in the bundled-programs table: `(program_id, source_name,
+/// accessor returning the upstream `ProgramSchema`)`.
+type BundledProgramRow = (
+    &'static str,
+    &'static str,
+    fn() -> &'static SvmProgramSchema,
+);
+
 /// Table of bundled programs. Lookup by base58 `program_id`. To add a
 /// program: ship a `ProgramSchema` constant in `hypersync_client_solana`,
 /// expose a public accessor, then add a row here.
-fn bundled_program_schemas(
-) -> Vec<(&'static str, &'static str, fn() -> &'static SvmProgramSchema)> {
+fn bundled_program_schemas() -> Vec<BundledProgramRow> {
     vec![(
         METAPLEX_TOKEN_METADATA_PROGRAM_ID,
         "metaplex_token_metadata",
