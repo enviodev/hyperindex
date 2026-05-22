@@ -1018,10 +1018,18 @@ export type SvmLog = {
   readonly message: string;
 };
 
-export type SvmInstructionEvent = {
+/** A single Solana instruction event delivered to a handler. Parameterised
+ * over `Decoded` so the per-(program, instruction) overload of
+ * `onInstruction` can narrow `event.instruction.decoded` to the
+ * codegen-generated `{ args, accounts }` shape. */
+export type SvmInstructionEvent<
+  Decoded extends SvmDecodedInstruction = SvmDecodedInstruction,
+> = {
   readonly contractName: string;
   readonly eventName: string;
-  readonly instruction: SvmInstruction;
+  readonly instruction: Omit<SvmInstruction, "decoded"> & {
+    readonly decoded?: Decoded;
+  };
   /** Present when the instruction's `include_transaction` is `true`. */
   readonly transaction?: SvmTransaction;
   /** Present when the instruction's `include_logs` is `true`; only logs
@@ -1039,6 +1047,21 @@ export type SvmOnInstructionHandlerArgs<
   readonly event: Event;
   readonly context: SvmOnSlotContext<Config>;
 };
+
+/** Shape extracted from `Global.config.svm.programs[P][I]`. The codegen
+ * emits `{ args: ...; accounts: ... }` per (program, instruction); this
+ * helper turns that into a `SvmDecodedInstruction`-compatible record. */
+type SvmDecodedFromProgramTable<TInstr> = TInstr extends {
+  args: infer A;
+  accounts: infer Acc extends Readonly<Record<string, string>>;
+}
+  ? {
+      readonly name: string;
+      readonly args: A;
+      readonly accounts: Acc;
+      readonly extraAccounts: readonly string[];
+    }
+  : SvmDecodedInstruction;
 
 /** Options for an SVM `indexer.onInstruction` registration. */
 export type SvmOnInstructionOptions<P extends string = string, I extends string = string> = {
@@ -1247,16 +1270,6 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
               readonly [K in keyof Chains]: SvmChain<Chains[K]["id"]>;
             };
             /**
-             * Register an instruction handler. Dispatch matches on
-             * `(programId, discriminator)` from the YAML config. Stage 4
-             * exposes raw instruction data + accounts; Borsh-decoded args
-             * arrive in a future stage on `event.instruction.decoded`.
-             */
-            readonly onInstruction: (
-              options: SvmOnInstructionOptions,
-              handler: SvmOnInstructionHandler<Config>,
-            ) => void;
-            /**
              * Register a slot handler. `where` is evaluated once per configured
              * chain at registration time; return `false` to skip a chain, `true`
              * to match every slot, or an {@link SvmOnSlotFilter} describing a
@@ -1266,7 +1279,41 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
               options: SvmOnSlotOptions<Config>,
               handler: SvmOnSlotHandler<Config>,
             ) => void;
+          } & (Config["svm"] extends {
+            programs: infer Programs extends Record<string, Record<string, any>>;
           }
+            ? {
+                /**
+                 * Register an instruction handler. Dispatch matches on
+                 * `(programId, discriminator)` from the YAML config.
+                 * `event.instruction.decoded.args` and
+                 * `event.instruction.decoded.accounts` are typed from the
+                 * program's Borsh schema (Anchor IDL, bundled, or
+                 * hand-written `accounts`/`args` in YAML). `decoded` stays
+                 * optional at runtime because schema-matching can fail on
+                 * IDL drift or unknown discriminators.
+                 */
+                readonly onInstruction: <
+                  P extends keyof Programs & string,
+                  I extends keyof Programs[P] & string,
+                >(
+                  options: SvmOnInstructionOptions<P, I>,
+                  handler: (
+                    args: SvmOnInstructionHandlerArgs<
+                      Config,
+                      SvmInstructionEvent<SvmDecodedFromProgramTable<Programs[P][I]>>
+                    >,
+                  ) => Promise<void>,
+                ) => void;
+              }
+            : {
+                /** Untyped fallback for indexers with no `programs` in
+                 * config. `decoded` stays the generic shape. */
+                readonly onInstruction: (
+                  options: SvmOnInstructionOptions,
+                  handler: SvmOnInstructionHandler<Config>,
+                ) => void;
+              })
         : never
       : never
     : never;
