@@ -50,6 +50,9 @@ describe("EventRouter SVM helpers", () => {
       includeLogs: false,
       accountFilters: [],
       isInner: None,
+      accounts: [],
+      args: JSON.Null,
+      definedTypes: JSON.Null,
     }
     let configs = [
       mk(
