@@ -19,10 +19,15 @@ use crate::{
     template_dirs::TemplateDirs,
     utils::file_system,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::Path;
+
+/// Exit code used when `envio init` short-circuits with an agent prompt.
+/// Distinct from 1 (generic failure) so coding agents can tell "the user
+/// needs to take a follow-up step" from "the command actually failed".
+pub const AGENTIC_INIT_EXIT_CODE: i32 = 2;
 
 pub async fn run_init_args(
     init_args: InitArgs,
@@ -35,11 +40,17 @@ pub async fn run_init_args(
     // agent (or otherwise running non-interactively), short-circuit with an
     // agent-readable prompt instead of stalling on an `inquire` Select that
     // can't be answered.
+    //
+    // Writing straight to stderr + `process::exit` keeps the prompt pristine:
+    // routing it through `anyhow::bail!` would pass it through the JS host's
+    // `Logging.error`, which wraps the message in pino's JSON envelope and
+    // buries the steps the agent needs to read.
     if init_args.init_commands.is_none() && is_agentic_init_mode(&AgenticEnv::from_process()) {
-        return Err(anyhow!(
-            "{}",
-            agentic_init_prompt(std::env::var("ENVIO_API_TOKEN").is_ok())
-        ));
+        let prompt = agentic_init_prompt(std::env::var("ENVIO_API_TOKEN").is_ok());
+        let mut stderr = std::io::stderr().lock();
+        let _ = stderr.write_all(prompt.as_bytes());
+        let _ = stderr.flush();
+        std::process::exit(AGENTIC_INIT_EXIT_CODE);
     }
 
     //get_init_args_interactive opens an interactive cli for required args to be selected
