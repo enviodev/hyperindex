@@ -1,0 +1,22 @@
+---
+source: packages/cli/src/executor/tools.rs
+expression: text
+---
+Found 3 result(s):
+
+1. **Event Handlers**
+   URL: https://docs.envio.dev/docs/HyperIndex/event-handlers
+   Matching sections: Event Handlers, Registration[​](/docs/HyperIndex/event-handlers#registration "Direct link to Registration"), Basic Example[​](/docs/HyperIndex/event-handlers#basic-example "Direct link to Basic Example")
+   On this page Event Handlers Registration​ A handler is a function that receives block...
+
+2. **Event Handlers**
+   URL: https://docs.envio.dev/docs/v2/HyperIndex/event-handlers
+   Matching sections: Event Handlers, Registration[​](/docs/v2/HyperIndex/event-handlers#registration "Direct link to Registration"), Basic Example[​](/docs/v2/HyperIndex/event-handlers#basic-example "Direct link to Basic Example")
+   On this page Event Handlers Registration​ A handler is a function that receives bl...
+
+3. **Accessing Contract State in Event Handlers**
+   URL: https://docs.envio.dev/docs/HyperIndex/contract-state
+   Matching sections: Accessing Contract State in Event Handlers, The Challenge: Token Data from Pool Creation Events[​](/docs/HyperIndex/contract-state#the-challenge-token-data-from-pool-creation-events "Direct link to The Challenge: Token Data from Pool Creation Events"), Step 3: Implement the Event Handler[​](/docs/HyperIndex/contract-state#step-3-implement-the-event-handler "Direct link to Step 3: Implement the Event Handler")
+   On this page Accessing Contract State in Event Handlers > **Example Repository:** The complete code for this guide can be found here Intr...
+
+Use docs_fetch with the URL to retrieve the full page content.

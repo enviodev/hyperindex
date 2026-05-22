@@ -120,6 +120,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[tokio::test]
+    async fn search_docs_event_handlers_live_mcp_snapshot() {
+        let text = call_mcp_tool(
+            "docs_search",
+            json!({ "query": "event handlers", "limit": 3 }),
+        )
+        .await
+        .expect("live MCP call");
+        insta::assert_snapshot!(text);
+    }
+
     #[test]
     fn parses_json_and_sse_envelopes_identically() {
         let json_body = r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#;

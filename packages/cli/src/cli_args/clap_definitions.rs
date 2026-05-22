@@ -65,7 +65,7 @@ pub enum CommandType {
     #[command(subcommand)]
     Skills(SkillsSubcommand),
 
-    ///Query Envio documentation from the command line
+    ///Query Envio documentation from the command line (subcommands: `search-docs`, `fetch-docs`)
     #[command(subcommand)]
     Tools(ToolsSubcommand),
 

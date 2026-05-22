@@ -51,7 +51,7 @@ This document contains the help content for the `envio` command-line program.
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 * `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
-* `tools` — Query Envio documentation from the command line
+* `tools` — Query Envio documentation from the command line (subcommands: `search-docs`, `fetch-docs`)
 * `config` — Inspect the indexer config
 
 ###### **Options:**
@@ -403,7 +403,7 @@ Re-extract every skill shipped by this CLI version, overwriting the matching dir
 
 ## `envio tools`
 
-Query Envio documentation from the command line
+Query Envio documentation from the command line (subcommands: `search-docs`, `fetch-docs`)
 
 **Usage:** `envio tools <COMMAND>`
 
