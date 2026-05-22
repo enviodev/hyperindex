@@ -479,6 +479,7 @@ pub mod svm {
 #[cfg(test)]
 mod test {
     use super::*;
+    use clap::CommandFactory;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
@@ -497,5 +498,12 @@ mod test {
             md_output.trim(),
             "Please run 'make update-generated-docs'"
         );
+    }
+
+    #[test]
+    fn envio_help_snapshot() {
+        let mut cmd = CommandLineArgs::command().version("0.0.0-test");
+        let rendered = cmd.render_help().to_string();
+        insta::assert_snapshot!(rendered);
     }
 }

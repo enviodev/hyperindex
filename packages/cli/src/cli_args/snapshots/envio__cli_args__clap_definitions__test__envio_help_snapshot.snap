@@ -1,0 +1,24 @@
+---
+source: packages/cli/src/cli_args/clap_definitions.rs
+expression: rendered
+---
+Usage: envio [OPTIONS] <COMMAND>
+
+Commands:
+  init     Initialize an indexer with one of the initialization options
+  dev      Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching
+  stop     Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
+  codegen  Generate indexing code from user-defined configuration & schema files
+  local    Prepare local environment for envio testing
+  start    Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
+  metrics  Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
+  skills   Manage Envio-provided Claude Code skills under `.claude/skills/`
+  tools    Tools for people and AI agents
+  config   Inspect the indexer config
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -d, --directory <DIRECTORY>  The directory of the project. Defaults to current dir ("./")
+      --config <CONFIG>        The file in the project containing the configuration. It can also be set via the `ENVIO_CONFIG` environment variable [env: ENVIO_CONFIG=] [default: config.yaml]
+  -h, --help                   Print help
+  -V, --version                Print version
