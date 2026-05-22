@@ -426,6 +426,10 @@ let initialize = async (
     | Some(engine) => ` ENGINE = ${engine}`
     | None => ""
     }
+    // Replicated database engine requires CREATE DATABASE to run on every
+    // replica; ON CLUSTER fans the DDL out via Keeper. The '{cluster}' macro
+    // resolves to each node's configured cluster name.
+    let onClusterClause = replicated ? ` ON CLUSTER '{cluster}'` : ""
 
     switch databaseEngine {
     | Some(engineSpec) => {
@@ -445,9 +449,9 @@ let initialize = async (
     | None => ()
     }
 
-    await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}`})
+    await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}${onClusterClause}`})
     await client->exec({
-      query: `CREATE DATABASE IF NOT EXISTS ${database}${databaseEngineClause}`,
+      query: `CREATE DATABASE IF NOT EXISTS ${database}${onClusterClause}${databaseEngineClause}`,
     })
     await client->exec({query: `USE ${database}`})
 
