@@ -169,8 +169,7 @@ pub struct InitArgs {
     pub package_manager: Option<init_config::PackageManager>,
 
     ///The hypersync API key to be initialized in your templates .env file.
-    ///Falls back to the `ENVIO_API_TOKEN` environment variable, so agents
-    ///that already have it in their session don't need to pass it explicitly.
+    ///Falls back to the `ENVIO_API_TOKEN` environment variable.
     #[arg(global = true, long, env = "ENVIO_API_TOKEN")]
     pub api_token: Option<String>,
 }

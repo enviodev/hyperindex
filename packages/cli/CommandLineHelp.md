@@ -83,7 +83,7 @@ Initialize an indexer with one of the initialization options
 
   Possible values: `pnpm`, `npm`, `yarn`, `bun`
 
-* `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file. Falls back to the `ENVIO_API_TOKEN` environment variable, so agents that already have it in their session don't need to pass it explicitly
+* `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file. Falls back to the `ENVIO_API_TOKEN` environment variable
 
 
 
