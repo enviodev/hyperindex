@@ -65,6 +65,10 @@ pub enum CommandType {
     #[command(subcommand)]
     Skills(SkillsSubcommand),
 
+    ///Query Envio documentation from the command line
+    #[command(subcommand)]
+    Tools(ToolsSubcommand),
+
     ///Inspect the indexer config
     #[command(subcommand)]
     Config(ConfigSubcommand),
@@ -78,6 +82,30 @@ pub enum CommandType {
 pub enum ConfigSubcommand {
     ///Print the resolved indexer config as JSON
     View,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ToolsSubcommand {
+    ///Full-text search across the Envio documentation
+    SearchDocs(SearchDocsArgs),
+    ///Fetch the full markdown content of a documentation page
+    FetchDocs(FetchDocsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SearchDocsArgs {
+    ///The search query
+    pub query: String,
+
+    ///Maximum number of results to return (1-20)
+    #[arg(short, long, default_value_t = 16)]
+    pub limit: u8,
+}
+
+#[derive(Debug, Args)]
+pub struct FetchDocsArgs {
+    ///The full URL of the documentation page to fetch
+    pub url: String,
 }
 
 #[derive(Debug, Subcommand)]
