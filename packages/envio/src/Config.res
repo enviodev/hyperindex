@@ -248,6 +248,7 @@ let derivedFieldSchema = S.schema(s =>
     "fieldName": s.matches(S.string),
     "derivedFromEntity": s.matches(S.string),
     "derivedFromField": s.matches(S.string),
+    "description": s.matches(S.option(S.string)),
   }
 )
 
@@ -263,6 +264,7 @@ let propertySchema = S.schema(s =>
     "entity": s.matches(S.option(S.string)),
     "precision": s.matches(S.option(S.int)),
     "scale": s.matches(S.option(S.int)),
+    "description": s.matches(S.option(S.string)),
   }
 )
 
@@ -280,6 +282,7 @@ let entityJsonSchema = S.schema(s =>
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
     "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
+    "description": s.matches(S.option(S.string)),
   }
 )
 
@@ -372,6 +375,7 @@ let parseEntitiesFromJson = (
         ~isArray,
         ~isIndex,
         ~linkedEntity=?prop["linkedEntity"],
+        ~description=?prop["description"],
       )
     })
 
@@ -383,6 +387,7 @@ let parseEntitiesFromJson = (
           df["fieldName"],
           ~derivedFromEntity=df["derivedFromEntity"],
           ~derivedFromField=df["derivedFromField"],
+          ~description=?df["description"],
         )
       )
 
@@ -402,6 +407,7 @@ let parseEntitiesFromJson = (
       entityName,
       ~fields=Array.concat(fields, derivedFields),
       ~compositeIndices,
+      ~description=?entityJson["description"],
     )
 
     // Build schema dynamically from properties

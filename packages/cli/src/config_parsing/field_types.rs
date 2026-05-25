@@ -72,4 +72,5 @@ pub struct Field {
     pub is_nullable: bool,
     pub is_array: bool,
     pub field_type: Primitive,
+    pub description: Option<String>,
 }

@@ -79,6 +79,8 @@ struct EntityJson {
     derived_fields: Vec<DerivedFieldJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     composite_indices: Vec<Vec<CompositeIndexJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -112,6 +114,8 @@ struct PropertyJson {
     precision: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     scale: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -120,6 +124,8 @@ struct DerivedFieldJson {
     field_name: String,
     derived_from_entity: String,
     derived_from_field: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -555,6 +561,7 @@ impl SystemConfig {
                             entity: entity_name,
                             precision,
                             scale,
+                            description: f.description.clone(),
                         }
                     })
                     .collect();
@@ -569,6 +576,7 @@ impl SystemConfig {
                                 field_name: df.field_name,
                                 derived_from_entity: df.derived_from_entity,
                                 derived_from_field: df.derived_from_field,
+                                description: df.description,
                             })
                     })
                     .collect();
@@ -605,6 +613,7 @@ impl SystemConfig {
                     properties,
                     derived_fields,
                     composite_indices,
+                    description: entity.description.clone(),
                 })
             })
             .collect::<Result<_>>()?;
