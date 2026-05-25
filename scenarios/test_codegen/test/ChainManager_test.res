@@ -182,9 +182,17 @@ describe("ChainManager", () => {
 
             let firstEventInBlock = items[0]->Option.getOrThrow
 
+            let getItemKey = (item: Internal.item) =>
+              switch item {
+              | Event({chain, blockNumber, logIndex}) => (
+                  chain->ChainMap.Chain.toChainId,
+                  blockNumber,
+                  logIndex,
+                )
+              | Block({onBlockConfig: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
+              }
             t.expect(
-              firstEventInBlock->EventUtils.getOrderedBatchItemComparator >
-                lastEvent->EventUtils.getOrderedBatchItemComparator,
+              firstEventInBlock->getItemKey > lastEvent->getItemKey,
               ~message="Check that first event in this block group is AFTER the last event before this block group",
             ).toBe(true)
 
