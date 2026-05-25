@@ -45,7 +45,7 @@ describe("Polling-stall loophole", () => {
 
       let newCalls = source.getHeightOrThrowCalls->Array.length - baseline
 
-      t.expect(newCalls).toBeGreaterThan(0)
+      t.expect(newCalls).toBeGreaterThan(1)
       t.expect(newCalls).toBeLessThanOrEqual(8)
     },
   )
