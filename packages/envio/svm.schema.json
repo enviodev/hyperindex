@@ -133,6 +133,13 @@
     "Chain": {
       "type": "object",
       "properties": {
+        "skip": {
+          "description": "Excludes the chain from indexing and migrations. Code generation is unaffected. For testing, prefer using a test framework instead.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "rpc": {
           "description": "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data.",
           "type": "string"

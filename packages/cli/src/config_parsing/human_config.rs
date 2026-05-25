@@ -603,6 +603,11 @@ pub mod evm {
         #[schemars(description = "The public blockchain chain ID.")]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. \
+                           Code generation is unaffected. \
+                           For testing, prefer using a test framework instead.")]
+        pub skip: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "RPC configuration for your indexer. If not specified \
                                   otherwise, for chains supported by HyperSync, RPC serves as \
                                   a fallback for added reliability. For others, it acts as the \
@@ -752,6 +757,11 @@ pub mod fuel {
     pub struct Chain {
         #[schemars(description = "Public chain id")]
         pub id: ChainId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. \
+                           Code generation is unaffected. \
+                           For testing, prefer using a test framework instead.")]
+        pub skip: Option<bool>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -839,6 +849,11 @@ pub mod svm {
         //     description = "The cluster's genesis hash used to identify the Svm blockchain."
         // )]
         // pub id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. \
+                           Code generation is unaffected. \
+                           For testing, prefer using a test framework instead.")]
+        pub skip: Option<bool>,
         #[schemars(
             description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data."
         )]
@@ -1205,6 +1220,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             raw_events: None,
             chains: vec![fuel::Chain {
                 id: 0,
+                skip: None,
                 start_block: 0,
                 end_block: None,
                 hyperfuel_config: None,
@@ -1335,6 +1351,7 @@ chains:
         assert_eq!(
             Chain {
                 id: 1,
+                skip: None,
                 hypersync_config: None,
                 rpc: None,
                 start_block: 2_000,
