@@ -18,7 +18,7 @@ type Transfer @storage(postgres: true, clickhouse: true) {
 }
 
 "An on-chain account participating in transfers"
-type Account {
+type Account @storage(postgres: true) {
   "The account's Ethereum address"
   id: ID!
   "All transfers sent from this account"
