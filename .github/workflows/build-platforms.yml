@@ -32,10 +32,6 @@ jobs:
         with:
           targets: ${{ matrix.job.target }}
 
-      - uses: ./.github/actions/cargo-cache
-        with:
-          cache-suffix: ${{ matrix.job.target }}
-
       - name: Patch Cargo.toml version
         shell: bash
         run: sed -i.bak "s/^version = .*/version = \"${{ inputs.version }}\"/" packages/cli/Cargo.toml
