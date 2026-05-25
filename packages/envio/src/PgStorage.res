@@ -1792,7 +1792,7 @@ let makeStorageFromEnv = (
               ~tableConfigs=tableNames->Array.map(tableName => {
                 Hasura.tableName,
                 description: None,
-                columnDescriptions: Dict.make(),
+                columnDescriptions: dict{},
               }),
             )->Promise.catch(err => {
               Logging.errorWithExn(

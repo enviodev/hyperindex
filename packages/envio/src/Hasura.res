@@ -125,16 +125,16 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<track
           // If set to false, any warnings will cause the API call to fail and no new tables to be tracked. Otherwise tables that fail to track will be raised as warnings. (default: true)
           "allow_warnings": false,
           "tables": tableConfigs->Array.map(({tableName, description, columnDescriptions}) => {
-            let configuration = Dict.fromArray([
-              ("custom_name", tableName->(Utils.magic: string => JSON.t)),
-            ])
+            let configuration = dict{
+              "custom_name": tableName->(Utils.magic: string => JSON.t),
+            }
             switch description {
             | Some(d) => configuration->Dict.set("comment", d->(Utils.magic: string => JSON.t))
             | None => ()
             }
             let columnConfigEntries = columnDescriptions->Dict.toArray
             if columnConfigEntries->Array.length > 0 {
-              let columnConfig = Dict.make()
+              let columnConfig = dict{}
               columnConfigEntries->Array.forEach(((column, comment)) =>
                 columnConfig->Dict.set(column, {"comment": comment}->(Utils.magic: {..} => JSON.t))
               )
@@ -232,12 +232,12 @@ let createEntityRelationship = async (
     },
   }->(Utils.magic: {..} => JSON.t)
 
-  let args = Dict.fromArray([
-    ("table", tableJson),
-    ("name", objectName->(Utils.magic: string => JSON.t)),
-    ("source", "default"->(Utils.magic: string => JSON.t)),
-    ("using", usingJson),
-  ])
+  let args = dict{
+    "table": tableJson,
+    "name": objectName->(Utils.magic: string => JSON.t),
+    "source": "default"->(Utils.magic: string => JSON.t),
+    "using": usingJson,
+  }
   switch comment {
   | Some(c) => args->Dict.set("comment", c->(Utils.magic: string => JSON.t))
   | None => ()
@@ -266,21 +266,21 @@ let trackDatabase = async (
     {
       tableName: InternalTable.RawEvents.table.tableName,
       description: None,
-      columnDescriptions: Dict.make(),
+      columnDescriptions: dict{},
     },
     {
       tableName: InternalTable.Views.metaViewName,
       description: None,
-      columnDescriptions: Dict.make(),
+      columnDescriptions: dict{},
     },
     {
       tableName: InternalTable.Views.chainMetadataViewName,
       description: None,
-      columnDescriptions: Dict.make(),
+      columnDescriptions: dict{},
     },
   ]
   let userTableConfigs = userEntities->Array.map(entity => {
-    let columnDescriptions = Dict.make()
+    let columnDescriptions = dict{}
     entity.table.fields->Array.forEach(fieldOrDerived =>
       switch fieldOrDerived {
       | Table.Field(field) =>
