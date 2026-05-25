@@ -1,10 +1,7 @@
 use anyhow::{anyhow, Result};
-use serde_json::{json, Map, Value};
-use std::collections::BTreeMap;
 
 use hypersync_client::net_types::FieldSelection as NetFieldSelection;
 
-use super::chain::ChainKind;
 use super::mapping::{self, Section, TypedField};
 
 /// Parsed positional fields.
@@ -24,7 +21,7 @@ pub struct Column {
 }
 
 impl Selection {
-    pub fn parse(kind: ChainKind, positionals: &[String]) -> Result<Self> {
+    pub fn parse(positionals: &[String]) -> Result<Self> {
         if positionals.is_empty() {
             return Err(anyhow!(
                 "No fields requested. Pass at least one field like `block.number` or `knownHeight`."
@@ -42,19 +39,19 @@ impl Selection {
                 anyhow!(
                     "Bad field `{raw}`. Use `<section>.<field>` (e.g. `block.number`) or `knownHeight`.\n\
                      Valid sections: {sections}.",
-                    sections = mapping::allowed_sections(kind).join(", "),
+                    sections = mapping::ALLOWED_SECTIONS.join(", "),
                 )
             })?;
 
-            let section = mapping::parse_section(kind, section_raw).ok_or_else(|| {
+            let section = mapping::parse_section(section_raw).ok_or_else(|| {
                 anyhow!(
                     "Unknown section `{section_raw}` in `{raw}`. Valid sections for this chain: {sections}.",
-                    sections = mapping::allowed_sections(kind).join(", "),
+                    sections = mapping::ALLOWED_SECTIONS.join(", "),
                 )
             })?;
 
-            let entry = mapping::lookup(kind, section, field_raw).ok_or_else(|| {
-                let valid = mapping::valid_indexer_names(kind, section).join(", ");
+            let entry = mapping::lookup(section, field_raw).ok_or_else(|| {
+                let valid = mapping::valid_indexer_names(section).join(", ");
                 anyhow!("Unknown field `{raw}`. Valid `{section_raw}.*` fields: {valid}.")
             })?;
 
@@ -74,24 +71,7 @@ impl Selection {
         !self.columns.is_empty()
     }
 
-    /// Builds the `field_selection` object for the HS query body (JSON path, used for Fuel).
-    /// Returns an empty object when no real fields were requested.
-    pub fn build_field_selection(&self) -> Value {
-        let mut by_section: BTreeMap<&'static str, Vec<Value>> = BTreeMap::new();
-        for col in &self.columns {
-            by_section
-                .entry(col.section.as_hs_key())
-                .or_default()
-                .push(Value::String(col.hs_name.clone()));
-        }
-        let mut out = Map::new();
-        for (k, v) in by_section {
-            out.insert(k.to_string(), json!(v));
-        }
-        Value::Object(out)
-    }
-
-    /// Builds a typed `FieldSelection` for the native hypersync client (EVM only).
+    /// Builds a typed `FieldSelection` for the native hypersync client.
     pub fn build_net_field_selection(&self) -> NetFieldSelection {
         let mut fs = NetFieldSelection::default();
         for col in &self.columns {
@@ -118,17 +98,14 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn parses_evm_fields_and_known_height() {
-        let sel = Selection::parse(
-            ChainKind::Evm,
-            &[
-                "block.number".into(),
-                "block.hash".into(),
-                "log.srcAddress".into(),
-                "transaction.transactionIndex".into(),
-                "knownHeight".into(),
-            ],
-        )
+    fn parses_fields_and_known_height() {
+        let sel = Selection::parse(&[
+            "block.number".into(),
+            "block.hash".into(),
+            "log.srcAddress".into(),
+            "transaction.transactionIndex".into(),
+            "knownHeight".into(),
+        ])
         .unwrap();
 
         let cols: Vec<(Section, String, String)> = sel
@@ -138,7 +115,7 @@ mod tests {
             .collect();
 
         assert_eq!(
-            (cols, sel.known_height, sel.build_field_selection()),
+            (cols, sel.known_height),
             (
                 vec![
                     (Section::Block, "number".into(), "number".into()),
@@ -151,32 +128,27 @@ mod tests {
                     ),
                 ],
                 true,
-                json!({
-                    "block": ["number", "hash"],
-                    "log": ["address"],
-                    "transaction": ["transaction_index"],
-                }),
             ),
         );
     }
 
     #[test]
     fn known_height_only_has_no_data_fields() {
-        let sel = Selection::parse(ChainKind::Evm, &["knownHeight".into()]).unwrap();
+        let sel = Selection::parse(&["knownHeight".into()]).unwrap();
         assert_eq!((sel.has_data_fields(), sel.known_height), (false, true),);
     }
 
     #[test]
     fn rejects_missing_dot() {
-        let err = Selection::parse(ChainKind::Evm, &["blocknumber".into()])
+        let err = Selection::parse(&["blocknumber".into()])
             .unwrap_err()
             .to_string();
         assert!(err.contains("Bad field"), "{err}");
     }
 
     #[test]
-    fn rejects_unknown_section_for_chain() {
-        let err = Selection::parse(ChainKind::Evm, &["receipt.txId".into()])
+    fn rejects_unknown_section() {
+        let err = Selection::parse(&["receipt.txId".into()])
             .unwrap_err()
             .to_string();
         assert!(err.contains("Unknown section"), "{err}");
@@ -184,28 +156,12 @@ mod tests {
 
     #[test]
     fn rejects_unknown_field() {
-        let err = Selection::parse(ChainKind::Evm, &["log.foo".into()])
+        let err = Selection::parse(&["log.foo".into()])
             .unwrap_err()
             .to_string();
         assert!(
             err.contains("Unknown field") && err.contains("srcAddress"),
             "{err}"
-        );
-    }
-
-    #[test]
-    fn fuel_accepts_receipt_and_block_height() {
-        let sel = Selection::parse(
-            ChainKind::Fuel,
-            &["block.height".into(), "receipt.contractId".into()],
-        )
-        .unwrap();
-        assert_eq!(
-            sel.build_field_selection(),
-            json!({
-                "block": ["height"],
-                "receipt": ["contract_id"],
-            }),
         );
     }
 }
