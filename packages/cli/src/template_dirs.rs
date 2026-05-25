@@ -444,8 +444,8 @@ mod test {
                 "indexer-testing",
                 "indexer-traces",
                 "indexer-transactions",
+                "indexer-troubleshooting",
                 "indexer-wildcard",
-                "migrate-from-subgraph",
             ]
         );
     }
