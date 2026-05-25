@@ -3,21 +3,12 @@ name: indexer-troubleshooting
 description: >-
   Use when the indexer fails to start, codegen errors, types are stale,
   Docker or database issues, RPC errors, or something is not working.
-  Prerequisites check, common error messages, and fixes.
+  Common error messages and fixes.
 metadata:
   managed-by: envio
 ---
 
 # Troubleshooting
-
-## Prerequisites Check
-
-```bash
-node -v               # v22+ required (v24 recommended)
-pnpm -v               # must be installed
-docker info            # Docker must be running
-echo $ENVIO_API_TOKEN  # required for HyperSync
-```
 
 ## Stale Types / Codegen Issues
 
@@ -57,7 +48,7 @@ rpc:
 
 **"rate limited" or timeout errors:** See `indexer-performance` skill for RPC tuning parameters.
 
-**Missing `ENVIO_API_TOKEN`:** Required for HyperSync. Set it in `.env` or shell environment.
+**Missing `ENVIO_API_TOKEN`:** Required for HyperSync. Get a token at https://envio.dev/app/api-tokens, then set it in `.env` or shell environment.
 
 ## Common Runtime Errors
 
