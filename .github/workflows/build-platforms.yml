@@ -32,6 +32,9 @@ jobs:
         with:
           targets: ${{ matrix.job.target }}
 
+      # No cargo cache here — this workflow produces published binaries,
+      # and a poisoned cache could inject tampered artifacts.
+
       - name: Patch Cargo.toml version
         shell: bash
         run: sed -i.bak "s/^version = .*/version = \"${{ inputs.version }}\"/" packages/cli/Cargo.toml
