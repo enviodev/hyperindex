@@ -7,10 +7,7 @@ use napi_derive::napi;
 
 use crate::hypersync_source::{
     map_err,
-    types::{
-        sol_value_to_param, DecodedEvent, DecodedSolValue, Event, EventParamsInput, Log, ParamMeta,
-        ParamValue,
-    },
+    types::{sol_value_to_param, Event, EventParamsInput, Log, ParamMeta, ParamValue},
 };
 
 /// Decoder for Ethereum events
@@ -44,21 +41,6 @@ fn reconstruct_signature(event_name: &str, params: &[ParamMeta]) -> String {
 #[napi]
 impl Decoder {
     #[napi(factory)]
-    pub fn from_signatures(
-        signatures: Vec<String>,
-        checksum_addresses: Option<bool>,
-    ) -> napi::Result<Decoder> {
-        let inner = hypersync_client::Decoder::from_signatures(&signatures)
-            .context("create inner decoder")
-            .map_err(map_err)?;
-        Ok(Self {
-            inner: Arc::new(inner),
-            checksummed_addresses: checksum_addresses.unwrap_or(false),
-            param_meta: Arc::new(HashMap::new()),
-        })
-    }
-
-    #[napi(factory)]
     pub fn from_params(
         event_params: Vec<EventParamsInput>,
         checksum_addresses: Option<bool>,
@@ -86,76 +68,16 @@ impl Decoder {
     }
 
     #[napi]
-    pub async fn decode_events(
-        &self,
-        events: Vec<Event>,
-    ) -> napi::Result<Vec<Option<DecodedEvent>>> {
-        let decoder = self.clone();
-        tokio::task::spawn_blocking(move || {
-            events
-                .iter()
-                .map(|event| decoder.decode_impl(&event.log).ok().flatten())
-                .collect::<Vec<_>>()
-        })
-        .await
-        .map_err(|e| map_err(anyhow::anyhow!("decode_events worker join failure: {e}")))
-    }
-
-    #[napi]
     pub async fn decode_logs(&self, events: Vec<Event>) -> napi::Result<Vec<Option<ParamValue>>> {
         let decoder = self.clone();
         tokio::task::spawn_blocking(move || {
             events
                 .iter()
-                .map(|event| decoder.decode_to_params(&event.log).map_err(|e| map_err(e)))
+                .map(|event| decoder.decode_to_params(&event.log).map_err(map_err))
                 .collect::<napi::Result<Vec<_>>>()
         })
         .await
         .map_err(|e| map_err(anyhow::anyhow!("decode_logs worker join failure: {e}")))?
-    }
-
-    fn decode_impl(&self, log: &Log) -> Result<Option<DecodedEvent>> {
-        let topics = log
-            .topics
-            .iter()
-            .map(|v| {
-                v.as_ref()
-                    .map(|v| LogArgument::decode_hex(v).context("decode topic"))
-                    .transpose()
-            })
-            .collect::<Result<Vec<_>>>()
-            .context("decode topics")?;
-
-        let topic0 = topics
-            .first()
-            .context("get topic0")?
-            .as_ref()
-            .context("topic0 is null")?;
-
-        let data = log.data.as_ref().context("get log.data")?;
-        let data = Data::decode_hex(data).context("decode data")?;
-
-        let decoded = match self
-            .inner
-            .decode(topic0.as_slice(), &topics, &data)
-            .context("decode log")?
-        {
-            Some(v) => v,
-            None => return Ok(None),
-        };
-
-        Ok(Some(DecodedEvent {
-            indexed: decoded
-                .indexed
-                .into_iter()
-                .map(|v| DecodedSolValue::new(v, self.checksummed_addresses))
-                .collect(),
-            body: decoded
-                .body
-                .into_iter()
-                .map(|v| DecodedSolValue::new(v, self.checksummed_addresses))
-                .collect(),
-        }))
     }
 
     fn decode_to_params(&self, log: &Log) -> Result<Option<ParamValue>> {

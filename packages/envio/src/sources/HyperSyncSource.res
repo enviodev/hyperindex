@@ -141,7 +141,6 @@ let memoGetSelectionConfig = (~chain) =>
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
-  allEventSignatures: array<string>,
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   apiToken: option<string>,
@@ -157,7 +156,6 @@ let make = (
   {
     chain,
     endpointUrl,
-    allEventSignatures: _,
     allEventParams,
     eventRouter,
     apiToken,

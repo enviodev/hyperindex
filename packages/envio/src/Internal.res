@@ -398,7 +398,6 @@ type eventFilters =
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
-  convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
   selectedTransactionFields: Utils.Set.t<evmTransactionField>,
   sighash: string,

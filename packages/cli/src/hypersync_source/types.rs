@@ -7,7 +7,7 @@ use hypersync_client::{
     format::{self, FixedSizeData, Hex},
     net_types, simple_types,
 };
-use napi::bindgen_prelude::{BigInt, Either4, ToNapiValue};
+use napi::bindgen_prelude::{BigInt, ToNapiValue};
 use napi_derive::napi;
 
 /// Data relating to a single event (log)
@@ -215,58 +215,6 @@ pub struct Block {
     pub send_count: Option<String>,
     pub send_root: Option<String>,
     pub mix_hash: Option<String>,
-}
-
-/// Decoded EVM log
-#[napi(object)]
-#[derive(Default)]
-pub struct DecodedEvent {
-    pub indexed: Vec<DecodedSolValue>,
-    pub body: Vec<DecodedSolValue>,
-}
-
-#[napi(object)]
-#[derive(Clone)]
-pub struct DecodedSolValue {
-    pub val: Either4<bool, BigInt, String, Vec<DecodedSolValue>>,
-}
-
-impl DecodedSolValue {
-    pub fn new(val: DynSolValue, checksummed_addresses: bool) -> Self {
-        let val = match val {
-            DynSolValue::Bool(b) => Either4::A(b),
-            DynSolValue::Int(v, _) => Either4::B(convert_bigint_signed(v)),
-            DynSolValue::Uint(v, _) => Either4::B(convert_bigint_unsigned(v)),
-            DynSolValue::FixedBytes(bytes, _) => Either4::C(encode_prefix_hex(bytes.as_slice())),
-            DynSolValue::Address(addr) => {
-                if !checksummed_addresses {
-                    Either4::C(encode_prefix_hex(addr.as_slice()))
-                } else {
-                    Either4::C(addr.to_checksum(None))
-                }
-            }
-            DynSolValue::Function(bytes) => Either4::C(encode_prefix_hex(bytes.as_slice())),
-            DynSolValue::Bytes(bytes) => Either4::C(encode_prefix_hex(bytes.as_slice())),
-            DynSolValue::String(s) => Either4::C(s),
-            DynSolValue::Array(vals) => Either4::D(
-                vals.into_iter()
-                    .map(|v| DecodedSolValue::new(v, checksummed_addresses))
-                    .collect(),
-            ),
-            DynSolValue::FixedArray(vals) => Either4::D(
-                vals.into_iter()
-                    .map(|v| DecodedSolValue::new(v, checksummed_addresses))
-                    .collect(),
-            ),
-            DynSolValue::Tuple(vals) => Either4::D(
-                vals.into_iter()
-                    .map(|v| DecodedSolValue::new(v, checksummed_addresses))
-                    .collect(),
-            ),
-        };
-
-        Self { val }
-    }
 }
 
 fn encode_prefix_hex(bytes: &[u8]) -> String {

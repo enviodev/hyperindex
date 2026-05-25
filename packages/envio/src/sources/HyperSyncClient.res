@@ -382,49 +382,6 @@ let make = (
 }
 
 module Decoder = {
-  type rec decodedSolType<'a> = {val: 'a}
-
-  @unboxed
-  type rec decodedRaw =
-    | DecodedBool(bool)
-    | DecodedStr(string)
-    | DecodedNum(bigint)
-    | DecodedVal(decodedSolType<decodedRaw>)
-    | DecodedArr(array<decodedRaw>)
-
-  @unboxed
-  type rec decodedUnderlying =
-    | Bool(bool)
-    | Str(string)
-    | Num(bigint)
-    | Arr(array<decodedUnderlying>)
-
-  let rec toUnderlying = (d: decodedRaw): decodedUnderlying => {
-    switch d {
-    | DecodedVal(v) => v.val->toUnderlying
-    | DecodedBool(v) => Bool(v)
-    | DecodedStr(v) => Str(v)
-    | DecodedNum(v) => Num(v)
-    | DecodedArr(v) => v->Belt.Array.map(toUnderlying)->Arr
-    }
-  }
-
-  type decodedEvent = {
-    indexed: array<decodedRaw>,
-    body: array<decodedRaw>,
-  }
-
-  type t = {
-    decodeEvents: array<ResponseTypes.event> => promise<array<Nullable.t<decodedEvent>>>,
-  }
-
-  @send
-  external classFromSignatures: (Core.decoderCtor, array<string>, ~checksumAddresses: bool=?) => t =
-    "fromSignatures"
-
-  let fromSignatures = (signatures, ~checksumAddresses=?) =>
-    Core.getAddon().decoder->classFromSignatures(signatures, ~checksumAddresses?)
-
   type rec paramMeta = {
     name: string,
     abiType: string,

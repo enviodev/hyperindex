@@ -210,10 +210,6 @@ let make = (
         Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
       ),
     })
-    // Collect all event signatures from contracts
-    let allEventSignatures =
-      chainConfig.contracts->Array.flatMap(contract => contract.eventSignatures)
-    // Convert rpcs to EvmChain.rpc format
     let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
       let syncConfig = rpc.syncConfig
       let ws = rpc.ws
@@ -228,7 +224,6 @@ let make = (
       ~chain,
       ~contracts=evmContracts,
       ~hyperSync=hypersync,
-      ~allEventSignatures,
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
     )

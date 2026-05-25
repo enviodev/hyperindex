@@ -193,38 +193,6 @@ let rec componentsToDefaultValue = (
   }
 }
 
-// Build a post-processor that converts the raw positional tuple values
-// produced by the HyperSync decoder into objects with named fields. Walks
-// through array wrappers so `struct[]` becomes `array<{...}>`. Returns `None`
-// for leaf params where no remapping is needed.
-let rec componentsToRemapper = (
-  abiType: string,
-  components: array<eventParamComponent>,
-  value: unknown,
-): unknown => {
-  if abiType->String.endsWith("]") {
-    let bracketIdx = abiType->String.lastIndexOf("[")
-    let baseType = abiType->String.slice(~start=0, ~end=bracketIdx)
-    let arr = value->(Utils.magic: unknown => array<unknown>)
-    arr
-    ->Array.map(item => componentsToRemapper(baseType, components, item))
-    ->(Utils.magic: array<unknown> => unknown)
-  } else {
-    // Must be a tuple at this level: build an object keyed by component names.
-    let arr = value->(Utils.magic: unknown => array<unknown>)
-    let dict = Dict.make()
-    components->Array.forEachWithIndex((c, i) => {
-      let raw = arr->Array.getUnsafe(i)
-      let mapped = switch c.components {
-      | Some(sub) => componentsToRemapper(c.abiType, sub, raw)
-      | None => raw
-      }
-      dict->Dict.set(c.name, mapped)
-    })
-    dict->(Utils.magic: dict<unknown> => unknown)
-  }
-}
-
 // ============== Build paramsRawEventSchema ==============
 
 let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> => {
@@ -276,71 +244,6 @@ let buildSimulateParamsSchema = (params: array<eventParam>): S.t<Internal.eventP
       })
       dict
     })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.eventParams>)
-  }
-}
-
-// ============== Build HyperSync decoder via new Function() ==============
-
-// Param names from ABI are valid Solidity identifiers ([a-zA-Z_$][a-zA-Z0-9_$]*),
-// so they're safe to use in quoted property names within new Function() body.
-@new @variadic
-external makeFunction: array<string> => 'a = "Function"
-
-let buildHyperSyncDecoder = (params: array<eventParam>): (
-  HyperSyncClient.Decoder.decodedEvent => Internal.eventParams
-) => {
-  if params->Array.length == 0 {
-    _ => ()->(Utils.magic: unit => Internal.eventParams)
-  } else {
-    let indexedParams = params->Array.filter(p => p.indexed)
-    let bodyParams = params->Array.filter(p => !p.indexed)
-
-    let fields = []
-    indexedParams->Array.forEachWithIndex((p, i) => {
-      fields->Array.push(`"${p.name}": t(d.indexed[${i->Int.toString}])`)->ignore
-    })
-    bodyParams->Array.forEachWithIndex((p, i) => {
-      fields->Array.push(`"${p.name}": t(d.body[${i->Int.toString}])`)->ignore
-    })
-    // Generate: function(t) { return function(d) { return { ... } } }
-    let body = `return function(d) { return {${fields->Array.joinUnsafe(", ")}} }`
-
-    let factory: (
-      HyperSyncClient.Decoder.decodedRaw => HyperSyncClient.Decoder.decodedUnderlying
-    ) => HyperSyncClient.Decoder.decodedEvent => Internal.eventParams =
-      makeFunction(["t", body])->(
-        Utils.magic: 'a => (
-          HyperSyncClient.Decoder.decodedRaw => HyperSyncClient.Decoder.decodedUnderlying
-        ) => HyperSyncClient.Decoder.decodedEvent => Internal.eventParams
-      )
-
-    let baseDecode = factory(HyperSyncClient.Decoder.toUnderlying)
-
-    // For any param that has tuple component metadata, rewrite its value from a
-    // positional array into a named record post-decode. We pre-collect the
-    // params that need remapping so the hot path only walks those. Indexed
-    // struct/tuple params arrive as keccak256 topic hashes (single hex strings)
-    // rather than positional arrays, so they must be skipped here — running
-    // componentsToRemapper on a hash would treat the hex string as an array
-    // and read garbage.
-    let paramsToRemap = params->Array.filter(p => !p.indexed && p.components->Option.isSome)
-
-    if paramsToRemap->Array.length == 0 {
-      baseDecode
-    } else {
-      decoded => {
-        let result = baseDecode(decoded)
-        let dict = result->(Utils.magic: Internal.eventParams => dict<unknown>)
-        paramsToRemap->Array.forEach(p => {
-          switch (p.components, dict->Dict.get(p.name)) {
-          | (Some(components), Some(raw)) =>
-            dict->Dict.set(p.name, componentsToRemapper(p.abiType, components, raw))
-          | _ => ()
-          }
-        })
-        dict->(Utils.magic: dict<unknown> => Internal.eventParams)
-      }
-    }
   }
 }
 
@@ -486,7 +389,6 @@ let buildEvmEventConfig = (
     filterByAddresses,
     dependsOnAddresses: !isWildcard || filterByAddresses,
     startBlock: resolvedStartBlock,
-    convertHyperSyncEventArgs: buildHyperSyncDecoder(params),
     selectedBlockFields,
     selectedTransactionFields,
     sighash,

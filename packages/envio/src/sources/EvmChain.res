@@ -82,7 +82,6 @@ let makeSources = (
   ~chain,
   ~contracts: array<Internal.evmContractConfig>,
   ~hyperSync,
-  ~allEventSignatures,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
 ) => {
@@ -98,7 +97,6 @@ let makeSources = (
       HyperSyncSource.make({
         chain,
         endpointUrl,
-        allEventSignatures,
         allEventParams,
         eventRouter,
         apiToken: Env.envioApiToken,
@@ -119,7 +117,6 @@ let makeSources = (
       syncConfig: getSyncConfig(syncConfig->Option.getOr({})),
       url,
       eventRouter,
-      allEventSignatures,
       allEventParams,
       lowercaseAddresses,
       ?ws,

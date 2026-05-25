@@ -8,9 +8,6 @@ external toEventSelector: string => string = "toEventSelector"
 
 @module("viem") external pad: string => string = "pad"
 
-let sigAllIndexed = "Transfer(address indexed from, address indexed to, uint256 indexed value)"
-let sigNoneIndexed = "Transfer(address from, address to, uint256 value)"
-
 let sighash = toEventSelector("event Transfer(address, address, uint256)")
 
 let fromAddr = "0x000000000000000000000000000000000000aaaa"
@@ -40,94 +37,35 @@ let noneIndexedLog = makeEvent(
   ),
 )
 
-describe("HyperSync decoder – same sighash, different indexed layouts", () => {
-  Async.it("native decoder correctly splits indexed vs body for both layouts", async t => {
-    let decoder = HyperSyncClient.Decoder.fromSignatures(
-      [sigAllIndexed, sigNoneIndexed],
-    )
-    let decoded = await decoder.decodeEvents([allIndexedLog, noneIndexedLog])
-
-    let decodedAll = decoded[0]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
-    let decodedNone = decoded[1]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
-
-    t.expect((decodedAll.indexed->Array.length, decodedAll.body->Array.length)).toEqual((3, 0))
-    t.expect((decodedNone.indexed->Array.length, decodedNone.body->Array.length)).toEqual((0, 3))
-  })
-
-  Async.it(
-    "end-to-end: convertHyperSyncEventArgs produces correct named params for both layouts",
-    async t => {
-      let decoder = HyperSyncClient.Decoder.fromSignatures(
-        [sigAllIndexed, sigNoneIndexed],
-      )
-      let decoded = await decoder.decodeEvents([allIndexedLog, noneIndexedLog])
-
-      let decodedAll = decoded[0]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
-      let decodedNone = decoded[1]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
-
-      let allIndexedParams: array<EventConfigBuilder.eventParam> = [
-        {name: "from", abiType: "address", indexed: true},
-        {name: "to", abiType: "address", indexed: true},
-        {name: "value", abiType: "uint256", indexed: true},
-      ]
-      let noneIndexedParams: array<EventConfigBuilder.eventParam> = [
-        {name: "from", abiType: "address", indexed: false},
-        {name: "to", abiType: "address", indexed: false},
-        {name: "value", abiType: "uint256", indexed: false},
-      ]
-
-      let convertAll = EventConfigBuilder.buildHyperSyncDecoder(allIndexedParams)
-      let convertNone = EventConfigBuilder.buildHyperSyncDecoder(noneIndexedParams)
-
-      let paramsAll = convertAll(decodedAll)
-      let paramsNone = convertNone(decodedNone)
-
-      let expected =
-        {"from": fromAddr, "to": toAddr, "value": value}->(
-          Utils.magic: {..} => Internal.eventParams
-        )
-      t.expect(paramsAll).toEqual(expected)
-      t.expect(paramsNone).toEqual(expected)
-    },
-  )
-
-  Async.it("fromParams + decodeLogs produces named params directly", async t => {
-    let allIndexedInput: HyperSyncClient.Decoder.eventParamsInput = {
-      sighash,
-      topicCount: 4,
-      eventName: "Transfer",
-      params: [
-        {name: "from", abiType: "address", indexed: true},
-        {name: "to", abiType: "address", indexed: true},
-        {name: "value", abiType: "uint256", indexed: true},
-      ],
-    }
-    let noneIndexedInput: HyperSyncClient.Decoder.eventParamsInput = {
-      sighash,
-      topicCount: 1,
-      eventName: "Transfer",
-      params: [
-        {name: "from", abiType: "address", indexed: false},
-        {name: "to", abiType: "address", indexed: false},
-        {name: "value", abiType: "uint256", indexed: false},
-      ],
-    }
-
-    let decoder = HyperSyncClient.Decoder.fromParams([allIndexedInput, noneIndexedInput])
+describe("HyperSync decoder – fromParams + decodeLogs", () => {
+  Async.it("produces named params directly for different indexed layouts", async t => {
+    let decoder = HyperSyncClient.Decoder.fromParams([
+      {
+        sighash,
+        topicCount: 4,
+        eventName: "Transfer",
+        params: [
+          {name: "from", abiType: "address", indexed: true},
+          {name: "to", abiType: "address", indexed: true},
+          {name: "value", abiType: "uint256", indexed: true},
+        ],
+      },
+      {
+        sighash,
+        topicCount: 1,
+        eventName: "Transfer",
+        params: [
+          {name: "from", abiType: "address", indexed: false},
+          {name: "to", abiType: "address", indexed: false},
+          {name: "value", abiType: "uint256", indexed: false},
+        ],
+      },
+    ])
 
     let decoded = await decoder.decodeLogs([allIndexedLog, noneIndexedLog])
 
-    let paramsAll =
-      decoded[0]
-      ->Option.getUnsafe
-      ->Nullable.toOption
-      ->Option.getUnsafe
-
-    let paramsNone =
-      decoded[1]
-      ->Option.getUnsafe
-      ->Nullable.toOption
-      ->Option.getUnsafe
+    let paramsAll = decoded[0]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
+    let paramsNone = decoded[1]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
 
     let expected = {"from": fromAddr, "to": toAddr, "value": value}->Utils.magic
     t.expect(paramsAll).toEqual(expected)
