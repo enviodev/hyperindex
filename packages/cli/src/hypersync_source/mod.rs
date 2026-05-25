@@ -1,6 +1,8 @@
-use std::sync::Once;
+use std::sync::{Mutex, Once};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use hypersync_client::RateLimitInfo;
 use napi_derive::napi;
 
 mod config;
@@ -29,6 +31,7 @@ fn init_logger(log_level: Option<&str>) {
 pub struct HypersyncClient {
     inner: hypersync_client::Client,
     enable_checksum_addresses: bool,
+    rate_limit_state: Mutex<Option<(RateLimitInfo, Instant)>>,
 }
 
 #[napi]
@@ -46,11 +49,13 @@ impl HypersyncClient {
         Ok(HypersyncClient {
             inner,
             enable_checksum_addresses,
+            rate_limit_state: Mutex::new(None),
         })
     }
 
     #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
+        self.wait_for_rate_limit().await;
         let query = query.try_into().context("parse query").map_err(map_err)?;
         let res = self
             .inner
@@ -58,6 +63,7 @@ impl HypersyncClient {
             .await
             .context("run inner query")
             .map_err(map_err)?;
+        self.save_rate_limit_state();
         convert_response(res, self.enable_checksum_addresses)
             .context("convert response")
             .map_err(map_err)
@@ -65,6 +71,7 @@ impl HypersyncClient {
 
     #[napi]
     pub async fn get_events(&self, query: Query) -> napi::Result<EventResponse> {
+        self.wait_for_rate_limit().await;
         let query = query.try_into().context("parse query").map_err(map_err)?;
         let res = self
             .inner
@@ -72,9 +79,46 @@ impl HypersyncClient {
             .await
             .context("run inner query")
             .map_err(map_err)?;
+        self.save_rate_limit_state();
         convert_event_response(res, self.enable_checksum_addresses)
             .context("convert response")
             .map_err(map_err)
+    }
+}
+
+impl HypersyncClient {
+    fn save_rate_limit_state(&self) {
+        if let Some(info) = self.inner.rate_limit_info() {
+            if info.limit.is_some() || info.remaining.is_some() || info.reset_secs.is_some() {
+                *self.rate_limit_state.lock().unwrap() = Some((info, Instant::now()));
+            }
+        }
+    }
+
+    async fn wait_for_rate_limit(&self) {
+        let wait = {
+            let state = self.rate_limit_state.lock().unwrap();
+            state.as_ref().and_then(|(info, captured_at)| {
+                if info.is_rate_limited() {
+                    info.suggested_wait_secs().map(|secs| {
+                        let elapsed = captured_at.elapsed().as_secs();
+                        (secs.saturating_sub(elapsed), info.clone())
+                    })
+                } else {
+                    None
+                }
+            })
+        };
+        if let Some((secs, info)) = wait {
+            if secs > 0 {
+                log::warn!(
+                    "rate limit exhausted ({info}), proactively waiting {secs}s for window reset. \
+                     To increase your rate limits, upgrade your plan at https://app.envio.dev/api-tokens. \
+                     For more info: https://docs.envio.dev/docs/HyperSync/api-tokens"
+                );
+                tokio::time::sleep(Duration::from_secs(secs)).await;
+            }
+        }
     }
 }
 

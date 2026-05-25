@@ -48,6 +48,7 @@ hypersync-client = "1.1.4"
 faster-hex = "0.9"
 ruint = "1"
 env_logger = "0.11"
+log = "0.4"
 arrayvec = "0.7"
 schemars = { version = "1.2", features = ["preserve_order"] }
 convert_case = "0.6.0"
