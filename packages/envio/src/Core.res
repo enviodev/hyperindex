@@ -14,7 +14,6 @@ type addon = {
   hypersyncClient: hypersyncClientCtor,
   @as("Decoder")
   decoder: decoderCtor,
-  setLogLevel: string => unit,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"

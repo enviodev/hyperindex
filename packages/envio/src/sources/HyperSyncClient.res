@@ -28,6 +28,7 @@ type cfg = {
   serializationFormat?: serializationFormat,
   /** Whether to use query caching when using CapnProto serialization format. */
   enableQueryCaching?: bool,
+  logLevel?: string,
 }
 
 module QueryTypes = {
@@ -112,34 +113,10 @@ module QueryTypes = {
     | Topic2
     | Topic3
 
-  type traceField =
-    | From
-    | To
-    | CallType
-    | Gas
-    | Input
-    | Init
-    | Value
-    | Author
-    | RewardType
-    | BlockHash
-    | BlockNumber
-    | Address
-    | Code
-    | GasUsed
-    | Output
-    | Subtraces
-    | TraceAddress
-    | TransactionHash
-    | TransactionPosition
-    | Type
-    | Error
-
   type fieldSelection = {
     block?: array<blockField>,
     transaction?: array<transactionField>,
     log?: array<logField>,
-    trace?: array<traceField>,
   }
   type topicFilter = array<EvmTypes.Hex.t>
   type topic0 = topicFilter
@@ -170,16 +147,6 @@ module QueryTypes = {
     contractAddress?: array<Address.t>,
   }
 
-  type traceSelection = {
-    from?: array<Address.t>,
-    @as("to") to_?: array<Address.t>,
-    address?: array<Address.t>,
-    callType?: array<string>,
-    rewardType?: array<string>,
-    @as("type") type_?: array<string>,
-    sighash?: array<string>,
-  }
-
   type blockSelection = {
     hash?: array<string>,
     miner?: array<Address.t>,
@@ -192,13 +159,11 @@ module QueryTypes = {
     @as("toBlock") toBlockExclusive?: int,
     logs?: array<logFilter>,
     transactions?: array<transactionFilter>,
-    traces?: array<traceSelection>,
     blocks?: array<blockSelection>,
     fieldSelection: fieldSelection,
     maxNumBlocks?: int,
     maxNumTransactions?: int,
     maxNumLogs?: int,
-    maxNumTraces?: int,
     joinMode?: joinMode,
     includeAllBlocks?: bool,
   }
@@ -372,6 +337,18 @@ external classNewWithAgent: (Core.hypersyncClientCtor, cfg, string) => t = "newW
 let makeWithAgent = (cfg, ~userAgent) =>
   Core.getAddon().hypersyncClient->classNewWithAgent(cfg, userAgent)
 
+type logLevel = [#trace | #debug | #info | #warn | #error]
+let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
+
+let logLevelToString = (level: logLevel) =>
+  switch level {
+  | #trace => "trace"
+  | #debug => "debug"
+  | #info => "info"
+  | #warn => "warn"
+  | #error => "error"
+  }
+
 let make = (
   ~url,
   ~apiToken,
@@ -383,6 +360,7 @@ let make = (
   ~retryBaseMs=?,
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
+  ~logLevel=#info,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   makeWithAgent(
@@ -397,27 +375,10 @@ let make = (
       ?retryBaseMs,
       ?retryBackoffMs,
       ?retryCeilingMs,
+      logLevel: logLevelToString(logLevel),
     },
     ~userAgent=`hyperindex/${envioVersion}`,
   )
-}
-
-type logLevel = [#trace | #debug | #info | #warn | #error]
-let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
-
-/**
- * Set the log level for the underlying Rust logger.
- * Must be called before creating any HypersyncClient.
- */
-let setLogLevel = (level: logLevel) => {
-  let s = switch level {
-  | #trace => "trace"
-  | #debug => "debug"
-  | #info => "info"
-  | #warn => "warn"
-  | #error => "error"
-  }
-  Core.getAddon().setLogLevel(s)
 }
 
 module Decoder = {
@@ -458,11 +419,8 @@ module Decoder = {
   }
 
   @send
-  external classFromSignatures: (
-    Core.decoderCtor,
-    array<string>,
-    ~checksumAddresses: bool=?,
-  ) => t = "fromSignatures"
+  external classFromSignatures: (Core.decoderCtor, array<string>, ~checksumAddresses: bool=?) => t =
+    "fromSignatures"
 
   let fromSignatures = (signatures, ~checksumAddresses=?) =>
     Core.getAddon().decoder->classFromSignatures(signatures, ~checksumAddresses?)

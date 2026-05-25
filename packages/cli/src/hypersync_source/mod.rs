@@ -24,17 +24,7 @@ fn init_logger(log_level: Option<&str>) {
     });
 }
 
-/// Set the log level for the underlying Rust logger.
-/// Accepts values like "info", "warn", "debug", "trace", "error",
-/// or a full filter directive like "hypersync_client=debug".
-/// If RUST_LOG env var is set, it takes precedence.
-/// Only the first call takes effect (logger can only init once per process).
-#[napi]
-pub fn set_log_level(level: String) {
-    init_logger(Some(&level));
-}
-
-/// HyperSync client for querying blockchain data
+/// HyperSync client for querying blockchain data.
 #[napi]
 pub struct HypersyncClient {
     inner: hypersync_client::Client,
@@ -43,14 +33,9 @@ pub struct HypersyncClient {
 
 #[napi]
 impl HypersyncClient {
-    #[napi(constructor)]
-    pub fn new(cfg: ClientConfig) -> napi::Result<HypersyncClient> {
-        Self::new_with_agent(cfg, format!("hypersync-source/{}", env!("CARGO_PKG_VERSION")))
-    }
-
     #[napi(factory)]
     pub fn new_with_agent(cfg: ClientConfig, user_agent: String) -> napi::Result<HypersyncClient> {
-        init_logger(Some("info"));
+        init_logger(cfg.log_level.as_deref());
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
@@ -125,27 +110,27 @@ fn convert_response(
     let blocks = res
         .data
         .blocks
-        .iter()
-        .flat_map(|b| b.iter().map(|b| Block::from_simple(b, should_checksum)))
+        .into_iter()
+        .flatten()
+        .map(|b| Block::from_simple(&b, should_checksum))
         .collect::<Result<Vec<_>>>()
         .context("mapping blocks")?;
 
     let transactions = res
         .data
         .transactions
-        .iter()
-        .flat_map(|b| {
-            b.iter()
-                .map(|tx| Transaction::from_simple(tx, should_checksum))
-        })
+        .into_iter()
+        .flatten()
+        .map(|tx| Transaction::from_simple(&tx, should_checksum))
         .collect::<Result<Vec<_>>>()
         .context("mapping transactions")?;
 
     let logs = res
         .data
         .logs
-        .iter()
-        .flat_map(|b| b.iter().map(|l| Log::from_simple(l, should_checksum)))
+        .into_iter()
+        .flatten()
+        .map(|l| Log::from_simple(&l, should_checksum))
         .collect::<Result<Vec<_>>>()
         .context("mapping logs")?;
 
