@@ -69,18 +69,21 @@ mod tests {
     #[test]
     fn fuel_errors_not_supported() {
         let err = resolve("fuel").unwrap_err().to_string();
-        assert!(err.contains("not supported yet"), "{err}");
+        insta::assert_snapshot!(err, @r#"`--chain=fuel` is not supported yet.
+Fuel support is on the roadmap. For now use an EVM chain (e.g. `--chain=base`)."#);
     }
 
     #[test]
     fn solana_errors_not_supported() {
         let err = resolve("solana").unwrap_err().to_string();
-        assert!(err.contains("not supported yet"), "{err}");
+        insta::assert_snapshot!(err, @r#"`--chain=solana` is not supported yet.
+Solana support is on the roadmap. For now use an EVM chain (e.g. `--chain=base`)."#);
     }
 
     #[test]
     fn unknown_chain_errors_with_examples() {
         let err = resolve("bogus-network").unwrap_err().to_string();
-        assert!(err.contains("--chain=base"), "{err}");
+        insta::assert_snapshot!(err, @r#"Unknown chain `bogus-network`. Pass a numeric chain id (e.g. `--chain=8453`) or
+a kebab-case network name (e.g. `--chain=base`, `--chain=arbitrum-one`)."#);
     }
 }
