@@ -312,7 +312,7 @@ struct SvmEventItem {
     include_transaction: bool,
     include_logs: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    account_filters: Vec<SvmAccountFilterJson>,
+    account_filters: Vec<Vec<SvmAccountFilterJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     is_inner: Option<bool>,
     /// Positional account names, in the order the on-chain program expects.
@@ -518,9 +518,14 @@ impl SystemConfig {
                                         account_filters: svm_kind
                                             .account_filters
                                             .iter()
-                                            .map(|af| SvmAccountFilterJson {
-                                                position: af.position,
-                                                values: af.values.clone(),
+                                            .map(|group| {
+                                                group
+                                                    .iter()
+                                                    .map(|af| SvmAccountFilterJson {
+                                                        position: af.position,
+                                                        values: af.values.clone(),
+                                                    })
+                                                    .collect()
                                             })
                                             .collect(),
                                         is_inner: svm_kind.is_inner,

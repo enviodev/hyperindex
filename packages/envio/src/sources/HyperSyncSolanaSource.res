@@ -11,17 +11,21 @@ type options = {
   clientTimeoutMillis: int,
 }
 
-// Build one HyperSync InstructionSelection per (programId, discriminator) pair.
+// Build HyperSync InstructionSelections from event configs. Each AND-group in
+// `cfg.accountFilters` becomes its own selection; selections sharing the same
+// `(programId, dN)` are OR-ed by the wire protocol. Empty outer array emits
+// one selection with no `aN` set (no account filtering).
+//
 // Empty programId means the config carries no real program (placeholder), in
 // which case we skip — better to over-fetch nothing than ship a degenerate
 // query.
 let buildInstructionSelections = (
   eventConfigs: array<Internal.svmInstructionEventConfig>,
 ): array<HyperSyncSolanaClient.QueryTypes.instructionSelection> => {
-  eventConfigs->Belt.Array.keepMap(cfg => {
+  eventConfigs->Belt.Array.flatMap(cfg => {
     let programIdString = cfg.programId->SvmTypes.Pubkey.toString
     if programIdString === "" {
-      None
+      []
     } else {
       // Each instruction owns exactly one dN field — the one matching its
       // declared byte length. The server-side filter is `d{N} IN [..]`.
@@ -32,26 +36,15 @@ let buildInstructionSelections = (
       | (Some(d), 8) => (None, None, None, Some([d]))
       | _ => (None, None, None, None)
       }
-      let accountFilters = cfg.accountFilters
-      let a0 = accountFilters->Belt.Array.keepMap(f =>
-        f.position == 0 ? Some(f.values->SvmTypes.Pubkey.toStrings) : None
-      )->Belt.Array.get(0)
-      let a1 = accountFilters->Belt.Array.keepMap(f =>
-        f.position == 1 ? Some(f.values->SvmTypes.Pubkey.toStrings) : None
-      )->Belt.Array.get(0)
-      let a2 = accountFilters->Belt.Array.keepMap(f =>
-        f.position == 2 ? Some(f.values->SvmTypes.Pubkey.toStrings) : None
-      )->Belt.Array.get(0)
-      let a3 = accountFilters->Belt.Array.keepMap(f =>
-        f.position == 3 ? Some(f.values->SvmTypes.Pubkey.toStrings) : None
-      )->Belt.Array.get(0)
-      let a4 = accountFilters->Belt.Array.keepMap(f =>
-        f.position == 4 ? Some(f.values->SvmTypes.Pubkey.toStrings) : None
-      )->Belt.Array.get(0)
-      let a5 = accountFilters->Belt.Array.keepMap(f =>
-        f.position == 5 ? Some(f.values->SvmTypes.Pubkey.toStrings) : None
-      )->Belt.Array.get(0)
-      Some(
+      let groups = switch cfg.accountFilters {
+      | [] => [[]]
+      | gs => gs
+      }
+      groups->Belt.Array.map(group => {
+        let pick = position =>
+          group->Belt.Array.keepMap(f =>
+            f.position == position ? Some(f.values->SvmTypes.Pubkey.toStrings) : None
+          )->Belt.Array.get(0)
         (
           {
             programId: [programIdString],
@@ -59,18 +52,18 @@ let buildInstructionSelections = (
             ?d2,
             ?d4,
             ?d8,
-            ?a0,
-            ?a1,
-            ?a2,
-            ?a3,
-            ?a4,
-            ?a5,
+            a0: ?pick(0),
+            a1: ?pick(1),
+            a2: ?pick(2),
+            a3: ?pick(3),
+            a4: ?pick(4),
+            a5: ?pick(5),
             isInner: ?cfg.isInner,
             includeTransaction: cfg.includeTransaction,
             includeLogs: cfg.includeLogs,
           }: HyperSyncSolanaClient.QueryTypes.instructionSelection
-        ),
-      )
+        )
+      })
     }
   })
 }

@@ -271,14 +271,15 @@
           ]
         },
         "account_filters": {
-          "description": "Optional positional account filters. Each entry pins a particular account position (0..=9) to one of a set of base58 pubkeys.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "$ref": "#/$defs/AccountFilter"
-          }
+          "description": "Optional positional account filters. Two shapes are accepted: a flat list of `{position, values}` entries (AND across positions, OR within `values`); or `{any_of: [[...]] }`, a list of AND-groups that are OR-ed together. Positions must be in 0..=5; positions 6..=9 are reserved for a future extension.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccountFilters"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "include_transaction": {
           "description": "When true, also fetch the parent transaction for each matched instruction. Defaults to true so handlers can read tx signatures.",
@@ -320,11 +321,24 @@
         "name"
       ]
     },
+    "AccountFilters": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccountFilter"
+          }
+        },
+        {
+          "$ref": "#/$defs/AnyOfAccountFilters"
+        }
+      ]
+    },
     "AccountFilter": {
       "type": "object",
       "properties": {
         "position": {
-          "description": "Account position within the instruction (0..=9).",
+          "description": "Account position within the instruction (0..=5).",
           "type": "integer",
           "format": "uint8",
           "minimum": 0,
@@ -342,6 +356,25 @@
       "required": [
         "position",
         "values"
+      ]
+    },
+    "AnyOfAccountFilters": {
+      "type": "object",
+      "properties": {
+        "any_of": {
+          "description": "A non-empty list of AND-groups. Each group is itself a non-empty list of `{position, values}` entries that must all match the same instruction. An instruction matches `any_of` when any one group matches.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/AccountFilter"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "any_of"
       ]
     },
     "ArgDef": {

@@ -941,10 +941,13 @@ pub mod svm {
         pub is_inner: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional positional account filters. Each entry pins a particular \
-                           account position (0..=9) to one of a set of base58 pubkeys."
+            description = "Optional positional account filters. Two shapes are accepted: a flat \
+                           list of `{position, values}` entries (AND across positions, OR within \
+                           `values`); or `{any_of: [[...]] }`, a list of AND-groups that are \
+                           OR-ed together. Positions must be in 0..=5; positions 6..=9 are \
+                           reserved for a future extension."
         )]
-        pub account_filters: Option<Vec<AccountFilter>>,
+        pub account_filters: Option<AccountFilters>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "When true, also fetch the parent transaction for each matched \
@@ -1065,10 +1068,40 @@ pub mod svm {
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct AccountFilter {
-        #[schemars(description = "Account position within the instruction (0..=9).")]
+        #[schemars(description = "Account position within the instruction (0..=5).")]
         pub position: u8,
         #[schemars(description = "Allowed base58 pubkeys for this account position.")]
         pub values: Vec<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct AnyOfAccountFilters {
+        #[schemars(
+            description = "A non-empty list of AND-groups. Each group is itself a non-empty list \
+                           of `{position, values}` entries that must all match the same \
+                           instruction. An instruction matches `any_of` when any one group \
+                           matches."
+        )]
+        pub any_of: Vec<Vec<AccountFilter>>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum AccountFilters {
+        Flat(Vec<AccountFilter>),
+        AnyOf(AnyOfAccountFilters),
+    }
+
+    impl AccountFilters {
+        pub fn groups(&self) -> Vec<&[AccountFilter]> {
+            match self {
+                AccountFilters::Flat(entries) => vec![entries.as_slice()],
+                AccountFilters::AnyOf(any_of) => {
+                    any_of.any_of.iter().map(|g| g.as_slice()).collect()
+                }
+            }
+        }
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -1623,12 +1656,12 @@ chains:
                             name: "UpdateMetadataAccountV2".to_string(),
                             discriminator: Some("0x0f".to_string()),
                             is_inner: None,
-                            account_filters: Some(vec![AccountFilter {
+                            account_filters: Some(AccountFilters::Flat(vec![AccountFilter {
                                 position: 0,
                                 values: vec![
                                     "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
                                 ],
-                            }]),
+                            }])),
                             include_transaction: Some(true),
                             include_logs: Some(false),
                             accounts: None,
