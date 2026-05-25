@@ -3,11 +3,12 @@ use serde_json::Value;
 
 use hypersync_client::net_types::{FieldSelection, LogFilter, Query, TransactionFilter};
 
-use super::mapping::{self, Section};
+use super::mapping::{self, Section, TypedField};
 
 #[derive(Debug, Clone)]
 pub struct FieldFilter {
     pub indexer_name: String,
+    pub field: TypedField,
     pub values: Vec<Value>,
 }
 
@@ -54,11 +55,11 @@ impl WhereFilter {
                 ),
             };
             for (field_raw, field_body) in fields {
-                mapping::lookup(section, &field_raw).ok_or_else(|| {
+                let typed_field = mapping::lookup(section, &field_raw).ok_or_else(|| {
                     let valid = mapping::valid_indexer_names(section).join(", ");
                     anyhow!("Unknown field `{section_raw}.{field_raw}` in --where. Valid: {valid}.")
                 })?;
-                apply_field(&mut out, section, &field_raw, field_body)?;
+                apply_field(&mut out, section, &field_raw, typed_field, field_body)?;
             }
         }
 
@@ -85,42 +86,32 @@ impl WhereFilter {
         if !self.log_filters.is_empty() {
             let mut lf = LogFilter::all();
             for f in &self.log_filters {
-                let str_values: Vec<String> = f
-                    .values
-                    .iter()
-                    .map(|v| match v {
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    })
-                    .collect();
-                let refs: Vec<&str> = str_values.iter().map(|s| s.as_str()).collect();
-                match f.indexer_name.as_str() {
-                    "srcAddress" => {
-                        lf = lf
-                            .and_address(refs)
-                            .context("invalid address in log filter")?;
+                let refs = filter_values_as_strs(&f.values);
+                let refs: Vec<&str> = refs.iter().map(|s| s.as_str()).collect();
+                use hypersync_client::net_types::log::LogField;
+                let TypedField::Log(log_field) = f.field else {
+                    unreachable!()
+                };
+                match log_field {
+                    LogField::Address => {
+                        lf = lf.and_address(refs).context("invalid address")?;
                     }
-                    "topic0" => {
-                        lf = lf
-                            .and_topic0(refs)
-                            .context("invalid topic0 in log filter")?;
+                    LogField::Topic0 => {
+                        lf = lf.and_topic0(refs).context("invalid topic0")?;
                     }
-                    "topic1" => {
-                        lf = lf
-                            .and_topic1(refs)
-                            .context("invalid topic1 in log filter")?;
+                    LogField::Topic1 => {
+                        lf = lf.and_topic1(refs).context("invalid topic1")?;
                     }
-                    "topic2" => {
-                        lf = lf
-                            .and_topic2(refs)
-                            .context("invalid topic2 in log filter")?;
+                    LogField::Topic2 => {
+                        lf = lf.and_topic2(refs).context("invalid topic2")?;
                     }
-                    "topic3" => {
-                        lf = lf
-                            .and_topic3(refs)
-                            .context("invalid topic3 in log filter")?;
+                    LogField::Topic3 => {
+                        lf = lf.and_topic3(refs).context("invalid topic3")?;
                     }
-                    other => bail!("Unsupported log filter field `{other}` for native query"),
+                    _ => bail!(
+                        "Filtering on `log.{}` is not supported in --where.",
+                        f.indexer_name
+                    ),
                 }
             }
             query = query.where_logs(lf);
@@ -129,34 +120,26 @@ impl WhereFilter {
         if !self.transaction_filters.is_empty() {
             let mut tf = TransactionFilter::all();
             for f in &self.transaction_filters {
-                let str_values: Vec<String> = f
-                    .values
-                    .iter()
-                    .map(|v| match v {
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    })
-                    .collect();
-                let refs: Vec<&str> = str_values.iter().map(|s| s.as_str()).collect();
-                match f.indexer_name.as_str() {
-                    "from" => {
-                        tf = tf
-                            .and_from(refs)
-                            .context("invalid from address in transaction filter")?;
+                let refs = filter_values_as_strs(&f.values);
+                let refs: Vec<&str> = refs.iter().map(|s| s.as_str()).collect();
+                use hypersync_client::net_types::transaction::TransactionField;
+                let TypedField::Transaction(tx_field) = f.field else {
+                    unreachable!()
+                };
+                match tx_field {
+                    TransactionField::From => {
+                        tf = tf.and_from(refs).context("invalid from address")?;
                     }
-                    "to" => {
-                        tf = tf
-                            .and_to(refs)
-                            .context("invalid to address in transaction filter")?;
+                    TransactionField::To => {
+                        tf = tf.and_to(refs).context("invalid to address")?;
                     }
-                    "sighash" => {
-                        tf = tf
-                            .and_sighash(refs)
-                            .context("invalid sighash in transaction filter")?;
+                    TransactionField::Sighash => {
+                        tf = tf.and_sighash(refs).context("invalid sighash")?;
                     }
-                    other => {
-                        bail!("Unsupported transaction filter field `{other}` for native query")
-                    }
+                    _ => bail!(
+                        "Filtering on `transaction.{}` is not supported in --where.",
+                        f.indexer_name
+                    ),
                 }
             }
             query = query.where_transactions(tf);
@@ -184,13 +167,25 @@ fn type_name(v: &Value) -> &'static str {
     }
 }
 
+fn filter_values_as_strs(values: &[Value]) -> Vec<String> {
+    values
+        .iter()
+        .map(|v| match v {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        })
+        .collect()
+}
+
 fn apply_field(
     out: &mut WhereFilter,
     section: Section,
     indexer_name: &str,
+    typed_field: TypedField,
     body: Value,
 ) -> Result<()> {
-    if section == Section::Block && indexer_name == "number" {
+    use hypersync_client::net_types::block::BlockField;
+    if matches!(typed_field, TypedField::Block(BlockField::Number)) {
         return apply_block_range(out, indexer_name, body);
     }
 
@@ -205,6 +200,7 @@ fn apply_field(
     let values = normalize_to_list(section, indexer_name, body)?;
     dest.push(FieldFilter {
         indexer_name: indexer_name.to_string(),
+        field: typed_field,
         values,
     });
     Ok(())
@@ -364,5 +360,13 @@ mod tests {
             "{ // comment\n  block: { number: { _gte: 100, } },\n  log: { srcAddress: '0xa', }, }",
         );
         assert_eq!((f.from_block, f.log_filters.len()), (Some(100), 1));
+    }
+
+    #[test]
+    fn case_insensitive_where_fields() {
+        let f = pf("{ log: { src_address: '0xa', TOPIC0: '0xb' } }");
+        assert_eq!(f.log_filters.len(), 2);
+        assert_eq!(f.log_filters[0].indexer_name, "src_address");
+        assert_eq!(f.log_filters[1].indexer_name, "TOPIC0");
     }
 }

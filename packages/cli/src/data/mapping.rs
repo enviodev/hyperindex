@@ -1,8 +1,7 @@
-use std::str::FromStr;
-
 use hypersync_client::net_types::{
     block::BlockField, log::LogField, transaction::TransactionField,
 };
+use strum::IntoEnumIterator;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Section {
@@ -38,23 +37,38 @@ impl TypedField {
     }
 }
 
-fn alias(indexer_name: &str) -> &str {
-    match indexer_name {
-        "srcAddress" => "address",
-        other => other,
+fn normalize(s: &str) -> String {
+    s.chars()
+        .filter(|c| *c != '_')
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+fn resolve_alias(section: Section, normalized: &str) -> Option<TypedField> {
+    match (section, normalized) {
+        (Section::Log, "srcaddress") => Some(TypedField::Log(LogField::Address)),
+        _ => None,
     }
 }
 
-fn to_snake(camel: &str) -> String {
-    let aliased = alias(camel);
-    let mut out = String::with_capacity(aliased.len() + 4);
-    for (i, ch) in aliased.chars().enumerate() {
-        if ch.is_ascii_uppercase() && i > 0 {
-            out.push('_');
-        }
-        out.push(ch.to_ascii_lowercase());
+pub fn lookup(section: Section, user_input: &str) -> Option<TypedField> {
+    let key = normalize(user_input);
+
+    if let Some(field) = resolve_alias(section, &key) {
+        return Some(field);
     }
-    out
+
+    match section {
+        Section::Block => BlockField::iter()
+            .find(|f| normalize(&f.to_string()) == key)
+            .map(TypedField::Block),
+        Section::Transaction => TransactionField::iter()
+            .find(|f| normalize(&f.to_string()) == key)
+            .map(TypedField::Transaction),
+        Section::Log => LogField::iter()
+            .find(|f| normalize(&f.to_string()) == key)
+            .map(TypedField::Log),
+    }
 }
 
 fn to_camel(snake: &str) -> String {
@@ -77,19 +91,7 @@ fn to_camel(snake: &str) -> String {
     out
 }
 
-pub fn lookup(section: Section, indexer_name: &str) -> Option<TypedField> {
-    let snake = to_snake(indexer_name);
-    match section {
-        Section::Block => BlockField::from_str(&snake).ok().map(TypedField::Block),
-        Section::Transaction => TransactionField::from_str(&snake)
-            .ok()
-            .map(TypedField::Transaction),
-        Section::Log => LogField::from_str(&snake).ok().map(TypedField::Log),
-    }
-}
-
 pub fn valid_indexer_names(section: Section) -> Vec<String> {
-    use strum::IntoEnumIterator;
     match section {
         Section::Block => BlockField::iter()
             .map(|f| to_camel(&f.to_string()))
@@ -117,7 +119,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lookup_standard_fields() {
+    fn lookup_camel_case() {
         assert!(matches!(
             lookup(Section::Block, "gasLimit"),
             Some(TypedField::Block(BlockField::GasLimit))
@@ -126,9 +128,41 @@ mod tests {
             lookup(Section::Transaction, "transactionIndex"),
             Some(TypedField::Transaction(TransactionField::TransactionIndex))
         ));
+    }
+
+    #[test]
+    fn lookup_snake_case() {
         assert!(matches!(
-            lookup(Section::Log, "topic0"),
-            Some(TypedField::Log(LogField::Topic0))
+            lookup(Section::Block, "gas_limit"),
+            Some(TypedField::Block(BlockField::GasLimit))
+        ));
+        assert!(matches!(
+            lookup(Section::Transaction, "transaction_index"),
+            Some(TypedField::Transaction(TransactionField::TransactionIndex))
+        ));
+    }
+
+    #[test]
+    fn lookup_all_lowercase() {
+        assert!(matches!(
+            lookup(Section::Block, "gaslimit"),
+            Some(TypedField::Block(BlockField::GasLimit))
+        ));
+        assert!(matches!(
+            lookup(Section::Block, "sha3uncles"),
+            Some(TypedField::Block(BlockField::Sha3Uncles))
+        ));
+    }
+
+    #[test]
+    fn lookup_uppercase_mixed() {
+        assert!(matches!(
+            lookup(Section::Block, "GAS_LIMIT"),
+            Some(TypedField::Block(BlockField::GasLimit))
+        ));
+        assert!(matches!(
+            lookup(Section::Block, "GASLIMIT"),
+            Some(TypedField::Block(BlockField::GasLimit))
         ));
     }
 
@@ -138,11 +172,47 @@ mod tests {
             lookup(Section::Log, "srcAddress"),
             Some(TypedField::Log(LogField::Address))
         ));
+        assert!(matches!(
+            lookup(Section::Log, "src_address"),
+            Some(TypedField::Log(LogField::Address))
+        ));
+        assert!(matches!(
+            lookup(Section::Log, "SRCADDRESS"),
+            Some(TypedField::Log(LogField::Address))
+        ));
+    }
+
+    #[test]
+    fn lookup_address_directly() {
+        assert!(matches!(
+            lookup(Section::Log, "address"),
+            Some(TypedField::Log(LogField::Address))
+        ));
+    }
+
+    #[test]
+    fn lookup_topic_fields() {
+        assert!(matches!(
+            lookup(Section::Log, "topic0"),
+            Some(TypedField::Log(LogField::Topic0))
+        ));
+        assert!(matches!(
+            lookup(Section::Log, "TOPIC3"),
+            Some(TypedField::Log(LogField::Topic3))
+        ));
     }
 
     #[test]
     fn lookup_unknown_returns_none() {
         assert!(lookup(Section::Block, "bogus").is_none());
+        assert!(lookup(Section::Log, "nonexistent").is_none());
+    }
+
+    #[test]
+    fn valid_names_use_camel_case() {
+        let names = valid_indexer_names(Section::Block);
+        assert!(names.contains(&"gasLimit".to_string()), "{names:?}");
+        assert!(names.contains(&"baseFeePerGas".to_string()), "{names:?}");
     }
 
     #[test]
@@ -155,5 +225,13 @@ mod tests {
     fn column_name_is_snake_case() {
         let f = lookup(Section::Block, "gasLimit").unwrap();
         assert_eq!(f.column_name(), "gas_limit");
+    }
+
+    #[test]
+    fn normalize_strips_underscores_and_lowercases() {
+        assert_eq!(normalize("gas_Limit"), "gaslimit");
+        assert_eq!(normalize("GAS_LIMIT"), "gaslimit");
+        assert_eq!(normalize("gasLimit"), "gaslimit");
+        assert_eq!(normalize("topic0"), "topic0");
     }
 }
