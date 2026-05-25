@@ -206,7 +206,7 @@ impl fmt::Display for NetworkSelection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EnterNetworkId => write!(f, "<Enter Network Id>"),
-            Self::Network(network) => write!(f, "{}", network.get_pretty_name()),
+            Self::Network(network) => write!(f, "{}", network),
         }
     }
 }
