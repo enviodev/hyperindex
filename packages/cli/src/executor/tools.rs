@@ -1,4 +1,4 @@
-use crate::clap_definitions::{FetchDocsArgs, SearchDocsArgs, ToolsSubcommand};
+use crate::clap_definitions::ToolsSubcommand;
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::time::Duration;
