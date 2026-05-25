@@ -100,10 +100,6 @@ pub enum ToolsSubcommand {
 pub struct SearchDocsArgs {
     ///The search query
     pub query: String,
-
-    ///Maximum number of results to return (1-20)
-    #[arg(short, long, default_value_t = 16)]
-    pub limit: u8,
 }
 
 #[derive(Debug, Args)]

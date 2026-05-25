@@ -422,17 +422,11 @@ Tools for people and AI agents.
 
 Full-text search over Envio docs; prints matching titles, URLs, and snippets. Pair with `fetch-docs` to read a hit in full
 
-**Usage:** `envio tools search-docs [OPTIONS] <QUERY>`
+**Usage:** `envio tools search-docs <QUERY>`
 
 ###### **Arguments:**
 
 * `<QUERY>` — The search query
-
-###### **Options:**
-
-* `-l`, `--limit <LIMIT>` — Maximum number of results to return (1-20)
-
-  Default value: `16`
 
 
 

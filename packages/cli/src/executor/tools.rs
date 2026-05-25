@@ -13,13 +13,12 @@ pub async fn run(subcommand: ToolsSubcommand) -> Result<()> {
     }
 }
 
+const SEARCH_LIMIT: u8 = 10;
+
 async fn run_search_docs(args: SearchDocsArgs) -> Result<()> {
-    if !(1..=20).contains(&args.limit) {
-        return Err(anyhow!("--limit must be between 1 and 20"));
-    }
     let text = call_mcp_tool(
         "docs_search",
-        json!({ "query": args.query, "limit": args.limit }),
+        json!({ "query": args.query, "limit": SEARCH_LIMIT }),
     )
     .await?;
     println!("{text}");
