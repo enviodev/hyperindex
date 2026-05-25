@@ -10,6 +10,7 @@ pub mod executor;
 mod fuel;
 mod hbs_templating;
 mod hypersync_source;
+#[cfg_attr(test, allow(dead_code))]
 mod napi;
 mod project_paths;
 pub mod scripts;
