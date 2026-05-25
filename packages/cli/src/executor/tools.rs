@@ -119,13 +119,22 @@ fn parse_mcp_payload(raw: &str) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clap_definitions::SearchDocsArgs;
+    use crate::clap_definitions::{FetchDocsArgs, SearchDocsArgs};
     use serde_json::json;
 
     #[tokio::test]
     async fn search_docs_clickhouse_support() {
         let subcommand = ToolsSubcommand::SearchDocs(SearchDocsArgs {
             query: "clickhouse support".to_string(),
+        });
+        let text = run_to_string(subcommand).await.expect("live MCP call");
+        insta::assert_snapshot!(text);
+    }
+
+    #[tokio::test]
+    async fn fetch_docs_mcp_server_page() {
+        let subcommand = ToolsSubcommand::FetchDocs(FetchDocsArgs {
+            url: "https://docs.envio.dev/docs/HyperIndex/mcp-server".to_string(),
         });
         let text = run_to_string(subcommand).await.expect("live MCP call");
         insta::assert_snapshot!(text);
