@@ -46,24 +46,6 @@ src/                 # Handler source files (see indexer-handlers)
 test/                # Tests (see indexer-testing)
 ```
 
-## Skill Map
-
-| Task | Skill |
-|------|-------|
-| Edit `config.yaml` | `indexer-configuration` |
-| Edit `schema.graphql` | `indexer-schema` |
-| Write event handlers | `indexer-handlers` |
-| Write tests | `indexer-testing` |
-| External I/O (RPC, fetch) | `indexer-external-calls` |
-| Factory/dynamic contracts | `indexer-factory` |
-| All addresses on a chain | `indexer-wildcard` |
-| Block-level processing | `indexer-blocks` |
-| Event filtering | `indexer-filters` |
-| Multiple chains | `indexer-multichain` |
-| Transaction fields | `indexer-transactions` |
-| Trace data | `indexer-traces` |
-| Sync performance | `indexer-performance` |
-
 ## Example Repos
 
 - [Uniswap v4 Indexer](https://github.com/enviodev/uniswap-v4-indexer)
