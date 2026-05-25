@@ -324,7 +324,7 @@ mod tests {
         let err = WhereFilter::parse(Some("{ knownHeight: 100 }"))
             .unwrap_err()
             .to_string();
-        assert!(err.contains("positional"), "{err}");
+        insta::assert_snapshot!(err, @"`knownHeight` is not a filter — pass it as a positional field instead.");
     }
 
     #[test]
@@ -332,10 +332,7 @@ mod tests {
         let err = WhereFilter::parse(Some("{ log: { foo: 'x' } }"))
             .unwrap_err()
             .to_string();
-        assert!(
-            err.contains("Unknown field") && err.contains("srcAddress"),
-            "{err}"
-        );
+        insta::assert_snapshot!(err, @"Unknown field `log.foo` in --where. Valid: transactionHash, blockHash, blockNumber, transactionIndex, logIndex, srcAddress, data, removed, topic0, topic1, topic2, topic3.");
     }
 
     #[test]
@@ -343,7 +340,7 @@ mod tests {
         let err = WhereFilter::parse(Some("{ block: { number: { _gte: 100, _lt: 100 } } }"))
             .unwrap_err()
             .to_string();
-        assert!(err.contains("empty"), "{err}");
+        insta::assert_snapshot!(err, @"Block range is empty: from_block=100, to_block(exclusive)=100.");
     }
 
     #[test]
@@ -351,7 +348,8 @@ mod tests {
         let err = WhereFilter::parse(Some("{ block: }"))
             .unwrap_err()
             .to_string();
-        assert!(err.contains("--where"), "{err}");
+        insta::assert_snapshot!(err, @r#"Failed to parse --where. Expected JSON-like object, e.g.
+--where='{ block: { number: { _gte: 1000, _lte: 2000 } }, log: { srcAddress: "0xabc" } }'"#);
     }
 
     #[test]

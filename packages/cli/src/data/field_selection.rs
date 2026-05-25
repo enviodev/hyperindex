@@ -133,7 +133,8 @@ mod tests {
         let err = Selection::parse(&["blocknumber".into()])
             .unwrap_err()
             .to_string();
-        assert!(err.contains("Bad field"), "{err}");
+        insta::assert_snapshot!(err, @r#"Bad field `blocknumber`. Use `<section>.<field>` (e.g. `block.number`) or `knownHeight`.
+Valid sections: block, transaction, log."#);
     }
 
     #[test]
@@ -141,7 +142,7 @@ mod tests {
         let err = Selection::parse(&["receipt.txId".into()])
             .unwrap_err()
             .to_string();
-        assert!(err.contains("Unknown section"), "{err}");
+        insta::assert_snapshot!(err, @"Unknown section `receipt` in `receipt.txId`. Valid sections for this chain: block, transaction, log.");
     }
 
     #[test]
@@ -149,9 +150,6 @@ mod tests {
         let err = Selection::parse(&["log.foo".into()])
             .unwrap_err()
             .to_string();
-        assert!(
-            err.contains("Unknown field") && err.contains("srcAddress"),
-            "{err}"
-        );
+        insta::assert_snapshot!(err, @"Unknown field `log.foo`. Valid `log.*` fields: transactionHash, blockHash, blockNumber, transactionIndex, logIndex, srcAddress, data, removed, topic0, topic1, topic2, topic3.");
     }
 }

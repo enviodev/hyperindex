@@ -13,7 +13,7 @@ use crate::data::{
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub async fn run(args: DataArgs) -> Result<()> {
-    let token = std::env::var("ENVIO_API_TOKEN").map_err(|_| missing_token_error())?;
+    let token = resolve_api_token().ok_or_else(missing_token_error)?;
     if token.trim().is_empty() {
         return Err(missing_token_error());
     }
@@ -143,11 +143,23 @@ fn section_part(
     Some(format!("{section}: {{ {} }}", body.join(", ")))
 }
 
+fn resolve_api_token() -> Option<String> {
+    if let Ok(val) = std::env::var("ENVIO_API_TOKEN") {
+        return Some(val);
+    }
+    use dotenvy::{EnvLoader, EnvSequence};
+    EnvLoader::with_path(".env")
+        .sequence(EnvSequence::InputOnly)
+        .load()
+        .ok()
+        .and_then(|m| m.var("ENVIO_API_TOKEN").ok())
+}
+
 fn missing_token_error() -> anyhow::Error {
     anyhow!(
         "ENVIO_API_TOKEN is not set.\n\
-         Create one at https://envio.dev/app/api-tokens\n\
-         Then run: export ENVIO_API_TOKEN=<your-token>"
+         Set the ENVIO_API_TOKEN environment variable in your .env file.\n\
+         Get a free API token at: https://envio.dev/app/api-tokens"
     )
 }
 

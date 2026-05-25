@@ -18,14 +18,6 @@ same `where` syntax used in indexer filters and prints results in TOON
 
 **Do NOT web-search for block ranges.** Query via `envio data`.
 
-## Setup
-
-Requires `ENVIO_API_TOKEN`:
-
-```bash
-export ENVIO_API_TOKEN=<your-token>   # create at https://envio.dev/app/api-tokens
-```
-
 ## Shape
 
 ```
