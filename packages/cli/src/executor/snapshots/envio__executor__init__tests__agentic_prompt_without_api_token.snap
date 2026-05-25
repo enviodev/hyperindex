@@ -1,0 +1,22 @@
+---
+source: packages/cli/src/executor/init.rs
+expression: agentic_init_prompt(false)
+---
+Welcome to Envio Indexer! Let's set up an indexer that will become a reliable blockchain backend you trust, love, and own.
+
+Leave the rest to your favorite agent:
+
+  1. ENVIO_API_TOKEN is not set. Ask the user to create one at https://envio.dev/app/api-tokens and provide it to the session before continuing.
+  2. Prompt the user for the project intent if it is missing from context (what should the indexer track and surface?).
+  3. Determine the chain, contract, and addresses needed to produce that result. Use web search or block-explorer tool calls when the user hasn't supplied them.
+  4. To continue, call:
+
+       pnpx envio init contract-import explorer \
+         -n ${indexer-name} \
+         -c ${address} \
+         -b ${chainId} \
+         --single-contract \
+         --all-events \
+         -d ${directory}
+
+Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until the user's goal is met.

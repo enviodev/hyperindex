@@ -275,6 +275,87 @@ describe("EventConfigBuilder", () => {
     t.expect(json).toEqual(%raw(`{"id": "42", "contactDetails": ["Alice", "alice@example.com"]}`))
   })
 
+  it(
+    "issue #1213 — paramsRawEventSchema serializes struct/tuple params decoded as named dicts",
+    t => {
+      // Reproduces https://github.com/enviodev/hyperindex/issues/1213
+      //
+      // When an event has a tuple/struct param with `components`, the
+      // HyperSync decoder turns the positional tuple into a named dict
+      // (componentsToRemapper). With raw_events: true, addItemToRawEvents
+      // calls S.reverseConvertOrThrow(event.params, paramsRawEventSchema).
+      // buildParamsSchema must therefore mirror the decoder shape — keyed by
+      // component names — otherwise the reverse-convert reads index N from a
+      // dict, gets undefined, and throws
+      // `TypeError: Cannot read properties of undefined (reading 'length')`.
+      let params: array<EventConfigBuilder.eventParam> = [
+        {name: "deployer", abiType: "address", indexed: true},
+        {name: "vehicle", abiType: "address", indexed: false},
+        {
+          name: "params",
+          abiType: "(address,address,address[],uint256,address)",
+          indexed: false,
+          components: [
+            {name: "asset", abiType: "address"},
+            {name: "poolAddressesProvider", abiType: "address"},
+            {name: "forbiddenAddresses", abiType: "address[]"},
+            {name: "initialExpectedSupply", abiType: "uint256"},
+            {name: "registry", abiType: "address"},
+          ],
+        },
+      ]
+
+      let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
+      let schema = EventConfigBuilder.buildParamsSchema(params)
+
+      let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
+        indexed: ["0xdeployer"->Utils.magic],
+        body: [
+          "0xvehicle"->Utils.magic,
+          (
+            "0xasset",
+            "0xpap",
+            ["0xforbidden1", "0xforbidden2"],
+            1000n,
+            "0xregistry",
+          )->Utils.magic,
+        ],
+      }
+
+      let decoded = decoder(mockDecodedEvent)
+
+      t.expect(decoded).toEqual(
+        {
+          "deployer": "0xdeployer",
+          "vehicle": "0xvehicle",
+          "params": {
+            "asset": "0xasset",
+            "poolAddressesProvider": "0xpap",
+            "forbiddenAddresses": ["0xforbidden1", "0xforbidden2"],
+            "initialExpectedSupply": 1000n,
+            "registry": "0xregistry",
+          },
+        }->(Utils.magic: {..} => Internal.eventParams),
+      )
+
+      let json = decoded->S.reverseConvertToJsonOrThrow(schema)
+
+      t.expect(json).toEqual(
+        %raw(`{
+          "deployer": "0xdeployer",
+          "vehicle": "0xvehicle",
+          "params": {
+            "asset": "0xasset",
+            "poolAddressesProvider": "0xpap",
+            "forbiddenAddresses": ["0xforbidden1", "0xforbidden2"],
+            "initialExpectedSupply": "1000",
+            "registry": "0xregistry"
+          }
+        }`),
+      )
+    },
+  )
+
   it("buildHyperSyncDecoder remaps mixed-name tuple components using index keys", t => {
     // Issue #538 follow-up: when a tuple has some named and some unnamed
     // components, the CLI emits `"0"`, `"1"`, ... for unnamed slots. The
@@ -426,6 +507,64 @@ describe("Config.fromPublic", () => {
     let contract = chain.contracts->Array.getUnsafe(0)
     let address = contract.addresses->Array.getUnsafe(0)
     t.expect(address->Address.toString, ~message="Address must be preserved verbatim").toBe(uni)
+  })
+
+  it("parses entity and field descriptions from public config", t => {
+    let publicConfigJson: JSON.t = %raw(`{
+      "version": "0.0.1-dev",
+      "name": "test",
+      "storage": { "postgres": true },
+      "evm": {
+        "chains": {
+          "ethereumMainnet": {
+            "id": 1,
+            "startBlock": 0,
+            "rpcs": [{ "url": "https://eth.com", "for": "sync" }]
+          }
+        },
+        "addressFormat": "checksum"
+      },
+      "enums": {},
+      "entities": [{
+        "name": "User",
+        "description": "A user of the protocol",
+        "properties": [
+          { "name": "id", "type": "string", "description": "The user's address" },
+          { "name": "balance", "type": "bigint" }
+        ],
+        "derivedFields": [
+          {
+            "fieldName": "tokens",
+            "derivedFromEntity": "Token",
+            "derivedFromField": "owner",
+            "description": "Tokens owned by this user"
+          }
+        ]
+      }]
+    }`)
+
+    let config = Config.fromPublic(publicConfigJson)
+    let userEntity = config.userEntities->Array.getUnsafe(0)
+    t.expect({
+      "tableDescription": userEntity.table.description,
+      "idDescription": switch userEntity.table.fields->Array.getUnsafe(0) {
+      | Table.Field(f) => f.description
+      | _ => None
+      },
+      "balanceDescription": switch userEntity.table.fields->Array.getUnsafe(1) {
+      | Table.Field(f) => f.description
+      | _ => None
+      },
+      "derivedDescription": switch userEntity.table.fields->Array.getUnsafe(2) {
+      | Table.DerivedFrom(f) => f.description
+      | _ => None
+      },
+    }).toEqual({
+      "tableDescription": Some("A user of the protocol"),
+      "idDescription": Some("The user's address"),
+      "balanceDescription": None,
+      "derivedDescription": Some("Tokens owned by this user"),
+    })
   })
 
   it("works with already-capitalized contract name", t => {

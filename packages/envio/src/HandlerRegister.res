@@ -14,7 +14,6 @@ type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
 
 type activeRegistration = {
   ecosystem: Ecosystem.t,
-  multichain: Internal.multichain,
   registrations: registrations,
   mutable finished: bool,
 }
@@ -102,10 +101,9 @@ let withRegistration = (fn: activeRegistration => unit) => {
   }
 }
 
-let startRegistration = (~ecosystem, ~multichain) => {
+let startRegistration = (~ecosystem) => {
   let r = {
     ecosystem,
-    multichain,
     registrations: {
       onBlockByChainId: Dict.make(),
     },
@@ -163,15 +161,6 @@ let registerOnBlock = (
   ~handler: Internal.onBlockArgs => promise<unit>,
 ) => {
   withRegistration(registration => {
-    // We need to get timestamp for ordered multichain mode
-    switch registration.multichain {
-    | Unordered => ()
-    | Ordered =>
-      JsError.throwWithMessage(
-        "Block Handlers are not supported for ordered multichain mode. Please reach out to the Envio team if you need this feature. Or enable unordered multichain mode by removing `multichain: ordered` from the config.yaml file.",
-      )
-    }
-
     let onBlockByChainId = registration.registrations.onBlockByChainId
     let key = chainId->Belt.Int.toString
     let index =

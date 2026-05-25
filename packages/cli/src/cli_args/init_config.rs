@@ -128,6 +128,7 @@ pub mod evm {
 
                             Chain {
                                 id: selected_chain.network.get_network_id(),
+                                skip: None,
                                 hypersync_config: None,
                                 rpc,
                                 start_block: selected_chain.network.get_start_block(),
@@ -270,6 +271,7 @@ pub mod fuel {
                     None => (),
                     Some(contracts) => network_configs.push(ChainConfig {
                         id: network as u64,
+                        skip: None,
                         start_block: 0,
                         end_block: None,
                         hyperfuel_config: None,
