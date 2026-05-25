@@ -4,16 +4,16 @@
   "description": "Schema for a YAML config for an envio Svm indexer",
   "type": "object",
   "properties": {
+    "name": {
+      "description": "Name of the project",
+      "type": "string"
+    },
     "description": {
       "description": "Description of the project",
       "type": [
         "string",
         "null"
       ]
-    },
-    "name": {
-      "description": "Name of the project",
-      "type": "string"
     },
     "schema": {
       "description": "Custom path to schema.graphql file",

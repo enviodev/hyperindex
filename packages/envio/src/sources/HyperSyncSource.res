@@ -149,6 +149,7 @@ type options = {
   lowercaseAddresses: bool,
   serializationFormat: HyperSyncClient.serializationFormat,
   enableQueryCaching: bool,
+  logLevel: HyperSyncClient.logLevel,
 }
 
 let make = (
@@ -163,6 +164,7 @@ let make = (
     lowercaseAddresses,
     serializationFormat,
     enableQueryCaching,
+    logLevel,
   }: options,
 ): t => {
   let name = "HyperSync"
@@ -185,6 +187,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
+    ~logLevel,
   )
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
@@ -192,18 +195,15 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     switch hscDecoder.contents {
     | Some(decoder) => decoder
     | None =>
-      switch HyperSyncClient.Decoder.fromSignatures(allEventSignatures) {
+      switch HyperSyncClient.Decoder.fromSignatures(
+        allEventSignatures,
+        ~checksumAddresses=!lowercaseAddresses,
+      ) {
       | exception exn =>
         exn->ErrorHandling.mkLogAndRaise(
           ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI",
         )
-      | decoder =>
-        if lowercaseAddresses {
-          decoder.disableChecksummedAddresses()
-        } else {
-          decoder.enableChecksummedAddresses()
-        }
-        decoder
+      | decoder => decoder
       }
     }
   }

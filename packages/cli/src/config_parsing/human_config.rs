@@ -21,7 +21,7 @@ impl<T: Clone + JsonSchema> JsonSchema for SingleOrList<T> {
         })
     }
 
-    fn always_inline_schema() -> bool {
+    fn inline_schema() -> bool {
         true
     }
 }
