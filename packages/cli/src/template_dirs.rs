@@ -439,12 +439,12 @@ mod test {
                 "indexer-filters",
                 "indexer-handlers",
                 "indexer-multichain",
-                "indexer-overview",
                 "indexer-performance",
                 "indexer-schema",
                 "indexer-testing",
                 "indexer-traces",
                 "indexer-transactions",
+                "indexer-troubleshooting",
                 "indexer-wildcard",
             ]
         );
