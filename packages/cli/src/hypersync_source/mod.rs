@@ -24,7 +24,7 @@ fn init_logger(log_level: Option<&str>) {
     });
 }
 
-/// HyperSync client for querying blockchain data
+/// HyperSync client for querying blockchain data.
 #[napi]
 pub struct HypersyncClient {
     inner: hypersync_client::Client,
