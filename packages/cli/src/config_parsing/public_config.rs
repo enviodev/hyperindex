@@ -29,8 +29,6 @@ pub(crate) struct PublicConfigJson<'a> {
     #[serde(skip_serializing_if = "is_false")]
     is_dev: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    multichain: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     full_batch_size: Option<u64>,
     #[serde(skip_serializing_if = "is_true")]
     rollback_on_reorg: bool,
@@ -510,12 +508,6 @@ impl SystemConfig {
             Ecosystem::Svm => (None, None, Some(SvmConfig { chains })),
         };
 
-        // Build multichain value
-        let multichain = match cfg.multichain {
-            crate::config_parsing::human_config::evm::Multichain::Ordered => Some("ordered"),
-            crate::config_parsing::human_config::evm::Multichain::Unordered => None,
-        };
-
         let enums_json: BTreeMap<String, Vec<String>> = cfg
             .get_gql_enums()
             .iter()
@@ -639,7 +631,6 @@ impl SystemConfig {
             description: cfg.human_config.get_base_config().description.as_deref(),
             handlers: cfg.handlers.as_deref(),
             is_dev,
-            multichain,
             full_batch_size: cfg.human_config.get_base_config().full_batch_size,
             rollback_on_reorg: cfg.rollback_on_reorg,
             save_full_history: cfg.save_full_history,

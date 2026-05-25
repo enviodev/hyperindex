@@ -264,7 +264,6 @@ module Indexer = {
 
   let rec make = async (
     ~chains: array<chainConfig>,
-    ~multichain=Config.Unordered,
     ~saveFullHistory=false,
     // Reinit storage without Hasura
     // makes tests ~1.9 seconds faster
@@ -314,7 +313,6 @@ module Indexer = {
         shouldSaveFullHistory: saveFullHistory,
         enableRawEvents,
         chainMap,
-        multichain,
         batchSize: batchSize->Option.getOr(config.batchSize),
       }
     }
@@ -499,7 +497,6 @@ module Indexer = {
           ~chains,
           ~enableHasura,
           ~enableRawEvents,
-          ~multichain,
           ~saveFullHistory,
           ~reset=false,
           ~batchSize?,
