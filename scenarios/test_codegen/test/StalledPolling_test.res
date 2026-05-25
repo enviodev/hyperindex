@@ -2,63 +2,52 @@ open Vitest
 
 describe("Polling-stall loophole", () => {
   Async.it_fails(
-    "Stalls polling on a chain whose buffer is at the head while another chain still backfills",
+    "Stalls polling when chain buffer is at the head but events not yet processed",
     async t => {
       let pollingInterval = 1
       let reducedPollingInterval = 10
-      let noopHandler = async _ => ()
 
-      let sourceA = MockIndexer.Source.make(
+      let source = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
         ~pollingInterval,
       )
-      let sourceB = MockIndexer.Source.make(
-        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
-        ~pollingInterval,
-      )
-      let indexerMock = await MockIndexer.Indexer.make(
-        ~chains=[
-          {chain: #1337, sourceConfig: Config.CustomSources([sourceA.source])},
-          {chain: #100, sourceConfig: Config.CustomSources([sourceB.source])},
-        ],
-        ~multichain=Ordered,
+      let _indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([source.source])}],
         ~shouldRollbackOnReorg=false,
         ~reducedPollingInterval,
       )
       await Utils.delay(0)
 
-      sourceA.resolveGetHeightOrThrow(300)
-      sourceB.resolveGetHeightOrThrow(300)
+      source.resolveGetHeightOrThrow(300)
       await Utils.delay(0)
       await Utils.delay(0)
 
-      sourceA.resolveGetItemsOrThrow(
-        [{blockNumber: 150, logIndex: 0, handler: noopHandler}],
+      // Handler that never resolves keeps the batch in-progress,
+      // so isReady stays false while the buffer sits at the head.
+      let blockingHandler = async _ => {
+        let _ = await Promise.make((_, _) => ())
+      }
+      source.resolveGetItemsOrThrow(
+        [{blockNumber: 150, logIndex: 0, handler: blockingHandler}],
         ~latestFetchedBlockNumber=300,
       )
-      sourceB.resolveGetItemsOrThrow(
-        [{blockNumber: 50, logIndex: 0, handler: noopHandler}],
-        ~latestFetchedBlockNumber=100,
-      )
 
-      await indexerMock.getBatchWritePromise()
       await Utils.delay(5)
 
-      let baseline = sourceA.getHeightOrThrowCalls->Array.length
+      let baseline = source.getHeightOrThrowCalls->Array.length
 
       let deadline = Date.now() +. 50.
       while Date.now() < deadline {
-        sourceA.resolveGetHeightOrThrow(300)
+        source.resolveGetHeightOrThrow(300)
         await Utils.delay(2)
       }
 
-      let newCalls = sourceA.getHeightOrThrowCalls->Array.length - baseline
+      let newCalls = source.getHeightOrThrowCalls->Array.length - baseline
 
       t.expect(
         newCalls,
-        ~message="Source A polled too often: its buffer is at the head while Source B backfills, so polling should be reduced",
+        ~message="Source polled too often: its buffer is at the head while the batch is still processing, so polling should be reduced",
       ).toBeLessThanOrEqual(2)
     },
   )
