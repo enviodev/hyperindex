@@ -1,12 +1,12 @@
-use crate::config_parsing::chain_helpers::{
-    ChainTier, GraphNetwork, HypersyncChain, NetworkWithExplorer,
-};
+use crate::config_parsing::chain_helpers::{GraphNetwork, HypersyncChain, NetworkWithExplorer};
 use anyhow::Result;
 use convert_case::{Case, Casing};
 use reqwest;
 use serde::Deserialize;
 use std::collections::HashSet;
 use strum::IntoEnumIterator;
+
+const HIDDEN_TIERS: &[&str] = &["INTERNAL", "HIDDEN", "EXPERIMENTAL"];
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -18,16 +18,23 @@ pub enum Ecosystem {
 #[derive(Deserialize, Debug)]
 struct Chain {
     name: String,
-    chain_id: Option<u64>, // None for Fuel testnet chain
-    tier: Option<ChainTier>,
+    chain_id: Option<u64>,
+    tier: Option<String>,
     ecosystem: Ecosystem,
 }
 
+impl Chain {
+    fn is_public(&self) -> bool {
+        match &self.tier {
+            Some(tier) => !HIDDEN_TIERS.contains(&tier.as_str()),
+            None => true,
+        }
+    }
+}
+
 pub struct Diff {
-    pub missing_tiers: Vec<String>,
     pub missing_chains: Vec<String>,
     pub extra_chains: Vec<String>,
-    pub incorrect_tiers: Vec<String>,
 }
 
 impl Diff {
@@ -37,42 +44,27 @@ impl Diff {
         let chains: Vec<Chain> = response.json::<Vec<Chain>>().await?;
 
         let mut api_chain_ids = HashSet::new();
-
         let mut missing_chains = Vec::new();
-        let mut missing_tiers = Vec::new();
-        let mut incorrect_tiers = Vec::new();
 
-        let public_chains = chains.into_iter().filter(|c| {
-            if c.name == *"gnosis-traces" {
-                false
-            } else {
-                match &c.tier {
-                    Some(tier) => tier.is_public(),
-                    None => true,
-                }
-            }
-        });
+        let public_chains = chains
+            .into_iter()
+            .filter(|c| c.name != *"gnosis-traces" && c.is_public());
 
         for chain in public_chains {
             let Some(chain_id) = chain.chain_id else {
-                continue; // Skip Fuel testnet chain
+                continue;
             };
             match chain.ecosystem {
                 Ecosystem::Evm => (),
-                Ecosystem::Fuel => {
-                    // Skip Fuel
-                    continue;
-                }
+                Ecosystem::Fuel => continue,
             }
-            // A quick workaround for HyperliquidTemp
-            // Can be removed in the future
             if chain.name.ends_with("-temp") {
                 continue;
             }
 
             api_chain_ids.insert(chain_id);
 
-            let Some(hypersync_chain) = HypersyncChain::from_repr(chain_id) else {
+            if HypersyncChain::from_repr(chain_id).is_none() {
                 let subenums = vec![
                     Some("HypersyncChain"),
                     NetworkWithExplorer::from_repr(chain_id).map(|_| "NetworkWithExplorer"),
@@ -89,19 +81,6 @@ impl Diff {
                     chain.name.to_case(Case::Pascal),
                     chain_id
                 ));
-
-                continue;
-            };
-
-            let Some(tier) = chain.tier else {
-                missing_tiers.push(chain.name.clone());
-                continue;
-            };
-
-            if tier != hypersync_chain.get_tier() {
-                let network_name = hypersync_chain.get_plain_name();
-                let current_tier = hypersync_chain.get_tier();
-                incorrect_tiers.push(format!("{network_name}: {current_tier} -> {tier}",));
             }
         }
 
@@ -120,67 +99,34 @@ impl Diff {
         Ok(Self {
             missing_chains,
             extra_chains,
-            missing_tiers,
-            incorrect_tiers,
         })
     }
 
     pub fn is_empty(&self) -> bool {
-        let Self {
-            missing_chains,
-            extra_chains,
-            missing_tiers,
-            incorrect_tiers,
-        } = self;
-
-        [missing_chains, extra_chains, missing_tiers, incorrect_tiers]
-            .iter()
-            .all(|v| v.is_empty())
+        self.missing_chains.is_empty() && self.extra_chains.is_empty()
     }
 
     pub fn print_message(&self) {
-        let Self {
-            missing_chains,
-            extra_chains,
-            missing_tiers,
-            incorrect_tiers,
-        } = self;
         if self.is_empty() {
             println!(
                 "All chains from the API are present in the HypersyncChain enum, and vice \
                  versa. Nothing to update."
             );
         } else {
-            if !missing_chains.is_empty() {
+            if !self.missing_chains.is_empty() {
                 println!("\nThe following chains are missing from the Network enum:");
-                for chain in missing_chains {
+                for chain in &self.missing_chains {
                     println!("{}", chain);
                 }
             }
 
-            if !extra_chains.is_empty() {
+            if !self.extra_chains.is_empty() {
                 println!(
                     "\nThe following chains are in the HypersyncChain enum but not in the API \
                      (remove the HypersyncChain subEnum from the chain_helpers.rs file):"
                 );
-                for chain in extra_chains {
+                for chain in &self.extra_chains {
                     println!("- {}", chain);
-                }
-            }
-
-            if !missing_tiers.is_empty() {
-                println!("\nThe following chains do not have a defined tier in the API:");
-                for tier in missing_tiers {
-                    println!("- {}", tier);
-                }
-            }
-
-            if !incorrect_tiers.is_empty() {
-                println!(
-                    "\nThe following chains have a tier that does not match the tier in the API:"
-                );
-                for tier in incorrect_tiers {
-                    println!("- {}", tier);
                 }
             }
         }
