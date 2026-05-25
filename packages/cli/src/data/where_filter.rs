@@ -8,7 +8,6 @@ use super::mapping::{self, FieldEntry, Section};
 #[derive(Debug, Clone)]
 pub struct FieldFilter {
     pub indexer_name: String,
-    pub hs_name: String,
     pub values: Vec<Value>,
 }
 
@@ -202,7 +201,6 @@ fn apply_field(out: &mut WhereFilter, entry: FieldEntry, body: Value) -> Result<
     let values = normalize_to_list(&entry, body)?;
     dest.push(FieldFilter {
         indexer_name: entry.indexer_name.to_string(),
-        hs_name: entry.hs_name.to_string(),
         values,
     });
     Ok(())

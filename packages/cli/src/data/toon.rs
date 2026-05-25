@@ -81,8 +81,8 @@ pub fn render_query_response(selection: &Selection, response: &QueryResponse) ->
                     for block in batch {
                         let row: Vec<String> = cols
                             .iter()
-                            .map(|c| match c.typed_field {
-                                Some(TypedField::Block(f)) => block_field_to_string(block, f),
+                            .map(|c| match c.field {
+                                TypedField::Block(f) => block_field_to_string(block, f),
                                 _ => String::new(),
                             })
                             .collect();
@@ -95,8 +95,8 @@ pub fn render_query_response(selection: &Selection, response: &QueryResponse) ->
                     for tx in batch {
                         let row: Vec<String> = cols
                             .iter()
-                            .map(|c| match c.typed_field {
-                                Some(TypedField::Transaction(f)) => tx_field_to_string(tx, f),
+                            .map(|c| match c.field {
+                                TypedField::Transaction(f) => tx_field_to_string(tx, f),
                                 _ => String::new(),
                             })
                             .collect();
@@ -109,8 +109,8 @@ pub fn render_query_response(selection: &Selection, response: &QueryResponse) ->
                     for log in batch {
                         let row: Vec<String> = cols
                             .iter()
-                            .map(|c| match c.typed_field {
-                                Some(TypedField::Log(f)) => log_field_to_string(log, f),
+                            .map(|c| match c.field {
+                                TypedField::Log(f) => log_field_to_string(log, f),
                                 _ => String::new(),
                             })
                             .collect();

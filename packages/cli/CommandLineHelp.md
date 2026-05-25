@@ -389,15 +389,19 @@ Query raw blockchain data — blocks, logs, transactions on EVM chains using the
 
 Examples:
 
-# Earliest USDC transfers on Base envio data block.number log.srcAddress log.transactionHash \ --chain=base \ --where='{ block: { number: { _gte: 0 } }, log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }, }'
+Earliest USDC transfers on Base:
 
-# Current archive height envio data knownHeight --chain=arbitrum-one
+``` envio data block.number log.srcAddress log.transactionHash \ --chain=base \ --where='{ block: { number: { _gte: 0 } }, log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }, }' ```
+
+Current archive height:
+
+``` envio data knownHeight --chain=arbitrum-one ```
 
 **Usage:** `envio data [OPTIONS] --chain <CHAIN> [FIELD]...`
 
 ###### **Arguments:**
 
-* `<FIELD>` — Indexer-style fields to fetch (e.g. `block.number`, `log.srcAddress`, `transaction.transactionIndex`). The special positional `knownHeight` returns the chain's archive height alongside the data (or alone, hits `/height` directly)
+* `<FIELD>` — Fields to fetch (e.g. `block.number`, `log.srcAddress`, `transaction.transactionIndex`). Use `knownHeight` to get the chain's current archive height
 
 ###### **Options:**
 

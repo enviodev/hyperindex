@@ -67,16 +67,22 @@ pub enum CommandType {
     ///
     ///Examples:
     ///
-    ///  # Earliest USDC transfers on Base
+    ///  Earliest USDC transfers on Base:
+    ///
+    ///  ```
     ///  envio data block.number log.srcAddress log.transactionHash \
     ///    --chain=base \
     ///    --where='{
     ///      block: { number: { _gte: 0 } },
     ///      log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
     ///    }'
+    ///  ```
     ///
-    ///  # Current archive height
+    ///  Current archive height:
+    ///
+    ///  ```
     ///  envio data knownHeight --chain=arbitrum-one
+    ///  ```
     Data(DataArgs),
 
     ///Manage Envio-provided Claude Code skills under `.claude/skills/`
@@ -150,10 +156,9 @@ pub enum JsonSchema {
 
 #[derive(Debug, Args)]
 pub struct DataArgs {
-    ///Indexer-style fields to fetch (e.g. `block.number`, `log.srcAddress`,
-    ///`transaction.transactionIndex`). The special positional
-    ///`knownHeight` returns the chain's archive height alongside the data
-    ///(or alone, hits `/height` directly).
+    ///Fields to fetch (e.g. `block.number`, `log.srcAddress`,
+    ///`transaction.transactionIndex`). Use `knownHeight` to get the
+    ///chain's current archive height.
     #[arg(value_name = "FIELD")]
     pub fields: Vec<String>,
 

@@ -134,24 +134,4 @@ pnpm test              # Run all tests
 pnpm test -- -u        # Update snapshots
 ```
 
-## Advanced: Finding Block Ranges
-
-Auto-exit mode eliminates the need for manual block discovery in most cases. Use this when you need specific block ranges for pinned snapshots.
-
-**Do NOT web-search for block ranges.** Use the `envio-data` skill — it queries blockchain data with the same `where` syntax as indexer filters and prints results in TOON. Example:
-
-```bash
-envio data block.number log.transactionHash \
-  --chain=base \
-  --where='{
-    block: { number: { _gte: 0 } },
-    log: {
-      srcAddress: "0xYOUR_CONTRACT_ADDRESS",
-      topic0: "0xYOUR_EVENT_TOPIC0",
-    },
-  }'
-```
-
-The first row is the earliest matching block. Pick a tight range (50–200 blocks) for fast, deterministic tests. See the `envio-data` skill for more recipes and the operator reference.
-
 > If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
