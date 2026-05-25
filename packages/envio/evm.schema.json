@@ -4,16 +4,16 @@
   "description": "Schema for a YAML config for an envio indexer",
   "type": "object",
   "properties": {
+    "name": {
+      "description": "Name of the project",
+      "type": "string"
+    },
     "description": {
       "description": "Description of the project",
       "type": [
         "string",
         "null"
       ]
-    },
-    "name": {
-      "description": "Name of the project",
-      "type": "string"
     },
     "schema": {
       "description": "Custom path to schema.graphql file",
@@ -67,7 +67,7 @@
         "null"
       ],
       "items": {
-        "$ref": "#/$defs/GlobalContract_for_ContractConfig"
+        "$ref": "#/$defs/GlobalContract"
       }
     },
     "chains": {
@@ -189,7 +189,7 @@
         "evm"
       ]
     },
-    "GlobalContract_for_ContractConfig": {
+    "GlobalContract": {
       "type": "object",
       "properties": {
         "name": {
@@ -425,7 +425,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/$defs/ChainContract_for_ContractConfig"
+            "$ref": "#/$defs/ChainContract"
           }
         }
       },
@@ -585,7 +585,7 @@
         "url"
       ]
     },
-    "ChainContract_for_ContractConfig": {
+    "ChainContract": {
       "type": "object",
       "properties": {
         "name": {

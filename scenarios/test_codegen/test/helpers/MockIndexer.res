@@ -273,6 +273,7 @@ module Indexer = {
     ~reset=true,
     ~batchSize=?,
     ~shouldRollbackOnReorg=true,
+    ~reducedPollingInterval=?,
   ) => {
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
@@ -356,6 +357,7 @@ module Indexer = {
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~registrations,
+      ~reducedPollingInterval?,
     )
     let globalState = GlobalState.make(
       ~ctx,
@@ -502,6 +504,7 @@ module Indexer = {
           ~reset=false,
           ~batchSize?,
           ~shouldRollbackOnReorg,
+          ~reducedPollingInterval?,
         )
       },
       graphql: query => {

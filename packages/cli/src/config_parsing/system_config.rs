@@ -2706,6 +2706,7 @@ mod test {
                 name: name.to_string(),
                 fields: Vec::new(),
                 multi_field_indexes: Vec::new(),
+                description: None,
                 postgres,
                 clickhouse,
             }
