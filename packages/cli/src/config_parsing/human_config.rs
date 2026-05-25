@@ -610,12 +610,9 @@ pub mod evm {
         #[schemars(description = "The public blockchain chain ID.")]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "If true, the chain is excluded from indexing at runtime and from \
-                           database migrations, but still participates in code generation. \
-                           Prefer using a test framework for testing. Use this field only \
-                           when you need to disable a specific chain in production."
-        )]
+        #[schemars(description = "Excludes the chain from indexing and migrations. \
+                           Code generation is unaffected. \
+                           For testing, prefer using a test framework instead.")]
         pub skip: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "RPC configuration for your indexer. If not specified \
@@ -768,12 +765,9 @@ pub mod fuel {
         #[schemars(description = "Public chain id")]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "If true, the chain is excluded from indexing at runtime and from \
-                           database migrations, but still participates in code generation. \
-                           Prefer using a test framework for testing. Use this field only \
-                           when you need to disable a specific chain in production."
-        )]
+        #[schemars(description = "Excludes the chain from indexing and migrations. \
+                           Code generation is unaffected. \
+                           For testing, prefer using a test framework instead.")]
         pub skip: Option<bool>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: u64,
@@ -863,12 +857,9 @@ pub mod svm {
         // )]
         // pub id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "If true, the chain is excluded from indexing at runtime and from \
-                           database migrations, but still participates in code generation. \
-                           Prefer using a test framework for testing. Use this field only \
-                           when you need to disable a specific chain in production."
-        )]
+        #[schemars(description = "Excludes the chain from indexing and migrations. \
+                           Code generation is unaffected. \
+                           For testing, prefer using a test framework instead.")]
         pub skip: Option<bool>,
         #[schemars(
             description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data."
