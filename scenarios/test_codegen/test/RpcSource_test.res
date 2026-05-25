@@ -1,7 +1,8 @@
 open Vitest
 open Internal
 
-let testApiToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
+@val external envApiToken: option<string> = "process.env.ENVIO_API_TOKEN"
+let testApiToken = envApiToken->Option.getOr("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")
 
 let mockLog = (
   ~transactionHash="0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
