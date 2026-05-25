@@ -63,7 +63,6 @@ test/                # Tests (see indexer-testing)
 | Transaction fields | `indexer-transactions` |
 | Trace data | `indexer-traces` |
 | Sync performance | `indexer-performance` |
-| Migrate from TheGraph | `migrate-from-subgraph` |
 
 ## Example Repos
 

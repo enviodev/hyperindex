@@ -25,6 +25,7 @@ const LEGACY_SKILL_NAMES: &[&str] = &[
     "indexing-wildcard",
     "subgraph-migration",
     "testing",
+    "migrate-from-subgraph",
 ];
 
 const MANAGED_BY_ENVIO: &str = "envio";
