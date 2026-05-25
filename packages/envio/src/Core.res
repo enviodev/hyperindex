@@ -182,3 +182,7 @@ let runCli = args => {
   let addon = getAddon()
   addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
 }
+
+let hypersyncClient = () => getAddon().hypersyncClient
+let decoder = () => getAddon().decoder
+let setLogLevel = s => getAddon().setLogLevel(s)

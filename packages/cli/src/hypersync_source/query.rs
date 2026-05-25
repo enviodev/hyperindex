@@ -90,15 +90,7 @@ pub struct FieldSelection {
 
 /// Available fields for block data
 #[napi(string_enum)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BlockField {
     Number,
     Hash,
@@ -132,15 +124,7 @@ pub enum BlockField {
 
 /// Available fields for transaction data
 #[napi(string_enum)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TransactionField {
     BlockHash,
     BlockNumber,
@@ -192,15 +176,7 @@ pub enum TransactionField {
 
 /// Available fields for log data
 #[napi(string_enum)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogField {
     Removed,
     LogIndex,
@@ -218,15 +194,7 @@ pub enum LogField {
 
 /// Available fields for trace data
 #[napi(string_enum)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TraceField {
     ActionAddress,
     Balance,
@@ -407,20 +375,7 @@ impl TryFrom<Query> for net_types::Query {
                  returned traces would be dropped before reaching the indexer"
             );
         }
-        let traces = if let Some(trace_filters) = query.traces {
-            trace_filters
-                .into_iter()
-                .map(|either| match either {
-                    Either::A(selection) => net_types::TraceSelection::try_from(selection),
-                    Either::B(filter) => {
-                        let net_filter = net_types::TraceFilter::try_from(filter)?;
-                        Ok(net_types::TraceSelection::new(net_filter))
-                    }
-                })
-                .collect::<Result<Vec<_>>>()?
-        } else {
-            Vec::new()
-        };
+        let traces = Vec::new();
 
         let blocks = if let Some(block_filters) = query.blocks {
             block_filters
@@ -581,64 +536,17 @@ impl TryFrom<TraceFilter> for net_types::TraceFilter {
     type Error = anyhow::Error;
 
     fn try_from(filter: TraceFilter) -> Result<net_types::TraceFilter> {
-        use hypersync_client::format::Address;
-        use hypersync_client::net_types::Sighash;
-
-        let from = if let Some(addresses) = filter.from {
-            addresses
-                .into_iter()
-                .map(|addr_str| Address::try_from(addr_str.as_str()))
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .context("Failed to parse from address")?
-        } else {
-            Vec::new()
-        };
-
-        let to = if let Some(addresses) = filter.to {
-            addresses
-                .into_iter()
-                .map(|addr_str| Address::try_from(addr_str.as_str()))
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .context("Failed to parse to address")?
-        } else {
-            Vec::new()
-        };
-
-        let address = if let Some(addresses) = filter.address {
-            addresses
-                .into_iter()
-                .map(|addr_str| Address::try_from(addr_str.as_str()))
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .context("Failed to parse address")?
-        } else {
-            Vec::new()
-        };
-
-        let call_type = filter.call_type.unwrap_or_default();
-        let reward_type = filter.reward_type.unwrap_or_default();
-        let type_ = filter.type_.unwrap_or_default();
-
-        let sighash = if let Some(sighashes) = filter.sighash {
-            sighashes
-                .into_iter()
-                .map(|sig_str| Sighash::try_from(sig_str.as_str()))
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .context("Failed to parse sighash")?
-        } else {
-            Vec::new()
-        };
-
         Ok(net_types::TraceFilter {
-            from,
+            from: map_optional_vec(filter.from).context("Failed to convert from")?,
             from_filter: None,
-            to,
+            to: map_optional_vec(filter.to).context("Failed to convert to")?,
             to_filter: None,
-            address,
+            address: map_optional_vec(filter.address).context("Failed to convert address")?,
             address_filter: None,
-            call_type,
-            reward_type,
-            type_,
-            sighash,
+            call_type: filter.call_type.unwrap_or_default(),
+            reward_type: filter.reward_type.unwrap_or_default(),
+            type_: filter.type_.unwrap_or_default(),
+            sighash: map_optional_vec(filter.sighash).context("Failed to convert sighash")?,
         })
     }
 }
@@ -701,153 +609,159 @@ impl TryFrom<BlockSelection> for net_types::BlockSelection {
     }
 }
 
-impl From<BlockField> for net_types::BlockField {
-    fn from(field: BlockField) -> Self {
-        match field {
-            BlockField::Number => net_types::BlockField::Number,
-            BlockField::Hash => net_types::BlockField::Hash,
-            BlockField::ParentHash => net_types::BlockField::ParentHash,
-            BlockField::Nonce => net_types::BlockField::Nonce,
-            BlockField::Sha3Uncles => net_types::BlockField::Sha3Uncles,
-            BlockField::LogsBloom => net_types::BlockField::LogsBloom,
-            BlockField::TransactionsRoot => net_types::BlockField::TransactionsRoot,
-            BlockField::StateRoot => net_types::BlockField::StateRoot,
-            BlockField::ReceiptsRoot => net_types::BlockField::ReceiptsRoot,
-            BlockField::Miner => net_types::BlockField::Miner,
-            BlockField::Difficulty => net_types::BlockField::Difficulty,
-            BlockField::TotalDifficulty => net_types::BlockField::TotalDifficulty,
-            BlockField::ExtraData => net_types::BlockField::ExtraData,
-            BlockField::Size => net_types::BlockField::Size,
-            BlockField::GasLimit => net_types::BlockField::GasLimit,
-            BlockField::GasUsed => net_types::BlockField::GasUsed,
-            BlockField::Timestamp => net_types::BlockField::Timestamp,
-            BlockField::Uncles => net_types::BlockField::Uncles,
-            BlockField::BaseFeePerGas => net_types::BlockField::BaseFeePerGas,
-            BlockField::BlobGasUsed => net_types::BlockField::BlobGasUsed,
-            BlockField::ExcessBlobGas => net_types::BlockField::ExcessBlobGas,
-            BlockField::ParentBeaconBlockRoot => net_types::BlockField::ParentBeaconBlockRoot,
-            BlockField::Withdrawals => net_types::BlockField::Withdrawals,
-            BlockField::L1BlockNumber => net_types::BlockField::L1BlockNumber,
-            BlockField::SendCount => net_types::BlockField::SendCount,
-            BlockField::SendRoot => net_types::BlockField::SendRoot,
-            BlockField::MixHash => net_types::BlockField::MixHash,
-            BlockField::WithdrawalsRoot => net_types::BlockField::WithdrawalsRoot,
+macro_rules! field_enum_convert {
+    ($local:ty, $remote:ty, [$($variant:ident),* $(,)?]) => {
+        impl From<$local> for $remote {
+            fn from(field: $local) -> Self {
+                match field { $( <$local>::$variant => <$remote>::$variant, )* }
+            }
         }
-    }
+        impl From<$remote> for $local {
+            fn from(field: $remote) -> Self {
+                match field { $( <$remote>::$variant => <$local>::$variant, )* }
+            }
+        }
+    };
 }
 
-impl From<TransactionField> for net_types::TransactionField {
-    fn from(field: TransactionField) -> Self {
-        match field {
-            TransactionField::BlockHash => net_types::TransactionField::BlockHash,
-            TransactionField::BlockNumber => net_types::TransactionField::BlockNumber,
-            TransactionField::From => net_types::TransactionField::From,
-            TransactionField::Gas => net_types::TransactionField::Gas,
-            TransactionField::GasPrice => net_types::TransactionField::GasPrice,
-            TransactionField::Hash => net_types::TransactionField::Hash,
-            TransactionField::Input => net_types::TransactionField::Input,
-            TransactionField::Nonce => net_types::TransactionField::Nonce,
-            TransactionField::To => net_types::TransactionField::To,
-            TransactionField::TransactionIndex => net_types::TransactionField::TransactionIndex,
-            TransactionField::Value => net_types::TransactionField::Value,
-            TransactionField::V => net_types::TransactionField::V,
-            TransactionField::R => net_types::TransactionField::R,
-            TransactionField::S => net_types::TransactionField::S,
-            TransactionField::YParity => net_types::TransactionField::YParity,
-            TransactionField::MaxPriorityFeePerGas => {
-                net_types::TransactionField::MaxPriorityFeePerGas
-            }
-            TransactionField::MaxFeePerGas => net_types::TransactionField::MaxFeePerGas,
-            TransactionField::ChainId => net_types::TransactionField::ChainId,
-            TransactionField::AccessList => net_types::TransactionField::AccessList,
-            TransactionField::MaxFeePerBlobGas => net_types::TransactionField::MaxFeePerBlobGas,
-            TransactionField::BlobVersionedHashes => {
-                net_types::TransactionField::BlobVersionedHashes
-            }
-            TransactionField::CumulativeGasUsed => net_types::TransactionField::CumulativeGasUsed,
-            TransactionField::EffectiveGasPrice => net_types::TransactionField::EffectiveGasPrice,
-            TransactionField::GasUsed => net_types::TransactionField::GasUsed,
-            TransactionField::ContractAddress => net_types::TransactionField::ContractAddress,
-            TransactionField::LogsBloom => net_types::TransactionField::LogsBloom,
-            TransactionField::Type => net_types::TransactionField::Type,
-            TransactionField::Root => net_types::TransactionField::Root,
-            TransactionField::Status => net_types::TransactionField::Status,
-            TransactionField::Sighash => net_types::TransactionField::Sighash,
-            TransactionField::AuthorizationList => net_types::TransactionField::AuthorizationList,
-            TransactionField::L1Fee => net_types::TransactionField::L1Fee,
-            TransactionField::L1BlockNumber => net_types::TransactionField::L1BlockNumber,
-            TransactionField::L1GasPrice => net_types::TransactionField::L1GasPrice,
-            TransactionField::L1GasUsed => net_types::TransactionField::L1GasUsed,
-            TransactionField::L1FeeScalar => net_types::TransactionField::L1FeeScalar,
-            TransactionField::L1BaseFeeScalar => net_types::TransactionField::L1BaseFeeScalar,
-            TransactionField::L1BlobBaseFee => net_types::TransactionField::L1BlobBaseFee,
-            TransactionField::L1BlobBaseFeeScalar => {
-                net_types::TransactionField::L1BlobBaseFeeScalar
-            }
-            TransactionField::GasUsedForL1 => net_types::TransactionField::GasUsedForL1,
-            TransactionField::BlobGasPrice => net_types::TransactionField::BlobGasPrice,
-            TransactionField::BlobGasUsed => net_types::TransactionField::BlobGasUsed,
+field_enum_convert!(
+    BlockField,
+    net_types::BlockField,
+    [
+        Number,
+        Hash,
+        ParentHash,
+        Nonce,
+        Sha3Uncles,
+        LogsBloom,
+        TransactionsRoot,
+        StateRoot,
+        ReceiptsRoot,
+        Miner,
+        Difficulty,
+        TotalDifficulty,
+        ExtraData,
+        Size,
+        GasLimit,
+        GasUsed,
+        Timestamp,
+        Uncles,
+        BaseFeePerGas,
+        BlobGasUsed,
+        ExcessBlobGas,
+        ParentBeaconBlockRoot,
+        WithdrawalsRoot,
+        Withdrawals,
+        L1BlockNumber,
+        SendCount,
+        SendRoot,
+        MixHash,
+    ]
+);
 
-            TransactionField::DepositNonce => net_types::TransactionField::DepositNonce,
-            TransactionField::DepositReceiptVersion => {
-                net_types::TransactionField::DepositReceiptVersion
-            }
-            TransactionField::Mint => net_types::TransactionField::Mint,
-            TransactionField::SourceHash => net_types::TransactionField::SourceHash,
-        }
-    }
-}
+field_enum_convert!(
+    TransactionField,
+    net_types::TransactionField,
+    [
+        BlockHash,
+        BlockNumber,
+        From,
+        Gas,
+        GasPrice,
+        Hash,
+        Input,
+        Nonce,
+        To,
+        TransactionIndex,
+        Value,
+        V,
+        R,
+        S,
+        YParity,
+        MaxPriorityFeePerGas,
+        MaxFeePerGas,
+        ChainId,
+        AccessList,
+        AuthorizationList,
+        MaxFeePerBlobGas,
+        BlobVersionedHashes,
+        CumulativeGasUsed,
+        EffectiveGasPrice,
+        GasUsed,
+        ContractAddress,
+        LogsBloom,
+        Type,
+        Root,
+        Status,
+        L1Fee,
+        L1BlockNumber,
+        L1GasPrice,
+        L1GasUsed,
+        L1FeeScalar,
+        L1BaseFeeScalar,
+        L1BlobBaseFee,
+        L1BlobBaseFeeScalar,
+        GasUsedForL1,
+        Sighash,
+        BlobGasPrice,
+        BlobGasUsed,
+        DepositNonce,
+        DepositReceiptVersion,
+        Mint,
+        SourceHash,
+    ]
+);
 
-impl From<LogField> for net_types::LogField {
-    fn from(field: LogField) -> Self {
-        match field {
-            LogField::Removed => net_types::LogField::Removed,
-            LogField::LogIndex => net_types::LogField::LogIndex,
-            LogField::TransactionIndex => net_types::LogField::TransactionIndex,
-            LogField::TransactionHash => net_types::LogField::TransactionHash,
-            LogField::BlockHash => net_types::LogField::BlockHash,
-            LogField::BlockNumber => net_types::LogField::BlockNumber,
-            LogField::Address => net_types::LogField::Address,
-            LogField::Data => net_types::LogField::Data,
-            LogField::Topic0 => net_types::LogField::Topic0,
-            LogField::Topic1 => net_types::LogField::Topic1,
-            LogField::Topic2 => net_types::LogField::Topic2,
-            LogField::Topic3 => net_types::LogField::Topic3,
-        }
-    }
-}
+field_enum_convert!(
+    LogField,
+    net_types::LogField,
+    [
+        Removed,
+        LogIndex,
+        TransactionIndex,
+        TransactionHash,
+        BlockHash,
+        BlockNumber,
+        Address,
+        Data,
+        Topic0,
+        Topic1,
+        Topic2,
+        Topic3,
+    ]
+);
 
-impl From<TraceField> for net_types::TraceField {
-    fn from(field: TraceField) -> Self {
-        match field {
-            TraceField::From => net_types::TraceField::From,
-            TraceField::To => net_types::TraceField::To,
-            TraceField::CallType => net_types::TraceField::CallType,
-            TraceField::Gas => net_types::TraceField::Gas,
-            TraceField::Input => net_types::TraceField::Input,
-            TraceField::Init => net_types::TraceField::Init,
-            TraceField::Value => net_types::TraceField::Value,
-            TraceField::Author => net_types::TraceField::Author,
-            TraceField::RewardType => net_types::TraceField::RewardType,
-            TraceField::BlockHash => net_types::TraceField::BlockHash,
-            TraceField::BlockNumber => net_types::TraceField::BlockNumber,
-            TraceField::Address => net_types::TraceField::Address,
-            TraceField::Code => net_types::TraceField::Code,
-            TraceField::GasUsed => net_types::TraceField::GasUsed,
-            TraceField::Output => net_types::TraceField::Output,
-            TraceField::Subtraces => net_types::TraceField::Subtraces,
-            TraceField::TraceAddress => net_types::TraceField::TraceAddress,
-            TraceField::TransactionHash => net_types::TraceField::TransactionHash,
-            TraceField::TransactionPosition => net_types::TraceField::TransactionPosition,
-            TraceField::Type => net_types::TraceField::Type,
-            TraceField::Error => net_types::TraceField::Error,
-            TraceField::ActionAddress => net_types::TraceField::ActionAddress,
-            TraceField::Balance => net_types::TraceField::Balance,
-            TraceField::RefundAddress => net_types::TraceField::RefundAddress,
-            TraceField::Sighash => net_types::TraceField::Sighash,
-        }
-    }
-}
+field_enum_convert!(
+    TraceField,
+    net_types::TraceField,
+    [
+        ActionAddress,
+        Balance,
+        RefundAddress,
+        Sighash,
+        From,
+        To,
+        CallType,
+        Gas,
+        Input,
+        Init,
+        Value,
+        Author,
+        RewardType,
+        BlockHash,
+        BlockNumber,
+        Address,
+        Code,
+        GasUsed,
+        Output,
+        Subtraces,
+        TraceAddress,
+        TransactionHash,
+        TransactionPosition,
+        Type,
+        Error,
+    ]
+);
 
 impl TryFrom<FieldSelection> for net_types::FieldSelection {
     type Error = anyhow::Error;
@@ -1102,153 +1016,6 @@ impl From<net_types::BlockSelection> for BlockSelection {
     }
 }
 
-impl From<net_types::BlockField> for BlockField {
-    fn from(field: net_types::BlockField) -> Self {
-        match field {
-            net_types::BlockField::Number => BlockField::Number,
-            net_types::BlockField::Hash => BlockField::Hash,
-            net_types::BlockField::ParentHash => BlockField::ParentHash,
-            net_types::BlockField::Nonce => BlockField::Nonce,
-            net_types::BlockField::Sha3Uncles => BlockField::Sha3Uncles,
-            net_types::BlockField::LogsBloom => BlockField::LogsBloom,
-            net_types::BlockField::TransactionsRoot => BlockField::TransactionsRoot,
-            net_types::BlockField::StateRoot => BlockField::StateRoot,
-            net_types::BlockField::ReceiptsRoot => BlockField::ReceiptsRoot,
-            net_types::BlockField::Miner => BlockField::Miner,
-            net_types::BlockField::Difficulty => BlockField::Difficulty,
-            net_types::BlockField::TotalDifficulty => BlockField::TotalDifficulty,
-            net_types::BlockField::ExtraData => BlockField::ExtraData,
-            net_types::BlockField::Size => BlockField::Size,
-            net_types::BlockField::GasLimit => BlockField::GasLimit,
-            net_types::BlockField::GasUsed => BlockField::GasUsed,
-            net_types::BlockField::Timestamp => BlockField::Timestamp,
-            net_types::BlockField::Uncles => BlockField::Uncles,
-            net_types::BlockField::BaseFeePerGas => BlockField::BaseFeePerGas,
-            net_types::BlockField::BlobGasUsed => BlockField::BlobGasUsed,
-            net_types::BlockField::ExcessBlobGas => BlockField::ExcessBlobGas,
-            net_types::BlockField::ParentBeaconBlockRoot => BlockField::ParentBeaconBlockRoot,
-            net_types::BlockField::WithdrawalsRoot => BlockField::WithdrawalsRoot,
-            net_types::BlockField::Withdrawals => BlockField::Withdrawals,
-            net_types::BlockField::L1BlockNumber => BlockField::L1BlockNumber,
-            net_types::BlockField::SendCount => BlockField::SendCount,
-            net_types::BlockField::SendRoot => BlockField::SendRoot,
-            net_types::BlockField::MixHash => BlockField::MixHash,
-        }
-    }
-}
-
-impl From<net_types::TransactionField> for TransactionField {
-    fn from(field: net_types::TransactionField) -> Self {
-        match field {
-            net_types::TransactionField::BlockHash => TransactionField::BlockHash,
-            net_types::TransactionField::BlockNumber => TransactionField::BlockNumber,
-            net_types::TransactionField::From => TransactionField::From,
-            net_types::TransactionField::Gas => TransactionField::Gas,
-            net_types::TransactionField::GasPrice => TransactionField::GasPrice,
-            net_types::TransactionField::Hash => TransactionField::Hash,
-            net_types::TransactionField::Input => TransactionField::Input,
-            net_types::TransactionField::Nonce => TransactionField::Nonce,
-            net_types::TransactionField::To => TransactionField::To,
-            net_types::TransactionField::TransactionIndex => TransactionField::TransactionIndex,
-            net_types::TransactionField::Value => TransactionField::Value,
-            net_types::TransactionField::V => TransactionField::V,
-            net_types::TransactionField::R => TransactionField::R,
-            net_types::TransactionField::S => TransactionField::S,
-            net_types::TransactionField::YParity => TransactionField::YParity,
-            net_types::TransactionField::MaxPriorityFeePerGas => {
-                TransactionField::MaxPriorityFeePerGas
-            }
-            net_types::TransactionField::MaxFeePerGas => TransactionField::MaxFeePerGas,
-            net_types::TransactionField::ChainId => TransactionField::ChainId,
-            net_types::TransactionField::AccessList => TransactionField::AccessList,
-            net_types::TransactionField::MaxFeePerBlobGas => TransactionField::MaxFeePerBlobGas,
-            net_types::TransactionField::BlobVersionedHashes => {
-                TransactionField::BlobVersionedHashes
-            }
-            net_types::TransactionField::CumulativeGasUsed => TransactionField::CumulativeGasUsed,
-            net_types::TransactionField::EffectiveGasPrice => TransactionField::EffectiveGasPrice,
-            net_types::TransactionField::GasUsed => TransactionField::GasUsed,
-            net_types::TransactionField::ContractAddress => TransactionField::ContractAddress,
-            net_types::TransactionField::LogsBloom => TransactionField::LogsBloom,
-            net_types::TransactionField::Type => TransactionField::Type,
-            net_types::TransactionField::Root => TransactionField::Root,
-            net_types::TransactionField::Status => TransactionField::Status,
-            net_types::TransactionField::Sighash => TransactionField::Sighash,
-            net_types::TransactionField::AuthorizationList => TransactionField::AuthorizationList,
-            net_types::TransactionField::L1Fee => TransactionField::L1Fee,
-            net_types::TransactionField::L1BlockNumber => TransactionField::L1BlockNumber,
-            net_types::TransactionField::L1GasPrice => TransactionField::L1GasPrice,
-            net_types::TransactionField::L1GasUsed => TransactionField::L1GasUsed,
-            net_types::TransactionField::L1FeeScalar => TransactionField::L1FeeScalar,
-            net_types::TransactionField::L1BaseFeeScalar => TransactionField::L1BaseFeeScalar,
-            net_types::TransactionField::L1BlobBaseFee => TransactionField::L1BlobBaseFee,
-            net_types::TransactionField::L1BlobBaseFeeScalar => {
-                TransactionField::L1BlobBaseFeeScalar
-            }
-            net_types::TransactionField::GasUsedForL1 => TransactionField::GasUsedForL1,
-            net_types::TransactionField::BlobGasPrice => TransactionField::BlobGasPrice,
-            net_types::TransactionField::BlobGasUsed => TransactionField::BlobGasUsed,
-            net_types::TransactionField::DepositNonce => TransactionField::DepositNonce,
-            net_types::TransactionField::DepositReceiptVersion => {
-                TransactionField::DepositReceiptVersion
-            }
-            net_types::TransactionField::Mint => TransactionField::Mint,
-            net_types::TransactionField::SourceHash => TransactionField::SourceHash,
-        }
-    }
-}
-
-impl From<net_types::LogField> for LogField {
-    fn from(field: net_types::LogField) -> Self {
-        match field {
-            net_types::LogField::Removed => LogField::Removed,
-            net_types::LogField::LogIndex => LogField::LogIndex,
-            net_types::LogField::TransactionIndex => LogField::TransactionIndex,
-            net_types::LogField::TransactionHash => LogField::TransactionHash,
-            net_types::LogField::BlockHash => LogField::BlockHash,
-            net_types::LogField::BlockNumber => LogField::BlockNumber,
-            net_types::LogField::Address => LogField::Address,
-            net_types::LogField::Data => LogField::Data,
-            net_types::LogField::Topic0 => LogField::Topic0,
-            net_types::LogField::Topic1 => LogField::Topic1,
-            net_types::LogField::Topic2 => LogField::Topic2,
-            net_types::LogField::Topic3 => LogField::Topic3,
-        }
-    }
-}
-
-impl From<net_types::TraceField> for TraceField {
-    fn from(field: net_types::TraceField) -> Self {
-        match field {
-            net_types::TraceField::From => TraceField::From,
-            net_types::TraceField::To => TraceField::To,
-            net_types::TraceField::CallType => TraceField::CallType,
-            net_types::TraceField::Gas => TraceField::Gas,
-            net_types::TraceField::Input => TraceField::Input,
-            net_types::TraceField::Init => TraceField::Init,
-            net_types::TraceField::Value => TraceField::Value,
-            net_types::TraceField::Author => TraceField::Author,
-            net_types::TraceField::RewardType => TraceField::RewardType,
-            net_types::TraceField::BlockHash => TraceField::BlockHash,
-            net_types::TraceField::BlockNumber => TraceField::BlockNumber,
-            net_types::TraceField::Address => TraceField::Address,
-            net_types::TraceField::Code => TraceField::Code,
-            net_types::TraceField::GasUsed => TraceField::GasUsed,
-            net_types::TraceField::Output => TraceField::Output,
-            net_types::TraceField::Subtraces => TraceField::Subtraces,
-            net_types::TraceField::TraceAddress => TraceField::TraceAddress,
-            net_types::TraceField::TransactionHash => TraceField::TransactionHash,
-            net_types::TraceField::TransactionPosition => TraceField::TransactionPosition,
-            net_types::TraceField::Type => TraceField::Type,
-            net_types::TraceField::Error => TraceField::Error,
-            net_types::TraceField::ActionAddress => TraceField::ActionAddress,
-            net_types::TraceField::Balance => TraceField::Balance,
-            net_types::TraceField::RefundAddress => TraceField::RefundAddress,
-            net_types::TraceField::Sighash => TraceField::Sighash,
-        }
-    }
-}
-
 impl From<net_types::FieldSelection> for FieldSelection {
     fn from(selection: net_types::FieldSelection) -> FieldSelection {
         fn map_into<T, F>(fields: std::collections::BTreeSet<T>) -> Option<Vec<F>>
@@ -1270,4 +1037,3 @@ impl From<net_types::FieldSelection> for FieldSelection {
         }
     }
 }
-

@@ -369,8 +369,7 @@ type t = {
 @send
 external classNewWithAgent: (Core.hypersyncClientCtor, cfg, string) => t = "newWithAgent"
 
-let makeWithAgent = (cfg, ~userAgent) =>
-  Core.getAddon().hypersyncClient->classNewWithAgent(cfg, userAgent)
+let makeWithAgent = (cfg, ~userAgent) => Core.hypersyncClient()->classNewWithAgent(cfg, userAgent)
 
 let make = (
   ~url,
@@ -417,7 +416,7 @@ let setLogLevel = (level: logLevel) => {
   | #warn => "warn"
   | #error => "error"
   }
-  Core.getAddon().setLogLevel(s)
+  Core.setLogLevel(s)
 }
 
 module Decoder = {
@@ -458,12 +457,9 @@ module Decoder = {
   }
 
   @send
-  external classFromSignatures: (
-    Core.decoderCtor,
-    array<string>,
-    ~checksumAddresses: bool=?,
-  ) => t = "fromSignatures"
+  external classFromSignatures: (Core.decoderCtor, array<string>, ~checksumAddresses: bool=?) => t =
+    "fromSignatures"
 
   let fromSignatures = (signatures, ~checksumAddresses=?) =>
-    Core.getAddon().decoder->classFromSignatures(signatures, ~checksumAddresses?)
+    Core.decoder()->classFromSignatures(signatures, ~checksumAddresses?)
 }
