@@ -260,11 +260,15 @@ pub struct GraphQLEnum {
 }
 
 impl GraphQLEnum {
-    pub fn new(name: String, values: Vec<String>) -> anyhow::Result<Self> {
+    pub fn new(
+        name: String,
+        values: Vec<String>,
+        description: Option<String>,
+    ) -> anyhow::Result<Self> {
         Self {
             name,
             values,
-            description: None,
+            description,
         }
         .valididate()
     }
@@ -320,9 +324,7 @@ impl GraphQLEnum {
             .iter()
             .map(|value| value.name.clone())
             .collect::<Vec<String>>();
-        let mut gql_enum = Self::new(name, values)?;
-        gql_enum.description = enm.description.clone();
-        Ok(gql_enum)
+        Self::new(name, values, enm.description.clone())
     }
 }
 
@@ -341,6 +343,9 @@ impl Entity {
         name: &str,
         fields: Vec<Field>,
         multi_field_indexes: Vec<MultiFieldIndex>,
+        description: Option<String>,
+        postgres: Option<bool>,
+        clickhouse: Option<bool>,
     ) -> anyhow::Result<Self> {
         // Check for duplicate field names
         let mut field_names_set = HashSet::new();
@@ -392,9 +397,9 @@ impl Entity {
             name: name.to_string(),
             fields,
             multi_field_indexes,
-            description: None,
-            postgres: None,
-            clickhouse: None,
+            description,
+            postgres,
+            clickhouse,
         })
     }
 
@@ -488,15 +493,17 @@ impl Entity {
             .collect::<anyhow::Result<Vec<Field>>>()
             .context(format!("Failed parsing fields on entity {name}"))?;
 
-        let mut entity = Self::new(name, fields, multi_field_indexes)
-            .context(format!("Failed constructing entity {name}",))?;
-        entity.description = obj.description.clone();
-
         let (postgres, clickhouse) = parse_storage_directive(obj)?;
-        entity.postgres = postgres;
-        entity.clickhouse = clickhouse;
 
-        Ok(entity)
+        Self::new(
+            name,
+            fields,
+            multi_field_indexes,
+            obj.description.clone(),
+            postgres,
+            clickhouse,
+        )
+        .context(format!("Failed constructing entity {name}"))
     }
 
     pub fn has_storage_directive(&self) -> bool {
@@ -1918,7 +1925,8 @@ type TestEntity {
     #[test]
     fn gql_type_to_rescript_type_entity() {
         let test_entity_string = String::from("TestEntity");
-        let test_entity = Entity::new(&test_entity_string, vec![], vec![]).unwrap();
+        let test_entity =
+            Entity::new(&test_entity_string, vec![], vec![], None, None, None).unwrap();
         let schema = Schema::new(vec![test_entity], vec![]).unwrap();
         let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(test_entity_string))
             .to_rescript_type(&schema)
@@ -1930,7 +1938,7 @@ type TestEntity {
     #[test]
     fn gql_type_to_rescript_type_enum() {
         let name = String::from("TestEnum");
-        let test_enum = GraphQLEnum::new(name.clone(), vec![]).unwrap();
+        let test_enum = GraphQLEnum::new(name.clone(), vec![], None).unwrap();
         let schema = Schema::new(vec![], vec![test_enum]).unwrap();
         let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(name))
             .to_rescript_type(&schema)
@@ -2007,7 +2015,8 @@ type TestEntity {
     #[test]
     fn gql_enum_type_to_pgprimitive() {
         let name = String::from("TestEnum");
-        let test_enum = GraphQLEnum::new(name.clone(), vec!["TEST_VALUE".to_string()]).unwrap();
+        let test_enum =
+            GraphQLEnum::new(name.clone(), vec!["TEST_VALUE".to_string()], None).unwrap();
         let field_type =
             get_field_type_helper_with_additional("TestEnum!", vec![test_enum.clone()]);
         let schema = Schema::new(vec![], vec![test_enum]).unwrap();
