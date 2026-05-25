@@ -424,7 +424,6 @@ pub struct SystemConfig {
     pub parsed_project_paths: ParsedProjectPaths,
     pub chains: ChainMap,
     pub contracts: ContractMap,
-    pub multichain: human_config::evm::Multichain,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
     pub schema: Schema,
@@ -794,6 +793,7 @@ impl SystemConfig {
 
                     let chain = Chain {
                         id: network.id,
+                        skip: network.skip.unwrap_or(false),
                         max_reorg_depth: network
                             .max_reorg_depth
                             .or_else(|| get_max_reorg_depth_from_id(network.id)),
@@ -827,7 +827,6 @@ impl SystemConfig {
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     contracts,
-                    multichain: human_config::evm::Multichain::Unordered,
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
                     schema,
@@ -952,6 +951,7 @@ impl SystemConfig {
 
                     let chain = Chain {
                         id: network.id,
+                        skip: network.skip.unwrap_or(false),
                         start_block: network.start_block,
                         end_block: network.end_block,
                         max_reorg_depth: network.max_reorg_depth,
@@ -973,7 +973,6 @@ impl SystemConfig {
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     contracts,
-                    multichain: human_config::evm::Multichain::Unordered,
                     rollback_on_reorg: false,
                     save_full_history: false,
                     schema,
@@ -994,6 +993,7 @@ impl SystemConfig {
 
                     let chain = Chain {
                         id: 0, //network.id,
+                        skip: network.skip.unwrap_or(false),
                         start_block: network.start_block,
                         end_block: network.end_block,
                         max_reorg_depth: None,
@@ -1016,7 +1016,6 @@ impl SystemConfig {
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     contracts,
-                    multichain: human_config::evm::Multichain::Unordered,
                     rollback_on_reorg: false,
                     save_full_history: false,
                     schema,
@@ -1257,6 +1256,7 @@ impl DataSource {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chain {
     pub id: u64,
+    pub skip: bool,
     pub sync_source: DataSource,
     pub start_block: u64,
     pub end_block: Option<u64>,
@@ -2097,6 +2097,55 @@ mod test {
     }
 
     #[test]
+    fn skip_chain_excluded_from_public_config_json() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let project_paths = ParsedProjectPaths::new(&test_dir, "configs/skip-one-chain.yaml")
+            .expect("Failed creating parsed_paths");
+
+        let config =
+            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
+
+        assert_eq!(config.get_chains().len(), 2, "both chains should be parsed");
+
+        let public_json = config
+            .to_public_config_json(false)
+            .expect("Failed serializing public config");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&public_json).expect("Failed parsing public config JSON");
+        let chains = parsed["evm"]["chains"]
+            .as_object()
+            .expect("evm.chains should be an object");
+
+        assert_eq!(
+            chains.len(),
+            1,
+            "only the active chain should be in public config"
+        );
+        assert!(
+            !public_json.contains("\"id\":137"),
+            "skipped chain 137 should not appear in public config JSON"
+        );
+    }
+
+    #[test]
+    fn skip_all_chains_returns_error() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let project_paths = ParsedProjectPaths::new(&test_dir, "configs/skip-all-chains.yaml")
+            .expect("Failed creating parsed_paths");
+
+        let config =
+            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
+
+        let err = config
+            .to_public_config_json(false)
+            .expect_err("should error when all chains are skipped");
+        assert!(
+            err.to_string().contains("All chains are skipped"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
     fn test_get_contract_abi() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_root = test_dir.as_str();
@@ -2482,6 +2531,7 @@ mod test {
 
         let network = EvmChain {
             id: 1,
+            skip: None,
             hypersync_config: Some(HypersyncConfig {
                 url: "https://somechain.hypersync.xyz//".to_string(),
             }),
@@ -2652,6 +2702,7 @@ mod test {
                 name: name.to_string(),
                 fields: Vec::new(),
                 multi_field_indexes: Vec::new(),
+                description: None,
                 postgres,
                 clickhouse,
             }

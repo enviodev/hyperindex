@@ -70,7 +70,6 @@ A few things already running in production:
 **Multichain indexing**
 - Index EVM, SVM, and Fuel blockchains from a single indexer
 - 70+ EVM chains with native HyperSync support, plus any EVM chain via RPC
-- Unordered multichain mode for maximum throughput across chains
 - Real-time indexing with reorg handling built in
 
 **Developer experience**

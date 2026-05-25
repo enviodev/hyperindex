@@ -66,7 +66,6 @@ let hypersyncClientEnableQueryCaching =
 
 let hypersyncLogLevel =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_LOG_LEVEL", HyperSyncClient.logLevelSchema, ~fallback=#info)
-HyperSyncClient.setLogLevel(hypersyncLogLevel)
 
 let logStrategy =
   envSafe->EnvSafe.get(

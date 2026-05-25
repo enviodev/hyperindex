@@ -1,21 +1,3 @@
-//Comparator used when ordering multichain events
-let getOrderedBatchItemComparator = (item: Internal.item) => {
-  switch item {
-  | Internal.Event({timestamp, chain, blockNumber, logIndex}) => (
-      timestamp,
-      chain->ChainMap.Chain.toChainId,
-      blockNumber,
-      logIndex,
-    )
-  | Internal.Block(_) =>
-    JsError.throwWithMessage("Block handlers are not supported for ordered multichain mode.")
-  }
-}
-
-let isEarlier = (item1: (int, int, int, int), item2: (int, int, int, int)) => {
-  item1 < item2
-}
-
 let isEarlierUnordered = (item1: (int, int, int), item2: (int, int, int)) => {
   item1 < item2
 }

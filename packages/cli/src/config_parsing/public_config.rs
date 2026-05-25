@@ -5,7 +5,7 @@ use super::{
     system_config::{self, Abi, Ecosystem, EventKind, FuelEventKind, SystemConfig},
 };
 use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -28,8 +28,6 @@ pub(crate) struct PublicConfigJson<'a> {
     handlers: Option<&'a str>,
     #[serde(skip_serializing_if = "is_false")]
     is_dev: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    multichain: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     full_batch_size: Option<u64>,
     #[serde(skip_serializing_if = "is_true")]
@@ -81,6 +79,8 @@ struct EntityJson {
     derived_fields: Vec<DerivedFieldJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     composite_indices: Vec<Vec<CompositeIndexJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -114,6 +114,8 @@ struct PropertyJson {
     precision: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     scale: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -122,6 +124,8 @@ struct DerivedFieldJson {
     field_name: String,
     derived_from_entity: String,
     derived_from_field: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -310,10 +314,17 @@ impl SystemConfig {
     pub fn to_public_config_json(&self, is_dev: bool) -> Result<String> {
         let cfg = self;
 
+        let active_chains: Vec<_> = cfg.get_chains().into_iter().filter(|c| !c.skip).collect();
+
+        if active_chains.is_empty() {
+            return Err(anyhow!(
+                "All chains are skipped. At least one chain must be active to run the indexer."
+            ));
+        }
+
         // Build chains map
-        let chains: BTreeMap<String, ChainConfig> = cfg
-            .get_chains()
-            .iter()
+        let chains: BTreeMap<String, ChainConfig> = active_chains
+            .into_iter()
             .map(|network| {
                 let chain_name = chain_id_to_name(network.id, &cfg.get_ecosystem());
 
@@ -497,12 +508,6 @@ impl SystemConfig {
             Ecosystem::Svm => (None, None, Some(SvmConfig { chains })),
         };
 
-        // Build multichain value
-        let multichain = match cfg.multichain {
-            crate::config_parsing::human_config::evm::Multichain::Ordered => Some("ordered"),
-            crate::config_parsing::human_config::evm::Multichain::Unordered => None,
-        };
-
         let enums_json: BTreeMap<String, Vec<String>> = cfg
             .get_gql_enums()
             .iter()
@@ -563,6 +568,7 @@ impl SystemConfig {
                             entity: entity_name,
                             precision,
                             scale,
+                            description: f.description.clone(),
                         }
                     })
                     .collect();
@@ -577,6 +583,7 @@ impl SystemConfig {
                                 field_name: df.field_name,
                                 derived_from_entity: df.derived_from_entity,
                                 derived_from_field: df.derived_from_field,
+                                description: df.description,
                             })
                     })
                     .collect();
@@ -613,6 +620,7 @@ impl SystemConfig {
                     properties,
                     derived_fields,
                     composite_indices,
+                    description: entity.description.clone(),
                 })
             })
             .collect::<Result<_>>()?;
@@ -623,7 +631,6 @@ impl SystemConfig {
             description: cfg.human_config.get_base_config().description.as_deref(),
             handlers: cfg.handlers.as_deref(),
             is_dev,
-            multichain,
             full_batch_size: cfg.human_config.get_base_config().full_batch_size,
             rollback_on_reorg: cfg.rollback_on_reorg,
             save_full_history: cfg.save_full_history,

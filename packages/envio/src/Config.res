@@ -56,10 +56,6 @@ type sourceSync = {
   pollingInterval: int,
 }
 
-type multichain = Internal.multichain =
-  | @as("ordered") Ordered
-  | @as("unordered") Unordered
-
 type storage = {
   postgres: bool,
   clickhouse: bool,
@@ -78,7 +74,6 @@ type t = {
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
   storage: storage,
-  multichain: multichain,
   chainMap: ChainMap.t<chain>,
   defaultChain: option<chain>,
   ecosystem: Ecosystem.t,
@@ -241,8 +236,6 @@ let publicConfigEvmSchema = S.schema(s =>
   }
 )
 
-let multichainSchema = S.enum([Ordered, Unordered])
-
 let compositeIndexFieldSchema = S.schema(s =>
   {
     "fieldName": s.matches(S.string),
@@ -255,6 +248,7 @@ let derivedFieldSchema = S.schema(s =>
     "fieldName": s.matches(S.string),
     "derivedFromEntity": s.matches(S.string),
     "derivedFromField": s.matches(S.string),
+    "description": s.matches(S.option(S.string)),
   }
 )
 
@@ -270,6 +264,7 @@ let propertySchema = S.schema(s =>
     "entity": s.matches(S.option(S.string)),
     "precision": s.matches(S.option(S.int)),
     "scale": s.matches(S.option(S.int)),
+    "description": s.matches(S.option(S.string)),
   }
 )
 
@@ -287,6 +282,7 @@ let entityJsonSchema = S.schema(s =>
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
     "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
+    "description": s.matches(S.option(S.string)),
   }
 )
 
@@ -379,6 +375,7 @@ let parseEntitiesFromJson = (
         ~isArray,
         ~isIndex,
         ~linkedEntity=?prop["linkedEntity"],
+        ~description=?prop["description"],
       )
     })
 
@@ -390,6 +387,7 @@ let parseEntitiesFromJson = (
           df["fieldName"],
           ~derivedFromEntity=df["derivedFromEntity"],
           ~derivedFromField=df["derivedFromField"],
+          ~description=?df["description"],
         )
       )
 
@@ -409,6 +407,7 @@ let parseEntitiesFromJson = (
       entityName,
       ~fields=Array.concat(fields, derivedFields),
       ~compositeIndices,
+      ~description=?entityJson["description"],
     )
 
     // Build schema dynamically from properties
@@ -470,7 +469,6 @@ let publicConfigSchema = S.schema(s =>
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
     "isDev": s.matches(S.option(S.bool)),
-    "multichain": s.matches(S.option(multichainSchema)),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
@@ -826,7 +824,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
     storage: globalStorage,
-    multichain: publicConfig["multichain"]->Option.getOr(Unordered),
     chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),

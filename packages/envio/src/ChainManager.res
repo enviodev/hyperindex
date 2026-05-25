@@ -1,7 +1,6 @@
 type t = {
   committedCheckpointId: bigint,
   chainFetchers: ChainMap.t<ChainFetcher.t>,
-  multichain: Config.multichain,
   isInReorgThreshold: bool,
   // True once every chain has caught up to head/endBlock. Monotonic during a run.
   isRealtime: bool,
@@ -35,6 +34,7 @@ let makeFromDbState = (
   ~initialState: Persistence.initialState,
   ~config: Config.t,
   ~registrations,
+  ~reducedPollingInterval=?,
 ): t => {
   let isInReorgThreshold = if initialState.cleanRun {
     false
@@ -81,6 +81,7 @@ let makeFromDbState = (
           ~targetBufferSize,
           ~config,
           ~registrations,
+          ~reducedPollingInterval?,
         ),
       )
     })
@@ -106,7 +107,6 @@ let makeFromDbState = (
 
   {
     committedCheckpointId: initialState.checkpointId,
-    multichain: config.multichain,
     chainFetchers,
     isInReorgThreshold,
     isRealtime,
@@ -128,11 +128,10 @@ let setChainFetcher = (chainManager: t, chainFetcher: ChainFetcher.t) => {
 }
 
 let nextItemIsNone = (chainManager: t): bool => {
-  !Batch.hasMultichainReadyItem(
+  !Batch.hasReadyItem(
     chainManager.chainFetchers->ChainMap.map(cf => {
       cf.fetchState
     }),
-    ~multichain=chainManager.multichain,
   )
 }
 
@@ -152,7 +151,6 @@ let createBatch = (chainManager: t, ~batchSizeTarget: int, ~isRollback: bool): B
       reorgDetection: cf.reorgDetection,
       chainConfig: cf.chainConfig,
     }),
-    ~multichain=chainManager.multichain,
     ~batchSizeTarget,
   )
 }

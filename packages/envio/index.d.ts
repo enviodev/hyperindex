@@ -299,8 +299,6 @@ type IndexerConfig = {
   description?: string;
   /** Path to handlers directory for auto-loading (default: "src/handlers"). */
   handlers?: string;
-  /** Multichain mode: ordered or unordered (default: "unordered"). */
-  multichain?: "ordered" | "unordered";
   /** Target batch size for event processing (default: 5000). */
   fullBatchSize?: number;
   /** Whether to rollback on chain reorg (default: true). */
