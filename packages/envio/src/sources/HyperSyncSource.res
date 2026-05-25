@@ -301,22 +301,35 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           }),
         ),
       )
-    | exn =>
-      throw(
-        Source.GetItemsError(
-          Source.FailedGettingItems({
-            exn,
-            attemptedToBlock: toBlock->Option.getOr(knownHeight),
-            retry: WithBackoff({
-              message: `Unexpected issue while fetching events from HyperSync client. Attempt a retry.`,
-              backoffMillis: switch retry {
-              | 0 => 500
-              | _ => 1000 * retry
+    | exn => {
+        let isRateLimited = switch exn->JsExn.anyToExnInternal {
+        | JsExn(e) =>
+          e
+          ->JsExn.message
+          ->Option.map(msg => msg->String.includes("rate limited"))
+          ->Option.getOr(false)
+        | _ => false
+        }
+        throw(
+          Source.GetItemsError(
+            Source.FailedGettingItems({
+              exn,
+              attemptedToBlock: toBlock->Option.getOr(knownHeight),
+              retry: if isRateLimited {
+                RateLimited({resetMs: 1000})
+              } else {
+                WithBackoff({
+                  message: `Unexpected issue while fetching events from HyperSync client. Attempt a retry.`,
+                  backoffMillis: switch retry {
+                  | 0 => 500
+                  | _ => 1000 * retry
+                  },
+                })
               },
             }),
-          }),
-        ),
-      )
+          ),
+        )
+      }
     }
 
     let pageFetchTime = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat

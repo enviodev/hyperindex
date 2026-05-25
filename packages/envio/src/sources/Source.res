@@ -24,6 +24,7 @@ type getItemsRetry =
   | WithSuggestedToBlock({toBlock: int})
   | WithBackoff({message: string, backoffMillis: int})
   | ImpossibleForTheQuery({message: string})
+  | RateLimited({resetMs: int})
 
 type getItemsError =
   | UnsupportedSelection({message: string})

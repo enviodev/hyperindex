@@ -300,14 +300,23 @@ module ResponseTypes = {
     firstParentHash: string,
   }
 
+  type rateLimitInfo = {
+    remaining?: int,
+    resetSecs?: int,
+    limit?: int,
+  }
+
   type eventResponse = {
     archiveHeight: option<int>,
     nextBlock: int,
     totalExecutionTime: int,
     data: array<event>,
     rollbackGuard: option<rollbackGuard>,
+    rateLimit: option<rateLimitInfo>,
   }
 }
+
+type rateLimitInfo = ResponseTypes.rateLimitInfo
 
 type query = QueryTypes.query
 type eventResponse = ResponseTypes.eventResponse
@@ -324,6 +333,7 @@ type queryResponse = {
   totalExecutionTime: int,
   data: queryResponseData,
   rollbackGuard: option<ResponseTypes.rollbackGuard>,
+  rateLimit: option<rateLimitInfo>,
 }
 
 type t = {

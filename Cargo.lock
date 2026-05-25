@@ -1610,7 +1610,6 @@ dependencies = [
  "inquire",
  "insta",
  "itertools 0.11.0",
- "log",
  "napi",
  "napi-build",
  "napi-derive",

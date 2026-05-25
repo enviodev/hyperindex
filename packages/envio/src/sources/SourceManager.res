@@ -651,6 +651,15 @@ let executeQuery = async (
         })
         retryRef := 0
 
+      | FailedGettingItems({exn: _, attemptedToBlock, retry: RateLimited({resetMs})}) =>
+        logger->Logging.childWarn({
+          "msg": "Rate limited by HyperSync. To increase your rate limits, upgrade your plan at https://app.envio.dev/api-tokens. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens",
+          "toBlock": attemptedToBlock,
+          "retry": retry,
+        })
+        await Utils.delay(Pervasives.min(resetMs, 60_000))
+        retryRef := retryRef.contents + 1
+
       | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
         // Start displaying warnings after 4 failures
         let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
