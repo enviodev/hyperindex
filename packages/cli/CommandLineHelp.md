@@ -51,7 +51,7 @@ This document contains the help content for the `envio` command-line program.
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 * `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
-* `data` — Query raw blockchain data — blocks, logs, transactions on EVM chains or blocks/receipts on Fuel — using the same `where` syntax as indexer filters. Output is TOON (token-oriented) tabular form by default
+* `data` — Query raw blockchain data — blocks, logs, transactions on EVM chains using the same `where` syntax as indexer filters. Output is TOON (token-oriented) tabular form by default
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
 * `tools` — Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
 * `config` — Inspect the indexer config
@@ -385,15 +385,13 @@ Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 
 ## `envio data`
 
-Query raw blockchain data — blocks, logs, transactions on EVM chains or blocks/receipts on Fuel — using the same `where` syntax as indexer filters. Output is TOON (token-oriented) tabular form by default.
+Query raw blockchain data — blocks, logs, transactions on EVM chains using the same `where` syntax as indexer filters. Output is TOON (token-oriented) tabular form by default.
 
 Examples:
 
-# EVM — earliest USDC transfers on Base envio data block.number log.srcAddress log.transactionHash \ --chain=base \ --where='{ block: { number: { _gte: 0 } }, log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }, }'
+# Earliest USDC transfers on Base envio data block.number log.srcAddress log.transactionHash \ --chain=base \ --where='{ block: { number: { _gte: 0 } }, log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }, }'
 
-# Fuel mainnet — receipts from a contract envio data block.height receipt.contractId receipt.receiptIndex \ --chain=fuel \ --where='{ block: { height: { _gte: 0 } }, receipt: { contractId: "0xf8134f388..." }, }'
-
-# Fuel testnet — just the current archive height envio data knownHeight --chain=fuel-testnet
+# Current archive height envio data knownHeight --chain=arbitrum-one
 
 **Usage:** `envio data [OPTIONS] --chain <CHAIN> [FIELD]...`
 
@@ -403,7 +401,7 @@ Examples:
 
 ###### **Options:**
 
-* `--chain <CHAIN>` — Chain id (e.g. `8453`), kebab-case name (e.g. `base`, `arbitrum-one`), or one of the special values `fuel`, `fuel-testnet`. Solana is not supported yet
+* `--chain <CHAIN>` — Chain id (e.g. `8453`) or kebab-case name (e.g. `base`, `arbitrum-one`). Solana is not supported yet
 * `--where <WHERE_FILTER>` — Filter in indexer `where` form, as JSON5 — JSON-style braces with relaxed syntax: unquoted keys, single quotes, trailing commas, and `//` comments are all accepted. Example:
 
    --where='{ block: { number: { _gte: 1000, _lte: 2000 } }, log:   { srcAddress: "0xa0b8..." }, }'

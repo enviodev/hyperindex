@@ -62,12 +62,12 @@ pub enum CommandType {
     Metrics,
 
     ///Query raw blockchain data — blocks, logs, transactions on EVM chains
-    ///or blocks/receipts on Fuel — using the same `where` syntax as indexer
-    ///filters. Output is TOON (token-oriented) tabular form by default.
+    ///using the same `where` syntax as indexer filters. Output is TOON
+    ///(token-oriented) tabular form by default.
     ///
     ///Examples:
     ///
-    ///  # EVM — earliest USDC transfers on Base
+    ///  # Earliest USDC transfers on Base
     ///  envio data block.number log.srcAddress log.transactionHash \
     ///    --chain=base \
     ///    --where='{
@@ -75,16 +75,8 @@ pub enum CommandType {
     ///      log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
     ///    }'
     ///
-    ///  # Fuel mainnet — receipts from a contract
-    ///  envio data block.height receipt.contractId receipt.receiptIndex \
-    ///    --chain=fuel \
-    ///    --where='{
-    ///      block: { height: { _gte: 0 } },
-    ///      receipt: { contractId: "0xf8134f388..." },
-    ///    }'
-    ///
-    ///  # Fuel testnet — just the current archive height
-    ///  envio data knownHeight --chain=fuel-testnet
+    ///  # Current archive height
+    ///  envio data knownHeight --chain=arbitrum-one
     Data(DataArgs),
 
     ///Manage Envio-provided Claude Code skills under `.claude/skills/`
@@ -165,9 +157,8 @@ pub struct DataArgs {
     #[arg(value_name = "FIELD")]
     pub fields: Vec<String>,
 
-    ///Chain id (e.g. `8453`), kebab-case name (e.g. `base`,
-    ///`arbitrum-one`), or one of the special values `fuel`, `fuel-testnet`.
-    ///Solana is not supported yet.
+    ///Chain id (e.g. `8453`) or kebab-case name (e.g. `base`,
+    ///`arbitrum-one`). Solana is not supported yet.
     #[arg(long)]
     pub chain: String,
 
