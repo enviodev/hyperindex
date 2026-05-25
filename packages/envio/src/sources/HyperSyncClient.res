@@ -113,34 +113,10 @@ module QueryTypes = {
     | Topic2
     | Topic3
 
-  type traceField =
-    | From
-    | To
-    | CallType
-    | Gas
-    | Input
-    | Init
-    | Value
-    | Author
-    | RewardType
-    | BlockHash
-    | BlockNumber
-    | Address
-    | Code
-    | GasUsed
-    | Output
-    | Subtraces
-    | TraceAddress
-    | TransactionHash
-    | TransactionPosition
-    | Type
-    | Error
-
   type fieldSelection = {
     block?: array<blockField>,
     transaction?: array<transactionField>,
     log?: array<logField>,
-    trace?: array<traceField>,
   }
   type topicFilter = array<EvmTypes.Hex.t>
   type topic0 = topicFilter
@@ -171,16 +147,6 @@ module QueryTypes = {
     contractAddress?: array<Address.t>,
   }
 
-  type traceSelection = {
-    from?: array<Address.t>,
-    @as("to") to_?: array<Address.t>,
-    address?: array<Address.t>,
-    callType?: array<string>,
-    rewardType?: array<string>,
-    @as("type") type_?: array<string>,
-    sighash?: array<string>,
-  }
-
   type blockSelection = {
     hash?: array<string>,
     miner?: array<Address.t>,
@@ -193,13 +159,11 @@ module QueryTypes = {
     @as("toBlock") toBlockExclusive?: int,
     logs?: array<logFilter>,
     transactions?: array<transactionFilter>,
-    traces?: array<traceSelection>,
     blocks?: array<blockSelection>,
     fieldSelection: fieldSelection,
     maxNumBlocks?: int,
     maxNumTransactions?: int,
     maxNumLogs?: int,
-    maxNumTraces?: int,
     joinMode?: joinMode,
     includeAllBlocks?: bool,
   }
