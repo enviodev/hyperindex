@@ -163,6 +163,4 @@ type Swap {
 
 Codegen always appends `_id` to entity reference field names in the TypeScript types. Do **not** add `_id` yourself in the schema.
 
-## Deep Documentation
-
-If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

@@ -54,6 +54,4 @@ const getTraces = createEffect(
 );
 ```
 
-## Deep Documentation
-
-If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

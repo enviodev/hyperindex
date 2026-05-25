@@ -165,6 +165,4 @@ curl --request POST \
 
 Returns the earliest matching blocks. Use `from_block` to paginate forward. Pick a tight range (50–200 blocks) for fast, deterministic tests.
 
-## Deep Documentation
-
-If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

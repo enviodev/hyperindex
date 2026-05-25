@@ -77,6 +77,4 @@ NftFactory.SimpleNftCreated.contractRegister(async ({ event, context }) => {
 
 When a dynamic contract is registered, the Envio Indexer indexes all events from that contract in the **same block** where it was created — even events from earlier transactions in that block.
 
-## Deep Documentation
-
-If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

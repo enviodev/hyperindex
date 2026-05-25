@@ -64,6 +64,4 @@ chains:
           - 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
 ```
 
-## Deep Documentation
-
-If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

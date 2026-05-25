@@ -160,6 +160,4 @@ On Fuel, key the block range on `block.height` instead of `block.number`. SVM ha
 - `return false` → skip the chain entirely (no events processed for that chain)
 - `return true` → accept all events (no filtering, default topic0-only selection)
 
-## Deep Documentation
-
-If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

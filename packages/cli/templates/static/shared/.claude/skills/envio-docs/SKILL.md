@@ -7,28 +7,8 @@ metadata:
   managed-by: envio
 ---
 
-# Envio Documentation Lookup
+- `envio tools search-docs "<query>"` — find docs pages by keyword
+- `envio tools fetch-docs <url>` — read a page in full (use a URL from search results)
+- `envio --help` — list available CLI commands and flags
 
-Two CLI commands give you access to the full Envio docs:
-
-## Search
-
-```bash
-envio tools search-docs "your question here"
-```
-
-Returns matching page titles, URLs, and snippets.
-
-## Read a page
-
-```bash
-envio tools fetch-docs <url>
-```
-
-Pass a URL from the search results to get the full page as markdown.
-
-## Workflow
-
-1. `envio tools search-docs "schema @derivedFrom"` — find relevant pages
-2. Pick the best URL from the results
-3. `envio tools fetch-docs https://docs.envio.dev/docs/HyperIndex/schema` — read it in full
+Example: `envio tools search-docs "schema derivedFrom"` → pick a URL → `envio tools fetch-docs <url>`

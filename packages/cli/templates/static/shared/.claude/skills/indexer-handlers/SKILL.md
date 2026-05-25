@@ -126,6 +126,4 @@ This is globally unique across chains and blocks. Use it as the default unless t
 
 **Schema & config** — see `indexer-schema` and `indexer-configuration` skills for full reference.
 
-## Deep Documentation
-
-If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
