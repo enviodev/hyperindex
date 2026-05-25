@@ -90,4 +90,6 @@ const getTokenMetadata = createEffect(
 | `cache` | `boolean` | `false` |
 | `rateLimit` | `false \| { calls, per }` | required |
 
-Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
+## Deep Documentation
+
+Use `envio tools search-docs <query>` to find relevant documentation and `envio tools fetch-docs <url>` to read the full page.

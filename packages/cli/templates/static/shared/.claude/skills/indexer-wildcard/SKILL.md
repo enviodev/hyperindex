@@ -69,4 +69,4 @@ indexer.onEvent(
 
 ## Deep Documentation
 
-Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
+Use `envio tools search-docs <query>` to find relevant documentation and `envio tools fetch-docs <url>` to read the full page.
