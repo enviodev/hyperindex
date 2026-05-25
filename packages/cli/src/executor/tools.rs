@@ -17,11 +17,15 @@ const SEARCH_LIMIT: u8 = 10;
 async fn run_to_string(subcommand: ToolsSubcommand) -> Result<String> {
     match subcommand {
         ToolsSubcommand::SearchDocs(args) => {
-            call_mcp_tool(
+            let text = call_mcp_tool(
                 "docs_search",
                 json!({ "query": args.query, "limit": SEARCH_LIMIT }),
             )
-            .await
+            .await?;
+            Ok(text.replace(
+                "Use docs_fetch with the URL to retrieve the full page content.",
+                "Use `envio tools fetch-docs <url>` to retrieve the full page content.",
+            ))
         }
         ToolsSubcommand::FetchDocs(args) => {
             call_mcp_tool("docs_fetch", json!({ "url": args.url })).await

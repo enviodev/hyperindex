@@ -22,4 +22,4 @@ Found 4 result(s):
    URL: https://docs.envio.dev/docs/HyperIndex/hosted-service-features
    ...Deployment Location Choice Coming Soon! Full support for cross-region deployments is in active development. If you require a deployment to be based in the USA please contact us through our support chann...
 
-Use docs_fetch with the URL to retrieve the full page content.
+Use `envio tools fetch-docs <url>` to retrieve the full page content.
