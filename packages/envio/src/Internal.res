@@ -517,8 +517,6 @@ let fuelTransferParamsSchema = S.schema(s => {
   amount: s.matches(Utils.BigInt.schema),
 })
 
-type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
-
 type entity = private {id: string}
 
 // Per-entity storage resolved at parse time against the global storage

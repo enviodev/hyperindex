@@ -299,6 +299,7 @@ pub async fn generate_config_from_subgraph_id(
         // Create network object to be populated
         let mut chain = Chain {
             id: chain_helpers::Network::from(*graph_network).get_network_id(),
+            skip: None,
             hypersync_config: None,
             rpc: None,
             start_block: 0,

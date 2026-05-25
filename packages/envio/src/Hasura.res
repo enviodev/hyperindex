@@ -110,7 +110,13 @@ let clearHasuraMetadata = async (~endpoint, ~auth) => {
   }
 }
 
-let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>) => {
+type trackTableConfig = {
+  tableName: string,
+  description: option<string>,
+  columnDescriptions: dict<string>,
+}
+
+let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<trackTableConfig>) => {
   try {
     let result = await trackTablesRoute->Rest.fetch(
       {
@@ -118,17 +124,33 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>
         "args": {
           // If set to false, any warnings will cause the API call to fail and no new tables to be tracked. Otherwise tables that fail to track will be raised as warnings. (default: true)
           "allow_warnings": false,
-          "tables": tableNames->Array.map(tableName =>
+          "tables": tableConfigs->Array.map(({tableName, description, columnDescriptions}) => {
+            let configuration = dict{
+              "custom_name": tableName->(Utils.magic: string => JSON.t),
+            }
+            switch description {
+            | Some(d) => configuration->Dict.set("comment", d->(Utils.magic: string => JSON.t))
+            | None => ()
+            }
+            let columnConfigEntries = columnDescriptions->Dict.toArray
+            if columnConfigEntries->Array.length > 0 {
+              let columnConfig = dict{}
+              columnConfigEntries->Array.forEach(((column, comment)) =>
+                columnConfig->Dict.set(column, {"comment": comment}->(Utils.magic: {..} => JSON.t))
+              )
+              configuration->Dict.set(
+                "column_config",
+                columnConfig->(Utils.magic: dict<JSON.t> => JSON.t),
+              )
+            }
             {
               "table": {
                 "name": tableName,
                 "schema": pgSchema,
               },
-              "configuration": {
-                "custom_name": tableName,
-              },
+              "configuration": configuration,
             }
-          ),
+          }),
         }->(Utils.magic: 'a => JSON.t),
       },
       ~client=Rest.client(endpoint),
@@ -139,13 +161,13 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>
     }
     Logging.trace({
       "msg": msg,
-      "tableNames": tableNames,
+      "tableNames": tableConfigs->Array.map(c => c.tableName),
     })
   } catch {
   | exn =>
     Logging.error({
       "msg": `There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
-      "tableNames": tableNames,
+      "tableNames": tableConfigs->Array.map(c => c.tableName),
       "err": exn->Utils.prettifyExn,
     })
   }
@@ -192,31 +214,41 @@ let createEntityRelationship = async (
   ~objectName: string,
   ~mappedEntity: string,
   ~isDerivedFrom: bool,
+  ~comment: option<string>=?,
 ) => {
   let derivedFromTo = isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}_id" : "id"`
+
+  let tableJson = {
+    "schema": pgSchema,
+    "name": tableName,
+  }->(Utils.magic: {..} => JSON.t)
+  let usingJson = {
+    "manual_configuration": {
+      "remote_table": {
+        "schema": pgSchema,
+        "name": mappedEntity,
+      },
+      "column_mapping": JSON.parseOrThrow(`{${derivedFromTo}}`),
+    },
+  }->(Utils.magic: {..} => JSON.t)
+
+  let args = dict{
+    "table": tableJson,
+    "name": objectName->(Utils.magic: string => JSON.t),
+    "source": "default"->(Utils.magic: string => JSON.t),
+    "using": usingJson,
+  }
+  switch comment {
+  | Some(c) => args->Dict.set("comment", c->(Utils.magic: string => JSON.t))
+  | None => ()
+  }
 
   await sendOperation(
     ~endpoint,
     ~auth,
     ~operation={
       "type": `pg_create_${relationshipType}_relationship`,
-      "args": {
-        "table": {
-          "schema": pgSchema,
-          "name": tableName,
-        },
-        "name": objectName,
-        "source": "default",
-        "using": {
-          "manual_configuration": {
-            "remote_table": {
-              "schema": pgSchema,
-              "name": mappedEntity,
-            },
-            "column_mapping": JSON.parseOrThrow(`{${derivedFromTo}}`),
-          },
-        },
-      },
+      "args": args,
     }->(Utils.magic: 'a => JSON.t),
   )
 }
@@ -230,19 +262,49 @@ let trackDatabase = async (
   ~responseLimit,
   ~schema,
 ) => {
-  let exposedInternalTableNames = [
-    InternalTable.RawEvents.table.tableName,
-    InternalTable.Views.metaViewName,
-    InternalTable.Views.chainMetadataViewName,
+  let exposedInternalTableConfigs = [
+    {
+      tableName: InternalTable.RawEvents.table.tableName,
+      description: None,
+      columnDescriptions: dict{},
+    },
+    {
+      tableName: InternalTable.Views.metaViewName,
+      description: None,
+      columnDescriptions: dict{},
+    },
+    {
+      tableName: InternalTable.Views.chainMetadataViewName,
+      description: None,
+      columnDescriptions: dict{},
+    },
   ]
-  let userTableNames = userEntities->Array.map(entity => entity.table.tableName)
-  let tableNames = [exposedInternalTableNames, userTableNames]->Belt.Array.concatMany
+  let userTableConfigs = userEntities->Array.map(entity => {
+    let columnDescriptions = dict{}
+    entity.table.fields->Array.forEach(fieldOrDerived =>
+      switch fieldOrDerived {
+      | Table.Field(field) =>
+        switch field.description {
+        | Some(d) => columnDescriptions->Dict.set(field->Table.getDbFieldName, d)
+        | None => ()
+        }
+      | Table.DerivedFrom(_) => ()
+      }
+    )
+    {
+      tableName: entity.table.tableName,
+      description: entity.table.description,
+      columnDescriptions,
+    }
+  })
+  let tableConfigs = [exposedInternalTableConfigs, userTableConfigs]->Belt.Array.concatMany
+  let tableNames = tableConfigs->Array.map(c => c.tableName)
 
   Logging.info("Tracking tables in Hasura")
 
   let _ = await clearHasuraMetadata(~endpoint, ~auth)
 
-  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames)
+  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableConfigs)
 
   for i in 0 to tableNames->Array.length - 1 {
     let tableName = tableNames->Array.getUnsafe(i)
@@ -278,6 +340,7 @@ let trackDatabase = async (
         ~objectName=derivedFromField.fieldName,
         ~relationalKey=relationalFieldName,
         ~mappedEntity=derivedFromField.derivedFromEntity,
+        ~comment=?derivedFromField.description,
       )
     }
 
@@ -295,6 +358,7 @@ let trackDatabase = async (
         ~objectName=field.fieldName,
         ~relationalKey=field.fieldName,
         ~mappedEntity=linkedEntityName,
+        ~comment=?field.description,
       )
     }
   }

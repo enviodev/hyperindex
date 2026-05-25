@@ -156,7 +156,7 @@ let applyRegistrations = (~config: Config.t): Config.t => {
 // `Config` never reads `HandlerRegister`. The only way to get a config that
 // reflects registration state is through the returned value here.
 let registerAllHandlers = async (~config: Config.t) => {
-  HandlerRegister.startRegistration(~ecosystem=config.ecosystem, ~multichain=config.multichain)
+  HandlerRegister.startRegistration(~ecosystem=config.ecosystem)
 
   // Auto-load all .js files from src/handlers directory
   await autoLoadFromSrcHandlers(~handlers=config.handlers)

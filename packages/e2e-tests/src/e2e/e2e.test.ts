@@ -169,6 +169,150 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     expect(result.data?._meta).toEqual([{ chainId: 1, isReady: true }]);
   });
 
+  it("should expose schema descriptions via GraphQL introspection", async () => {
+    // Pulls the whole introspected schema from the live Hasura endpoint and
+    // snapshots descriptions on user-defined entity types — covers entity
+    // (table comment), regular fields (column comment), and indexed field
+    // round-tripping from schema.graphql through to Hasura introspection.
+    // `#` line comments are GraphQL comments (not descriptions) and must
+    // NOT appear.
+    //
+    // Note on relationships: Hasura overrides the `comment` on array/object
+    // relationships with hardcoded defaults ("An array relationship" / "An
+    // aggregate relationship" / "An object relationship") in GraphQL
+    // introspection. The schema-level description we set still lands in
+    // Hasura's metadata API, but it does not surface here, so the snapshot
+    // captures Hasura's defaults for relationship fields.
+    interface IntrospectedTypeRef {
+      name: string | null;
+      kind: string;
+      ofType: IntrospectedTypeRef | null;
+    }
+    interface IntrospectedField {
+      name: string;
+      description: string | null;
+      type: IntrospectedTypeRef;
+    }
+    interface IntrospectedType {
+      name: string;
+      description: string | null;
+      fields: IntrospectedField[] | null;
+    }
+    const result = await graphql.query<{
+      __schema: { types: IntrospectedType[] };
+    }>(`{
+      __schema {
+        types {
+          name
+          description
+          fields {
+            name
+            description
+            type {
+              name
+              kind
+              ofType {
+                name
+                kind
+                ofType {
+                  name
+                  kind
+                  ofType { name kind }
+                }
+              }
+            }
+          }
+        }
+      }
+    }`);
+
+    const formatType = (t: IntrospectedTypeRef | null): string => {
+      if (!t) return "?";
+      if (t.kind === "NON_NULL") return `${formatType(t.ofType)}!`;
+      if (t.kind === "LIST") return `[${formatType(t.ofType)}]`;
+      return t.name ?? "?";
+    };
+
+    const userTypeNames = new Set(["Transfer", "Account"]);
+    const userTypes = (result.data?.__schema.types ?? [])
+      .filter((t) => userTypeNames.has(t.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((t) => ({
+        name: t.name,
+        description: t.description,
+        fields: t.fields
+          ?.slice()
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((f) => ({
+            name: f.name,
+            description: f.description,
+            type: formatType(f.type),
+          })),
+      }));
+
+    expect(userTypes).toMatchInlineSnapshot(`
+      [
+        {
+          "description": "An on-chain account participating in transfers",
+          "fields": [
+            {
+              "description": "The account's Ethereum address",
+              "name": "id",
+              "type": "String!",
+            },
+            {
+              "description": "An array relationship",
+              "name": "outgoing",
+              "type": "[Transfer!]!",
+            },
+            {
+              "description": "An aggregate relationship",
+              "name": "outgoing_aggregate",
+              "type": "Transfer_aggregate!",
+            },
+          ],
+          "name": "Account",
+        },
+        {
+          "description": "An ERC-20 transfer event",
+          "fields": [
+            {
+              "description": "Block number the transfer was emitted in",
+              "name": "blockNumber",
+              "type": "Int!",
+            },
+            {
+              "description": "Sender address",
+              "name": "from",
+              "type": "String!",
+            },
+            {
+              "description": "Composite ID built from chainId-block-logIndex",
+              "name": "id",
+              "type": "String!",
+            },
+            {
+              "description": "Recipient address",
+              "name": "to",
+              "type": "String!",
+            },
+            {
+              "description": "Hash of the transaction that emitted the transfer",
+              "name": "transactionHash",
+              "type": "String!",
+            },
+            {
+              "description": "Token amount transferred (raw, no decimals applied)",
+              "name": "value",
+              "type": "numeric!",
+            },
+          ],
+          "name": "Transfer",
+        },
+      ]
+    `);
+  });
+
   it("should have Transfer entities indexed", async () => {
     const result = await graphql.poll<{
       Transfer: Array<{

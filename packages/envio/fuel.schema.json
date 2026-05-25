@@ -230,6 +230,13 @@
           "format": "uint64",
           "minimum": 0
         },
+        "skip": {
+          "description": "Excludes the chain from indexing and migrations. Code generation is unaffected. For testing, prefer using a test framework instead.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "start_block": {
           "description": "The block at which the indexer should start ingesting data",
           "type": "integer",

@@ -319,6 +319,64 @@ describe("Config.fromPublic", () => {
     t.expect(address->Address.toString, ~message="Address must be preserved verbatim").toBe(uni)
   })
 
+  it("parses entity and field descriptions from public config", t => {
+    let publicConfigJson: JSON.t = %raw(`{
+      "version": "0.0.1-dev",
+      "name": "test",
+      "storage": { "postgres": true },
+      "evm": {
+        "chains": {
+          "ethereumMainnet": {
+            "id": 1,
+            "startBlock": 0,
+            "rpcs": [{ "url": "https://eth.com", "for": "sync" }]
+          }
+        },
+        "addressFormat": "checksum"
+      },
+      "enums": {},
+      "entities": [{
+        "name": "User",
+        "description": "A user of the protocol",
+        "properties": [
+          { "name": "id", "type": "string", "description": "The user's address" },
+          { "name": "balance", "type": "bigint" }
+        ],
+        "derivedFields": [
+          {
+            "fieldName": "tokens",
+            "derivedFromEntity": "Token",
+            "derivedFromField": "owner",
+            "description": "Tokens owned by this user"
+          }
+        ]
+      }]
+    }`)
+
+    let config = Config.fromPublic(publicConfigJson)
+    let userEntity = config.userEntities->Array.getUnsafe(0)
+    t.expect({
+      "tableDescription": userEntity.table.description,
+      "idDescription": switch userEntity.table.fields->Array.getUnsafe(0) {
+      | Table.Field(f) => f.description
+      | _ => None
+      },
+      "balanceDescription": switch userEntity.table.fields->Array.getUnsafe(1) {
+      | Table.Field(f) => f.description
+      | _ => None
+      },
+      "derivedDescription": switch userEntity.table.fields->Array.getUnsafe(2) {
+      | Table.DerivedFrom(f) => f.description
+      | _ => None
+      },
+    }).toEqual({
+      "tableDescription": Some("A user of the protocol"),
+      "idDescription": Some("The user's address"),
+      "balanceDescription": None,
+      "derivedDescription": Some("Tokens owned by this user"),
+    })
+  })
+
   it("works with already-capitalized contract name", t => {
     let publicConfigJson: JSON.t = %raw(`{
       "version": "0.0.1-dev",
