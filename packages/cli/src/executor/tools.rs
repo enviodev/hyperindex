@@ -7,28 +7,26 @@ const MCP_ENDPOINT: &str = "https://docs.envio.dev/mcp";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn run(subcommand: ToolsSubcommand) -> Result<()> {
-    match subcommand {
-        ToolsSubcommand::SearchDocs(args) => run_search_docs(args).await,
-        ToolsSubcommand::FetchDocs(args) => run_fetch_docs(args).await,
-    }
+    let text = run_to_string(subcommand).await?;
+    println!("{text}");
+    Ok(())
 }
 
 const SEARCH_LIMIT: u8 = 10;
 
-async fn run_search_docs(args: SearchDocsArgs) -> Result<()> {
-    let text = call_mcp_tool(
-        "docs_search",
-        json!({ "query": args.query, "limit": SEARCH_LIMIT }),
-    )
-    .await?;
-    println!("{text}");
-    Ok(())
-}
-
-async fn run_fetch_docs(args: FetchDocsArgs) -> Result<()> {
-    let text = call_mcp_tool("docs_fetch", json!({ "url": args.url })).await?;
-    println!("{text}");
-    Ok(())
+async fn run_to_string(subcommand: ToolsSubcommand) -> Result<String> {
+    match subcommand {
+        ToolsSubcommand::SearchDocs(args) => {
+            call_mcp_tool(
+                "docs_search",
+                json!({ "query": args.query, "limit": SEARCH_LIMIT }),
+            )
+            .await
+        }
+        ToolsSubcommand::FetchDocs(args) => {
+            call_mcp_tool("docs_fetch", json!({ "url": args.url })).await
+        }
+    }
 }
 
 /// Calls a tool on the Envio docs MCP server over Streamable HTTP and
@@ -117,16 +115,15 @@ fn parse_mcp_payload(raw: &str) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clap_definitions::SearchDocsArgs;
     use serde_json::json;
 
     #[tokio::test]
-    async fn search_docs_event_handlers_live_mcp_snapshot() {
-        let text = call_mcp_tool(
-            "docs_search",
-            json!({ "query": "event handlers", "limit": 3 }),
-        )
-        .await
-        .expect("live MCP call");
+    async fn search_docs_clickhouse_support() {
+        let subcommand = ToolsSubcommand::SearchDocs(SearchDocsArgs {
+            query: "clickhouse support".to_string(),
+        });
+        let text = run_to_string(subcommand).await.expect("live MCP call");
         insta::assert_snapshot!(text);
     }
 

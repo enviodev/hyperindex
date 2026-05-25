@@ -65,11 +65,9 @@ pub enum CommandType {
     #[command(subcommand)]
     Skills(SkillsSubcommand),
 
-    ///Tools for people and AI agents.
-    ///
-    ///* `search-docs <query>`: full-text search over Envio docs, returns titles+URLs+snippets.
-    ///
-    ///* `fetch-docs <url>`: full page markdown for a search hit
+    ///Tools for people and AI agents:
+    ///search-docs <query> — full-text docs search, returns titles+URLs+snippets;
+    ///fetch-docs <url> — full page markdown for a search hit
     #[command(subcommand)]
     Tools(ToolsSubcommand),
 
