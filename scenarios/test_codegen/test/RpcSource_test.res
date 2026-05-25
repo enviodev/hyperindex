@@ -1,8 +1,10 @@
 open Vitest
 open Internal
 
-@val external envApiToken: option<string> = "process.env.ENVIO_API_TOKEN"
-let testApiToken = envApiToken->Option.getOr("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")
+let testApiToken =
+  Env.envioApiToken->Option.getOrThrow(
+    ~message="ENVIO_API_TOKEN env var must be set to run RpcSource tests",
+  )
 
 let mockLog = (
   ~transactionHash="0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",

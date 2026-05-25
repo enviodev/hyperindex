@@ -329,18 +329,37 @@ impl TryFrom<Query> for net_types::Query {
             JoinMode::JoinNothing => net_types::JoinMode::JoinNothing,
         };
 
+        let from_block =
+            u64::try_from(query.from_block).context("from_block must be >= 0")?;
+        let to_block = query
+            .to_block
+            .map(|b| u64::try_from(b).context("to_block must be >= 0"))
+            .transpose()?;
+        let max_num_blocks = query
+            .max_num_blocks
+            .map(|n| usize::try_from(n).context("max_num_blocks must be >= 0"))
+            .transpose()?;
+        let max_num_transactions = query
+            .max_num_transactions
+            .map(|n| usize::try_from(n).context("max_num_transactions must be >= 0"))
+            .transpose()?;
+        let max_num_logs = query
+            .max_num_logs
+            .map(|n| usize::try_from(n).context("max_num_logs must be >= 0"))
+            .transpose()?;
+
         Ok(net_types::Query {
-            from_block: query.from_block as u64,
-            to_block: query.to_block.map(|b| b as u64),
+            from_block,
+            to_block,
             logs,
             transactions,
             traces: Vec::new(),
             blocks,
             include_all_blocks: query.include_all_blocks.unwrap_or(false),
             field_selection,
-            max_num_blocks: query.max_num_blocks.map(|n| n as usize),
-            max_num_transactions: query.max_num_transactions.map(|n| n as usize),
-            max_num_logs: query.max_num_logs.map(|n| n as usize),
+            max_num_blocks,
+            max_num_transactions,
+            max_num_logs,
             max_num_traces: None,
             join_mode,
         })
@@ -401,8 +420,8 @@ impl TryFrom<AuthorizationSelection> for net_types::AuthorizationSelection {
             .chain_id
             .unwrap_or_default()
             .into_iter()
-            .map(|id| id as u64)
-            .collect();
+            .map(|id| u64::try_from(id).context("authorization chain_id must be >= 0"))
+            .collect::<Result<Vec<_>>>()?;
 
         let address =
             map_optional_vec(selection.address).context("Failed to parse authorization address")?;
@@ -435,7 +454,10 @@ impl TryFrom<TransactionFilter> for net_types::TransactionFilter {
             to: map_optional_vec(filter.to).context("Failed to convert to")?,
             to_filter: None,
             sighash: map_optional_vec(filter.sighash).context("Failed to convert sighash")?,
-            status: filter.status.map(|s| s as u8),
+            status: filter
+                .status
+                .map(|s| u8::try_from(s).context("status must fit in u8"))
+                .transpose()?,
             type_: filter.type_.unwrap_or_default(),
             contract_address: map_optional_vec(filter.contract_address)
                 .context("Failed to convert contract_address")?,
