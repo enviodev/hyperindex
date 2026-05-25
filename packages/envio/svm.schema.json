@@ -133,6 +133,13 @@
     "Chain": {
       "type": "object",
       "properties": {
+        "skip": {
+          "description": "If true, the chain is excluded from indexing at runtime (start/dev) and from database migrations, but still participates in code generation so that types and handlers remain available.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "rpc": {
           "description": "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data.",
           "type": "string"

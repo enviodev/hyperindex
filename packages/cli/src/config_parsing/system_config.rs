@@ -794,6 +794,7 @@ impl SystemConfig {
 
                     let chain = Chain {
                         id: network.id,
+                        skip: network.skip.unwrap_or(false),
                         max_reorg_depth: network
                             .max_reorg_depth
                             .or_else(|| get_max_reorg_depth_from_id(network.id)),
@@ -952,6 +953,7 @@ impl SystemConfig {
 
                     let chain = Chain {
                         id: network.id,
+                        skip: network.skip.unwrap_or(false),
                         start_block: network.start_block,
                         end_block: network.end_block,
                         max_reorg_depth: network.max_reorg_depth,
@@ -994,6 +996,7 @@ impl SystemConfig {
 
                     let chain = Chain {
                         id: 0, //network.id,
+                        skip: network.skip.unwrap_or(false),
                         start_block: network.start_block,
                         end_block: network.end_block,
                         max_reorg_depth: None,
@@ -1257,6 +1260,7 @@ impl DataSource {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chain {
     pub id: u64,
+    pub skip: bool,
     pub sync_source: DataSource,
     pub start_block: u64,
     pub end_block: Option<u64>,
@@ -2482,6 +2486,7 @@ mod test {
 
         let network = EvmChain {
             id: 1,
+            skip: None,
             hypersync_config: Some(HypersyncConfig {
                 url: "https://somechain.hypersync.xyz//".to_string(),
             }),

@@ -230,6 +230,13 @@
           "format": "uint64",
           "minimum": 0
         },
+        "skip": {
+          "description": "If true, the chain is excluded from indexing at runtime (start/dev) and from database migrations, but still participates in code generation so that types and handlers remain available.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "start_block": {
           "description": "The block at which the indexer should start ingesting data",
           "type": "integer",
