@@ -2,7 +2,7 @@
 # in introspection. Only string descriptions ("""...""" or "...") are exposed.
 
 "An ERC-20 transfer event"
-type Transfer {
+type Transfer @storage(postgres: true, clickhouse: true) {
   "Composite ID built from chainId-block-logIndex"
   id: ID!
   "Sender address"
@@ -23,4 +23,20 @@ type Account {
   id: ID!
   "All transfers sent from this account"
   outgoing: [Transfer!]! @derivedFrom(field: "from")
+}
+
+# Override the global multi-storage default: this entity only lives in
+# Postgres. ClickHouse will not receive writes for it.
+type TransferPgOnly @storage(postgres: true) {
+  id: ID!
+  from: String!
+  value: BigInt!
+}
+
+# Mirror override: this entity only lives in ClickHouse, so it is
+# absent from the Postgres-backed `pgUserEntities` (and from Hasura).
+type TransferChOnly @storage(clickhouse: true) {
+  id: ID!
+  from: String!
+  value: BigInt!
 }

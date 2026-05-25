@@ -14,7 +14,7 @@ import {
   type EvmEvent,
   type NftCollection,
   type User,
-} from "generated";
+} from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
 
@@ -161,7 +161,7 @@ indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ eve
       typeof context.chain,
       {
         readonly id: EvmChainId;
-        readonly isLive: boolean;
+        readonly isRealtime: boolean;
       }
     >
   >(true);
@@ -792,6 +792,41 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
         id: "1",
       });
       fail("Should have thrown");
+    }
+
+    // Reproduction for https://github.com/enviodev/hyperindex/issues/1199:
+    // getWhere on a linkedEntity field (db column name `<field>_id`) must
+    // resolve the field schema in the in-memory TestIndexer. Production
+    // PgStorage uses the db column path, so the bug only surfaces here.
+    case "getWhereByLinkedEntityField": {
+      const tokens = await context.Token.getWhere({
+        collection_id: { _eq: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      });
+      context.CustomSelectionTestPass.set({
+        id: "issue-1199:" + tokens.length.toString(),
+      });
+      break;
+    }
+
+    // getWhere on a nullable linkedEntity column registers an InMemoryTable
+    // index for that field. A subsequent set whose entity omits the FK key
+    // (the common shape for nullable relations) used to crash inside
+    // updateIndices with `UndefinedKey("gravatar_id")`.
+    case "getWhereThenSetNullableFk": {
+      await context.User.getWhere({
+        gravatar_id: { _eq: "non-existent-gravatar" },
+      });
+      context.User.set({
+        id: "user-with-null-gravatar",
+        address: "0x1111111111111111111111111111111111111111",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      });
+      context.CustomSelectionTestPass.set({
+        id: "getWhereThenSetNullableFk:ok",
+      });
+      break;
     }
   }
 });

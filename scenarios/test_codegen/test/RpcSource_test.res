@@ -1,7 +1,10 @@
 open Vitest
 open Internal
 
-let testApiToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
+let testApiToken =
+  Env.envioApiToken->Option.getOrThrow(
+    ~message="ENVIO_API_TOKEN env var must be set to run RpcSource tests",
+  )
 
 let mockLog = (
   ~transactionHash="0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
@@ -36,20 +39,24 @@ describe("RpcSource - name", () => {
 })
 
 describe("RpcSource - getHeightOrThrow", () => {
-  Async.it("Returns the name of the source including sanitized rpc url", async t => {
-    let source = RpcSource.make({
-      url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
-      chain: MockConfig.chain1337,
-      eventRouter: EventRouter.empty(),
-      sourceFor: Sync,
-      syncConfig: EvmChain.getSyncConfig({}),
-      allEventSignatures: ["a", "b", "c"],
-      lowercaseAddresses: false,
-    })
-    let height = await source.getHeightOrThrow()
-    t.expect(height > 21994218).toBe(true)
-    t.expect(height < 30000000).toBe(true)
-  })
+  Async.itWithOptions(
+    "Returns the name of the source including sanitized rpc url",
+    {retry: 3},
+    async t => {
+      let source = RpcSource.make({
+        url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
+        chain: MockConfig.chain1337,
+        eventRouter: EventRouter.empty(),
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventSignatures: ["a", "b", "c"],
+        lowercaseAddresses: false,
+      })
+      let height = await source.getHeightOrThrow()
+      t.expect(height > 21994218).toBe(true)
+      t.expect(height < 30000000).toBe(true)
+    },
+  )
 })
 
 describe("RpcSource - getEventTransactionOrThrow", () => {
@@ -134,7 +141,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     })
   })
 
-  Async.it("Queries transaction fields from raw JSON (with real RPC)", async t => {
+  Async.itWithOptions(
+    "Queries transaction fields from raw JSON (with real RPC)",
+    {retry: 3},
+    async t => {
     let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
 
     let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
@@ -198,10 +208,12 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       "effectiveGasPrice": 17699339493n,
       "status": 1,
     })
-  })
+    },
+  )
 
-  Async.it(
+  Async.itWithOptions(
     "Successfully fetches ZKSync EIP-712 transactions (type 0x71) with optional signature fields",
+    {retry: 3},
     async t => {
       // Transaction from Abstract Testnet (ZKSync-based) that lacks r/s/v signature fields
       let testTransactionHash = "0x245134326b7fecdcb7e0ed0a6cf090fc8881a63420ecd329ef645686b85647ed"
@@ -638,7 +650,10 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     t.expect(result).toEqual(%raw(`{"baseFeePerGas": 1000000000n, "difficulty": 17179869184n}`))
   })
 
-  Async.it("Queries block fields from raw JSON (with real RPC)", async t => {
+  Async.itWithOptions(
+    "Queries block fields from raw JSON (with real RPC)",
+    {retry: 3},
+    async t => {
     let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
     let client = Rpc.makeClient(rpcUrl)
 
@@ -683,7 +698,8 @@ describe("RpcSource - getEventBlockOrThrow", () => {
         "parentHash": "0x58ebb0c939bed8e69d7e3519f579b028338613050986d0a3e8770de2c7ec2949"
       }`),
     )
-  })
+    },
+  )
 })
 
 describe("RpcSource - fieldRegistry completeness", () => {

@@ -31,7 +31,6 @@ build
 *.res.js
 *.res.mjs
 *.bs.js
-generated
 logs
 build
 .nyc_output

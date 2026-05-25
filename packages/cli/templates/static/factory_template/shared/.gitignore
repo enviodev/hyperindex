@@ -25,7 +25,6 @@ lib/*
 /node_modules/
 benchmarks/
 artifacts
-generated
 logs
 *.res.js
 *.res.mjs

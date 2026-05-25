@@ -11,10 +11,10 @@
     "lint": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
+    "@types/node": "24.12.2",
     "envio": "file:../../packages/envio",
     "tsx": "^4.19.0",
     "typescript": "6.0.3",
-    "vitest": "4.0.18"
+    "vitest": "4.1.0"
   }
 }

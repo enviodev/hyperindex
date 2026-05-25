@@ -12,16 +12,13 @@
     "start": "envio start"
   },
   "devDependencies": {
-    "@types/node": "^24.10.1",
+    "@types/node": "24.12.2",
     "typescript": "6.0.3",
-    "vitest": "4.0.18"
+    "vitest": "4.1.0"
   },
   "dependencies": {
     "envio": "file:../../packages/envio",
     "rescript": "12.2.0"
-  },
-  "optionalDependencies": {
-    "generated": "./generated"
   },
   "engines": {
     "node": ">=22.0.0"

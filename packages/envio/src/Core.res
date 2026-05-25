@@ -4,10 +4,16 @@
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
+type hypersyncClientCtor
+type decoderCtor
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
-  upsertPersistedState: (~json: string) => promise<unit>,
+  @as("HypersyncClient")
+  hypersyncClient: hypersyncClientCtor,
+  @as("Decoder")
+  decoder: decoderCtor,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"
@@ -174,9 +180,4 @@ let getConfigJson = (~configPath=?, ~directory=?) => {
 let runCli = args => {
   let addon = getAddon()
   addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
-}
-
-let upsertPersistedState = json => {
-  let addon = getAddon()
-  addon.upsertPersistedState(~json)
 }

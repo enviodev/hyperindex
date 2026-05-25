@@ -3,7 +3,7 @@
 process.env.E2E_EXPECTED_END_BLOCK = "10861774";
 
 import { describe, it } from "vitest";
-import { createTestIndexer } from "generated";
+import { createTestIndexer } from "envio";
 
 describe("Indexer smoke test", () => {
   it(
@@ -25,6 +25,24 @@ describe("Indexer smoke test", () => {
                     "id": "1-10861674-23",
                     "to": "0x41653c7d61609D856f29355E404F310Ec4142Cfb",
                     "transactionHash": "0x4b37d2f343608457ca3322accdab2811c707acf3eb07a40dd8d9567093ea5b82",
+                    "value": 1000000000000000000000000000n,
+                  },
+                ],
+              },
+              "TransferChOnly": {
+                "sets": [
+                  {
+                    "from": "0x0000000000000000000000000000000000000000",
+                    "id": "1-10861674-23",
+                    "value": 1000000000000000000000000000n,
+                  },
+                ],
+              },
+              "TransferPgOnly": {
+                "sets": [
+                  {
+                    "from": "0x0000000000000000000000000000000000000000",
+                    "id": "1-10861674-23",
                     "value": 1000000000000000000000000000n,
                   },
                 ],

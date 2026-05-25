@@ -86,6 +86,7 @@ type t = {
   maxAddrInPartition: int,
   batchSize: int,
   lowercaseAddresses: bool,
+  isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
@@ -144,17 +145,21 @@ module EnvioAddresses = {
   external castToInternal: t => Internal.entity = "%identity"
 
   let entityConfig = {
-    name,
+    Internal.name,
     index,
     schema,
     rowsSchema,
     table,
+    // Internal address tracking is Postgres-only; the global config is
+    // always required to have Postgres enabled (Storage::resolve forbids
+    // a Postgres-disabled global), so this is safe regardless of mode.
+    storage: {postgres: true, clickhouse: false},
   }->Internal.fromGenericEntityConfig
 }
 
-type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("live") Live
+type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
 
-let rpcSourceForSchema = S.enum([Sync, Fallback, Live])
+let rpcSourceForSchema = S.enum([Sync, Fallback, Realtime])
 
 let rpcConfigSchema = S.schema(s =>
   {
@@ -270,9 +275,17 @@ let propertySchema = S.schema(s =>
   }
 )
 
+let entityStorageSchema = S.schema(s =>
+  {
+    "postgres": s.matches(S.option(S.bool)),
+    "clickhouse": s.matches(S.option(S.bool)),
+  }
+)
+
 let entityJsonSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
+    "storage": s.matches(S.option(entityStorageSchema)),
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
     "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
@@ -350,6 +363,7 @@ let parseEnumsFromJson = (enumsJson: dict<array<string>>): array<Table.enumConfi
 let parseEntitiesFromJson = (
   entitiesJson: array<'entityJson>,
   ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
+  ~globalStorage: storage,
 ): array<Internal.entityConfig> => {
   entitiesJson->Array.mapWithIndex((entityJson, index) => {
     let entityName = entityJson["name"]
@@ -421,6 +435,21 @@ let parseEntitiesFromJson = (
       dict
     })
 
+    // Resolve per-entity storage against the global config. The CLI
+    // validates that an entity never opts into a backend the global
+    // config didn't enable, and that at least one backend stays true
+    // for an annotated entity — so `getOr(false)` is safe here.
+    let storage: Internal.entityStorage = switch entityJson["storage"] {
+    | Some(s) => {
+        postgres: s["postgres"]->Option.getOr(false),
+        clickhouse: s["clickhouse"]->Option.getOr(false),
+      }
+    | None => {
+        postgres: globalStorage.postgres,
+        clickhouse: globalStorage.clickhouse,
+      }
+    }
+
     {
       Internal.name: entityName,
       index,
@@ -429,6 +458,7 @@ let parseEntitiesFromJson = (
         Utils.magic: S.t<array<dict<unknown>>> => S.t<array<Internal.entity>>
       ),
       table,
+      storage,
     }->Internal.fromGenericEntityConfig
   })
 }
@@ -445,6 +475,7 @@ let publicConfigSchema = S.schema(s =>
     "name": s.matches(S.string),
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
+    "isDev": s.matches(S.option(S.bool)),
     "multichain": s.matches(S.option(multichainSchema)),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
@@ -622,7 +653,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     switch sourceFor {
     | Sync => Source.Sync
     | Fallback => Source.Fallback
-    | Live => Source.Live
+    | Realtime => Source.Realtime
     }
   }
 
@@ -760,10 +791,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   let enumConfigsByName =
     allEnums->Array.map(enumConfig => (enumConfig.name, enumConfig))->Dict.fromArray
 
+  let globalStorage: storage = {
+    postgres: publicConfig["storage"]["postgres"],
+    clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
+  }
+
   let userEntities =
     publicConfig["entities"]
     ->Option.getOr([])
-    ->parseEntitiesFromJson(~enumConfigsByName)
+    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage)
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 
@@ -795,10 +831,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
-    storage: {
-      postgres: publicConfig["storage"]["postgres"],
-      clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
-    },
+    storage: globalStorage,
     multichain: publicConfig["multichain"]->Option.getOr(Unordered),
     chainMap,
     defaultChain: chains->Array.get(0),
@@ -807,6 +840,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     maxAddrInPartition,
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     lowercaseAddresses,
+    isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,
     userEntities,
     allEntities,
@@ -867,6 +901,194 @@ let prime = (json: JSON.t): unit => {
   cached := None
 }
 
+let getPublicConfigJson = () =>
+  switch primedJson.contents {
+  | Some(json) => json
+  | None => Core.getConfigJson()->JSON.parseOrThrow
+  }
+
+// Drops source URLs from each chain so RPC/hypersync edits don't trigger
+// the resume-time compat check (and don't end up in `envio_info`). Also
+// drops `isDev`, which toggles between `envio dev` and `envio start` and
+// has no bearing on schema/indexing compatibility.
+let stripSensitiveData = (json: JSON.t): JSON.t => {
+  let cloned = json->JSON.stringify->JSON.parseOrThrow
+  let stripChains = (ecosystem: option<JSON.t>) =>
+    switch ecosystem {
+    | Some(Object(ecosystemDict)) =>
+      switch ecosystemDict->Dict.get("chains") {
+      | Some(Object(chains)) =>
+        chains
+        ->Dict.valuesToArray
+        ->Array.forEach(chainJson =>
+          switch chainJson {
+          | Object(chain) => {
+              chain->Utils.Dict.deleteInPlace("rpcs")
+              chain->Utils.Dict.deleteInPlace("rpc")
+              chain->Utils.Dict.deleteInPlace("hypersync")
+            }
+          | _ => ()
+          }
+        )
+      | _ => ()
+      }
+    | _ => ()
+    }
+  switch cloned {
+  | Object(obj) => {
+      obj->Utils.Dict.deleteInPlace("isDev")
+      stripChains(obj->Dict.get("evm"))
+      stripChains(obj->Dict.get("fuel"))
+      stripChains(obj->Dict.get("svm"))
+    }
+  | _ => ()
+  }
+  cloned
+}
+
+// Postgres jsonb doesn't preserve key order, so canonicalize with sorted
+// keys before string-comparing.
+let rec canonicalJson = (json: JSON.t): JSON.t =>
+  switch json {
+  | Object(d) => {
+      let sorted = Dict.make()
+      d
+      ->Dict.keysToArray
+      ->Array.toSorted(String.compare)
+      ->Array.forEach(k => sorted->Dict.set(k, d->Dict.getUnsafe(k)->canonicalJson))
+      Object(sorted)
+    }
+  | Array(arr) => Array(arr->Array.map(canonicalJson))
+  | _ => json
+  }
+
+// Returns dotted leaf paths (`a.b[i].c`) where `stored` differs from
+// `current`, restricted to the highest-priority top-level tier with any
+// diff. Tiers in order: version → name → storage → ecosystem
+// (evm/fuel/svm) → entities → other top-level keys. The first tier
+// containing a diff is the only one rendered; lower tiers are silenced
+// so a single noisy section doesn't bury the actionable change.
+let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
+  let canonEq = (a: JSON.t, b: JSON.t) =>
+    JSON.stringify(canonicalJson(a)) === JSON.stringify(canonicalJson(b))
+
+  let acc = []
+  let rec go = (s: JSON.t, c: JSON.t, prefix: string) => {
+    if canonEq(s, c) {
+      ()
+    } else {
+      switch (s, c) {
+      | (Object(sObj), Object(cObj)) =>
+        let keys = Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
+        keys
+        ->Utils.Set.toArray
+        ->Array.toSorted(String.compare)
+        ->Array.forEach(k => {
+          let p = prefix === "" ? k : `${prefix}.${k}`
+          switch (sObj->Dict.get(k), cObj->Dict.get(k)) {
+          | (None, None) => ()
+          | (None, _) | (_, None) => acc->Array.push(p)->ignore
+          | (Some(sv), Some(cv)) => go(sv, cv, p)
+          }
+        })
+      | (Array(sArr), Array(cArr)) =>
+        let maxLen = Math.Int.max(sArr->Array.length, cArr->Array.length)
+        for i in 0 to maxLen - 1 {
+          let p = `${prefix}[${Int.toString(i)}]`
+          switch (sArr->Belt.Array.get(i), cArr->Belt.Array.get(i)) {
+          | (None, _) | (_, None) => acc->Array.push(p)->ignore
+          | (Some(sv), Some(cv)) => go(sv, cv, p)
+          }
+        }
+      | _ => acc->Array.push(prefix === "" ? "<root>" : prefix)->ignore
+      }
+    }
+  }
+
+  let getTopKey = (j: JSON.t, k: string) =>
+    switch j {
+    | Object(d) => d->Dict.get(k)
+    | _ => None
+    }
+  let topKeyDiffers = (k: string) =>
+    switch (getTopKey(stored, k), getTopKey(current, k)) {
+    | (None, None) => false
+    | (None, _) | (_, None) => true
+    | (Some(s), Some(c)) => !canonEq(s, c)
+    }
+  let runTier = (keys: array<string>) =>
+    keys->Array.forEach(k =>
+      switch (getTopKey(stored, k), getTopKey(current, k)) {
+      | (None, None) => ()
+      | (None, _) | (_, None) => acc->Array.push(k)->ignore
+      | (Some(s), Some(c)) => go(s, c, k)
+      }
+    )
+
+  switch (stored, current) {
+  | (Object(sObj), Object(cObj)) =>
+    let tiers = [["version"], ["name"], ["storage"], ["evm", "fuel", "svm"], ["entities"]]
+    let firstHit = tiers->Array.reduce(None, (acc, tier) =>
+      switch acc {
+      | Some(_) => acc
+      | None =>
+        switch tier->Array.filter(topKeyDiffers) {
+        | [] => None
+        | hits => Some(hits)
+        }
+      }
+    )
+    switch firstHit {
+    | Some(hits) => runTier(hits)
+    | None =>
+      let knownSet = Utils.Set.fromArray(tiers->Belt.Array.concatMany)
+      let extras =
+        Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
+        ->Utils.Set.toArray
+        ->Array.filter(k => !(knownSet->Utils.Set.has(k)))
+        ->Array.toSorted(String.compare)
+        ->Array.filter(topKeyDiffers)
+      runTier(extras)
+    }
+  | _ => go(stored, current, "")
+  }
+  acc
+}
+
+// Throws an `incompatible config` error listing each path in `changedPaths`,
+// plus the remediation options. `~resetCommand` is rendered as-is for
+// option 2 (the wipe-and-redo). `~runCommand` controls option 3 (parallel
+// indexer recipe): when `None`, option 3 is omitted — the migrate flow
+// uses this because running a second indexer doesn't apply.
+// `~hasClickhouse` adds the extra env line so users running both
+// Postgres and Clickhouse get a complete override.
+let throwIfIncompatible = (
+  changedPaths: array<string>,
+  ~resetCommand: string,
+  ~runCommand: option<string>,
+  ~hasClickhouse: bool,
+) => {
+  if changedPaths->Array.length > 0 {
+    let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
+    let option1 = "Revert the changes above"
+    let padTo = (s, col) => s ++ " "->String.repeat(Math.Int.max(col - String.length(s), 1))
+    let col = Math.Int.max(String.length(option1), String.length(resetCommand)) + 2
+    let option3 = switch runCommand {
+    | None => ""
+    | Some(cmd) =>
+      let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
+      `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
+    }
+    JsError.throwWithMessage(
+      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(
+          col,
+        )}# resume indexing where it left off\n  2. ${resetCommand->padTo(
+          col,
+        )}# delete all indexed data and start over${option3}`,
+    )
+  }
+}
+
 // The returned value is a pure function of the JSON — no handler
 // registrations are applied here. Post-registration configs come from
 // `HandlerLoader.applyRegistrations`. That purity is what lets this
@@ -875,11 +1097,10 @@ let loadWithoutRegistrations = () =>
   switch cached.contents {
   | Some(c) => c
   | None => {
-      let c = switch primedJson.contents {
-      | Some(json) => json->fromPublic
-      | None => Core.getConfigJson()->JSON.parseOrThrow->fromPublic
-      }
+      let c = getPublicConfigJson()->fromPublic
       cached := Some(c)
       c
     }
   }
+
+let getPgUserEntities = (config: t) => config.userEntities->Array.filter(e => e.storage.postgres)

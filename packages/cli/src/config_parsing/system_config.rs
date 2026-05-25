@@ -32,7 +32,7 @@ use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 type ContractNameKey = String;
@@ -477,6 +477,85 @@ impl Storage {
             clickhouse,
         })
     }
+
+    pub fn is_multi(&self) -> bool {
+        self.postgres && self.clickhouse
+    }
+}
+
+/// Check per-entity `@storage` directives against the resolved global storage.
+/// Malformed directives are raised earlier, during schema parsing.
+//
+// With two backends, the two failure modes are mutually exclusive: multi-storage
+// mode means both backends are on (so an entity can never target a disabled one),
+// and single-storage mode is exempt from the must-declare rule. If a third
+// backend lands the two checks could fire together — flag that here so a future
+// reader sees the simplification's premise.
+pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    if storage.is_multi() {
+        let missing: Vec<&str> = entities
+            .iter()
+            .filter(|e| !e.has_storage_directive())
+            .map(|e| e.name.as_str())
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let example = missing[0];
+        let listed = missing
+            .iter()
+            .map(|n| format!("  - {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(anyhow!(
+            "Schema validation failed:\n\
+             \n\
+             Entities missing the @storage directive (multi-storage mode requires it):\n\
+             {listed}\n\
+             \n\
+             Fixes:\n  \
+             - Add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
+             type {example} @storage(postgres: true) {{ ... }}\n      \
+             type {example} @storage(clickhouse: true) {{ ... }}\n      \
+             type {example} @storage(postgres: true, clickhouse: true) {{ ... }}"
+        ));
+    }
+
+    let unsupported: Vec<(&str, &'static str)> = entities
+        .iter()
+        .flat_map(|e| {
+            let mut out: Vec<(&str, &'static str)> = Vec::new();
+            if e.postgres == Some(true) && !storage.postgres {
+                out.push((e.name.as_str(), "postgres"));
+            }
+            if e.clickhouse == Some(true) && !storage.clickhouse {
+                out.push((e.name.as_str(), "clickhouse"));
+            }
+            out
+        })
+        .collect();
+    if unsupported.is_empty() {
+        return Ok(());
+    }
+    let listed = unsupported
+        .iter()
+        .map(|(name, backend)| {
+            format!("  - `{name}` uses `{backend}`, but `{backend}` is not enabled.")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Err(anyhow!(
+        "Schema validation failed:\n\
+         \n\
+         Entities using storages not enabled in config.yaml:\n\
+         {listed}\n\
+         \n\
+         Fixes:\n  \
+         - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml."
+    ))
 }
 
 //Getter methods for system config
@@ -584,39 +663,9 @@ impl SystemConfig {
 
         let base_config = human_config.get_base_config();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
+        validate_entity_storage(&storage, &schema)?;
 
-        // Create a new ParsedProjectPaths that uses the output field from config if specified
-        let final_project_paths = {
-            match base_config.output.as_ref() {
-                Some(output) => {
-                    // If output is specified, create a new ParsedProjectPaths with the custom output path
-                    // The output path is relative to the config file location
-                    let config_dir = project_paths.config.parent().ok_or_else(|| {
-                        anyhow!("Unexpected config file should have a parent directory")
-                    })?;
-
-                    let output_relative_path = PathBuf::from(output);
-                    if let Some(Component::ParentDir) =
-                        output_relative_path.components().peekable().peek()
-                    {
-                        anyhow::bail!("Output folder must be in project directory");
-                    }
-
-                    let output_joined = config_dir.join(output_relative_path);
-                    let output_normalized = path_utils::normalize_path(output_joined);
-
-                    ParsedProjectPaths {
-                        project_root: project_paths.project_root.clone(),
-                        config: project_paths.config.clone(),
-                        generated: output_normalized,
-                    }
-                }
-                None => {
-                    // If no output is specified, use the default ParsedProjectPaths
-                    project_paths.clone()
-                }
-            }
-        };
+        let final_project_paths = project_paths.clone();
 
         let is_rescript = final_project_paths
             .project_root
@@ -1440,7 +1489,7 @@ impl Event {
 
     fn get_abi_event(event_string: &str, opt_abi: &Option<EvmAbi>) -> Result<AlloyEvent> {
         let parse_event_sig = |sig: &str| -> Result<AlloyEvent> {
-            AlloyEvent::parse(sig).map_err(|err| {
+            crate::config_parsing::abi_compat::parse_event_signature_to_alloy(sig).map_err(|err| {
                 anyhow!(
                     "Unable to parse event signature {} due to the following error: {}. \
                      Please refer to our docs on how to correctly define a human readable ABI.",
@@ -1976,7 +2025,7 @@ mod test {
     use super::SystemConfig;
     use crate::{
         config_parsing::{
-            human_config::{evm::HumanConfig as EvmConfig, BaseConfig},
+            human_config::evm::HumanConfig as EvmConfig,
             system_config::{DataSource, Event, MainEvmDataSource},
         },
         project_paths::ParsedProjectPaths,
@@ -2006,9 +2055,8 @@ mod test {
     #[test]
     fn parses_unquoted_hex_address_through_full_pipeline() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
-        let project_paths =
-            ParsedProjectPaths::new(&test_dir, "generated/", "configs/unquoted-hex-address.yaml")
-                .expect("Failed creating parsed_paths");
+        let project_paths = ParsedProjectPaths::new(&test_dir, "configs/unquoted-hex-address.yaml")
+            .expect("Failed creating parsed_paths");
 
         let config =
             SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
@@ -2030,7 +2078,7 @@ mod test {
         );
 
         let public_json = config
-            .to_public_config_json()
+            .to_public_config_json(false)
             .expect("Failed serializing public config");
         assert!(
             public_json.contains("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),
@@ -2040,7 +2088,7 @@ mod test {
         // Mirror NAPI's two serde_json round-trips that hand the config
         // to the JS runtime.
         use crate::executor::public_config_value;
-        let value = public_config_value(&config).expect("public_config_value");
+        let value = public_config_value(&config, false).expect("public_config_value");
         let wire = serde_json::to_string(&value).expect("to_string");
         assert!(
             wire.contains("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),
@@ -2053,8 +2101,7 @@ mod test {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_root = test_dir.as_str();
         let config_dir = "configs/config1.yaml";
-        let generated = "generated/";
-        let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
+        let project_paths = ParsedProjectPaths::new(project_root, config_dir)
             .expect("Failed creating parsed_paths");
 
         let config =
@@ -2141,8 +2188,7 @@ mod test {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_root = test_dir.as_str();
         let config_dir = "configs/nested-abi.yaml";
-        let generated = "generated/";
-        let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
+        let project_paths = ParsedProjectPaths::new(project_root, config_dir)
             .expect("Failed creating parsed_paths");
 
         let config =
@@ -2339,6 +2385,44 @@ mod test {
     }
 
     #[test]
+    fn parse_event_sig_with_named_tuple_components_issue_1206() {
+        // Regression for https://github.com/enviodev/hyperindex/issues/1206.
+        // A custom event signature whose tuple components are named must not
+        // require an ABI file. Selector should match the canonical tuple-only
+        // signature (component names stripped per ABI spec).
+        let event_string = "ConsumeBoostVial(address from, uint256 playerId, (uint40 a, uint24 b, uint16 c, uint16 d, uint8 e) playerBoostInfo)";
+        let parsed = Event::get_abi_event(event_string, &None).unwrap();
+
+        let canonical = "ConsumeBoostVial(address from, uint256 playerId, (uint40,uint24,uint16,uint16,uint8) playerBoostInfo)";
+        let canonical_parsed = Event::get_abi_event(canonical, &None).unwrap();
+
+        // Selector is computed from the canonical (unnamed) signature so the
+        // two forms must match.
+        assert_eq!(
+            parsed.selector().to_string(),
+            canonical_parsed.selector().to_string(),
+        );
+
+        // Component names must survive into our converted EventParam tree so
+        // codegen can emit named record fields.
+        let params = Event::convert_event_params(&parsed).unwrap();
+        let tuple_param = params
+            .iter()
+            .find(|p| p.name == "playerBoostInfo")
+            .expect("playerBoostInfo");
+        let names: Vec<Option<&str>> = match &tuple_param.kind {
+            crate::config_parsing::abi_compat::AbiType::Tuple(fields) => {
+                fields.iter().map(|f| f.name.as_deref()).collect()
+            }
+            other => panic!("expected Tuple, got {:?}", other),
+        };
+        assert_eq!(
+            names,
+            vec![Some("a"), Some("b"), Some("c"), Some("d"), Some("e")]
+        );
+    }
+
+    #[test]
     fn fails_to_parse_event_name_without_abi() {
         let event_string = ("MyEvent").to_string();
         assert_eq!(
@@ -2460,108 +2544,6 @@ mod test {
     }
 
     #[test]
-    fn test_output_configuration() {
-        use crate::config_parsing::human_config::{
-            evm::{Chain as EvmChain, HumanConfig as EvmConfig},
-            HumanConfig,
-        };
-        use crate::project_paths::ParsedProjectPaths;
-
-        // Test with default output (no output field specified)
-        let evm_config = EvmConfig {
-            base: BaseConfig {
-                name: "Test Project".to_string(),
-                description: None,
-                schema: None,
-                output: None,
-                handlers: None,
-                full_batch_size: None,
-                storage: None,
-            },
-            ecosystem: None,
-            contracts: None,
-            chains: vec![EvmChain {
-                id: 1,
-                hypersync_config: None,
-                rpc: None,
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: None,
-                block_lag: None,
-                contracts: None,
-            }],
-            rollback_on_reorg: None,
-            save_full_history: None,
-            field_selection: None,
-            raw_events: None,
-            address_format: None,
-        };
-
-        let project_paths = ParsedProjectPaths::new(".", "generated", "config.yaml").unwrap();
-        let schema = crate::config_parsing::entity_parsing::Schema {
-            entities: std::collections::HashMap::new(),
-            enums: std::collections::HashMap::new(),
-        };
-
-        let system_config = SystemConfig::from_human_config(
-            HumanConfig::Evm(evm_config),
-            schema.clone(),
-            &project_paths,
-        )
-        .unwrap();
-
-        // Should use the default generated path
-        assert_eq!(
-            system_config.parsed_project_paths.generated,
-            project_paths.generated
-        );
-
-        // Test with custom output path
-        let evm_config_with_output = EvmConfig {
-            base: BaseConfig {
-                name: "Test Project".to_string(),
-                description: None,
-                schema: None,
-                output: Some("custom/output".to_string()),
-                handlers: None,
-                full_batch_size: None,
-                storage: None,
-            },
-            ecosystem: None,
-            contracts: None,
-            chains: vec![EvmChain {
-                id: 1,
-                hypersync_config: None,
-                rpc: None,
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: None,
-                block_lag: None,
-                contracts: None,
-            }],
-            rollback_on_reorg: None,
-            save_full_history: None,
-            field_selection: None,
-            raw_events: None,
-            address_format: None,
-        };
-
-        let system_config_with_output = SystemConfig::from_human_config(
-            HumanConfig::Evm(evm_config_with_output),
-            schema,
-            &project_paths,
-        )
-        .unwrap();
-
-        // Should use the custom output path relative to config location
-        let expected_custom_path = std::path::PathBuf::from("custom/output");
-        assert_eq!(
-            system_config_with_output.parsed_project_paths.generated,
-            expected_custom_path
-        );
-    }
-
-    #[test]
     fn test_storage_resolve() {
         use super::human_config::StorageConfig;
 
@@ -2648,5 +2630,136 @@ mod test {
                 .contains("At least one storage backend must be enabled"),
             "Unexpected error: {err}"
         );
+    }
+
+    // --- validate_entity_storage: per-entity storage routing checks ---
+
+    mod entity_storage_validation {
+        use super::super::{validate_entity_storage, Storage};
+        use crate::config_parsing::entity_parsing::{Entity, Schema};
+
+        // Bypass `Schema::new` validation: only storage routing matters here.
+        fn make_schema(entities: Vec<Entity>) -> Schema {
+            let mut schema = Schema::empty();
+            for entity in entities {
+                schema.entities.insert(entity.name.clone(), entity);
+            }
+            schema
+        }
+
+        fn entity(name: &str, postgres: Option<bool>, clickhouse: Option<bool>) -> Entity {
+            Entity {
+                name: name.to_string(),
+                fields: Vec::new(),
+                multi_field_indexes: Vec::new(),
+                description: None,
+                postgres,
+                clickhouse,
+            }
+        }
+
+        #[test]
+        fn single_storage_no_directive_ok() {
+            let schema = make_schema(vec![entity("Transfer", None, None)]);
+            let storage = Storage {
+                postgres: true,
+                clickhouse: false,
+            };
+            assert!(validate_entity_storage(&storage, &schema).is_ok());
+        }
+
+        #[test]
+        fn single_storage_matching_directive_ok() {
+            let schema = make_schema(vec![entity("Transfer", Some(true), None)]);
+            let storage = Storage {
+                postgres: true,
+                clickhouse: false,
+            };
+            assert!(validate_entity_storage(&storage, &schema).is_ok());
+        }
+
+        #[test]
+        fn single_storage_entity_targets_disabled_backend_e1() {
+            // Global: postgres only. Entity wants clickhouse → E1.
+            let schema = make_schema(vec![entity("Snapshot", Some(true), Some(true))]);
+            let storage = Storage {
+                postgres: true,
+                clickhouse: false,
+            };
+            let err = validate_entity_storage(&storage, &schema).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Schema validation failed:\n\
+                 \n\
+                 Entities using storages not enabled in config.yaml:\n  \
+                 - `Snapshot` uses `clickhouse`, but `clickhouse` is not enabled.\n\
+                 \n\
+                 Fixes:\n  \
+                 - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml."
+            );
+        }
+
+        #[test]
+        fn multi_storage_all_annotated_ok() {
+            let schema = make_schema(vec![
+                entity("Transfer", Some(true), None),
+                entity("Snapshot", None, Some(true)),
+                entity("Audit", Some(true), Some(true)),
+            ]);
+            let storage = Storage {
+                postgres: true,
+                clickhouse: true,
+            };
+            assert!(validate_entity_storage(&storage, &schema).is_ok());
+        }
+
+        #[test]
+        fn multi_storage_missing_directives_e2() {
+            let schema = make_schema(vec![
+                entity("Transfer", None, None),
+                entity("Approval", None, None),
+                entity("DailySnapshot", None, None),
+            ]);
+            let storage = Storage {
+                postgres: true,
+                clickhouse: true,
+            };
+            let err = validate_entity_storage(&storage, &schema).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Schema validation failed:\n\
+                 \n\
+                 Entities missing the @storage directive (multi-storage mode requires it):\n  \
+                 - Approval\n  \
+                 - DailySnapshot\n  \
+                 - Transfer\n\
+                 \n\
+                 Fixes:\n  \
+                 - Add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
+                 type Approval @storage(postgres: true) { ... }\n      \
+                 type Approval @storage(clickhouse: true) { ... }\n      \
+                 type Approval @storage(postgres: true, clickhouse: true) { ... }"
+            );
+        }
+
+        // Insertion order is Zebra→Apple→Mango; the error must still list
+        // them alphabetically regardless of HashMap iteration order.
+        #[test]
+        fn entities_listed_alphabetically_in_error() {
+            let schema = make_schema(vec![
+                entity("Zebra", None, None),
+                entity("Apple", None, None),
+                entity("Mango", None, None),
+            ]);
+            let storage = Storage {
+                postgres: true,
+                clickhouse: true,
+            };
+            let err = validate_entity_storage(&storage, &schema).unwrap_err();
+            assert!(
+                err.to_string().contains("- Apple\n  - Mango\n  - Zebra"),
+                "Entities not listed alphabetically. Got:\n{err}"
+            );
+        }
     }
 }

@@ -62,7 +62,7 @@ A few things already running in production:
 ## Key Features
 
 **Performance**
-- Historical backfills at 10,000+ events per second
+- Historical backfills at 25,000+ events per second
 - Up to 2000x faster than traditional RPC via HyperSync (enabled by default, no config required)
 - Sync times reduced from days to minutes
 - Fallback RPC support for reliability without touching your indexer code
@@ -92,6 +92,7 @@ A few things already running in production:
 **Agentic development**
 - HyperIndex is the default indexing framework for AI-assisted and agentic workflows via Envio's hosted service CLI (`envio-cloud`) and Claude skills
 - An agent can scaffold, configure, and deploy a production-ready indexer without touching a config file. [400,000 events indexed in ~20 seconds](https://docs.envio.dev/blog/agentic-blockchain-indexing-envio-hyperindex)
+- Powerful built-in testing framework purpose-built for AI-driven development. Agents can write, run, and iterate on handler tests in a tight feedback loop, catching regressions before deploy
 
 ---
 
@@ -100,7 +101,7 @@ A few things already running in production:
 **Requirements**: Node.js, Docker (only needed for local development)
 
 ```bash
-npx envio init
+pnpx envio init
 ```
 
 This scaffolds your entire indexer project, config, schema, and handler functions, in seconds. You can generate from a contract address, choose from templates, or start from an existing example.
@@ -109,7 +110,7 @@ From there, three files define your indexer:
 
 - `config.yaml`: networks, contracts, events, and indexing behaviour
 - `schema.graphql`: the shape of your indexed data
-- `src/EventHandlers.*`: your handler logic in TypeScript, JavaScript, or ReScript
+- `src/handlers`: your handler logic in TypeScript, JavaScript, or ReScript
 
 [Full getting started guide →](https://docs.envio.dev/docs/HyperIndex/getting-started)
 

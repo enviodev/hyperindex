@@ -282,25 +282,55 @@ WHERE "id" = $1;`
   }
 }
 
-module PersistedState = {
-  type t = {
-    id: int,
-    envio_version: string,
-    config_hash: string,
-    schema_hash: string,
-    abi_files_hash: string,
-  }
-
+module EnvioInfo = {
+  // Singleton table — written by `initialize` inside the schema-setup
+  // transaction, read on resume for the config compat check. The `id`
+  // column has a fixed default of 1 plus a primary key, so the table can
+  // hold at most one row; `write` upserts on conflict.
+  //
+  // `config` is TEXT (not JSONB) so the round-trip is byte-stable: jsonb
+  // re-serializes numbers/escapes which made the diff produce false
+  // positives on harmless format differences.
   let table = mkTable(
-    "persisted_state",
+    "envio_info",
     ~fields=[
-      mkField("id", Serial, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField("envio_version", String, ~fieldSchema=S.string),
-      mkField("config_hash", String, ~fieldSchema=S.string),
-      mkField("schema_hash", String, ~fieldSchema=S.string),
-      mkField("abi_files_hash", String, ~fieldSchema=S.string),
+      mkField("id", Int32, ~fieldSchema=S.int, ~isPrimaryKey, ~default="1"),
+      mkField("config", String, ~fieldSchema=S.string),
     ],
   )
+
+  // Postgres SQLSTATE for "undefined_table" — what we get when the schema
+  // was initialized by an older envio that didn't have `envio_info`.
+  let undefinedTableSqlState = "42P01"
+
+  @get external getCode: JsExn.t => option<string> = "code"
+
+  let read = async (sql, ~pgSchema): option<JSON.t> => {
+    let rows: array<{
+      "config": string,
+    }> = try await sql->Postgres.unsafe(
+      `SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`,
+    ) catch {
+    | exn =>
+      switch exn->JsExn.anyToExnInternal {
+      | JsExn(e) if e->getCode === Some(undefinedTableSqlState) => []
+      | _ => throw(exn)
+      }
+    }
+    rows->Belt.Array.get(0)->Belt.Option.map(row => row["config"]->JSON.parseOrThrow)
+  }
+
+  // Upsert keyed on the fixed id so the table stays a singleton even if
+  // `initialize` runs against a non-empty schema (shouldn't happen, but
+  // protects against a partially-applied prior run).
+  let write = (sql, ~pgSchema, ~envioInfo: JSON.t) => {
+    sql
+    ->Postgres.preparedUnsafe(
+      `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "config") VALUES (1, $1) ON CONFLICT ("id") DO UPDATE SET "config" = EXCLUDED."config";`,
+      [envioInfo->JSON.stringify]->(Utils.magic: array<string> => unknown),
+    )
+    ->Utils.Promise.ignoreValue
+  }
 }
 
 module Checkpoints = {

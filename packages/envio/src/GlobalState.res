@@ -336,6 +336,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     | None => chainManager.committedCheckpointId
     },
     chainFetchers,
+    isRealtime: chainManager.isRealtime || allChainsReady.contents,
   }
 }
 
@@ -820,26 +821,21 @@ let checkAndFetchForChain = (
     let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
     if !isPreparingRollback(state) {
       let {fetchState} = chainFetcher
+      let isRealtime = state.chainManager.isRealtime
 
-      // Reduce polling to 60s when this chain is caught up but waiting for other chains
-      let reducedPolling = if state.ctx.config.shouldRollbackOnReorg {
-        !state.chainManager.isInReorgThreshold &&
-        fetchState->FetchState.isReadyToEnterReorgThreshold
-      } else {
-        chainFetcher->ChainFetcher.isReady &&
-          state.chainManager.chainFetchers
-          ->ChainMap.values
-          ->Array.some(cf => !(cf->ChainFetcher.isReady))
-      }
+      // Reduce polling when there's nothing useful to fetch right now:
+      //   - this chain has caught up but others are still backfilling, or
+      //   - we're about to enter the reorg threshold (rollback mode only).
+      let reducedPolling =
+        (chainFetcher->ChainFetcher.isReady && !isRealtime) ||
+          (state.ctx.config.shouldRollbackOnReorg &&
+          !state.chainManager.isInReorgThreshold &&
+          fetchState->FetchState.isReadyToEnterReorgThreshold)
 
       await chainFetcher.sourceManager->SourceManager.fetchNext(
         ~fetchState,
         ~waitForNewBlock=(~knownHeight) =>
-          chainFetcher.sourceManager->waitForNewBlock(
-            ~knownHeight,
-            ~isLive=chainFetcher->ChainFetcher.isReady,
-            ~reducedPolling,
-          ),
+          chainFetcher.sourceManager->waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling),
         ~onNewBlock=(~knownHeight) =>
           dispatchAction(FinishWaitingForNewBlock({chain, knownHeight})),
         ~executeQuery=async query => {
@@ -847,7 +843,7 @@ let checkAndFetchForChain = (
             let response = await chainFetcher.sourceManager->executeQuery(
               ~query,
               ~knownHeight=fetchState.knownHeight,
-              ~isLive=chainFetcher->ChainFetcher.isReady,
+              ~isRealtime,
             )
             dispatchAction(ValidatePartitionQueryResponse({chain, response, query}))
           } catch {

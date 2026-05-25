@@ -4,6 +4,10 @@
   "description": "Schema for a YAML config for an envio Svm indexer",
   "type": "object",
   "properties": {
+    "name": {
+      "description": "Name of the project",
+      "type": "string"
+    },
     "description": {
       "description": "Description of the project",
       "type": [
@@ -11,19 +15,8 @@
         "null"
       ]
     },
-    "name": {
-      "description": "Name of the project",
-      "type": "string"
-    },
     "schema": {
       "description": "Custom path to schema.graphql file",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "output": {
-      "description": "Path where the generated directory will be placed. By default it's 'generated' relative to the current working directory. If set, it'll be a path relative to the config file location.",
       "type": [
         "string",
         "null"

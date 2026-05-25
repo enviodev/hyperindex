@@ -1,0 +1,25 @@
+name: Announce release to Discord
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    if: github.event.release.draft == false
+    steps:
+      - name: Post release to Discord
+        uses: SethCohen/github-releases-to-discord@24d166886aee4646d448c8a389ff9e1ebcab3682 # v1.20.0
+        with:
+          webhook_url: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          color: "5814783"
+          username: "HyperIndex Releases"
+          avatar_url: "https://avatars.githubusercontent.com/u/135992464?v=4"
+          footer_title: "HyperIndex"
+          footer_timestamp: "true"
+          reduce_headings: "true"
+          max_description: "4000"

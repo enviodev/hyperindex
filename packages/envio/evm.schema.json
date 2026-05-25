@@ -4,6 +4,10 @@
   "description": "Schema for a YAML config for an envio indexer",
   "type": "object",
   "properties": {
+    "name": {
+      "description": "Name of the project",
+      "type": "string"
+    },
     "description": {
       "description": "Description of the project",
       "type": [
@@ -11,19 +15,8 @@
         "null"
       ]
     },
-    "name": {
-      "description": "Name of the project",
-      "type": "string"
-    },
     "schema": {
       "description": "Custom path to schema.graphql file",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "output": {
-      "description": "Path where the generated directory will be placed. By default it's 'generated' relative to the current working directory. If set, it'll be a path relative to the config file location.",
       "type": [
         "string",
         "null"
@@ -74,7 +67,7 @@
         "null"
       ],
       "items": {
-        "$ref": "#/$defs/GlobalContract_for_ContractConfig"
+        "$ref": "#/$defs/GlobalContract"
       }
     },
     "chains": {
@@ -196,7 +189,7 @@
         "evm"
       ]
     },
-    "GlobalContract_for_ContractConfig": {
+    "GlobalContract": {
       "type": "object",
       "properties": {
         "name": {
@@ -425,7 +418,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/$defs/ChainContract_for_ContractConfig"
+            "$ref": "#/$defs/ChainContract"
           }
         }
       },
@@ -568,7 +561,7 @@
         {
           "description": "Use RPC for real-time indexing only. HyperSync will be used for historical sync, then automatically switch to this RPC once synced for lower latency.",
           "type": "string",
-          "const": "live"
+          "const": "realtime"
         }
       ]
     },
@@ -585,7 +578,7 @@
         "url"
       ]
     },
-    "ChainContract_for_ContractConfig": {
+    "ChainContract": {
       "type": "object",
       "properties": {
         "name": {

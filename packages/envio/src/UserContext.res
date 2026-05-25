@@ -23,9 +23,10 @@ Utils.Object.defineProperty(
   effectContextPrototype,
   "log",
   {
-    get: () => {
+    // Wrap with toMethod so `this` binds to the EffectContext instance.
+    get: Utils.toMethod(() => {
       (paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))).item->Logging.getUserLogger
-    },
+    }),
   },
 )
 %%raw(`
@@ -202,9 +203,19 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
 let noopSet = (_entity: Internal.entity) => ()
 let noopDeleteUnsafe = (_entityId: string) => ()
 
+// Reads against ClickHouse-only entities have no Postgres table to hit;
+// surface a friendly error instead of letting the SQL layer fail with
+// "relation does not exist".
+let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) =>
+  JsError.throwWithMessage(
+    `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
+  )
+
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
+
+    let isClickHouseOnly = !params.entityConfig.storage.postgres
 
     let set = params.isPreload
       ? noopSet
@@ -223,66 +234,92 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
 
     switch prop {
     | "get" =>
-      (
-        entityId =>
-          LoadLayer.loadById(
-            ~loadManager=params.loadManager,
-            ~persistence=params.persistence,
-            ~entityConfig=params.entityConfig,
-            ~inMemoryStore=params.inMemoryStore,
-            ~shouldGroup=params.isPreload,
-            ~item=params.item,
-            ~entityId,
-          )
-      )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
+      if isClickHouseOnly {
+        ((_entityId: string) => throwClickHouseReadOnly(params.entityConfig, "get"))->(
+          Utils.magic: (string => promise<option<Internal.entity>>) => unknown
+        )
+      } else {
+        (
+          entityId =>
+            LoadLayer.loadById(
+              ~loadManager=params.loadManager,
+              ~persistence=params.persistence,
+              ~entityConfig=params.entityConfig,
+              ~inMemoryStore=params.inMemoryStore,
+              ~shouldGroup=params.isPreload,
+              ~item=params.item,
+              ~entityId,
+            )
+        )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
+      }
     | "getWhere" =>
-      (filter => getWhereHandler(params, filter->(Utils.magic: unknown => dict<dict<unknown>>)))->(
-        Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown
-      )
+      if isClickHouseOnly {
+        ((_filter: unknown) => throwClickHouseReadOnly(params.entityConfig, "getWhere"))->(
+          Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown
+        )
+      } else {
+        (
+          filter => getWhereHandler(params, filter->(Utils.magic: unknown => dict<dict<unknown>>))
+        )->(Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown)
+      }
+
     | "getOrThrow" =>
-      (
-        (entityId, ~message=?) =>
-          LoadLayer.loadById(
-            ~loadManager=params.loadManager,
-            ~persistence=params.persistence,
-            ~entityConfig=params.entityConfig,
-            ~inMemoryStore=params.inMemoryStore,
-            ~shouldGroup=params.isPreload,
-            ~item=params.item,
-            ~entityId,
-          )->Promise.thenResolve(entity => {
-            switch entity {
-            | Some(entity) => entity
-            | None =>
-              JsError.throwWithMessage(
-                message->Belt.Option.getWithDefault(
-                  `Entity '${params.entityConfig.name}' with ID '${entityId}' is expected to exist.`,
-                ),
-              )
-            }
-          })
-      )->(Utils.magic: ((string, ~message: string=?) => promise<Internal.entity>) => unknown)
-    | "getOrCreate" =>
-      (
-        (entity: Internal.entity) =>
-          LoadLayer.loadById(
-            ~loadManager=params.loadManager,
-            ~persistence=params.persistence,
-            ~entityConfig=params.entityConfig,
-            ~inMemoryStore=params.inMemoryStore,
-            ~shouldGroup=params.isPreload,
-            ~item=params.item,
-            ~entityId=entity.id,
-          )->Promise.thenResolve(storageEntity => {
-            switch storageEntity {
-            | Some(entity) => entity
-            | None => {
-                set(entity)
-                entity
+      if isClickHouseOnly {
+        (
+          (_entityId: string, ~message as _=?) =>
+            throwClickHouseReadOnly(params.entityConfig, "getOrThrow")
+        )->(Utils.magic: ((string, ~message: string=?) => promise<Internal.entity>) => unknown)
+      } else {
+        (
+          (entityId, ~message=?) =>
+            LoadLayer.loadById(
+              ~loadManager=params.loadManager,
+              ~persistence=params.persistence,
+              ~entityConfig=params.entityConfig,
+              ~inMemoryStore=params.inMemoryStore,
+              ~shouldGroup=params.isPreload,
+              ~item=params.item,
+              ~entityId,
+            )->Promise.thenResolve(entity => {
+              switch entity {
+              | Some(entity) => entity
+              | None =>
+                JsError.throwWithMessage(
+                  message->Belt.Option.getWithDefault(
+                    `Entity '${params.entityConfig.name}' with ID '${entityId}' is expected to exist.`,
+                  ),
+                )
               }
-            }
-          })
-      )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
+            })
+        )->(Utils.magic: ((string, ~message: string=?) => promise<Internal.entity>) => unknown)
+      }
+    | "getOrCreate" =>
+      if isClickHouseOnly {
+        (
+          (_entity: Internal.entity) => throwClickHouseReadOnly(params.entityConfig, "getOrCreate")
+        )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
+      } else {
+        (
+          (entity: Internal.entity) =>
+            LoadLayer.loadById(
+              ~loadManager=params.loadManager,
+              ~persistence=params.persistence,
+              ~entityConfig=params.entityConfig,
+              ~inMemoryStore=params.inMemoryStore,
+              ~shouldGroup=params.isPreload,
+              ~item=params.item,
+              ~entityId=entity.id,
+            )->Promise.thenResolve(storageEntity => {
+              switch storageEntity {
+              | Some(entity) => entity
+              | None => {
+                  set(entity)
+                  entity
+                }
+              }
+            })
+        )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
+      }
     | "set" => set->(Utils.magic: (Internal.entity => unit) => unknown)
     | "deleteUnsafe" =>
       if params.isPreload {

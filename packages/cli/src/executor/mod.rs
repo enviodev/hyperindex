@@ -1,17 +1,20 @@
 use crate::{
-    clap_definitions::{JsonSchema, Script},
+    clap_definitions::{ConfigSubcommand, JsonSchema, Script, SkillsSubcommand},
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
+    commands,
     config_parsing::{human_config, system_config::SystemConfig},
     docker_env,
-    persisted_state::{self, PersistedState, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     scripts,
 };
 
 mod codegen;
+mod config;
 mod dev;
 pub mod init;
 mod local;
+mod metrics;
+mod skills;
 
 use anyhow::{Context, Result};
 use schemars::schema_for;
@@ -24,30 +27,22 @@ use schemars::schema_for;
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Command {
-    /// `migrate: Some` folds the migration into the same `init()` call as
-    /// the indexer startup.
+    /// `reset: true` wipes the schema before the indexer's first init call;
+    /// the runtime always runs `Persistence.init` either way (DB compat and
+    /// migration decisions live in ReScript now).
     Start {
-        migrate: Option<MigrateOpts>,
+        reset: bool,
         cwd: String,
         env: serde_json::Map<String, serde_json::Value>,
         config: serde_json::Value,
     },
     Migrate {
         reset: bool,
-        #[serde(rename = "persistedState")]
-        persisted_state: PersistedState,
         config: serde_json::Value,
     },
     DropSchema {
         config: serde_json::Value,
     },
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct MigrateOpts {
-    pub reset: bool,
-    #[serde(rename = "persistedState")]
-    pub persisted_state: PersistedState,
 }
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
@@ -86,50 +81,41 @@ pub async fn execute(
             Ok(None)
         }
 
-        CommandType::Start(start_args) => {
-            // Warn early if the generated directory looks stale — `envio start`
-            // keeps running even in these cases, but the indexer will use
-            // whatever generated code is on disk.
-            match PersistedStateExists::get_persisted_state_file(&parsed_project_paths) {
-                PersistedStateExists::Exists(ps)
-                    if ps.envio_version != persisted_state::current_version() =>
-                {
-                    eprintln!(
-                        "Warning: the generated directory was built with envio {}, but you're \
-                         running envio {}. Run `envio codegen` to regenerate it (or switch to the \
-                         matching envio version).",
-                        &ps.envio_version,
-                        persisted_state::current_version(),
-                    )
-                }
-                PersistedStateExists::NotExists => eprintln!(
-                    "Warning: no generated files found. Run `envio codegen` first to generate the \
-                     indexer runtime.",
-                ),
-                PersistedStateExists::Corrupted => eprintln!(
-                    "Warning: the generated directory is in an invalid state. Run `envio codegen` \
-                     to regenerate it.",
-                ),
-                PersistedStateExists::Exists(_) => (),
-            };
+        CommandType::Metrics => {
+            metrics::run().await?;
+            Ok(None)
+        }
 
+        CommandType::Skills(SkillsSubcommand::Update) => {
+            skills::run_update(&parsed_project_paths)?;
+            Ok(None)
+        }
+
+        CommandType::Config(ConfigSubcommand::View) => {
+            config::run_view(&parsed_project_paths)?;
+            Ok(None)
+        }
+
+        CommandType::Start(start_args) => {
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
 
-            let migrate = if start_args.restart {
-                let persisted_state = PersistedState::get_current_state(&config)
-                    .context("Failed constructing persisted state")?;
-                Some(MigrateOpts {
-                    reset: true,
-                    persisted_state,
-                })
-            } else {
-                None
-            };
+            // Always regenerate so the runtime never boots against stale
+            // codegen output (e.g. after an `envio` package upgrade).
+            // Mirrors `envio dev`; the JS side handles DB compat via
+            // `envio_info`.
+            commands::codegen::run_codegen(&config)
+                .await
+                .context("Failed running codegen")?;
 
             // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).
-            Ok(Some(build_start_command(&config, migrate, &[])?))
+            Ok(Some(build_start_command(
+                &config,
+                start_args.restart,
+                false,
+                &[],
+            )?))
         }
 
         CommandType::Local(local_commands) => {
@@ -179,10 +165,12 @@ pub async fn execute(
 }
 
 /// `ENVIO_CONFIG` is always present in the returned `env`; callers may
-/// append extra env pairs (e.g. `ENVIO_DEV_MODE` for `envio dev`).
+/// append extra env pairs (e.g. ClickHouse credentials from Docker for
+/// `envio dev`).
 pub fn build_start_command(
     config: &SystemConfig,
-    migrate: Option<MigrateOpts>,
+    reset: bool,
+    is_dev: bool,
     extra_env: &[(String, String)],
 ) -> Result<Command> {
     let config_path = config
@@ -197,20 +185,20 @@ pub fn build_start_command(
             .collect();
 
     Ok(Command::Start {
-        migrate,
+        reset,
         cwd: config
             .parsed_project_paths
             .project_root
             .to_string_lossy()
             .into_owned(),
         env,
-        config: public_config_value(config)?,
+        config: public_config_value(config, is_dev)?,
     })
 }
 
 /// Returns a `Value` (not a string) so the serde payload embeds the config
 /// as a nested JSON object — the JS side then skips the extra `JSON.parse`.
-pub fn public_config_value(config: &SystemConfig) -> Result<serde_json::Value> {
-    serde_json::from_str(&config.to_public_config_json()?)
+pub fn public_config_value(config: &SystemConfig, is_dev: bool) -> Result<serde_json::Value> {
+    serde_json::from_str(&config.to_public_config_json(is_dev)?)
         .context("Failed parsing public config JSON")
 }

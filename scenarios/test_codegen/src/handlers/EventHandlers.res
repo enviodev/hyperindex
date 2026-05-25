@@ -166,10 +166,10 @@ let lastEmptyEventChain: ref<option<Internal.chainInfo>> = ref(None)
 
 Indexer.indexer.onEvent({event: Indexer.Gravatar(EmptyEvent)}, async ({context}) => {
   // This handler tests that chain state is accessible in the context
-  // Chain will have isLive: false during sync and isLive: true during live indexing
+  // Chain will have isRealtime: false during sync and isRealtime: true once all chains caught up
   lastEmptyEventChain := Some(context.chain)
 
   // Log chain state for verification
-  let status = context.chain.isLive ? "ready (live)" : "syncing (historical)"
+  let status = context.chain.isRealtime ? "ready (realtime)" : "syncing (historical)"
   context.log.debug(`Chain ${context.chain.id->Belt.Int.toString} status: ${status}`)
 })

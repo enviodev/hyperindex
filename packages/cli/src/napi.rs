@@ -17,25 +17,13 @@ pub fn get_config_json(
     // Error messages intentionally omit absolute paths (cwd / resolved config
     // path) — the JS caller already knows its cwd and what it passed in, and
     // we don't want to leak filesystem layout into logs shipped off-host.
-    let project_paths = ParsedProjectPaths::new(&project_root, "generated", &config)
+    let project_paths = ParsedProjectPaths::new(&project_root, &config)
         .map_err(|e| napi::Error::from_reason(format!("Failed parsing project paths: {e}")))?;
     let system_config = SystemConfig::parse_from_project_files(&project_paths)
         .map_err(|e| napi::Error::from_reason(format!("Config parse error: {e}")))?;
     system_config
-        .to_public_config_json()
+        .to_public_config_json(false)
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
-}
-
-/// Requires the migration tables to already exist.
-#[napi_derive::napi]
-pub async fn upsert_persisted_state(json: String) -> napi::Result<()> {
-    let state: crate::persisted_state::PersistedState = serde_json::from_str(&json)
-        .map_err(|e| napi::Error::from_reason(format!("Failed to parse persisted state: {e}")))?;
-    state
-        .upsert_to_db()
-        .await
-        .map_err(|e| napi::Error::from_reason(format!("Failed to upsert persisted state: {e}")))?;
-    Ok(())
 }
 
 /// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when

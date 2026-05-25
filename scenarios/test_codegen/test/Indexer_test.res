@@ -13,7 +13,7 @@ describe("Indexer.indexer", () => {
       startBlock: 1,
       endBlock: None,
       name: "1337",
-      isLive: false,
+      isRealtime: false,
       \"NftFactory": {
         name: "NftFactory",
         addresses: ["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Address.unsafeFromString],

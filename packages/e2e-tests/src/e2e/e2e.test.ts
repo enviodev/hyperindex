@@ -24,19 +24,27 @@ import {
   stopClickHouse,
   queryClickHouse,
 } from "../utils/clickhouse.js";
+import { runPgSql } from "../utils/postgres.js";
 import path from "path";
 
 const PROJECT_DIR = path.join(config.scenariosDir, "e2e_test");
-const CH_DATABASE = "envio_sink";
+const CH_DATABASE = "envio_indexer";
 
 interface ClickHouseResult<T> {
   data: T[];
   rows: number;
 }
 
+interface MetricsResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
 describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
   let indexerProcess: ChildProcess | null = null;
   let graphql: GraphQLClient;
+  let metricsWhileRunning: MetricsResult | null = null;
 
   beforeAll(async () => {
     graphql = new GraphQLClient({
@@ -56,6 +64,7 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
         ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
         ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
         ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+        ENVIO_CLICKHOUSE_DATABASE: CH_DATABASE,
         // First run: no DB state yet, fallback returns the config endBlock
         E2E_EXPECTED_END_BLOCK: "10861774",
         // Flush chain metadata immediately (no throttle) so isReady
@@ -89,6 +98,15 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       );
     }
 
+    // Capture metrics output here (must run before SIGKILL); assertions
+    // live in dedicated `it` blocks below so failures surface as test
+    // failures rather than aborting the suite.
+    metricsWhileRunning = await runCommand(
+      config.envioCommand,
+      [...config.envioArgs, "metrics"],
+      { cwd: PROJECT_DIR, timeout: 10_000 }
+    );
+
     // Kill so envio dev doesn't tear down docker before tests query it.
     indexerProcess.kill("SIGKILL");
     indexerProcess = null;
@@ -117,6 +135,22 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     }).catch(() => {});
     await stopClickHouse();
   }, 30_000);
+
+  it("envio metrics returns Prometheus output while indexer is running", () => {
+    expect({
+      exitCode: metricsWhileRunning?.exitCode,
+      hasEnvioTypeLine: /^# TYPE envio_/m.test(metricsWhileRunning?.stdout ?? ""),
+    }).toEqual({ exitCode: 0, hasEnvioTypeLine: true });
+  });
+
+  it("envio metrics exits 1 when indexer is not running", async () => {
+    const result = await runCommand(
+      config.envioCommand,
+      [...config.envioArgs, "metrics"],
+      { cwd: PROJECT_DIR, timeout: 15_000 }
+    );
+    expect(result.exitCode).toBe(1);
+  });
 
   it("should have _meta with isReady true", async () => {
     // After SIGKILL, Hasura is still running but may need a moment.
@@ -342,6 +376,149 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     });
   });
 
+  // --- Per-entity @storage routing ---
+  //
+  // The e2e_test schema declares:
+  //   Transfer        @storage(postgres: true, clickhouse: true)
+  //   TransferPgOnly  @storage(postgres: true)
+  //   TransferChOnly  @storage(clickhouse: true)
+  //
+  // Each backend should host exactly the entities that opted into it, with
+  // at least one row each. Hasura sits on top of Postgres so it must
+  // expose Transfer and TransferPgOnly only.
+
+  it("Postgres has tables for postgres-enabled entities only", async () => {
+    const tables = await runPgSql(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
+      ORDER BY table_name
+    `);
+    expect(tables.map((r) => r[0])).toMatchInlineSnapshot(`
+      [
+        "Transfer",
+        "TransferPgOnly",
+      ]
+    `);
+
+    // The handler writes one row to each entity per Transfer event. Anchor
+    // on the Transfer count being non-zero, then assert per-entity counts
+    // are exactly equal — that pins the row totals without needing the
+    // historical block range's magic number, and catches dropped writes.
+    const transferRows = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
+    const transferCount = Number(transferRows[0]?.[0]);
+    expect(transferCount).toBeGreaterThan(0);
+
+    const pgOnlyRows = await runPgSql(`SELECT count(*)::text FROM "TransferPgOnly"`);
+    expect(Number(pgOnlyRows[0]?.[0])).toBe(transferCount);
+  });
+
+  it("ClickHouse has tables for clickhouse-enabled entities only", async () => {
+    const tables = await queryClickHouse<
+      ClickHouseResult<{ name: string }>
+    >(
+      `SELECT name FROM system.tables
+       WHERE database = '${CH_DATABASE}'
+         AND name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
+       ORDER BY name
+       FORMAT JSON`
+    );
+    expect(tables.data.map((r) => r.name)).toMatchInlineSnapshot(`
+      [
+        "Transfer",
+        "TransferChOnly",
+      ]
+    `);
+
+    // Same invariant as the Postgres side: one row per Transfer event on
+    // each ClickHouse-bound entity. Lock the row totals to the Postgres
+    // Transfer count so routing drops surface as a count mismatch.
+    const pgTransferRows = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
+    const transferCount = Number(pgTransferRows[0]?.[0]);
+    expect(transferCount).toBeGreaterThan(0);
+
+    const transferCh = await queryClickHouse<
+      ClickHouseResult<{ c: string }>
+    >(`SELECT count() as c FROM ${CH_DATABASE}.Transfer FORMAT JSON`);
+    expect(Number(transferCh.data[0]?.c)).toBe(transferCount);
+
+    const chOnly = await queryClickHouse<
+      ClickHouseResult<{ c: string }>
+    >(`SELECT count() as c FROM ${CH_DATABASE}.TransferChOnly FORMAT JSON`);
+    expect(Number(chOnly.data[0]?.c)).toBe(transferCount);
+  });
+
+  it("Hasura GraphQL schema exposes only postgres-backed entities", async () => {
+    const result = await graphql.query<{
+      __schema: {
+        queryType: { fields: Array<{ name: string }> };
+        types: Array<{
+          name: string;
+          kind: string;
+          fields: Array<{ name: string }> | null;
+        }>;
+      };
+    }>(`{
+      __schema {
+        queryType { fields { name } }
+        types { name kind fields { name } }
+      }
+    }`);
+
+    const userEntityNames = ["Transfer", "TransferPgOnly", "TransferChOnly"];
+    const isEntityQuery = (name: string) =>
+      userEntityNames.some((p) => name === p || name.startsWith(`${p}_`));
+
+    const entityQueries = result
+      .data!.__schema.queryType.fields.filter((f) => isEntityQuery(f.name))
+      .map((f) => f.name)
+      .sort();
+
+    const entityObjectTypes = result
+      .data!.__schema.types.filter(
+        (t) => t.kind === "OBJECT" && userEntityNames.includes(t.name)
+      )
+      .map((t) => ({
+        name: t.name,
+        fields: t.fields?.map((f) => f.name).sort() ?? [],
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    expect({ entityQueries, entityObjectTypes }).toMatchInlineSnapshot(`
+      {
+        "entityObjectTypes": [
+          {
+            "fields": [
+              "blockNumber",
+              "from",
+              "id",
+              "to",
+              "transactionHash",
+              "value",
+            ],
+            "name": "Transfer",
+          },
+          {
+            "fields": [
+              "from",
+              "id",
+              "value",
+            ],
+            "name": "TransferPgOnly",
+          },
+        ],
+        "entityQueries": [
+          "Transfer",
+          "TransferPgOnly",
+          "TransferPgOnly_aggregate",
+          "TransferPgOnly_by_pk",
+          "Transfer_aggregate",
+          "Transfer_by_pk",
+        ],
+      }
+    `);
+  });
+
   it("should resume with DB state on second start", async () => {
     const patchedEndBlock = 10861775; // original 10861774 + 1
 
@@ -373,6 +550,7 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
           ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
           ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
           ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+          ENVIO_CLICKHOUSE_DATABASE: CH_DATABASE,
           E2E_EXPECTED_END_BLOCK: String(patchedEndBlock),
         },
       });

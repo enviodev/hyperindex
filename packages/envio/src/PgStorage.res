@@ -185,7 +185,7 @@ let makeInitializeTransaction = (
 ) => {
   let generalTables = [
     InternalTable.Chains.table,
-    InternalTable.PersistedState.table,
+    InternalTable.EnvioInfo.table,
     InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
   ]
@@ -1202,7 +1202,18 @@ let make = (
     cache
   }
 
-  let initialize = async (~chainConfigs=[], ~entities=[], ~enums=[]): Persistence.initialState => {
+  let initialize = async (
+    ~chainConfigs=[],
+    ~entities=[],
+    ~enums=[],
+    ~envioInfo,
+  ): Persistence.initialState => {
+    // Per-entity storage routing: PG owns tables only for entities that
+    // opted into Postgres; the sink mirrors only those that opted into
+    // ClickHouse.
+    let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
+    let chEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse)
+
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
     )
@@ -1230,24 +1241,27 @@ let make = (
 
     // Call sink.initialize before executing PG queries
     switch sink {
-    | Some(sink) => await sink.initialize(~chainConfigs, ~entities, ~enums)
+    | Some(sink) => await sink.initialize(~chainConfigs, ~entities=chEntities, ~enums)
     | None => ()
     }
 
     let queries = makeInitializeTransaction(
       ~pgSchema,
       ~pgUser,
-      ~entities,
+      ~entities=pgEntities,
       ~enums,
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
       ~isHasuraEnabled,
     )
-    // Execute all queries within a single transaction for integrity
-    let _ = await sql->Postgres.beginSql(sql => {
+    // Execute all queries within a single transaction for integrity.
+    // The envio_info row is written in the same transaction so a successful
+    // initialize is atomic — no schema can come up without the matching row.
+    let _ = await sql->Postgres.beginSql(async sql => {
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
-      Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
+      let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
+      await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
     })
 
     // Populate config addresses into envio_addresses with registration_block/log = -1
@@ -1285,6 +1299,9 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       cleanRun: true,
       cache,
       reorgCheckpoints: [],
+      // Just-written row; resume's compat check would no-op on a clean run,
+      // but keep the field consistent with the resume path's shape.
+      envioInfo: Some(envioInfo),
       chains: chainConfigs->Array.map((chainConfig): Persistence.initialChainState => {
         id: chainConfig.id,
         startBlock: chainConfig.startBlock,
@@ -1481,7 +1498,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints) = await Promise.all4((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints, envioInfo) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -1515,6 +1532,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
           }>,
         >
       ),
+      InternalTable.EnvioInfo.read(sql, ~pgSchema),
     ))
 
     let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
@@ -1539,6 +1557,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       cache,
       chains,
       checkpointId,
+      envioInfo,
     }
   }
 
@@ -1607,12 +1626,25 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~updatedEffectsCache,
     ~updatedEntities,
   ) => {
+    let pgUpdates = []
+    let chUpdates = []
+    for i in 0 to updatedEntities->Array.length - 1 {
+      let update = updatedEntities->Array.getUnsafe(i)
+      let {entityConfig}: Persistence.updatedEntity = update
+      if entityConfig.storage.postgres {
+        pgUpdates->Array.push(update)
+      }
+      if entityConfig.storage.clickhouse {
+        chUpdates->Array.push(update)
+      }
+    }
+
     // Initialize sink if configured
     let sinkPromise = switch sink {
     | Some(sink) => {
         let timerRef = Hrtime.makeTimer()
         Some(
-          sink.writeBatch(~batch, ~updatedEntities)
+          sink.writeBatch(~batch, ~updatedEntities=chUpdates)
           ->Promise.thenResolve(_ => {
             Prometheus.StorageWrite.increment(
               ~storage=sink.name,
@@ -1639,7 +1671,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~allEntities,
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
-      ~updatedEntities,
+      ~updatedEntities=pgUpdates,
       ~sinkPromise,
     )
     Prometheus.StorageWrite.increment(
@@ -1692,6 +1724,7 @@ let makeStorageFromEnv = (
         let host = Env.ClickHouse.host()
         let username = Env.ClickHouse.username()
         let password = Env.ClickHouse.password()
+        let database = Env.ClickHouse.database()
         let missing = []
         let checkEnv = (opt, name) =>
           switch opt {
@@ -1701,6 +1734,7 @@ let makeStorageFromEnv = (
         host->checkEnv("ENVIO_CLICKHOUSE_HOST")
         username->checkEnv("ENVIO_CLICKHOUSE_USERNAME")
         password->checkEnv("ENVIO_CLICKHOUSE_PASSWORD")
+        database->checkEnv("ENVIO_CLICKHOUSE_DATABASE")
         if missing->Array.length > 0 {
           JsError.throwWithMessage(
             `ClickHouse storage is enabled but required env vars are not set: ${missing->Array.joinUnsafe(
@@ -1711,7 +1745,7 @@ let makeStorageFromEnv = (
         Some(
           Sink.makeClickHouse(
             ~host=host->Option.getUnsafe,
-            ~database=Env.ClickHouse.database(),
+            ~database=database->Option.getUnsafe,
             ~username=username->Option.getUnsafe,
             ~password=password->Option.getUnsafe,
           ),
@@ -1731,7 +1765,7 @@ let makeStorageFromEnv = (
                 secret: Env.Hasura.secret,
               },
               ~pgSchema,
-              ~userEntities=config.userEntities,
+              ~userEntities=config->Config.getPgUserEntities,
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Schema.make(config.allEntities->Belt.Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,

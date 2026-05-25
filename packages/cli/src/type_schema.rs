@@ -561,6 +561,8 @@ impl TypeIdent {
                 format!("{{ {} }}", inner)
             }
             Self::SchemaEnum(enum_name) => {
+                // References the file-level `Enums` lookup table emitted by
+                // codegen_templates.rs::wrap_envio_module_augmentation.
                 format!("Enums[\"{}\"]", &enum_name.original)
             }
             Self::GenericParam(name) => name.clone(),
