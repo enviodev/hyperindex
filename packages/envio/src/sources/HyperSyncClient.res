@@ -334,7 +334,8 @@ type t = {
 @send
 external classNewWithAgent: (Core.hypersyncClientCtor, cfg, string) => t = "newWithAgent"
 
-let makeWithAgent = (cfg, ~userAgent) => Core.hypersyncClient()->classNewWithAgent(cfg, userAgent)
+let makeWithAgent = (cfg, ~userAgent) =>
+  Core.getAddon().hypersyncClient->classNewWithAgent(cfg, userAgent)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
@@ -422,5 +423,5 @@ module Decoder = {
     "fromSignatures"
 
   let fromSignatures = (signatures, ~checksumAddresses=?) =>
-    Core.decoder()->classFromSignatures(signatures, ~checksumAddresses?)
+    Core.getAddon().decoder->classFromSignatures(signatures, ~checksumAddresses?)
 }
