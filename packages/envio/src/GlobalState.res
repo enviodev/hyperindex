@@ -823,6 +823,8 @@ let checkAndFetchForChain = (
       let {fetchState} = chainFetcher
       let isRealtime = state.chainManager.isRealtime
 
+      // Only affects the WaitingForNewBlock branch of fetchNext, where
+      // there's nothing to fetch. During backfill any such chain is idle.
       let reducedPolling = !isRealtime
 
       await chainFetcher.sourceManager->SourceManager.fetchNext(

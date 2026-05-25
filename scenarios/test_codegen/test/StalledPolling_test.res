@@ -45,10 +45,8 @@ describe("Polling-stall loophole", () => {
 
       let newCalls = source.getHeightOrThrowCalls->Array.length - baseline
 
-      t.expect(
-        newCalls,
-        ~message="Source polled too often: its buffer is at the head while the batch is still processing, so polling should be reduced",
-      ).toBeLessThanOrEqual(8)
+      t.expect(newCalls).toBeGreaterThan(0)
+      t.expect(newCalls).toBeLessThanOrEqual(8)
     },
   )
 })
