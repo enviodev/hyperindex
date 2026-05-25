@@ -51,6 +51,7 @@ let make = (
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
   ~knownHeight=0,
+  ~reducedPollingInterval=?,
 ): t => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -245,6 +246,7 @@ let make = (
       ~sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
       ~isRealtime,
+      ~reducedPollingInterval?,
     ),
     reorgDetection: ReorgDetection.make(
       ~chainReorgCheckpoints,
@@ -305,6 +307,7 @@ let makeFromDbState = (
   ~config,
   ~registrations,
   ~targetBufferSize,
+  ~reducedPollingInterval=?,
 ) => {
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
@@ -337,6 +340,7 @@ let makeFromDbState = (
     ~isInReorgThreshold,
     ~isRealtime,
     ~knownHeight=resumedChainState.sourceBlockNumber,
+    ~reducedPollingInterval?,
   )
 }
 
