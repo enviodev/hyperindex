@@ -357,7 +357,7 @@
           "minimum": 0
         },
         "skip": {
-          "description": "If true, the chain is excluded from indexing at runtime (start/dev) and from database migrations, but still participates in code generation so that types and handlers remain available.",
+          "description": "If true, the chain is excluded from indexing at runtime and from database migrations, but still participates in code generation. Prefer using a test framework for testing. Use this field only when you need to disable a specific chain in production.",
           "type": [
             "boolean",
             "null"

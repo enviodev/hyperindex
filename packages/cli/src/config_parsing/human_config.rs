@@ -611,9 +611,10 @@ pub mod evm {
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "If true, the chain is excluded from indexing at runtime (start/dev) \
-                           and from database migrations, but still participates in code \
-                           generation so that types and handlers remain available."
+            description = "If true, the chain is excluded from indexing at runtime and from \
+                           database migrations, but still participates in code generation. \
+                           Prefer using a test framework for testing. Use this field only \
+                           when you need to disable a specific chain in production."
         )]
         pub skip: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -768,9 +769,10 @@ pub mod fuel {
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "If true, the chain is excluded from indexing at runtime (start/dev) \
-                           and from database migrations, but still participates in code \
-                           generation so that types and handlers remain available."
+            description = "If true, the chain is excluded from indexing at runtime and from \
+                           database migrations, but still participates in code generation. \
+                           Prefer using a test framework for testing. Use this field only \
+                           when you need to disable a specific chain in production."
         )]
         pub skip: Option<bool>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
@@ -862,9 +864,10 @@ pub mod svm {
         // pub id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "If true, the chain is excluded from indexing at runtime (start/dev) \
-                           and from database migrations, but still participates in code \
-                           generation so that types and handlers remain available."
+            description = "If true, the chain is excluded from indexing at runtime and from \
+                           database migrations, but still participates in code generation. \
+                           Prefer using a test framework for testing. Use this field only \
+                           when you need to disable a specific chain in production."
         )]
         pub skip: Option<bool>,
         #[schemars(
