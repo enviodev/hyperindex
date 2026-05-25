@@ -930,6 +930,28 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    #[ignore] // Run manually: cargo test -p envio update_schema_files -- --ignored
+    fn update_schema_files() {
+        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../envio");
+        for (filename, json) in [
+            (
+                "evm.schema.json",
+                serde_json::to_string_pretty(&schema_for!(HumanConfig)).unwrap(),
+            ),
+            (
+                "fuel.schema.json",
+                serde_json::to_string_pretty(&schema_for!(fuel::HumanConfig)).unwrap(),
+            ),
+            (
+                "svm.schema.json",
+                serde_json::to_string_pretty(&schema_for!(super::svm::HumanConfig)).unwrap(),
+            ),
+        ] {
+            std::fs::write(base.join(filename), json + "\n").unwrap();
+        }
+    }
+
+    #[test]
     fn test_evm_config_schema() {
         let config_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../envio/evm.schema.json");

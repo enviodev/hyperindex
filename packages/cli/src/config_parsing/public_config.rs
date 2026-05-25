@@ -320,7 +320,7 @@ impl SystemConfig {
 
         // Build chains map
         let chains: BTreeMap<String, ChainConfig> = active_chains
-            .iter()
+            .into_iter()
             .map(|network| {
                 let chain_name = chain_id_to_name(network.id, &cfg.get_ecosystem());
 

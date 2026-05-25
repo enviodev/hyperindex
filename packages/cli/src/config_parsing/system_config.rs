@@ -2101,6 +2101,55 @@ mod test {
     }
 
     #[test]
+    fn skip_chain_excluded_from_public_config_json() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let project_paths = ParsedProjectPaths::new(&test_dir, "configs/skip-one-chain.yaml")
+            .expect("Failed creating parsed_paths");
+
+        let config =
+            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
+
+        assert_eq!(config.get_chains().len(), 2, "both chains should be parsed");
+
+        let public_json = config
+            .to_public_config_json(false)
+            .expect("Failed serializing public config");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&public_json).expect("Failed parsing public config JSON");
+        let chains = parsed["evm"]["chains"]
+            .as_object()
+            .expect("evm.chains should be an object");
+
+        assert_eq!(
+            chains.len(),
+            1,
+            "only the active chain should be in public config"
+        );
+        assert!(
+            !public_json.contains("\"id\":137"),
+            "skipped chain 137 should not appear in public config JSON"
+        );
+    }
+
+    #[test]
+    fn skip_all_chains_returns_error() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let project_paths = ParsedProjectPaths::new(&test_dir, "configs/skip-all-chains.yaml")
+            .expect("Failed creating parsed_paths");
+
+        let config =
+            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
+
+        let err = config
+            .to_public_config_json(false)
+            .expect_err("should error when all chains are skipped");
+        assert!(
+            err.to_string().contains("All chains are skipped"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
     fn test_get_contract_abi() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_root = test_dir.as_str();
