@@ -5,7 +5,7 @@ use super::{
     system_config::{self, Abi, Ecosystem, EventKind, FuelEventKind, SystemConfig},
 };
 use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -316,10 +316,17 @@ impl SystemConfig {
     pub fn to_public_config_json(&self, is_dev: bool) -> Result<String> {
         let cfg = self;
 
+        let active_chains: Vec<_> = cfg.get_chains().into_iter().filter(|c| !c.skip).collect();
+
+        if active_chains.is_empty() {
+            return Err(anyhow!(
+                "All chains are skipped. At least one chain must be active to run the indexer."
+            ));
+        }
+
         // Build chains map
-        let chains: BTreeMap<String, ChainConfig> = cfg
-            .get_chains()
-            .iter()
+        let chains: BTreeMap<String, ChainConfig> = active_chains
+            .into_iter()
             .map(|network| {
                 let chain_name = chain_id_to_name(network.id, &cfg.get_ecosystem());
 
