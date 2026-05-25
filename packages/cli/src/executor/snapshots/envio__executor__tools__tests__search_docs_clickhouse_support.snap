@@ -2,52 +2,29 @@
 source: packages/cli/src/executor/tools.rs
 expression: text
 ---
-Found 10 result(s):
+Found 5 result(s):
 
-1. **Envio Developer Update April 2026**
-   URL: https://docs.envio.dev/blog/envio-developer-update-april-2026
-   Matching sections: Improved Multiple Data-Sources Support[​](/blog/envio-developer-update-april-2026#improved-multiple-data-sources-support "Direct link to Improved Multiple Data-Sources Support"), Experimental ClickHouse Sink[​](/blog/envio-developer-update-april-2026#experimental-clickhouse-sink "Direct link to Experimental ClickHouse Sink")
-   ...rIndex v3.0.0 alpha.21 ships with an experimental ClickHouse Sink, improved multiple data-sources support, and an updated testing framework with three ways to feed events. We also released the Polymarket V2 Ind...
-
-2. **Jordyn Laurier**
-   URL: https://docs.envio.dev/blog/author/j_o_r_d_y_s
-   Matching sections: [Using ClickHouse Storage in HyperIndex V3](/blog/clickhouse-storage-hyperindex-v3), [Envio Now Supports 70+ Blockchains](/blog/envio-hypersync-supports-70-networks), [Indexing Real-Time Data on LUKSO Using Envio](/blog/envio-data-indexing-supports-developers-building-on-lukso)
-   ...yer, up to 2000x faster than RPC across dozens of supported chains. Learn what it is, how it works, and how to query it.](/blog/what-is-hypersync) [![Envio Developer Update April 2026](/blog-assets/dev-upda...
-
-3. **Envio Developer Update December 2025**
-   URL: https://docs.envio.dev/blog/envio-developer-update-december-2025
-   Matching sections: Experimental ClickHouse Sink support[​](/blog/envio-developer-update-december-2025#experimental-clickhouse-sink-support "Direct link to Experimental ClickHouse Sink support"), Experimental additions: Solana Support[​](/blog/envio-developer-update-december-2025#experimental-additions-solana-support "Direct link to Experimental additions: Solana Support"), Envio Supports Developers Building on Sonic[​](/blog/envio-developer-update-december-2025#envio-supports-developers-building-on-sonic "Direct link to Envio Supports Developers Building on Sonic")
-   ...erIndex v3.0.0, early experimentation with Solana support, continued support for teams building on Sonic, updates from Decypted Bytes streams, a new USDT0 indexing example, and our featured developer for Dec...
-
-4. **What's New in HyperIndex V3**
+1. **What's New in HyperIndex V3**
    URL: https://docs.envio.dev/docs/HyperIndex/whats-new-in-v3
    Matching sections: ClickHouse Storage (Experimental)[​](/docs/HyperIndex/whats-new-in-v3#clickhouse-storage-experimental "Direct link to ClickHouse Storage (Experimental)"), Stored in both Postgres and ClickHouse, Stored only in ClickHouse
    ...libraries that have long since abandoned CommonJS support - **Top-level await** in handler files Top-Level Await​ Th...
 
-5. **Envio Blog**
+2. **Envio Blog**
    URL: https://docs.envio.dev/blog
    Matching sections: [Using ClickHouse Storage in HyperIndex V3](/blog/clickhouse-storage-hyperindex-v3), [Envio Now Supports 70+ Blockchains](/blog/envio-hypersync-supports-70-networks), [Indexing Real-Time Data on LUKSO Using Envio](/blog/envio-data-indexing-supports-developers-building-on-lukso)
    ...yer, up to 2000x faster than RPC across dozens of supported chains. Learn what it is, how it works, and how to query it.](/blog/what-is-hypersync) [![Envio Developer Update April 2026](/blog-assets/dev-upda...
 
-6. **Using ClickHouse Storage in HyperIndex V3**
-   URL: https://docs.envio.dev/blog/clickhouse-storage-hyperindex-v3
-   Matching sections: Why We Built ClickHouse Storage[​](/blog/clickhouse-storage-hyperindex-v3#why-we-built-clickhouse-storage "Direct link to Why We Built ClickHouse Storage"), What is ClickHouse?[​](/blog/clickhouse-storage-hyperindex-v3#what-is-clickhouse "Direct link to What is ClickHouse?"), How ClickHouse Storage Works in HyperIndex[​](/blog/clickhouse-storage-hyperindex-v3#how-clickhouse-storage-works-in-hyperindex "Direct link to How ClickHouse Storage Works in HyperIndex")
-   !Cover image for the ClickHouse Storage blog TL;DR - HyperIndex V3 Alpha adds experimental **ClickHouse St...
-
-7. **Privacy in Public: A Case Study on Privacy Pools**
-   URL: https://docs.envio.dev/blog/privacy-in-public-case-study
-   ...end-to-end with one Envio HyperIndex v3 indexer, ClickHouse storage, and a thin Uniswap V4 price feed on BSC. Full multichain sync to head: \~30 seconds. - Full open-source code, queries, and BI report generat...
-
-8. **Envio Product Updates**
-   URL: https://docs.envio.dev/blog/tag/product-updates
-   ...change logs across Envio. New releases, features, supported networks, agentic indexing workflows and more. AllCase StudiesProduct UpdatesAnnouncementsAITutorials [![Envio Developer Update April 2026](/blog...
-
-9. **Archive**
-   URL: https://docs.envio.dev/blog/archive
-   ...ative-eth-transfers-hypersync) - April 24 <!-- --> - <!-- --> [Using ClickHouse Storage in HyperIndex V3](/blog/clic...
-
-10. **Configuration Schema Reference**
+3. **Configuration Schema Reference**
    URL: https://docs.envio.dev/docs/HyperIndex/config-schema-reference
    ...writes to. Postgres is enabled by default; enable ClickHouse by setting clickhouse: true. When both backends are enabled, route each entity explicitly via the @storage directive in schema.graphql: ty...
+
+4. **Configuration File (config.yaml)**
+   URL: https://docs.envio.dev/docs/HyperIndex/configuration-file
+   Matching sections: Stored in both Postgres and ClickHouse, Stored only in ClickHouse
+   ...ption configures an RPC data source per chain. It supports multiple URLs with explicit roles via the for field: - sync – use this RPC for historical sync. - realtime – use this RPC for low-latency hea...
+
+5. **Envio Cloud Features**
+   URL: https://docs.envio.dev/docs/HyperIndex/hosted-service-features
+   ...Deployment Location Choice") Coming Soon! Full support for cross-region deployments is in active development. If you require a deployment to be based in the USA please contact us through our support chann...
 
 Use docs_fetch with the URL to retrieve the full page content.
