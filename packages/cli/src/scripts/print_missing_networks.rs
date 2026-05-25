@@ -18,7 +18,7 @@ pub enum Ecosystem {
 #[derive(Deserialize, Debug)]
 struct Chain {
     name: String,
-    chain_id: Option<u64>,
+    chain_id: Option<u64>, // None for Fuel testnet chain
     tier: Option<String>,
     ecosystem: Ecosystem,
 }
@@ -56,10 +56,8 @@ impl Diff {
             };
             match chain.ecosystem {
                 Ecosystem::Evm => (),
+                // Skip Fuel
                 Ecosystem::Fuel => continue,
-            }
-            if chain.name.ends_with("-temp") {
-                continue;
             }
 
             api_chain_ids.insert(chain_id);
