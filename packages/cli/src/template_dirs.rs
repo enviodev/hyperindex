@@ -439,6 +439,7 @@ mod test {
                 "indexer-filters",
                 "indexer-handlers",
                 "indexer-multichain",
+                "indexer-overview",
                 "indexer-performance",
                 "indexer-schema",
                 "indexer-testing",
