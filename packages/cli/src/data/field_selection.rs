@@ -2,8 +2,10 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
+use hypersync_client::net_types::FieldSelection as NetFieldSelection;
+
 use super::chain::ChainKind;
-use super::mapping::{self, Section};
+use super::mapping::{self, Section, TypedField};
 
 /// Parsed positional fields.
 #[derive(Debug, Clone, Default)]
@@ -18,6 +20,7 @@ pub struct Column {
     pub section: Section,
     pub indexer_name: String,
     pub hs_name: String,
+    pub typed_field: Option<TypedField>,
 }
 
 impl Selection {
@@ -59,6 +62,7 @@ impl Selection {
                 section,
                 indexer_name: field_raw.to_string(),
                 hs_name: entry.hs_name.to_string(),
+                typed_field: entry.typed_field,
             });
         }
 
@@ -70,7 +74,7 @@ impl Selection {
         !self.columns.is_empty()
     }
 
-    /// Builds the `field_selection` object for the HS query body.
+    /// Builds the `field_selection` object for the HS query body (JSON path, used for Fuel).
     /// Returns an empty object when no real fields were requested.
     pub fn build_field_selection(&self) -> Value {
         let mut by_section: BTreeMap<&'static str, Vec<Value>> = BTreeMap::new();
@@ -85,6 +89,26 @@ impl Selection {
             out.insert(k.to_string(), json!(v));
         }
         Value::Object(out)
+    }
+
+    /// Builds a typed `FieldSelection` for the native hypersync client (EVM only).
+    pub fn build_net_field_selection(&self) -> NetFieldSelection {
+        let mut fs = NetFieldSelection::default();
+        for col in &self.columns {
+            match col.typed_field {
+                Some(TypedField::Block(f)) => {
+                    fs.block.insert(f);
+                }
+                Some(TypedField::Transaction(f)) => {
+                    fs.transaction.insert(f);
+                }
+                Some(TypedField::Log(f)) => {
+                    fs.log.insert(f);
+                }
+                None => {}
+            }
+        }
+        fs
     }
 }
 

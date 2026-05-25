@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::cli_args::clap_definitions::DataArgs;
 use crate::data::{
-    chain::{self, Chain},
+    chain::{self, Chain, ChainKind},
     field_selection::Selection,
     toon,
     where_filter::WhereFilter,
@@ -22,19 +22,121 @@ pub async fn run(args: DataArgs) -> Result<()> {
     let selection = Selection::parse(chain.kind, &args.fields)?;
     let filter = WhereFilter::parse(chain.kind, args.where_filter.as_deref())?;
 
-    let client = reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .context("Failed building HTTP client")?;
+    match chain.kind {
+        ChainKind::Evm => run_evm(&args, &chain, &token, &selection, &filter).await,
+        ChainKind::Fuel => run_fuel(&args, &chain, &token, &selection, &filter).await,
+    }
+}
 
-    // Fast path: only `knownHeight` requested with no filters → hit /height.
+fn build_native_client(chain: &Chain, token: &str) -> Result<hypersync_client::Client> {
+    let user_agent = format!(
+        "envio-data/{}",
+        crate::config_parsing::system_config::VERSION,
+    );
+    hypersync_client::Client::new_with_agent(
+        hypersync_client::ClientConfig {
+            url: chain.base_url.clone(),
+            api_token: token.to_string(),
+            http_req_timeout_millis: REQUEST_TIMEOUT.as_millis() as u64,
+            ..Default::default()
+        },
+        user_agent,
+    )
+    .context("Failed building blockchain data client")
+}
+
+async fn run_evm(
+    args: &DataArgs,
+    chain: &Chain,
+    token: &str,
+    selection: &Selection,
+    filter: &WhereFilter,
+) -> Result<()> {
+    let client = build_native_client(chain, token)?;
+
+    // Fast path: only `knownHeight` requested with no filters -> hit /height.
     if selection.known_height
         && !selection.has_data_fields()
         && filter.from_block.is_none()
         && filter.to_block_exclusive.is_none()
         && !filter.has_section_filters()
     {
-        let height = fetch_height(&client, &chain, &token).await?;
+        let height = client
+            .get_height()
+            .await
+            .context("Failed fetching chain height")?;
+        print!("{}", toon::render_height(height as i64));
+        eprintln!();
+        eprintln!("Chain {} is at height {}.", chain.display, height);
+        return Ok(());
+    }
+
+    if !selection.has_data_fields() && !selection.known_height {
+        bail!("No data fields requested. Pass at least one positional field.");
+    }
+
+    let net_fs = selection.build_net_field_selection();
+    let query = filter.build_net_query(net_fs)?;
+    let response = client
+        .get(&query)
+        .await
+        .context("Failed querying blockchain data")?;
+
+    let mut out = toon::render_query_response(selection, &response);
+
+    let archive_height = response.archive_height.unwrap_or(0) as i64;
+
+    if selection.known_height {
+        out.push_str(&toon::render_archive_height(archive_height));
+    }
+
+    print!("{out}");
+
+    let next_block = response.next_block;
+    eprintln!();
+    eprintln!("archive_height: {archive_height}");
+    eprintln!("next_block: {next_block}");
+
+    let exhausted = matches!(filter.to_block_exclusive, Some(end) if next_block >= end)
+        || (next_block as i64) >= archive_height;
+
+    if exhausted {
+        eprintln!();
+        eprintln!("Done — next_block ({next_block}) reached the end of the requested range.");
+    } else {
+        eprintln!();
+        eprintln!("Next page:");
+        eprintln!("  envio data {} \\", args.fields.join(" "));
+        eprintln!("    --chain={} \\", chain.display);
+        eprintln!(
+            "    --where='{body}'",
+            body = render_where_hint(chain.kind, filter, next_block),
+        );
+    }
+
+    Ok(())
+}
+
+async fn run_fuel(
+    args: &DataArgs,
+    chain: &Chain,
+    token: &str,
+    selection: &Selection,
+    filter: &WhereFilter,
+) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .context("Failed building HTTP client")?;
+
+    // Fast path: only `knownHeight` requested with no filters -> hit /height.
+    if selection.known_height
+        && !selection.has_data_fields()
+        && filter.from_block.is_none()
+        && filter.to_block_exclusive.is_none()
+        && !filter.has_section_filters()
+    {
+        let height = fetch_height(&client, chain, token).await?;
         print!("{}", toon::render_height(height));
         eprintln!();
         eprintln!("Chain {} is at height {}.", chain.display, height);
@@ -46,9 +148,9 @@ pub async fn run(args: DataArgs) -> Result<()> {
     }
 
     let body = filter.build_query_body(selection.build_field_selection());
-    let response = post_query(&client, &chain, &token, &body).await?;
+    let response = post_query(&client, chain, token, &body).await?;
 
-    let mut out = toon::render_response(&selection, &response);
+    let mut out = toon::render_response(selection, &response);
 
     let archive_height = response
         .get("archive_height")
@@ -82,7 +184,7 @@ pub async fn run(args: DataArgs) -> Result<()> {
         eprintln!("    --chain={} \\", chain.display);
         eprintln!(
             "    --where='{body}'",
-            body = render_where_hint(chain.kind, &filter, next_block),
+            body = render_where_hint(chain.kind, filter, next_block),
         );
     }
 

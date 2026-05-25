@@ -1,6 +1,8 @@
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Map, Value};
 
+use hypersync_client::net_types::{FieldSelection, LogFilter, Query, TransactionFilter};
+
 use super::chain::ChainKind;
 use super::mapping::{self, FieldEntry, Section};
 
@@ -79,6 +81,97 @@ impl WhereFilter {
         !self.log_filters.is_empty()
             || !self.transaction_filters.is_empty()
             || !self.receipt_filters.is_empty()
+    }
+
+    /// Build a typed `Query` for the native hypersync client (EVM only).
+    pub fn build_net_query(&self, field_selection: FieldSelection) -> Result<Query> {
+        let mut query = Query::new().from_block(self.from_block.unwrap_or(0));
+        if let Some(to) = self.to_block_exclusive {
+            query = query.to_block_excl(to);
+        }
+        query.field_selection = field_selection;
+
+        if !self.log_filters.is_empty() {
+            let mut lf = LogFilter::all();
+            for f in &self.log_filters {
+                let str_values: Vec<String> = f
+                    .values
+                    .iter()
+                    .map(|v| match v {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .collect();
+                let refs: Vec<&str> = str_values.iter().map(|s| s.as_str()).collect();
+                match f.indexer_name.as_str() {
+                    "srcAddress" => {
+                        lf = lf
+                            .and_address(refs)
+                            .context("invalid address in log filter")?;
+                    }
+                    "topic0" => {
+                        lf = lf
+                            .and_topic0(refs)
+                            .context("invalid topic0 in log filter")?;
+                    }
+                    "topic1" => {
+                        lf = lf
+                            .and_topic1(refs)
+                            .context("invalid topic1 in log filter")?;
+                    }
+                    "topic2" => {
+                        lf = lf
+                            .and_topic2(refs)
+                            .context("invalid topic2 in log filter")?;
+                    }
+                    "topic3" => {
+                        lf = lf
+                            .and_topic3(refs)
+                            .context("invalid topic3 in log filter")?;
+                    }
+                    other => bail!("Unsupported log filter field `{other}` for native query"),
+                }
+            }
+            query = query.where_logs(lf);
+        }
+
+        if !self.transaction_filters.is_empty() {
+            let mut tf = TransactionFilter::all();
+            for f in &self.transaction_filters {
+                let str_values: Vec<String> = f
+                    .values
+                    .iter()
+                    .map(|v| match v {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .collect();
+                let refs: Vec<&str> = str_values.iter().map(|s| s.as_str()).collect();
+                match f.indexer_name.as_str() {
+                    "from" => {
+                        tf = tf
+                            .and_from(refs)
+                            .context("invalid from address in transaction filter")?;
+                    }
+                    "to" => {
+                        tf = tf
+                            .and_to(refs)
+                            .context("invalid to address in transaction filter")?;
+                    }
+                    "sighash" => {
+                        tf = tf
+                            .and_sighash(refs)
+                            .context("invalid sighash in transaction filter")?;
+                    }
+                    other => {
+                        bail!("Unsupported transaction filter field `{other}` for native query")
+                    }
+                }
+            }
+            query = query.where_transactions(tf);
+        }
+
+        Ok(query)
     }
 
     /// Build the HS `/query` request body. `field_selection` is taken from the caller.
