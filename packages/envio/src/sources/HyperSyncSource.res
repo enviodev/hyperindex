@@ -142,6 +142,7 @@ type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   allEventSignatures: array<string>,
+  allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   apiToken: option<string>,
   clientMaxRetries: int,
@@ -156,7 +157,8 @@ let make = (
   {
     chain,
     endpointUrl,
-    allEventSignatures,
+    allEventSignatures: _,
+    allEventParams,
     eventRouter,
     apiToken,
     clientMaxRetries,
@@ -190,13 +192,13 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     ~logLevel,
   )
 
-  let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
+  let hscDecoder: ref<option<HyperSyncClient.Decoder.tWithParams>> = ref(None)
   let getHscDecoder = () => {
     switch hscDecoder.contents {
     | Some(decoder) => decoder
     | None =>
-      switch HyperSyncClient.Decoder.fromSignatures(
-        allEventSignatures,
+      switch HyperSyncClient.Decoder.fromParams(
+        allEventParams,
         ~checksumAddresses=!lowercaseAddresses,
       ) {
       | exception exn =>
@@ -418,7 +420,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     }
 
     //Parse page items into queue items
-    let parsedEvents = switch await getHscDecoder().decodeEvents(pageUnsafe.events) {
+    let parsedEvents = switch await getHscDecoder().decodeLogs(pageUnsafe.events) {
     | exception exn =>
       exn->mkLogAndRaise(
         ~msg="Failed to parse events using hypersync client, please double check your ABI.",
@@ -448,7 +450,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         ->Array.push(
           makeEventBatchQueueItem(
             item,
-            ~params=decoded->eventConfig.convertHyperSyncEventArgs,
+            ~params=decoded->(Utils.magic: unknown => Internal.eventParams),
             ~eventConfig,
           ),
         )

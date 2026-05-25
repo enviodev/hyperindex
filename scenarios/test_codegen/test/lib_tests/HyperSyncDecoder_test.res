@@ -90,4 +90,47 @@ describe("HyperSync decoder – same sighash, different indexed layouts", () => 
       t.expect(paramsNone).toEqual(expected)
     },
   )
+
+  Async.it("fromParams + decodeLogs produces named params directly", async t => {
+    let allIndexedInput: HyperSyncClient.Decoder.eventParamsInput = {
+      sighash,
+      topicCount: 4,
+      eventName: "Transfer",
+      params: [
+        {name: "from", abiType: "address", indexed: true},
+        {name: "to", abiType: "address", indexed: true},
+        {name: "value", abiType: "uint256", indexed: true},
+      ],
+    }
+    let noneIndexedInput: HyperSyncClient.Decoder.eventParamsInput = {
+      sighash,
+      topicCount: 1,
+      eventName: "Transfer",
+      params: [
+        {name: "from", abiType: "address", indexed: false},
+        {name: "to", abiType: "address", indexed: false},
+        {name: "value", abiType: "uint256", indexed: false},
+      ],
+    }
+
+    let decoder = HyperSyncClient.Decoder.fromParams([allIndexedInput, noneIndexedInput])
+
+    let decoded = await decoder.decodeLogs([allIndexedLog, noneIndexedLog])
+
+    let paramsAll =
+      decoded[0]
+      ->Option.getUnsafe
+      ->Nullable.toOption
+      ->Option.getUnsafe
+
+    let paramsNone =
+      decoded[1]
+      ->Option.getUnsafe
+      ->Nullable.toOption
+      ->Option.getUnsafe
+
+    let expected = {"from": fromAddr, "to": toAddr, "value": value}->Utils.magic
+    t.expect(paramsAll).toEqual(expected)
+    t.expect(paramsNone).toEqual(expected)
+  })
 })

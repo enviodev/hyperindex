@@ -401,11 +401,9 @@ type evmEventConfig = {
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
   selectedTransactionFields: Utils.Set.t<evmTransactionField>,
-  // Retained so `HandlerLoader.applyRegistrations` can re-run
-  // `LogSelection.parseEventFiltersOrThrow` after handler modules register
-  // with a `where:` filter. Only indexed params are kept — they're all the
-  // filter parser needs for topic-getter construction + key validation.
   sighash: string,
+  topicCount: int,
+  params: array<eventParam>,
   indexedParams: array<eventParam>,
 }
 

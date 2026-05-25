@@ -424,4 +424,32 @@ module Decoder = {
 
   let fromSignatures = (signatures, ~checksumAddresses=?) =>
     Core.getAddon().decoder->classFromSignatures(signatures, ~checksumAddresses?)
+
+  type rec paramMeta = {
+    name: string,
+    abiType: string,
+    indexed: bool,
+    components?: array<paramMeta>,
+  }
+
+  type eventParamsInput = {
+    sighash: string,
+    topicCount: int,
+    eventName: string,
+    params: array<paramMeta>,
+  }
+
+  type tWithParams = {
+    decodeLogs: array<ResponseTypes.event> => promise<array<Nullable.t<unknown>>>,
+  }
+
+  @send
+  external classFromParams: (
+    Core.decoderCtor,
+    array<eventParamsInput>,
+    ~checksumAddresses: bool=?,
+  ) => tWithParams = "fromParams"
+
+  let fromParams = (eventParams, ~checksumAddresses=?) =>
+    Core.getAddon().decoder->classFromParams(eventParams, ~checksumAddresses?)
 }

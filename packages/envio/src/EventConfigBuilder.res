@@ -490,6 +490,8 @@ let buildEvmEventConfig = (
     selectedBlockFields,
     selectedTransactionFields,
     sighash,
+    topicCount,
+    params,
     indexedParams,
   }
 }
