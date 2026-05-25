@@ -4,10 +4,8 @@ use hypersync_client::net_types::FieldSelection as NetFieldSelection;
 
 use super::mapping::{self, Section, TypedField};
 
-/// Parsed positional fields.
 #[derive(Debug, Clone, Default)]
 pub struct Selection {
-    /// Preserves the user's input order, used for TOON column order.
     pub columns: Vec<Column>,
     pub known_height: bool,
 }
@@ -16,11 +14,11 @@ pub struct Selection {
 pub struct Column {
     pub section: Section,
     pub indexer_name: String,
-    pub hs_name: String,
-    pub typed_field: Option<TypedField>,
+    pub field: TypedField,
 }
 
 impl Selection {
+    // FIXME: field names and examples are EVM-specific — update when adding Solana support.
     pub fn parse(positionals: &[String]) -> Result<Self> {
         if positionals.is_empty() {
             return Err(anyhow!(
@@ -58,34 +56,30 @@ impl Selection {
             sel.columns.push(Column {
                 section,
                 indexer_name: field_raw.to_string(),
-                hs_name: entry.hs_name.to_string(),
-                typed_field: entry.typed_field,
+                field: entry.field,
             });
         }
 
         Ok(sel)
     }
 
-    /// Whether at least one real (non-knownHeight) field was requested.
     pub fn has_data_fields(&self) -> bool {
         !self.columns.is_empty()
     }
 
-    /// Builds a typed `FieldSelection` for the native hypersync client.
     pub fn build_net_field_selection(&self) -> NetFieldSelection {
         let mut fs = NetFieldSelection::default();
         for col in &self.columns {
-            match col.typed_field {
-                Some(TypedField::Block(f)) => {
+            match col.field {
+                TypedField::Block(f) => {
                     fs.block.insert(f);
                 }
-                Some(TypedField::Transaction(f)) => {
+                TypedField::Transaction(f) => {
                     fs.transaction.insert(f);
                 }
-                Some(TypedField::Log(f)) => {
+                TypedField::Log(f) => {
                     fs.log.insert(f);
                 }
-                None => {}
             }
         }
         fs
@@ -108,24 +102,20 @@ mod tests {
         ])
         .unwrap();
 
-        let cols: Vec<(Section, String, String)> = sel
+        let cols: Vec<(Section, &str)> = sel
             .columns
             .iter()
-            .map(|c| (c.section, c.indexer_name.clone(), c.hs_name.clone()))
+            .map(|c| (c.section, c.indexer_name.as_str()))
             .collect();
 
         assert_eq!(
             (cols, sel.known_height),
             (
                 vec![
-                    (Section::Block, "number".into(), "number".into()),
-                    (Section::Block, "hash".into(), "hash".into()),
-                    (Section::Log, "srcAddress".into(), "address".into()),
-                    (
-                        Section::Transaction,
-                        "transactionIndex".into(),
-                        "transaction_index".into()
-                    ),
+                    (Section::Block, "number"),
+                    (Section::Block, "hash"),
+                    (Section::Log, "srcAddress"),
+                    (Section::Transaction, "transactionIndex"),
                 ],
                 true,
             ),
@@ -135,7 +125,7 @@ mod tests {
     #[test]
     fn known_height_only_has_no_data_fields() {
         let sel = Selection::parse(&["knownHeight".into()]).unwrap();
-        assert_eq!((sel.has_data_fields(), sel.known_height), (false, true),);
+        assert_eq!((sel.has_data_fields(), sel.known_height), (false, true));
     }
 
     #[test]
