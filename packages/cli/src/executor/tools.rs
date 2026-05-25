@@ -7,9 +7,15 @@ const MCP_ENDPOINT: &str = "https://docs.envio.dev/mcp";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn run(subcommand: ToolsSubcommand) -> Result<()> {
-    let text = run_to_string(subcommand).await?;
-    println!("{text}");
-    Ok(())
+    match run_to_string(subcommand).await {
+        Ok(text) => {
+            println!("{text}");
+            Ok(())
+        }
+        Err(e) => Err(
+            e.context("If this issue persists, make sure you are using the latest envio version")
+        ),
+    }
 }
 
 const SEARCH_LIMIT: u8 = 10;
