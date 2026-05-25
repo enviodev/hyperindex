@@ -4,17 +4,19 @@ describe("Polling-stall loophole", () => {
   Async.it_fails(
     "Stalls polling on a chain whose buffer is at the head while another chain still backfills",
     async t => {
+      let pollingInterval = 1
+      let reducedPollingInterval = 10
       let noopHandler = async _ => ()
 
       let sourceA = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
-        ~pollingInterval=1,
+        ~pollingInterval,
       )
       let sourceB = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
-        ~pollingInterval=1,
+        ~pollingInterval,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -22,9 +24,8 @@ describe("Polling-stall loophole", () => {
           {chain: #100, sourceConfig: Config.CustomSources([sourceB.source])},
         ],
         ~multichain=Ordered,
-        // blockLag=0 when false, and the reorg-threshold OR branch in the
-        // reducedPolling formula stays false — isolates the isReady loophole.
         ~shouldRollbackOnReorg=false,
+        ~reducedPollingInterval,
       )
       await Utils.delay(0)
 
