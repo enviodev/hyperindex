@@ -1789,7 +1789,11 @@ let makeStorageFromEnv = (
                 secret: Env.Hasura.secret,
               },
               ~pgSchema,
-              ~tableNames,
+              ~tableConfigs=tableNames->Array.map(tableName => {
+                Hasura.tableName,
+                description: None,
+                columnDescriptions: dict{},
+              }),
             )->Promise.catch(err => {
               Logging.errorWithExn(
                 err->Utils.prettifyExn,

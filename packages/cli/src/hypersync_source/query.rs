@@ -329,8 +329,7 @@ impl TryFrom<Query> for net_types::Query {
             JoinMode::JoinNothing => net_types::JoinMode::JoinNothing,
         };
 
-        let from_block =
-            u64::try_from(query.from_block).context("from_block must be >= 0")?;
+        let from_block = u64::try_from(query.from_block).context("from_block must be >= 0")?;
         let to_block = query
             .to_block
             .map(|b| u64::try_from(b).context("to_block must be >= 0"))

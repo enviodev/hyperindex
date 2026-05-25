@@ -702,6 +702,7 @@ impl From<Param> for Field {
         Field {
             name: val.entity_key.original,
             field_type: val.graphql_type,
+            description: None,
         }
     }
 }

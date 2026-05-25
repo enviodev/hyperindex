@@ -256,11 +256,21 @@ impl Schema {
 pub struct GraphQLEnum {
     pub name: String,
     pub values: Vec<String>,
+    pub description: Option<String>,
 }
 
 impl GraphQLEnum {
-    pub fn new(name: String, values: Vec<String>) -> anyhow::Result<Self> {
-        Self { name, values }.valididate()
+    pub fn new(
+        name: String,
+        values: Vec<String>,
+        description: Option<String>,
+    ) -> anyhow::Result<Self> {
+        Self {
+            name,
+            values,
+            description,
+        }
+        .valididate()
     }
 
     fn valididate(self) -> anyhow::Result<Self> {
@@ -314,7 +324,7 @@ impl GraphQLEnum {
             .iter()
             .map(|value| value.name.clone())
             .collect::<Vec<String>>();
-        Self::new(name, values)
+        Self::new(name, values, enm.description.clone())
     }
 }
 
@@ -323,6 +333,7 @@ pub struct Entity {
     pub name: String,
     pub fields: Vec<Field>,
     pub multi_field_indexes: Vec<MultiFieldIndex>,
+    pub description: Option<String>,
     pub postgres: Option<bool>,
     pub clickhouse: Option<bool>,
 }
@@ -332,6 +343,9 @@ impl Entity {
         name: &str,
         fields: Vec<Field>,
         multi_field_indexes: Vec<MultiFieldIndex>,
+        description: Option<String>,
+        postgres: Option<bool>,
+        clickhouse: Option<bool>,
     ) -> anyhow::Result<Self> {
         // Check for duplicate field names
         let mut field_names_set = HashSet::new();
@@ -383,8 +397,9 @@ impl Entity {
             name: name.to_string(),
             fields,
             multi_field_indexes,
-            postgres: None,
-            clickhouse: None,
+            description,
+            postgres,
+            clickhouse,
         })
     }
 
@@ -478,14 +493,17 @@ impl Entity {
             .collect::<anyhow::Result<Vec<Field>>>()
             .context(format!("Failed parsing fields on entity {name}"))?;
 
-        let mut entity = Self::new(name, fields, multi_field_indexes)
-            .context(format!("Failed constructing entity {name}",))?;
-
         let (postgres, clickhouse) = parse_storage_directive(obj)?;
-        entity.postgres = postgres;
-        entity.clickhouse = clickhouse;
 
-        Ok(entity)
+        Self::new(
+            name,
+            fields,
+            multi_field_indexes,
+            obj.description.clone(),
+            postgres,
+            clickhouse,
+        )
+        .context(format!("Failed constructing entity {name}"))
     }
 
     pub fn has_storage_directive(&self) -> bool {
@@ -681,6 +699,7 @@ fn get_positive_integer(arg_value: &Value<String>) -> anyhow::Result<u32> {
 pub struct Field {
     pub name: String,
     pub field_type: FieldType,
+    pub description: Option<String>,
 }
 
 impl Field {
@@ -864,6 +883,7 @@ impl Field {
         Ok(Field {
             name: field.name.clone(),
             field_type,
+            description: field.description.clone(),
         })
     }
 
@@ -967,6 +987,7 @@ impl Field {
                 linked_entity: gql_field_type.get_linked_entity(schema)?,
                 is_primary_key: self.is_primary_key(),
                 is_nullable: gql_field_type.is_optional(),
+                description: self.description.clone(),
             })),
         }
     }
@@ -980,6 +1001,7 @@ impl Field {
                 field_name: self.name.clone(),
                 derived_from_field: derived_from_field.clone(),
                 derived_from_entity: entity_name.clone(),
+                description: self.description.clone(),
             }),
             FieldType::RegularField { .. } => None,
         }
@@ -1903,7 +1925,8 @@ type TestEntity {
     #[test]
     fn gql_type_to_rescript_type_entity() {
         let test_entity_string = String::from("TestEntity");
-        let test_entity = Entity::new(&test_entity_string, vec![], vec![]).unwrap();
+        let test_entity =
+            Entity::new(&test_entity_string, vec![], vec![], None, None, None).unwrap();
         let schema = Schema::new(vec![test_entity], vec![]).unwrap();
         let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(test_entity_string))
             .to_rescript_type(&schema)
@@ -1915,7 +1938,7 @@ type TestEntity {
     #[test]
     fn gql_type_to_rescript_type_enum() {
         let name = String::from("TestEnum");
-        let test_enum = GraphQLEnum::new(name.clone(), vec![]).unwrap();
+        let test_enum = GraphQLEnum::new(name.clone(), vec![], None).unwrap();
         let schema = Schema::new(vec![], vec![test_enum]).unwrap();
         let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(name))
             .to_rescript_type(&schema)
@@ -1992,7 +2015,8 @@ type TestEntity {
     #[test]
     fn gql_enum_type_to_pgprimitive() {
         let name = String::from("TestEnum");
-        let test_enum = GraphQLEnum::new(name.clone(), vec!["TEST_VALUE".to_string()]).unwrap();
+        let test_enum =
+            GraphQLEnum::new(name.clone(), vec!["TEST_VALUE".to_string()], None).unwrap();
         let field_type =
             get_field_type_helper_with_additional("TestEnum!", vec![test_enum.clone()]);
         let schema = Schema::new(vec![], vec![test_enum]).unwrap();
@@ -2802,6 +2826,63 @@ type TestEntity
         // Single-field index should not appear in composite indices
         let composite = parsed_entity.get_composite_indices();
         assert_eq!(composite.len(), 0);
+    }
+
+    #[test]
+    fn test_descriptions_extracted_from_schema() {
+        let schema_str = r#"
+"A user of the protocol"
+type User {
+  "The user's unique identifier (Ethereum address)"
+  id: ID!
+  "Total amount the user has staked"
+  balance: BigInt!
+  "Tokens owned by this user"
+  tokens: [Token!]! @derivedFrom(field: "owner")
+}
+
+"An NFT token"
+type Token {
+  id: ID!
+  owner: User!
+}
+
+"Status of an entity"
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+
+        let user = schema.entities.get("User").unwrap();
+        assert_eq!(user.description.as_deref(), Some("A user of the protocol"));
+
+        let id_field = user.get_field("id").unwrap();
+        assert_eq!(
+            id_field.description.as_deref(),
+            Some("The user's unique identifier (Ethereum address)")
+        );
+
+        let balance_field = user.get_field("balance").unwrap();
+        assert_eq!(
+            balance_field.description.as_deref(),
+            Some("Total amount the user has staked")
+        );
+
+        let tokens_field = user.get_field("tokens").unwrap();
+        assert_eq!(
+            tokens_field.description.as_deref(),
+            Some("Tokens owned by this user")
+        );
+
+        let token = schema.entities.get("Token").unwrap();
+        assert_eq!(token.description.as_deref(), Some("An NFT token"));
+        assert_eq!(token.get_field("owner").unwrap().description, None);
+
+        let status = schema.enums.get("Status").unwrap();
+        assert_eq!(status.description.as_deref(), Some("Status of an entity"));
     }
 
     // --- @storage directive (per-entity storage routing) ---
