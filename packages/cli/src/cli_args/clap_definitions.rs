@@ -65,9 +65,7 @@ pub enum CommandType {
     #[command(subcommand)]
     Skills(SkillsSubcommand),
 
-    ///Tools for people and AI agents:
-    ///search-docs <query> — full-text docs search, returns titles+URLs+snippets;
-    ///fetch-docs <url> — full page markdown for a search hit
+    ///Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
     #[command(subcommand)]
     Tools(ToolsSubcommand),
 
@@ -498,6 +496,16 @@ mod test {
     fn envio_help_snapshot() {
         let mut cmd = CommandLineArgs::command().version("0.0.0-test");
         let rendered = cmd.render_help().to_string();
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn envio_tools_help_snapshot() {
+        let mut cmd = CommandLineArgs::command();
+        let tools_cmd = cmd
+            .find_subcommand_mut("tools")
+            .expect("tools subcommand exists");
+        let rendered = tools_cmd.render_help().to_string();
         insta::assert_snapshot!(rendered);
     }
 }
