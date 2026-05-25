@@ -2,29 +2,24 @@
 source: packages/cli/src/executor/tools.rs
 expression: text
 ---
-Found 5 result(s):
+Found 4 result(s):
 
 1. **What's New in HyperIndex V3**
    URL: https://docs.envio.dev/docs/HyperIndex/whats-new-in-v3
-   Matching sections: ClickHouse Storage (Experimental)[​](/docs/HyperIndex/whats-new-in-v3#clickhouse-storage-experimental "Direct link to ClickHouse Storage (Experimental)"), Stored in both Postgres and ClickHouse, Stored only in ClickHouse
-   ...libraries that have long since abandoned CommonJS support - **Top-level await** in handler files Top-Level Await​ Th...
+   Matching sections: ClickHouse Storage (Experimental), Stored in both Postgres and ClickHouse, Stored only in ClickHouse
+   ...libraries that have long since abandoned CommonJS support - **Top-level await** in handler files Top-Level Await Thanks to the migration to ESM, you can now use await directly in handler and other fi...
 
-2. **Envio Blog**
-   URL: https://docs.envio.dev/blog
-   Matching sections: [Using ClickHouse Storage in HyperIndex V3](/blog/clickhouse-storage-hyperindex-v3), [Envio Now Supports 70+ Blockchains](/blog/envio-hypersync-supports-70-networks), [Indexing Real-Time Data on LUKSO Using Envio](/blog/envio-data-indexing-supports-developers-building-on-lukso)
-   ...yer, up to 2000x faster than RPC across dozens of supported chains. Learn what it is, how it works, and how to query it.](/blog/what-is-hypersync) [![Envio Developer Update April 2026](/blog-assets/dev-upda...
-
-3. **Configuration Schema Reference**
+2. **Configuration Schema Reference**
    URL: https://docs.envio.dev/docs/HyperIndex/config-schema-reference
    ...writes to. Postgres is enabled by default; enable ClickHouse by setting clickhouse: true. When both backends are enabled, route each entity explicitly via the @storage directive in schema.graphql: ty...
 
-4. **Configuration File (config.yaml)**
+3. **Configuration File (config.yaml)**
    URL: https://docs.envio.dev/docs/HyperIndex/configuration-file
    Matching sections: Stored in both Postgres and ClickHouse, Stored only in ClickHouse
    ...ption configures an RPC data source per chain. It supports multiple URLs with explicit roles via the for field: - sync – use this RPC for historical sync. - realtime – use this RPC for low-latency hea...
 
-5. **Envio Cloud Features**
+4. **Envio Cloud Features**
    URL: https://docs.envio.dev/docs/HyperIndex/hosted-service-features
-   ...Deployment Location Choice") Coming Soon! Full support for cross-region deployments is in active development. If you require a deployment to be based in the USA please contact us through our support chann...
+   ...Deployment Location Choice Coming Soon! Full support for cross-region deployments is in active development. If you require a deployment to be based in the USA please contact us through our support chann...
 
 Use docs_fetch with the URL to retrieve the full page content.
