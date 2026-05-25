@@ -9,6 +9,7 @@ mod evm;
 pub mod executor;
 mod fuel;
 mod hbs_templating;
+mod hypersync_source;
 mod napi;
 mod project_paths;
 pub mod scripts;

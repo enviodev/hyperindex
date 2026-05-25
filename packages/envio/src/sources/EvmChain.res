@@ -70,6 +70,7 @@ let makeSources = (
         lowercaseAddresses,
         serializationFormat: Env.hypersyncClientSerializationFormat,
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
+        logLevel: Env.hypersyncLogLevel,
       }),
     ]
   | _ => []
