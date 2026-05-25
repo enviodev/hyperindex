@@ -117,9 +117,6 @@ module Async = {
   @module("vitest") @scope("it")
   external it_skipIf: bool => (string, testContext => promise<unit>) => unit = "skipIf"
 
-  // Marks a test as expected to fail. Test passes when its assertions fail
-  // and fails when its assertions pass — used to document a known bug until
-  // it's fixed.
   @module("vitest") @scope("it")
   external it_fails: (string, testContext => promise<unit>) => unit = "fails"
 
