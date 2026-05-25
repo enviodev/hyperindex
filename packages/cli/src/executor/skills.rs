@@ -5,6 +5,25 @@ use std::{fs, path::Path};
 
 use crate::{project_paths::ParsedProjectPaths, template_dirs::TemplateDirs};
 
+/// Skill names shipped before the `managed-by` marker existed.
+/// These lack the marker, so the marker-based cleanup won't find them.
+const LEGACY_SKILL_NAMES: &[&str] = &[
+    "indexing-blocks",
+    "indexing-config",
+    "indexing-external-calls",
+    "indexing-factory",
+    "indexing-filters",
+    "indexing-handler-syntax",
+    "indexing-multichain",
+    "indexing-performance",
+    "indexing-schema",
+    "indexing-traces",
+    "indexing-transactions",
+    "indexing-wildcard",
+    "subgraph-migration",
+    "testing",
+];
+
 const MANAGED_BY_ENVIO: &str = "envio";
 
 #[derive(Deserialize)]
@@ -72,6 +91,14 @@ pub fn run_update(project_paths: &ParsedProjectPaths) -> Result<()> {
         if read_managed_by(&entry.path()).as_deref() == Some(MANAGED_BY_ENVIO) {
             fs::remove_dir_all(entry.path())
                 .with_context(|| format!("Failed removing {}", entry.path().display()))?;
+        }
+    }
+
+    for name in LEGACY_SKILL_NAMES {
+        let target = skills_root.join(name);
+        if target.exists() {
+            fs::remove_dir_all(&target)
+                .with_context(|| format!("Failed removing legacy skill {}", target.display()))?;
         }
     }
 
@@ -183,6 +210,42 @@ mod tests {
                 "---\nname: my-custom\n---\ncustom body".to_string(),
                 true,
             ),
+        );
+    }
+
+    #[test]
+    fn removes_legacy_skills_without_marker() {
+        let tmp = TempDir::new("envio_skills_legacy").expect("tempdir");
+        let project_paths =
+            ParsedProjectPaths::default_with_root(tmp.path().to_str().expect("utf-8 path"))
+                .expect("parsed project paths");
+        let skills_root = tmp.path().join(".claude").join("skills");
+
+        write_skill(
+            &skills_root.join("indexing-blocks"),
+            "---\nname: indexing-blocks\n---\nold content",
+        );
+        write_skill(
+            &skills_root.join("testing"),
+            "---\nname: testing\n---\nold content",
+        );
+        write_skill(
+            &skills_root.join("my-custom"),
+            "---\nname: my-custom\n---\nkeep me",
+        );
+
+        run_update(&project_paths).expect("update succeeds");
+
+        let mut expected = shipped_skill_names();
+        expected.push("my-custom".to_string());
+        expected.sort();
+
+        assert_eq!(
+            (
+                dir_listing(&skills_root),
+                fs::read_to_string(skills_root.join("my-custom").join("SKILL.md")).unwrap(),
+            ),
+            (expected, "---\nname: my-custom\n---\nkeep me".to_string(),),
         );
     }
 
