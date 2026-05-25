@@ -348,13 +348,6 @@ pub mod evm {
         Lowercase,
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
-    #[serde(rename_all = "lowercase")]
-    pub enum Multichain {
-        Ordered,
-        Unordered,
-    }
-
     impl Display for HumanConfig {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(

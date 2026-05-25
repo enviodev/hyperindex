@@ -56,10 +56,6 @@ type sourceSync = {
   pollingInterval: int,
 }
 
-type multichain = Internal.multichain =
-  | @as("ordered") Ordered
-  | @as("unordered") Unordered
-
 type storage = {
   postgres: bool,
   clickhouse: bool,
@@ -78,7 +74,6 @@ type t = {
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
   storage: storage,
-  multichain: multichain,
   chainMap: ChainMap.t<chain>,
   defaultChain: option<chain>,
   ecosystem: Ecosystem.t,
@@ -240,8 +235,6 @@ let publicConfigEvmSchema = S.schema(s =>
     "globalTransactionFields": s.matches(S.option(S.array(Internal.evmTransactionFieldSchema))),
   }
 )
-
-let multichainSchema = S.enum([Ordered, Unordered])
 
 let compositeIndexFieldSchema = S.schema(s =>
   {
@@ -470,7 +463,6 @@ let publicConfigSchema = S.schema(s =>
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
     "isDev": s.matches(S.option(S.bool)),
-    "multichain": s.matches(S.option(multichainSchema)),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
@@ -826,7 +818,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
     storage: globalStorage,
-    multichain: publicConfig["multichain"]->Option.getOr(Unordered),
     chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),

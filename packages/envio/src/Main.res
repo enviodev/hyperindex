@@ -24,7 +24,6 @@ type state =
       chains: array<chainData>,
       indexerStartTime: Date.t,
       isPreRegisteringDynamicContracts: bool,
-      isUnorderedMultichainMode: bool,
       rollbackOnReorg: bool,
     })
 
@@ -51,7 +50,6 @@ let stateSchema = S.union([
     indexerStartTime: s.matches(S.datetime(S.string)),
     // Keep the field, since Dev Console expects it to be present
     isPreRegisteringDynamicContracts: false,
-    isUnorderedMultichainMode: s.matches(S.bool),
     rollbackOnReorg: s.matches(S.bool),
   })),
 ])
@@ -744,10 +742,6 @@ let start = async (
             indexerStartTime: state.indexerStartTime,
             isPreRegisteringDynamicContracts: false,
             rollbackOnReorg: ctx.config.shouldRollbackOnReorg,
-            isUnorderedMultichainMode: switch ctx.config.multichain {
-            | Unordered => true
-            | Ordered => false
-            },
           })
         }
       }

@@ -146,6 +146,7 @@ Add at top of file for IDE schema validation:
 - `event_decoder` — removed
 - `rpc_config` — replaced by `rpc:` under chains
 - `unordered_multichain_mode` — removed
+- `multichain` — removed
 
 ## RPC Configuration
 
