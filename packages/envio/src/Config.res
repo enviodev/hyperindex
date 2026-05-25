@@ -196,7 +196,6 @@ let publicConfigChainSchema = S.schema(s =>
 
 let contractEventItemSchema = S.schema(s =>
   {
-    "event": s.matches(S.string),
     "name": s.matches(S.string),
     "sighash": s.matches(S.string),
     "params": s.matches(S.option(S.array(EventConfigBuilder.eventParamSchema))),

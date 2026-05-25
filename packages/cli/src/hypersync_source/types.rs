@@ -493,15 +493,18 @@ impl ToNapiValue for ParamValue {
             ParamValue::Arr(items) => Vec::<ParamValue>::to_napi_value(raw_env, items),
             ParamValue::Obj(entries) => {
                 let mut obj = std::ptr::null_mut();
-                let status = napi::sys::napi_create_object(raw_env, &mut obj);
-                debug_assert_eq!(status, napi::sys::Status::napi_ok);
+                assert_eq!(
+                    napi::sys::napi_create_object(raw_env, &mut obj),
+                    napi::sys::Status::napi_ok
+                );
                 for (key, val) in entries {
                     let js_val = ParamValue::to_napi_value(raw_env, val)?;
                     let c_key = CString::new(key)
                         .map_err(|_| napi::Error::from_reason("invalid param name"))?;
-                    let status =
-                        napi::sys::napi_set_named_property(raw_env, obj, c_key.as_ptr(), js_val);
-                    debug_assert_eq!(status, napi::sys::Status::napi_ok);
+                    assert_eq!(
+                        napi::sys::napi_set_named_property(raw_env, obj, c_key.as_ptr(), js_val),
+                        napi::sys::Status::napi_ok,
+                    );
                 }
                 Ok(obj)
             }
