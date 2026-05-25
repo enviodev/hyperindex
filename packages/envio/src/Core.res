@@ -14,7 +14,6 @@ type addon = {
   hypersyncClient: hypersyncClientCtor,
   @as("Decoder")
   decoder: decoderCtor,
-  setLogLevel: string => unit,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"
@@ -185,4 +184,3 @@ let runCli = args => {
 
 let hypersyncClient = () => getAddon().hypersyncClient
 let decoder = () => getAddon().decoder
-let setLogLevel = s => getAddon().setLogLevel(s)

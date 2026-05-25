@@ -28,6 +28,7 @@ type cfg = {
   serializationFormat?: serializationFormat,
   /** Whether to use query caching when using CapnProto serialization format. */
   enableQueryCaching?: bool,
+  logLevel?: string,
 }
 
 module QueryTypes = {
@@ -371,6 +372,18 @@ external classNewWithAgent: (Core.hypersyncClientCtor, cfg, string) => t = "newW
 
 let makeWithAgent = (cfg, ~userAgent) => Core.hypersyncClient()->classNewWithAgent(cfg, userAgent)
 
+type logLevel = [#trace | #debug | #info | #warn | #error]
+let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
+
+let logLevelToString = (level: logLevel) =>
+  switch level {
+  | #trace => "trace"
+  | #debug => "debug"
+  | #info => "info"
+  | #warn => "warn"
+  | #error => "error"
+  }
+
 let make = (
   ~url,
   ~apiToken,
@@ -382,6 +395,7 @@ let make = (
   ~retryBaseMs=?,
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
+  ~logLevel=#info,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   makeWithAgent(
@@ -396,27 +410,10 @@ let make = (
       ?retryBaseMs,
       ?retryBackoffMs,
       ?retryCeilingMs,
+      logLevel: logLevelToString(logLevel),
     },
     ~userAgent=`hyperindex/${envioVersion}`,
   )
-}
-
-type logLevel = [#trace | #debug | #info | #warn | #error]
-let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
-
-/**
- * Set the log level for the underlying Rust logger.
- * Must be called before creating any HypersyncClient.
- */
-let setLogLevel = (level: logLevel) => {
-  let s = switch level {
-  | #trace => "trace"
-  | #debug => "debug"
-  | #info => "info"
-  | #warn => "warn"
-  | #error => "error"
-  }
-  Core.setLogLevel(s)
 }
 
 module Decoder = {

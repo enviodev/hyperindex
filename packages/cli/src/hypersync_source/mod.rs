@@ -24,16 +24,6 @@ fn init_logger(log_level: Option<&str>) {
     });
 }
 
-/// Set the log level for the underlying Rust logger.
-/// Accepts values like "info", "warn", "debug", "trace", "error",
-/// or a full filter directive like "hypersync_client=debug".
-/// If RUST_LOG env var is set, it takes precedence.
-/// Only the first call takes effect (logger can only init once per process).
-#[napi]
-pub fn set_log_level(level: String) {
-    init_logger(Some(&level));
-}
-
 /// HyperSync client for querying blockchain data
 #[napi]
 pub struct HypersyncClient {
@@ -45,7 +35,7 @@ pub struct HypersyncClient {
 impl HypersyncClient {
     #[napi(factory)]
     pub fn new_with_agent(cfg: ClientConfig, user_agent: String) -> napi::Result<HypersyncClient> {
-        init_logger(Some("info"));
+        init_logger(cfg.log_level.as_deref());
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 

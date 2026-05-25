@@ -149,6 +149,7 @@ type options = {
   lowercaseAddresses: bool,
   serializationFormat: HyperSyncClient.serializationFormat,
   enableQueryCaching: bool,
+  logLevel: HyperSyncClient.logLevel,
 }
 
 let make = (
@@ -163,6 +164,7 @@ let make = (
     lowercaseAddresses,
     serializationFormat,
     enableQueryCaching,
+    logLevel,
   }: options,
 ): t => {
   let name = "HyperSync"
@@ -185,6 +187,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
+    ~logLevel,
   )
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
