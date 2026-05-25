@@ -111,7 +111,8 @@ impl Decoder {
         };
 
         let sighash = format!("0x{}", faster_hex::hex_string(topic0.as_slice()));
-        let key = meta_key(&sighash, topics.len());
+        let topic_count = topics.iter().filter(|t| t.is_some()).count();
+        let key = meta_key(&sighash, topic_count);
 
         let params = match self.param_meta.get(&key) {
             Some(p) => p,
