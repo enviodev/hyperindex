@@ -65,6 +65,10 @@ pub enum CommandType {
     #[command(subcommand)]
     Skills(SkillsSubcommand),
 
+    ///Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
+    #[command(subcommand)]
+    Tools(ToolsSubcommand),
+
     ///Inspect the indexer config
     #[command(subcommand)]
     Config(ConfigSubcommand),
@@ -78,6 +82,26 @@ pub enum CommandType {
 pub enum ConfigSubcommand {
     ///Print the resolved indexer config as JSON
     View,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ToolsSubcommand {
+    ///Full-text search over Envio docs; prints matching titles, URLs, and snippets. Pair with `fetch-docs` to read a hit in full.
+    SearchDocs(SearchDocsArgs),
+    ///Print the full markdown of a docs page by URL. Use a URL returned by `search-docs`.
+    FetchDocs(FetchDocsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SearchDocsArgs {
+    ///The search query
+    pub query: String,
+}
+
+#[derive(Debug, Args)]
+pub struct FetchDocsArgs {
+    ///The full URL of the documentation page to fetch
+    pub url: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -447,6 +471,7 @@ pub mod svm {
 #[cfg(test)]
 mod test {
     use super::*;
+    use clap::CommandFactory;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
@@ -465,5 +490,22 @@ mod test {
             md_output.trim(),
             "Please run 'make update-generated-docs'"
         );
+    }
+
+    #[test]
+    fn envio_help_snapshot() {
+        let mut cmd = CommandLineArgs::command().version("0.0.0-test");
+        let rendered = cmd.render_help().to_string();
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn envio_tools_help_snapshot() {
+        let mut cmd = CommandLineArgs::command();
+        let tools_cmd = cmd
+            .find_subcommand_mut("tools")
+            .expect("tools subcommand exists");
+        let rendered = tools_cmd.render_help().to_string();
+        insta::assert_snapshot!(rendered);
     }
 }
