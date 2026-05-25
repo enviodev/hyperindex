@@ -183,9 +183,15 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     // introspection. The schema-level description we set still lands in
     // Hasura's metadata API, but it does not surface here, so the snapshot
     // captures Hasura's defaults for relationship fields.
+    interface IntrospectedTypeRef {
+      name: string | null;
+      kind: string;
+      ofType: IntrospectedTypeRef | null;
+    }
     interface IntrospectedField {
       name: string;
       description: string | null;
+      type: IntrospectedTypeRef;
     }
     interface IntrospectedType {
       name: string;
@@ -202,10 +208,30 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
           fields {
             name
             description
+            type {
+              name
+              kind
+              ofType {
+                name
+                kind
+                ofType {
+                  name
+                  kind
+                  ofType { name kind }
+                }
+              }
+            }
           }
         }
       }
     }`);
+
+    const formatType = (t: IntrospectedTypeRef | null): string => {
+      if (!t) return "?";
+      if (t.kind === "NON_NULL") return `${formatType(t.ofType)}!`;
+      if (t.kind === "LIST") return `[${formatType(t.ofType)}]`;
+      return t.name ?? "?";
+    };
 
     const userTypeNames = new Set(["Transfer", "Account"]);
     const userTypes = (result.data?.__schema.types ?? [])
@@ -220,6 +246,7 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
           .map((f) => ({
             name: f.name,
             description: f.description,
+            type: formatType(f.type),
           })),
       }));
 
@@ -231,14 +258,17 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
             {
               "description": "The account's Ethereum address",
               "name": "id",
+              "type": "String!",
             },
             {
               "description": "An array relationship",
               "name": "outgoing",
+              "type": "[Transfer!]!",
             },
             {
               "description": "An aggregate relationship",
               "name": "outgoing_aggregate",
+              "type": "Transfer_aggregate!",
             },
           ],
           "name": "Account",
@@ -249,26 +279,32 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
             {
               "description": "Block number the transfer was emitted in",
               "name": "blockNumber",
+              "type": "Int!",
             },
             {
               "description": "Sender address",
               "name": "from",
+              "type": "String!",
             },
             {
               "description": "Composite ID built from chainId-block-logIndex",
               "name": "id",
+              "type": "String!",
             },
             {
               "description": "Recipient address",
               "name": "to",
+              "type": "String!",
             },
             {
               "description": "Hash of the transaction that emitted the transfer",
               "name": "transactionHash",
+              "type": "String!",
             },
             {
               "description": "Token amount transferred (raw, no decimals applied)",
               "name": "value",
+              "type": "numeric!",
             },
           ],
           "name": "Transfer",
