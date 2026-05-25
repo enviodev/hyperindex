@@ -504,7 +504,7 @@ let buildSvmInstructionEventConfig = (
   ~discriminatorByteLen: int,
   ~includeTransaction: bool,
   ~includeLogs: bool,
-  ~accountFilters: array<Internal.svmAccountFilter>,
+  ~accountFilters: array<Internal.svmAccountFilterGroup>,
   ~isInner: option<bool>,
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
