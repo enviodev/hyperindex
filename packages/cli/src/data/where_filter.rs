@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use hypersync_client::net_types::{FieldSelection, LogFilter, Query, TransactionFilter};
 
-use super::mapping::{self, FieldEntry, Section};
+use super::mapping::{self, Section};
 
 #[derive(Debug, Clone)]
 pub struct FieldFilter {
@@ -54,11 +54,11 @@ impl WhereFilter {
                 ),
             };
             for (field_raw, field_body) in fields {
-                let entry = mapping::lookup(section, &field_raw).ok_or_else(|| {
+                mapping::lookup(section, &field_raw).ok_or_else(|| {
                     let valid = mapping::valid_indexer_names(section).join(", ");
                     anyhow!("Unknown field `{section_raw}.{field_raw}` in --where. Valid: {valid}.")
                 })?;
-                apply_field(&mut out, entry, field_body)?;
+                apply_field(&mut out, section, &field_raw, field_body)?;
             }
         }
 
@@ -184,42 +184,42 @@ fn type_name(v: &Value) -> &'static str {
     }
 }
 
-fn apply_field(out: &mut WhereFilter, entry: FieldEntry, body: Value) -> Result<()> {
-    if entry.section == Section::Block && entry.indexer_name == "number" {
-        return apply_block_range(out, entry, body);
+fn apply_field(
+    out: &mut WhereFilter,
+    section: Section,
+    indexer_name: &str,
+    body: Value,
+) -> Result<()> {
+    if section == Section::Block && indexer_name == "number" {
+        return apply_block_range(out, indexer_name, body);
     }
 
-    let dest = match entry.section {
+    let dest = match section {
         Section::Log => &mut out.log_filters,
         Section::Transaction => &mut out.transaction_filters,
         Section::Block => bail!(
-            "Filtering on `block.{f}` is not supported. Only `block.number` (with _gte/_lt/_lte/_gt) is a block filter.",
-            f = entry.indexer_name,
+            "Filtering on `block.{indexer_name}` is not supported. Only `block.number` (with _gte/_lt/_lte/_gt) is a block filter.",
         ),
     };
 
-    let values = normalize_to_list(&entry, body)?;
+    let values = normalize_to_list(section, indexer_name, body)?;
     dest.push(FieldFilter {
-        indexer_name: entry.indexer_name.to_string(),
+        indexer_name: indexer_name.to_string(),
         values,
     });
     Ok(())
 }
 
-fn apply_block_range(out: &mut WhereFilter, entry: FieldEntry, body: Value) -> Result<()> {
+fn apply_block_range(out: &mut WhereFilter, field_name: &str, body: Value) -> Result<()> {
     let map = match body {
         Value::Object(m) => m,
-        _ => bail!(
-            "Expected operator object under `block.{f}` (e.g. `_gte: 1000`).",
-            f = entry.indexer_name,
-        ),
+        _ => bail!("Expected operator object under `block.{field_name}` (e.g. `_gte: 1000`).",),
     };
 
     for (op, val) in map {
         let n = value_to_u64(&val).with_context(|| {
             format!(
-                "Operator `{op}` on `block.{f}` expects a non-negative integer, got {val}",
-                f = entry.indexer_name,
+                "Operator `{op}` on `block.{field_name}` expects a non-negative integer, got {val}",
             )
         })?;
         match op.as_str() {
@@ -238,8 +238,7 @@ fn apply_block_range(out: &mut WhereFilter, entry: FieldEntry, body: Value) -> R
                 out.to_block_exclusive = Some(out.to_block_exclusive.map_or(n, |cur| cur.min(n)));
             }
             other => bail!(
-                "Unsupported operator `{other}` on `block.{f}`. Use `_gte`, `_gt`, `_lte`, `_lt`.",
-                f = entry.indexer_name,
+                "Unsupported operator `{other}` on `block.{field_name}`. Use `_gte`, `_gt`, `_lte`, `_lt`.",
             ),
         }
     }
@@ -257,7 +256,8 @@ fn value_to_u64(v: &Value) -> Result<u64> {
     }
 }
 
-fn normalize_to_list(entry: &FieldEntry, body: Value) -> Result<Vec<Value>> {
+fn normalize_to_list(section: Section, name: &str, body: Value) -> Result<Vec<Value>> {
+    let label = || format!("{}.{name}", section.as_indexer_str());
     match body {
         Value::String(_) | Value::Number(_) | Value::Bool(_) => Ok(vec![body]),
         Value::Array(arr) => Ok(arr),
@@ -267,29 +267,19 @@ fn normalize_to_list(entry: &FieldEntry, body: Value) -> Result<Vec<Value>> {
                     "_eq" => return Ok(vec![v.clone()]),
                     "_in" => {
                         let arr = v.as_array().ok_or_else(|| {
-                            anyhow!(
-                                "`_in` on `{s}.{f}` expects an array, got {t}",
-                                s = entry.section.as_indexer_str(),
-                                f = entry.indexer_name,
-                                t = type_name(v),
-                            )
+                            anyhow!("`_in` on `{}` expects an array, got {}", label(), type_name(v))
                         })?;
                         return Ok(arr.clone());
                     }
                     other => bail!(
-                        "Unsupported operator `{other}` on `{s}.{f}`. Use a scalar, an array, `_eq`, or `_in`.",
-                        s = entry.section.as_indexer_str(),
-                        f = entry.indexer_name,
+                        "Unsupported operator `{other}` on `{}`. Use a scalar, an array, `_eq`, or `_in`.",
+                        label(),
                     ),
                 }
             }
             Ok(vec![])
         }
-        Value::Null => bail!(
-            "`{s}.{f}` cannot be null",
-            s = entry.section.as_indexer_str(),
-            f = entry.indexer_name,
-        ),
+        Value::Null => bail!("`{}` cannot be null", label()),
     }
 }
 

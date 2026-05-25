@@ -48,7 +48,7 @@ impl Selection {
                 )
             })?;
 
-            let entry = mapping::lookup(section, field_raw).ok_or_else(|| {
+            let field = mapping::lookup(section, field_raw).ok_or_else(|| {
                 let valid = mapping::valid_indexer_names(section).join(", ");
                 anyhow!("Unknown field `{raw}`. Valid `{section_raw}.*` fields: {valid}.")
             })?;
@@ -56,7 +56,7 @@ impl Selection {
             sel.columns.push(Column {
                 section,
                 indexer_name: field_raw.to_string(),
-                field: entry.field,
+                field,
             });
         }
 

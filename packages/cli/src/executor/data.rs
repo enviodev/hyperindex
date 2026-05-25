@@ -45,11 +45,11 @@ pub async fn run(args: DataArgs) -> Result<()> {
 
     let query = filter.build_net_query(selection.build_net_field_selection())?;
     let response = client
-        .get(&query)
+        .get_arrow(&query)
         .await
         .context("Failed querying blockchain data")?;
 
-    let mut out = toon::render_query_response(&selection, &response);
+    let mut out = toon::render_arrow_response(&selection, &response);
 
     let archive_height = response.archive_height.unwrap_or(0);
 

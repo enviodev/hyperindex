@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use hypersync_client::net_types::{
     block::BlockField, log::LogField, transaction::TransactionField,
 };
@@ -26,427 +28,77 @@ pub enum TypedField {
     Log(LogField),
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct FieldEntry {
-    pub indexer_name: &'static str,
-    pub section: Section,
-    pub field: TypedField,
+impl TypedField {
+    pub fn column_name(self) -> String {
+        match self {
+            TypedField::Block(f) => f.to_string(),
+            TypedField::Transaction(f) => f.to_string(),
+            TypedField::Log(f) => f.to_string(),
+        }
+    }
 }
 
-const EVM_FIELDS: &[FieldEntry] = &[
-    // block.*
-    FieldEntry {
-        indexer_name: "number",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::Number),
-    },
-    FieldEntry {
-        indexer_name: "hash",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::Hash),
-    },
-    FieldEntry {
-        indexer_name: "parentHash",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::ParentHash),
-    },
-    FieldEntry {
-        indexer_name: "nonce",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::Nonce),
-    },
-    FieldEntry {
-        indexer_name: "sha3Uncles",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::Sha3Uncles),
-    },
-    FieldEntry {
-        indexer_name: "logsBloom",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::LogsBloom),
-    },
-    FieldEntry {
-        indexer_name: "transactionsRoot",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::TransactionsRoot),
-    },
-    FieldEntry {
-        indexer_name: "stateRoot",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::StateRoot),
-    },
-    FieldEntry {
-        indexer_name: "receiptsRoot",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::ReceiptsRoot),
-    },
-    FieldEntry {
-        indexer_name: "miner",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::Miner),
-    },
-    FieldEntry {
-        indexer_name: "difficulty",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::Difficulty),
-    },
-    FieldEntry {
-        indexer_name: "totalDifficulty",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::TotalDifficulty),
-    },
-    FieldEntry {
-        indexer_name: "extraData",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::ExtraData),
-    },
-    FieldEntry {
-        indexer_name: "size",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::Size),
-    },
-    FieldEntry {
-        indexer_name: "gasLimit",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::GasLimit),
-    },
-    FieldEntry {
-        indexer_name: "gasUsed",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::GasUsed),
-    },
-    FieldEntry {
-        indexer_name: "timestamp",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::Timestamp),
-    },
-    FieldEntry {
-        indexer_name: "uncles",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::Uncles),
-    },
-    FieldEntry {
-        indexer_name: "baseFeePerGas",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::BaseFeePerGas),
-    },
-    FieldEntry {
-        indexer_name: "blobGasUsed",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::BlobGasUsed),
-    },
-    FieldEntry {
-        indexer_name: "excessBlobGas",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::ExcessBlobGas),
-    },
-    FieldEntry {
-        indexer_name: "parentBeaconBlockRoot",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::ParentBeaconBlockRoot),
-    },
-    FieldEntry {
-        indexer_name: "withdrawalsRoot",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::WithdrawalsRoot),
-    },
-    FieldEntry {
-        indexer_name: "withdrawals",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::Withdrawals),
-    },
-    FieldEntry {
-        indexer_name: "l1BlockNumber",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::L1BlockNumber),
-    },
-    FieldEntry {
-        indexer_name: "sendCount",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::SendCount),
-    },
-    FieldEntry {
-        indexer_name: "sendRoot",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::SendRoot),
-    },
-    FieldEntry {
-        indexer_name: "mixHash",
-        section: Section::Block,
-        field: TypedField::Block(BlockField::MixHash),
-    },
-    // transaction.*
-    FieldEntry {
-        indexer_name: "blockHash",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::BlockHash),
-    },
-    FieldEntry {
-        indexer_name: "blockNumber",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::BlockNumber),
-    },
-    FieldEntry {
-        indexer_name: "from",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::From),
-    },
-    FieldEntry {
-        indexer_name: "gas",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::Gas),
-    },
-    FieldEntry {
-        indexer_name: "gasPrice",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::GasPrice),
-    },
-    FieldEntry {
-        indexer_name: "hash",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::Hash),
-    },
-    FieldEntry {
-        indexer_name: "input",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::Input),
-    },
-    FieldEntry {
-        indexer_name: "nonce",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::Nonce),
-    },
-    FieldEntry {
-        indexer_name: "to",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::To),
-    },
-    FieldEntry {
-        indexer_name: "transactionIndex",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::TransactionIndex),
-    },
-    FieldEntry {
-        indexer_name: "value",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::Value),
-    },
-    FieldEntry {
-        indexer_name: "v",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::V),
-    },
-    FieldEntry {
-        indexer_name: "r",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::R),
-    },
-    FieldEntry {
-        indexer_name: "s",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::S),
-    },
-    FieldEntry {
-        indexer_name: "maxPriorityFeePerGas",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::MaxPriorityFeePerGas),
-    },
-    FieldEntry {
-        indexer_name: "maxFeePerGas",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::MaxFeePerGas),
-    },
-    FieldEntry {
-        indexer_name: "chainId",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::ChainId),
-    },
-    FieldEntry {
-        indexer_name: "cumulativeGasUsed",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::CumulativeGasUsed),
-    },
-    FieldEntry {
-        indexer_name: "effectiveGasPrice",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::EffectiveGasPrice),
-    },
-    FieldEntry {
-        indexer_name: "gasUsed",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::GasUsed),
-    },
-    FieldEntry {
-        indexer_name: "contractAddress",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::ContractAddress),
-    },
-    FieldEntry {
-        indexer_name: "logsBloom",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::LogsBloom),
-    },
-    FieldEntry {
-        indexer_name: "type",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::Type),
-    },
-    FieldEntry {
-        indexer_name: "root",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::Root),
-    },
-    FieldEntry {
-        indexer_name: "status",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::Status),
-    },
-    FieldEntry {
-        indexer_name: "sighash",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::Sighash),
-    },
-    FieldEntry {
-        indexer_name: "l1Fee",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::L1Fee),
-    },
-    FieldEntry {
-        indexer_name: "l1GasPrice",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::L1GasPrice),
-    },
-    FieldEntry {
-        indexer_name: "l1GasUsed",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::L1GasUsed),
-    },
-    FieldEntry {
-        indexer_name: "l1FeeScalar",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::L1FeeScalar),
-    },
-    FieldEntry {
-        indexer_name: "gasUsedForL1",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::GasUsedForL1),
-    },
-    FieldEntry {
-        indexer_name: "maxFeePerBlobGas",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::MaxFeePerBlobGas),
-    },
-    FieldEntry {
-        indexer_name: "blobGasPrice",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::BlobGasPrice),
-    },
-    FieldEntry {
-        indexer_name: "blobGasUsed",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::BlobGasUsed),
-    },
-    FieldEntry {
-        indexer_name: "yParity",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::YParity),
-    },
-    FieldEntry {
-        indexer_name: "sourceHash",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::SourceHash),
-    },
-    FieldEntry {
-        indexer_name: "mint",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::Mint),
-    },
-    FieldEntry {
-        indexer_name: "depositNonce",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::DepositNonce),
-    },
-    FieldEntry {
-        indexer_name: "depositReceiptVersion",
-        section: Section::Transaction,
-        field: TypedField::Transaction(TransactionField::DepositReceiptVersion),
-    },
-    // log.*
-    FieldEntry {
-        indexer_name: "removed",
-        section: Section::Log,
-        field: TypedField::Log(LogField::Removed),
-    },
-    FieldEntry {
-        indexer_name: "logIndex",
-        section: Section::Log,
-        field: TypedField::Log(LogField::LogIndex),
-    },
-    FieldEntry {
-        indexer_name: "transactionIndex",
-        section: Section::Log,
-        field: TypedField::Log(LogField::TransactionIndex),
-    },
-    FieldEntry {
-        indexer_name: "transactionHash",
-        section: Section::Log,
-        field: TypedField::Log(LogField::TransactionHash),
-    },
-    FieldEntry {
-        indexer_name: "blockHash",
-        section: Section::Log,
-        field: TypedField::Log(LogField::BlockHash),
-    },
-    FieldEntry {
-        indexer_name: "blockNumber",
-        section: Section::Log,
-        field: TypedField::Log(LogField::BlockNumber),
-    },
-    FieldEntry {
-        indexer_name: "srcAddress",
-        section: Section::Log,
-        field: TypedField::Log(LogField::Address),
-    },
-    FieldEntry {
-        indexer_name: "data",
-        section: Section::Log,
-        field: TypedField::Log(LogField::Data),
-    },
-    FieldEntry {
-        indexer_name: "topic0",
-        section: Section::Log,
-        field: TypedField::Log(LogField::Topic0),
-    },
-    FieldEntry {
-        indexer_name: "topic1",
-        section: Section::Log,
-        field: TypedField::Log(LogField::Topic1),
-    },
-    FieldEntry {
-        indexer_name: "topic2",
-        section: Section::Log,
-        field: TypedField::Log(LogField::Topic2),
-    },
-    FieldEntry {
-        indexer_name: "topic3",
-        section: Section::Log,
-        field: TypedField::Log(LogField::Topic3),
-    },
-];
-
-pub fn lookup(section: Section, indexer_name: &str) -> Option<FieldEntry> {
-    EVM_FIELDS
-        .iter()
-        .find(|f| f.section == section && f.indexer_name == indexer_name)
-        .copied()
+fn alias(indexer_name: &str) -> &str {
+    match indexer_name {
+        "srcAddress" => "address",
+        other => other,
+    }
 }
 
-pub fn valid_indexer_names(section: Section) -> Vec<&'static str> {
-    EVM_FIELDS
-        .iter()
-        .filter(|f| f.section == section)
-        .map(|f| f.indexer_name)
-        .collect()
+fn to_snake(camel: &str) -> String {
+    let aliased = alias(camel);
+    let mut out = String::with_capacity(aliased.len() + 4);
+    for (i, ch) in aliased.chars().enumerate() {
+        if ch.is_ascii_uppercase() && i > 0 {
+            out.push('_');
+        }
+        out.push(ch.to_ascii_lowercase());
+    }
+    out
+}
+
+fn to_camel(snake: &str) -> String {
+    match snake {
+        "address" => return "srcAddress".to_string(),
+        _ => {}
+    }
+    let mut out = String::with_capacity(snake.len());
+    let mut capitalize_next = false;
+    for ch in snake.chars() {
+        if ch == '_' {
+            capitalize_next = true;
+        } else if capitalize_next {
+            out.push(ch.to_ascii_uppercase());
+            capitalize_next = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+pub fn lookup(section: Section, indexer_name: &str) -> Option<TypedField> {
+    let snake = to_snake(indexer_name);
+    match section {
+        Section::Block => BlockField::from_str(&snake).ok().map(TypedField::Block),
+        Section::Transaction => TransactionField::from_str(&snake)
+            .ok()
+            .map(TypedField::Transaction),
+        Section::Log => LogField::from_str(&snake).ok().map(TypedField::Log),
+    }
+}
+
+pub fn valid_indexer_names(section: Section) -> Vec<String> {
+    use strum::IntoEnumIterator;
+    match section {
+        Section::Block => BlockField::iter()
+            .map(|f| to_camel(&f.to_string()))
+            .collect(),
+        Section::Transaction => TransactionField::iter()
+            .map(|f| to_camel(&f.to_string()))
+            .collect(),
+        Section::Log => LogField::iter().map(|f| to_camel(&f.to_string())).collect(),
+    }
 }
 
 pub fn parse_section(raw: &str) -> Option<Section> {
@@ -459,3 +111,49 @@ pub fn parse_section(raw: &str) -> Option<Section> {
 }
 
 pub const ALLOWED_SECTIONS: &[&str] = &["block", "transaction", "log"];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_standard_fields() {
+        assert!(matches!(
+            lookup(Section::Block, "gasLimit"),
+            Some(TypedField::Block(BlockField::GasLimit))
+        ));
+        assert!(matches!(
+            lookup(Section::Transaction, "transactionIndex"),
+            Some(TypedField::Transaction(TransactionField::TransactionIndex))
+        ));
+        assert!(matches!(
+            lookup(Section::Log, "topic0"),
+            Some(TypedField::Log(LogField::Topic0))
+        ));
+    }
+
+    #[test]
+    fn lookup_src_address_alias() {
+        assert!(matches!(
+            lookup(Section::Log, "srcAddress"),
+            Some(TypedField::Log(LogField::Address))
+        ));
+    }
+
+    #[test]
+    fn lookup_unknown_returns_none() {
+        assert!(lookup(Section::Block, "bogus").is_none());
+    }
+
+    #[test]
+    fn valid_names_include_src_address() {
+        let names = valid_indexer_names(Section::Log);
+        assert!(names.contains(&"srcAddress".to_string()), "{names:?}");
+    }
+
+    #[test]
+    fn column_name_is_snake_case() {
+        let f = lookup(Section::Block, "gasLimit").unwrap();
+        assert_eq!(f.column_name(), "gas_limit");
+    }
+}
