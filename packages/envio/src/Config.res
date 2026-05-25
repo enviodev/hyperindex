@@ -695,7 +695,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
                   "includeTransaction": bool,
                   "includeLogs": bool,
                   "accountFilters": option<
-                    array<{"position": int, "values": array<string>}>,
+                    array<array<{"position": int, "values": array<string>}>>,
                   >,
                   "isInner": option<bool>,
                   "accounts": option<array<string>>,
@@ -711,10 +711,12 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             )
           }
           let accountFilters =
-            (svm["accountFilters"]->Option.getOr([]))->Array.map(af => {
-              Internal.position: af["position"],
-              values: af["values"]->SvmTypes.Pubkey.fromStringsUnsafe,
-            })
+            (svm["accountFilters"]->Option.getOr([]))->Array.map(group =>
+              group->Array.map(af => {
+                Internal.position: af["position"],
+                values: af["values"]->SvmTypes.Pubkey.fromStringsUnsafe,
+              })
+            )
           (EventConfigBuilder.buildSvmInstructionEventConfig(
             ~contractName,
             ~instructionName=eventName,

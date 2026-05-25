@@ -1042,14 +1042,23 @@ impl SystemConfig {
                                     include_logs: instr.include_logs.unwrap_or(false),
                                     account_filters: instr
                                         .account_filters
-                                        .as_deref()
-                                        .unwrap_or(&[])
-                                        .iter()
-                                        .map(|af| SvmAccountFilter {
-                                            position: af.position,
-                                            values: af.values.clone(),
+                                        .as_ref()
+                                        .map(|filters| {
+                                            filters
+                                                .groups()
+                                                .into_iter()
+                                                .map(|group| {
+                                                    group
+                                                        .iter()
+                                                        .map(|af| SvmAccountFilter {
+                                                            position: af.position,
+                                                            values: af.values.clone(),
+                                                        })
+                                                        .collect()
+                                                })
+                                                .collect()
                                         })
-                                        .collect(),
+                                        .unwrap_or_default(),
                                     is_inner: instr.is_inner,
                                     accounts,
                                     args,
@@ -1833,7 +1842,9 @@ pub struct SvmEventKind {
     pub discriminator_byte_len: u8,
     pub include_transaction: bool,
     pub include_logs: bool,
-    pub account_filters: Vec<SvmAccountFilter>,
+    /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
+    /// AND across positions. An empty outer list means "no account filter".
+    pub account_filters: Vec<Vec<SvmAccountFilter>>,
     /// `None` matches both outer and inner (CPI-invoked) instructions.
     pub is_inner: Option<bool>,
     /// Positional account names. Empty when the user supplied no schema and

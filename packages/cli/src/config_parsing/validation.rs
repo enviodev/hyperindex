@@ -279,25 +279,66 @@ pub fn validate_deserialized_svm_config_yaml(
                         format!("instruction {:?} in program {:?}", instr.name, program.name)
                     })?;
                 }
-                for filter in instr.account_filters.as_ref().unwrap_or(&vec![]) {
-                    if filter.position > 9 {
-                        return Err(anyhow!(
-                            "Account filter position {} in instruction {:?} (program {:?}) \
-                             must be in 0..=9",
-                            filter.position,
-                            instr.name,
-                            program.name
-                        ));
-                    }
-                    for value in &filter.values {
-                        if !is_valid_solana_pubkey(value) {
+                if let Some(filters) = instr.account_filters.as_ref() {
+                    if let crate::config_parsing::human_config::svm::AccountFilters::AnyOf(any_of) =
+                        filters
+                    {
+                        if any_of.any_of.is_empty() {
                             return Err(anyhow!(
-                                "Account filter on instruction {:?} (program {:?}) has an \
-                                 invalid base58 pubkey {:?}",
+                                "`any_of` account filter on instruction {:?} (program {:?}) is \
+                                 empty; remove the `account_filters` field instead, or add at \
+                                 least one AND-group",
                                 instr.name,
-                                program.name,
-                                value
+                                program.name
                             ));
+                        }
+                    }
+                    let groups = filters.groups();
+                    for (group_idx, group) in groups.iter().enumerate() {
+                        if group.is_empty() {
+                            return Err(anyhow!(
+                                "Account filter group {} in instruction {:?} (program {:?}) is \
+                                 empty; each `any_of` branch must contain at least one entry",
+                                group_idx,
+                                instr.name,
+                                program.name
+                            ));
+                        }
+                        let mut seen_positions = std::collections::HashSet::new();
+                        for filter in group.iter() {
+                            if filter.position > 5 {
+                                return Err(anyhow!(
+                                    "Account filter position {} in instruction {:?} (program \
+                                     {:?}) must be in 0..=5 (positions 6..=9 are reserved for a \
+                                     future extension)",
+                                    filter.position,
+                                    instr.name,
+                                    program.name
+                                ));
+                            }
+                            if !seen_positions.insert(filter.position) {
+                                return Err(anyhow!(
+                                    "Duplicate position {} in account filter group {} of \
+                                     instruction {:?} (program {:?}); combine the pubkeys into a \
+                                     single `values` list, or use `any_of` to express OR across \
+                                     positions",
+                                    filter.position,
+                                    group_idx,
+                                    instr.name,
+                                    program.name
+                                ));
+                            }
+                            for value in &filter.values {
+                                if !is_valid_solana_pubkey(value) {
+                                    return Err(anyhow!(
+                                        "Account filter on instruction {:?} (program {:?}) has \
+                                         an invalid base58 pubkey {:?}",
+                                        instr.name,
+                                        program.name,
+                                        value
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
@@ -680,12 +721,109 @@ chains:
         instructions:
           - name: I
             account_filters:
-              - position: 10
+              - position: 6
                 values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
 "#,
             );
             let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
-            assert!(err.to_string().contains("0..=9"), "{err}");
+            assert!(err.to_string().contains("0..=5"), "{err}");
+        }
+
+        #[test]
+        fn validation_rejects_duplicate_position_within_group() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: r
+    start_block: 0
+    programs:
+      - name: P
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        instructions:
+          - name: I
+            account_filters:
+              - position: 1
+                values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+              - position: 1
+                values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("Duplicate position"), "{err}");
+        }
+
+        #[test]
+        fn validation_rejects_empty_any_of() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: r
+    start_block: 0
+    programs:
+      - name: P
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        instructions:
+          - name: I
+            account_filters:
+              any_of: []
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("`any_of`"), "{err}");
+            assert!(err.to_string().contains("empty"), "{err}");
+        }
+
+        #[test]
+        fn validation_rejects_empty_any_of_group() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: r
+    start_block: 0
+    programs:
+      - name: P
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        instructions:
+          - name: I
+            account_filters:
+              any_of:
+                - []
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("group"), "{err}");
+            assert!(err.to_string().contains("empty"), "{err}");
+        }
+
+        #[test]
+        fn validation_accepts_any_of_with_cross_group_duplicate_positions() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: r
+    start_block: 0
+    programs:
+      - name: P
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        instructions:
+          - name: I
+            account_filters:
+              any_of:
+                - - position: 2
+                    values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+                - - position: 2
+                    values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+"#,
+            );
+            assert!(validate_deserialized_svm_config_yaml(&cfg).is_ok());
         }
 
         #[test]

@@ -427,6 +427,9 @@ type svmAccountFilter = {
   values: array<SvmTypes.Pubkey.t>,
 }
 
+/** AND-group: every entry must match the same instruction. */
+type svmAccountFilterGroup = array<svmAccountFilter>
+
 type svmInstructionEventConfig = {
   ...eventConfig,
   /** Base58 Solana program id this instruction belongs to. */
@@ -439,7 +442,9 @@ type svmInstructionEventConfig = {
   discriminatorByteLen: int,
   includeTransaction: bool,
   includeLogs: bool,
-  accountFilters: array<svmAccountFilter>,
+  /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
+   AND across positions. Empty outer array means "no account filter". */
+  accountFilters: array<svmAccountFilterGroup>,
   /** `None` matches both outer and inner (CPI-invoked) instructions. */
   isInner: option<bool>,
   /** Positional account names from the Borsh schema, in declared order.
