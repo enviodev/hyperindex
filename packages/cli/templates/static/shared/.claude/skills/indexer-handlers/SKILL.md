@@ -128,4 +128,4 @@ This is globally unique across chains and blocks. Use it as the default unless t
 
 ## Deep Documentation
 
-Use `envio tools search-docs <query>` to find relevant documentation and `envio tools fetch-docs <url>` to read the full page.
+If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

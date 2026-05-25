@@ -167,4 +167,4 @@ Returns the earliest matching blocks. Use `from_block` to paginate forward. Pick
 
 ## Deep Documentation
 
-Use `envio tools search-docs <query>` to find relevant documentation and `envio tools fetch-docs <url>` to read the full page.
+If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
