@@ -152,4 +152,32 @@ Valid sections: block, transaction, log."#);
             .to_string();
         insta::assert_snapshot!(err, @"Unknown field `log.foo`. Valid `log.*` fields: transactionHash, blockHash, blockNumber, transactionIndex, logIndex, srcAddress, data, removed, topic0, topic1, topic2, topic3.");
     }
+
+    #[test]
+    fn accepts_snake_case_fields() {
+        let sel = Selection::parse(&[
+            "block.gas_limit".into(),
+            "log.src_address".into(),
+            "transaction.transaction_index".into(),
+        ])
+        .unwrap();
+        let names: Vec<&str> = sel
+            .columns
+            .iter()
+            .map(|c| c.indexer_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["gas_limit", "src_address", "transaction_index"]);
+    }
+
+    #[test]
+    fn accepts_all_lowercase() {
+        let sel = Selection::parse(&["block.gaslimit".into(), "log.blocknumber".into()]).unwrap();
+        assert_eq!(sel.columns.len(), 2);
+    }
+
+    #[test]
+    fn accepts_uppercase() {
+        let sel = Selection::parse(&["block.GAS_LIMIT".into(), "log.TOPIC0".into()]).unwrap();
+        assert_eq!(sel.columns.len(), 2);
+    }
 }
