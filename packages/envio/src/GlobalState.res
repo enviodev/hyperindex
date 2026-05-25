@@ -823,14 +823,7 @@ let checkAndFetchForChain = (
       let {fetchState} = chainFetcher
       let isRealtime = state.chainManager.isRealtime
 
-      // Reduce polling when there's nothing useful to fetch right now:
-      //   - this chain has caught up but others are still backfilling, or
-      //   - we're about to enter the reorg threshold (rollback mode only).
-      let reducedPolling =
-        (chainFetcher->ChainFetcher.isReady && !isRealtime) ||
-          (state.ctx.config.shouldRollbackOnReorg &&
-          !state.chainManager.isInReorgThreshold &&
-          fetchState->FetchState.isReadyToEnterReorgThreshold)
+      let reducedPolling = !isRealtime
 
       await chainFetcher.sourceManager->SourceManager.fetchNext(
         ~fetchState,
