@@ -35,6 +35,7 @@ let makeFromDbState = (
   ~initialState: Persistence.initialState,
   ~config: Config.t,
   ~registrations,
+  ~reducedPollingInterval=?,
 ): t => {
   let isInReorgThreshold = if initialState.cleanRun {
     false
@@ -81,6 +82,7 @@ let makeFromDbState = (
           ~targetBufferSize,
           ~config,
           ~registrations,
+          ~reducedPollingInterval?,
         ),
       )
     })
