@@ -688,6 +688,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
                   "discriminatorByteLen": int,
                   "includeTransaction": bool,
                   "includeLogs": bool,
+                  "includeTokenBalances": bool,
                   "accountFilters": option<
                     array<array<{"position": int, "values": array<string>}>>,
                   >,
@@ -719,6 +720,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~discriminatorByteLen=svm["discriminatorByteLen"],
             ~includeTransaction=svm["includeTransaction"],
             ~includeLogs=svm["includeLogs"],
+            ~includeTokenBalances=svm["includeTokenBalances"],
             ~accountFilters,
             ~isInner=svm["isInner"],
             ~isWildcard=false,

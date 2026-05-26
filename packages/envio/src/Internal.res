@@ -432,6 +432,7 @@ type svmInstructionEventConfig = {
   discriminatorByteLen: int,
   includeTransaction: bool,
   includeLogs: bool,
+  includeTokenBalances: bool,
   /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
    AND across positions. Empty outer array means "no account filter". */
   accountFilters: array<svmAccountFilterGroup>,
