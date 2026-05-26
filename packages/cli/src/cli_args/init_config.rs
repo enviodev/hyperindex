@@ -34,6 +34,8 @@ pub mod evm {
         FeatureExternalCalls,
         #[strum(serialize = "Feature: Factory Contract")]
         FeatureFactory,
+        #[strum(serialize = "Feature: Topic Filtering")]
+        FeatureTopicFilter,
     }
 
     ///A an object that holds all the values a user can select during
