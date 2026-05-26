@@ -946,6 +946,12 @@ pub mod svm {
         pub include_logs: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
+            description = "When true, also fetch SPL Token / Token-2022 balance snapshots \
+                           for the parent transaction. Implies include_transaction: true."
+        )]
+        pub include_token_balances: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
             description = "Optional positional account names. The Nth entry names \
                            account slot N on the dispatched instruction; surfaces as \
                            `event.instruction.decoded.accounts.<name>`. Accounts beyond \
@@ -1602,6 +1608,7 @@ chains:
                             account_filters: None,
                             include_transaction: None,
                             include_logs: None,
+                            include_token_balances: None,
                             accounts: None,
                             args: None,
                         },
@@ -1617,6 +1624,7 @@ chains:
                             }]),
                             include_transaction: Some(true),
                             include_logs: Some(false),
+                            include_token_balances: None,
                             accounts: None,
                             args: None,
                         },

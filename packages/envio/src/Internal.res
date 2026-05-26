@@ -439,6 +439,7 @@ type svmInstructionEventConfig = {
   discriminatorByteLen: int,
   includeTransaction: bool,
   includeLogs: bool,
+  includeTokenBalances: bool,
   accountFilters: array<svmAccountFilter>,
   /** `None` matches both outer and inner (CPI-invoked) instructions. */
   isInner: option<bool>,

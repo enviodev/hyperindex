@@ -287,6 +287,13 @@
             "null"
           ]
         },
+        "include_token_balances": {
+          "description": "When true, also fetch SPL Token / Token-2022 balance snapshots for the parent transaction. Implies include_transaction: true.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "accounts": {
           "description": "Optional positional account names. The Nth entry names account slot N on the dispatched instruction; surfaces as `event.instruction.decoded.accounts.<name>`. Accounts beyond the named list become `extra_accounts`.",
           "type": [

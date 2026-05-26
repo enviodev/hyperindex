@@ -1000,6 +1000,15 @@ export type SvmInstruction = {
   readonly decoded?: SvmDecodedInstruction;
 };
 
+export type SvmTokenBalance = {
+  readonly account?: string;
+  readonly mint?: string;
+  readonly owner?: string;
+  /** u64 decimal string. Cast with BigInt(...) for arithmetic. */
+  readonly preAmount?: string;
+  readonly postAmount?: string;
+};
+
 /** Parent transaction surfaced when an instruction's
  * `include_transaction` flag is `true`. */
 export type SvmTransaction = {
@@ -1013,6 +1022,9 @@ export type SvmTransaction = {
   readonly accountKeys: readonly string[];
   readonly recentBlockhash?: string;
   readonly version?: string;
+  /** SPL Token / Token-2022 balance snapshots for this transaction.
+   * Present when `include_token_balances` is `true`. */
+  readonly tokenBalances?: readonly SvmTokenBalance[];
 };
 
 export type SvmLog = {
