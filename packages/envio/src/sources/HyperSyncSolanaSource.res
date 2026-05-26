@@ -61,6 +61,7 @@ let buildInstructionSelections = (
             isInner: ?cfg.isInner,
             includeTransaction: cfg.includeTransaction,
             includeLogs: cfg.includeLogs,
+            includeTokenBalances: cfg.includeTokenBalances,
           }: HyperSyncSolanaClient.QueryTypes.instructionSelection
         )
       })
@@ -217,6 +218,16 @@ let toSvmTransaction = (
   version: ?tx.version,
 }
 
+let toSvmTokenBalance = (
+  tb: HyperSyncSolanaClient.ResponseTypes.tokenBalance,
+): Envio.svmTokenBalance => {
+  account: ?tb.account->Option.map(SvmTypes.Pubkey.fromStringUnsafe),
+  mint: ?tb.mint->Option.map(SvmTypes.Pubkey.fromStringUnsafe),
+  owner: ?tb.owner->Option.map(SvmTypes.Pubkey.fromStringUnsafe),
+  preAmount: ?tb.preAmount,
+  postAmount: ?tb.postAmount,
+}
+
 // Probe the discriminator byte-length ordering longest-first. Stops at the
 // first router hit. Falls back to the `_none` key (program-wide handler) when
 // no discriminator-keyed handler matches.
@@ -289,6 +300,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
   // startup; reused on every decoded instruction.
   let schemaHandlesByProgram = buildSchemaHandles(eventConfigs)
 
+  let needsTokenBalances = eventConfigs->Belt.Array.some(cfg => cfg.includeTokenBalances)
+
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
@@ -304,10 +317,22 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
     let pageFetchRef = Hrtime.makeTimer()
 
     let instructionSelections = buildInstructionSelections(eventConfigs)
+    let fields = if needsTokenBalances {
+      Some(
+        (
+          {
+            tokenBalance: [Slot, TransactionIndex, Account, Mint, Owner, PreAmount, PostAmount],
+          }: HyperSyncSolanaClient.QueryTypes.fieldSelection
+        ),
+      )
+    } else {
+      None
+    }
     let query: HyperSyncSolanaClient.query = {
       fromSlot: fromBlock,
       toSlot: ?toBlock,
       instructions: instructionSelections,
+      fields: ?fields,
     }
 
     Prometheus.SourceRequestCount.increment(
@@ -367,6 +392,21 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
       }
     })
 
+    let tokenBalancesByTx = Dict.make()
+    if needsTokenBalances {
+      resp.data.tokenBalances->Belt.Array.forEach(tb => {
+        switch tb.transactionIndex {
+        | Some(txIdx) =>
+          let key = tb.slot->Int.toString ++ ":" ++ txIdx->Int.toString
+          switch tokenBalancesByTx->Dict.get(key) {
+          | Some(existing) => existing->Array.push(tb)
+          | None => tokenBalancesByTx->Dict.set(key, [tb])
+          }
+        | None => ()
+        }
+      })
+    }
+
     let parsedQueueItems = []
     resp.data.instructions->Belt.Array.forEach(instr => {
       let programId = instr.programId->SvmTypes.Pubkey.fromStringUnsafe
@@ -392,6 +432,17 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
           instr.slot->Int.toString ++ ":" ++ instr.transactionIndex->Int.toString
         let maybeTx =
           txByKey->Utils.Dict.dangerouslyGetNonOption(txKey)->Option.map(toSvmTransaction)
+        let maybeTx = if eventConfig.includeTokenBalances {
+          maybeTx->Option.map(tx => {
+            let maybeBalances =
+              tokenBalancesByTx
+              ->Utils.Dict.dangerouslyGetNonOption(txKey)
+              ->Option.map(bals => bals->Array.map(toSvmTokenBalance))
+            {...tx, tokenBalances: ?maybeBalances}
+          })
+        } else {
+          maybeTx
+        }
         let logKey =
           instr.slot->Int.toString ++
           ":" ++
