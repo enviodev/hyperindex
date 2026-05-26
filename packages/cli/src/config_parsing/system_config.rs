@@ -1037,7 +1037,9 @@ impl SystemConfig {
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
-                                    include_transaction: instr.include_transaction.unwrap_or(true),
+                                    include_token_balances: instr.include_token_balances.unwrap_or(false),
+                                    include_transaction: instr.include_transaction.unwrap_or(true)
+                                        || instr.include_token_balances.unwrap_or(false),
                                     include_logs: instr.include_logs.unwrap_or(false),
                                     account_filters: instr
                                         .account_filters
@@ -1842,6 +1844,7 @@ pub struct SvmEventKind {
     pub discriminator_byte_len: u8,
     pub include_transaction: bool,
     pub include_logs: bool,
+    pub include_token_balances: bool,
     /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
     /// AND across positions. An empty outer list means "no account filter".
     pub account_filters: Vec<Vec<SvmAccountFilter>>,
@@ -3276,6 +3279,7 @@ mod test {
                         k.discriminator_byte_len,
                         k.include_transaction,
                         k.include_logs,
+                        k.include_token_balances,
                         k.account_filters.len(),
                     ),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
@@ -3284,8 +3288,8 @@ mod test {
             assert_eq!(
                 kinds,
                 vec![
-                    ("CreateMetadataAccountV3", Some("0x21"), 1, true, false, 0),
-                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, true, false, 1),
+                    ("CreateMetadataAccountV3", Some("0x21"), 1, true, false, false, 0),
+                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, true, false, false, 1),
                 ],
             );
 

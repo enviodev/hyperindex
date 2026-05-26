@@ -312,6 +312,7 @@ struct SvmEventItem {
     discriminator_byte_len: u8,
     include_transaction: bool,
     include_logs: bool,
+    include_token_balances: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     account_filters: Vec<Vec<SvmAccountFilterJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -516,6 +517,7 @@ impl SystemConfig {
                                         discriminator_byte_len: svm_kind.discriminator_byte_len,
                                         include_transaction: svm_kind.include_transaction,
                                         include_logs: svm_kind.include_logs,
+                                        include_token_balances: svm_kind.include_token_balances,
                                         account_filters: svm_kind
                                             .account_filters
                                             .iter()
