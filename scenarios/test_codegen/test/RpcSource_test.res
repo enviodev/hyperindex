@@ -46,7 +46,7 @@ describe("RpcSource - getHeightOrThrow", () => {
       eventRouter: EventRouter.empty(),
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
-      allEventSignatures: ["a", "b", "c"],
+      allEventParams: [],
       lowercaseAddresses: false,
     })
     let height = await source.getHeightOrThrow()
