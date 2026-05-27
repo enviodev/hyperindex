@@ -1674,7 +1674,7 @@ let make = (
   | None => ()
   }
 
-  {
+  let initialState = {
     optimizedPartitions,
     contractConfigs,
     chainId,
@@ -1689,6 +1689,16 @@ let make = (
     knownHeight,
     buffer: [],
     firstEventBlock,
+  }
+
+  // On resume, knownHeight is restored from the DB but the buffer starts empty.
+  // Without this, onBlock-only indexers (e.g. SVM onSlot) get stuck: getNextQuery
+  // returns NothingToQuery because there are no partitions to drive fetching,
+  // and no one calls updateInternal to populate the buffer.
+  if knownHeight > 0 && onBlockConfigs->Utils.Array.notEmpty {
+    initialState->updateInternal(~knownHeight)
+  } else {
+    initialState
   }
 }
 
