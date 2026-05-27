@@ -14,7 +14,7 @@ chains:
     # Query current height with:
     #   cargo run --example script ... or `curl https://solana.hypersync.xyz/height`.
     start_block: 417995000
-    programs:
+    programs_experimental:
       - name: TokenMetadata
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         handler: ./src/handlers/TokenMetadataHandlers.ts

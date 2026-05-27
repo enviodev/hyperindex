@@ -179,7 +179,7 @@
           "format": "uint32",
           "minimum": 0
         },
-        "programs": {
+        "programs_experimental": {
           "description": "Solana programs to index on this chain.",
           "type": [
             "array",

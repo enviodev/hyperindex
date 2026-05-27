@@ -151,10 +151,9 @@ pub struct DecodedInstructionJson {
 
 impl From<UpstreamDecoded> for DecodedInstructionJson {
     fn from(d: UpstreamDecoded) -> Self {
-        let args_json = serde_json::to_string(&d.args)
-            .unwrap_or_else(|_| "{}".to_string());
-        let accounts_json = serde_json::to_string(&d.named_accounts)
-            .unwrap_or_else(|_| "{}".to_string());
+        let args_json = serde_json::to_string(&d.args).unwrap_or_else(|_| "{}".to_string());
+        let accounts_json =
+            serde_json::to_string(&d.named_accounts).unwrap_or_else(|_| "{}".to_string());
         DecodedInstructionJson {
             name: d.name,
             args_json,
@@ -216,7 +215,11 @@ fn build_program_schema(d: ProgramSchemaJson) -> Result<UpstreamSchema> {
         );
     }
 
-    Ok(UpstreamSchema::build(d.program_id, instructions, defined_types))
+    Ok(UpstreamSchema::build(
+        d.program_id,
+        instructions,
+        defined_types,
+    ))
 }
 
 fn arg_type_to_field_type(ty: &ArgType) -> Result<SvmFieldType> {

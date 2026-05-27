@@ -45,7 +45,10 @@ pub struct HypersyncClient {
 impl HypersyncClient {
     #[napi(constructor)]
     pub fn new(cfg: ClientConfig) -> napi::Result<HypersyncClient> {
-        Self::new_with_agent(cfg, format!("hypersync-source/{}", env!("CARGO_PKG_VERSION")))
+        Self::new_with_agent(
+            cfg,
+            format!("hypersync-source/{}", env!("CARGO_PKG_VERSION")),
+        )
     }
 
     #[napi(factory)]

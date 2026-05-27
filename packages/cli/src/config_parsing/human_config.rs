@@ -886,7 +886,10 @@ pub mod svm {
                            Useful for avoiding reorg issues by indexing slightly behind the tip."
         )]
         pub block_lag: Option<u32>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "programs_experimental",
+            skip_serializing_if = "Option::is_none"
+        )]
         #[schemars(description = "Solana programs to index on this chain.")]
         pub programs: Option<Vec<Program>>,
     }
@@ -1613,7 +1616,7 @@ chains:
     hypersync_config:
       url: https://solana.hypersync.xyz
     start_block: 200000000
-    programs:
+    programs_experimental:
       - name: TokenMetadata
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         instructions:
@@ -1688,7 +1691,7 @@ ecosystem: svm
 chains:
   - rpc: r
     start_block: 1
-    programs:
+    programs_experimental:
       - name: P
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         bogus_extra: true

@@ -12,7 +12,7 @@ chains:
       url: https://solana.hypersync.xyz
     start_block: 417950000
     end_block: 417950500
-    programs:
+    programs_experimental:
       - name: TokenMetadata
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         handler: ./src/handlers/TokenMetadataHandlers.ts

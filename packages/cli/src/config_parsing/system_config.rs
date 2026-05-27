@@ -1003,8 +1003,8 @@ impl SystemConfig {
 
                     let mut chain_contracts = Vec::new();
                     for program in network.programs.as_deref().unwrap_or(&[]) {
-                        let svm_abi = resolve_program_schema(program, project_paths)
-                            .with_context(|| {
+                        let svm_abi =
+                            resolve_program_schema(program, project_paths).with_context(|| {
                                 format!(
                                     "Resolving Borsh schema for program '{}' ({})",
                                     program.name, program.program_id
@@ -1037,7 +1037,9 @@ impl SystemConfig {
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
-                                    include_token_balances: instr.include_token_balances.unwrap_or(false),
+                                    include_token_balances: instr
+                                        .include_token_balances
+                                        .unwrap_or(false),
                                     include_transaction: instr.include_transaction.unwrap_or(true)
                                         || instr.include_token_balances.unwrap_or(false),
                                     include_logs: instr.include_logs.unwrap_or(false),
@@ -1632,9 +1634,7 @@ pub fn field_type_to_arg_type(ty: &SvmFieldType) -> human_config::svm::ArgType {
         SvmFieldType::Option(inner) => {
             T::Composite(C::Option(Box::new(field_type_to_arg_type(inner))))
         }
-        SvmFieldType::Vec(inner) => {
-            T::Composite(C::Vec(Box::new(field_type_to_arg_type(inner))))
-        }
+        SvmFieldType::Vec(inner) => T::Composite(C::Vec(Box::new(field_type_to_arg_type(inner)))),
         SvmFieldType::Array { ty, len } => {
             T::Composite(C::Array(Box::new(field_type_to_arg_type(ty)), *len))
         }
@@ -3288,8 +3288,24 @@ mod test {
             assert_eq!(
                 kinds,
                 vec![
-                    ("CreateMetadataAccountV3", Some("0x21"), 1, true, false, false, 0),
-                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, true, false, false, 1),
+                    (
+                        "CreateMetadataAccountV3",
+                        Some("0x21"),
+                        1,
+                        true,
+                        false,
+                        false,
+                        0
+                    ),
+                    (
+                        "UpdateMetadataAccountV2",
+                        Some("0x0f"),
+                        1,
+                        true,
+                        false,
+                        false,
+                        1
+                    ),
                 ],
             );
 
