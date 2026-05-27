@@ -390,7 +390,7 @@ module Decoder = {
   }
 
   type tWithParams = {
-    decodeLogs: array<ResponseTypes.event> => promise<array<Nullable.t<unknown>>>,
+    decodeLogs: array<ResponseTypes.event> => promise<array<Nullable.t<Internal.eventParams>>>,
   }
 
   @send

@@ -184,10 +184,7 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
           }->Utils.magic,
         )
 
-      let json =
-        result
-        ->(Utils.magic: unknown => Internal.eventParams)
-        ->S.reverseConvertToJsonOrThrow(schema)
+      let json = result->S.reverseConvertToJsonOrThrow(schema)
       t
         .expect(json)
         .toEqual(

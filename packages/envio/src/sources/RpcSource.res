@@ -1108,7 +1108,10 @@ let make = (
 
     let parsedQueueItems = await logs
     ->Array.zip(parsedEvents)
-    ->Array.filterMap(((log: Rpc.GetLogs.log, maybeDecodedEvent: Nullable.t<unknown>)) => {
+    ->Array.filterMap(((
+      log: Rpc.GetLogs.log,
+      maybeDecodedEvent: Nullable.t<Internal.eventParams>,
+    )) => {
       let topic0 = log.topics[0]->Option.getOr("0x0")
       let routedAddress = if lowercaseAddresses {
         log.address->Address.Evm.fromAddressLowercaseOrThrow
@@ -1158,7 +1161,7 @@ let make = (
                     contractName: eventConfig.contractName,
                     eventName: eventConfig.name,
                     chainId: chain->ChainMap.Chain.toChainId,
-                    params: decoded->(Utils.magic: unknown => Internal.eventParams),
+                    params: decoded,
                     transaction,
                     block,
                     srcAddress: routedAddress,

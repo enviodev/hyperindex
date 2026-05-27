@@ -445,13 +445,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       switch (maybeEventConfig, maybeDecodedEvent) {
       | (Some(eventConfig), Value(decoded)) =>
         parsedQueueItems
-        ->Array.push(
-          makeEventBatchQueueItem(
-            item,
-            ~params=decoded->(Utils.magic: unknown => Internal.eventParams),
-            ~eventConfig,
-          ),
-        )
+        ->Array.push(makeEventBatchQueueItem(item, ~params=decoded, ~eventConfig))
         ->ignore
       | (Some(eventConfig), Null | Undefined) =>
         handleDecodeFailure(
