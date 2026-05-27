@@ -31,6 +31,9 @@ This document contains the help content for the `envio` command-line program.
 * [`envio metrics`↴](#envio-metrics)
 * [`envio skills`↴](#envio-skills)
 * [`envio skills update`↴](#envio-skills-update)
+* [`envio tools`↴](#envio-tools)
+* [`envio tools search-docs`↴](#envio-tools-search-docs)
+* [`envio tools fetch-docs`↴](#envio-tools-fetch-docs)
 * [`envio config`↴](#envio-config)
 * [`envio config view`↴](#envio-config-view)
 
@@ -48,6 +51,7 @@ This document contains the help content for the `envio` command-line program.
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 * `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
+* `tools` — Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
 * `config` — Inspect the indexer config
 
 ###### **Options:**
@@ -394,6 +398,43 @@ Manage Envio-provided Claude Code skills under `.claude/skills/`
 Re-extract every skill shipped by this CLI version, overwriting the matching directories under `<cwd>/.claude/skills/`. Skills not shipped by envio are left untouched
 
 **Usage:** `envio skills update`
+
+
+
+## `envio tools`
+
+Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
+
+**Usage:** `envio tools <COMMAND>`
+
+###### **Subcommands:**
+
+* `search-docs` — Full-text search over Envio docs; prints matching titles, URLs, and snippets. Pair with `fetch-docs` to read a hit in full
+* `fetch-docs` — Print the full markdown of a docs page by URL. Use a URL returned by `search-docs`
+
+
+
+## `envio tools search-docs`
+
+Full-text search over Envio docs; prints matching titles, URLs, and snippets. Pair with `fetch-docs` to read a hit in full
+
+**Usage:** `envio tools search-docs <QUERY>`
+
+###### **Arguments:**
+
+* `<QUERY>` — The search query
+
+
+
+## `envio tools fetch-docs`
+
+Print the full markdown of a docs page by URL. Use a URL returned by `search-docs`
+
+**Usage:** `envio tools fetch-docs <URL>`
+
+###### **Arguments:**
+
+* `<URL>` — The full URL of the documentation page to fetch
 
 
 

@@ -66,6 +66,4 @@ rpc:
 
 Add `@index` to schema fields for faster queries — see `indexer-schema` for full syntax (single-field, composite, DESC direction).
 
-## Deep Documentation
-
-Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

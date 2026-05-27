@@ -68,6 +68,4 @@ indexer.onBlock(
 - If `where` returns `false` for every configured chain, a warning is logged at registration time
 - For per-event startBlock (not stride), use `indexer.onEvent` with `where.block.number._gte` (see `indexer-filters`). Event filters accept `_gte` only; `_lte`/`_every` are reserved for `onBlock`.
 
-## Deep Documentation
-
-Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

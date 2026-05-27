@@ -432,6 +432,7 @@ mod test {
         assert_eq!(
             names,
             vec![
+                "envio-docs",
                 "indexer-blocks",
                 "indexer-configuration",
                 "indexer-external-calls",

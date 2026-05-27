@@ -1,0 +1,66 @@
+---
+source: packages/cli/src/executor/tools.rs
+expression: text
+---
+# MCP Server
+
+> Connect AI coding assistants to Envio documentation using the Model Context Protocol (MCP) server
+
+## Contents
+
+- [MCP Server](#mcp-server)
+  - [Endpoint](#endpoint)
+  - [Available Tools](#available-tools)
+  - [Setup](#setup)
+    - [Claude Code](#claude-code)
+    - [Cursor / VS Code](#cursor-vs-code)
+    - [Other MCP Clients](#other-mcp-clients)
+
+---
+
+On this page
+
+# MCP Server
+
+Envio provides a Model Context Protocol (MCP) server that lets AI coding assistants search and retrieve documentation directly. This means tools like Claude Code, Cursor, and other MCP-compatible clients can access Envio docs without you needing to copy-paste context manually.
+
+## Endpoint
+
+```
+https://docs.envio.dev/mcp
+```
+
+## Available Tools
+
+The MCP server exposes two tools:
+
+| Tool          | Description                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------- |
+| `docs_search` | Full-text search across all documentation. Returns matching pages with titles, URLs, and content snippets. |
+| `docs_fetch`  | Retrieves the full content of a documentation page as markdown.                                            |
+
+## Setup
+
+### Claude Code
+
+```
+claude mcp add --transport http envio-docs https://docs.envio.dev/mcp
+```
+
+### Cursor / VS Code
+
+Add the following to your MCP configuration (`.cursor/mcp.json` or VS Code MCP settings):
+
+```
+{
+  "mcpServers": {
+    "envio-docs": {
+      "url": "https://docs.envio.dev/mcp"
+    }
+  }
+}
+```
+
+### Other MCP Clients
+
+Point any MCP-compatible client to the endpoint URL above using the **Streamable HTTP** transport.
