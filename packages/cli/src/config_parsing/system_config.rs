@@ -1034,15 +1034,23 @@ impl SystemConfig {
                                 .with_context(|| {
                                     format!("Layout for instruction '{}'", instr.name)
                                 })?;
+                                let fs = instr.field_selection.as_ref();
+                                let include_token_balances = fs
+                                    .and_then(|f| f.token_balance_fields.as_ref())
+                                    .map_or(false, |v| v.is_enabled());
+                                let include_transaction = fs
+                                    .and_then(|f| f.transaction_fields.as_ref())
+                                    .map_or(false, |v| v.is_enabled())
+                                    || include_token_balances;
+                                let include_logs = fs
+                                    .and_then(|f| f.log_fields.as_ref())
+                                    .map_or(false, |v| v.is_enabled());
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
-                                    include_token_balances: instr
-                                        .include_token_balances
-                                        .unwrap_or(false),
-                                    include_transaction: instr.include_transaction.unwrap_or(true)
-                                        || instr.include_token_balances.unwrap_or(false),
-                                    include_logs: instr.include_logs.unwrap_or(false),
+                                    include_token_balances,
+                                    include_transaction,
+                                    include_logs,
                                     account_filters: instr
                                         .account_filters
                                         .as_ref()
@@ -3292,7 +3300,7 @@ mod test {
                         "CreateMetadataAccountV3",
                         Some("0x21"),
                         1,
-                        true,
+                        false,
                         false,
                         false,
                         0

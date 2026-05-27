@@ -18,5 +18,5 @@ chains:
               - position: 0
                 values:
                   - metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-            include_transaction: true
-            include_logs: false
+            field_selection:
+              transaction_fields: true

@@ -16,7 +16,9 @@ chains:
         instructions:
           - name: CreateMetadataAccountV3
             discriminator: "0x21"
-            include_transaction: true
+            field_selection:
+              transaction_fields: true
           - name: UpdateMetadataAccountV2
             discriminator: "0x0f"
-            include_transaction: true
+            field_selection:
+              transaction_fields: true

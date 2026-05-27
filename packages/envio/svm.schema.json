@@ -281,25 +281,15 @@
             }
           ]
         },
-        "include_transaction": {
-          "description": "When true, also fetch the parent transaction for each matched instruction. Defaults to true so handlers can read tx signatures.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "include_logs": {
-          "description": "When true, also fetch program logs for each matched instruction.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "include_token_balances": {
-          "description": "When true, also fetch SPL Token / Token-2022 balance snapshots for the parent transaction. Implies include_transaction: true.",
-          "type": [
-            "boolean",
-            "null"
+        "field_selection": {
+          "description": "Select which additional data to fetch for each matched instruction. Each key accepts `true` (include all fields) or a list of field names (per-field selection, not yet supported). When absent, only the instruction itself is included.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SvmFieldSelection"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "accounts": {
@@ -382,6 +372,59 @@
       "additionalProperties": false,
       "required": [
         "any_of"
+      ]
+    },
+    "SvmFieldSelection": {
+      "type": "object",
+      "properties": {
+        "transaction_fields": {
+          "description": "Include the parent transaction for each matched instruction. Use `true` to include all fields.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldSelectionValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "log_fields": {
+          "description": "Include program logs scoped to each matched instruction. Use `true` to include all fields.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldSelectionValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "token_balance_fields": {
+          "description": "Include SPL Token / Token-2022 balance snapshots for the parent transaction. Implies transaction_fields: true. Use `true` to include all fields.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldSelectionValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "FieldSelectionValue": {
+      "description": "Value for a field-selection entry. `true` includes all fields;\na list of field names enables per-field selection (not yet supported).",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       ]
     },
     "ArgDef": {
