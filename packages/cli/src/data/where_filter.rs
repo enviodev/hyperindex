@@ -258,14 +258,15 @@ fn normalize_to_list(section: Section, name: &str, body: Value) -> Result<Vec<Va
         Value::String(_) | Value::Number(_) | Value::Bool(_) => Ok(vec![body]),
         Value::Array(arr) => Ok(arr),
         Value::Object(map) => {
+            let mut values = Vec::new();
             for (k, v) in &map {
                 match k.as_str() {
-                    "_eq" => return Ok(vec![v.clone()]),
+                    "_eq" => values.push(v.clone()),
                     "_in" => {
                         let arr = v.as_array().ok_or_else(|| {
                             anyhow!("`_in` on `{}` expects an array, got {}", label(), type_name(v))
                         })?;
-                        return Ok(arr.clone());
+                        values.extend(arr.iter().cloned());
                     }
                     other => bail!(
                         "Unsupported operator `{other}` on `{}`. Use a scalar, an array, `_eq`, or `_in`.",
@@ -273,7 +274,7 @@ fn normalize_to_list(section: Section, name: &str, body: Value) -> Result<Vec<Va
                     ),
                 }
             }
-            Ok(vec![])
+            Ok(values)
         }
         Value::Null => bail!("`{}` cannot be null", label()),
     }
@@ -360,6 +361,12 @@ mod tests {
             "{ // comment\n  block: { number: { _gte: 100, } },\n  log: { srcAddress: '0xa', }, }",
         );
         assert_eq!((f.from_block, f.log_filters.len()), (Some(100), 1));
+    }
+
+    #[test]
+    fn case_insensitive_block_range() {
+        let f = pf("{ block: { NUMBER: { _gte: 500 } } }");
+        assert_eq!(f.from_block, Some(500));
     }
 
     #[test]
