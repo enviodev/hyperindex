@@ -1018,6 +1018,7 @@ let injectedTaskReducer = (
             ~batch,
             ~inMemoryStore,
             ~isInReorgThreshold,
+            ~isRealtime=state.chainManager.isRealtime,
             ~loadManager=state.loadManager,
             ~ctx=state.ctx,
             ~chainFetchers=state.chainManager.chainFetchers,

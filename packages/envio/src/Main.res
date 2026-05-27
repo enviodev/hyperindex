@@ -101,6 +101,9 @@ let getInitialChainState = (~chainId: int): option<Persistence.initialChainState
 
 // Importing `generated` must not trigger `Config.loadWithoutRegistrations()`,
 // so the exported indexer calls this lazily on first `indexer.chains` access.
+// When globalGsManagerRef is set, returns the live publicChain objects from
+// chain fetchers. Otherwise builds temporary ChainContext instances from
+// config + persistence state.
 let buildChainsObject = (~config: Config.t) => {
   let chainIds = []
   let chains = Utils.Object.createNullObject()
@@ -108,131 +111,86 @@ let buildChainsObject = (~config: Config.t) => {
   ->ChainMap.values
   ->Array.forEach(chainConfig => {
     let chainIdStr = chainConfig.id->Int.toString
-
     chainIds->Array.push(chainConfig.id)->ignore
 
-    let chainObj = Utils.Object.createNullObject()
-    chainObj
-    ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
-    ->Utils.Object.defineProperty(
-      "startBlock",
-      {
-        enumerable: true,
-        get: () => {
-          switch getInitialChainState(~chainId=chainConfig.id) {
-          | Some(chainState) => chainState.startBlock
-          | None => chainConfig.startBlock
-          }
-        },
-      },
-    )
-    ->Utils.Object.defineProperty(
-      "endBlock",
-      {
-        enumerable: true,
-        get: () => {
-          // Persistence may store endBlock=None (eg the test indexer's
-          // auto-exit mode where the user didn't specify an endBlock).
-          // Only override the config when persistence has an explicit value.
-          switch getInitialChainState(~chainId=chainConfig.id) {
-          | Some({endBlock: Some(_) as eb}) => eb
-          | _ => chainConfig.endBlock
-          }
-        },
-      },
-    )
-    ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
-    ->Utils.Object.defineProperty(
-      "isRealtime",
-      {
-        enumerable: true,
-        get: () => {
-          switch globalGsManagerRef.contents {
-          | Some(gsManager) => (gsManager->GlobalStateManager.getState).chainManager.isRealtime
-          // Before the GlobalStateManager is available (eg during handler
-          // module load after resume), derive from persistence: every chain
-          // must have previously caught up to head or endBlock. Mirror the
-          // ChainManager.makeFromDbState path: updateSyncTimeOnRestart wipes
-          // the saved timestamps so a restart re-enters backfill.
-          | None if Env.updateSyncTimeOnRestart => false
-          | None =>
-            config.chainMap
-            ->ChainMap.values
-            ->Array.every(c =>
-              switch getInitialChainState(~chainId=c.id) {
-              | Some(chainState) => chainState.timestampCaughtUpToHeadOrEndblock->Option.isSome
-              | None => false
-              }
+    let chainObj = switch globalGsManagerRef.contents {
+    | Some(gsManager) =>
+      let state = gsManager->GlobalStateManager.getState
+      let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
+      let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+      let params = chainFetcher.publicChain->ChainContext.getParams
+      params.fetchState = chainFetcher.fetchState
+      params.isRealtime = state.chainManager.isRealtime
+      chainFetcher.publicChain->(Utils.magic: Internal.chainInfo => {..})
+    | None =>
+      let initialChainState = getInitialChainState(~chainId=chainConfig.id)
+      let startBlock = switch initialChainState {
+      | Some(chainState) => chainState.startBlock
+      | None => chainConfig.startBlock
+      }
+      let endBlock = switch initialChainState {
+      | Some({endBlock: Some(_) as eb}) => eb
+      | _ => chainConfig.endBlock
+      }
+      let indexingAddresses = {
+        let addrs = Dict.make()
+        chainConfig.contracts->Array.forEach(contract => {
+          contract.addresses->Array.forEach(
+            address => {
+              addrs->Dict.set(
+                address->(Utils.magic: Address.t => string),
+                {
+                  FetchState.address,
+                  contractName: contract.name,
+                  registrationBlock: -1,
+                  effectiveStartBlock: chainConfig.startBlock,
+                },
+              )
+            },
+          )
+        })
+        switch initialChainState {
+        | Some(chainState) =>
+          chainState.indexingAddresses->Array.forEach(dc => {
+            addrs->Dict.set(
+              dc.address->(Utils.magic: Address.t => string),
+              {
+                FetchState.address: dc.address,
+                contractName: dc.contractName,
+                registrationBlock: dc.registrationBlock,
+                effectiveStartBlock: chainConfig.startBlock,
+              },
             )
+          })
+        | None => ()
+        }
+        addrs
+      }
+      let isRealtime = if Env.updateSyncTimeOnRestart {
+        false
+      } else {
+        config.chainMap
+        ->ChainMap.values
+        ->Array.every(c =>
+          switch getInitialChainState(~chainId=c.id) {
+          | Some(chainState) => chainState.timestampCaughtUpToHeadOrEndblock->Option.isSome
+          | None => false
           }
-        },
-      },
-    )
-    ->ignore
+        )
+      }
+      ChainContext.makeFromConfig(
+        ~chainConfig,
+        ~startBlock,
+        ~endBlock,
+        ~indexingAddresses,
+        ~isRealtime,
+      )->(Utils.magic: Internal.chainInfo => {..})
+    }
 
-    // Add contracts to chain object
-    chainConfig.contracts->Array.forEach(contract => {
-      let contractObj = Utils.Object.createNullObject()
-      contractObj
-      ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: contract.name})
-      ->Utils.Object.definePropertyWithValue("abi", {enumerable: true, value: contract.abi})
-      ->Utils.Object.defineProperty(
-        "addresses",
-        {
-          enumerable: true,
-          get: () => {
-            switch globalGsManagerRef.contents {
-            | Some(gsManager) => {
-                let state = gsManager->GlobalStateManager.getState
-                let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
-                let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-                let indexingAddresses = chainFetcher.fetchState.indexingAddresses
-
-                // Collect all addresses for this contract name from indexingAddresses
-                let addresses = []
-                let values = indexingAddresses->Dict.valuesToArray
-                for idx in 0 to values->Array.length - 1 {
-                  let indexingContract = values->Array.getUnsafe(idx)
-                  if indexingContract.contractName === contract.name {
-                    addresses->Array.push(indexingContract.address)->ignore
-                  }
-                }
-                addresses
-              }
-            // Before the GlobalStateManager is available (eg during handler
-            // module load after resume), combine static addresses from config
-            // with dynamic contracts persisted in the database.
-            | None =>
-              switch getInitialChainState(~chainId=chainConfig.id) {
-              | Some(chainState) =>
-                let addresses = contract.addresses->Array.copy
-                chainState.indexingAddresses->Array.forEach(
-                  dc => {
-                    if dc.contractName === contract.name {
-                      addresses->Array.push(dc.address)->ignore
-                    }
-                  },
-                )
-                addresses
-              | None => contract.addresses
-              }
-            }
-          },
-        },
-      )
-      ->ignore
-
-      chainObj
-      ->Utils.Object.definePropertyWithValue(contract.name, {enumerable: true, value: contractObj})
-      ->ignore
-    })
-
-    // Primary key is chain ID as string
     chains
     ->Utils.Object.definePropertyWithValue(chainIdStr, {enumerable: true, value: chainObj})
     ->ignore
 
-    // If chain has a name different from ID, add non-enumerable alias
     if chainConfig.name !== chainIdStr {
       chains
       ->Utils.Object.definePropertyWithValue(chainConfig.name, {enumerable: false, value: chainObj})

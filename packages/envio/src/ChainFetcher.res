@@ -10,6 +10,7 @@ type t = {
   fetchState: FetchState.t,
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
+  publicChain: Internal.chainInfo,
   isProgressAtHead: bool,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   committedProgressBlockNumber: int,
@@ -238,9 +239,16 @@ let make = (
   | Config.CustomSources(sources) => sources
   }
 
+  let publicChain = ChainContext.makeChainContext({
+    chainConfig,
+    fetchState,
+    isRealtime,
+  })
+
   {
     logger,
     chainConfig,
+    publicChain,
     sourceManager: SourceManager.make(
       ~sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,

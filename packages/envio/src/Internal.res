@@ -299,12 +299,8 @@ type entityHandlerContext<'entity> = {
   deleteUnsafe: string => unit,
 }
 
-type chainInfo = {
-  id: int,
-  // True once every chain has caught up to head/endBlock and entered real-time
-  // indexing mode. False while any chain is still backfilling.
-  isRealtime: bool,
-}
+type chainContract
+type chainInfo
 
 type chains = dict<chainInfo>
 

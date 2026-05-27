@@ -537,7 +537,7 @@ type EventIdentity<
  * caller, preload flag, chain state, and the entity operations map derived
  * from the project schema.
  */
-type BaseHandlerContext<Config extends IndexerConfigTypes = GlobalConfig, ChainId = unknown> = {
+type BaseHandlerContext<Config extends IndexerConfigTypes = GlobalConfig, Chain = unknown> = {
   /** Access the logger instance. */
   readonly log: Logger;
   /** Call an Effect with the given input. */
@@ -545,27 +545,24 @@ type BaseHandlerContext<Config extends IndexerConfigTypes = GlobalConfig, ChainI
   /** True when running in preload mode (parallel pre-run for cache population). */
   readonly isPreload: boolean;
   /** Chain state for the current event's chain. */
-  readonly chain: {
-    readonly id: ChainId;
-    readonly isRealtime: boolean;
-  };
+  readonly chain: Chain;
 } & {
   readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
 };
 
 /** Context for onEvent handlers. Includes entity operations, logging, and chain info. */
 export type EvmOnEventContext<Config extends IndexerConfigTypes = GlobalConfig> = Prettify<
-  BaseHandlerContext<Config, EvmChainIds<Config>>
+  BaseHandlerContext<Config, EvmChain<EvmChainIds<Config>, EvmContractNames<Config>>>
 >;
 
 /** Context for onEvent handlers in Fuel ecosystem. */
 export type FuelOnEventContext<Config extends IndexerConfigTypes = GlobalConfig> = Prettify<
-  BaseHandlerContext<Config, FuelChainIds<Config>>
+  BaseHandlerContext<Config, FuelChain<FuelChainIds<Config>, FuelContractNames<Config>>>
 >;
 
 /** Context for `indexer.onSlot` handlers in SVM ecosystem. */
 export type SvmOnSlotContext<Config extends IndexerConfigTypes = GlobalConfig> = Prettify<
-  BaseHandlerContext<Config, SvmChainIds<Config>>
+  BaseHandlerContext<Config, SvmChain<SvmChainIds<Config>>>
 >;
 
 /** Entity operations available in handler contexts. */
