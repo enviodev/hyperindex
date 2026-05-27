@@ -1037,14 +1037,14 @@ impl SystemConfig {
                                 let fs = instr.field_selection.as_ref();
                                 let include_token_balances = fs
                                     .and_then(|f| f.token_balance_fields.as_ref())
-                                    .map_or(false, |v| v.is_enabled());
+                                    .is_some_and(|v| v.is_enabled());
                                 let include_transaction = fs
                                     .and_then(|f| f.transaction_fields.as_ref())
-                                    .map_or(false, |v| v.is_enabled())
+                                    .is_some_and(|v| v.is_enabled())
                                     || include_token_balances;
                                 let include_logs = fs
                                     .and_then(|f| f.log_fields.as_ref())
-                                    .map_or(false, |v| v.is_enabled());
+                                    .is_some_and(|v| v.is_enabled());
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,

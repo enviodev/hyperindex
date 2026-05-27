@@ -601,7 +601,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       let capitalizedName = contractName->Utils.String.capitalize
       let abi = contractConfig["abi"]->(Utils.magic: JSON.t => EvmTypes.Abi.t)
       let eventSignatures = switch contractConfig["events"] {
-      | Some(events) => events->Array.map(eventItem => eventItem["event"])
+      | Some(events) => events->Array.map(eventItem => eventItem["sighash"])
       | None => []
       }
       let widened =
