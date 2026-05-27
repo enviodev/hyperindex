@@ -952,21 +952,12 @@ pub mod svm {
         pub account_filters: Option<AccountFilters>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "When true, also fetch the parent transaction for each matched \
-                           instruction. Defaults to true so handlers can read tx signatures."
+            description = "Select which additional data to fetch for each matched instruction. \
+                           Each key accepts `true` (include all fields) or a list of field \
+                           names (per-field selection, not yet supported). When absent, only \
+                           the instruction itself is included."
         )]
-        pub include_transaction: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "When true, also fetch program logs for each matched instruction."
-        )]
-        pub include_logs: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "When true, also fetch SPL Token / Token-2022 balance snapshots \
-                           for the parent transaction. Implies include_transaction: true."
-        )]
-        pub include_token_balances: Option<bool>,
+        pub field_selection: Option<SvmFieldSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Optional positional account names. The Nth entry names \
@@ -1110,6 +1101,52 @@ pub mod svm {
                 }
             }
         }
+    }
+
+    /// Value for a field-selection entry. `true` includes all fields;
+    /// a list of field names enables per-field selection (not yet supported).
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum FieldSelectionValue {
+        All(bool),
+        Fields(Vec<String>),
+    }
+
+    impl FieldSelectionValue {
+        pub fn is_enabled(&self) -> bool {
+            match self {
+                FieldSelectionValue::All(b) => *b,
+                FieldSelectionValue::Fields(f) => !f.is_empty(),
+            }
+        }
+
+        pub fn is_per_field(&self) -> bool {
+            matches!(self, FieldSelectionValue::Fields(_))
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct SvmFieldSelection {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Include the parent transaction for each matched instruction. \
+                           Use `true` to include all fields."
+        )]
+        pub transaction_fields: Option<FieldSelectionValue>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Include program logs scoped to each matched instruction. \
+                           Use `true` to include all fields."
+        )]
+        pub log_fields: Option<FieldSelectionValue>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Include SPL Token / Token-2022 balance snapshots for the \
+                           parent transaction. Implies transaction_fields: true. \
+                           Use `true` to include all fields."
+        )]
+        pub token_balance_fields: Option<FieldSelectionValue>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -1626,8 +1663,8 @@ chains:
             account_filters:
               - position: 0
                 values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-            include_transaction: true
-            include_logs: false
+            field_selection:
+              transaction_fields: true
 "#;
 
         #[test]
@@ -1655,9 +1692,7 @@ chains:
                             discriminator: Some("0x21".to_string()),
                             is_inner: None,
                             account_filters: None,
-                            include_transaction: None,
-                            include_logs: None,
-                            include_token_balances: None,
+                            field_selection: None,
                             accounts: None,
                             args: None,
                         },
@@ -1671,9 +1706,11 @@ chains:
                                     "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
                                 ],
                             }])),
-                            include_transaction: Some(true),
-                            include_logs: Some(false),
-                            include_token_balances: None,
+                            field_selection: Some(SvmFieldSelection {
+                                transaction_fields: Some(FieldSelectionValue::All(true)),
+                                log_fields: None,
+                                token_balance_fields: None,
+                            }),
                             accounts: None,
                             args: None,
                         },
