@@ -45,43 +45,83 @@ fn envio_data(args: &[&str]) -> Output {
 fn height_returns_a_number() {
     let out = envio_data(&["knownHeight", "--chain=base"]);
     assert!(out.ok, "envio data failed:\n{out}");
-    assert!(
-        out.stdout.starts_with("height[1]{value}:\n"),
-        "unexpected output:\n{out}",
-    );
-    let height_line = out.stdout.lines().nth(1).unwrap_or("").trim();
-    let height: u64 = height_line
+
+    let lines: Vec<&str> = out.stdout.lines().collect();
+    assert_eq!(lines[0], "height[1]{value}:", "unexpected stdout:\n{out}");
+    let height: u64 = lines[1]
+        .trim()
         .parse()
         .unwrap_or_else(|_| panic!("height should be a number:\n{out}"));
     assert!(height > 1_000_000, "height suspiciously low:\n{out}");
+
+    assert!(
+        out.stderr.trim().starts_with("Chain 8453 is at height"),
+        "unexpected stderr:\n{out}",
+    );
 }
 
+/// Historical block 20000000 on Ethereum mainnet — deterministic output.
+/// Queries USDT Transfer events (11 in this block).
 #[test]
-fn query_returns_blocks_and_logs() {
+fn query_returns_deterministic_block_and_log_data() {
     let out = envio_data(&[
         "block.number",
+        "block.gasUsed",
         "log.srcAddress",
-        "--chain=base",
-        "--where={ block: { number: { _gte: 25000000, _lte: 25000020 } }, log: { srcAddress: \"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913\" } }",
+        "log.logIndex",
+        "--chain=1",
+        "--where={ block: { number: { _gte: 20000000, _lte: 20000000 } }, log: { srcAddress: \"0xdAC17F958D2ee523a2206206994597C13D831ec7\", topic0: \"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef\" } }",
     ]);
     assert!(out.ok, "envio data failed:\n{out}");
+
+    assert_eq!(
+        out.stdout,
+        "\
+blocks[1]{number,gasUsed}:
+  20000000,11089692
+logs[11]{srcAddress,logIndex}:
+  0xdac17f958d2ee523a2206206994597c13d831ec7,86
+  0xdac17f958d2ee523a2206206994597c13d831ec7,89
+  0xdac17f958d2ee523a2206206994597c13d831ec7,108
+  0xdac17f958d2ee523a2206206994597c13d831ec7,111
+  0xdac17f958d2ee523a2206206994597c13d831ec7,112
+  0xdac17f958d2ee523a2206206994597c13d831ec7,125
+  0xdac17f958d2ee523a2206206994597c13d831ec7,132
+  0xdac17f958d2ee523a2206206994597c13d831ec7,133
+  0xdac17f958d2ee523a2206206994597c13d831ec7,172
+  0xdac17f958d2ee523a2206206994597c13d831ec7,208
+  0xdac17f958d2ee523a2206206994597c13d831ec7,209
+",
+        "unexpected stdout:\n{out}",
+    );
+
     assert!(
-        out.stdout.starts_with("blocks[") && out.stdout.contains("\nlogs["),
-        "unexpected output:\n{out}",
+        out.stderr.trim().starts_with("archive_height:"),
+        "unexpected stderr:\n{out}",
     );
     assert!(
-        out.stdout
-            .contains("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"),
-        "missing USDC address:\n{out}",
+        out.stderr.contains("next_block: 20000001"),
+        "unexpected stderr:\n{out}",
     );
+    assert!(out.stderr.contains("Done"), "unexpected stderr:\n{out}",);
 }
 
 #[test]
 fn no_where_pages_forward_from_genesis() {
     let out = envio_data(&["block.number", "--chain=base"]);
     assert!(out.ok, "envio data failed:\n{out}");
+
+    assert_eq!(
+        out.stdout, "blocks[0]{number}:\n",
+        "unexpected stdout:\n{out}",
+    );
+
     assert!(
-        out.stderr.starts_with("\narchive_height:"),
-        "unexpected output:\n{out}",
+        out.stderr.trim().starts_with("archive_height:"),
+        "unexpected stderr:\n{out}",
+    );
+    assert!(
+        out.stderr.contains("next_block:"),
+        "unexpected stderr:\n{out}",
     );
 }
