@@ -134,11 +134,11 @@ fn binary_as_decimal(bytes: &[u8]) -> String {
 }
 
 pub fn render_height(value: i64) -> String {
-    render_table("height", &["value"], &[vec![value.to_string()]])
+    render_table("knownHeight", &["value"], &[vec![value.to_string()]])
 }
 
 pub fn render_archive_height(value: i64) -> String {
-    render_table("archiveHeight", &["value"], &[vec![value.to_string()]])
+    render_table("knownHeight", &["value"], &[vec![value.to_string()]])
 }
 
 #[cfg(test)]

@@ -28,6 +28,31 @@ impl std::fmt::Display for Output {
     }
 }
 
+impl Output {
+    fn stderr_template(&self) -> String {
+        self.stderr
+            .trim()
+            .lines()
+            .map(|line| {
+                let mut result = String::new();
+                let mut chars = line.chars().peekable();
+                while let Some(ch) = chars.next() {
+                    if ch.is_ascii_digit() {
+                        while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+                            chars.next();
+                        }
+                        result.push_str("<N>");
+                    } else {
+                        result.push(ch);
+                    }
+                }
+                result
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
 fn envio_data(args: &[&str]) -> Output {
     let output = Command::new("cargo")
         .args(["run", "--quiet", "--example", "script", "--", "data"])
@@ -47,15 +72,19 @@ fn height_returns_a_number() {
     assert!(out.ok, "envio data failed:\n{out}");
 
     let lines: Vec<&str> = out.stdout.lines().collect();
-    assert_eq!(lines[0], "height[1]{value}:", "unexpected stdout:\n{out}");
+    assert_eq!(
+        lines[0], "knownHeight[1]{value}:",
+        "unexpected stdout:\n{out}"
+    );
     let height: u64 = lines[1]
         .trim()
         .parse()
         .unwrap_or_else(|_| panic!("height should be a number:\n{out}"));
     assert!(height > 1_000_000, "height suspiciously low:\n{out}");
 
-    assert!(
-        out.stderr.trim().starts_with("Chain 8453 is at height"),
+    assert_eq!(
+        out.stderr_template(),
+        "Chain <N> is at height <N>.",
         "unexpected stderr:\n{out}",
     );
 }
@@ -95,15 +124,14 @@ logs[11]{srcAddress,logIndex}:
         "unexpected stdout:\n{out}",
     );
 
-    assert!(
-        out.stderr.trim().starts_with("archive_height:"),
+    assert_eq!(
+        out.stderr_template(),
+        "archive_height: <N>\n\
+         next_block: <N>\n\
+         \n\
+         Done \u{2014} next_block (<N>) reached the end of the requested range.",
         "unexpected stderr:\n{out}",
     );
-    assert!(
-        out.stderr.contains("next_block: 20000001"),
-        "unexpected stderr:\n{out}",
-    );
-    assert!(out.stderr.contains("Done"), "unexpected stderr:\n{out}",);
 }
 
 #[test]
@@ -116,12 +144,12 @@ fn no_where_pages_forward_from_genesis() {
         "unexpected stdout:\n{out}",
     );
 
-    assert!(
-        out.stderr.trim().starts_with("archive_height:"),
-        "unexpected stderr:\n{out}",
-    );
-    assert!(
-        out.stderr.contains("next_block:"),
+    assert_eq!(
+        out.stderr_template(),
+        "archive_height: <N>\n\
+         next_block: <N>\n\
+         \n\
+         Done \u{2014} next_block (<N>) reached the end of the requested range.",
         "unexpected stderr:\n{out}",
     );
 }
