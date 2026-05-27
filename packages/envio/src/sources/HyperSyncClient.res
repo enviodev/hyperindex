@@ -333,7 +333,7 @@ type queryResponse = {
   totalExecutionTime: int,
   data: queryResponseData,
   rollbackGuard: option<ResponseTypes.rollbackGuard>,
-  rateLimit: option<rateLimitInfo>,
+  rateLimit: rateLimitInfo,
 }
 
 type t = {

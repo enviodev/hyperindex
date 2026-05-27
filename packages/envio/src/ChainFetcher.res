@@ -468,6 +468,9 @@ Finds the last known valid block number below the reorg block
 If not found, returns the highest block below threshold
 */
 let getLastKnownValidBlock = async (chainFetcher: t, ~reorgBlockNumber: int) => {
+  // Don't include the reorg block itself — different source instances
+  // may have mismatching hashes at the head, so we always rollback
+  // the block where we detected the reorg.
   let scannedBlockNumbers =
     chainFetcher.reorgDetection->ReorgDetection.getThresholdBlockNumbersBelowBlock(
       ~blockNumber=reorgBlockNumber,

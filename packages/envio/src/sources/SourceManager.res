@@ -748,22 +748,28 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>) => {
       }
     } catch {
     | exn => {
-        let isRateLimited = switch exn->JsExn.anyToExnInternal {
+        let rateLimitResetMs = switch exn->JsExn.anyToExnInternal {
         | JsExn(e) =>
           e
           ->JsExn.message
-          ->Option.map(msg => msg->String.includes("rate limited"))
-          ->Option.getOr(false)
-        | _ => false
+          ->Option.flatMap(msg =>
+            if msg->String.startsWith("RATE_LIMITED:") {
+              msg->String.slice(~start=12, ~end=msg->String.length)->Int.fromString
+            } else {
+              None
+            }
+          )
+        | _ => None
         }
 
-        if isRateLimited {
+        switch rateLimitResetMs {
+        | Some(resetMs) =>
           logger->Logging.childWarn({
             "msg": "Rate limited by HyperSync while fetching block hashes. To increase your rate limits, upgrade your plan at https://app.envio.dev/api-tokens. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens",
             "retry": retry,
           })
-          await Utils.delay(1000)
-        } else {
+          await Utils.delay(Pervasives.min(resetMs, 60_000))
+        | None =>
           let backoffMillis = switch retry {
           | 0 => 500
           | _ => 1000 * retry

@@ -39,6 +39,16 @@ fn convert_rate_limit_info(info: &hypersync_client::RateLimitInfo) -> NapiRateLi
     }
 }
 
+fn make_rate_limit_err(inner: &hypersync_client::Client, e: anyhow::Error) -> napi::Error {
+    if let Some(info) = inner.rate_limit_info() {
+        if info.is_rate_limited() {
+            let reset_ms = info.suggested_wait_secs().unwrap_or(1) * 1000;
+            return napi::Error::from_reason(format!("RATE_LIMITED:{reset_ms}"));
+        }
+    }
+    map_err(e.context("run inner query"))
+}
+
 /// HyperSync client for querying blockchain data.
 #[napi]
 pub struct HypersyncClient {
@@ -71,8 +81,7 @@ impl HypersyncClient {
             .inner
             .get_with_rate_limit(&query)
             .await
-            .context("run inner query")
-            .map_err(map_err)?;
+            .map_err(|e| make_rate_limit_err(&self.inner, e))?;
         let rate_limit = convert_rate_limit_info(&res.rate_limit);
         convert_response(res.response, self.enable_checksum_addresses, rate_limit)
             .context("convert response")
@@ -86,8 +95,7 @@ impl HypersyncClient {
             .inner
             .get_events(query)
             .await
-            .context("run inner query")
-            .map_err(map_err)?;
+            .map_err(|e| make_rate_limit_err(&self.inner, e))?;
         let rate_limit = self
             .inner
             .rate_limit_info()
@@ -112,7 +120,7 @@ pub struct QueryResponse {
     pub total_execution_time: i64,
     pub data: QueryResponseData,
     pub rollback_guard: Option<RollbackGuard>,
-    pub rate_limit: Option<NapiRateLimitInfo>,
+    pub rate_limit: NapiRateLimitInfo,
 }
 
 #[napi(object)]
@@ -178,7 +186,7 @@ fn convert_response(
             .map(RollbackGuard::try_from)
             .transpose()
             .context("convert rollback guard")?,
-        rate_limit: Some(rate_limit),
+        rate_limit,
     })
 }
 

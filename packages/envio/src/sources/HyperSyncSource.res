@@ -302,22 +302,27 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         ),
       )
     | exn => {
-        let isRateLimited = switch exn->JsExn.anyToExnInternal {
+        let rateLimitResetMs = switch exn->JsExn.anyToExnInternal {
         | JsExn(e) =>
           e
           ->JsExn.message
-          ->Option.map(msg => msg->String.includes("rate limited"))
-          ->Option.getOr(false)
-        | _ => false
+          ->Option.flatMap(msg =>
+            if msg->String.startsWith("RATE_LIMITED:") {
+              msg->String.slice(~start=12, ~end=msg->String.length)->Int.fromString
+            } else {
+              None
+            }
+          )
+        | _ => None
         }
         throw(
           Source.GetItemsError(
             Source.FailedGettingItems({
               exn,
               attemptedToBlock: toBlock->Option.getOr(knownHeight),
-              retry: if isRateLimited {
-                RateLimited({resetMs: 1000})
-              } else {
+              retry: switch rateLimitResetMs {
+              | Some(resetMs) => RateLimited({resetMs: resetMs})
+              | None =>
                 WithBackoff({
                   message: `Unexpected issue while fetching events from HyperSync client. Attempt a retry.`,
                   backoffMillis: switch retry {
