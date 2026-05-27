@@ -13,7 +13,6 @@ module ChainLine = {
     ~endBlock,
     ~poweredByHyperSync,
     ~eventsProcessed,
-    ~rateLimitTimeMs,
   ) => {
     let chainsWidth = Pervasives.min(stdoutColumns - 2, 60)
     let headerWidth = maxChainIdLength + 10 // 10 for additional text
@@ -60,14 +59,6 @@ module ChainLine = {
           : <Box flexDirection={Row}>
               <Text color={Gray}> {eventsText->String.trim->React.string} </Text>
             </Box>}
-        {rateLimitTimeMs > 1000.
-          ? {
-              let rateLimitSecs = Math.round(rateLimitTimeMs /. 1000.)
-              <Text color={Danger}>
-                {`⚠ ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting on rate limits — upgrade at https://app.envio.dev/api-tokens`->React.string}
-              </Text>
-            }
-          : React.null}
         <Newline />
       </Box>
     | (_, _, _) =>
@@ -259,7 +250,6 @@ module App = {
           stdoutColumns={stdoutColumns}
           poweredByHyperSync={chainData.poweredByHyperSync}
           eventsProcessed={chainData.eventsProcessed}
-          rateLimitTimeMs={chainData.rateLimitTimeMs}
         />
       })
       ->React.array}
@@ -268,6 +258,18 @@ module App = {
         eventsPerSecond={SyncETA.isIndexerFullySynced(chains) ? None : eventsPerSecond}
       />
       <SyncETA chains indexerStartTime=state.indexerStartTime />
+      {
+        let maxRateLimitTimeMs =
+          chains->Array.reduce(0., (acc, chain) => Pervasives.max(acc, chain.rateLimitTimeMs))
+        maxRateLimitTimeMs > 1000.
+          ? {
+              let rateLimitSecs = Math.round(maxRateLimitTimeMs /. 1000.)
+              <Text color={Danger}>
+                {`Rate limited: ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting — upgrade at https://app.envio.dev/api-tokens`->React.string}
+              </Text>
+            }
+          : React.null
+      }
       <Newline />
       <Box flexDirection={Row}>
         <Text> {"GraphQL: "->React.string} </Text>

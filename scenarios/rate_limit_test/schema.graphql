@@ -1,0 +1,7 @@
+type Transfer {
+  id: ID!
+  from: String!
+  to: String!
+  value: BigInt!
+  blockNumber: Int!
+}
