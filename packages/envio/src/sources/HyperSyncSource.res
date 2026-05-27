@@ -203,7 +203,9 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         exn->ErrorHandling.mkLogAndRaise(
           ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI",
         )
-      | decoder => decoder
+      | decoder =>
+        hscDecoder := Some(decoder)
+        decoder
       }
     }
   }

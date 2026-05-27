@@ -73,11 +73,11 @@ impl Decoder {
         tokio::task::spawn_blocking(move || {
             events
                 .iter()
-                .map(|event| decoder.decode_to_params(&event.log).map_err(map_err))
-                .collect::<napi::Result<Vec<_>>>()
+                .map(|event| decoder.decode_to_params(&event.log).ok().flatten())
+                .collect::<Vec<_>>()
         })
         .await
-        .map_err(|e| map_err(anyhow::anyhow!("decode_logs worker join failure: {e}")))?
+        .map_err(|e| map_err(anyhow::anyhow!("decode_logs worker join failure: {e}")))
     }
 
     fn decode_to_params(&self, log: &Log) -> Result<Option<ParamValue>> {

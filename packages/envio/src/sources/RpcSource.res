@@ -1002,6 +1002,7 @@ let make = (
           allEventParams,
           ~checksumAddresses=!lowercaseAddresses,
         )
+        hscDecoder := Some(decoder)
         decoder
       }
     }
