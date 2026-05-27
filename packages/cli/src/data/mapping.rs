@@ -3,6 +3,12 @@ use hypersync_client::net_types::{
 };
 use strum::IntoEnumIterator;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnFormat {
+    Decimal,
+    Hex,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Section {
     Block,
@@ -33,6 +39,57 @@ impl TypedField {
             TypedField::Block(f) => f.to_string(),
             TypedField::Transaction(f) => f.to_string(),
             TypedField::Log(f) => f.to_string(),
+        }
+    }
+
+    pub fn column_format(self) -> ColumnFormat {
+        match self {
+            TypedField::Block(f) => match f {
+                BlockField::Difficulty
+                | BlockField::TotalDifficulty
+                | BlockField::Size
+                | BlockField::GasLimit
+                | BlockField::GasUsed
+                | BlockField::Timestamp
+                | BlockField::BaseFeePerGas
+                | BlockField::BlobGasUsed
+                | BlockField::ExcessBlobGas
+                | BlockField::SendCount => ColumnFormat::Decimal,
+                _ => ColumnFormat::Hex,
+            },
+            TypedField::Transaction(f) => match f {
+                TransactionField::Gas
+                | TransactionField::GasPrice
+                | TransactionField::Nonce
+                | TransactionField::Value
+                | TransactionField::V
+                | TransactionField::R
+                | TransactionField::S
+                | TransactionField::MaxPriorityFeePerGas
+                | TransactionField::MaxFeePerGas
+                | TransactionField::ChainId
+                | TransactionField::CumulativeGasUsed
+                | TransactionField::EffectiveGasPrice
+                | TransactionField::GasUsed
+                | TransactionField::YParity
+                | TransactionField::L1Fee
+                | TransactionField::L1GasPrice
+                | TransactionField::L1GasUsed
+                | TransactionField::L1FeeScalar
+                | TransactionField::GasUsedForL1
+                | TransactionField::MaxFeePerBlobGas
+                | TransactionField::BlobGasPrice
+                | TransactionField::BlobGasUsed
+                | TransactionField::DepositNonce
+                | TransactionField::DepositReceiptVersion
+                | TransactionField::Mint
+                | TransactionField::L1BaseFeeScalar
+                | TransactionField::L1BlobBaseFee
+                | TransactionField::L1BlobBaseFeeScalar
+                | TransactionField::L1BlockNumber => ColumnFormat::Decimal,
+                _ => ColumnFormat::Hex,
+            },
+            TypedField::Log(_) => ColumnFormat::Hex,
         }
     }
 }

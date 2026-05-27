@@ -5,7 +5,7 @@ use arrow::datatypes::DataType;
 use hypersync_client::ArrowResponse;
 
 use super::field_selection::{Column, Selection};
-use super::mapping::Section;
+use super::mapping::{ColumnFormat, Section};
 
 pub fn render_table(name: &str, columns: &[&str], rows: &[Vec<String>]) -> String {
     let mut out = String::new();
@@ -66,13 +66,19 @@ pub fn render_arrow_response(selection: &Selection, response: &ArrowResponse) ->
         };
 
         let column_keys: Vec<String> = cols.iter().map(|c| c.field.column_name()).collect();
-        let rows = extract_rows(batches, &column_keys);
+        let column_formats: Vec<ColumnFormat> =
+            cols.iter().map(|c| c.field.column_format()).collect();
+        let rows = extract_rows(batches, &column_keys, &column_formats);
         out.push_str(&render_table(plural, &col_names, &rows));
     }
     out
 }
 
-fn extract_rows(batches: &[RecordBatch], column_keys: &[String]) -> Vec<Vec<String>> {
+fn extract_rows(
+    batches: &[RecordBatch],
+    column_keys: &[String],
+    column_formats: &[ColumnFormat],
+) -> Vec<Vec<String>> {
     let mut rows = Vec::new();
     for batch in batches {
         let arrays: Vec<Option<&dyn Array>> = column_keys
@@ -82,8 +88,9 @@ fn extract_rows(batches: &[RecordBatch], column_keys: &[String]) -> Vec<Vec<Stri
         for row_idx in 0..batch.num_rows() {
             let row: Vec<String> = arrays
                 .iter()
-                .map(|arr| match arr {
-                    Some(col) => cell_to_string(*col, row_idx),
+                .zip(column_formats.iter())
+                .map(|(arr, fmt)| match arr {
+                    Some(col) => cell_to_string(*col, row_idx, *fmt),
                     None => String::new(),
                 })
                 .collect();
@@ -93,7 +100,7 @@ fn extract_rows(batches: &[RecordBatch], column_keys: &[String]) -> Vec<Vec<Stri
     rows
 }
 
-fn cell_to_string(col: &dyn Array, row: usize) -> String {
+fn cell_to_string(col: &dyn Array, row: usize, fmt: ColumnFormat) -> String {
     if col.is_null(row) {
         return String::new();
     }
@@ -109,10 +116,21 @@ fn cell_to_string(col: &dyn Array, row: usize) -> String {
         DataType::Boolean => col.as_boolean().value(row).to_string(),
         DataType::Binary => {
             let bytes = col.as_binary::<i32>().value(row);
-            format!("0x{}", faster_hex::hex_string(bytes))
+            match fmt {
+                ColumnFormat::Decimal => binary_as_decimal(bytes),
+                ColumnFormat::Hex => format!("0x{}", faster_hex::hex_string(bytes)),
+            }
         }
         _ => String::new(),
     }
+}
+
+fn binary_as_decimal(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "0".to_string();
+    }
+    let val = ruint::aliases::U256::try_from_be_slice(bytes).unwrap_or_default();
+    val.to_string()
 }
 
 pub fn render_height(value: i64) -> String {
@@ -136,7 +154,7 @@ mod tests {
 
     #[test]
     fn empty_batches_render_zero_rows() {
-        let s = extract_rows(&[], &["number".to_string()]);
+        let s = extract_rows(&[], &["number".to_string()], &[ColumnFormat::Decimal]);
         assert!(s.is_empty());
     }
 }
