@@ -709,7 +709,7 @@ let executeQuery = async (
   responseRef.contents->Option.getUnsafe
 }
 
-let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~logger: Pino.t) => {
+let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>) => {
   let responseRef = ref(None)
   let retryRef = ref(0)
 
@@ -717,6 +717,9 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~logger
     let sourceState = switch sourceManager->getNextSource(~isRealtime=false) {
     | Some(s) => s
     | None =>
+      let logger = Logging.createChild(
+        ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
+      )
       %raw(`null`)->ErrorHandling.mkLogAndRaise(
         ~logger,
         ~msg="No data-sources available for fetching block hashes.",
@@ -725,6 +728,15 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~logger
     sourceManager.activeSource = sourceState.source
     let source = sourceState.source
     let retry = retryRef.contents
+
+    let logger = Logging.createChild(
+      ~params={
+        "chainId": source.chain->ChainMap.Chain.toChainId,
+        "logType": "Block Hash Query",
+        "source": source.name,
+        "retry": retry,
+      },
+    )
 
     try {
       let res = await source.getBlockHashes(~blockNumbers, ~logger)

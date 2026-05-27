@@ -479,7 +479,6 @@ let getLastKnownValidBlock = async (chainFetcher: t, ~reorgBlockNumber: int) => 
   | _ => {
       let blockNumbersAndHashes = await chainFetcher.sourceManager->SourceManager.getBlockHashes(
         ~blockNumbers=scannedBlockNumbers,
-        ~logger=chainFetcher.logger,
       )
 
       switch chainFetcher.reorgDetection->ReorgDetection.getLatestValidScannedBlock(

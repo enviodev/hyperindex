@@ -54,5 +54,4 @@ let makeGetHeightRetryInterval: (
 let getBlockHashes: (
   t,
   ~blockNumbers: array<int>,
-  ~logger: Pino.t,
 ) => promise<array<ReorgDetection.blockDataWithTimestamp>>
