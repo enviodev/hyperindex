@@ -13,6 +13,7 @@ module ChainLine = {
     ~endBlock,
     ~poweredByHyperSync,
     ~eventsProcessed,
+    ~rateLimitTimeMs,
   ) => {
     let chainsWidth = Pervasives.min(stdoutColumns - 2, 60)
     let headerWidth = maxChainIdLength + 10 // 10 for additional text
@@ -59,6 +60,14 @@ module ChainLine = {
           : <Box flexDirection={Row}>
               <Text color={Gray}> {eventsText->String.trim->React.string} </Text>
             </Box>}
+        {rateLimitTimeMs > 1000.
+          ? {
+              let rateLimitSecs = Math.round(rateLimitTimeMs /. 1000.)
+              <Text color={Danger}>
+                {`⚠ ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting on rate limits — upgrade at https://app.envio.dev/api-tokens`->React.string}
+              </Text>
+            }
+          : React.null}
         <Newline />
       </Box>
     | (_, _, _) =>
@@ -210,6 +219,7 @@ module App = {
             poweredByHyperSync: (
               cf.sourceManager->SourceManager.getActiveSource
             ).poweredByHyperSync,
+            rateLimitTimeMs: cf.sourceManager->SourceManager.getRateLimitTimeMs,
           }: TuiData.chain
         )
       })
@@ -249,6 +259,7 @@ module App = {
           stdoutColumns={stdoutColumns}
           poweredByHyperSync={chainData.poweredByHyperSync}
           eventsProcessed={chainData.eventsProcessed}
+          rateLimitTimeMs={chainData.rateLimitTimeMs}
         />
       })
       ->React.array}

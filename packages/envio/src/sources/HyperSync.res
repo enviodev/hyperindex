@@ -200,6 +200,8 @@ module GetLogs = {
       reraisIfRateLimited(exn)
       throw(exn)
     }
+
+    // Might happen when /height response was from another instance of HyperSync
     if res.nextBlock <= fromBlock {
       throw(Error(WrongInstance))
     }

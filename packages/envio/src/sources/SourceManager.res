@@ -28,14 +28,44 @@ type t = {
   getHeightRetryInterval: (~retry: int) => int,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
+  // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
   recoveryTimeout: float,
   mutable hasRealtime: bool,
   mutable rateLimitTimeMs: float,
+  mutable rateLimitWaiters: int,
+  mutable rateLimitStartTime: option<Hrtime.timeRef>,
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
-let getRateLimitTimeMs = sourceManager => sourceManager.rateLimitTimeMs
+
+let getRateLimitTimeMs = sourceManager =>
+  sourceManager.rateLimitTimeMs +.
+  switch sourceManager.rateLimitStartTime {
+  | Some(startTime) => startTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
+  | None => 0.0
+  }
+
+let startRateLimitTimeout = sourceManager => {
+  if sourceManager.rateLimitWaiters === 0 {
+    sourceManager.rateLimitStartTime = Some(Hrtime.makeTimer())
+  }
+  sourceManager.rateLimitWaiters = sourceManager.rateLimitWaiters + 1
+}
+
+let stopRateLimitTimeout = sourceManager => {
+  sourceManager.rateLimitWaiters = sourceManager.rateLimitWaiters - 1
+  if sourceManager.rateLimitWaiters === 0 {
+    switch sourceManager.rateLimitStartTime {
+    | Some(startTime) =>
+      sourceManager.rateLimitTimeMs =
+        sourceManager.rateLimitTimeMs +.
+        startTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
+      sourceManager.rateLimitStartTime = None
+    | None => ()
+    }
+  }
+}
 
 type sourceRole = Primary | Secondary
 
@@ -122,6 +152,8 @@ let make = (
     status: Idle,
     hasRealtime,
     rateLimitTimeMs: 0.0,
+    rateLimitWaiters: 0,
+    rateLimitStartTime: None,
   }
 }
 
@@ -602,9 +634,9 @@ let executeQuery = async (
       responseRef := Some(response)
     } catch {
     | Source.RateLimited({resetMs}) =>
-      let delayMs = Pervasives.min(resetMs, 60_000)
-      sourceManager.rateLimitTimeMs = sourceManager.rateLimitTimeMs +. delayMs->Int.toFloat
-      await Utils.delay(delayMs)
+      sourceManager->startRateLimitTimeout
+      await Utils.delay(Pervasives.min(resetMs, 60_000))
+      sourceManager->stopRateLimitTimeout
       retryRef := retryRef.contents + 1
 
     | Source.GetItemsError(error) =>
@@ -747,9 +779,9 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       }
     } catch {
     | Source.RateLimited({resetMs}) =>
-      let delayMs = Pervasives.min(resetMs, 60_000)
-      sourceManager.rateLimitTimeMs = sourceManager.rateLimitTimeMs +. delayMs->Int.toFloat
-      await Utils.delay(delayMs)
+      sourceManager->startRateLimitTimeout
+      await Utils.delay(Pervasives.min(resetMs, 60_000))
+      sourceManager->stopRateLimitTimeout
       retryRef := retryRef.contents + 1
 
     | exn =>
