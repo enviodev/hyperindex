@@ -16,18 +16,15 @@ struct Output {
     ok: bool,
 }
 
-impl Output {
-    fn error_message(&self) -> String {
-        self.stderr
-            .split("Caused by:")
-            .nth(1)
-            .unwrap_or(&self.stderr)
-            .lines()
-            .map(|l| l.trim())
-            .take_while(|l| !l.starts_with("Stack backtrace:"))
-            .filter(|l| !l.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n")
+impl std::fmt::Display for Output {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "exit: {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            if self.ok { "ok" } else { "FAIL" },
+            self.stdout,
+            self.stderr,
+        )
     }
 }
 
@@ -47,15 +44,16 @@ fn envio_data(args: &[&str]) -> Output {
 #[test]
 fn height_returns_a_number() {
     let out = envio_data(&["knownHeight", "--chain=base"]);
-    assert!(out.ok, "envio data failed: {}", out.stderr);
+    assert!(out.ok, "envio data failed:\n{out}");
     assert!(
         out.stdout.starts_with("height[1]{value}:\n"),
-        "unexpected stdout: {}",
-        out.stdout,
+        "unexpected output:\n{out}",
     );
     let height_line = out.stdout.lines().nth(1).unwrap_or("").trim();
-    let height: u64 = height_line.parse().expect("height should be a number");
-    assert!(height > 1_000_000, "height suspiciously low: {height}");
+    let height: u64 = height_line
+        .parse()
+        .unwrap_or_else(|_| panic!("height should be a number:\n{out}"));
+    assert!(height > 1_000_000, "height suspiciously low:\n{out}");
 }
 
 #[test]
@@ -66,27 +64,24 @@ fn query_returns_blocks_and_logs() {
         "--chain=base",
         "--where={ block: { number: { _gte: 25000000, _lte: 25000020 } }, log: { srcAddress: \"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913\" } }",
     ]);
-    assert!(out.ok, "envio data failed: {}", out.stderr);
+    assert!(out.ok, "envio data failed:\n{out}");
     assert!(
         out.stdout.starts_with("blocks[") && out.stdout.contains("\nlogs["),
-        "unexpected stdout: {}",
-        out.stdout,
+        "unexpected output:\n{out}",
     );
     assert!(
         out.stdout
             .contains("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"),
-        "missing USDC address in output: {}",
-        out.stdout,
+        "missing USDC address:\n{out}",
     );
 }
 
 #[test]
 fn no_where_pages_forward_from_genesis() {
     let out = envio_data(&["block.number", "--chain=base"]);
-    assert!(out.ok, "envio data failed: {}", out.stderr);
+    assert!(out.ok, "envio data failed:\n{out}");
     assert!(
         out.stderr.starts_with("\narchive_height:"),
-        "unexpected stderr start: {}",
-        out.stderr,
+        "unexpected output:\n{out}",
     );
 }
