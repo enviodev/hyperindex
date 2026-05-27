@@ -1,7 +1,7 @@
 use std::sync::Once;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
+use hypersync_client::RateLimitResponse;
 use napi_derive::napi;
 
 mod config;
@@ -40,24 +40,9 @@ fn convert_rate_limit_info(info: &hypersync_client::RateLimitInfo) -> NapiRateLi
     }
 }
 
-fn make_rate_limit_err(inner: &hypersync_client::Client, e: anyhow::Error) -> napi::Error {
-    if let Some(info) = inner.rate_limit_info() {
-        if info.is_rate_limited() {
-            let reset_ms = info.suggested_wait_secs().unwrap_or(1) * 1000;
-            return napi::Error::from_reason(format!("RATE_LIMITED:{reset_ms}"));
-        }
-    }
-    map_err(e.context("run inner query"))
-}
-
-fn make_timeout_or_rate_limit_err(inner: &hypersync_client::Client) -> napi::Error {
-    if let Some(info) = inner.rate_limit_info() {
-        if info.is_rate_limited() {
-            let reset_ms = info.suggested_wait_secs().unwrap_or(1) * 1000;
-            return napi::Error::from_reason(format!("RATE_LIMITED:{reset_ms}"));
-        }
-    }
-    map_err(anyhow::anyhow!("request timed out"))
+fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
+    let reset_ms = info.suggested_wait_secs().unwrap_or(1) * 1000;
+    napi::Error::from_reason(format!("RATE_LIMITED:{reset_ms}"))
 }
 
 /// HyperSync client for querying blockchain data.
@@ -65,9 +50,6 @@ fn make_timeout_or_rate_limit_err(inner: &hypersync_client::Client) -> napi::Err
 pub struct HypersyncClient {
     inner: hypersync_client::Client,
     enable_checksum_addresses: bool,
-    // Used to detect when the inner client is stuck sleeping on a 429
-    // instead of returning the error promptly.
-    http_req_timeout: Duration,
 }
 
 #[napi]
@@ -78,11 +60,6 @@ impl HypersyncClient {
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
-        let http_req_timeout_millis = cfg.http_req_timeout_millis.filter(|v| *v >= 0).map_or(
-            hypersync_client::ClientConfig::default_http_req_timeout_millis(),
-            |v| v as u64,
-        );
-
         let inner = hypersync_client::Client::new_with_agent(cfg.into(), user_agent)
             .context("build client")
             .map_err(map_err)?;
@@ -90,33 +67,41 @@ impl HypersyncClient {
         Ok(HypersyncClient {
             inner,
             enable_checksum_addresses,
-            http_req_timeout: Duration::from_millis(http_req_timeout_millis),
         })
     }
 
     #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let deadline = self.http_req_timeout + Duration::from_secs(1);
-        let res = match tokio::time::timeout(deadline, self.inner.get_with_rate_limit(&query)).await
-        {
-            Ok(res) => res.map_err(|e| make_rate_limit_err(&self.inner, e))?,
-            Err(_) => return Err(make_timeout_or_rate_limit_err(&self.inner)),
-        };
-        let rate_limit = convert_rate_limit_info(&res.rate_limit);
-        convert_response(res.response, self.enable_checksum_addresses, rate_limit)
-            .context("convert response")
-            .map_err(map_err)
+        let res = self
+            .inner
+            .get_with_rate_limit(&query)
+            .await
+            .context("run inner query")
+            .map_err(map_err)?;
+        match res {
+            RateLimitResponse::Success {
+                response,
+                rate_limit,
+            } => {
+                let rate_limit = convert_rate_limit_info(&rate_limit);
+                convert_response(response, self.enable_checksum_addresses, rate_limit)
+                    .context("convert response")
+                    .map_err(map_err)
+            }
+            RateLimitResponse::RateLimited(info) => Err(make_rate_limit_err(&info)),
+        }
     }
 
     #[napi]
     pub async fn get_events(&self, query: Query) -> napi::Result<EventResponse> {
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let deadline = self.http_req_timeout + Duration::from_secs(1);
-        let res = match tokio::time::timeout(deadline, self.inner.get_events(query)).await {
-            Ok(res) => res.map_err(|e| make_rate_limit_err(&self.inner, e))?,
-            Err(_) => return Err(make_timeout_or_rate_limit_err(&self.inner)),
-        };
+        let res = self
+            .inner
+            .get_events(query)
+            .await
+            .context("run inner query")
+            .map_err(map_err)?;
         let rate_limit = self
             .inner
             .rate_limit_info()
