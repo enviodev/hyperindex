@@ -804,7 +804,7 @@ module Source = {
                             selectedTransactionFields: Utils.Set.make(),
                             sighash: "",
                             topicCount: 1,
-                            params: [],
+                            paramsMetadata: [],
                             indexedParams: [],
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
@@ -965,7 +965,7 @@ let evmEventConfig = (
     selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
     sighash: id,
     topicCount: 1,
-    params: [],
+    paramsMetadata: [],
     indexedParams: [],
   }
 }

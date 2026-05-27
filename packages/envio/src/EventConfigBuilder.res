@@ -393,7 +393,7 @@ let buildEvmEventConfig = (
     selectedTransactionFields,
     sighash,
     topicCount,
-    params,
+    paramsMetadata: params,
     indexedParams,
   }
 }

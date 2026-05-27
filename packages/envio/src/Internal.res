@@ -402,7 +402,7 @@ type evmEventConfig = {
   selectedTransactionFields: Utils.Set.t<evmTransactionField>,
   sighash: string,
   topicCount: int,
-  params: array<eventParam>,
+  paramsMetadata: array<eventParam>,
   indexedParams: array<eventParam>,
 }
 

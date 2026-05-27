@@ -68,7 +68,7 @@ let collectEventParams = (contracts: array<Internal.evmContractConfig>): array<
             HyperSyncClient.Decoder.sighash: event.sighash,
             topicCount: event.topicCount,
             eventName: event.name,
-            params: event.params->Array.map(paramToMeta),
+            params: event.paramsMetadata->Array.map(paramToMeta),
           })
           ->ignore
         }
