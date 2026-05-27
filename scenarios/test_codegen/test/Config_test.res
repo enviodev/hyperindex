@@ -178,7 +178,7 @@ describe("Field selection enum schemas", () => {
 
 describe("EventConfigBuilder", () => {
   it("buildParamsSchema handles simple types", t => {
-    let params: array<EventConfigBuilder.eventParam> = [
+    let params: array<EventConfigBuilder.paramMeta> = [
       {name: "from", abiType: "address", indexed: true},
       {name: "to", abiType: "address", indexed: true},
       {name: "value", abiType: "uint256", indexed: false},
@@ -199,7 +199,7 @@ describe("EventConfigBuilder", () => {
   })
 
   it("buildParamsSchema handles tuple params", t => {
-    let params: array<EventConfigBuilder.eventParam> = [
+    let params: array<EventConfigBuilder.paramMeta> = [
       {name: "id", abiType: "uint256", indexed: false},
       {name: "details", abiType: "(string,string)", indexed: false},
     ]
@@ -210,7 +210,7 @@ describe("EventConfigBuilder", () => {
   })
 
   it("buildParamsSchema handles nested tuple params", t => {
-    let params: array<EventConfigBuilder.eventParam> = [
+    let params: array<EventConfigBuilder.paramMeta> = [
       {name: "data", abiType: "(uint256,(uint256,string))", indexed: false},
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)
@@ -220,7 +220,7 @@ describe("EventConfigBuilder", () => {
   })
 
   it("buildParamsSchema handles array types", t => {
-    let params: array<EventConfigBuilder.eventParam> = [
+    let params: array<EventConfigBuilder.paramMeta> = [
       {name: "ids", abiType: "uint256[]", indexed: false},
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)

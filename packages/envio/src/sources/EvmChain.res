@@ -38,19 +38,6 @@ let getSyncConfig = (
   }
 }
 
-let rec paramToMeta = (p: Internal.eventParam): HyperSyncClient.Decoder.paramMeta => {
-  name: p.name,
-  abiType: p.abiType,
-  indexed: p.indexed,
-  components: ?(p.components->Option.map(cs => cs->Array.map(componentToMeta))),
-}
-and componentToMeta = (c: Internal.eventParamComponent): HyperSyncClient.Decoder.paramMeta => {
-  name: c.name,
-  abiType: c.abiType,
-  indexed: false,
-  components: ?(c.components->Option.map(cs => cs->Array.map(componentToMeta))),
-}
-
 let collectEventParams = (contracts: array<Internal.evmContractConfig>): array<
   HyperSyncClient.Decoder.eventParamsInput,
 > => {
@@ -68,7 +55,7 @@ let collectEventParams = (contracts: array<Internal.evmContractConfig>): array<
             HyperSyncClient.Decoder.sighash: event.sighash,
             topicCount: event.topicCount,
             eventName: event.name,
-            params: event.paramsMetadata->Array.map(paramToMeta),
+            params: event.paramsMetadata,
           })
           ->ignore
         }

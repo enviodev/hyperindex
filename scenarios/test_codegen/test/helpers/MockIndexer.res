@@ -805,7 +805,6 @@ module Source = {
                             sighash: "",
                             topicCount: 1,
                             paramsMetadata: [],
-                            indexedParams: [],
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -966,6 +965,5 @@ let evmEventConfig = (
     sighash: id,
     topicCount: 1,
     paramsMetadata: [],
-    indexedParams: [],
   }
 }

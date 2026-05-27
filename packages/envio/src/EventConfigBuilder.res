@@ -1,23 +1,13 @@
-// Types moved to `Internal` so `Internal.evmEventConfig` can retain
-// `indexedParams: array<eventParam>` for post-registration filter rebuild.
-// Re-exported here as aliases for existing call sites.
-type eventParamComponent = Internal.eventParamComponent
-type eventParam = Internal.eventParam
+type paramMeta = Internal.paramMeta
 
-let eventParamComponentSchema = S.recursive(self =>
-  S.object((s): eventParamComponent => {
+let paramMetaSchema = S.recursive(self =>
+  S.object((s): paramMeta => {
     name: s.field("name", S.string),
     abiType: s.field("abiType", S.string),
+    indexed: s.fieldOr("indexed", S.bool, false),
     components: ?s.field("components", S.option(S.array(self))),
   })
 )
-
-let eventParamSchema = S.object((s): eventParam => {
-  name: s.field("name", S.string),
-  abiType: s.field("abiType", S.string),
-  indexed: s.fieldOr("indexed", S.bool, false),
-  components: ?s.field("components", S.option(S.array(eventParamComponentSchema))),
-})
 
 // Normalize a value that could be a single item or an array into an array
 let normalizeOrThrow: 'a => array<'a> = value => {
@@ -151,7 +141,7 @@ let rec abiTypeToDefaultValue = (abiType: string): unknown => {
 let rec componentsToObjectSchema = (
   ~leafSchema: string => S.t<unknown>,
   abiType: string,
-  components: array<eventParamComponent>,
+  components: array<paramMeta>,
 ): S.t<unknown> => {
   if abiType->String.endsWith("]") {
     let bracketIdx = abiType->String.lastIndexOf("[")
@@ -174,10 +164,7 @@ let rec componentsToObjectSchema = (
 
 // Default simulate value for a component tree — mirrors `abiTypeToDefaultValue`
 // but emits objects with named fields for tuples.
-let rec componentsToDefaultValue = (
-  abiType: string,
-  components: array<eventParamComponent>,
-): unknown => {
+let rec componentsToDefaultValue = (abiType: string, components: array<paramMeta>): unknown => {
   if abiType->String.endsWith("]") {
     []->(Utils.magic: array<unknown> => unknown)
   } else {
@@ -195,7 +182,7 @@ let rec componentsToDefaultValue = (
 
 // ============== Build paramsRawEventSchema ==============
 
-let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> => {
+let buildParamsSchema = (params: array<paramMeta>): S.t<Internal.eventParams> => {
   if params->Array.length == 0 {
     S.literal(%raw(`null`))
     ->S.shape(_ => ())
@@ -224,7 +211,7 @@ let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> =
 // Uses S.schema + s.matches with S.null->S.Option.getOr to fill missing fields with defaults.
 // When a param carries component metadata (Solidity struct), we accept and emit a
 // record with named fields rather than a positional tuple.
-let buildSimulateParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> => {
+let buildSimulateParamsSchema = (params: array<paramMeta>): S.t<Internal.eventParams> => {
   if params->Array.length == 0 {
     S.unknown
     ->S.shape(_ => ())
@@ -289,7 +276,7 @@ let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => {
   }
 }
 
-let buildTopicGetter = (p: eventParam) => {
+let buildTopicGetter = (p: paramMeta) => {
   let encoder = getTopicEncoder(p.abiType)
   (eventFilter: dict<JSON.t>) =>
     eventFilter
@@ -328,7 +315,7 @@ let buildEvmEventConfig = (
   ~contractName: string,
   ~eventName: string,
   ~sighash: string,
-  ~params: array<eventParam>,
+  ~params: array<paramMeta>,
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
@@ -394,7 +381,6 @@ let buildEvmEventConfig = (
     sighash,
     topicCount,
     paramsMetadata: params,
-    indexedParams,
   }
 }
 

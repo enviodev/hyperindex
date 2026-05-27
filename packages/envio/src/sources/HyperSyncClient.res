@@ -382,18 +382,11 @@ let make = (
 }
 
 module Decoder = {
-  type rec paramMeta = {
-    name: string,
-    abiType: string,
-    indexed: bool,
-    components?: array<paramMeta>,
-  }
-
   type eventParamsInput = {
     sighash: string,
     topicCount: int,
     eventName: string,
-    params: array<paramMeta>,
+    params: array<Internal.paramMeta>,
   }
 
   type tWithParams = {

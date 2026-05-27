@@ -198,7 +198,7 @@ let contractEventItemSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
     "sighash": s.matches(S.string),
-    "params": s.matches(S.option(S.array(EventConfigBuilder.eventParamSchema))),
+    "params": s.matches(S.option(S.array(EventConfigBuilder.paramMetaSchema))),
     "kind": s.matches(S.option(S.string)),
     "blockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
     "transactionFields": s.matches(S.option(S.array(Internal.evmTransactionFieldSchema))),

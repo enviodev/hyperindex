@@ -330,17 +330,11 @@ type genericHandlerWithLoader<'loader, 'handler, 'where> = {
 // param (or any nested field) is a Solidity struct. `name` is always non-empty —
 // the CLI fills in `"0"`, `"1"`, ... for anonymous components in mixed-name
 // tuples — so the runtime can always rebuild a keyed object.
-type rec eventParamComponent = {
-  name: string,
-  abiType: string,
-  components?: array<eventParamComponent>,
-}
-
-type eventParam = {
+type rec paramMeta = {
   name: string,
   abiType: string,
   indexed: bool,
-  components?: array<eventParamComponent>,
+  components?: array<paramMeta>,
 }
 
 // This is private so it's not manually constructed internally
@@ -402,8 +396,7 @@ type evmEventConfig = {
   selectedTransactionFields: Utils.Set.t<evmTransactionField>,
   sighash: string,
   topicCount: int,
-  paramsMetadata: array<eventParam>,
-  indexedParams: array<eventParam>,
+  paramsMetadata: array<paramMeta>,
 }
 
 // Shared formula for `eventConfig.dependsOnAddresses`. Kept here so
