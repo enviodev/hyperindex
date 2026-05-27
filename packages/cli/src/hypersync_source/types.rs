@@ -1,3 +1,5 @@
+use std::ffi::CString;
+
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Signed, U256};
 use anyhow::{Context, Result};
@@ -5,7 +7,7 @@ use hypersync_client::{
     format::{self, FixedSizeData, Hex},
     net_types, simple_types,
 };
-use napi::bindgen_prelude::{BigInt, Either4};
+use napi::bindgen_prelude::{BigInt, ToNapiValue};
 use napi_derive::napi;
 
 /// Data relating to a single event (log)
@@ -213,58 +215,6 @@ pub struct Block {
     pub send_count: Option<String>,
     pub send_root: Option<String>,
     pub mix_hash: Option<String>,
-}
-
-/// Decoded EVM log
-#[napi(object)]
-#[derive(Default)]
-pub struct DecodedEvent {
-    pub indexed: Vec<DecodedSolValue>,
-    pub body: Vec<DecodedSolValue>,
-}
-
-#[napi(object)]
-#[derive(Clone)]
-pub struct DecodedSolValue {
-    pub val: Either4<bool, BigInt, String, Vec<DecodedSolValue>>,
-}
-
-impl DecodedSolValue {
-    pub fn new(val: DynSolValue, checksummed_addresses: bool) -> Self {
-        let val = match val {
-            DynSolValue::Bool(b) => Either4::A(b),
-            DynSolValue::Int(v, _) => Either4::B(convert_bigint_signed(v)),
-            DynSolValue::Uint(v, _) => Either4::B(convert_bigint_unsigned(v)),
-            DynSolValue::FixedBytes(bytes, _) => Either4::C(encode_prefix_hex(bytes.as_slice())),
-            DynSolValue::Address(addr) => {
-                if !checksummed_addresses {
-                    Either4::C(encode_prefix_hex(addr.as_slice()))
-                } else {
-                    Either4::C(addr.to_checksum(None))
-                }
-            }
-            DynSolValue::Function(bytes) => Either4::C(encode_prefix_hex(bytes.as_slice())),
-            DynSolValue::Bytes(bytes) => Either4::C(encode_prefix_hex(bytes.as_slice())),
-            DynSolValue::String(s) => Either4::C(s),
-            DynSolValue::Array(vals) => Either4::D(
-                vals.into_iter()
-                    .map(|v| DecodedSolValue::new(v, checksummed_addresses))
-                    .collect(),
-            ),
-            DynSolValue::FixedArray(vals) => Either4::D(
-                vals.into_iter()
-                    .map(|v| DecodedSolValue::new(v, checksummed_addresses))
-                    .collect(),
-            ),
-            DynSolValue::Tuple(vals) => Either4::D(
-                vals.into_iter()
-                    .map(|v| DecodedSolValue::new(v, checksummed_addresses))
-                    .collect(),
-            ),
-        };
-
-        Self { val }
-    }
 }
 
 fn encode_prefix_hex(bytes: &[u8]) -> String {
@@ -501,6 +451,129 @@ impl TryFrom<net_types::RollbackGuard> for RollbackGuard {
                 .context("convert first_block_number")?,
             first_parent_hash: arg.first_parent_hash.encode_hex(),
         })
+    }
+}
+
+// ============== New decoder types ==============
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct ParamMeta {
+    pub name: String,
+    pub abi_type: String,
+    pub indexed: bool,
+    pub components: Option<Vec<ParamMeta>>,
+}
+
+#[napi(object)]
+pub struct EventParamsInput {
+    pub sighash: String,
+    pub topic_count: i32,
+    pub event_name: String,
+    pub params: Vec<ParamMeta>,
+}
+
+pub enum ParamValue {
+    Bool(bool),
+    BigInt(BigInt),
+    Str(String),
+    Arr(Vec<ParamValue>),
+    Obj(Vec<(String, ParamValue)>),
+}
+
+impl ToNapiValue for ParamValue {
+    unsafe fn to_napi_value(
+        raw_env: napi::sys::napi_env,
+        val: Self,
+    ) -> napi::Result<napi::sys::napi_value> {
+        match val {
+            ParamValue::Bool(v) => bool::to_napi_value(raw_env, v),
+            ParamValue::BigInt(v) => BigInt::to_napi_value(raw_env, v),
+            ParamValue::Str(v) => String::to_napi_value(raw_env, v),
+            ParamValue::Arr(items) => Vec::<ParamValue>::to_napi_value(raw_env, items),
+            ParamValue::Obj(entries) => {
+                let mut obj = std::ptr::null_mut();
+                assert_eq!(
+                    napi::sys::napi_create_object(raw_env, &mut obj),
+                    napi::sys::Status::napi_ok
+                );
+                for (key, val) in entries {
+                    let js_val = ParamValue::to_napi_value(raw_env, val)?;
+                    let c_key = CString::new(key)
+                        .map_err(|_| napi::Error::from_reason("invalid param name"))?;
+                    assert_eq!(
+                        napi::sys::napi_set_named_property(raw_env, obj, c_key.as_ptr(), js_val),
+                        napi::sys::Status::napi_ok,
+                    );
+                }
+                Ok(obj)
+            }
+        }
+    }
+}
+
+pub fn sol_value_to_param(
+    val: DynSolValue,
+    components: Option<&[ParamMeta]>,
+    checksummed: bool,
+) -> ParamValue {
+    match (val, components) {
+        (DynSolValue::Tuple(vals), Some(comps)) => {
+            let fields = vals
+                .into_iter()
+                .zip(comps.iter())
+                .map(|(v, c)| {
+                    let value = sol_value_to_param(v, c.components.as_deref(), checksummed);
+                    (c.name.clone(), value)
+                })
+                .collect();
+            ParamValue::Obj(fields)
+        }
+        (DynSolValue::Array(vals), Some(comps)) => ParamValue::Arr(
+            vals.into_iter()
+                .map(|v| sol_value_to_param(v, Some(comps), checksummed))
+                .collect(),
+        ),
+        (DynSolValue::FixedArray(vals), Some(comps)) => ParamValue::Arr(
+            vals.into_iter()
+                .map(|v| sol_value_to_param(v, Some(comps), checksummed))
+                .collect(),
+        ),
+        (val, _) => sol_value_to_leaf(val, checksummed),
+    }
+}
+
+fn sol_value_to_leaf(val: DynSolValue, checksummed: bool) -> ParamValue {
+    match val {
+        DynSolValue::Bool(b) => ParamValue::Bool(b),
+        DynSolValue::Int(v, _) => ParamValue::BigInt(convert_bigint_signed(v)),
+        DynSolValue::Uint(v, _) => ParamValue::BigInt(convert_bigint_unsigned(v)),
+        DynSolValue::FixedBytes(bytes, _) => ParamValue::Str(encode_prefix_hex(bytes.as_slice())),
+        DynSolValue::Address(addr) => {
+            if checksummed {
+                ParamValue::Str(addr.to_checksum(None))
+            } else {
+                ParamValue::Str(encode_prefix_hex(addr.as_slice()))
+            }
+        }
+        DynSolValue::Function(bytes) => ParamValue::Str(encode_prefix_hex(bytes.as_slice())),
+        DynSolValue::Bytes(bytes) => ParamValue::Str(encode_prefix_hex(bytes.as_slice())),
+        DynSolValue::String(s) => ParamValue::Str(s),
+        DynSolValue::Array(vals) => ParamValue::Arr(
+            vals.into_iter()
+                .map(|v| sol_value_to_leaf(v, checksummed))
+                .collect(),
+        ),
+        DynSolValue::FixedArray(vals) => ParamValue::Arr(
+            vals.into_iter()
+                .map(|v| sol_value_to_leaf(v, checksummed))
+                .collect(),
+        ),
+        DynSolValue::Tuple(vals) => ParamValue::Arr(
+            vals.into_iter()
+                .map(|v| sol_value_to_leaf(v, checksummed))
+                .collect(),
+        ),
     }
 }
 

@@ -31,7 +31,7 @@ describe("RpcSource - name", () => {
       eventRouter: EventRouter.empty(),
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
-      allEventSignatures: [],
+      allEventParams: [],
       lowercaseAddresses: false,
     })
     t.expect(source.name).toBe("RPC (eth.rpc.hypersync.xyz)")
@@ -49,7 +49,7 @@ describe("RpcSource - getHeightOrThrow", () => {
         eventRouter: EventRouter.empty(),
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
-        allEventSignatures: ["a", "b", "c"],
+        allEventParams: [],
         lowercaseAddresses: false,
       })
       let height = await source.getHeightOrThrow()

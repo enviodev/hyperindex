@@ -402,9 +402,6 @@ pub enum Network {
     Tangle = 5845,
 
     #[subenum(HypersyncChain)]
-    Taraxa = 841,
-
-    #[subenum(HypersyncChain)]
     Tempo = 4217,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -603,7 +600,6 @@ impl Network {
             | Network::Sonic
             | Network::SonicTestnet
             | Network::Swell
-            | Network::Taraxa
             | Network::Citrea
             | Network::Hoodi
             | Network::Injective

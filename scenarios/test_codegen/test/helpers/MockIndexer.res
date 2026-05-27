@@ -800,12 +800,11 @@ module Source = {
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ =>
                               JsError.throwWithMessage("Not implemented"),
-                            convertHyperSyncEventArgs: _ =>
-                              JsError.throwWithMessage("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
                             selectedTransactionFields: Utils.Set.make(),
                             sighash: "",
-                            indexedParams: [],
+                            topicCount: 1,
+                            paramsMetadata: [],
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -961,10 +960,10 @@ let evmEventConfig = (
           },
         ])
       },
-    convertHyperSyncEventArgs: _ => JsError.throwWithMessage("Not implemented"),
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
     sighash: id,
-    indexedParams: [],
+    topicCount: 1,
+    paramsMetadata: [],
   }
 }

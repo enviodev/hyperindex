@@ -330,17 +330,11 @@ type genericHandlerWithLoader<'loader, 'handler, 'where> = {
 // param (or any nested field) is a Solidity struct. `name` is always non-empty —
 // the CLI fills in `"0"`, `"1"`, ... for anonymous components in mixed-name
 // tuples — so the runtime can always rebuild a keyed object.
-type rec eventParamComponent = {
-  name: string,
-  abiType: string,
-  components?: array<eventParamComponent>,
-}
-
-type eventParam = {
+type rec paramMeta = {
   name: string,
   abiType: string,
   indexed: bool,
-  components?: array<eventParamComponent>,
+  components?: array<paramMeta>,
 }
 
 // This is private so it's not manually constructed internally
@@ -398,15 +392,11 @@ type eventFilters =
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
-  convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
   selectedTransactionFields: Utils.Set.t<evmTransactionField>,
-  // Retained so `HandlerLoader.applyRegistrations` can re-run
-  // `LogSelection.parseEventFiltersOrThrow` after handler modules register
-  // with a `where:` filter. Only indexed params are kept — they're all the
-  // filter parser needs for topic-getter construction + key validation.
   sighash: string,
-  indexedParams: array<eventParam>,
+  topicCount: int,
+  paramsMetadata: array<paramMeta>,
 }
 
 // Shared formula for `eventConfig.dependsOnAddresses`. Kept here so

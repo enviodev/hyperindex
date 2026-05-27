@@ -382,46 +382,24 @@ let make = (
 }
 
 module Decoder = {
-  type rec decodedSolType<'a> = {val: 'a}
-
-  @unboxed
-  type rec decodedRaw =
-    | DecodedBool(bool)
-    | DecodedStr(string)
-    | DecodedNum(bigint)
-    | DecodedVal(decodedSolType<decodedRaw>)
-    | DecodedArr(array<decodedRaw>)
-
-  @unboxed
-  type rec decodedUnderlying =
-    | Bool(bool)
-    | Str(string)
-    | Num(bigint)
-    | Arr(array<decodedUnderlying>)
-
-  let rec toUnderlying = (d: decodedRaw): decodedUnderlying => {
-    switch d {
-    | DecodedVal(v) => v.val->toUnderlying
-    | DecodedBool(v) => Bool(v)
-    | DecodedStr(v) => Str(v)
-    | DecodedNum(v) => Num(v)
-    | DecodedArr(v) => v->Belt.Array.map(toUnderlying)->Arr
-    }
+  type eventParamsInput = {
+    sighash: string,
+    topicCount: int,
+    eventName: string,
+    params: array<Internal.paramMeta>,
   }
 
-  type decodedEvent = {
-    indexed: array<decodedRaw>,
-    body: array<decodedRaw>,
-  }
-
-  type t = {
-    decodeEvents: array<ResponseTypes.event> => promise<array<Nullable.t<decodedEvent>>>,
+  type tWithParams = {
+    decodeLogs: array<ResponseTypes.event> => promise<array<Nullable.t<Internal.eventParams>>>,
   }
 
   @send
-  external classFromSignatures: (Core.decoderCtor, array<string>, ~checksumAddresses: bool=?) => t =
-    "fromSignatures"
+  external classFromParams: (
+    Core.decoderCtor,
+    array<eventParamsInput>,
+    ~checksumAddresses: bool=?,
+  ) => tWithParams = "fromParams"
 
-  let fromSignatures = (signatures, ~checksumAddresses=?) =>
-    Core.getAddon().decoder->classFromSignatures(signatures, ~checksumAddresses?)
+  let fromParams = (eventParams, ~checksumAddresses=?) =>
+    Core.getAddon().decoder->classFromParams(eventParams, ~checksumAddresses?)
 }

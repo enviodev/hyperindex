@@ -141,7 +141,7 @@ let memoGetSelectionConfig = (~chain) =>
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
-  allEventSignatures: array<string>,
+  allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   apiToken: option<string>,
   clientMaxRetries: int,
@@ -156,7 +156,7 @@ let make = (
   {
     chain,
     endpointUrl,
-    allEventSignatures,
+    allEventParams,
     eventRouter,
     apiToken,
     clientMaxRetries,
@@ -190,20 +190,22 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     ~logLevel,
   )
 
-  let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
+  let hscDecoder: ref<option<HyperSyncClient.Decoder.tWithParams>> = ref(None)
   let getHscDecoder = () => {
     switch hscDecoder.contents {
     | Some(decoder) => decoder
     | None =>
-      switch HyperSyncClient.Decoder.fromSignatures(
-        allEventSignatures,
+      switch HyperSyncClient.Decoder.fromParams(
+        allEventParams,
         ~checksumAddresses=!lowercaseAddresses,
       ) {
       | exception exn =>
         exn->ErrorHandling.mkLogAndRaise(
           ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI",
         )
-      | decoder => decoder
+      | decoder =>
+        hscDecoder := Some(decoder)
+        decoder
       }
     }
   }
@@ -418,7 +420,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     }
 
     //Parse page items into queue items
-    let parsedEvents = switch await getHscDecoder().decodeEvents(pageUnsafe.events) {
+    let parsedEvents = switch await getHscDecoder().decodeLogs(pageUnsafe.events) {
     | exception exn =>
       exn->mkLogAndRaise(
         ~msg="Failed to parse events using hypersync client, please double check your ABI.",
@@ -445,13 +447,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       switch (maybeEventConfig, maybeDecodedEvent) {
       | (Some(eventConfig), Value(decoded)) =>
         parsedQueueItems
-        ->Array.push(
-          makeEventBatchQueueItem(
-            item,
-            ~params=decoded->eventConfig.convertHyperSyncEventArgs,
-            ~eventConfig,
-          ),
-        )
+        ->Array.push(makeEventBatchQueueItem(item, ~params=decoded, ~eventConfig))
         ->ignore
       | (Some(eventConfig), Null | Undefined) =>
         handleDecodeFailure(

@@ -114,20 +114,21 @@ let applyRegistrations = (~config: Config.t): Config.t => {
               ~contractName=ev.contractName,
               ~eventName=ev.name,
             )
+            let indexedParams = evmEv.paramsMetadata->Array.filter(p => p.indexed)
             let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(
               ~eventFilters,
               ~sighash=evmEv.sighash,
-              ~params=evmEv.indexedParams->Array.map(p => p.name),
+              ~params=indexedParams->Array.map(p => p.name),
               ~contractName=ev.contractName,
               ~probeChainId=chain.id,
               ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
-              ~topic1=?evmEv.indexedParams
+              ~topic1=?indexedParams
               ->Array.get(0)
               ->Option.map(EventConfigBuilder.buildTopicGetter),
-              ~topic2=?evmEv.indexedParams
+              ~topic2=?indexedParams
               ->Array.get(1)
               ->Option.map(EventConfigBuilder.buildTopicGetter),
-              ~topic3=?evmEv.indexedParams
+              ~topic3=?indexedParams
               ->Array.get(2)
               ->Option.map(EventConfigBuilder.buildTopicGetter),
             )
