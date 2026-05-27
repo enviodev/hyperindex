@@ -51,7 +51,7 @@ This document contains the help content for the `envio` command-line program.
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 * `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
-* `data` — Query raw blockchain data — blocks, logs, transactions on EVM chains using the same `where` syntax as indexer filters. Output is TOON (token-oriented) tabular form by default
+* `data` — Query raw blockchain data — blocks, logs, transactions on EVM chains using the same `where` syntax as indexer filters
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
 * `tools` — Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
 * `config` — Inspect the indexer config
@@ -385,7 +385,9 @@ Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 
 ## `envio data`
 
-Query raw blockchain data — blocks, logs, transactions on EVM chains using the same `where` syntax as indexer filters. Output is TOON (token-oriented) tabular form by default.
+Query raw blockchain data — blocks, logs, transactions on EVM chains using the same `where` syntax as indexer filters.
+
+Output is TOON (token-oriented) tabular form.
 
 Examples:
 
