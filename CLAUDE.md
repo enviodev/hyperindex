@@ -1,5 +1,6 @@
 - Use `pnpm` over `npm`/`npx`.
 - Always use single assert to check the whole value instead of multiple asserts for every field.
+- Never use `contains` in test assertions — assert the full expected value. Use `assert_eq!` or `insta::assert_snapshot!` for error messages.
 
 ## Comments
 

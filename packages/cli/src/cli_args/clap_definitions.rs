@@ -62,8 +62,9 @@ pub enum CommandType {
     Metrics,
 
     ///Query raw blockchain data — blocks, logs, transactions on EVM chains
-    ///using the same `where` syntax as indexer filters. Output is TOON
-    ///(token-oriented) tabular form by default.
+    ///using the same `where` syntax as indexer filters.
+    ///
+    ///Output is TOON (token-oriented) tabular form.
     ///
     ///Examples:
     ///

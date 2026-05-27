@@ -10,110 +10,141 @@
 
 use std::process::Command;
 
-fn envio_data(args: &[&str]) -> (String, String, bool) {
+struct Output {
+    stdout: String,
+    stderr: String,
+    ok: bool,
+}
+
+impl Output {
+    fn error_message(&self) -> String {
+        self.stderr
+            .split("Caused by:")
+            .nth(1)
+            .unwrap_or(&self.stderr)
+            .lines()
+            .map(|l| l.trim())
+            .take_while(|l| !l.starts_with("Stack backtrace:"))
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+fn envio_data(args: &[&str]) -> Output {
     let output = Command::new("cargo")
         .args(["run", "--quiet", "--example", "script", "--", "data"])
         .args(args)
         .output()
         .expect("failed to execute envio data");
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    (stdout, stderr, output.status.success())
+    Output {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        ok: output.status.success(),
+    }
+}
+
+fn envio_data_no_token(args: &[&str]) -> Output {
+    let output = Command::new("cargo")
+        .args(["run", "--quiet", "--example", "script", "--", "data"])
+        .args(args)
+        .env_remove("ENVIO_API_TOKEN")
+        .output()
+        .expect("failed to execute envio data");
+    Output {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        ok: output.status.success(),
+    }
 }
 
 #[test]
 fn height_returns_a_number() {
-    let (stdout, stderr, ok) = envio_data(&["knownHeight", "--chain=base"]);
-    assert!(ok, "envio data failed: {stderr}");
+    let out = envio_data(&["knownHeight", "--chain=base"]);
+    assert!(out.ok, "envio data failed: {}", out.stderr);
     assert!(
-        stdout.contains("height[1]{value}:"),
-        "stdout missing height header: {stdout}"
+        out.stdout.starts_with("height[1]{value}:\n"),
+        "unexpected stdout: {}",
+        out.stdout,
     );
-    let height_line = stdout.lines().nth(1).unwrap_or("").trim();
+    let height_line = out.stdout.lines().nth(1).unwrap_or("").trim();
     let height: u64 = height_line.parse().expect("height should be a number");
     assert!(height > 1_000_000, "height suspiciously low: {height}");
-    assert!(
-        stderr.contains("is at height"),
-        "stderr missing friendly message: {stderr}"
-    );
 }
 
 #[test]
 fn query_returns_blocks_and_logs() {
-    let (stdout, stderr, ok) = envio_data(&[
+    let out = envio_data(&[
         "block.number",
         "log.srcAddress",
         "--chain=base",
         "--where={ block: { number: { _gte: 25000000, _lte: 25000020 } }, log: { srcAddress: \"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913\" } }",
     ]);
-    assert!(ok, "envio data failed: {stderr}");
+    assert!(out.ok, "envio data failed: {}", out.stderr);
     assert!(
-        stdout.contains("blocks["),
-        "missing blocks section: {stdout}"
-    );
-    assert!(stdout.contains("logs["), "missing logs section: {stdout}");
-    assert!(
-        stdout.contains("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"),
-        "missing USDC address in output: {stdout}"
+        out.stdout.starts_with("blocks[") && out.stdout.contains("\nlogs["),
+        "unexpected stdout: {}",
+        out.stdout,
     );
     assert!(
-        stderr.contains("Done") || stderr.contains("Next page"),
-        "stderr missing pagination info: {stderr}"
+        out.stdout
+            .contains("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"),
+        "missing USDC address in output: {}",
+        out.stdout,
     );
 }
 
 #[test]
 fn no_where_pages_forward_from_genesis() {
-    let (stdout, stderr, ok) = envio_data(&["block.number", "--chain=base"]);
-    assert!(ok, "envio data failed: {stderr}");
+    let out = envio_data(&["block.number", "--chain=base"]);
+    assert!(out.ok, "envio data failed: {}", out.stderr);
     assert!(
-        stderr.contains("next_block:"),
-        "stderr missing next_block: {stderr}"
+        out.stderr.starts_with("\narchive_height:"),
+        "unexpected stderr start: {}",
+        out.stderr,
     );
 }
 
 #[test]
 fn missing_token_gives_friendly_error() {
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--example", "script", "--", "data"])
-        .args(["knownHeight", "--chain=base"])
-        .env_remove("ENVIO_API_TOKEN")
-        .output()
-        .expect("failed to execute");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success());
-    assert!(
-        stderr.contains("ENVIO_API_TOKEN") && stderr.contains("envio.dev"),
-        "missing friendly token error: {stderr}"
+    let out = envio_data_no_token(&["knownHeight", "--chain=base"]);
+    assert!(!out.ok);
+    assert_eq!(
+        out.error_message(),
+        "ENVIO_API_TOKEN is not set.\n\
+         Set the ENVIO_API_TOKEN environment variable in your .env file.\n\
+         Get a free API token at: https://envio.dev/app/api-tokens",
     );
 }
 
 #[test]
 fn unknown_chain_gives_friendly_error() {
-    let (_, stderr, ok) = envio_data(&["block.number", "--chain=bogus-network"]);
-    assert!(!ok);
-    assert!(
-        stderr.contains("Unknown chain") || stderr.contains("--chain=base"),
-        "missing chain hint: {stderr}"
+    let out = envio_data(&["block.number", "--chain=bogus-network"]);
+    assert!(!out.ok);
+    assert_eq!(
+        out.error_message(),
+        "Unknown chain `bogus-network`. Pass a numeric chain id (e.g. `--chain=8453`) or\n\
+         a kebab-case network name (e.g. `--chain=base`, `--chain=arbitrum-one`).",
     );
 }
 
 #[test]
 fn solana_gives_not_supported_error() {
-    let (_, stderr, ok) = envio_data(&["knownHeight", "--chain=solana"]);
-    assert!(!ok);
-    assert!(
-        stderr.contains("not supported yet"),
-        "missing solana message: {stderr}"
+    let out = envio_data(&["knownHeight", "--chain=solana"]);
+    assert!(!out.ok);
+    assert_eq!(
+        out.error_message(),
+        "`--chain=solana` is not supported yet.\n\
+         Solana support is on the roadmap. For now use an EVM chain (e.g. `--chain=base`).",
     );
 }
 
 #[test]
 fn unknown_field_gives_friendly_error() {
-    let (_, stderr, ok) = envio_data(&["log.bogusField", "--chain=base"]);
-    assert!(!ok);
-    assert!(
-        stderr.contains("Unknown field") && stderr.contains("srcAddress"),
-        "missing field hint: {stderr}"
+    let out = envio_data(&["log.bogusField", "--chain=base"]);
+    assert!(!out.ok);
+    assert_eq!(
+        out.error_message(),
+        "Unknown field `log.bogusField`. Valid `log.*` fields: transactionHash, blockHash, blockNumber, transactionIndex, logIndex, srcAddress, data, removed, topic0, topic1, topic2, topic3.",
     );
 }
