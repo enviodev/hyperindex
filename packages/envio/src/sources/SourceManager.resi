@@ -54,4 +54,7 @@ let makeGetHeightRetryInterval: (
 let getBlockHashes: (
   t,
   ~blockNumbers: array<int>,
+  ~isRealtime: bool,
 ) => promise<array<ReorgDetection.blockDataWithTimestamp>>
+
+let getRateLimitTimeMs: t => float

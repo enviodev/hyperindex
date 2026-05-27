@@ -1,3 +1,16 @@
+let reraisIfRateLimited = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(e) =>
+    switch e->JsExn.message {
+    | Some(msg) if msg->String.startsWith("RATE_LIMITED:") =>
+      let resetMs =
+        msg->String.slice(~start=12, ~end=msg->String.length)->Int.fromString->Option.getOr(1000)
+      throw(Source.RateLimited({resetMs: resetMs}))
+    | _ => ()
+    }
+  | _ => ()
+  }
+
 module Log = {
   type t = {
     address: Address.t,
@@ -182,9 +195,12 @@ module GetLogs = {
       ~fieldSelection,
     )
 
-    let res = await client.getEvents(~query)
+    let res = try await client.getEvents(~query) catch {
+    | exn =>
+      reraisIfRateLimited(exn)
+      throw(exn)
+    }
     if res.nextBlock <= fromBlock {
-      // Might happen when /height response was from another instance of HyperSync
       throw(Error(WrongInstance))
     }
 
@@ -258,7 +274,9 @@ module BlockData = {
 
     Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="getBlockHashes")
     let maybeSuccessfulRes = switch await client.get(~query=body) {
-    | exception _ => None
+    | exception exn =>
+      reraisIfRateLimited(exn)
+      None
     | res if res.nextBlock <= fromBlock => None
     | res => Some(res)
     }
