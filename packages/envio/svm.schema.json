@@ -179,8 +179,8 @@
           "format": "uint32",
           "minimum": 0
         },
-        "programs": {
-          "description": "Solana programs to index on this chain.",
+        "programs_experimental": {
+          "description": "Solana programs to index on this chain. Experimental: this config shape may change in future releases.",
           "type": [
             "array",
             "null"

@@ -622,7 +622,7 @@ ecosystem: svm
 chains:
   - rpc: r
     start_block: 0
-    programs:
+    programs_experimental:
       - name: TokenMetadata
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         instructions:
@@ -642,7 +642,7 @@ ecosystem: svm
 chains:
   - rpc: r
     start_block: 0
-    programs:
+    programs_experimental:
       - name: P
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         instructions:
@@ -663,13 +663,13 @@ ecosystem: svm
 chains:
   - rpc: r
     start_block: 0
-    programs:
+    programs_experimental:
       - name: shared
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         instructions: []
   - rpc: r2
     start_block: 0
-    programs:
+    programs_experimental:
       - name: SHARED
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         instructions: []
@@ -688,7 +688,7 @@ ecosystem: svm
 chains:
   - rpc: r
     start_block: 0
-    programs:
+    programs_experimental:
       - name: P
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         instructions:
@@ -711,7 +711,7 @@ ecosystem: svm
 chains:
   - rpc: r
     start_block: 0
-    programs:
+    programs_experimental:
       - name: P
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         instructions:
@@ -736,7 +736,7 @@ ecosystem: svm
 chains:
   - rpc: r
     start_block: 0
-    programs:
+    programs_experimental:
       - name: P
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         instructions:
@@ -759,7 +759,7 @@ ecosystem: svm
 chains:
   - rpc: r
     start_block: 0
-    programs:
+    programs_experimental:
       - name: P
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         instructions:
@@ -783,7 +783,7 @@ ecosystem: svm
 chains:
   - rpc: r
     start_block: 0
-    programs:
+    programs_experimental:
       - name: P
         program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
         instructions:
@@ -808,7 +808,7 @@ ecosystem: svm
 chains:
   - rpc: r
     start_block: 0
-    programs:
+    programs_experimental:
       - name: P
         program_id: not_a_pubkey
         instructions: []
