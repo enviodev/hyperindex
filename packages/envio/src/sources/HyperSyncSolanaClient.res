@@ -65,11 +65,21 @@ module QueryTypes = {
     | @as("kind") Kind
     | @as("message") Message
 
+  type tokenBalanceField =
+    | @as("slot") Slot
+    | @as("transaction_index") TransactionIndex
+    | @as("account") Account
+    | @as("mint") Mint
+    | @as("owner") Owner
+    | @as("pre_amount") PreAmount
+    | @as("post_amount") PostAmount
+
   type fieldSelection = {
     block?: array<blockField>,
     transaction?: array<transactionField>,
     instruction?: array<instructionField>,
     log?: array<logField>,
+    tokenBalance?: array<tokenBalanceField>,
   }
 
   /** Filter for selecting instructions. All non-empty fields are AND-ed: an
@@ -96,6 +106,7 @@ module QueryTypes = {
     isInner?: bool,
     includeTransaction?: bool,
     includeLogs?: bool,
+    includeTokenBalances?: bool,
   }
 
   type transactionSelection = {
@@ -183,11 +194,22 @@ module ResponseTypes = {
     message?: string,
   }
 
+  type tokenBalance = {
+    slot: int,
+    transactionIndex?: int,
+    account?: string,
+    mint?: string,
+    owner?: string,
+    preAmount?: string,
+    postAmount?: string,
+  }
+
   type queryResponseData = {
     blocks: array<block>,
     transactions: array<transaction>,
     instructions: array<instruction>,
     logs: array<log>,
+    tokenBalances: array<tokenBalance>,
   }
 
   type queryResponse = {

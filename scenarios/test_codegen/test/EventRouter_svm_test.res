@@ -48,6 +48,7 @@ describe("EventRouter SVM helpers", () => {
       discriminatorByteLen,
       includeTransaction: true,
       includeLogs: false,
+      includeTokenBalances: false,
       accountFilters: [],
       isInner: None,
       accounts: [],

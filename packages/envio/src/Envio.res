@@ -58,6 +58,14 @@ type svmInstruction = {
   decoded?: svmDecodedInstruction,
 }
 
+type svmTokenBalance = {
+  account?: SvmTypes.Pubkey.t,
+  mint?: SvmTypes.Pubkey.t,
+  owner?: SvmTypes.Pubkey.t,
+  preAmount?: string,
+  postAmount?: string,
+}
+
 type svmTransaction = {
   signatures: array<string>,
   feePayer?: SvmTypes.Pubkey.t,
@@ -68,6 +76,7 @@ type svmTransaction = {
   accountKeys: array<SvmTypes.Pubkey.t>,
   recentBlockhash?: string,
   version?: string,
+  tokenBalances?: array<svmTokenBalance>,
 }
 
 type svmLog = {
