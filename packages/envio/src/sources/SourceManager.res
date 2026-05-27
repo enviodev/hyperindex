@@ -708,3 +708,76 @@ let executeQuery = async (
 
   responseRef.contents->Option.getUnsafe
 }
+
+let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~logger: Pino.t) => {
+  let responseRef = ref(None)
+  let retryRef = ref(0)
+
+  while responseRef.contents->Option.isNone {
+    let sourceState = switch sourceManager->getNextSource(~isRealtime=false) {
+    | Some(s) => s
+    | None =>
+      %raw(`null`)->ErrorHandling.mkLogAndRaise(
+        ~logger,
+        ~msg="No data-sources available for fetching block hashes.",
+      )
+    }
+    sourceManager.activeSource = sourceState.source
+    let source = sourceState.source
+    let retry = retryRef.contents
+
+    try {
+      let res = await source.getBlockHashes(~blockNumbers, ~logger)
+      switch res {
+      | Ok(data) =>
+        sourceState.lastFailedAt = None
+        responseRef := Some(data)
+      | Error(exn) => throw(exn)
+      }
+    } catch {
+    | exn => {
+        let isRateLimited = switch exn->JsExn.anyToExnInternal {
+        | JsExn(e) =>
+          e
+          ->JsExn.message
+          ->Option.map(msg => msg->String.includes("rate limited"))
+          ->Option.getOr(false)
+        | _ => false
+        }
+
+        if isRateLimited {
+          logger->Logging.childWarn({
+            "msg": "Rate limited by HyperSync while fetching block hashes. To increase your rate limits, upgrade your plan at https://app.envio.dev/api-tokens. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens",
+            "retry": retry,
+          })
+          await Utils.delay(1000)
+        } else {
+          let backoffMillis = switch retry {
+          | 0 => 500
+          | _ => 1000 * retry
+          }
+          let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
+          logger->log({
+            "msg": "Failed to fetch block hashes. Retrying.",
+            "retry": retry,
+            "backOffMilliseconds": backoffMillis,
+            "err": exn->Utils.prettifyExn,
+          })
+
+          let shouldSwitch = switch retry {
+          | 0 | 1 => false
+          | _ => retry->mod(2) === 0
+          }
+
+          if shouldSwitch {
+            sourceState.lastFailedAt = Some(Date.now())
+          }
+          await Utils.delay(Pervasives.min(backoffMillis, 60_000))
+        }
+        retryRef := retryRef.contents + 1
+      }
+    }
+  }
+
+  responseRef.contents->Option.getUnsafe
+}

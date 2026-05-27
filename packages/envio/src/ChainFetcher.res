@@ -467,38 +467,20 @@ let getHighestBlockBelowThreshold = (cf: t): int => {
 Finds the last known valid block number below the reorg block
 If not found, returns the highest block below threshold
 */
-let getLastKnownValidBlock = async (
-  chainFetcher: t,
-  ~reorgBlockNumber: int,
-  //Parameter used for dependency injecting in tests
-  ~getBlockHashes=(chainFetcher.sourceManager->SourceManager.getActiveSource).getBlockHashes,
-) => {
-  // Improtant: It's important to not include the reorg detection block number
-  // because there might be different instances of the source
-  // with mismatching hashes between them.
-  // So we MUST always rollback the block number where we detected a reorg.
+let getLastKnownValidBlock = async (chainFetcher: t, ~reorgBlockNumber: int) => {
   let scannedBlockNumbers =
     chainFetcher.reorgDetection->ReorgDetection.getThresholdBlockNumbersBelowBlock(
       ~blockNumber=reorgBlockNumber,
       ~knownHeight=chainFetcher.fetchState.knownHeight,
     )
 
-  let getBlockHashes = blockNumbers => {
-    getBlockHashes(~blockNumbers, ~logger=chainFetcher.logger)->Promise.thenResolve(res =>
-      switch res {
-      | Ok(v) => v
-      | Error(exn) =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Failed to fetch blockHashes for given blockNumbers during rollback",
-        )
-      }
-    )
-  }
-
   switch scannedBlockNumbers {
   | [] => chainFetcher->getHighestBlockBelowThreshold
   | _ => {
-      let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
+      let blockNumbersAndHashes = await chainFetcher.sourceManager->SourceManager.getBlockHashes(
+        ~blockNumbers=scannedBlockNumbers,
+        ~logger=chainFetcher.logger,
+      )
 
       switch chainFetcher.reorgDetection->ReorgDetection.getLatestValidScannedBlock(
         ~blockNumbersAndHashes,
