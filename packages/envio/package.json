@@ -12,7 +12,7 @@
     "url": "git+https://github.com/enviodev/hyperindex.git"
   },
   "scripts": {
-    "build": "pnpx rescript",
+    "build": "rescript",
     "watch": "rescript watch"
   },
   "author": "envio contributors <about@envio.dev>",
