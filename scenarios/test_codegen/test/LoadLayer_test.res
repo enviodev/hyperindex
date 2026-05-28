@@ -15,6 +15,7 @@ describe("LoadLayer", () => {
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     let user = await getUser("123")
@@ -42,6 +43,7 @@ describe("LoadLayer", () => {
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     let user1 = await getUser("1")
@@ -105,6 +107,7 @@ describe("LoadLayer", () => {
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     let user1 = await getUser("1")
@@ -149,6 +152,7 @@ describe("LoadLayer", () => {
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     let users = await Promise.all([getUser("1"), getUser("2")])
@@ -336,6 +340,7 @@ describe("LoadLayer", () => {
         ~item,
         ~fieldValue,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
     let getUsersWithUpdates = fieldValue =>
       LoadLayer.loadByField(
@@ -349,6 +354,7 @@ describe("LoadLayer", () => {
         ~item,
         ~fieldValue,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     let users1 = await getUsersWithId("123")
@@ -384,6 +390,7 @@ describe("LoadLayer", () => {
         ~item,
         ~fieldValue,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     let users3 = await getUsersWithUpdatesLt(5)
@@ -438,6 +445,7 @@ describe("LoadLayer", () => {
         ~item,
         ~fieldValue,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     let getUsersWithUpdates = fieldValue =>
@@ -452,6 +460,7 @@ describe("LoadLayer", () => {
         ~item,
         ~fieldValue,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     t.expect(await getUsersWithId("1")).toEqual([
@@ -535,6 +544,7 @@ describe("LoadLayer", () => {
           ~item,
           ~fieldValue,
           ~shouldGroup=true,
+          ~checkpointId=0n,
         )
 
       let users = await getUsersWithId("1")

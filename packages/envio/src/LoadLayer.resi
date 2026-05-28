@@ -6,6 +6,7 @@ let loadById: (
   ~shouldGroup: bool,
   ~item: Internal.item,
   ~entityId: string,
+  ~checkpointId: bigint,
 ) => promise<option<Internal.entity>>
 
 let loadByField: (
@@ -19,6 +20,7 @@ let loadByField: (
   ~shouldGroup: bool,
   ~item: Internal.item,
   ~fieldValue: 'fieldValue,
+  ~checkpointId: bigint,
 ) => promise<array<Internal.entity>>
 
 let loadEffect: (

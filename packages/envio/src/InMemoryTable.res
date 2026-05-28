@@ -26,13 +26,17 @@ let get = (self: t<'key, 'val>, key: 'key) =>
 let values = (self: t<'key, 'val>) => self.dict->Dict.valuesToArray
 
 let clone = (self: t<'key, 'val>) => {
-  ...self,
-  dict: self.dict->Lodash.cloneDeep,
+  dict: self.dict->Utils.Dict.shallowCopy,
+  hash: self.hash,
 }
 
 module Entity = {
   type relatedEntityId = string
-  type indexWithRelatedIds = (TableIndices.Index.t, Utils.Set.t<relatedEntityId>)
+  type indexWithRelatedIds = {
+    index: TableIndices.Index.t,
+    relatedEntityIds: Utils.Set.t<relatedEntityId>,
+    mutable lastReferencedCheckpointId: bigint,
+  }
   type indicesSerializedToValue = t<TableIndices.Index.t, indexWithRelatedIds>
   type indexFieldNameToIndices = t<TableIndices.Index.t, indicesSerializedToValue>
 
@@ -40,10 +44,12 @@ module Entity = {
     latest: option<'entity>,
     status: Internal.inMemoryStoreEntityStatus<'entity>,
     entityIndices: Utils.Set.t<TableIndices.Index.t>,
+    mutable lastReferencedCheckpointId: bigint,
   }
   type t<'entity> = {
     table: t<string, entityWithIndices<'entity>>,
     fieldNameIndices: indexFieldNameToIndices,
+    mutable changeCount: float,
   }
 
   // Helper to extract entity ID from any entity
@@ -62,13 +68,14 @@ module Entity = {
     ~relatedEntityIds=Utils.Set.make(),
   ): indicesSerializedToValue => {
     let empty = make(~hash=TableIndices.Index.toString)
-    empty->set(index, (index, relatedEntityIds))
+    empty->set(index, {index, relatedEntityIds, lastReferencedCheckpointId: 0n})
     empty
   }
 
   let make = (): t<'entity> => {
     table: make(~hash=str => str),
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
+    changeCount: 0.,
   }
 
   let updateIndices = (
@@ -92,18 +99,14 @@ module Entity = {
     ->Dict.keysToArray
     ->Array.forEach(fieldName => {
       let indices = self.fieldNameIndices.dict->Dict.getUnsafe(fieldName)
-      // A missing key reads as `undefined`, which matches the `None` arm of
-      // `FieldValue.t` (`option<...>`). Mirror `addEmptyIndex` so nullable
-      // FK columns that were omitted on the set entity don't crash.
       let fieldValue =
         entity
         ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
         ->Dict.getUnsafe(fieldName)
       indices
       ->values
-      ->Array.forEach(((index, relatedEntityIds)) => {
+      ->Array.forEach(({index, relatedEntityIds}) => {
         if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
-          //Add entity id to indices and add index to entity indicies
           relatedEntityIds->Utils.Set.add(getEntityIdUnsafe(entity))->ignore
           entityIndices->Utils.Set.add(index)->ignore
         } else {
@@ -118,7 +121,7 @@ module Entity = {
       switch self.fieldNameIndices
       ->get(index)
       ->Option.flatMap(get(_, index)) {
-      | Some((_index, relatedEntityIds)) =>
+      | Some({relatedEntityIds}) =>
         let _wasRemoved = relatedEntityIds->Utils.Set.delete(entityId)
       | None => () //Unexpected index should exist if it is entityIndices
       }
@@ -129,6 +132,7 @@ module Entity = {
     inMemTable: t<'entity>,
     ~key: string,
     ~entity: option<'entity>,
+    ~checkpointId: bigint=0n,
     // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
     ~allowOverWriteEntity=false,
   ) => {
@@ -153,6 +157,7 @@ module Entity = {
           latest: entity,
           status: Loaded,
           entityIndices,
+          lastReferencedCheckpointId: checkpointId,
         },
       )
     }
@@ -179,12 +184,21 @@ module Entity = {
     | Delete(_) => None
     }
 
+    let checkpointId = change->Change.getCheckpointId
+    inMemTable.changeCount = inMemTable.changeCount +. 1.
+
     let updatedEntityRecord = switch inMemTable.table->get(change->Change.getEntityId) {
-    | None => {latest, status: newStatus(), entityIndices: Utils.Set.make()}
+    | None => {
+        latest,
+        status: newStatus(),
+        entityIndices: Utils.Set.make(),
+        lastReferencedCheckpointId: checkpointId,
+      }
     | Some({status: Loaded, entityIndices}) => {
         latest,
         status: newStatus(),
         entityIndices,
+        lastReferencedCheckpointId: checkpointId,
       }
     | Some({status: Updated(previous_values), entityIndices}) =>
       let newStatus = Internal.Updated({
@@ -203,7 +217,7 @@ module Entity = {
         },
         containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
       })
-      {latest, status: newStatus, entityIndices}
+      {latest, status: newStatus, entityIndices, lastReferencedCheckpointId: checkpointId}
     }
 
     switch change {
@@ -248,6 +262,7 @@ module Entity = {
     inMemTable: t<'entity>,
     ~fieldName,
     ~operator: TableIndices.Operator.t,
+    ~checkpointId: bigint,
   ) => {
     let getEntity = inMemTable->getUnsafe
     fieldValueHash => {
@@ -262,9 +277,11 @@ module Entity = {
             JsError.throwWithMessage(
               `Unexpected error. Must have an index for the value ${fieldValueHash} on field ${fieldName}`,
             )
-          | Some((_index, relatedEntityIds)) => {
+          | Some(indexEntry) => {
+              // Stamp index as referenced at this checkpoint
+              indexEntry.lastReferencedCheckpointId = checkpointId
               let res =
-                relatedEntityIds
+                indexEntry.relatedEntityIds
                 ->Utils.Set.toArray
                 ->Array.filterMap(entityId => {
                   switch hasByHash(inMemTable.table, entityId) {
@@ -308,7 +325,11 @@ module Entity = {
       )
     | Some(indicesSerializedToValue) =>
       switch indicesSerializedToValue->getRow(index) {
-      | None => indicesSerializedToValue->setRow(index, (index, relatedEntityIds))
+      | None =>
+        indicesSerializedToValue->setRow(
+          index,
+          {index, relatedEntityIds, lastReferencedCheckpointId: 0n},
+        )
       | Some(_) => () //Should not happen, this means the index already exists
       }
     }
@@ -327,8 +348,15 @@ module Entity = {
     | Some(indicesSerializedToValue) =>
       switch indicesSerializedToValue->getRow(index) {
       | None =>
-        indicesSerializedToValue->setRow(index, (index, Utils.Set.make()->Utils.Set.add(entityId)))
-      | Some((_index, relatedEntityIds)) => relatedEntityIds->Utils.Set.add(entityId)->ignore
+        indicesSerializedToValue->setRow(
+          index,
+          {
+            index,
+            relatedEntityIds: Utils.Set.make()->Utils.Set.add(entityId),
+            lastReferencedCheckpointId: 0n,
+          },
+        )
+      | Some({relatedEntityIds}) => relatedEntityIds->Utils.Set.add(entityId)->ignore
       }
     }
 
@@ -349,7 +377,86 @@ module Entity = {
     ->Array.filterMap(rowToEntity)
   }
 
-  let clone = ({table, fieldNameIndices}: t<'entity>) => {
+  // After a background write completes:
+  // 1. Remove stale indices not referenced after the written checkpoint
+  // 2. Evict entities that lost all indices, or reset Updated→Loaded if indices remain
+  let cleanupAfterWrite = (inMemTable: t<'entity>, ~writtenCheckpointId: bigint) => {
+    // Phase 1: Remove stale indices from fieldNameIndices
+    let fieldNameKeys = inMemTable.fieldNameIndices.dict->Dict.keysToArray
+    for i in 0 to fieldNameKeys->Array.length - 1 {
+      let fieldNameKey = fieldNameKeys->Array.getUnsafe(i)
+      switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldNameKey) {
+      | None => ()
+      | Some(indicesSerializedToValue) =>
+        let indexKeys = indicesSerializedToValue.dict->Dict.keysToArray
+        for j in 0 to indexKeys->Array.length - 1 {
+          let indexKey = indexKeys->Array.getUnsafe(j)
+          switch indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(indexKey) {
+          | None => ()
+          | Some(indexEntry) =>
+            if indexEntry.lastReferencedCheckpointId <= writtenCheckpointId {
+              // Remove this index from all entities' entityIndices sets
+              indexEntry.relatedEntityIds->Utils.Set.forEach(entityId => {
+                switch inMemTable.table.dict->Utils.Dict.dangerouslyGetNonOption(entityId) {
+                | Some(row) => row.entityIndices->Utils.Set.delete(indexEntry.index)->ignore
+                | None => ()
+                }
+              })
+              indicesSerializedToValue.dict->Utils.Dict.deleteInPlace(indexKey)
+            }
+          }
+        }
+
+        // If no indices left for this field, remove the field entry
+        if indicesSerializedToValue.dict->Dict.keysToArray->Array.length === 0 {
+          inMemTable.fieldNameIndices.dict->Utils.Dict.deleteInPlace(fieldNameKey)
+        }
+      }
+    }
+
+    // Phase 2: Clean up entities
+    let remainingChangeCount = ref(0.)
+    let keys = inMemTable.table.dict->Dict.keysToArray
+    for idx in 0 to keys->Array.length - 1 {
+      let key = keys->Array.getUnsafe(idx)
+      switch inMemTable.table.dict->Utils.Dict.dangerouslyGetNonOption(key) {
+      | None => ()
+      | Some(row) =>
+        if row.lastReferencedCheckpointId <= writtenCheckpointId {
+          let hasActiveIndices = row.entityIndices->Utils.Set.size > 0
+          switch row.status {
+          | Updated(_) if !hasActiveIndices =>
+            inMemTable->deleteEntityFromIndices(~entityId=key, ~entityIndices=row.entityIndices)
+            inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
+          | Updated(_) => inMemTable.table.dict->Dict.set(key, {...row, status: Loaded})
+          | Loaded =>
+            inMemTable->deleteEntityFromIndices(~entityId=key, ~entityIndices=row.entityIndices)
+            inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
+          }
+        } else {
+          switch row.status {
+          | Updated(update) =>
+            remainingChangeCount := remainingChangeCount.contents +. 1.
+            inMemTable.table.dict->Dict.set(
+              key,
+              {
+                ...row,
+                status: Updated({
+                  ...update,
+                  history: [update.latestChange],
+                  containsRollbackDiffChange: false,
+                }),
+              },
+            )
+          | Loaded => ()
+          }
+        }
+      }
+    }
+    inMemTable.changeCount = remainingChangeCount.contents
+  }
+
+  let clone = ({table, fieldNameIndices, changeCount}: t<'entity>) => {
     table: table->clone,
     fieldNameIndices: {
       ...fieldNameIndices,
@@ -358,5 +465,6 @@ module Entity = {
       ->Array.map(((k, v)) => (k, v->clone))
       ->Dict.fromArray,
     },
+    changeCount,
   }
 }

@@ -6,6 +6,7 @@ let loadById = (
   ~shouldGroup,
   ~item,
   ~entityId,
+  ~checkpointId: bigint,
 ) => {
   let key = `${entityConfig.name}.get`
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
@@ -39,6 +40,7 @@ let loadById = (
         ~allowOverWriteEntity=false,
         ~key=entityId,
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
+        ~checkpointId,
       )
     })
 
@@ -351,6 +353,7 @@ let loadByField = (
   ~shouldGroup,
   ~item,
   ~fieldValue,
+  ~checkpointId: bigint,
 ) => {
   let operatorCallName = switch operator {
   | Eq => "eq"
@@ -400,6 +403,7 @@ let loadByField = (
             ~allowOverWriteEntity=false,
             ~key=entity.id,
             ~entity=Some(entity),
+            ~checkpointId,
           )
         })
 
@@ -437,7 +441,11 @@ let loadByField = (
     ~shouldGroup,
     ~hasher=fieldValue =>
       fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString,
-    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex(~fieldName, ~operator),
+    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex(
+      ~fieldName,
+      ~operator,
+      ~checkpointId,
+    ),
     ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex(~fieldName, ~operator),
   )
 }

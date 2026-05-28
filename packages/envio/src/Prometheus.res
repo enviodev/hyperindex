@@ -128,8 +128,8 @@ module ProcessingBatch = {
     "help": "Cumulative time spent executing event handlers during batch processing.",
   })
 
-  let registerMetrics = (~loadDuration, ~handlerDuration) => {
-    loadTimeCounter->PromClient.Counter.incMany(loadDuration->(Utils.magic: float => int))
+  let setLoaderAndHandlerDurations = (~loaderDuration, ~handlerDuration) => {
+    loadTimeCounter->PromClient.Counter.incMany(loaderDuration->(Utils.magic: float => int))
     handlerTimeCounter->PromClient.Counter.incMany(handlerDuration->(Utils.magic: float => int))
   }
 }

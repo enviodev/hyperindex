@@ -146,6 +146,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
         ~shouldGroup=params.isPreload,
         ~item=params.item,
         ~fieldValue,
+        ~checkpointId=params.checkpointId,
       )
     )
     ->Promise.all
@@ -167,6 +168,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
         ~shouldGroup=params.isPreload,
         ~item=params.item,
         ~fieldValue,
+        ~checkpointId=params.checkpointId,
       )
 
     [loadWithOperator(Eq), loadWithOperator(rangeOperator)]
@@ -196,6 +198,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
       ~shouldGroup=params.isPreload,
       ~item=params.item,
       ~fieldValue,
+      ~checkpointId=params.checkpointId,
     )
   }
 }
@@ -220,10 +223,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     let set = params.isPreload
       ? noopSet
       : (entity: Internal.entity) => {
-          params.inMemoryStore
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
-          ->InMemoryTable.Entity.set(
-            Set({
+          params.inMemoryStore->InMemoryStore.entitySet(
+            ~entityConfig=params.entityConfig,
+            ~change=Set({
               entityId: entity.id,
               checkpointId: params.checkpointId,
               entity,
@@ -249,6 +251,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId,
+              ~checkpointId=params.checkpointId,
             )
         )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
       }
@@ -280,6 +283,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId,
+              ~checkpointId=params.checkpointId,
             )->Promise.thenResolve(entity => {
               switch entity {
               | Some(entity) => entity
@@ -309,6 +313,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId=entity.id,
+              ~checkpointId=params.checkpointId,
             )->Promise.thenResolve(storageEntity => {
               switch storageEntity {
               | Some(entity) => entity
@@ -326,10 +331,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         noopDeleteUnsafe
       } else {
         entityId => {
-          params.inMemoryStore
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
-          ->InMemoryTable.Entity.set(
-            Delete({
+          params.inMemoryStore->InMemoryStore.entitySet(
+            ~entityConfig=params.entityConfig,
+            ~change=Delete({
               entityId,
               checkpointId: params.checkpointId,
             }),
