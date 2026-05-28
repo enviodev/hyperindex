@@ -13,7 +13,7 @@ let set = (self: t<'key, 'val>, key, value) => self.dict->Dict.set(key->self.has
 let setByHash = (self: t<'key, 'val>, hash, value) => self.dict->Dict.set(hash, value)
 
 let hasByHash = (self: t<'key, 'val>, hash) => {
-  self.dict->Utils.Dict.has(hash)
+  self.dict->Dict.has(hash)
 }
 
 let getUnsafeByHash = (self: t<'key, 'val>, hash) => {
@@ -265,7 +265,7 @@ module Entity = {
                 relatedEntityIds
                 ->Utils.Set.toArray
                 ->Array.filterMap(entityId => {
-                  switch inMemTable.entities->Utils.Dict.has(entityId) {
+                  switch inMemTable.entities->Dict.has(entityId) {
                   | true => getEntity(entityId)
                   | false => None
                   }
