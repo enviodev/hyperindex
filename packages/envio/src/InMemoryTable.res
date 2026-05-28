@@ -31,20 +31,20 @@ module Entity = {
   type indicesSerializedToValue = t<TableIndices.Index.t, indexWithRelatedIds>
   type indexFieldNameToIndices = t<TableIndices.Index.t, indicesSerializedToValue>
 
-  type entityWithIndices<'entity> = {
-    latest: option<'entity>,
-    status: Internal.inMemoryStoreEntityStatus<'entity>,
+  type entityWithIndices = {
+    latest: option<Internal.entity>,
+    status: Internal.inMemoryStoreEntityStatus,
     entityIndices: Utils.Set.t<TableIndices.Index.t>,
   }
-  type t<'entity> = {
-    table: t<string, entityWithIndices<'entity>>,
+  type t = {
+    table: t<string, entityWithIndices>,
     fieldNameIndices: indexFieldNameToIndices,
   }
 
   // Helper to extract entity ID from any entity
   exception UnexpectedIdNotDefinedOnEntity
-  let getEntityIdUnsafe = (entity: 'entity): string =>
-    switch (entity->(Utils.magic: 'entity => {"id": option<string>}))["id"] {
+  let getEntityIdUnsafe = (entity: Internal.entity): string =>
+    switch (entity->(Utils.magic: Internal.entity => {"id": option<string>}))["id"] {
     | Some(id) => id
     | None =>
       UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(
@@ -61,14 +61,14 @@ module Entity = {
     empty
   }
 
-  let make = (): t<'entity> => {
+  let make = (): t => {
     table: make(~hash=str => str),
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
   }
 
   let updateIndices = (
-    self: t<'entity>,
-    ~entity: 'entity,
+    self: t,
+    ~entity: Internal.entity,
     ~entityIndices: Utils.Set.t<TableIndices.Index.t>,
   ) => {
     //Remove any invalid indices on entity
@@ -76,7 +76,7 @@ module Entity = {
       let fieldName = index->TableIndices.Index.getFieldName
       let fieldValue =
         entity
-        ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
+        ->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
         ->Dict.getUnsafe(fieldName)
       if !(index->TableIndices.Index.evaluate(~fieldName, ~fieldValue)) {
         entityIndices->Utils.Set.delete(index)->ignore
@@ -92,7 +92,7 @@ module Entity = {
       // FK columns that were omitted on the set entity don't crash.
       let fieldValue =
         entity
-        ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
+        ->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
         ->Dict.getUnsafe(fieldName)
       indices
       ->values
@@ -108,7 +108,7 @@ module Entity = {
     })
   }
 
-  let deleteEntityFromIndices = (self: t<'entity>, ~entityId: string, ~entityIndices) =>
+  let deleteEntityFromIndices = (self: t, ~entityId: string, ~entityIndices) =>
     entityIndices->Utils.Set.forEach(index => {
       switch self.fieldNameIndices
       ->get(index)
@@ -121,9 +121,9 @@ module Entity = {
     })
 
   let initValue = (
-    inMemTable: t<'entity>,
+    inMemTable: t,
     ~key: string,
-    ~entity: option<'entity>,
+    ~entity: option<Internal.entity>,
     // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
     ~allowOverWriteEntity=false,
   ) => {
@@ -155,8 +155,8 @@ module Entity = {
 
   let setRow = set
   let set = (
-    inMemTable: t<'entity>,
-    change: Change.t<'entity>,
+    inMemTable: t,
+    change: Change.t<Internal.entity>,
     ~shouldSaveHistory,
     ~containsRollbackDiffChange=false,
   ) => {
@@ -166,7 +166,9 @@ module Entity = {
       latestChange: change,
       history: shouldSaveHistory
         ? [change]
-        : Utils.Array.immutableEmpty->(Utils.magic: array<unknown> => array<Change.t<'entity>>),
+        : Utils.Array.immutableEmpty->(
+            Utils.magic: array<unknown> => array<Change.t<Internal.entity>>
+          ),
       containsRollbackDiffChange,
     })
     let latest = switch change {
@@ -221,13 +223,13 @@ module Entity = {
   that the entity is not set to the in memory store,
   and the second option means that the entity doesn't esist/deleted.
   It's needed to prevent an additional round trips to the database for deleted entities. */
-  let getUnsafe = (inMemTable: t<'entity>) =>
+  let getUnsafe = (inMemTable: t) =>
     (key: string) =>
       inMemTable.table.dict
       ->Dict.getUnsafe(key)
       ->rowToEntity
 
-  let hasIndex = (inMemTable: t<'entity>, ~fieldName, ~operator: TableIndices.Operator.t) =>
+  let hasIndex = (inMemTable: t, ~fieldName, ~operator: TableIndices.Operator.t) =>
     fieldValueHash => {
       switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
       | None => false
@@ -239,11 +241,7 @@ module Entity = {
       }
     }
 
-  let getUnsafeOnIndex = (
-    inMemTable: t<'entity>,
-    ~fieldName,
-    ~operator: TableIndices.Operator.t,
-  ) => {
+  let getUnsafeOnIndex = (inMemTable: t, ~fieldName, ~operator: TableIndices.Operator.t) => {
     let getEntity = inMemTable->getUnsafe
     fieldValueHash => {
       switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
@@ -275,7 +273,7 @@ module Entity = {
     }
   }
 
-  let addEmptyIndex = (inMemTable: t<'entity>, ~index) => {
+  let addEmptyIndex = (inMemTable: t, ~index) => {
     let fieldName = index->TableIndices.Index.getFieldName
     let relatedEntityIds = Utils.Set.make()
 
@@ -286,7 +284,7 @@ module Entity = {
       | Some(entity) =>
         let fieldValue =
           entity
-          ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
+          ->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
           ->Dict.getUnsafe(fieldName)
         if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
           let _ = row.entityIndices->Utils.Set.add(index)
@@ -309,7 +307,7 @@ module Entity = {
     }
   }
 
-  let addIdToIndex = (inMemTable: t<'entity>, ~index, ~entityId) =>
+  let addIdToIndex = (inMemTable: t, ~index, ~entityId) =>
     switch inMemTable.fieldNameIndices->getRow(index) {
     | None =>
       inMemTable.fieldNameIndices->setRow(
@@ -327,7 +325,7 @@ module Entity = {
       }
     }
 
-  let updates = (inMemTable: t<'entity>) => {
+  let updates = (inMemTable: t) => {
     inMemTable.table
     ->values
     ->Array.filterMap(v =>
@@ -338,7 +336,7 @@ module Entity = {
     )
   }
 
-  let values = (inMemTable: t<'entity>) => {
+  let values = (inMemTable: t) => {
     inMemTable.table
     ->values
     ->Array.filterMap(rowToEntity)

@@ -7,7 +7,7 @@ let hashRawEventsKey = (key: rawEventsKey) =>
   EventUtils.getEventIdKeyString(~chainId=key.chainId, ~eventId=key.eventId)
 
 module EntityTables = {
-  type t = dict<InMemoryTable.Entity.t<Internal.entity>>
+  type t = dict<InMemoryTable.Entity.t>
   exception UndefinedEntity({entityName: string})
   let make = (entities: array<Internal.entityConfig>): t => {
     let init = Dict.make()
@@ -17,13 +17,9 @@ module EntityTables = {
     init
   }
 
-  let get = (type entity, self: t, ~entityName: string) => {
+  let get = (self: t, ~entityName: string) => {
     switch self->Utils.Dict.dangerouslyGetNonOption(entityName) {
-    | Some(table) =>
-      table->(
-        Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<entity>
-      )
-
+    | Some(table) => table
     | None =>
       UndefinedEntity({entityName: entityName})->ErrorHandling.mkLogAndRaise(
         ~msg="Unexpected, entity InMemoryTable is undefined",
@@ -42,7 +38,7 @@ type effectCacheInMemTable = {
 type t = {
   allEntities: array<Internal.entityConfig>,
   mutable rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
-  mutable entities: dict<InMemoryTable.Entity.t<Internal.entity>>,
+  mutable entities: dict<InMemoryTable.Entity.t>,
   mutable effects: dict<effectCacheInMemTable>,
   mutable rollbackTargetCheckpointId: option<Internal.checkpointId>,
 }
@@ -81,7 +77,7 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
 let getInMemTable = (
   inMemoryStore: t,
   ~entityConfig: Internal.entityConfig,
-): InMemoryTable.Entity.t<Internal.entity> => {
+): InMemoryTable.Entity.t => {
   inMemoryStore.entities->EntityTables.get(~entityName=entityConfig.name)
 }
 
