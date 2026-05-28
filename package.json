@@ -5,7 +5,7 @@
   "scripts": {
     "test:templates": "pnpm --filter e2e-tests test:templates",
     "test:e2e": "pnpm --filter e2e-tests test:e2e",
-    "test": "pnpm --filter e2e-tests test"
+    "test": "for d in e2e_test test_codegen fuel_test svm_test; do echo \"=== scenarios/$d ===\" && (cd \"scenarios/$d\" && if [ \"$d\" = test_codegen ]; then ln -sf ../../.pnpmfile.cjs .pnpmfile.cjs; fi && pnpm exec envio codegen && pnpm test) || exit 1; done"
   },
   "devDependencies": {},
   "pnpm": {
