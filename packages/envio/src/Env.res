@@ -153,6 +153,18 @@ module ClickHouse = {
   let databaseEngine = () => read("ENVIO_CLICKHOUSE_DATABASE_ENGINE")
 }
 
+// Read lazily at call time for the same reason as ClickHouse: `envio dev` may
+// inject the path into process.env after this module is evaluated.
+module DuckDb = {
+  %%private(
+    let read: string => option<string> = %raw(`(k) => {
+      const v = process.env[k];
+      return v === undefined || v === "" ? undefined : v;
+    }`)
+  )
+  let path = () => read("ENVIO_DUCKDB_PATH")
+}
+
 module Hasura = {
   // Disable it on HS indexer run, since we don't have Hasura credentials anyways
   // Also, it might be useful for some users who don't care about Hasura

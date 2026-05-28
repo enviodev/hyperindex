@@ -1,5 +1,8 @@
 type t = {
   name: string,
+  // Which entities this sink mirrors. PgStorage filters entities/updates
+  // through this before calling initialize/writeBatch.
+  shouldStoreEntity: Internal.entityConfig => bool,
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
@@ -26,6 +29,7 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
 
   {
     name: "clickhouse",
+    shouldStoreEntity: entityConfig => entityConfig.storage.clickhouse,
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
       ClickHouse.initialize(client, ~database, ~entities, ~enums)
     },
@@ -39,6 +43,41 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
         }),
       )->Utils.Promise.ignoreValue
       await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)
+    },
+  }
+}
+
+// DuckDB is a full mirror of every persisted entity, backed by a local file.
+// The connection is opened lazily because instance/connect are async and the
+// file path's parent directory must exist first.
+let makeDuckDb = (~path): t => {
+  let connRef = ref(None)
+  let getConn = async () =>
+    switch connRef.contents {
+    | Some(p) => await p
+    | None =>
+      let p =
+        NodeJs.Fs.Promises.mkdir(~path=NodeJs.Path.dirname(path), ~options={recursive: true})
+        ->Promise.then(() => DuckDb.createInstance(path))
+        ->Promise.then(instance => instance->DuckDb.connect)
+      connRef := Some(p)
+      await p
+    }
+
+  {
+    name: "duckdb",
+    shouldStoreEntity: _ => true,
+    initialize: async (~chainConfigs as _=[], ~entities=[], ~enums as _=[]) => {
+      let conn = await getConn()
+      await DuckDb.initialize(conn, ~entities)
+    },
+    resume: async (~checkpointId) => {
+      let conn = await getConn()
+      await DuckDb.resume(conn, ~checkpointId)
+    },
+    writeBatch: async (~batch, ~updatedEntities) => {
+      let conn = await getConn()
+      await DuckDb.writeBatch(conn, ~batch, ~updatedEntities)
     },
   }
 }

@@ -927,7 +927,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
     async t => {
       let config = {
         ...MockIndexer.config,
-        storage: ({postgres: true, clickhouse: true}: Config.storage),
+        storage: ({postgres: true, clickhouse: true, duckdb: false}: Config.storage),
       }
       let message = switch try {
         let _ = PgStorage.makeStorageFromEnv(~config)
@@ -953,7 +953,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
     async t => {
       let config = {
         ...MockIndexer.config,
-        storage: ({postgres: true, clickhouse: false}: Config.storage),
+        storage: ({postgres: true, clickhouse: false, duckdb: false}: Config.storage),
       }
       // Just ensure construction succeeds without touching ClickHouse env vars.
       let _ = PgStorage.makeStorageFromEnv(~config)
@@ -977,7 +977,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
       setEnvVar("ENVIO_CLICKHOUSE_DATABASE", "envio_indexer")
       let config = {
         ...MockIndexer.config,
-        storage: ({postgres: true, clickhouse: true}: Config.storage),
+        storage: ({postgres: true, clickhouse: true, duckdb: false}: Config.storage),
       }
       let result = try {
         let _ = PgStorage.makeStorageFromEnv(~config)

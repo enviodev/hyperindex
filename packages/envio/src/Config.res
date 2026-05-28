@@ -57,6 +57,7 @@ type sourceSync = {
 type storage = {
   postgres: bool,
   clickhouse: bool,
+  duckdb: bool,
 }
 
 type contractHandler = {
@@ -457,6 +458,7 @@ let publicConfigStorageSchema = S.schema(s =>
   {
     "postgres": s.matches(S.bool),
     "clickhouse": s.matches(S.option(S.bool)),
+    "duckdb": s.matches(S.option(S.bool)),
   }
 )
 
@@ -773,6 +775,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   let globalStorage: storage = {
     postgres: publicConfig["storage"]["postgres"],
     clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
+    duckdb: publicConfig["storage"]["duckdb"]->Option.getOr(false),
   }
 
   let userEntities =

@@ -45,6 +45,7 @@
   ],
   "dependencies": {
     "@clickhouse/client": "1.17.0",
+    "@duckdb/node-api": "1.5.3-r.2",
     "@elastic/ecs-pino-format": "1.4.0",
     "@envio-dev/hyperfuel-client": "1.2.2",
     "@fuel-ts/crypto": "0.96.1",

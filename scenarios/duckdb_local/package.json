@@ -1,0 +1,20 @@
+{
+  "name": "duckdb_local",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "codegen": "envio codegen",
+    "dev": "envio dev",
+    "start": "envio start"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3"
+  },
+  "dependencies": {
+    "envio": "file:../../packages/envio"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

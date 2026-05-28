@@ -724,7 +724,7 @@ let rec writeBatch = async (
   ~setEffectCacheOrThrow,
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
-  ~sinkPromise: option<promise<option<exn>>>,
+  ~sinkPromises: array<promise<option<exn>>>,
   ~escapeTables=?,
 ) => {
   try {
@@ -980,14 +980,15 @@ let rec writeBatch = async (
           ->Promise.all
           ->Utils.Promise.ignoreValue
 
-          switch sinkPromise {
-          | Some(sinkPromise) =>
-            switch await sinkPromise {
+          // Gate the PG commit on every sink: await all, surface the first
+          // failure so the transaction rolls back and stores stay consistent.
+          let sinkResults = await sinkPromises->Promise.all
+          sinkResults->Array.forEach(result =>
+            switch result {
             | Some(exn) => throw(exn)
             | None => ()
             }
-          | None => ()
-          }
+          )
         }),
         // Since effect cache currently doesn't support rollback,
         // we can run it outside of the transaction for simplicity.
@@ -1033,7 +1034,7 @@ let rec writeBatch = async (
       ~updatedEffectsCache,
       ~allEntities,
       ~updatedEntities,
-      ~sinkPromise,
+      ~sinkPromises,
     )
   }
 }
@@ -1095,7 +1096,7 @@ let make = (
   ~pgDatabase,
   ~pgPassword,
   ~isHasuraEnabled,
-  ~sink: option<Sink.t>=?,
+  ~sinks: array<Sink.t>=[],
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
@@ -1209,10 +1210,9 @@ let make = (
     ~envioInfo,
   ): Persistence.initialState => {
     // Per-entity storage routing: PG owns tables only for entities that
-    // opted into Postgres; the sink mirrors only those that opted into
-    // ClickHouse.
+    // opted into Postgres; each sink mirrors the entities it claims via
+    // `shouldStoreEntity`.
     let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
-    let chEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse)
 
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
@@ -1239,11 +1239,18 @@ let make = (
       )
     }
 
-    // Call sink.initialize before executing PG queries
-    switch sink {
-    | Some(sink) => await sink.initialize(~chainConfigs, ~entities=chEntities, ~enums)
-    | None => ()
-    }
+    // Initialize sinks before executing PG queries. Each sink gets only the
+    // entities it claims.
+    await sinks
+    ->Belt.Array.map(sink =>
+      sink.initialize(
+        ~chainConfigs,
+        ~entities=entities->Array.filter(sink.shouldStoreEntity),
+        ~enums,
+      )
+    )
+    ->Promise.all
+    ->Utils.Promise.ignoreValue
 
     let queries = makeInitializeTransaction(
       ~pgSchema,
@@ -1545,11 +1552,11 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       blockHash: raw["block_hash"],
     })
 
-    // Resume sink if present - needed to rollback any reorg changes
-    switch sink {
-    | Some(sink) => await sink.resume(~checkpointId)
-    | None => ()
-    }
+    // Resume sinks - needed to rollback any reorg changes
+    await sinks
+    ->Belt.Array.map(sink => sink.resume(~checkpointId))
+    ->Promise.all
+    ->Utils.Promise.ignoreValue
 
     {
       cleanRun: false,
@@ -1626,38 +1633,30 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~updatedEffectsCache,
     ~updatedEntities,
   ) => {
-    let pgUpdates = []
-    let chUpdates = []
-    for i in 0 to updatedEntities->Array.length - 1 {
-      let update = updatedEntities->Array.getUnsafe(i)
-      let {entityConfig}: Persistence.updatedEntity = update
-      if entityConfig.storage.postgres {
-        pgUpdates->Array.push(update)
-      }
-      if entityConfig.storage.clickhouse {
-        chUpdates->Array.push(update)
-      }
-    }
+    let pgUpdates =
+      updatedEntities->Array.filter((u: Persistence.updatedEntity) =>
+        u.entityConfig.storage.postgres
+      )
 
-    // Initialize sink if configured
-    let sinkPromise = switch sink {
-    | Some(sink) => {
-        let timerRef = Hrtime.makeTimer()
-        Some(
-          sink.writeBatch(~batch, ~updatedEntities=chUpdates)
-          ->Promise.thenResolve(_ => {
-            Prometheus.StorageWrite.increment(
-              ~storage=sink.name,
-              ~timeSeconds=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
-            )
-            None
-          })
-          // Otherwise it fails with unhandled exception
-          ->Utils.Promise.catchResolve(exn => Some(exn)),
+    // Kick off each sink in parallel with the PG transaction. Failures are
+    // reduced to `option<exn>` so they don't surface as unhandled rejections;
+    // the PG transaction awaits them before committing.
+    let sinkPromises = sinks->Belt.Array.map(sink => {
+      let sinkUpdates =
+        updatedEntities->Array.filter((u: Persistence.updatedEntity) =>
+          sink.shouldStoreEntity(u.entityConfig)
         )
-      }
-    | None => None
-    }
+      let timerRef = Hrtime.makeTimer()
+      sink.writeBatch(~batch, ~updatedEntities=sinkUpdates)
+      ->Promise.thenResolve(_ => {
+        Prometheus.StorageWrite.increment(
+          ~storage=sink.name,
+          ~timeSeconds=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+        )
+        None
+      })
+      ->Utils.Promise.catchResolve(exn => Some(exn))
+    })
 
     let primaryTimerRef = Hrtime.makeTimer()
     await writeBatch(
@@ -1672,7 +1671,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
       ~updatedEntities=pgUpdates,
-      ~sinkPromise,
+      ~sinkPromises,
     )
     Prometheus.StorageWrite.increment(
       ~storage="postgres",
@@ -1716,10 +1715,12 @@ let makeStorageFromEnv = (
     ~pgPort=Env.Db.port,
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
-    ~sink=?{
-      // Internally ClickHouse storage is implemented as a sync of the
-      // Postgres storage. Required env vars are validated here only when
-      // the user opts in via `storage.clickhouse: true` in config.yaml.
+    ~sinks={
+      let sinks = []
+
+      // ClickHouse is implemented as a sync of the Postgres storage. Required
+      // env vars are validated here only when the user opts in via
+      // `storage.clickhouse: true` in config.yaml.
       if config.storage.clickhouse {
         let host = Env.ClickHouse.host()
         let username = Env.ClickHouse.username()
@@ -1742,7 +1743,8 @@ let makeStorageFromEnv = (
               )}. Please set them, disable clickhouse in the \`storage\` config, or run \`envio dev\` for a pre-configured local ClickHouse.`,
           )
         }
-        Some(
+        sinks
+        ->Array.push(
           Sink.makeClickHouse(
             ~host=host->Option.getUnsafe,
             ~database=database->Option.getUnsafe,
@@ -1750,9 +1752,20 @@ let makeStorageFromEnv = (
             ~password=password->Option.getUnsafe,
           ),
         )
-      } else {
-        None
+        ->ignore
       }
+
+      // DuckDB syncs to a local file. Path comes from ENVIO_DUCKDB_PATH, or
+      // defaults to a file inside the project's .envio directory.
+      if config.storage.duckdb {
+        let path = switch Env.DuckDb.path() {
+        | Some(p) => p
+        | None => NodeJs.Path.resolve([".envio", "duckdb", "indexer.duckdb"])->NodeJs.Path.toString
+        }
+        sinks->Array.push(Sink.makeDuckDb(~path))->ignore
+      }
+
+      sinks
     },
     ~onInitialize=?{
       if isHasuraEnabled {

@@ -97,6 +97,8 @@ pub struct StorageConfig {
     pub postgres: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clickhouse: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duckdb: Option<bool>,
 }
 
 // Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
@@ -120,15 +122,22 @@ impl JsonSchema for StorageConfig {
                     "description": "Whether to additionally sync the indexed data to ClickHouse. \
                                     Requires Postgres to be enabled (default: false).",
                     "type": ["boolean", "null"]
+                },
+                "duckdb": {
+                    "description": "Whether to additionally sync the indexed data to a local \
+                                    DuckDB file. Requires Postgres to be enabled (default: false).",
+                    "type": ["boolean", "null"]
                 }
             },
             "additionalProperties": false,
-            // Storage::resolve rejects two shapes:
-            //   1. `postgres: false` (with any clickhouse value) — either
-            //      fails as "ClickHouse not supported as a single storage
-            //      yet" or resolves to all-backends-disabled.
+            // Storage::resolve rejects these shapes:
+            //   1. `postgres: false` (with any sink value) — either fails as
+            //      "<sink> not supported as a single storage yet" or resolves
+            //      to all-backends-disabled.
             //   2. `clickhouse: true` without an explicit `postgres: true` —
             //      the user must opt in to Postgres alongside ClickHouse.
+            //   3. `duckdb: true` without an explicit `postgres: true` —
+            //      same rule: DuckDB is a sink layered on Postgres.
             "allOf": [
                 {
                     "not": {
@@ -144,6 +153,20 @@ impl JsonSchema for StorageConfig {
                             "clickhouse": { "const": true }
                         },
                         "required": ["clickhouse"]
+                    },
+                    "then": {
+                        "properties": {
+                            "postgres": { "const": true }
+                        },
+                        "required": ["postgres"]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "duckdb": { "const": true }
+                        },
+                        "required": ["duckdb"]
                     },
                     "then": {
                         "properties": {
@@ -1291,6 +1314,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             StorageConfig {
                 postgres: Some(true),
                 clickhouse: Some(true),
+                duckdb: None,
             }
         );
 
@@ -1302,6 +1326,19 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             StorageConfig {
                 postgres: None,
                 clickhouse: Some(true),
+                duckdb: None,
+            }
+        );
+
+        // DuckDB set
+        let yaml = "postgres: true\nduckdb: true\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: Some(true),
+                clickhouse: None,
+                duckdb: Some(true),
             }
         );
 
@@ -1332,6 +1369,7 @@ chains:
             Some(super::StorageConfig {
                 postgres: Some(true),
                 clickhouse: Some(true),
+                duckdb: None,
             })
         );
     }

@@ -101,6 +101,13 @@
             "boolean",
             "null"
           ]
+        },
+        "duckdb": {
+          "description": "Whether to additionally sync the indexed data to a local DuckDB file. Requires Postgres to be enabled (default: false).",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,
@@ -126,6 +133,28 @@
             },
             "required": [
               "clickhouse"
+            ]
+          },
+          "then": {
+            "properties": {
+              "postgres": {
+                "const": true
+              }
+            },
+            "required": [
+              "postgres"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "duckdb": {
+                "const": true
+              }
+            },
+            "required": [
+              "duckdb"
             ]
           },
           "then": {
