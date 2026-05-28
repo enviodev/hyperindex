@@ -1,5 +1,3 @@
-module Log = HyperSyncClient.EventItems.Log
-
 type hyperSyncPage<'item> = {
   items: array<'item>,
   nextBlock: int,
@@ -8,7 +6,10 @@ type hyperSyncPage<'item> = {
 }
 
 type logsQueryPageItem = {
-  log: Log.t,
+  logIndex: int,
+  srcAddress: Address.t,
+  topic0: EvmTypes.Hex.t,
+  topicCount: int,
   block: HyperSyncClient.ResponseTypes.block,
   transaction: Internal.eventTransaction,
   params: Nullable.t<Internal.eventParams>,

@@ -204,7 +204,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     ~params: Internal.eventParams,
     ~eventConfig: Internal.evmEventConfig,
   ): Internal.item => {
-    let {block, log, transaction} = item
+    let {block, transaction, logIndex, srcAddress} = item
     let chainId = chain->ChainMap.Chain.toChainId
 
     Internal.Event({
@@ -212,7 +212,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       timestamp: block.timestamp->Belt.Option.getUnsafe,
       chain,
       blockNumber: block.number->Belt.Option.getUnsafe,
-      logIndex: log.logIndex,
+      logIndex,
       event: {
         contractName: eventConfig.contractName,
         eventName: eventConfig.name,
@@ -220,8 +220,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         params,
         transaction,
         block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
-        srcAddress: log.address,
-        logIndex: log.logIndex,
+        srcAddress,
+        logIndex,
       }->Internal.fromGenericEvent,
     })
   }
@@ -407,18 +407,16 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     }
 
     pageUnsafe.items->Belt.Array.forEach(item => {
-      let {block, log} = item
       let chainId = chain->ChainMap.Chain.toChainId
-      let topic0 = log.topics->Utils.Array.firstUnsafe
       let maybeEventConfig =
         eventRouter->EventRouter.get(
           ~tag=EventRouter.getEvmEventId(
-            ~sighash=topic0->EvmTypes.Hex.toString,
-            ~topicCount=log.topics->Array.length,
+            ~sighash=item.topic0->EvmTypes.Hex.toString,
+            ~topicCount=item.topicCount,
           ),
           ~indexingAddresses,
-          ~contractAddress=log.address,
-          ~blockNumber=block.number->Belt.Option.getUnsafe,
+          ~contractAddress=item.srcAddress,
+          ~blockNumber=item.block.number->Belt.Option.getUnsafe,
         )
 
       switch (maybeEventConfig, item.params) {
@@ -429,8 +427,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       | (Some(eventConfig), Null | Undefined) =>
         handleDecodeFailure(
           ~eventConfig,
-          ~logIndex=log.logIndex,
-          ~blockNumber=block.number->Belt.Option.getUnsafe,
+          ~logIndex=item.logIndex,
+          ~blockNumber=item.block.number->Belt.Option.getUnsafe,
           ~chainId,
           ~exn=UndefinedValue,
         )

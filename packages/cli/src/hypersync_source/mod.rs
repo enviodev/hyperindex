@@ -144,21 +144,15 @@ pub struct QueryResponse {
     pub rollback_guard: Option<RollbackGuard>,
 }
 
-/// Slim log shape consumed by `HyperSyncSource.res` — only the four fields it
-/// actually reads (`address`, `data`, `topics`, `logIndex`). Address is
-/// pre-unwrapped (and checksummed when the client config asks for it), topics
-/// are pre-filtered to non-null hex strings, and `data` is pre-encoded.
-#[napi(object)]
-pub struct EventLog {
-    pub log_index: i64,
-    pub address: String,
-    pub data: String,
-    pub topics: Vec<String>,
-}
-
 #[napi(object)]
 pub struct EventItem {
-    pub log: EventLog,
+    pub log_index: i64,
+    pub src_address: String,
+    /// Sighash (topic0), pre-encoded as a 0x-prefixed hex string.
+    pub topic0: String,
+    /// Number of non-null topics on the log (1..=4). Combined with `topic0`
+    /// this is the routing key used by the event router on the JS side.
+    pub topic_count: i64,
     pub block: Block,
     pub transaction: Transaction,
     /// Decoded event params; `None` when the log's topic0/topic-count doesn't
@@ -289,10 +283,14 @@ fn convert_event_items(
             .context("mapping transaction")?
             .unwrap_or_default();
 
-        let log = convert_event_log(&event.log, should_checksum).context("mapping log")?;
+        let (log_index, src_address, topic0, topic_count) =
+            flatten_log_for_js(&event.log, should_checksum).context("mapping log")?;
 
         items.push(EventItem {
-            log,
+            log_index,
+            src_address,
+            topic0,
+            topic_count,
             block,
             transaction,
             params,
@@ -301,34 +299,36 @@ fn convert_event_items(
     Ok(items)
 }
 
-fn convert_event_log(
+fn flatten_log_for_js(
     log: &hypersync_client::simple_types::Log,
     should_checksum: bool,
-) -> Result<EventLog> {
+) -> Result<(i64, String, String, i64)> {
     use hypersync_client::format::Hex;
 
     let log_index: i64 = u64::from(log.log_index.context("log.logIndex missing")?)
         .try_into()
         .context("log.logIndex overflow")?;
     let address_raw = log.address.as_ref().context("log.address missing")?;
-    let address = if should_checksum {
+    let src_address = if should_checksum {
         alloy_primitives::Address(alloy_primitives::FixedBytes(***address_raw)).to_checksum(None)
     } else {
         address_raw.encode_hex()
     };
-    let data = log.data.as_ref().context("log.data missing")?.encode_hex();
-    let topics = log
+    let topic0 = log
+        .topics
+        .first()
+        .context("log.topics empty")?
+        .as_ref()
+        .context("log.topics[0] missing")?
+        .encode_hex();
+    let topic_count: i64 = log
         .topics
         .iter()
-        .filter_map(|t| t.as_ref().map(|v| v.encode_hex()))
-        .collect();
-
-    Ok(EventLog {
-        log_index,
-        address,
-        data,
-        topics,
-    })
+        .filter(|t| t.is_some())
+        .count()
+        .try_into()
+        .context("topic_count overflow")?;
+    Ok((log_index, src_address, topic0, topic_count))
 }
 
 /// Marker error so the ReScript side can recognize "data shape" failures.

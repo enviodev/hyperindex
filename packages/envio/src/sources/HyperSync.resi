@@ -5,17 +5,11 @@ type hyperSyncPage<'item> = {
   rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
 }
 
-module Log: {
-  type t = HyperSyncClient.EventItems.Log.t = {
-    logIndex: int,
-    address: Address.t,
-    data: string,
-    topics: array<EvmTypes.Hex.t>,
-  }
-}
-
 type logsQueryPageItem = {
-  log: Log.t,
+  logIndex: int,
+  srcAddress: Address.t,
+  topic0: EvmTypes.Hex.t,
+  topicCount: int,
   block: HyperSyncClient.ResponseTypes.block,
   transaction: Internal.eventTransaction,
   params: Nullable.t<Internal.eventParams>,

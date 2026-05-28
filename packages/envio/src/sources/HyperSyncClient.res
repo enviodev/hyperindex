@@ -341,20 +341,14 @@ module Decoder = {
 }
 
 module EventItems = {
-  module Log = {
-    /// Slim log shape produced by the Rust client. Address is pre-unwrapped
-    /// (and checksummed when the config asks for it), topics are pre-filtered
-    /// to non-null hex strings, and `data` is pre-encoded.
-    type t = {
-      logIndex: int,
-      address: Address.t,
-      data: string,
-      topics: array<EvmTypes.Hex.t>,
-    }
-  }
-
+  /// Flat shape produced by the Rust client. Only the fields HyperSyncSource
+  /// actually reads are exposed; `srcAddress` and `topic0` are pre-unwrapped
+  /// (and checksummed when the config asks for it).
   type item = {
-    log: Log.t,
+    logIndex: int,
+    srcAddress: Address.t,
+    topic0: EvmTypes.Hex.t,
+    topicCount: int,
     block: ResponseTypes.block,
     transaction: ResponseTypes.transaction,
     /// `Null` when the log's topic0/topic-count didn't match any signature

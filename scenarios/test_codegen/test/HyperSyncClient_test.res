@@ -74,12 +74,10 @@ describe("HyperSync client getEventItems (live)", () => {
 
       let first = res.items->Array.getUnsafe(0)
 
-      // Log shape: pre-unwrapped address, hex topics including topic0
-      t.expect(first.log.address->Address.toString->String.length).toBe(42)
-      t.expect(first.log.topics->Array.length).toBe(3)
-      t
-        .expect(first.log.topics->Array.getUnsafe(0)->EvmTypes.Hex.toString)
-        .toBe(transferSighash)
+      // Flattened item: pre-unwrapped src address, separate topic0 + count
+      t.expect(first.srcAddress->Address.toString->String.length).toBe(42)
+      t.expect(first.topicCount).toBe(3)
+      t.expect(first.topic0->EvmTypes.Hex.toString).toBe(transferSighash)
 
       // Block fields all populated
       let block = first.block
