@@ -14,6 +14,12 @@ chains:
     # 213.190.30.141) tails ~420.66M, ~2M slots behind mainnet (see Solana
     # Issues P0). Start ~10k slots below its head for a quick backfill + tail.
     start_block: 420650000
+    # Bounded window: with Orca/Meteora added the data is ~6x denser (~45 ix/slot),
+    # so keep the backfill small enough that each HyperSync query stays well under
+    # the client timeout. Without an end_block a heavy query can time out, and the
+    # SVM RPC fallback is an unimplemented stub ("Svm does not support getting
+    # items") that crashes the run - see Solana Issues. end_block also stops cleanly.
+    end_block: 420650200
     programs_experimental:
       # --- IDL-decoded protocols ---
       - name: Jupiter
@@ -112,5 +118,33 @@ chains:
               - userSourceTokenAccount
               - userDestTokenAccount
               - userSourceOwner
+            field_selection:
+              token_balance_fields: true
+      # Orca Whirlpool + Meteora DLMM: Anchor 0.30 IDLs (embedded discriminators).
+      # Jupiter routes CPI into these too, so they add cross-protocol edges
+      # beyond Jupiter->Raydium. Orca/Meteora `swap` share disc 0xf8c6... but
+      # dispatch is program-scoped, so no collision.
+      - name: Orca
+        program_id: whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc
+        idl: idls/orca.json
+        instructions:
+          - name: swap
+            discriminator: "0xf8c69e91e17587c8"
+            field_selection:
+              token_balance_fields: true
+          - name: swap_v2
+            discriminator: "0x2b04ed0b1ac91e62"
+            field_selection:
+              token_balance_fields: true
+      - name: Meteora
+        program_id: LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo
+        idl: idls/meteora.json
+        instructions:
+          - name: swap
+            discriminator: "0xf8c69e91e17587c8"
+            field_selection:
+              token_balance_fields: true
+          - name: swap2
+            discriminator: "0x414b3f4ceb5b5b88"
             field_selection:
               token_balance_fields: true

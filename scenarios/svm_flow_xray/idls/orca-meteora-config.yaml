@@ -1,0 +1,71 @@
+# Stream B-ext (Orca/Meteora) programs_experimental fragments - 2026-05-28
+#
+# Paste these as siblings of the Jupiter/Kamino/Drift (idl:) entries under
+#   chains[0].programs_experimental
+# in config.yaml. Both use the program-level `idl:` path (like Jupiter/Kamino/
+# Drift), NOT inline args/accounts: the IDL supplies typed args + ordered
+# accounts once the discriminator is provided.
+#
+# IDL FORMAT: BOTH are Anchor 0.30 "spec 0.1.0" IDLs (top-level `address`,
+# `metadata.spec`, per-instruction embedded `discriminator` byte arrays,
+# snake_case instruction names). HyperIndex's schema parser
+# (hypersync-client-solana::schema_from_anchor_idl_json) keys the instruction
+# table by the embedded discriminator bytes and matches the config-side
+# `discriminator:` hex against that map. The config `name:` is the handler/
+# event label only (it is NOT cross-checked against the IDL name), but we use
+# the IDL-exact snake_case names below for clarity. The discriminators here are
+# the embedded arrays converted to 0x-hex; each was verified to equal
+# sha256("global:" + name)[..8].
+#
+# Every instruction sets field_selection.token_balance_fields: true (implies
+# transaction_fields: true) so per-tx tokenBalances + mints arrive for value.
+
+      - name: Orca
+        program_id: whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc
+        idl: idls/orca.json
+        # whirlpool IDL v0.9.0 (fetched from the on-chain Anchor IDL account).
+        # swap args: amount/otherAmountThreshold (u64), sqrtPriceLimit (u128),
+        # amountSpecifiedIsInput/aToB (bool). Mints/vaults are token_vault_a/b
+        # (+ token_mint_a/b on swap_v2) for value attribution.
+        instructions:
+          - name: swap
+            discriminator: "0xf8c69e91e17587c8"
+            field_selection:
+              token_balance_fields: true
+          - name: swap_v2
+            discriminator: "0x2b04ed0b1ac91e62"
+            field_selection:
+              token_balance_fields: true
+
+      - name: Meteora
+        program_id: LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo
+        idl: idls/meteora.json
+        # lb_clmm (DLMM) IDL v0.12.0 (from MeteoraAg/dlmm-sdk ts-client idl.json).
+        # swap args: amountIn/minAmountOut (u64). Mints token_x_mint/token_y_mint,
+        # vaults reserve_x/reserve_y, user accounts user_token_in/user_token_out.
+        # swap2 adds remaining_accounts_info + memo_program (token-2022 routes).
+        instructions:
+          - name: swap
+            discriminator: "0xf8c69e91e17587c8"
+            field_selection:
+              token_balance_fields: true
+          - name: swap2
+            discriminator: "0x414b3f4ceb5b5b88"
+            field_selection:
+              token_balance_fields: true
+          - name: swapExactOut
+            discriminator: "0xfa49652126cf4bb8"
+            field_selection:
+              token_balance_fields: true
+
+# NOTE on the shared 0x f8c69e91e17587c8 discriminator: Orca `swap` and Meteora
+# `swap` collide because both derive from sha256("global:swap"). This is HARMLESS
+# here: HyperIndex dispatches per-program (program_id + discriminator), so each
+# program's `swap` only matches its own program's instructions. The two entries
+# above live under distinct program_ids, so no cross-talk.
+#
+# OPTIONAL extra Meteora variants present in the IDL (not configured above; add
+# if Jupiter routes through them appear in backfill):
+#   swap_exact_out2          0x2bd7f784893cf351  (max_in_amount,out_amount,+remaining)
+#   swap_with_price_impact   0x38ade6d0ade49ccd  (amount_in,active_id?,max_price_impact_bps)
+#   swap_with_price_impact2  0x4a62c0d6b1334b33  (+remaining_accounts_info)

@@ -205,6 +205,21 @@ const driftLiquidateSpot: MapArgs = (d) => {
   return { argMarketIndex: a.liabilityMarketIndex, argU64A: bi(a.liquidatorMaxLiabilityTransfer) };
 };
 const driftSettlePnl: MapArgs = (d) => ({ argMarketIndex: (d.args as Partial<DriftSettlePnlArgs>).marketIndex });
+// Orca/Meteora are Anchor 0.30 IDLs; arg/account keys are snake_case.
+const orcaSwap: MapArgs = (d) => ({
+  argU64A: bi((d.args as { amount?: string }).amount),
+  argMintA: d.accounts.token_mint_a,
+  argMintB: d.accounts.token_mint_b,
+});
+const meteoraSwap: MapArgs = (d) => {
+  const a = d.args as { amount_in?: string; min_amount_out?: string };
+  return {
+    argU64A: bi(a.amount_in),
+    argU64B: bi(a.min_amount_out),
+    argMintA: d.accounts.token_x_mint,
+    argMintB: d.accounts.token_y_mint,
+  };
+};
 
 register("Jupiter", "route", jupiterRoute);
 register("Jupiter", "sharedAccountsRoute", jupiterRoute);
@@ -223,3 +238,8 @@ register("Drift", "settlePnl", driftSettlePnl);
 // SplToken + System are not matched (volume); see config.yaml. Their mapArgs
 // (splAmount / systemTransfer) are kept for a future tight-window deep dive.
 register("Raydium", "swap", raydiumSwap);
+
+register("Orca", "swap", orcaSwap);
+register("Orca", "swap_v2", orcaSwap);
+register("Meteora", "swap", meteoraSwap);
+register("Meteora", "swap2", meteoraSwap);

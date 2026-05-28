@@ -102,3 +102,27 @@ chains:
               - userSourceOwner
             field_selection:
               token_balance_fields: true
+      - name: Orca
+        program_id: whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc
+        idl: idls/orca.json
+        instructions:
+          - name: swap
+            discriminator: "0xf8c69e91e17587c8"
+            field_selection:
+              token_balance_fields: true
+          - name: swap_v2
+            discriminator: "0x2b04ed0b1ac91e62"
+            field_selection:
+              token_balance_fields: true
+      - name: Meteora
+        program_id: LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo
+        idl: idls/meteora.json
+        instructions:
+          - name: swap
+            discriminator: "0xf8c69e91e17587c8"
+            field_selection:
+              token_balance_fields: true
+          - name: swap2
+            discriminator: "0x414b3f4ceb5b5b88"
+            field_selection:
+              token_balance_fields: true
