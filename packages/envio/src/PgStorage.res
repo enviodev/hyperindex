@@ -745,7 +745,7 @@ let rec writeBatch = async (
       ~items=rawEvents,
     )
 
-    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
+    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, updates, history}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
@@ -773,24 +773,22 @@ let rec writeBatch = async (
             let batchDeleteEntityIds = []
 
             updates->Array.forEach(update => {
-              switch update {
-              | {history, containsRollbackDiffChange} =>
-                history->Array.forEach(
-                  (change: Change.t<'a>) => {
-                    if !containsRollbackDiffChange {
-                      backfillHistoryIds->Utils.Set.add(change->Change.getEntityId)->ignore
-                    }
-                    switch change {
-                    | Delete({entityId}) => {
-                        batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
-                        batchDeleteCheckpointIds
-                        ->Belt.Array.push(change->Change.getCheckpointId)
-                        ->ignore
-                      }
-                    | Set(_) => batchSetUpdates->Array.push(change)->ignore
-                    }
-                  },
-                )
+              if !update.containsRollbackDiffChange {
+                backfillHistoryIds
+                ->Utils.Set.add(update.latestChange->Change.getEntityId)
+                ->ignore
+              }
+            })
+
+            history->Array.forEach((change: Change.t<'a>) => {
+              switch change {
+              | Delete({entityId}) => {
+                  batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
+                  batchDeleteCheckpointIds
+                  ->Belt.Array.push(change->Change.getCheckpointId)
+                  ->ignore
+                }
+              | Set(_) => batchSetUpdates->Array.push(change)->ignore
               }
             })
 

@@ -9,13 +9,13 @@ type serializableChange =
 
 type serializableEntityUpdate = {
   latestChange: serializableChange,
-  history: array<serializableChange>,
   containsRollbackDiffChange: bool,
 }
 
 type serializableUpdatedEntity = {
   entityName: string,
   updates: array<serializableEntityUpdate>,
+  history: array<serializableChange>,
 }
 
 // Worker -> Main thread payloads
@@ -147,7 +147,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
   ) => {
     // Encode entities to JSON for serialization across worker boundary
     let serializableEntities = updatedEntities->Array.map((
-      {entityConfig, updates}: Persistence.updatedEntity,
+      {entityConfig, updates, history}: Persistence.updatedEntity,
     ) => {
       let encodeChange = (change: Change.t<Internal.entity>): serializableChange => {
         switch change {
@@ -164,9 +164,9 @@ let makeStorage = (proxy: t): Persistence.storage => {
         entityName: entityConfig.name,
         updates: updates->Array.map(update => {
           latestChange: encodeChange(update.latestChange),
-          history: update.history->Array.map(encodeChange),
           containsRollbackDiffChange: update.containsRollbackDiffChange,
         }),
+        history: history->Array.map(encodeChange),
       }
     })
     let _ = await proxy->sendRequest(

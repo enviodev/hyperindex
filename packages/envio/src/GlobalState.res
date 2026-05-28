@@ -958,7 +958,6 @@ let injectedTaskReducer = (
         let progressedChainsById = batch.progressedChainsById
 
         let isInReorgThreshold = state.chainManager.isInReorgThreshold
-        let shouldSaveHistory = state.ctx.config->Config.shouldSaveHistory(~isInReorgThreshold)
 
         let isBelowReorgThreshold =
           !state.chainManager.isInReorgThreshold && state.ctx.config.shouldRollbackOnReorg
@@ -999,7 +998,7 @@ let injectedTaskReducer = (
           dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
           let inMemoryStore = state.ctx.inMemoryStore
-          inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
+          inMemoryStore->InMemoryStore.setBatchDcs(~batch)
 
           switch await EventProcessing.processEventBatch(
             ~batch,

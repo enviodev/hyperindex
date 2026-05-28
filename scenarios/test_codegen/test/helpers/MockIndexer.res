@@ -17,7 +17,6 @@ module InMemoryStore = {
         checkpointId: 0n,
         entity,
       }),
-      ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold=false),
     )
   }
 

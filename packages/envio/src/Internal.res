@@ -596,7 +596,6 @@ type reorgCheckpoint = {
 
 type inMemoryStoreEntityUpdate = {
   latestChange: Change.t<entity>,
-  history: array<Change.t<entity>>,
   // In the event of a rollback, some entity updates may have been
   // been affected by a rollback diff. If there was no rollback diff
   // this will always be false.
@@ -605,6 +604,10 @@ type inMemoryStoreEntityUpdate = {
   // but true if the update is related to an entity that is
   // currently present in the diff
   containsRollbackDiffChange: bool,
+  // Index of this row's most recent entry in the entity table's shared
+  // history array. -1 when the row has no entry (e.g. only populated by
+  // a rollback-diff replay).
+  historyIndex: int,
 }
 
 @unboxed

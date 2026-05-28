@@ -156,18 +156,18 @@ describe("E2E rollback tests", () => {
           },
         }),
         Set({
-          checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
-          entityId: "3",
-          entity: {
-            Indexer.Entities.SimpleEntity.id: "3",
-            value: "value-1",
-          },
-        }),
-        Set({
           checkpointId: firstHistoryCheckpointId,
           entityId: "4",
           entity: {
             Indexer.Entities.SimpleEntity.id: "4",
+            value: "value-1",
+          },
+        }),
+        Set({
+          checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
+          entityId: "3",
+          entity: {
+            Indexer.Entities.SimpleEntity.id: "3",
             value: "value-1",
           },
         }),
