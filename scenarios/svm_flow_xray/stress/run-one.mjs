@@ -164,6 +164,15 @@ const counts = readCounts();
 const matchedInstructions = Math.max(totalInstructions, counts.matchedIx ?? 0);
 const tokenBalanceRows = Math.max(tokenDeltas, counts.tbRows ?? 0);
 
+// Distinguish a true OOM from the endpoint-503 -> RPC-fallback cascade crash
+// (Solana Issues P1 #2): a real OOM processes data first (high matchedIx, RSS
+// climbing past the addon+node baseline), whereas the cascade dies before any
+// instruction is dispatched. So a worker crash with ZERO matched instructions is
+// the endpoint cascade, not memory exhaustion.
+if ((outcome === "worker-exit" || outcome === "error") && matchedInstructions === 0) {
+  outcome = "endpoint-fallback";
+}
+
 const metrics = {
   config: cfg.replace(/^.*\//, ""),
   windowSlots: endBlock - startBlock,
