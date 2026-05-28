@@ -490,7 +490,7 @@ let getLastKnownValidBlock = async (
     )
   }
 
-  switch scannedBlockNumbers {
+  let rollbackTargetBlock = switch scannedBlockNumbers {
   | [] => chainFetcher->getHighestBlockBelowThreshold
   | _ => {
       let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
@@ -503,6 +503,10 @@ let getLastKnownValidBlock = async (
       }
     }
   }
+
+  chainFetcher.sourceManager->SourceManager.onReorg(~rollbackTargetBlock)
+
+  rollbackTargetBlock
 }
 
 let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing

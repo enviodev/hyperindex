@@ -331,64 +331,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     //In the query
     let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-    let lastBlockQueriedPromise = switch pageUnsafe.rollbackGuard {
-    //In the case a rollbackGuard is returned (this only happens at the head for unconfirmed blocks)
-    //use these values
-    | Some({blockNumber, timestamp, hash}) =>
-      (
-        {
-          blockNumber,
-          blockTimestamp: timestamp,
-          blockHash: hash,
-        }: ReorgDetection.blockDataWithTimestamp
-      )->Promise.resolve
-    | None =>
-      //The optional block and timestamp of the last item returned by the query
-      //(Optional in the case that there are no logs returned in the query)
-      switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
-      | Some({block}) if block.number->Belt.Option.getUnsafe == heighestBlockQueried =>
-        //If the last log item in the current page is equal to the
-        //heighest block acounted for in the query. Simply return this
-        //value without making an extra query
-
-        (
-          {
-            blockNumber: block.number->Belt.Option.getUnsafe,
-            blockTimestamp: block.timestamp->Belt.Option.getUnsafe,
-            blockHash: block.hash->Belt.Option.getUnsafe,
-          }: ReorgDetection.blockDataWithTimestamp
-        )->Promise.resolve
-      //If it does not match it means that there were no matching logs in the last
-      //block so we should fetch the block data
-      | Some(_)
-      | None =>
-        //If there were no logs at all in the current page query then fetch the
-        //timestamp of the heighest block accounted for
-        HyperSync.queryBlockData(
-          ~client,
-          ~blockNumber=heighestBlockQueried,
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~logger,
-        )->Promise.thenResolve(res =>
-          switch res {
-          | Ok(Some(blockData)) => blockData
-          | Ok(None) =>
-            mkLogAndRaise(
-              Not_found,
-              ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
-            )
-          | Error(e) =>
-            HyperSync.queryErrorToMsq(e)
-            ->Obj.magic
-            ->mkLogAndRaise(
-              ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
-            )
-          }
-        )
-      }
-    }
-
     let parsingTimeRef = Hrtime.makeTimer()
 
     //Parse page items into queue items
@@ -463,14 +405,46 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
 
     let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    let rangeLastBlock = await lastBlockQueriedPromise
+    // Collect (blockNumber, blockHash) pairs we already have from the response —
+    // one per item's block (deduped) plus, when present, the rollbackGuard's
+    // head block and the parent of the range's first block.
+    let blockHashes = []
+    let seenBlockNumbers = Dict.make()
+    let pushBlockHash = (blockNumber, blockHash) => {
+      let key = blockNumber->Int.toString
+      if !(seenBlockNumbers->Dict.has(key)) {
+        seenBlockNumbers->Dict.set(key, true)
+        blockHashes
+        ->Array.push({ReorgDetection.blockNumber, blockHash})
+        ->ignore
+      }
+    }
+    pageUnsafe.items->Belt.Array.forEach(({block}) => {
+      switch (block.number, block.hash) {
+      | (Some(blockNumber), Some(blockHash)) => pushBlockHash(blockNumber, blockHash)
+      | _ => ()
+      }
+    })
+    switch pageUnsafe.rollbackGuard {
+    | None => ()
+    | Some({blockNumber, hash, firstBlockNumber, firstParentHash}) => {
+        pushBlockHash(blockNumber, hash)
+        pushBlockHash(firstBlockNumber - 1, firstParentHash)
+      }
+    }
 
-    let reorgGuard: ReorgDetection.reorgGuard = {
-      rangeLastBlock: rangeLastBlock->ReorgDetection.generalizeBlockDataWithTimestamp,
-      prevRangeLastBlock: pageUnsafe.rollbackGuard->Option.map(v => {
-        ReorgDetection.blockHash: v.firstParentHash,
-        blockNumber: v.firstBlockNumber - 1,
-      }),
+    // Best-effort timestamp for the queried-range head: prefer the rollbackGuard
+    // (set at the head for unconfirmed blocks), otherwise the last item if it
+    // happens to be in the range's last block. 0 is a tolerated placeholder
+    // when neither is available (FetchState already uses 0 in several spots).
+    let latestFetchedBlockTimestamp = switch pageUnsafe.rollbackGuard {
+    | Some({timestamp}) => timestamp
+    | None =>
+      switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
+      | Some({block}) if block.number->Belt.Option.getUnsafe == heighestBlockQueried =>
+        block.timestamp->Belt.Option.getUnsafe
+      | _ => 0
+      }
     }
 
     let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
@@ -482,12 +456,12 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     }
 
     {
-      latestFetchedBlockTimestamp: rangeLastBlock.blockTimestamp,
+      latestFetchedBlockTimestamp,
       parsedQueueItems,
-      latestFetchedBlockNumber: rangeLastBlock.blockNumber,
+      latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
-      reorgGuard,
+      blockHashes,
       fromBlockQueried: fromBlock,
     }
   }

@@ -731,29 +731,41 @@ module Source = {
                   let latestFetchedBlockNumber =
                     latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
-                  resolve({
-                    Source.knownHeight,
-                    reorgGuard: {
-                      rangeLastBlock: {
+                  let latestFetchedBlockHash = switch latestFetchedBlockHash {
+                  | Some(latestFetchedBlockHash) => latestFetchedBlockHash
+                  | None => `0x${latestFetchedBlockNumber->Int.toString}`
+                  }
+                  let blockHashes = [
+                    (
+                      {
                         blockNumber: latestFetchedBlockNumber,
-                        blockHash: switch latestFetchedBlockHash {
-                        | Some(latestFetchedBlockHash) => latestFetchedBlockHash
-                        | None => `0x${latestFetchedBlockNumber->Int.toString}`
-                        },
-                      },
-                      prevRangeLastBlock: switch prevRangeLastBlock {
-                      | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
-                      | None =>
-                        if fromBlock > 0 {
-                          Some({
+                        blockHash: latestFetchedBlockHash,
+                      }: ReorgDetection.blockData
+                    ),
+                  ]
+                  let prevEntry = switch prevRangeLastBlock {
+                  | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
+                  | None =>
+                    if fromBlock > 0 {
+                      Some(
+                        (
+                          {
                             blockNumber: fromBlock - 1,
                             blockHash: `0x${(fromBlock - 1)->Int.toString}`,
-                          })
-                        } else {
-                          None
-                        }
-                      },
-                    },
+                          }: ReorgDetection.blockData
+                        ),
+                      )
+                    } else {
+                      None
+                    }
+                  }
+                  switch prevEntry {
+                  | Some(prev) => blockHashes->Array.unshift(prev)->ignore
+                  | None => ()
+                  }
+                  resolve({
+                    Source.knownHeight,
+                    blockHashes,
                     parsedQueueItems: items->Array.map(
                       item => {
                         Internal.Event({
