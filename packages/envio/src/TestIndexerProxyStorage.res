@@ -4,18 +4,15 @@ type requestId = int
 // Serializable change with entity as JSON (for worker thread messaging)
 @tag("type")
 type serializableChange =
-  | @as("SET") Set({entityId: string, entity: JSON.t, checkpointId: bigint})
-  | @as("DELETE") Delete({entityId: string, checkpointId: bigint})
+  | @as("SET") Set({entityId: string, entity: JSON.t, checkpointId: bigint, isRollbackDiff?: bool})
+  | @as("DELETE") Delete({entityId: string, checkpointId: bigint, isRollbackDiff?: bool})
 
-type serializableEntityUpdate = {
-  latestChange: serializableChange,
-  history: array<serializableChange>,
-  containsRollbackDiffChange: bool,
-}
+type serializableEntityUpdate = {latestChange: serializableChange}
 
 type serializableUpdatedEntity = {
   entityName: string,
   updates: array<serializableEntityUpdate>,
+  history: array<serializableChange>,
 }
 
 // Worker -> Main thread payloads
@@ -147,26 +144,32 @@ let makeStorage = (proxy: t): Persistence.storage => {
   ) => {
     // Encode entities to JSON for serialization across worker boundary
     let serializableEntities = updatedEntities->Array.map((
-      {entityConfig, updates}: Persistence.updatedEntity,
+      {entityConfig, updates, history}: Persistence.updatedEntity,
     ) => {
       let encodeChange = (change: Change.t<Internal.entity>): serializableChange => {
+        let isRollbackDiff = change->Change.isRollbackDiff
         switch change {
         | Set({entityId, entity, checkpointId}) =>
           Set({
             entityId,
             entity: entity->S.reverseConvertToJsonOrThrow(entityConfig.schema),
             checkpointId,
+            isRollbackDiff: ?(isRollbackDiff ? Some(true) : None),
           })
-        | Delete({entityId, checkpointId}) => Delete({entityId, checkpointId})
+        | Delete({entityId, checkpointId}) =>
+          Delete({
+            entityId,
+            checkpointId,
+            isRollbackDiff: ?(isRollbackDiff ? Some(true) : None),
+          })
         }
       }
       {
         entityName: entityConfig.name,
         updates: updates->Array.map(update => {
           latestChange: encodeChange(update.latestChange),
-          history: update.history->Array.map(encodeChange),
-          containsRollbackDiffChange: update.containsRollbackDiffChange,
         }),
+        history: history->Array.map(encodeChange),
       }
     })
     let _ = await proxy->sendRequest(

@@ -96,14 +96,12 @@ let writeBatch = async (
     JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
     let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
-      let updates =
-        inMemoryStore
-        ->getInMemTable(~entityConfig)
-        ->InMemoryTable.Entity.updates
+      let inMemTable = inMemoryStore->getInMemTable(~entityConfig)
+      let updates = inMemTable->InMemoryTable.Entity.updates
       if updates->Utils.Array.isEmpty {
         None
       } else {
-        Some(({entityConfig, updates}: Persistence.updatedEntity))
+        Some(({entityConfig, updates, history: inMemTable.history}: Persistence.updatedEntity))
       }
     })
     await persistence.storage.writeBatch(
@@ -183,9 +181,8 @@ let prepareRollbackDiff = async (
         Delete({
           entityId: data["id"],
           checkpointId: rollbackDiffCheckpointId,
+          isRollbackDiff: true,
         }),
-        ~shouldSaveHistory=false,
-        ~containsRollbackDiffChange=true,
       )
     })
 
@@ -198,9 +195,8 @@ let prepareRollbackDiff = async (
           entityId: entity.id,
           checkpointId: rollbackDiffCheckpointId,
           entity,
+          isRollbackDiff: true,
         }),
-        ~shouldSaveHistory=false,
-        ~containsRollbackDiffChange=true,
       )
     })
   })
@@ -212,7 +208,7 @@ let prepareRollbackDiff = async (
   }
 }
 
-let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
+let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t) => {
   let inMemTable =
     inMemoryStore->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
 
@@ -246,7 +242,6 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
               checkpointId,
               entity: entity->InternalTable.EnvioAddresses.castToInternal,
             }),
-            ~shouldSaveHistory,
           )
         }
       }

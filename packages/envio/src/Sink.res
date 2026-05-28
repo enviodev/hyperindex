@@ -34,8 +34,8 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
     },
     writeBatch: async (~batch, ~updatedEntities) => {
       await Promise.all(
-        updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
-          ClickHouse.setUpdatesOrThrow(client, ~cache, ~updates, ~entityConfig, ~database)
+        updatedEntities->Belt.Array.map(({entityConfig, history}) => {
+          ClickHouse.setUpdatesOrThrow(client, ~cache, ~history, ~entityConfig, ~database)
         }),
       )->Utils.Promise.ignoreValue
       await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)

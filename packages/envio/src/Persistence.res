@@ -51,6 +51,7 @@ type updatedEffectCache = {
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
   updates: array<Internal.inMemoryStoreEntityUpdate>,
+  history: array<Change.t<Internal.entity>>,
 }
 
 type storage = {
