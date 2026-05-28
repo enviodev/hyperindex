@@ -89,38 +89,37 @@ impl HypersyncClient {
             .context("run inner query")
             .map_err(map_err)?;
 
-        let decoder = self.decoder.clone();
-        let checksum = self.enable_checksum_addresses;
-        let archive_height = res.archive_height;
-        let next_block = res.next_block;
-        let rollback_guard = res.rollback_guard;
-        let events = res.data;
-
-        let items = tokio::task::spawn_blocking(move || {
+        // Fuse conversion + decoding into the same task that ran get_events.
+        // The upstream `get_events` already uses `block_in_place` for its
+        // Arrow parse step, so we mirror that here — no separate
+        // spawn_blocking, just a hint to the runtime that we're about to do
+        // CPU work and any other tasks pinned to this worker should move.
+        let items = tokio::task::block_in_place(|| {
             convert_event_items(
-                events,
-                &decoder,
-                checksum,
+                res.data,
+                &self.decoder,
+                self.enable_checksum_addresses,
                 &non_optional_block_fields,
                 &non_optional_transaction_fields,
             )
         })
-        .await
-        .map_err(|e| map_err(anyhow::anyhow!("get_event_items worker join failure: {e}")))?
         .map_err(map_err)?;
 
         Ok(EventItemsResponse {
-            archive_height: archive_height
+            archive_height: res
+                .archive_height
                 .map(|h| h.try_into())
                 .transpose()
                 .context("convert archive_height")
                 .map_err(map_err)?,
-            next_block: next_block
+            next_block: res
+                .next_block
                 .try_into()
                 .context("convert next_block")
                 .map_err(map_err)?,
             items,
-            rollback_guard: rollback_guard
+            rollback_guard: res
+                .rollback_guard
                 .map(RollbackGuard::try_from)
                 .transpose()
                 .context("convert rollback guard")
