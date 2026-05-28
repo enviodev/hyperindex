@@ -13,13 +13,14 @@ chains:
     # The public endpoint we can reach (solana-demo2 via the /etc/hosts pin to
     # 213.190.30.141) tails ~420.66M, ~2M slots behind mainnet (see Solana
     # Issues P0). Start ~10k slots below its head for a quick backfill + tail.
-    start_block: 420650000
-    # Bounded window: with Orca/Meteora added the data is ~6x denser (~45 ix/slot),
-    # so keep the backfill small enough that each HyperSync query stays well under
-    # the client timeout. Without an end_block a heavy query can time out, and the
-    # SVM RPC fallback is an unimplemented stub ("Svm does not support getting
-    # items") that crashes the run - see Solana Issues. end_block also stops cleanly.
-    end_block: 420650200
+    # Window moved to the 420.00M band: on THIS demo endpoint Drift data only
+    # exists ~420.00M-420.10M (dense everywhere on real mainnet), so a window here
+    # captures Drift + the DEXes together. Bounded + small because the band is
+    # dense and the transaction-data path is slow; run with
+    # ENVIO_HYPERSYNC_CLIENT_MAX_RETRIES=12 so a transient 503 doesn't crash into
+    # the unimplemented SVM RPC fallback (see Solana Issues).
+    start_block: 420000000
+    end_block: 420002000
     programs_experimental:
       # --- IDL-decoded protocols ---
       - name: Jupiter
