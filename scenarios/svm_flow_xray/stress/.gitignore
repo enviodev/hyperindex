@@ -1,0 +1,8 @@
+# Ephemeral run artifacts: generated configs, count sidecars, captured logs.
+.generated/
+# Self-contained run-root symlinks (recreated by setup; not source).
+/node_modules
+/idls
+/schema.graphql
+/.envio
+/envio-env.d.ts
