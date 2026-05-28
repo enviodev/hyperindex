@@ -52,7 +52,7 @@ chains:
             field_selection:
               token_balance_fields: true
       - name: Drift
-        program_id: dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcozatL
+        program_id: dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH
         idl: idls/drift.json
         instructions:
           - name: placePerpOrder

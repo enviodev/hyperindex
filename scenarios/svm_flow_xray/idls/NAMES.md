@@ -47,7 +47,7 @@ Other notable route variants in the IDL (not configured, FYI):
 
 ---
 
-## Drift (`dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcozatL`)
+## Drift (`dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH`)
 
 All 5 intended instructions CONFIRMED present (exact names match):
 
