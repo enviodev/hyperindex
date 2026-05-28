@@ -1,19 +1,40 @@
 // Resolution order:
-//   1. Production: require("envio-{os}-{arch}") — platform-specific npm package
-//   2. Dev build:  find repo → cargo build --lib → load from target/debug/
+//   1. Production: require("envio-{os}-{arch}") - platform-specific npm package
+//   2. Dev build:  find repo -> cargo build --lib -> load from target/debug/
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
 type hypersyncClientCtor
+type hypersyncSolanaClientCtor
 type decoderCtor
+
+/// JS shape of one decoded instruction. Mirrors `DecodedInstructionJson` in
+/// `packages/cli/src/hypersync_source_svm/decoder.rs`. The `argsJson` /
+/// `accountsJson` fields are stringified to side-step napi-rs's lack of
+/// native `serde_json::Value` passthrough; callers `JSON.parse` once.
+type svmDecodedInstruction = {
+  name: string,
+  argsJson: string,
+  accountsJson: string,
+  extraAccounts: array<string>,
+}
 
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
   @as("HypersyncClient")
   hypersyncClient: hypersyncClientCtor,
+  @as("HypersyncSolanaClient")
+  hypersyncSolanaClient: hypersyncSolanaClientCtor,
   @as("Decoder")
   decoder: decoderCtor,
+  setLogLevel: string => unit,
+  registerProgramSchema: (~descriptorJson: string) => int,
+  decodeInstruction: (
+    ~schemaHandle: int,
+    ~dataHex: string,
+    ~accounts: array<string>,
+  ) => Null.t<svmDecodedInstruction>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"
@@ -122,8 +143,8 @@ let loadAddon = () => {
   }
 
   // Only swallow MODULE_NOT_FOUND (the optional package isn't installed on
-  // this host). Any other failure — corrupt .node, ABI mismatch, dlopen
-  // error — is a real load failure and must surface.
+  // this host). Any other failure - corrupt .node, ABI mismatch, dlopen
+  // error - is a real load failure and must surface.
   let rec tryRequire = i =>
     switch candidates[i] {
     | None => None

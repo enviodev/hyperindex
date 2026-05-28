@@ -229,7 +229,31 @@ let make = (
       ~lowercaseAddresses,
     )
   | Config.FuelSourceConfig({hypersync}) => [HyperFuelSource.make({chain, endpointUrl: hypersync})]
-  | Config.SvmSourceConfig({rpc}) => [Svm.makeRPCSource(~chain, ~rpc)]
+  | Config.SvmSourceConfig({hypersync, rpc}) =>
+    switch hypersync {
+    | None => [Svm.makeRPCSource(~chain, ~rpc)]
+    | Some(hypersyncUrl) =>
+      // HyperSync drives instruction sync; RPC remains the height oracle
+      // (Svm.makeRPCSource's `getFinalizedSlot` route) and the fallback.
+      let svmEventConfigs =
+        chainConfig.contracts
+        ->Array.flatMap(contract => contract.events)
+        ->(
+          Utils.magic: array<Internal.eventConfig> => array<Internal.svmInstructionEventConfig>
+        )
+      let apiToken = Env.envioApiToken
+      [
+        HyperSyncSolanaSource.make({
+          chain,
+          endpointUrl: hypersyncUrl,
+          apiToken,
+          eventConfigs: svmEventConfigs,
+          clientMaxRetries: Env.hyperSyncClientMaxRetries,
+          clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
+        }),
+        Svm.makeRPCSource(~chain, ~rpc, ~sourceFor=Fallback),
+      ]
+    }
   // For tests: use ready-to-use sources directly
   | Config.CustomSources(sources) => sources
   }

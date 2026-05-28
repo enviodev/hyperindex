@@ -959,6 +959,137 @@ export type SvmOnSlotOptions<Config extends IndexerConfigTypes = GlobalConfig> =
   readonly where?: (args: SvmOnSlotWhereArgs<Config>) => SvmOnSlotWhereResult;
 };
 
+// ============== SVM onInstruction types ==============
+
+/** Borsh-decoded view of an instruction. Present whenever a `ProgramSchema`
+ * was attached to the program (bundled, Anchor IDL, or hand-written
+ * `accounts`/`args` in YAML). Absent when no schema applies or the
+ * discriminator didn't match any registered instruction. */
+export type SvmDecodedInstruction = {
+  /** Schema-declared instruction name. */
+  readonly name: string;
+  /** Borsh-decoded args object. POC types this as `unknown`; narrow with a
+   * locally-declared type until the typed-args codegen lands. */
+  readonly args: unknown;
+  /** Named accounts in schema order. Keys are exactly the schema-declared
+   * names; values are base58 pubkeys. */
+  readonly accounts: Readonly<Record<string, string>>;
+  /** Accounts beyond the schema's named list (Anchor `remaining_accounts`,
+   * IDL drift). Empty when counts match the schema. */
+  readonly extraAccounts: readonly string[];
+};
+
+/** A single Solana instruction matched by the indexer.
+ *
+ * `data` and discriminator prefixes are `0x`-prefixed hex strings; accounts
+ * are base58 strings. When a Borsh schema is configured (bundled, Anchor
+ * IDL, or hand-written YAML), `decoded` carries the named-accounts +
+ * decoded-args view. */
+export type SvmInstruction = {
+  readonly programId: string;
+  readonly data: string;
+  readonly accounts: readonly string[];
+  readonly instructionAddress: readonly number[];
+  readonly isInner: boolean;
+  readonly d1?: string;
+  readonly d2?: string;
+  readonly d4?: string;
+  readonly d8?: string;
+  readonly decoded?: SvmDecodedInstruction;
+};
+
+export type SvmTokenBalance = {
+  readonly account?: string;
+  readonly mint?: string;
+  readonly owner?: string;
+  /** u64 decimal string. Cast with BigInt(...) for arithmetic. */
+  readonly preAmount?: string;
+  readonly postAmount?: string;
+};
+
+/** Parent transaction surfaced when an instruction's
+ * `include_transaction` flag is `true`. */
+export type SvmTransaction = {
+  readonly signatures: readonly string[];
+  readonly feePayer?: string;
+  readonly success?: boolean;
+  readonly err?: string;
+  /** Lamports. */
+  readonly fee?: bigint;
+  readonly computeUnitsConsumed?: bigint;
+  readonly accountKeys: readonly string[];
+  readonly recentBlockhash?: string;
+  readonly version?: string;
+  /** SPL Token / Token-2022 balance snapshots for this transaction.
+   * Present when `include_token_balances` is `true`. */
+  readonly tokenBalances?: readonly SvmTokenBalance[];
+};
+
+export type SvmLog = {
+  readonly kind: string;
+  readonly message: string;
+};
+
+/** A single Solana instruction event delivered to a handler. Parameterised
+ * over `Decoded` so the per-(program, instruction) overload of
+ * `onInstruction` can narrow `event.instruction.decoded` to the
+ * codegen-generated `{ args, accounts }` shape. */
+export type SvmInstructionEvent<
+  Decoded extends SvmDecodedInstruction = SvmDecodedInstruction,
+> = {
+  readonly contractName: string;
+  readonly eventName: string;
+  readonly instruction: Omit<SvmInstruction, "decoded"> & {
+    readonly decoded?: Decoded;
+  };
+  /** Present when the instruction's `include_transaction` is `true`. */
+  readonly transaction?: SvmTransaction;
+  /** Present when the instruction's `include_logs` is `true`; only logs
+   * scoped to this exact instruction (matching `instruction_address`). */
+  readonly logs?: readonly SvmLog[];
+  readonly slot: number;
+  readonly blockTime?: number;
+};
+
+/** Arguments passed to handlers registered via `indexer.onInstruction`. */
+export type SvmOnInstructionHandlerArgs<
+  Config extends IndexerConfigTypes = GlobalConfig,
+  Event extends SvmInstructionEvent = SvmInstructionEvent,
+> = {
+  readonly event: Event;
+  readonly context: SvmOnSlotContext<Config>;
+};
+
+/** Shape extracted from `Global.config.svm.programs[P][I]`. The codegen
+ * emits `{ args: ...; accounts: ... }` per (program, instruction); this
+ * helper turns that into a `SvmDecodedInstruction`-compatible record. */
+type SvmDecodedFromProgramTable<TInstr> = TInstr extends {
+  args: infer A;
+  accounts: infer Acc extends Readonly<Record<string, string>>;
+}
+  ? {
+      readonly name: string;
+      readonly args: A;
+      readonly accounts: Acc;
+      readonly extraAccounts: readonly string[];
+    }
+  : SvmDecodedInstruction;
+
+/** Options for an SVM `indexer.onInstruction` registration. */
+export type SvmOnInstructionOptions<P extends string = string, I extends string = string> = {
+  /** Program name as declared under `chains[].programs[].name` in
+   * `config.yaml`. */
+  readonly program: P;
+  /** Instruction name as declared under
+   * `chains[].programs[].instructions[].name` in `config.yaml`. */
+  readonly instruction: I;
+};
+
+/** Handler function for an SVM `indexer.onInstruction` registration. */
+export type SvmOnInstructionHandler<
+  Config extends IndexerConfigTypes = GlobalConfig,
+> = (args: SvmOnInstructionHandlerArgs<Config>) => Promise<void>;
+
 // ============== Indexer Types ==============
 
 // Helper: Check if an ecosystem is configured. Single-ecosystem indexers only
@@ -1136,7 +1267,7 @@ type FuelEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
       : never
     : never;
 
-// SVM ecosystem type — chains plus onSlot handler method. SVM has no onEvent yet.
+// SVM ecosystem type — chains plus instruction + slot handler methods.
 type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
   "svm" extends keyof Config
     ? Config["svm"] extends { chains: infer Chains }
@@ -1160,7 +1291,41 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
               options: SvmOnSlotOptions<Config>,
               handler: SvmOnSlotHandler<Config>,
             ) => void;
+          } & (Config["svm"] extends {
+            programs: infer Programs extends Record<string, Record<string, any>>;
           }
+            ? {
+                /**
+                 * Register an instruction handler. Dispatch matches on
+                 * `(programId, discriminator)` from the YAML config.
+                 * `event.instruction.decoded.args` and
+                 * `event.instruction.decoded.accounts` are typed from the
+                 * program's Borsh schema (Anchor IDL, bundled, or
+                 * hand-written `accounts`/`args` in YAML). `decoded` stays
+                 * optional at runtime because schema-matching can fail on
+                 * IDL drift or unknown discriminators.
+                 */
+                readonly onInstruction: <
+                  P extends keyof Programs & string,
+                  I extends keyof Programs[P] & string,
+                >(
+                  options: SvmOnInstructionOptions<P, I>,
+                  handler: (
+                    args: SvmOnInstructionHandlerArgs<
+                      Config,
+                      SvmInstructionEvent<SvmDecodedFromProgramTable<Programs[P][I]>>
+                    >,
+                  ) => Promise<void>,
+                ) => void;
+              }
+            : {
+                /** Untyped fallback for indexers with no `programs` in
+                 * config. `decoded` stays the generic shape. */
+                readonly onInstruction: (
+                  options: SvmOnInstructionOptions,
+                  handler: SvmOnInstructionHandler<Config>,
+                ) => void;
+              })
         : never
       : never
     : never;
@@ -1176,6 +1341,7 @@ type CodegenRequiredHint =
   "Run 'envio codegen' to generate handler types from config.yaml. Without codegen, the indexer has no contracts, chains, or events to register handlers for.";
 type CodegenRequiredFallback = {
   readonly onEvent: (...hint: CodegenRequiredHint[]) => void;
+  readonly onInstruction: (...hint: CodegenRequiredHint[]) => void;
   readonly onBlock: (...hint: CodegenRequiredHint[]) => void;
   readonly onSlot: (...hint: CodegenRequiredHint[]) => void;
   readonly contractRegister: (...hint: CodegenRequiredHint[]) => void;

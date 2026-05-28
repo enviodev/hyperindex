@@ -608,6 +608,34 @@ impl EventTemplate {
                     }
                 }
             }
+            EventKind::Svm(_) => Ok(Self::from_svm_instruction_event(
+                config_event,
+                contract_name,
+            )),
+        }
+    }
+
+    /// Per-instruction ReScript module for SVM. Minimal surface for C1: enough
+    /// shape so the GADT `eventIdentity<event, paramsConstructor, onEventWhere>`
+    /// machinery still type-checks. Concrete `indexer.onInstruction(...)`
+    /// registration arrives in C2 alongside dispatch.
+    fn from_svm_instruction_event(
+        config_event: &system_config::Event,
+        _contract_name: &CapitalizedOptions,
+    ) -> Self {
+        let event_name = config_event.name.capitalize();
+        let module_code = format!(
+            r#"
+let name = "{event_name}"
+let contractName = contractName
+type params = Envio.svmInstruction
+type paramsConstructor = unit
+type event = Envio.svmInstructionEvent
+type onEventWhere = Internal.noOnEventWhere"#
+        );
+        EventTemplate {
+            name: event_name,
+            module_code,
         }
     }
 }
@@ -654,6 +682,8 @@ impl ContractTemplate {
                     abi.path_relative_to_root, all_abi_type_declarations,
                 )
             }
+            // Solana programs ship no ABI artifact today.
+            Abi::Svm(_) => String::new(),
         };
 
         Ok(ContractTemplate {
@@ -1398,6 +1428,11 @@ type indexer = {{
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
+  /** Register an instruction handler. */
+  onInstruction: 'event 'paramsConstructor 'where. (
+    onInstructionOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
+    Internal.genericHandler<Internal.genericHandlerArgs<'event, handlerContext>>,
+  ) => unit,
   /** Register a Slot Handler. Evaluates `where` once per configured chain at registration time. */
   onSlot: (
     Envio.onBlockOptions<indexerChain>,
@@ -1695,6 +1730,12 @@ type onEventOptions<'eventIdentity, 'where> = {{
   where?: 'where,
 }}
 
+/** Options for `indexer.onInstruction` (SVM). */
+type onInstructionOptions<'eventIdentity, 'where> = {{
+  instruction: 'eventIdentity,
+  where?: 'where,
+}}
+
 module Enums = {{
 {enums_module_code}
 }}
@@ -1854,6 +1895,7 @@ type testIndexer = {{
         let fuel_contracts_body: String;
         let fuel_event_filters_body: String;
         let svm_chains_body: String;
+        let svm_programs_body: String;
         let entities_body: String;
         let enums_body: String;
         {
@@ -2125,6 +2167,91 @@ type testIndexer = {{
                 format!("{{\n{}\n      }}", svm_chains_entries.join("\n"))
             };
 
+            // SVM programs table: per-program record of per-instruction
+            // `{ args, accounts }` shapes. Empty when no SVM programs
+            // configured, or when no instruction in any program carries a
+            // resolved schema (bundled / IDL / inline).
+            //
+            // Each instruction emits both `args` (typed from the Borsh
+            // schema) and `accounts` (named string slots from the schema).
+            // Handlers reach them via the literal-typed `onInstruction`
+            // overload in index.d.ts.
+            svm_programs_body = if cfg.get_ecosystem() == Ecosystem::Svm {
+                let mut program_entries: Vec<String> = Vec::new();
+                for contract in cfg.contracts.values() {
+                    use crate::config_parsing::system_config::{Abi, EventKind};
+                    let svm_abi = match &contract.abi {
+                        Abi::Svm(abi) => abi,
+                        _ => continue,
+                    };
+                    let mut instruction_entries: Vec<String> = Vec::new();
+                    for event in &contract.events {
+                        let svm_kind = match &event.kind {
+                            EventKind::Svm(k) => k,
+                            _ => continue,
+                        };
+                        let args_ts = if svm_kind.args.is_empty() {
+                            "{}".to_string()
+                        } else {
+                            let fields = svm_kind
+                                .args
+                                .iter()
+                                .map(|f| {
+                                    let ts = field_type_to_ts_type(
+                                        &f.ty,
+                                        &svm_abi.defined_types,
+                                        &mut Vec::new(),
+                                    );
+                                    format!(
+                                        "readonly {}: {}",
+                                        ts_safe_property_name(&f.name),
+                                        ts
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join("; ");
+                            format!("{{ {fields} }}")
+                        };
+                        let accounts_ts = if svm_kind.accounts.is_empty() {
+                            "Readonly<Record<string, string>>".to_string()
+                        } else {
+                            let fields = svm_kind
+                                .accounts
+                                .iter()
+                                .map(|name| {
+                                    format!(
+                                        "readonly {}: string",
+                                        ts_safe_property_name(name)
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join("; ");
+                            format!("{{ {fields} }}")
+                        };
+                        instruction_entries.push(format!(
+                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: {accs} }};",
+                            instr = event.name,
+                            args = args_ts,
+                            accs = accounts_ts,
+                        ));
+                    }
+                    if !instruction_entries.is_empty() {
+                        program_entries.push(format!(
+                            "        \"{name}\": {{\n{body}\n        }};",
+                            name = contract.name,
+                            body = instruction_entries.join("\n"),
+                        ));
+                    }
+                }
+                if program_entries.is_empty() {
+                    "{}".to_string()
+                } else {
+                    format!("{{\n{}\n      }}", program_entries.join("\n"))
+                }
+            } else {
+                "{}".to_string()
+            };
+
             // File-level Enums and Entities tables. They reference each
             // other (entity field types use `Enums["Foo"]`), so they must
             // be named — but no prefix needed since neither name collides
@@ -2215,6 +2342,7 @@ type testIndexer = {{
                     fuel_contracts: &fuel_contracts_body,
                     fuel_event_filters: &fuel_event_filters_body,
                     svm_chains: &svm_chains_body,
+                    svm_programs: &svm_programs_body,
                     entities: &entities_body,
                     enums: &enums_body,
                 },
@@ -2266,7 +2394,11 @@ type testIndexer = {{
                 contracts = bodies.fuel_contracts,
                 filters = bodies.fuel_event_filters,
             ),
-            Ecosystem::Svm => format!("svm: {{ chains: {} }};", bodies.svm_chains),
+            Ecosystem::Svm => format!(
+                "svm: {{ chains: {chains}; programs: {programs} }};",
+                chains = bodies.svm_chains,
+                programs = bodies.svm_programs,
+            ),
         };
         let config_block = [
             ecosystem_field.as_str(),
@@ -2319,8 +2451,126 @@ struct ConfigBodies<'a> {
     fuel_contracts: &'a str,
     fuel_event_filters: &'a str,
     svm_chains: &'a str,
+    svm_programs: &'a str,
     entities: &'a str,
     enums: &'a str,
+}
+
+/// Render an upstream `FieldType` as a TypeScript type. `defined_types` is
+/// the program-level nominal-type registry, used when the field is
+/// `Defined("Name")`. `seen` tracks the recursion stack to break cycles.
+///
+/// Locked conventions (mirror `STAGE_7B_DECISIONS.md` decision 3):
+/// - sub-64-bit integers / floats → `number`
+/// - 64-/128-bit integers → `string` (decimal)
+/// - pubkey + `[u8; 32]` → `string` (base58)
+/// - `Vec<u8>` (Borsh `bytes`) → `string` (hex)
+fn field_type_to_ts_type(
+    ty: &hypersync_client_solana::decode::FieldType,
+    defined_types: &std::collections::BTreeMap<String, hypersync_client_solana::decode::FieldType>,
+    seen: &mut Vec<String>,
+) -> String {
+    use hypersync_client_solana::decode::FieldType as F;
+    match ty {
+        F::Bool => "boolean".to_string(),
+        F::U8 | F::U16 | F::U32 | F::I8 | F::I16 | F::I32 | F::F32 | F::F64 => {
+            "number".to_string()
+        }
+        F::U64 | F::U128 | F::I64 | F::I128 => "string".to_string(),
+        F::String | F::Bytes | F::Pubkey => "string".to_string(),
+        F::Option(inner) => format!(
+            "({}) | null",
+            field_type_to_ts_type(inner, defined_types, seen)
+        ),
+        F::Vec(inner) => format!(
+            "({})[]",
+            field_type_to_ts_type(inner, defined_types, seen)
+        ),
+        F::Array { ty: inner, len } => {
+            if matches!(**inner, F::U8) && *len == 32 {
+                "string".to_string()
+            } else {
+                format!(
+                    "({})[]",
+                    field_type_to_ts_type(inner, defined_types, seen)
+                )
+            }
+        }
+        F::Struct(fields) => {
+            let body = fields
+                .iter()
+                .map(|f| {
+                    format!(
+                        "readonly {}: {}",
+                        ts_safe_property_name(&f.name),
+                        field_type_to_ts_type(&f.ty, defined_types, seen)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("{{ {body} }}")
+        }
+        F::Enum(variants) => {
+            if variants.is_empty() {
+                return "never".to_string();
+            }
+            variants
+                .iter()
+                .map(|v| {
+                    let body = match &v.fields {
+                        None => "{}".to_string(),
+                        Some(fields) => {
+                            let body = fields
+                                .iter()
+                                .map(|f| {
+                                    format!(
+                                        "readonly {}: {}",
+                                        ts_safe_property_name(&f.name),
+                                        field_type_to_ts_type(&f.ty, defined_types, seen)
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join("; ");
+                            format!("{{ {body} }}")
+                        }
+                    };
+                    format!(
+                        "{{ readonly {}: {body} }}",
+                        ts_safe_property_name(&v.name)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
+        }
+        F::Defined(name) => {
+            if seen.iter().any(|n| n == name) {
+                // Cycle: avoid infinite expansion; users can refine via cast.
+                "unknown".to_string()
+            } else if let Some(resolved) = defined_types.get(name) {
+                seen.push(name.clone());
+                let rendered = field_type_to_ts_type(resolved, defined_types, seen);
+                seen.pop();
+                rendered
+            } else {
+                // Missing nominal type: surface as `unknown` rather than
+                // failing codegen, since hand-written ad-hoc schemas may
+                // reference types the user resolves at runtime.
+                "unknown".to_string()
+            }
+        }
+    }
+}
+
+/// Quote a TypeScript property name when it isn't a bare identifier.
+fn ts_safe_property_name(name: &str) -> String {
+    let is_bare_ident = !name.is_empty()
+        && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if is_bare_ident {
+        name.to_string()
+    } else {
+        format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+    }
 }
 
 #[cfg(test)]
@@ -2900,6 +3150,7 @@ mod test {
                 fuel_contracts: "{}",
                 fuel_event_filters: "{}",
                 svm_chains: "{}",
+                svm_programs: "{}",
                 entities: "Entities",
                 enums: "Enums",
             },

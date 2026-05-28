@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=./node_modules/envio/svm.schema.json
+name: solana-metaplex-token-metadata
+description: Indexes Metaplex Token Metadata creates and updates on Solana mainnet via HyperSync.
+ecosystem: svm
+chains:
+  - rpc: ${ENVIO_MAINNET_RPC_URL:-https://api.mainnet-beta.solana.com}
+    hypersync_config:
+      url: https://solana.hypersync.xyz
+    # Adjust just before first run: query the current height with
+    #   curl -s https://solana.hypersync.xyz/height
+    # and set this to ~30k slots below it for a quick backfill (~30s).
+    start_block: 417920000
+    programs_experimental:
+      - name: TokenMetadata
+        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+        instructions:
+          - name: CreateMetadataAccountV3
+            discriminator: "0x21"
+            field_selection:
+              transaction_fields: true
+          - name: UpdateMetadataAccountV2
+            discriminator: "0x0f"
+            field_selection:
+              transaction_fields: true

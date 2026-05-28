@@ -144,6 +144,17 @@
           "description": "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data.",
           "type": "string"
         },
+        "hypersync_config": {
+          "description": "Optional HyperSync Config for fetching historical instructions.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HypersyncConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "start_block": {
           "description": "The slot number at which the indexer should start ingesting data",
           "type": "integer",
@@ -167,12 +178,425 @@
           ],
           "format": "uint32",
           "minimum": 0
+        },
+        "programs_experimental": {
+          "description": "Solana programs to index on this chain. Experimental: this config shape may change in future releases.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Program"
+          }
         }
       },
       "additionalProperties": false,
       "required": [
         "rpc",
         "start_block"
+      ]
+    },
+    "HypersyncConfig": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "URL of the HyperSync endpoint (default: the public Solana HyperSync endpoint at https://solana.hypersync.xyz)",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ]
+    },
+    "Program": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "A unique project-wide name for this program (used in generated code).",
+          "type": "string"
+        },
+        "program_id": {
+          "description": "Base58-encoded program id (32 bytes).",
+          "type": "string"
+        },
+        "handler": {
+          "description": "Optional relative path to a file where handlers are registered for the given program. If not provided, handlers can be auto-loaded from the src directory.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "idl": {
+          "description": "Optional path (relative to config.yaml) to an Anchor IDL JSON file. When present, codegen parses the IDL and derives `accounts`/`args` for every named instruction. Mutually exclusive with per-instruction `accounts`/`args` overrides.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "instructions": {
+          "description": "A list of instructions that should be indexed on this program.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Instruction"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "program_id",
+        "instructions"
+      ]
+    },
+    "Instruction": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name of the instruction in the HyperIndex generated code. Should be unique per program.",
+          "type": "string"
+        },
+        "discriminator": {
+          "description": "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" optional). Must be 1, 2, 4, or 8 bytes after decoding. An 8-byte value matches the standard Anchor discriminator.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_inner": {
+          "description": "Filter on inner-vs-outer instructions. None / absent matches both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "account_filters": {
+          "description": "Optional positional account filters. Two shapes are accepted: a flat list of `{position, values}` entries (AND across positions, OR within `values`); or `{any_of: [[...]] }`, a list of AND-groups that are OR-ed together. Positions must be in 0..=5; positions 6..=9 are reserved for a future extension.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccountFilters"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "field_selection": {
+          "description": "Select which additional data to fetch for each matched instruction. Each key accepts `true` (include all fields) or a list of field names (per-field selection, not yet supported). When absent, only the instruction itself is included.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SvmFieldSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "accounts": {
+          "description": "Optional positional account names. The Nth entry names account slot N on the dispatched instruction; surfaces as `event.instruction.decoded.accounts.<name>`. Accounts beyond the named list become `extra_accounts`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "args": {
+          "description": "Optional Borsh argument schema. Each entry names one arg and gives its type; the decoder walks the instruction data after the discriminator in declared order. Mutually exclusive with the program-level `idl` field.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ArgDef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "AccountFilters": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccountFilter"
+          }
+        },
+        {
+          "$ref": "#/$defs/AnyOfAccountFilters"
+        }
+      ]
+    },
+    "AccountFilter": {
+      "type": "object",
+      "properties": {
+        "position": {
+          "description": "Account position within the instruction (0..=5).",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "values": {
+          "description": "Allowed base58 pubkeys for this account position.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "position",
+        "values"
+      ]
+    },
+    "AnyOfAccountFilters": {
+      "type": "object",
+      "properties": {
+        "any_of": {
+          "description": "A non-empty list of AND-groups. Each group is itself a non-empty list of `{position, values}` entries that must all match the same instruction. An instruction matches `any_of` when any one group matches.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/AccountFilter"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "any_of"
+      ]
+    },
+    "SvmFieldSelection": {
+      "type": "object",
+      "properties": {
+        "transaction_fields": {
+          "description": "Include the parent transaction for each matched instruction. Use `true` to include all fields.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldSelectionValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "log_fields": {
+          "description": "Include program logs scoped to each matched instruction. Use `true` to include all fields.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldSelectionValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "token_balance_fields": {
+          "description": "Include SPL Token / Token-2022 balance snapshots for the parent transaction. Implies transaction_fields: true. Use `true` to include all fields.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldSelectionValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "FieldSelectionValue": {
+      "description": "Value for a field-selection entry. `true` includes all fields;\na list of field names enables per-field selection (not yet supported).",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "ArgDef": {
+      "description": "One named argument of an instruction. Mirrors\n`hypersync_client_solana::decode::NamedField`.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Field name as it appears on the decoded args object.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Borsh type of this field.",
+          "$ref": "#/$defs/ArgType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "ArgType": {
+      "description": "User-facing Borsh type grammar. Mirrors\n`hypersync_client_solana::decode::FieldType`. The YAML accepts either:\n- A bare string for primitives (`\"u64\"`, `\"pubkey\"`, `\"bool\"`, ...).\n- A tagged object for composites (`{ vec: u8 }`, `{ option: pubkey }`,\n  `{ array: [u8, 32] }`, `{ defined: \"DataV2\" }`).\n- An object with `kind: struct` or `kind: enum` for nominal types\n  declared inline on this field. Most users will use `defined` and\n  declare the nominal types under the program's `types:` block (Anchor\n  IDL shape) once that lands; for now inline `struct` / `enum` is the\n  only way to express nominal shapes ad-hoc.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArgPrimitive"
+        },
+        {
+          "$ref": "#/$defs/ArgComposite"
+        }
+      ]
+    },
+    "ArgPrimitive": {
+      "type": "string",
+      "enum": [
+        "bool",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "u128",
+        "i8",
+        "i16",
+        "i32",
+        "i64",
+        "i128",
+        "f32",
+        "f64",
+        "string",
+        "bytes",
+        "pubkey",
+        "publicKey"
+      ]
+    },
+    "ArgComposite": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "option": {
+              "$ref": "#/$defs/ArgType"
+            }
+          },
+          "required": [
+            "option"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "vec": {
+              "$ref": "#/$defs/ArgType"
+            }
+          },
+          "required": [
+            "vec"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "`[ <element type>, <length> ]` — same shape Anchor IDLs use.",
+          "type": "object",
+          "properties": {
+            "array": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/ArgType"
+                },
+                {
+                  "type": "integer",
+                  "format": "uint",
+                  "minimum": 0
+                }
+              ],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "required": [
+            "array"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Reference to a nominal type defined in the program-level\n`defined_types` registry (populated from an Anchor IDL `types:`\nblock or the bundled-Metaplex registry).",
+          "type": "object",
+          "properties": {
+            "defined": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "defined"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Inline-or-registry struct. Used as a nominal type definition in\nthe `defined_types` registry; rarely seen at the field level.",
+          "type": "object",
+          "properties": {
+            "struct": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ArgDef"
+              }
+            }
+          },
+          "required": [
+            "struct"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Inline-or-registry enum. Same role as `Struct`: a nominal type\ndefinition in the `defined_types` registry.",
+          "type": "object",
+          "properties": {
+            "enum": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ArgEnumVariant"
+              }
+            }
+          },
+          "required": [
+            "enum"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ArgEnumVariant": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "fields": {
+          "description": "`None` for unit variants; `Some([])` for struct variants with no\nfields. The Borsh wire format is identical in both cases (the\n1-byte tag), but the distinction is preserved for round-tripping.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ArgDef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
       ]
     }
   }
