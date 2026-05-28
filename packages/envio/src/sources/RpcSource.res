@@ -1079,7 +1079,7 @@ let make = (
     // We also don't care about it when we have a hard max block interval
     if (
       executedBlockInterval >= suggestedBlockInterval &&
-        !(mutSuggestedBlockIntervals->Utils.Dict.has(maxSuggestedBlockIntervalKey))
+        !(mutSuggestedBlockIntervals->Dict.has(maxSuggestedBlockIntervalKey))
     ) {
       // Increase batch size going forward, but do not increase past a configured maximum
       // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
