@@ -13,7 +13,7 @@ let set = (self: t<'key, 'val>, key, value) => self.dict->Dict.set(key->self.has
 let setByHash = (self: t<'key, 'val>, hash, value) => self.dict->Dict.set(hash, value)
 
 let hasByHash = (self: t<'key, 'val>, hash) => {
-  self.dict->Utils.Dict.has(hash)
+  self.dict->Dict.has(hash)
 }
 
 let getUnsafeByHash = (self: t<'key, 'val>, hash) => {
@@ -37,7 +37,7 @@ module Entity = {
     mutable entityIndices?: Utils.Set.t<TableIndices.Index.t>,
   }
   type t = {
-    table: t<string, entityWithIndices>,
+    entities: dict<entityWithIndices>,
     fieldNameIndices: indexFieldNameToIndices,
     history: array<Change.t<Internal.entity>>,
   }
@@ -72,7 +72,7 @@ module Entity = {
   }
 
   let make = (): t => {
-    table: make(~hash=str => str),
+    entities: Dict.make(),
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
     history: [],
   }
@@ -144,7 +144,7 @@ module Entity = {
   ) => {
     let shouldWriteEntity =
       allowOverWriteEntity ||
-      inMemTable.table.dict->Dict.get(key->inMemTable.table.hash)->Option.isNone
+      inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone
 
     //Only initialize a row in the case where it is none
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
@@ -160,7 +160,7 @@ module Entity = {
         inMemTable->updateIndices(~entity, ~row)
       | None => ()
       }
-      inMemTable.table.dict->Dict.set(key->inMemTable.table.hash, row)
+      inMemTable.entities->Dict.set(key, row)
     }
   }
 
@@ -171,7 +171,7 @@ module Entity = {
     | Delete(_) => None
     }
 
-    let prev = inMemTable.table->get(change->Change.getEntityId)
+    let prev = inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(change->Change.getEntityId)
 
     let historyIndex = if change->Change.isRollbackDiff {
       // Rollback-diff replays are restorations from existing history;
@@ -204,7 +204,7 @@ module Entity = {
     | Set({entity}) => inMemTable->updateIndices(~entity, ~row=updatedEntityRecord)
     | Delete({entityId}) => inMemTable->deleteEntityFromIndices(~entityId, ~row=updatedEntityRecord)
     }
-    inMemTable.table->setRow(change->Change.getEntityId, updatedEntityRecord)
+    inMemTable.entities->Dict.set(change->Change.getEntityId, updatedEntityRecord)
   }
 
   let rowToEntity = row => row.latest
@@ -217,7 +217,7 @@ module Entity = {
   It's needed to prevent an additional round trips to the database for deleted entities. */
   let getUnsafe = (inMemTable: t) =>
     (key: string) =>
-      inMemTable.table.dict
+      inMemTable.entities
       ->Dict.getUnsafe(key)
       ->rowToEntity
 
@@ -252,7 +252,7 @@ module Entity = {
                 relatedEntityIds
                 ->Utils.Set.toArray
                 ->Array.filterMap(entityId => {
-                  switch hasByHash(inMemTable.table, entityId) {
+                  switch inMemTable.entities->Dict.has(entityId) {
                   | true => getEntity(entityId)
                   | false => None
                   }
@@ -269,9 +269,7 @@ module Entity = {
     let fieldName = index->TableIndices.Index.getFieldName
     let relatedEntityIds = Utils.Set.make()
 
-    inMemTable.table
-    ->values
-    ->Array.forEach(row => {
+    inMemTable.entities->Utils.Dict.forEach(row => {
       switch row->rowToEntity {
       | Some(entity) =>
         let fieldValue =
@@ -318,19 +316,24 @@ module Entity = {
     }
 
   let updates = (inMemTable: t) => {
-    inMemTable.table
-    ->values
-    ->Array.filterMap(v =>
+    let acc = []
+    inMemTable.entities->Utils.Dict.forEach(v =>
       switch v.status {
-      | Updated(update) => Some(update)
-      | Loaded => None
+      | Updated(update) => acc->Array.push(update)
+      | Loaded => ()
       }
     )
+    acc
   }
 
   let values = (inMemTable: t) => {
-    inMemTable.table
-    ->values
-    ->Array.filterMap(rowToEntity)
+    let acc = []
+    inMemTable.entities->Utils.Dict.forEach(v =>
+      switch v->rowToEntity {
+      | Some(entity) => acc->Array.push(entity)
+      | None => ()
+      }
+    )
+    acc
   }
 }
