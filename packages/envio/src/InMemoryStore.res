@@ -30,13 +30,6 @@ module EntityTables = {
       )
     }
   }
-
-  let clone = (self: t) => {
-    self
-    ->Dict.toArray
-    ->Belt.Array.map(((k, v)) => (k, v->InMemoryTable.Entity.clone))
-    ->Dict.fromArray
-  }
 }
 
 type effectCacheInMemTable = {
@@ -67,19 +60,6 @@ let clear = (self: t) => {
   self.entities = EntityTables.make(self.allEntities)
   self.effects = Dict.make()
   self.rollbackTargetCheckpointId = None
-}
-
-let clone = (self: t) => {
-  allEntities: self.allEntities,
-  rawEvents: self.rawEvents->InMemoryTable.clone,
-  entities: self.entities->EntityTables.clone,
-  effects: Dict.mapValues(self.effects, table => {
-    idsToStore: table.idsToStore->Array.copy,
-    invalidationsCount: table.invalidationsCount,
-    dict: table.dict->Utils.Dict.shallowCopy,
-    effect: table.effect,
-  }),
-  rollbackTargetCheckpointId: self.rollbackTargetCheckpointId,
 }
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {

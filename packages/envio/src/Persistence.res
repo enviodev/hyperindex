@@ -340,6 +340,7 @@ let prepareRollbackDiff = async (
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
 ) => {
+  inMemoryStore->InMemoryStore.clear
   inMemoryStore.rollbackTargetCheckpointId = Some(rollbackTargetCheckpointId)
 
   let deletedEntities = Dict.make()

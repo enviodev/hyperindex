@@ -999,13 +999,9 @@ let injectedTaskReducer = (
           dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
           let inMemoryStore = state.ctx.inMemoryStore
-          if !isRollbackBatch {
-            inMemoryStore->InMemoryStore.clear
-          }
-
           inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
 
-          switch await EventProcessing.processEventBatch(
+          let result = switch await EventProcessing.processEventBatch(
             ~batch,
             ~inMemoryStore,
             ~isInReorgThreshold,
@@ -1016,16 +1012,19 @@ let injectedTaskReducer = (
           | exception exn =>
             //All casese should be handled/caught before this with better user messaging.
             //This is just a safety in case something unexpected happens
-            let errHandler =
+            Error(
               exn->ErrorHandling.make(
                 ~msg="A top level unexpected error occurred during processing",
-              )
-            dispatchAction(ErrorExit(errHandler))
-          | res =>
-            switch res {
-            | Ok() => dispatchAction(EventBatchProcessed({batch: batch}))
-            | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
-            }
+              ),
+            )
+          | res => res
+          }
+
+          inMemoryStore->InMemoryStore.clear
+
+          switch result {
+          | Ok() => dispatchAction(EventBatchProcessed({batch: batch}))
+          | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
           }
         }
       }
@@ -1180,8 +1179,6 @@ let injectedTaskReducer = (
           }
         })
 
-        // Populate the singleton in-memory store with the rollback diff
-        state.ctx.inMemoryStore->InMemoryStore.clear
         let diff = await state.ctx.persistence->Persistence.prepareRollbackDiff(
           ~inMemoryStore=state.ctx.inMemoryStore,
           ~rollbackTargetCheckpointId,
