@@ -1045,6 +1045,13 @@ let make = (
     //Defensively ensure we never query a target block below fromBlock
     ->Pervasives.max(fromBlock)
 
+    let firstBlockParentPromise =
+      fromBlock > 0
+        ? blockLoader.contents
+          ->LazyLoader.get(fromBlock - 1)
+          ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
+        : Promise.resolve(None)
+
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
     let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
 
@@ -1175,23 +1182,25 @@ let make = (
     })
     ->Promise.all
 
+    let optFirstBlockParent = await firstBlockParentPromise
+
     let totalTimeElapsed = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    let blockHashes = [
-      (
-        {
-          blockNumber: latestFetchedBlockInfo.number,
-          blockHash: latestFetchedBlockInfo.hash,
-        }: ReorgDetection.blockData
-      ),
-    ]
-    if latestFetchedBlockInfo.number > 0 {
-      blockHashes
-      ->Array.push({
-        ReorgDetection.blockNumber: latestFetchedBlockInfo.number - 1,
-        blockHash: latestFetchedBlockInfo.parentHash,
-      })
-      ->ignore
+    // Every fetched block carries `hash` and `parentHash`, so each one yields
+    // two confirmed (number, hash) pairs for reorg detection at no extra cost.
+    let blockHashes = []
+    let pushBlockInfo = (b: blockInfo) => {
+      blockHashes->Array.push({ReorgDetection.blockNumber: b.number, blockHash: b.hash})->ignore
+      if b.number > 0 {
+        blockHashes
+        ->Array.push({ReorgDetection.blockNumber: b.number - 1, blockHash: b.parentHash})
+        ->ignore
+      }
+    }
+    pushBlockInfo(latestFetchedBlockInfo)
+    switch optFirstBlockParent {
+    | Some(b) => pushBlockInfo(b)
+    | None => ()
     }
     logs->Belt.Array.forEach(log =>
       blockHashes
