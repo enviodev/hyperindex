@@ -670,6 +670,7 @@ let actionReducer = (state: t, action: action) => {
       ~chain,
     )
   | EventBatchProcessed({batch}) =>
+    state.ctx.inMemoryStore->InMemoryStore.clear
     let maybePruneEntityHistory =
       state.ctx.config->Config.shouldPruneHistory(
         ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
@@ -1001,7 +1002,7 @@ let injectedTaskReducer = (
           let inMemoryStore = state.ctx.inMemoryStore
           inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
 
-          let result = switch await EventProcessing.processEventBatch(
+          switch await EventProcessing.processEventBatch(
             ~batch,
             ~inMemoryStore,
             ~isInReorgThreshold,
@@ -1012,19 +1013,16 @@ let injectedTaskReducer = (
           | exception exn =>
             //All casese should be handled/caught before this with better user messaging.
             //This is just a safety in case something unexpected happens
-            Error(
+            let errHandler =
               exn->ErrorHandling.make(
                 ~msg="A top level unexpected error occurred during processing",
-              ),
-            )
-          | res => res
-          }
-
-          inMemoryStore->InMemoryStore.clear
-
-          switch result {
-          | Ok() => dispatchAction(EventBatchProcessed({batch: batch}))
-          | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+              )
+            dispatchAction(ErrorExit(errHandler))
+          | res =>
+            switch res {
+            | Ok() => dispatchAction(EventBatchProcessed({batch: batch}))
+            | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+            }
           }
         }
       }
