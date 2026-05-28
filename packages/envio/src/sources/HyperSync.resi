@@ -1,7 +1,5 @@
-type logsQueryPageItem = HyperSyncClient.EventItems.item
-
 type logsQueryPage = {
-  items: array<logsQueryPageItem>,
+  items: array<HyperSyncClient.EventItems.item>,
   nextBlock: int,
   archiveHeight: int,
   rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,

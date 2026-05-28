@@ -190,7 +190,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   exception UndefinedValue
 
   let makeEventBatchQueueItem = (
-    item: HyperSync.logsQueryPageItem,
+    item: HyperSyncClient.EventItems.item,
     ~params: Internal.eventParams,
     ~eventConfig: Internal.evmEventConfig,
   ): Internal.item => {
