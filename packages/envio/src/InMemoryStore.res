@@ -87,7 +87,7 @@ let getInMemTable = (
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpointId !== None
 
-let writeBatch = (
+let writeBatch = async (
   inMemoryStore: t,
   ~persistence: Persistence.t,
   ~batch,
@@ -110,7 +110,7 @@ let writeBatch = (
         Some(({entityConfig, updates}: Persistence.updatedEntity))
       }
     })
-    persistence.storage.writeBatch(
+    await persistence.storage.writeBatch(
       ~batch,
       ~rawEvents=inMemoryStore.rawEvents->InMemoryTable.values,
       ~rollbackTargetCheckpointId=inMemoryStore.rollbackTargetCheckpointId,
@@ -157,6 +157,7 @@ let writeBatch = (
         acc
       },
     )
+    inMemoryStore->clear
   }
 
 let prepareRollbackDiff = async (

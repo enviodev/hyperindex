@@ -670,7 +670,6 @@ let actionReducer = (state: t, action: action) => {
       ~chain,
     )
   | EventBatchProcessed({batch}) =>
-    state.ctx.inMemoryStore->InMemoryStore.clear
     let maybePruneEntityHistory =
       state.ctx.config->Config.shouldPruneHistory(
         ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
