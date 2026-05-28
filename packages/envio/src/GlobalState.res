@@ -1177,8 +1177,8 @@ let injectedTaskReducer = (
           }
         })
 
-        let diff = await state.ctx.persistence->Persistence.prepareRollbackDiff(
-          ~inMemoryStore=state.ctx.inMemoryStore,
+        let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(
+          ~persistence=state.ctx.persistence,
           ~rollbackTargetCheckpointId,
           ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->BigInt.add(1n),
         )
