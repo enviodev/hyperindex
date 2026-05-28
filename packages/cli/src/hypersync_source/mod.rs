@@ -10,7 +10,7 @@ mod types;
 
 use config::ClientConfig;
 use decode::DecoderCore;
-use query::{BlockField, Query, TransactionField};
+use query::{BlockField, LogField, Query, TransactionField};
 use types::{encode_address, Block, EventParamsInput, Log, ParamValue, RollbackGuard, Transaction};
 
 static LOGGER_INIT: Once = Once::new();
@@ -74,7 +74,12 @@ impl HypersyncClient {
     }
 
     #[napi]
-    pub async fn get_event_items(&self, query: Query) -> napi::Result<EventItemsResponse> {
+    pub async fn get_event_items(&self, mut query: Query) -> napi::Result<EventItemsResponse> {
+        // get_event_items always reads address/data/topic0..3/logIndex off the
+        // log to decode params and flatten the JS-side shape. Force-add them
+        // to the field selection so callers don't have to know the contract.
+        ensure_required_log_fields(&mut query.field_selection.log);
+
         let requested_block_fields = query.field_selection.block.clone().unwrap_or_default();
         let requested_transaction_fields = query
             .field_selection
@@ -371,6 +376,9 @@ fn block_field_missing(
 ) -> Option<&'static str> {
     use BlockField::*;
     match field {
+        // `Withdrawals` and `WithdrawalsRoot` are Shanghai-only and legitimately
+        // absent on pre-Shanghai blocks; the original `evmNullableBlockFields`
+        // missed `Withdrawals` — fixed here.
         Nonce
         | Difficulty
         | TotalDifficulty
@@ -380,6 +388,7 @@ fn block_field_missing(
         | ExcessBlobGas
         | ParentBeaconBlockRoot
         | WithdrawalsRoot
+        | Withdrawals
         | L1BlockNumber
         | SendCount
         | SendRoot
@@ -401,7 +410,6 @@ fn block_field_missing(
         GasLimit => block.gas_limit.is_none().then_some("gasLimit"),
         GasUsed => block.gas_used.is_none().then_some("gasUsed"),
         Timestamp => block.timestamp.is_none().then_some("timestamp"),
-        Withdrawals => block.withdrawals.is_none().then_some("withdrawals"),
     }
 }
 
@@ -452,6 +460,22 @@ fn transaction_field_missing(
         | Mint
         | SourceHash => None,
     }
+}
+
+fn ensure_required_log_fields(selection: &mut Option<Vec<LogField>>) {
+    use std::collections::BTreeSet;
+    const REQUIRED: &[LogField] = &[
+        LogField::Address,
+        LogField::Data,
+        LogField::LogIndex,
+        LogField::Topic0,
+        LogField::Topic1,
+        LogField::Topic2,
+        LogField::Topic3,
+    ];
+    let mut set: BTreeSet<LogField> = selection.take().unwrap_or_default().into_iter().collect();
+    set.extend(REQUIRED.iter().copied());
+    *selection = Some(set.into_iter().collect());
 }
 
 pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {

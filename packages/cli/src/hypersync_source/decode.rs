@@ -139,6 +139,10 @@ impl DecoderCore {
 fn parse_meta_key(sighash: &str, topic_count: i32) -> Result<MetaKey> {
     let bytes = LogArgument::decode_hex(sighash).context("decode sighash hex")?;
     let count: u8 = u8::try_from(topic_count).context("topic_count out of u8 range")?;
+    anyhow::ensure!(
+        (1..=4).contains(&count),
+        "topic_count must be 1..=4, got {count}",
+    );
     Ok((**bytes, count))
 }
 
@@ -186,5 +190,31 @@ impl Decoder {
         })
         .await
         .map_err(|e| map_err(anyhow::anyhow!("decode_logs worker join failure: {e}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VALID_SIGHASH: &str =
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+    #[test]
+    fn parse_meta_key_rejects_zero_topics() {
+        let err = parse_meta_key(VALID_SIGHASH, 0).unwrap_err();
+        assert!(format!("{err}").contains("topic_count must be 1..=4"));
+    }
+
+    #[test]
+    fn parse_meta_key_rejects_five_topics() {
+        let err = parse_meta_key(VALID_SIGHASH, 5).unwrap_err();
+        assert!(format!("{err}").contains("topic_count must be 1..=4"));
+    }
+
+    #[test]
+    fn parse_meta_key_accepts_boundary_values() {
+        assert!(parse_meta_key(VALID_SIGHASH, 1).is_ok());
+        assert!(parse_meta_key(VALID_SIGHASH, 4).is_ok());
     }
 }
