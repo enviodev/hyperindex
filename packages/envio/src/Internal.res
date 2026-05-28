@@ -594,9 +594,9 @@ type reorgCheckpoint = {
   blockHash: string,
 }
 
-type inMemoryStoreEntityUpdate<'entity> = {
-  latestChange: Change.t<'entity>,
-  history: array<Change.t<'entity>>,
+type inMemoryStoreEntityUpdate = {
+  latestChange: Change.t<entity>,
+  history: array<Change.t<entity>>,
   // In the event of a rollback, some entity updates may have been
   // been affected by a rollback diff. If there was no rollback diff
   // this will always be false.
@@ -608,6 +608,6 @@ type inMemoryStoreEntityUpdate<'entity> = {
 }
 
 @unboxed
-type inMemoryStoreEntityStatus<'entity> =
-  | Updated(inMemoryStoreEntityUpdate<'entity>)
+type inMemoryStoreEntityStatus =
+  | Updated(inMemoryStoreEntityUpdate)
   | Loaded // This means there is no change from the db.
