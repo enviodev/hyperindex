@@ -13,6 +13,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
         ~apiToken=testApiToken,
         ~maxNumRetries=Env.hyperSyncClientMaxRetries,
         ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
+        ~eventParams=[],
       ),
       ~fromBlock=12403138,
       ~toBlock=Some(12403139),
@@ -35,8 +36,6 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
         log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
         transaction: [Hash],
       },
-      ~nonOptionalBlockFieldNames=[],
-      ~nonOptionalTransactionFieldNames=["hash"],
     )
 
     Console.log(page)

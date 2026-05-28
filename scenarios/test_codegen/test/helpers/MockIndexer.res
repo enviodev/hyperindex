@@ -331,6 +331,7 @@ module Indexer = {
       Ctx.registrations,
       config,
       persistence,
+      inMemoryStore: InMemoryStore.make(),
     }
 
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)

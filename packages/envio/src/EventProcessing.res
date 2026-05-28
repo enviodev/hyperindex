@@ -426,10 +426,10 @@ let processEventBatch = async (
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     try {
-      await ctx.persistence->Persistence.writeBatch(
+      await inMemoryStore->InMemoryStore.writeBatch(
+        ~persistence=ctx.persistence,
         ~batch,
         ~config=ctx.config,
-        ~inMemoryStore,
         ~isInReorgThreshold,
       )
 

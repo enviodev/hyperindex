@@ -5,13 +5,9 @@ type selectionConfig = {
     ~addressesByContractName: dict<array<Address.t>>,
   ) => array<LogSelection.t>,
   fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
-  nonOptionalBlockFieldNames: array<string>,
-  nonOptionalTransactionFieldNames: array<string>,
 }
 
 let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
-  let nonOptionalBlockFieldNames = Utils.Set.make()
-  let nonOptionalTransactionFieldNames = Utils.Set.make()
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
 
@@ -33,22 +29,18 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   }) => {
     selectedBlockFields
     ->Utils.Set.toArray
-    ->Array.forEach(name => {
-      let nameStr = (name :> string)
-      if !(Internal.evmNullableBlockFields->Utils.Set.has(name)) {
-        nonOptionalBlockFieldNames->Utils.Set.add(nameStr)->ignore
-      }
-      capitalizedBlockFields->Utils.Set.add(nameStr->Utils.String.capitalize)->ignore
-    })
+    ->Array.forEach(name =>
+      capitalizedBlockFields
+      ->Utils.Set.add((name :> string)->Utils.String.capitalize)
+      ->ignore
+    )
     selectedTransactionFields
     ->Utils.Set.toArray
-    ->Array.forEach(name => {
-      let nameStr = (name :> string)
-      if !(Internal.evmNullableTransactionFields->Utils.Set.has(name)) {
-        nonOptionalTransactionFieldNames->Utils.Set.add(nameStr)->ignore
-      }
-      capitalizedTransactionFields->Utils.Set.add(nameStr->Utils.String.capitalize)->ignore
-    })
+    ->Array.forEach(name =>
+      capitalizedTransactionFields
+      ->Utils.Set.add((name :> string)->Utils.String.capitalize)
+      ->ignore
+    )
 
     let eventFilters = getEventFiltersOrThrow(chain)
     if dependsOnAddresses {
@@ -130,8 +122,6 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   {
     getLogSelectionOrThrow,
     fieldSelection,
-    nonOptionalBlockFieldNames: nonOptionalBlockFieldNames->Utils.Set.toArray,
-    nonOptionalTransactionFieldNames: nonOptionalTransactionFieldNames->Utils.Set.toArray,
   }
 }
 
@@ -179,45 +169,32 @@ Set the ENVIO_API_TOKEN environment variable in your .env file.
 Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   }
 
-  let client = HyperSyncClient.make(
+  let client = switch HyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,
     ~maxNumRetries=clientMaxRetries,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
+    ~eventParams=allEventParams,
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
     ~logLevel,
-  )
-
-  let hscDecoder: ref<option<HyperSyncClient.Decoder.tWithParams>> = ref(None)
-  let getHscDecoder = () => {
-    switch hscDecoder.contents {
-    | Some(decoder) => decoder
-    | None =>
-      switch HyperSyncClient.Decoder.fromParams(
-        allEventParams,
-        ~checksumAddresses=!lowercaseAddresses,
-      ) {
-      | exception exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI",
-        )
-      | decoder =>
-        hscDecoder := Some(decoder)
-        decoder
-      }
-    }
+  ) {
+  | client => client
+  | exception exn =>
+    exn->ErrorHandling.mkLogAndRaise(
+      ~msg="Failed to instantiate the hypersync client, please double check your ABI",
+    )
   }
 
   exception UndefinedValue
 
   let makeEventBatchQueueItem = (
-    item: HyperSync.logsQueryPageItem,
+    item: HyperSyncClient.EventItems.item,
     ~params: Internal.eventParams,
     ~eventConfig: Internal.evmEventConfig,
   ): Internal.item => {
-    let {block, log, transaction} = item
+    let {block, transaction, logIndex, srcAddress} = item
     let chainId = chain->ChainMap.Chain.toChainId
 
     Internal.Event({
@@ -225,7 +202,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       timestamp: block.timestamp->Belt.Option.getUnsafe,
       chain,
       blockNumber: block.number->Belt.Option.getUnsafe,
-      logIndex: log.logIndex,
+      logIndex,
       event: {
         contractName: eventConfig.contractName,
         eventName: eventConfig.name,
@@ -233,8 +210,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         params,
         transaction,
         block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
-        srcAddress: log.address,
-        logIndex: log.logIndex,
+        srcAddress,
+        logIndex,
       }->Internal.fromGenericEvent,
     })
   }
@@ -274,8 +251,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~toBlock,
       ~logSelections,
       ~fieldSelection=selectionConfig.fieldSelection,
-      ~nonOptionalBlockFieldNames=selectionConfig.nonOptionalBlockFieldNames,
-      ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
       throw(
@@ -361,32 +336,20 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }
     }
 
-    //Parse page items into queue items
-    let parsedEvents = switch await getHscDecoder().decodeLogs(pageUnsafe.events) {
-    | exception exn =>
-      exn->mkLogAndRaise(
-        ~msg="Failed to parse events using hypersync client, please double check your ABI.",
-      )
-    | parsedEvents => parsedEvents
-    }
-
-    pageUnsafe.items->Belt.Array.forEachWithIndex((index, item) => {
-      let {block, log} = item
+    pageUnsafe.items->Belt.Array.forEach(item => {
       let chainId = chain->ChainMap.Chain.toChainId
-      let topic0 = log.topics->Utils.Array.firstUnsafe
       let maybeEventConfig =
         eventRouter->EventRouter.get(
           ~tag=EventRouter.getEvmEventId(
-            ~sighash=topic0->EvmTypes.Hex.toString,
-            ~topicCount=log.topics->Array.length,
+            ~sighash=item.topic0->EvmTypes.Hex.toString,
+            ~topicCount=item.topicCount,
           ),
           ~indexingAddresses,
-          ~contractAddress=log.address,
-          ~blockNumber=block.number->Belt.Option.getUnsafe,
+          ~contractAddress=item.srcAddress,
+          ~blockNumber=item.block.number->Belt.Option.getUnsafe,
         )
-      let maybeDecodedEvent = parsedEvents->Array.getUnsafe(index)
 
-      switch (maybeEventConfig, maybeDecodedEvent) {
+      switch (maybeEventConfig, item.params) {
       | (Some(eventConfig), Value(decoded)) =>
         parsedQueueItems
         ->Array.push(makeEventBatchQueueItem(item, ~params=decoded, ~eventConfig))
@@ -394,8 +357,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       | (Some(eventConfig), Null | Undefined) =>
         handleDecodeFailure(
           ~eventConfig,
-          ~logIndex=log.logIndex,
-          ~blockNumber=block.number->Belt.Option.getUnsafe,
+          ~logIndex=item.logIndex,
+          ~blockNumber=item.block.number->Belt.Option.getUnsafe,
           ~chainId,
           ~exn=UndefinedValue,
         )
