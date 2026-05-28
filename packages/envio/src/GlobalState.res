@@ -1046,6 +1046,10 @@ let injectedTaskReducer = (
             ~reorgBlockNumber,
           )
 
+          chainFetcher.sourceManager->SourceManager.onReorg(
+            ~rollbackTargetBlock=rollbackTargetBlockNumber,
+          )
+
           dispatchAction(FindReorgDepth({chain, rollbackTargetBlockNumber}))
         }
       // We can come to this case when event batch finished processing
