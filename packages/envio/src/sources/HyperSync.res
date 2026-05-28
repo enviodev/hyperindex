@@ -1,29 +1,9 @@
-module Log = {
-  type t = {
-    address: Address.t,
-    data: string,
-    topics: array<EvmTypes.Hex.t>,
-    logIndex: int,
-  }
-
-  let fieldNames = ["address", "data", "topics", "logIndex"]
-}
-
-type hyperSyncPage<'item> = {
-  items: array<'item>,
+type logsQueryPage = {
+  items: array<HyperSyncClient.EventItems.item>,
   nextBlock: int,
   archiveHeight: int,
   rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
-  events: array<HyperSyncClient.ResponseTypes.event>,
 }
-
-type logsQueryPageItem = {
-  log: Log.t,
-  block: HyperSyncClient.ResponseTypes.block,
-  transaction: Internal.eventTransaction,
-}
-
-type logsQueryPage = hyperSyncPage<logsQueryPageItem>
 
 type missingParams = {
   queryName: string,
@@ -74,84 +54,29 @@ module GetLogs = {
     fieldSelection,
   }
 
-  @inline
-  let addMissingParams = (acc, fieldNames, returnedObj, ~prefix) => {
-    if fieldNames->Utils.Array.notEmpty {
-      if !(returnedObj->Obj.magic) {
-        acc->Array.push(prefix)->ignore
-      } else {
-        for idx in 0 to fieldNames->Array.length - 1 {
-          let fieldName = fieldNames->Array.getUnsafe(idx)
-          switch returnedObj
-          ->(Utils.magic: 'a => dict<unknown>)
-          ->Utils.Dict.dangerouslyGetNonOption(fieldName) {
-          | Some(_) => ()
-          | None => acc->Array.push(prefix ++ "." ++ fieldName)->ignore
-          }
+  // Rust encodes structured failures as a JSON payload in the napi error's
+  // message: `{"kind":"MissingFields","fields":["block.timestamp", ...]}`.
+  // JSON.parse + shape check is the recovery protocol — no string-grepping
+  // on anyhow's Debug format.
+  let extractMissingParams = (exn: exn): option<array<string>> => {
+    let message = switch exn {
+    | JsExn(jsExn) => jsExn->JsExn.message
+    | _ => None
+    }
+    switch message {
+    | None => None
+    | Some(msg) =>
+      switch msg->JSON.parseOrThrow->JSON.Decode.object {
+      | exception _ => None
+      | None => None
+      | Some(obj) =>
+        switch (obj->Dict.get("kind"), obj->Dict.get("fields")) {
+        | (Some(String("MissingFields")), Some(Array(fields))) =>
+          Some(fields->Array.filterMap(JSON.Decode.string))
+        | _ => None
         }
       }
     }
-  }
-
-  //Note this function can throw an error
-  let convertEvent = (
-    event: HyperSyncClient.ResponseTypes.event,
-    ~nonOptionalBlockFieldNames,
-    ~nonOptionalTransactionFieldNames,
-  ): logsQueryPageItem => {
-    let missingParams = []
-    missingParams->addMissingParams(Log.fieldNames, event.log, ~prefix="log")
-    missingParams->addMissingParams(nonOptionalBlockFieldNames, event.block, ~prefix="block")
-    missingParams->addMissingParams(
-      nonOptionalTransactionFieldNames,
-      event.transaction,
-      ~prefix="transaction",
-    )
-    if missingParams->Array.length > 0 {
-      throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
-    }
-
-    //Topics can be nullable and still need to be filtered
-    let logUnsanitized: Log.t = event.log->(Utils.magic: HyperSyncClient.ResponseTypes.log => Log.t)
-    let topics = event.log.topics->Option.getUnsafe->Array.filterMap(Nullable.toOption)
-    let address = event.log.address->Option.getUnsafe
-    let log = {
-      ...logUnsanitized,
-      topics,
-      address,
-    }
-
-    {
-      log,
-      block: event.block->(
-        Utils.magic: option<
-          HyperSyncClient.ResponseTypes.block,
-        > => HyperSyncClient.ResponseTypes.block
-      ),
-      transaction: event.transaction->(
-        Utils.magic: option<HyperSyncClient.ResponseTypes.transaction> => Internal.eventTransaction
-      ),
-    }
-  }
-
-  let convertResponse = (
-    res: HyperSyncClient.ResponseTypes.eventResponse,
-    ~nonOptionalBlockFieldNames,
-    ~nonOptionalTransactionFieldNames,
-  ): logsQueryPage => {
-    let {nextBlock, archiveHeight, rollbackGuard} = res
-    let items =
-      res.data->Array.map(item =>
-        item->convertEvent(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
-      )
-    let page: logsQueryPage = {
-      items,
-      nextBlock,
-      archiveHeight: archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
-      events: res.data,
-      rollbackGuard,
-    }
-    page
   }
 
   let query = async (
@@ -160,8 +85,6 @@ module GetLogs = {
     ~toBlock,
     ~logSelections: array<LogSelection.t>,
     ~fieldSelection,
-    ~nonOptionalBlockFieldNames,
-    ~nonOptionalTransactionFieldNames,
   ): logsQueryPage => {
     let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
       topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
@@ -182,13 +105,25 @@ module GetLogs = {
       ~fieldSelection,
     )
 
-    let res = await client.getEvents(~query)
+    let res = switch await client.getEventItems(~query) {
+    | res => res
+    | exception exn =>
+      switch extractMissingParams(exn) {
+      | Some(missingParams) => throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
+      | None => throw(exn)
+      }
+    }
     if res.nextBlock <= fromBlock {
       // Might happen when /height response was from another instance of HyperSync
       throw(Error(WrongInstance))
     }
 
-    res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
+    {
+      items: res.items,
+      nextBlock: res.nextBlock,
+      archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
+      rollbackGuard: res.rollbackGuard,
+    }
   }
 }
 
