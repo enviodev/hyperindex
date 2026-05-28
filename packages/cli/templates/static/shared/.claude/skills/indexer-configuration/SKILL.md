@@ -151,6 +151,4 @@ Add at top of file for IDE schema validation:
 
 RPC tuning parameters are documented in the `indexer-performance` skill.
 
-## Deep Documentation
-
-Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

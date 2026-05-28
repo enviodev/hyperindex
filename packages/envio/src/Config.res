@@ -15,8 +15,6 @@ type contract = {
   addresses: array<Address.t>,
   events: array<Internal.eventConfig>,
   startBlock: option<int>,
-  // EVM-specific: event sighashes for HyperSync queries
-  eventSignatures: array<string>,
 }
 
 // Sources are instantiated lazily in ChainFetcher from this config.
@@ -56,10 +54,6 @@ type sourceSync = {
   pollingInterval: int,
 }
 
-type multichain = Internal.multichain =
-  | @as("ordered") Ordered
-  | @as("unordered") Unordered
-
 type storage = {
   postgres: bool,
   clickhouse: bool,
@@ -78,7 +72,6 @@ type t = {
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
   storage: storage,
-  multichain: multichain,
   chainMap: ChainMap.t<chain>,
   defaultChain: option<chain>,
   ecosystem: Ecosystem.t,
@@ -145,11 +138,15 @@ module EnvioAddresses = {
   external castToInternal: t => Internal.entity = "%identity"
 
   let entityConfig = {
-    name,
+    Internal.name,
     index,
     schema,
     rowsSchema,
     table,
+    // Internal address tracking is Postgres-only; the global config is
+    // always required to have Postgres enabled (Storage::resolve forbids
+    // a Postgres-disabled global), so this is safe regardless of mode.
+    storage: {postgres: true, clickhouse: false},
   }->Internal.fromGenericEntityConfig
 }
 
@@ -199,10 +196,9 @@ let publicConfigChainSchema = S.schema(s =>
 
 let contractEventItemSchema = S.schema(s =>
   {
-    "event": s.matches(S.string),
     "name": s.matches(S.string),
     "sighash": s.matches(S.string),
-    "params": s.matches(S.option(S.array(EventConfigBuilder.eventParamSchema))),
+    "params": s.matches(S.option(S.array(EventConfigBuilder.paramMetaSchema))),
     "kind": s.matches(S.option(S.string)),
     "blockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
     "transactionFields": s.matches(S.option(S.array(Internal.evmTransactionFieldSchema))),
@@ -237,8 +233,6 @@ let publicConfigEvmSchema = S.schema(s =>
   }
 )
 
-let multichainSchema = S.enum([Ordered, Unordered])
-
 let compositeIndexFieldSchema = S.schema(s =>
   {
     "fieldName": s.matches(S.string),
@@ -251,6 +245,7 @@ let derivedFieldSchema = S.schema(s =>
     "fieldName": s.matches(S.string),
     "derivedFromEntity": s.matches(S.string),
     "derivedFromField": s.matches(S.string),
+    "description": s.matches(S.option(S.string)),
   }
 )
 
@@ -266,15 +261,25 @@ let propertySchema = S.schema(s =>
     "entity": s.matches(S.option(S.string)),
     "precision": s.matches(S.option(S.int)),
     "scale": s.matches(S.option(S.int)),
+    "description": s.matches(S.option(S.string)),
+  }
+)
+
+let entityStorageSchema = S.schema(s =>
+  {
+    "postgres": s.matches(S.option(S.bool)),
+    "clickhouse": s.matches(S.option(S.bool)),
   }
 )
 
 let entityJsonSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
+    "storage": s.matches(S.option(entityStorageSchema)),
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
     "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
+    "description": s.matches(S.option(S.string)),
   }
 )
 
@@ -348,6 +353,7 @@ let parseEnumsFromJson = (enumsJson: dict<array<string>>): array<Table.enumConfi
 let parseEntitiesFromJson = (
   entitiesJson: array<'entityJson>,
   ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
+  ~globalStorage: storage,
 ): array<Internal.entityConfig> => {
   entitiesJson->Array.mapWithIndex((entityJson, index) => {
     let entityName = entityJson["name"]
@@ -366,6 +372,7 @@ let parseEntitiesFromJson = (
         ~isArray,
         ~isIndex,
         ~linkedEntity=?prop["linkedEntity"],
+        ~description=?prop["description"],
       )
     })
 
@@ -377,6 +384,7 @@ let parseEntitiesFromJson = (
           df["fieldName"],
           ~derivedFromEntity=df["derivedFromEntity"],
           ~derivedFromField=df["derivedFromField"],
+          ~description=?df["description"],
         )
       )
 
@@ -396,6 +404,7 @@ let parseEntitiesFromJson = (
       entityName,
       ~fields=Array.concat(fields, derivedFields),
       ~compositeIndices,
+      ~description=?entityJson["description"],
     )
 
     // Build schema dynamically from properties
@@ -416,6 +425,21 @@ let parseEntitiesFromJson = (
       dict
     })
 
+    // Resolve per-entity storage against the global config. The CLI
+    // validates that an entity never opts into a backend the global
+    // config didn't enable, and that at least one backend stays true
+    // for an annotated entity — so `getOr(false)` is safe here.
+    let storage: Internal.entityStorage = switch entityJson["storage"] {
+    | Some(s) => {
+        postgres: s["postgres"]->Option.getOr(false),
+        clickhouse: s["clickhouse"]->Option.getOr(false),
+      }
+    | None => {
+        postgres: globalStorage.postgres,
+        clickhouse: globalStorage.clickhouse,
+      }
+    }
+
     {
       Internal.name: entityName,
       index,
@@ -424,6 +448,7 @@ let parseEntitiesFromJson = (
         Utils.magic: S.t<array<dict<unknown>>> => S.t<array<Internal.entity>>
       ),
       table,
+      storage,
     }->Internal.fromGenericEntityConfig
   })
 }
@@ -441,7 +466,6 @@ let publicConfigSchema = S.schema(s =>
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
     "isDev": s.matches(S.option(S.bool)),
-    "multichain": s.matches(S.option(multichainSchema)),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
@@ -515,12 +539,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => (Utils.Set.fromArray(EventConfigBuilder.alwaysIncludedBlockFields), Utils.Set.make())
   }
 
-  // Build contract data lookup: ABI, event signatures, event configs (keyed by capitalized name)
-  let contractDataByName: dict<{
-    "abi": EvmTypes.Abi.t,
-    "eventSignatures": array<string>,
-    "events": option<array<_>>,
-  }> = Dict.make()
+  let contractDataByName: dict<{"abi": EvmTypes.Abi.t, "events": option<array<_>>}> = Dict.make()
   switch publicContractsConfig {
   | Some(contractsDict) =>
     contractsDict
@@ -528,13 +547,9 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ->Array.forEach(((contractName, contractConfig)) => {
       let capitalizedName = contractName->Utils.String.capitalize
       let abi = contractConfig["abi"]->(Utils.magic: JSON.t => EvmTypes.Abi.t)
-      let eventSignatures = switch contractConfig["events"] {
-      | Some(events) => events->Array.map(eventItem => eventItem["event"])
-      | None => []
-      }
       contractDataByName->Dict.set(
         capitalizedName,
-        {"abi": abi, "eventSignatures": eventSignatures, "events": contractConfig["events"]},
+        {"abi": abi, "events": contractConfig["events"]},
       )
     })
   | None => ()
@@ -662,7 +677,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             addresses,
             events,
             startBlock,
-            eventSignatures: contractData["eventSignatures"],
           }
         })
 
@@ -756,10 +770,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   let enumConfigsByName =
     allEnums->Array.map(enumConfig => (enumConfig.name, enumConfig))->Dict.fromArray
 
+  let globalStorage: storage = {
+    postgres: publicConfig["storage"]["postgres"],
+    clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
+  }
+
   let userEntities =
     publicConfig["entities"]
     ->Option.getOr([])
-    ->parseEntitiesFromJson(~enumConfigsByName)
+    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage)
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 
@@ -791,11 +810,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
-    storage: {
-      postgres: publicConfig["storage"]["postgres"],
-      clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
-    },
-    multichain: publicConfig["multichain"]->Option.getOr(Unordered),
+    storage: globalStorage,
     chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
@@ -926,11 +941,18 @@ let rec canonicalJson = (json: JSON.t): JSON.t =>
   }
 
 // Returns dotted leaf paths (`a.b[i].c`) where `stored` differs from
-// `current`. Skips subtrees whose canonical JSON matches.
+// `current`, restricted to the highest-priority top-level tier with any
+// diff. Tiers in order: version → name → storage → ecosystem
+// (evm/fuel/svm) → entities → other top-level keys. The first tier
+// containing a diff is the only one rendered; lower tiers are silenced
+// so a single noisy section doesn't bury the actionable change.
 let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
+  let canonEq = (a: JSON.t, b: JSON.t) =>
+    JSON.stringify(canonicalJson(a)) === JSON.stringify(canonicalJson(b))
+
   let acc = []
   let rec go = (s: JSON.t, c: JSON.t, prefix: string) => {
-    if JSON.stringify(canonicalJson(s)) === JSON.stringify(canonicalJson(c)) {
+    if canonEq(s, c) {
       ()
     } else {
       switch (s, c) {
@@ -956,25 +978,91 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
           | (Some(sv), Some(cv)) => go(sv, cv, p)
           }
         }
-      | _ =>
-        // Type mismatch or scalar diff
-        acc->Array.push(prefix === "" ? "<root>" : prefix)->ignore
+      | _ => acc->Array.push(prefix === "" ? "<root>" : prefix)->ignore
       }
     }
   }
-  go(stored, current, "")
+
+  let getTopKey = (j: JSON.t, k: string) =>
+    switch j {
+    | Object(d) => d->Dict.get(k)
+    | _ => None
+    }
+  let topKeyDiffers = (k: string) =>
+    switch (getTopKey(stored, k), getTopKey(current, k)) {
+    | (None, None) => false
+    | (None, _) | (_, None) => true
+    | (Some(s), Some(c)) => !canonEq(s, c)
+    }
+  let runTier = (keys: array<string>) =>
+    keys->Array.forEach(k =>
+      switch (getTopKey(stored, k), getTopKey(current, k)) {
+      | (None, None) => ()
+      | (None, _) | (_, None) => acc->Array.push(k)->ignore
+      | (Some(s), Some(c)) => go(s, c, k)
+      }
+    )
+
+  switch (stored, current) {
+  | (Object(sObj), Object(cObj)) =>
+    let tiers = [["version"], ["name"], ["storage"], ["evm", "fuel", "svm"], ["entities"]]
+    let firstHit = tiers->Array.reduce(None, (acc, tier) =>
+      switch acc {
+      | Some(_) => acc
+      | None =>
+        switch tier->Array.filter(topKeyDiffers) {
+        | [] => None
+        | hits => Some(hits)
+        }
+      }
+    )
+    switch firstHit {
+    | Some(hits) => runTier(hits)
+    | None =>
+      let knownSet = Utils.Set.fromArray(tiers->Belt.Array.concatMany)
+      let extras =
+        Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
+        ->Utils.Set.toArray
+        ->Array.filter(k => !(knownSet->Utils.Set.has(k)))
+        ->Array.toSorted(String.compare)
+        ->Array.filter(topKeyDiffers)
+      runTier(extras)
+    }
+  | _ => go(stored, current, "")
+  }
   acc
 }
 
 // Throws an `incompatible config` error listing each path in `changedPaths`,
-// plus the revert/reset remediation. `~resetCommand` lets each call site
-// (`envio dev -r` / `envio start -r` / `envio local db-migrate setup`)
-// surface the right wipe-and-restart command.
-let throwIfIncompatible = (changedPaths: array<string>, ~resetCommand: string) => {
+// plus the remediation options. `~resetCommand` is rendered as-is for
+// option 2 (the wipe-and-redo). `~runCommand` controls option 3 (parallel
+// indexer recipe): when `None`, option 3 is omitted — the migrate flow
+// uses this because running a second indexer doesn't apply.
+// `~hasClickhouse` adds the extra env line so users running both
+// Postgres and Clickhouse get a complete override.
+let throwIfIncompatible = (
+  changedPaths: array<string>,
+  ~resetCommand: string,
+  ~runCommand: option<string>,
+  ~hasClickhouse: bool,
+) => {
   if changedPaths->Array.length > 0 {
     let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
+    let option1 = "Revert the changes above"
+    let padTo = (s, col) => s ++ " "->String.repeat(Math.Int.max(col - String.length(s), 1))
+    let col = Math.Int.max(String.length(option1), String.length(resetCommand)) + 2
+    let option3 = switch runCommand {
+    | None => ""
+    | Some(cmd) =>
+      let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
+      `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
+    }
     JsError.throwWithMessage(
-      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n\n  1. Revert the changes above    # resume indexing where it left off\n  2. ${resetCommand}                # wipe the database and re-index from scratch`,
+      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(
+          col,
+        )}# resume indexing where it left off\n  2. ${resetCommand->padTo(
+          col,
+        )}# delete all indexed data and start over${option3}`,
     )
   }
 }
@@ -992,3 +1080,5 @@ let loadWithoutRegistrations = () =>
       c
     }
   }
+
+let getPgUserEntities = (config: t) => config.userEntities->Array.filter(e => e.storage.postgres)

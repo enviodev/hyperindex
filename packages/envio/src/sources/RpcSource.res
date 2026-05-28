@@ -838,7 +838,7 @@ type options = {
   url: string,
   chain: ChainMap.Chain.t,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
-  allEventSignatures: array<string>,
+  allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   lowercaseAddresses: bool,
   ws?: string,
 }
@@ -850,7 +850,7 @@ let make = (
     url,
     chain,
     eventRouter,
-    allEventSignatures,
+    allEventParams,
     lowercaseAddresses,
     ?ws,
   }: options,
@@ -993,12 +993,16 @@ let make = (
     {log: hyperSyncLog}
   }
 
-  let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
+  let hscDecoder: ref<option<HyperSyncClient.Decoder.tWithParams>> = ref(None)
   let getHscDecoder = () => {
     switch hscDecoder.contents {
     | Some(decoder) => decoder
     | None => {
-        let decoder = HyperSyncClient.Decoder.fromSignatures(allEventSignatures)
+        let decoder = HyperSyncClient.Decoder.fromParams(
+          allEventParams,
+          ~checksumAddresses=!lowercaseAddresses,
+        )
+        hscDecoder := Some(decoder)
         decoder
       }
     }
@@ -1088,7 +1092,7 @@ let make = (
     let hyperSyncEvents = logs->Belt.Array.map(convertLogToHyperSyncEvent)
 
     // Decode using HyperSyncClient decoder
-    let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
+    let parsedEvents = try await getHscDecoder().decodeLogs(hyperSyncEvents) catch {
     | exn =>
       throw(
         Source.GetItemsError(
@@ -1107,7 +1111,7 @@ let make = (
     ->Array.zip(parsedEvents)
     ->Array.filterMap(((
       log: Rpc.GetLogs.log,
-      maybeDecodedEvent: Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
+      maybeDecodedEvent: Nullable.t<Internal.eventParams>,
     )) => {
       let topic0 = log.topics[0]->Option.getOr("0x0")
       let routedAddress = if lowercaseAddresses {
@@ -1158,7 +1162,7 @@ let make = (
                     contractName: eventConfig.contractName,
                     eventName: eventConfig.name,
                     chainId: chain->ChainMap.Chain.toChainId,
-                    params: decoded->eventConfig.convertHyperSyncEventArgs,
+                    params: decoded,
                     transaction,
                     block,
                     srcAddress: routedAddress,

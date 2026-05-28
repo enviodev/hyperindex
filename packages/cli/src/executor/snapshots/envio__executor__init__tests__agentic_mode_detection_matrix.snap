@@ -1,0 +1,13 @@
+---
+source: packages/cli/src/executor/init.rs
+expression: report
+---
+plain interactive tty: false
+piped stdout: true
+claudecode set: true
+ci set: true
+term=dumb: true
+envio_tui=false overrides tty: true
+envio_tui=true overrides agent: false
+envio_tui=1 forces interactive: false
+envio_tui=0 forces agentic: true

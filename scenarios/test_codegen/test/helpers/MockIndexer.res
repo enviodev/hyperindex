@@ -264,7 +264,6 @@ module Indexer = {
 
   let rec make = async (
     ~chains: array<chainConfig>,
-    ~multichain=Config.Unordered,
     ~saveFullHistory=false,
     // Reinit storage without Hasura
     // makes tests ~1.9 seconds faster
@@ -273,6 +272,7 @@ module Indexer = {
     ~reset=true,
     ~batchSize=?,
     ~shouldRollbackOnReorg=true,
+    ~reducedPollingInterval=?,
   ) => {
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
@@ -313,7 +313,6 @@ module Indexer = {
         shouldSaveFullHistory: saveFullHistory,
         enableRawEvents,
         chainMap,
-        multichain,
         batchSize: batchSize->Option.getOr(config.batchSize),
       }
     }
@@ -349,6 +348,7 @@ module Indexer = {
       ~chainConfigs=config.chainMap->ChainMap.values,
       ~envioInfo=JSON.Encode.object(Dict.make()),
       ~resetCommand="envio dev -r",
+      ~runCommand=Some("envio dev"),
       ~reset,
     )
 
@@ -356,6 +356,7 @@ module Indexer = {
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~registrations,
+      ~reducedPollingInterval?,
     )
     let globalState = GlobalState.make(
       ~ctx,
@@ -494,11 +495,11 @@ module Indexer = {
           ~chains,
           ~enableHasura,
           ~enableRawEvents,
-          ~multichain,
           ~saveFullHistory,
           ~reset=false,
           ~batchSize?,
           ~shouldRollbackOnReorg,
+          ~reducedPollingInterval?,
         )
       },
       graphql: query => {
@@ -797,12 +798,11 @@ module Source = {
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ =>
                               JsError.throwWithMessage("Not implemented"),
-                            convertHyperSyncEventArgs: _ =>
-                              JsError.throwWithMessage("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
                             selectedTransactionFields: Utils.Set.make(),
                             sighash: "",
-                            indexedParams: [],
+                            topicCount: 1,
+                            paramsMetadata: [],
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -958,10 +958,10 @@ let evmEventConfig = (
           },
         ])
       },
-    convertHyperSyncEventArgs: _ => JsError.throwWithMessage("Not implemented"),
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
     sighash: id,
-    indexedParams: [],
+    topicCount: 1,
+    paramsMetadata: [],
   }
 }

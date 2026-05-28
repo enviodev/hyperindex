@@ -43,12 +43,14 @@ type field = {
   isIndex: bool,
   linkedEntity: option<string>,
   defaultValue: option<string>,
+  description: option<string>,
 }
 
 type derivedFromField = {
   fieldName: string,
   derivedFromEntity: string,
   derivedFromField: string,
+  description: option<string>,
 }
 
 type fieldOrDerived = Field(field) | DerivedFrom(derivedFromField)
@@ -63,6 +65,7 @@ let mkField = (
   ~isPrimaryKey=false,
   ~isIndex=false,
   ~linkedEntity=?,
+  ~description=?,
 ) =>
   {
     fieldName,
@@ -74,13 +77,15 @@ let mkField = (
     isIndex,
     linkedEntity,
     defaultValue: default,
+    description,
   }->Field
 
-let mkDerivedFromField = (fieldName, ~derivedFromEntity, ~derivedFromField) =>
+let mkDerivedFromField = (fieldName, ~derivedFromEntity, ~derivedFromField, ~description=?) =>
   {
     fieldName,
     derivedFromField,
     derivedFromEntity,
+    description,
   }->DerivedFrom
 
 let getUserDefinedFieldName = fieldOrDerived =>
@@ -162,12 +167,14 @@ type table = {
   tableName: string,
   fields: array<fieldOrDerived>,
   compositeIndices: array<array<compositeIndexField>>,
+  description: option<string>,
 }
 
-let mkTable = (tableName, ~compositeIndices=[], ~fields) => {
+let mkTable = (tableName, ~compositeIndices=[], ~fields, ~description=?) => {
   tableName,
   fields,
   compositeIndices,
+  description,
 }
 
 let getPrimaryKeyFieldNames = table =>

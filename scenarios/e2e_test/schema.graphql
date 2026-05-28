@@ -1,8 +1,42 @@
-type Transfer {
+# Hash comments are ignored by the GraphQL parser and should NOT appear
+# in introspection. Only string descriptions ("""...""" or "...") are exposed.
+
+"An ERC-20 transfer event"
+type Transfer @storage(postgres: true, clickhouse: true) {
+  "Composite ID built from chainId-block-logIndex"
   id: ID!
+  "Sender address"
   from: String! @index
+  "Recipient address"
   to: String! @index
+  "Token amount transferred (raw, no decimals applied)"
   value: BigInt!
+  "Block number the transfer was emitted in"
   blockNumber: Int!
+  "Hash of the transaction that emitted the transfer"
   transactionHash: String!
+}
+
+"An on-chain account participating in transfers"
+type Account @storage(postgres: true) {
+  "The account's Ethereum address"
+  id: ID!
+  "All transfers sent from this account"
+  outgoing: [Transfer!]! @derivedFrom(field: "from")
+}
+
+# Override the global multi-storage default: this entity only lives in
+# Postgres. ClickHouse will not receive writes for it.
+type TransferPgOnly @storage(postgres: true) {
+  id: ID!
+  from: String!
+  value: BigInt!
+}
+
+# Mirror override: this entity only lives in ClickHouse, so it is
+# absent from the Postgres-backed `pgUserEntities` (and from Hasura).
+type TransferChOnly @storage(clickhouse: true) {
+  id: ID!
+  from: String!
+  value: BigInt!
 }

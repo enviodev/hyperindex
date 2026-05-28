@@ -3395,7 +3395,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateEmpty = makeFetchStateWith(~latestBlock=100, ~queueBlocks=[])
 
     t.expect(
-      fetchStateEmpty->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
+      fetchStateEmpty->FetchState.getProgressBlockNumberAt(~index=0),
       ~message="Should return latestFullyFetchedBlock.blockNumber when queue is empty",
     ).toBe(100)
   })
@@ -3404,7 +3404,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 0)])
 
     t.expect(
-      fetchStateSingleItem->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
+      fetchStateSingleItem->FetchState.getProgressBlockNumberAt(~index=0),
       ~message="Should return single queue item blockNumber - 1",
     ).toBe(54)
   })
@@ -3413,7 +3413,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 5)])
 
     t.expect(
-      fetchStateSingleItem->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
+      fetchStateSingleItem->FetchState.getProgressBlockNumberAt(~index=0),
       ~message="Should return single queue item blockNumber - 1",
     ).toBe(54)
   })
@@ -3425,7 +3425,7 @@ describe("FetchState progress tracking", () => {
     )
 
     t.expect(
-      fetchStateWithQueue->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
+      fetchStateWithQueue->FetchState.getProgressBlockNumberAt(~index=0),
       ~message="Should return latest fetched block number",
     ).toBe(90)
   })

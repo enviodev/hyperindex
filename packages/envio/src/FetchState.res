@@ -1485,15 +1485,6 @@ let getNextQuery = (
   }
 }
 
-let getTimestampAt = (fetchState: t, ~index) => {
-  switch fetchState.buffer->Belt.Array.get(index) {
-  | Some(Event({timestamp})) => timestamp
-  | Some(Block(_)) =>
-    JsError.throwWithMessage("Block handlers are not supported for ordered multichain mode.")
-  | None => (fetchState->bufferBlock).blockTimestamp
-  }
-}
-
 let hasReadyItem = ({buffer} as fetchState: t) => {
   switch buffer->Belt.Array.get(0) {
   | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
@@ -1965,8 +1956,7 @@ let sortForUnorderedBatch = {
   }
 }
 
-// Ordered multichain mode can't skip blocks, even if there are no items.
-let getUnorderedMultichainProgressBlockNumberAt = ({buffer} as fetchState: t, ~index) => {
+let getProgressBlockNumberAt = ({buffer} as fetchState: t, ~index) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
   switch buffer->Belt.Array.get(index) {
   | Some(item) if bufferBlockNumber >= item->Internal.getItemBlockNumber =>

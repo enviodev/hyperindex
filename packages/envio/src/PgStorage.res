@@ -1208,6 +1208,12 @@ let make = (
     ~enums=[],
     ~envioInfo,
   ): Persistence.initialState => {
+    // Per-entity storage routing: PG owns tables only for entities that
+    // opted into Postgres; the sink mirrors only those that opted into
+    // ClickHouse.
+    let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
+    let chEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse)
+
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
     )
@@ -1235,14 +1241,14 @@ let make = (
 
     // Call sink.initialize before executing PG queries
     switch sink {
-    | Some(sink) => await sink.initialize(~chainConfigs, ~entities, ~enums)
+    | Some(sink) => await sink.initialize(~chainConfigs, ~entities=chEntities, ~enums)
     | None => ()
     }
 
     let queries = makeInitializeTransaction(
       ~pgSchema,
       ~pgUser,
-      ~entities,
+      ~entities=pgEntities,
       ~enums,
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
@@ -1620,12 +1626,25 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~updatedEffectsCache,
     ~updatedEntities,
   ) => {
+    let pgUpdates = []
+    let chUpdates = []
+    for i in 0 to updatedEntities->Array.length - 1 {
+      let update = updatedEntities->Array.getUnsafe(i)
+      let {entityConfig}: Persistence.updatedEntity = update
+      if entityConfig.storage.postgres {
+        pgUpdates->Array.push(update)
+      }
+      if entityConfig.storage.clickhouse {
+        chUpdates->Array.push(update)
+      }
+    }
+
     // Initialize sink if configured
     let sinkPromise = switch sink {
     | Some(sink) => {
         let timerRef = Hrtime.makeTimer()
         Some(
-          sink.writeBatch(~batch, ~updatedEntities)
+          sink.writeBatch(~batch, ~updatedEntities=chUpdates)
           ->Promise.thenResolve(_ => {
             Prometheus.StorageWrite.increment(
               ~storage=sink.name,
@@ -1652,7 +1671,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~allEntities,
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
-      ~updatedEntities,
+      ~updatedEntities=pgUpdates,
       ~sinkPromise,
     )
     Prometheus.StorageWrite.increment(
@@ -1705,6 +1724,7 @@ let makeStorageFromEnv = (
         let host = Env.ClickHouse.host()
         let username = Env.ClickHouse.username()
         let password = Env.ClickHouse.password()
+        let database = Env.ClickHouse.database()
         let missing = []
         let checkEnv = (opt, name) =>
           switch opt {
@@ -1714,6 +1734,7 @@ let makeStorageFromEnv = (
         host->checkEnv("ENVIO_CLICKHOUSE_HOST")
         username->checkEnv("ENVIO_CLICKHOUSE_USERNAME")
         password->checkEnv("ENVIO_CLICKHOUSE_PASSWORD")
+        database->checkEnv("ENVIO_CLICKHOUSE_DATABASE")
         if missing->Array.length > 0 {
           JsError.throwWithMessage(
             `ClickHouse storage is enabled but required env vars are not set: ${missing->Array.joinUnsafe(
@@ -1724,7 +1745,7 @@ let makeStorageFromEnv = (
         Some(
           Sink.makeClickHouse(
             ~host=host->Option.getUnsafe,
-            ~database=Env.ClickHouse.database(),
+            ~database=database->Option.getUnsafe,
             ~username=username->Option.getUnsafe,
             ~password=password->Option.getUnsafe,
           ),
@@ -1744,7 +1765,7 @@ let makeStorageFromEnv = (
                 secret: Env.Hasura.secret,
               },
               ~pgSchema,
-              ~userEntities=config.userEntities,
+              ~userEntities=config->Config.getPgUserEntities,
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Schema.make(config.allEntities->Belt.Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
@@ -1768,7 +1789,11 @@ let makeStorageFromEnv = (
                 secret: Env.Hasura.secret,
               },
               ~pgSchema,
-              ~tableNames,
+              ~tableConfigs=tableNames->Array.map(tableName => {
+                Hasura.tableName,
+                description: None,
+                columnDescriptions: dict{},
+              }),
             )->Promise.catch(err => {
               Logging.errorWithExn(
                 err->Utils.prettifyExn,

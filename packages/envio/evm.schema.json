@@ -4,16 +4,16 @@
   "description": "Schema for a YAML config for an envio indexer",
   "type": "object",
   "properties": {
+    "name": {
+      "description": "Name of the project",
+      "type": "string"
+    },
     "description": {
       "description": "Description of the project",
       "type": [
         "string",
         "null"
       ]
-    },
-    "name": {
-      "description": "Name of the project",
-      "type": "string"
     },
     "schema": {
       "description": "Custom path to schema.graphql file",
@@ -67,7 +67,7 @@
         "null"
       ],
       "items": {
-        "$ref": "#/$defs/GlobalContract_for_ContractConfig"
+        "$ref": "#/$defs/GlobalContract"
       }
     },
     "chains": {
@@ -189,7 +189,7 @@
         "evm"
       ]
     },
-    "GlobalContract_for_ContractConfig": {
+    "GlobalContract": {
       "type": "object",
       "properties": {
         "name": {
@@ -356,6 +356,13 @@
           "format": "uint64",
           "minimum": 0
         },
+        "skip": {
+          "description": "Excludes the chain from indexing and migrations. Code generation is unaffected. For testing, prefer using a test framework instead.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "rpc": {
           "description": "RPC configuration for your indexer. If not specified otherwise, for chains supported by HyperSync, RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. HyperSync offers significant performance improvements, up to a 1000x faster than traditional RPC.",
           "anyOf": [
@@ -418,7 +425,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/$defs/ChainContract_for_ContractConfig"
+            "$ref": "#/$defs/ChainContract"
           }
         }
       },
@@ -578,7 +585,7 @@
         "url"
       ]
     },
-    "ChainContract_for_ContractConfig": {
+    "ChainContract": {
       "type": "object",
       "properties": {
         "name": {

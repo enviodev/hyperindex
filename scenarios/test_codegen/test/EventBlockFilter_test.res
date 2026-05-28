@@ -214,7 +214,7 @@ describe("Generated onEventWhereFilter — block field exists on EVM events", ()
 // unit-testing it here avoids a full-indexer bring-up while still proving
 // the override semantics.
 describe("EventConfigBuilder — where.block.number._gte overrides contract startBlock", () => {
-  let transferParams: array<EventConfigBuilder.eventParam> = [
+  let transferParams: array<EventConfigBuilder.paramMeta> = [
     {name: "from", abiType: "address", indexed: true},
     {name: "to", abiType: "address", indexed: true},
     {name: "value", abiType: "uint256", indexed: false},

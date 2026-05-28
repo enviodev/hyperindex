@@ -943,7 +943,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
         message,
         ~message="Should throw a helpful error naming every missing env var at once",
       ).toBe(
-        "ClickHouse storage is enabled but required env vars are not set: ENVIO_CLICKHOUSE_HOST, ENVIO_CLICKHOUSE_USERNAME, ENVIO_CLICKHOUSE_PASSWORD. Please set them, disable clickhouse in the `storage` config, or run `envio dev` for a pre-configured local ClickHouse.",
+        "ClickHouse storage is enabled but required env vars are not set: ENVIO_CLICKHOUSE_HOST, ENVIO_CLICKHOUSE_USERNAME, ENVIO_CLICKHOUSE_PASSWORD, ENVIO_CLICKHOUSE_DATABASE. Please set them, disable clickhouse in the `storage` config, or run `envio dev` for a pre-configured local ClickHouse.",
       )
     },
   )
@@ -974,7 +974,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
       setEnvVar("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123")
       setEnvVar("ENVIO_CLICKHOUSE_USERNAME", "default")
       setEnvVar("ENVIO_CLICKHOUSE_PASSWORD", "testing")
-      setEnvVar("ENVIO_CLICKHOUSE_DATABASE", "envio_sink")
+      setEnvVar("ENVIO_CLICKHOUSE_DATABASE", "envio_indexer")
       let config = {
         ...MockIndexer.config,
         storage: ({postgres: true, clickhouse: true}: Config.storage),

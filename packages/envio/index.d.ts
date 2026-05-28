@@ -299,8 +299,6 @@ type IndexerConfig = {
   description?: string;
   /** Path to handlers directory for auto-loading (default: "src/handlers"). */
   handlers?: string;
-  /** Multichain mode: ordered or unordered (default: "unordered"). */
-  multichain?: "ordered" | "unordered";
   /** Target batch size for event processing (default: 5000). */
   fullBatchSize?: number;
   /** Whether to rollback on chain reorg (default: true). */
@@ -1167,6 +1165,22 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
       : never
     : never;
 
+// Surfaced when the indexer has no configured ecosystem — typically because
+// `envio codegen` hasn't been run yet, so `Global` isn't augmented and
+// `GlobalConfig` resolves to `{}`. The handler methods are still present so
+// IDE autocomplete shows them; their rest parameter is typed as a
+// string-literal hint so any call site fails with an error message that
+// names codegen as the fix. A rest parameter (rather than a single one)
+// avoids "Expected N arguments" errors masking the hint.
+type CodegenRequiredHint =
+  "Run 'envio codegen' to generate handler types from config.yaml. Without codegen, the indexer has no contracts, chains, or events to register handlers for.";
+type CodegenRequiredFallback = {
+  readonly onEvent: (...hint: CodegenRequiredHint[]) => void;
+  readonly onBlock: (...hint: CodegenRequiredHint[]) => void;
+  readonly onSlot: (...hint: CodegenRequiredHint[]) => void;
+  readonly contractRegister: (...hint: CodegenRequiredHint[]) => void;
+};
+
 // Single-ecosystem chains live at the root of the indexer object alongside
 // the handler-registration methods. Multi-ecosystem indexers aren't
 // supported by the runtime, so there's no nested `evm` / `fuel` / `svm`
@@ -1178,7 +1192,7 @@ type SingleEcosystemChains<Config extends IndexerConfigTypes = GlobalConfig> =
     ? FuelEcosystem<Config>
     : HasSvm<Config> extends true
     ? SvmEcosystem<Config>
-    : {};
+    : CodegenRequiredFallback;
 
 /** Indexer type resolved from config. */
 export type IndexerFromConfig<Config extends IndexerConfigTypes = GlobalConfig> = Prettify<
@@ -1457,7 +1471,7 @@ type SingleEcosystemTestChains<Config extends IndexerConfigTypes = GlobalConfig>
     ? FuelTestEcosystem<Config>
     : HasSvm<Config> extends true
     ? SvmTestEcosystem<Config>
-    : {};
+    : CodegenRequiredFallback;
 
 /**
  * Test indexer type resolved from config.

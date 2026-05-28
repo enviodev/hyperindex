@@ -24,10 +24,11 @@ import {
   stopClickHouse,
   queryClickHouse,
 } from "../utils/clickhouse.js";
+import { runPgSql } from "../utils/postgres.js";
 import path from "path";
 
 const PROJECT_DIR = path.join(config.scenariosDir, "e2e_test");
-const CH_DATABASE = "envio_sink";
+const CH_DATABASE = "envio_indexer";
 
 interface ClickHouseResult<T> {
   data: T[];
@@ -63,6 +64,7 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
         ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
         ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
         ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+        ENVIO_CLICKHOUSE_DATABASE: CH_DATABASE,
         // First run: no DB state yet, fallback returns the config endBlock
         E2E_EXPECTED_END_BLOCK: "10861774",
         // Flush chain metadata immediately (no throttle) so isReady
@@ -167,6 +169,150 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     expect(result.data?._meta).toEqual([{ chainId: 1, isReady: true }]);
   });
 
+  it("should expose schema descriptions via GraphQL introspection", async () => {
+    // Pulls the whole introspected schema from the live Hasura endpoint and
+    // snapshots descriptions on user-defined entity types — covers entity
+    // (table comment), regular fields (column comment), and indexed field
+    // round-tripping from schema.graphql through to Hasura introspection.
+    // `#` line comments are GraphQL comments (not descriptions) and must
+    // NOT appear.
+    //
+    // Note on relationships: Hasura overrides the `comment` on array/object
+    // relationships with hardcoded defaults ("An array relationship" / "An
+    // aggregate relationship" / "An object relationship") in GraphQL
+    // introspection. The schema-level description we set still lands in
+    // Hasura's metadata API, but it does not surface here, so the snapshot
+    // captures Hasura's defaults for relationship fields.
+    interface IntrospectedTypeRef {
+      name: string | null;
+      kind: string;
+      ofType: IntrospectedTypeRef | null;
+    }
+    interface IntrospectedField {
+      name: string;
+      description: string | null;
+      type: IntrospectedTypeRef;
+    }
+    interface IntrospectedType {
+      name: string;
+      description: string | null;
+      fields: IntrospectedField[] | null;
+    }
+    const result = await graphql.query<{
+      __schema: { types: IntrospectedType[] };
+    }>(`{
+      __schema {
+        types {
+          name
+          description
+          fields {
+            name
+            description
+            type {
+              name
+              kind
+              ofType {
+                name
+                kind
+                ofType {
+                  name
+                  kind
+                  ofType { name kind }
+                }
+              }
+            }
+          }
+        }
+      }
+    }`);
+
+    const formatType = (t: IntrospectedTypeRef | null): string => {
+      if (!t) return "?";
+      if (t.kind === "NON_NULL") return `${formatType(t.ofType)}!`;
+      if (t.kind === "LIST") return `[${formatType(t.ofType)}]`;
+      return t.name ?? "?";
+    };
+
+    const userTypeNames = new Set(["Transfer", "Account"]);
+    const userTypes = (result.data?.__schema.types ?? [])
+      .filter((t) => userTypeNames.has(t.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((t) => ({
+        name: t.name,
+        description: t.description,
+        fields: t.fields
+          ?.slice()
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((f) => ({
+            name: f.name,
+            description: f.description,
+            type: formatType(f.type),
+          })),
+      }));
+
+    expect(userTypes).toMatchInlineSnapshot(`
+      [
+        {
+          "description": "An on-chain account participating in transfers",
+          "fields": [
+            {
+              "description": "The account's Ethereum address",
+              "name": "id",
+              "type": "String!",
+            },
+            {
+              "description": "An array relationship",
+              "name": "outgoing",
+              "type": "[Transfer!]!",
+            },
+            {
+              "description": "An aggregate relationship",
+              "name": "outgoing_aggregate",
+              "type": "Transfer_aggregate!",
+            },
+          ],
+          "name": "Account",
+        },
+        {
+          "description": "An ERC-20 transfer event",
+          "fields": [
+            {
+              "description": "Block number the transfer was emitted in",
+              "name": "blockNumber",
+              "type": "Int!",
+            },
+            {
+              "description": "Sender address",
+              "name": "from",
+              "type": "String!",
+            },
+            {
+              "description": "Composite ID built from chainId-block-logIndex",
+              "name": "id",
+              "type": "String!",
+            },
+            {
+              "description": "Recipient address",
+              "name": "to",
+              "type": "String!",
+            },
+            {
+              "description": "Hash of the transaction that emitted the transfer",
+              "name": "transactionHash",
+              "type": "String!",
+            },
+            {
+              "description": "Token amount transferred (raw, no decimals applied)",
+              "name": "value",
+              "type": "numeric!",
+            },
+          ],
+          "name": "Transfer",
+        },
+      ]
+    `);
+  });
+
   it("should have Transfer entities indexed", async () => {
     const result = await graphql.poll<{
       Transfer: Array<{
@@ -266,6 +412,149 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     });
   });
 
+  // --- Per-entity @storage routing ---
+  //
+  // The e2e_test schema declares:
+  //   Transfer        @storage(postgres: true, clickhouse: true)
+  //   TransferPgOnly  @storage(postgres: true)
+  //   TransferChOnly  @storage(clickhouse: true)
+  //
+  // Each backend should host exactly the entities that opted into it, with
+  // at least one row each. Hasura sits on top of Postgres so it must
+  // expose Transfer and TransferPgOnly only.
+
+  it("Postgres has tables for postgres-enabled entities only", async () => {
+    const tables = await runPgSql(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
+      ORDER BY table_name
+    `);
+    expect(tables.map((r) => r[0])).toMatchInlineSnapshot(`
+      [
+        "Transfer",
+        "TransferPgOnly",
+      ]
+    `);
+
+    // The handler writes one row to each entity per Transfer event. Anchor
+    // on the Transfer count being non-zero, then assert per-entity counts
+    // are exactly equal — that pins the row totals without needing the
+    // historical block range's magic number, and catches dropped writes.
+    const transferRows = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
+    const transferCount = Number(transferRows[0]?.[0]);
+    expect(transferCount).toBeGreaterThan(0);
+
+    const pgOnlyRows = await runPgSql(`SELECT count(*)::text FROM "TransferPgOnly"`);
+    expect(Number(pgOnlyRows[0]?.[0])).toBe(transferCount);
+  });
+
+  it("ClickHouse has tables for clickhouse-enabled entities only", async () => {
+    const tables = await queryClickHouse<
+      ClickHouseResult<{ name: string }>
+    >(
+      `SELECT name FROM system.tables
+       WHERE database = '${CH_DATABASE}'
+         AND name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
+       ORDER BY name
+       FORMAT JSON`
+    );
+    expect(tables.data.map((r) => r.name)).toMatchInlineSnapshot(`
+      [
+        "Transfer",
+        "TransferChOnly",
+      ]
+    `);
+
+    // Same invariant as the Postgres side: one row per Transfer event on
+    // each ClickHouse-bound entity. Lock the row totals to the Postgres
+    // Transfer count so routing drops surface as a count mismatch.
+    const pgTransferRows = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
+    const transferCount = Number(pgTransferRows[0]?.[0]);
+    expect(transferCount).toBeGreaterThan(0);
+
+    const transferCh = await queryClickHouse<
+      ClickHouseResult<{ c: string }>
+    >(`SELECT count() as c FROM ${CH_DATABASE}.Transfer FORMAT JSON`);
+    expect(Number(transferCh.data[0]?.c)).toBe(transferCount);
+
+    const chOnly = await queryClickHouse<
+      ClickHouseResult<{ c: string }>
+    >(`SELECT count() as c FROM ${CH_DATABASE}.TransferChOnly FORMAT JSON`);
+    expect(Number(chOnly.data[0]?.c)).toBe(transferCount);
+  });
+
+  it("Hasura GraphQL schema exposes only postgres-backed entities", async () => {
+    const result = await graphql.query<{
+      __schema: {
+        queryType: { fields: Array<{ name: string }> };
+        types: Array<{
+          name: string;
+          kind: string;
+          fields: Array<{ name: string }> | null;
+        }>;
+      };
+    }>(`{
+      __schema {
+        queryType { fields { name } }
+        types { name kind fields { name } }
+      }
+    }`);
+
+    const userEntityNames = ["Transfer", "TransferPgOnly", "TransferChOnly"];
+    const isEntityQuery = (name: string) =>
+      userEntityNames.some((p) => name === p || name.startsWith(`${p}_`));
+
+    const entityQueries = result
+      .data!.__schema.queryType.fields.filter((f) => isEntityQuery(f.name))
+      .map((f) => f.name)
+      .sort();
+
+    const entityObjectTypes = result
+      .data!.__schema.types.filter(
+        (t) => t.kind === "OBJECT" && userEntityNames.includes(t.name)
+      )
+      .map((t) => ({
+        name: t.name,
+        fields: t.fields?.map((f) => f.name).sort() ?? [],
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    expect({ entityQueries, entityObjectTypes }).toMatchInlineSnapshot(`
+      {
+        "entityObjectTypes": [
+          {
+            "fields": [
+              "blockNumber",
+              "from",
+              "id",
+              "to",
+              "transactionHash",
+              "value",
+            ],
+            "name": "Transfer",
+          },
+          {
+            "fields": [
+              "from",
+              "id",
+              "value",
+            ],
+            "name": "TransferPgOnly",
+          },
+        ],
+        "entityQueries": [
+          "Transfer",
+          "TransferPgOnly",
+          "TransferPgOnly_aggregate",
+          "TransferPgOnly_by_pk",
+          "Transfer_aggregate",
+          "Transfer_by_pk",
+        ],
+      }
+    `);
+  });
+
   it("should resume with DB state on second start", async () => {
     const patchedEndBlock = 10861775; // original 10861774 + 1
 
@@ -297,6 +586,7 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
           ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
           ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
           ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+          ENVIO_CLICKHOUSE_DATABASE: CH_DATABASE,
           E2E_EXPECTED_END_BLOCK: String(patchedEndBlock),
         },
       });

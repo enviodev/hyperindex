@@ -126,34 +126,7 @@ pub fn validate_names_valid_rescript(
 }
 
 impl human_config::evm::Chain {
-    pub fn validate_finite_endblock_networks(
-        &self,
-        _human_config: &human_config::evm::HumanConfig,
-    ) -> anyhow::Result<()> {
-        // let is_ordered_multichain_mode =
-        //     matches!(human_config.multichain, Some(human_config::evm::Multichain::Ordered));
-        // let is_multichain_indexer = human_config.chains.len() > 1;
-        // if is_ordered_multichain_mode && is_multichain_indexer {
-        //     let make_err = |finite_end_block: u64| {
-        //         Err(anyhow!(
-        //             "Chain {} has a finite end block of {}. Please set an end_block that is \
-        //              less than or equal to the finite end block in your config or set \
-        //              \"multichain\" to \"unordered\". Your multichain indexer will \
-        //              otherwise be stuck when it reaches the end of this chain.",
-        //             self.id,
-        //             finite_end_block
-        //         ))
-        //     };
-        //     if let Ok(network) = chain_helpers::Network::from_network_id(self.id) {
-        //         match (self.end_block, network.get_finite_end_block()) {
-        //             (Some(end_block), Some(finite_end_block)) if end_block > finite_end_block => {
-        //                 return make_err(finite_end_block)
-        //             }
-        //             (None, Some(finite_end_block)) => return make_err(finite_end_block),
-        //             _ => (),
-        //         }
-        //     }
-        // }
+    pub fn validate_finite_endblock_networks(&self) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -183,7 +156,7 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     for chain in &evm_config.chains {
         // validate endblock is a greater than the startblock
         chain.validate_endblock_lte_startblock()?;
-        chain.validate_finite_endblock_networks(evm_config)?;
+        chain.validate_finite_endblock_networks()?;
 
         for contract in chain.contracts.as_ref().unwrap_or(&vec![]) {
             if contract.config.as_ref().is_some() {

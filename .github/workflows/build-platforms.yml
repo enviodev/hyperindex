@@ -32,9 +32,8 @@ jobs:
         with:
           targets: ${{ matrix.job.target }}
 
-      - uses: ./.github/actions/cargo-cache
-        with:
-          cache-suffix: ${{ matrix.job.target }}
+      # No cargo cache here — this workflow produces published binaries,
+      # and a poisoned cache could inject tampered artifacts.
 
       - name: Patch Cargo.toml version
         shell: bash

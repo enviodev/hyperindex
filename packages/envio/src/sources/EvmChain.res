@@ -22,33 +22,53 @@ let getSyncConfig = (
     initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getOr(
       initialBlockInterval->Option.getOr(10_000),
     ),
-    // After an RPC error, how much to scale back the number of blocks requested at once
     backoffMultiplicative: Env.Configurable.SyncConfig.backoffMultiplicative->Option.getOr(
       backoffMultiplicative->Option.getOr(0.8),
     ),
-    // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
     accelerationAdditive: Env.Configurable.SyncConfig.accelerationAdditive->Option.getOr(
       accelerationAdditive->Option.getOr(500),
     ),
-    // Do not further increase the block interval past this limit
     intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getOr(
       intervalCeiling->Option.getOr(10_000),
     ),
-    // After an error, how long to wait before retrying
     backoffMillis: backoffMillis->Option.getOr(5000),
-    // How long to wait before cancelling an RPC request
     queryTimeoutMillis,
     fallbackStallTimeout: fallbackStallTimeout->Option.getOr(queryTimeoutMillis / 2),
-    // How frequently to check for new blocks in realtime (default: 1000ms)
     pollingInterval: pollingInterval->Option.getOr(1000),
   }
+}
+
+let collectEventParams = (contracts: array<Internal.evmContractConfig>): array<
+  HyperSyncClient.Decoder.eventParamsInput,
+> => {
+  let seen = Dict.make()
+  let result = []
+  contracts->Array.forEach(contract => {
+    contract.events->Array.forEach(event => {
+      let key = event.sighash ++ "_" ++ event.topicCount->Int.toString
+      switch seen->Dict.get(key) {
+      | Some(_) => ()
+      | None => {
+          seen->Dict.set(key, true)
+          result
+          ->Array.push({
+            HyperSyncClient.Decoder.sighash: event.sighash,
+            topicCount: event.topicCount,
+            eventName: event.name,
+            params: event.paramsMetadata,
+          })
+          ->ignore
+        }
+      }
+    })
+  })
+  result
 }
 
 let makeSources = (
   ~chain,
   ~contracts: array<Internal.evmContractConfig>,
   ~hyperSync,
-  ~allEventSignatures,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
 ) => {
@@ -57,12 +77,14 @@ let makeSources = (
     ->Belt.Array.flatMap(contract => contract.events)
     ->EventRouter.fromEvmEventModsOrThrow(~chain)
 
+  let allEventParams = collectEventParams(contracts)
+
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
       HyperSyncSource.make({
         chain,
         endpointUrl,
-        allEventSignatures,
+        allEventParams,
         eventRouter,
         apiToken: Env.envioApiToken,
         clientMaxRetries: Env.hyperSyncClientMaxRetries,
@@ -70,6 +92,7 @@ let makeSources = (
         lowercaseAddresses,
         serializationFormat: Env.hypersyncClientSerializationFormat,
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
+        logLevel: Env.hypersyncLogLevel,
       }),
     ]
   | _ => []
@@ -81,7 +104,7 @@ let makeSources = (
       syncConfig: getSyncConfig(syncConfig->Option.getOr({})),
       url,
       eventRouter,
-      allEventSignatures,
+      allEventParams,
       lowercaseAddresses,
       ?ws,
     })

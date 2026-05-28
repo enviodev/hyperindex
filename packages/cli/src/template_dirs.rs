@@ -432,6 +432,7 @@ mod test {
         assert_eq!(
             names,
             vec![
+                "envio-docs",
                 "indexer-blocks",
                 "indexer-configuration",
                 "indexer-external-calls",
@@ -444,8 +445,8 @@ mod test {
                 "indexer-testing",
                 "indexer-traces",
                 "indexer-transactions",
+                "indexer-troubleshooting",
                 "indexer-wildcard",
-                "migrate-from-subgraph",
             ]
         );
     }

@@ -51,6 +51,7 @@ let make = (
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
   ~knownHeight=0,
+  ~reducedPollingInterval=?,
 ): t => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -210,10 +211,6 @@ let make = (
         Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
       ),
     })
-    // Collect all event signatures from contracts
-    let allEventSignatures =
-      chainConfig.contracts->Array.flatMap(contract => contract.eventSignatures)
-    // Convert rpcs to EvmChain.rpc format
     let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
       let syncConfig = rpc.syncConfig
       let ws = rpc.ws
@@ -228,7 +225,6 @@ let make = (
       ~chain,
       ~contracts=evmContracts,
       ~hyperSync=hypersync,
-      ~allEventSignatures,
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
     )
@@ -245,6 +241,7 @@ let make = (
       ~sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
       ~isRealtime,
+      ~reducedPollingInterval?,
     ),
     reorgDetection: ReorgDetection.make(
       ~chainReorgCheckpoints,
@@ -305,6 +302,7 @@ let makeFromDbState = (
   ~config,
   ~registrations,
   ~targetBufferSize,
+  ~reducedPollingInterval=?,
 ) => {
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
@@ -337,6 +335,7 @@ let makeFromDbState = (
     ~isInReorgThreshold,
     ~isRealtime,
     ~knownHeight=resumedChainState.sourceBlockNumber,
+    ~reducedPollingInterval?,
   )
 }
 
