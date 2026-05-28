@@ -4,13 +4,10 @@ type requestId = int
 // Serializable change with entity as JSON (for worker thread messaging)
 @tag("type")
 type serializableChange =
-  | @as("SET") Set({entityId: string, entity: JSON.t, checkpointId: bigint})
-  | @as("DELETE") Delete({entityId: string, checkpointId: bigint})
+  | @as("SET") Set({entityId: string, entity: JSON.t, checkpointId: bigint, isRollbackDiff?: bool})
+  | @as("DELETE") Delete({entityId: string, checkpointId: bigint, isRollbackDiff?: bool})
 
-type serializableEntityUpdate = {
-  latestChange: serializableChange,
-  containsRollbackDiffChange: bool,
-}
+type serializableEntityUpdate = {latestChange: serializableChange}
 
 type serializableUpdatedEntity = {
   entityName: string,
@@ -150,21 +147,27 @@ let makeStorage = (proxy: t): Persistence.storage => {
       {entityConfig, updates, history}: Persistence.updatedEntity,
     ) => {
       let encodeChange = (change: Change.t<Internal.entity>): serializableChange => {
+        let isRollbackDiff = change->Change.isRollbackDiff
         switch change {
         | Set({entityId, entity, checkpointId}) =>
           Set({
             entityId,
             entity: entity->S.reverseConvertToJsonOrThrow(entityConfig.schema),
             checkpointId,
+            isRollbackDiff: ?(isRollbackDiff ? Some(true) : None),
           })
-        | Delete({entityId, checkpointId}) => Delete({entityId, checkpointId})
+        | Delete({entityId, checkpointId}) =>
+          Delete({
+            entityId,
+            checkpointId,
+            isRollbackDiff: ?(isRollbackDiff ? Some(true) : None),
+          })
         }
       }
       {
         entityName: entityConfig.name,
         updates: updates->Array.map(update => {
           latestChange: encodeChange(update.latestChange),
-          containsRollbackDiffChange: update.containsRollbackDiffChange,
         }),
         history: history->Array.map(encodeChange),
       }

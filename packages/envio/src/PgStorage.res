@@ -773,7 +773,7 @@ let rec writeBatch = async (
             let batchDeleteEntityIds = []
 
             updates->Array.forEach(update => {
-              if !update.containsRollbackDiffChange {
+              if !(update.latestChange->Change.isRollbackDiff) {
                 backfillHistoryIds
                 ->Utils.Set.add(update.latestChange->Change.getEntityId)
                 ->ignore

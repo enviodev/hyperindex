@@ -165,11 +165,7 @@ module Entity = {
   }
 
   let setRow = set
-  let set = (
-    inMemTable: t,
-    change: Change.t<Internal.entity>,
-    ~containsRollbackDiffChange=false,
-  ) => {
+  let set = (inMemTable: t, change: Change.t<Internal.entity>) => {
     let latest = switch change {
     | Set({entity}) => Some(entity)
     | Delete(_) => None
@@ -177,7 +173,7 @@ module Entity = {
 
     let prev = inMemTable.table->get(change->Change.getEntityId)
 
-    let historyIndex = if containsRollbackDiffChange {
+    let historyIndex = if change->Change.isRollbackDiff {
       // Rollback-diff replays are restorations from existing history;
       // don't record them again in the in-memory history buffer.
       -1
@@ -194,15 +190,8 @@ module Entity = {
       }
     }
 
-    let containsRollbackDiffChange = switch prev {
-    | Some({status: Updated({containsRollbackDiffChange: prevFlag})}) =>
-      prevFlag || containsRollbackDiffChange
-    | _ => containsRollbackDiffChange
-    }
-
     let newStatus = Internal.Updated({
       latestChange: change,
-      containsRollbackDiffChange,
       historyIndex,
     })
 

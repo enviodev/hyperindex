@@ -181,8 +181,8 @@ let prepareRollbackDiff = async (
         Delete({
           entityId: data["id"],
           checkpointId: rollbackDiffCheckpointId,
+          isRollbackDiff: true,
         }),
-        ~containsRollbackDiffChange=true,
       )
     })
 
@@ -195,8 +195,8 @@ let prepareRollbackDiff = async (
           entityId: entity.id,
           checkpointId: rollbackDiffCheckpointId,
           entity,
+          isRollbackDiff: true,
         }),
-        ~containsRollbackDiffChange=true,
       )
     })
   })

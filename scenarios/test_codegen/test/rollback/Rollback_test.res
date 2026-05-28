@@ -284,6 +284,22 @@ describe("E2E rollback tests", () => {
       ],
       [
         Set({
+          checkpointId: 0n,
+          entityId: "1",
+          entity: {
+            Indexer.Entities.SimpleEntity.id: "1",
+            value: "value-2",
+          },
+        }),
+        Set({
+          checkpointId: 0n,
+          entityId: "2",
+          entity: {
+            Indexer.Entities.SimpleEntity.id: "2",
+            value: "value-2",
+          },
+        }),
+        Set({
           checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
           entityId: "1",
           entity: {
@@ -1698,6 +1714,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
           },
         ],
         [
+          Set({
+            checkpointId: 0n,
+            entityId: "foo",
+            entity: {
+              Indexer.Entities.EntityWithBigDecimal.id: "foo",
+              bigDecimal: BigDecimal.fromFloat(0.),
+            },
+          }),
           Set({
             checkpointId: 10n,
             entityId: "foo",
