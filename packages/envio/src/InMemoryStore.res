@@ -87,6 +87,135 @@ let getInMemTable = (
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpointId !== None
 
+let writeBatch = async (
+  inMemoryStore: t,
+  ~persistence: Persistence.t,
+  ~batch,
+  ~config,
+  ~isInReorgThreshold,
+) =>
+  switch persistence.storageStatus {
+  | Unknown
+  | Initializing(_) =>
+    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
+  | Ready({cache}) =>
+    let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
+      let updates =
+        inMemoryStore
+        ->getInMemTable(~entityConfig)
+        ->InMemoryTable.Entity.updates
+      if updates->Utils.Array.isEmpty {
+        None
+      } else {
+        Some(({entityConfig, updates}: Persistence.updatedEntity))
+      }
+    })
+    await persistence.storage.writeBatch(
+      ~batch,
+      ~rawEvents=inMemoryStore.rawEvents->InMemoryTable.values,
+      ~rollbackTargetCheckpointId=inMemoryStore.rollbackTargetCheckpointId,
+      ~isInReorgThreshold,
+      ~config,
+      ~allEntities=persistence.allEntities,
+      ~updatedEntities,
+      ~updatedEffectsCache={
+        let acc = []
+        inMemoryStore.effects->Utils.Dict.forEach(inMemTable => {
+          let {idsToStore, dict, effect, invalidationsCount} = inMemTable
+          switch idsToStore {
+          | [] => ()
+          | ids =>
+            let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+            ids->Belt.Array.forEachWithIndex((index, id) => {
+              items->Array.setUnsafe(
+                index,
+                (
+                  {
+                    id,
+                    output: dict->Dict.getUnsafe(id),
+                  }: Internal.effectCacheItem
+                ),
+              )
+            })
+            let effectName = effect.name
+            let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
+            | Some(c) => c
+            | None =>
+              let c: Persistence.effectCacheRecord = {effectName, count: 0}
+              cache->Dict.set(effectName, c)
+              c
+            }
+            let shouldInitialize = effectCacheRecord.count === 0
+            effectCacheRecord.count =
+              effectCacheRecord.count + items->Array.length - invalidationsCount
+            Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
+            acc
+            ->Array.push(({effect, items, shouldInitialize}: Persistence.updatedEffectCache))
+            ->ignore
+          }
+        })
+        acc
+      },
+    )
+    inMemoryStore->clear
+  }
+
+let prepareRollbackDiff = async (
+  inMemoryStore: t,
+  ~persistence: Persistence.t,
+  ~rollbackTargetCheckpointId,
+  ~rollbackDiffCheckpointId,
+) => {
+  inMemoryStore->clear
+  inMemoryStore.rollbackTargetCheckpointId = Some(rollbackTargetCheckpointId)
+
+  let deletedEntities = Dict.make()
+  let setEntities = Dict.make()
+
+  let _ = await persistence.allEntities
+  ->Belt.Array.map(async entityConfig => {
+    let entityTable = inMemoryStore->getInMemTable(~entityConfig)
+
+    let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+      ~entityConfig,
+      ~rollbackTargetCheckpointId,
+    )
+
+    removedIdsResult->Array.forEach(data => {
+      deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
+      entityTable->InMemoryTable.Entity.set(
+        Delete({
+          entityId: data["id"],
+          checkpointId: rollbackDiffCheckpointId,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
+      )
+    })
+
+    let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
+
+    restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
+      setEntities->Utils.Dict.push(entityConfig.name, entity.id)
+      entityTable->InMemoryTable.Entity.set(
+        Set({
+          entityId: entity.id,
+          checkpointId: rollbackDiffCheckpointId,
+          entity,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
+      )
+    })
+  })
+  ->Promise.all
+
+  {
+    "deletedEntities": deletedEntities,
+    "setEntities": setEntities,
+  }
+}
+
 let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
   let inMemTable =
     inMemoryStore->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)

@@ -670,7 +670,6 @@ let actionReducer = (state: t, action: action) => {
       ~chain,
     )
   | EventBatchProcessed({batch}) =>
-    state.ctx.inMemoryStore->InMemoryStore.clear
     let maybePruneEntityHistory =
       state.ctx.config->Config.shouldPruneHistory(
         ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
@@ -1177,8 +1176,8 @@ let injectedTaskReducer = (
           }
         })
 
-        let diff = await state.ctx.persistence->Persistence.prepareRollbackDiff(
-          ~inMemoryStore=state.ctx.inMemoryStore,
+        let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(
+          ~persistence=state.ctx.persistence,
           ~rollbackTargetCheckpointId,
           ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->BigInt.add(1n),
         )
