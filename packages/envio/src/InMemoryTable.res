@@ -25,11 +25,6 @@ let get = (self: t<'key, 'val>, key: 'key) =>
 
 let values = (self: t<'key, 'val>) => self.dict->Dict.valuesToArray
 
-let clone = (self: t<'key, 'val>) => {
-  ...self,
-  dict: self.dict->Lodash.cloneDeep,
-}
-
 module Entity = {
   type relatedEntityId = string
   type indexWithRelatedIds = (TableIndices.Index.t, Utils.Set.t<relatedEntityId>)
@@ -347,16 +342,5 @@ module Entity = {
     inMemTable.table
     ->values
     ->Array.filterMap(rowToEntity)
-  }
-
-  let clone = ({table, fieldNameIndices}: t<'entity>) => {
-    table: table->clone,
-    fieldNameIndices: {
-      ...fieldNameIndices,
-      dict: fieldNameIndices.dict
-      ->Dict.toArray
-      ->Array.map(((k, v)) => (k, v->clone))
-      ->Dict.fromArray,
-    },
   }
 }
