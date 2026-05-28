@@ -13,6 +13,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
         ~apiToken=testApiToken,
         ~maxNumRetries=Env.hyperSyncClientMaxRetries,
         ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
+        ~eventParams=[],
       ),
       ~fromBlock=12403138,
       ~toBlock=Some(12403139),

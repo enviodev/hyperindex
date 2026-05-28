@@ -10,9 +10,8 @@ mod types;
 
 use config::ClientConfig;
 use decode::DecoderCore;
-use query::Query;
-use query::{BlockField, TransactionField};
-use types::{Block, EventParamsInput, Log, ParamValue, RollbackGuard, Transaction};
+use query::{BlockField, Query, TransactionField};
+use types::{encode_address, Block, EventParamsInput, Log, ParamValue, RollbackGuard, Transaction};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -26,7 +25,6 @@ fn init_logger(log_level: Option<&str>) {
     });
 }
 
-/// HyperSync client for querying blockchain data.
 #[napi]
 pub struct HypersyncClient {
     inner: hypersync_client::Client,
@@ -77,9 +75,6 @@ impl HypersyncClient {
 
     #[napi]
     pub async fn get_event_items(&self, query: Query) -> napi::Result<EventItemsResponse> {
-        // The requested fields drive the response-shape validation. Anything
-        // the user asked for that the server didn't return (and that isn't
-        // inherently nullable per-row) is a defect we want to surface clearly.
         let requested_block_fields = query.field_selection.block.clone().unwrap_or_default();
         let requested_transaction_fields = query
             .field_selection
@@ -95,11 +90,6 @@ impl HypersyncClient {
             .context("run inner query")
             .map_err(map_err)?;
 
-        // Fuse conversion + decoding into the same task that ran get_events.
-        // The upstream `get_events` already uses `block_in_place` for its
-        // Arrow parse step, so we mirror that here — no separate
-        // spawn_blocking, just a hint to the runtime that we're about to do
-        // CPU work and any other tasks pinned to this worker should move.
         let items = tokio::task::block_in_place(|| {
             convert_event_items(
                 res.data,
@@ -109,7 +99,7 @@ impl HypersyncClient {
                 &requested_transaction_fields,
             )
         })
-        .map_err(map_err)?;
+        .map_err(convert_error_to_napi)?;
 
         Ok(EventItemsResponse {
             archive_height: res
@@ -154,16 +144,13 @@ pub struct QueryResponse {
 pub struct EventItem {
     pub log_index: i64,
     pub src_address: String,
-    /// Sighash (topic0), pre-encoded as a 0x-prefixed hex string.
     pub topic0: String,
-    /// Number of non-null topics on the log (1..=4). Combined with `topic0`
-    /// this is the routing key used by the event router on the JS side.
     pub topic_count: i64,
     pub block: Block,
     pub transaction: Transaction,
-    /// Decoded event params; `None` when the log's topic0/topic-count doesn't
-    /// match any signature passed to the client constructor (e.g. wildcard
-    /// indexers that select more sighashes than they decode).
+    /// `None` when the log's topic0/topic-count doesn't match any signature
+    /// passed to the client constructor (e.g. wildcard indexers that select
+    /// more sighashes than they decode).
     pub params: Option<ParamValue>,
 }
 
@@ -230,13 +217,16 @@ fn convert_response(
     })
 }
 
+/// Validation + decoding for one page of events. Aborts on the first item that
+/// has a structural defect (server omitted a required field; raw bytes can't
+/// be decoded against the declared ABI).
 fn convert_event_items(
     events: Vec<hypersync_client::simple_types::Event>,
     decoder: &DecoderCore,
     should_checksum: bool,
     requested_block_fields: &[BlockField],
     requested_transaction_fields: &[TransactionField],
-) -> Result<Vec<EventItem>> {
+) -> std::result::Result<Vec<EventItem>, ConvertError> {
     let mut items = Vec::with_capacity(events.len());
     for event in events {
         let mut missing: Vec<String> = Vec::new();
@@ -266,10 +256,17 @@ fn convert_event_items(
         }
 
         if !missing.is_empty() {
-            return Err(MissingFieldsError(missing).into());
+            return Err(ConvertError::MissingFields(missing));
         }
 
-        let params = decoder.decode_simple(&event.log).ok().flatten();
+        // Propagate genuine decode errors (malformed bytes, ABI mismatch) up
+        // to the JS caller instead of silently coercing them into `None` —
+        // `None` is reserved for "topic0/count doesn't match a registered
+        // signature", which is the only outcome the wildcard event path
+        // expects to handle.
+        let params = decoder
+            .decode_simple(&event.log)
+            .context("decode event params")?;
 
         let block = event
             .block
@@ -312,12 +309,10 @@ fn flatten_log_for_js(
     let log_index: i64 = u64::from(log.log_index.context("log.logIndex missing")?)
         .try_into()
         .context("log.logIndex overflow")?;
-    let address_raw = log.address.as_ref().context("log.address missing")?;
-    let src_address = if should_checksum {
-        alloy_primitives::Address(alloy_primitives::FixedBytes(***address_raw)).to_checksum(None)
-    } else {
-        address_raw.encode_hex()
-    };
+    let src_address = encode_address(
+        log.address.as_ref().context("log.address missing")?,
+        should_checksum,
+    );
     let topic0 = log
         .topics
         .first()
@@ -335,30 +330,47 @@ fn flatten_log_for_js(
     Ok((log_index, src_address, topic0, topic_count))
 }
 
-/// Marker error so the ReScript side can recognize "data shape" failures.
-/// The `Debug` output is parsed at the JS boundary, so keep the prefix stable.
+/// Failure modes specific to event-items conversion. `MissingFields` is the
+/// shape the JS side recognizes and treats as `ImpossibleForTheQuery`;
+/// `Other` falls through to the generic napi error path.
 #[derive(Debug)]
-pub struct MissingFieldsError(pub Vec<String>);
+pub(crate) enum ConvertError {
+    MissingFields(Vec<String>),
+    Other(anyhow::Error),
+}
 
-impl std::fmt::Display for MissingFieldsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MissingFields: {}", self.0.join(","))
+impl From<anyhow::Error> for ConvertError {
+    fn from(e: anyhow::Error) -> Self {
+        Self::Other(e)
     }
 }
 
-impl std::error::Error for MissingFieldsError {}
+/// Encodes `ConvertError::MissingFields` as a JSON payload in the napi
+/// error's message. The ReScript side calls `JSON.parse` on the message and
+/// dispatches on `kind`, so any future variants can be added by extending
+/// the JSON shape — no string-grepping protocol to maintain.
+fn convert_error_to_napi(err: ConvertError) -> napi::Error {
+    match err {
+        ConvertError::MissingFields(fields) => {
+            let payload = serde_json::json!({
+                "kind": "MissingFields",
+                "fields": fields,
+            })
+            .to_string();
+            napi::Error::new(napi::Status::InvalidArg, payload)
+        }
+        ConvertError::Other(e) => map_err(e),
+    }
+}
 
 /// Returns `Some(camelCaseFieldName)` if the user requested this field but the
 /// server's response omits it AND the field isn't inherently nullable per-row.
-/// `None` means "fine" — either the field is present, or it belongs to the
-/// nullable set (legit chain/block-dependent absence).
 fn block_field_missing(
     block: &hypersync_client::simple_types::Block,
     field: BlockField,
 ) -> Option<&'static str> {
     use BlockField::*;
     match field {
-        // Inherently nullable: pre-EIP-1559 blocks, L2-only fields, etc.
         Nonce
         | Difficulty
         | TotalDifficulty
@@ -372,7 +384,6 @@ fn block_field_missing(
         | SendCount
         | SendRoot
         | MixHash => None,
-        // Always-present-when-requested:
         Number => block.number.is_none().then_some("number"),
         Hash => block.hash.is_none().then_some("hash"),
         ParentHash => block.parent_hash.is_none().then_some("parentHash"),
@@ -400,12 +411,9 @@ fn transaction_field_missing(
 ) -> Option<&'static str> {
     use TransactionField::*;
     match field {
-        // Inherently nullable: type-dependent signature fields, optimism-only,
-        // contract-creation `to`, etc.
         GasPrice | V | R | S | YParity | MaxPriorityFeePerGas | MaxFeePerGas | MaxFeePerBlobGas
         | BlobVersionedHashes | ContractAddress | Root | Status | L1Fee | L1GasPrice
         | L1GasUsed | L1FeeScalar | GasUsedForL1 | From | To | Type => None,
-        // Always-present-when-requested:
         BlockHash => tx.block_hash.is_none().then_some("blockHash"),
         BlockNumber => tx.block_number.is_none().then_some("blockNumber"),
         Gas => tx.gas.is_none().then_some("gas"),
@@ -430,9 +438,8 @@ fn transaction_field_missing(
             .then_some("effectiveGasPrice"),
         GasUsed => tx.gas_used.is_none().then_some("gasUsed"),
         LogsBloom => tx.logs_bloom.is_none().then_some("logsBloom"),
-        // Fields exposed via the typed enum but not represented on the
-        // simple_types::Transaction struct in this crate version — treat as
-        // never-missing (no-op).
+        // Enum variants not represented on simple_types::Transaction in this
+        // crate version — treat as never-missing.
         L1BlockNumber
         | L1BaseFeeScalar
         | L1BlobBaseFee
@@ -449,4 +456,156 @@ fn transaction_field_missing(
 
 pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
     napi::Error::from_reason(format!("{:?}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hypersync_client::simple_types;
+
+    fn empty_decoder() -> DecoderCore {
+        DecoderCore::from_params(Vec::new(), false).unwrap()
+    }
+
+    #[test]
+    fn missing_block_field_returns_typed_error() {
+        // event.block is None but the user asked for block.number/hash/timestamp.
+        let event = simple_types::Event {
+            transaction: None,
+            block: None,
+            log: simple_types::Log::default(),
+        };
+        let err = convert_event_items(
+            vec![event],
+            &empty_decoder(),
+            false,
+            &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
+            &[],
+        )
+        .err()
+        .expect("expected MissingFields error");
+
+        match err {
+            ConvertError::MissingFields(fields) => assert_eq!(fields, vec!["block".to_string()]),
+            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_block_field_named_path() {
+        // block is present but timestamp is not.
+        let mut block = simple_types::Block::default();
+        block.number = Some(1u64.into());
+        block.hash = Some(Default::default());
+        // timestamp left None
+        let event = simple_types::Event {
+            transaction: None,
+            block: Some(block.into()),
+            log: simple_types::Log::default(),
+        };
+        let err = convert_event_items(
+            vec![event],
+            &empty_decoder(),
+            false,
+            &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
+            &[],
+        )
+        .err()
+        .expect("expected MissingFields error");
+
+        match err {
+            ConvertError::MissingFields(fields) => {
+                assert_eq!(fields, vec!["block.timestamp".to_string()])
+            }
+            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn nullable_block_field_not_reported() {
+        // BaseFeePerGas is inherently nullable — server omitting it must not
+        // trigger MissingFields, regardless of whether the user requested it.
+        let mut block = simple_types::Block::default();
+        block.number = Some(1u64.into());
+        block.hash = Some(Default::default());
+        block.timestamp = Some(Default::default());
+        // base_fee_per_gas left None
+        let event = simple_types::Event {
+            transaction: None,
+            block: Some(block.into()),
+            log: simple_types::Log {
+                log_index: Some(0.into()),
+                address: Some(Default::default()),
+                data: Some(Default::default()),
+                topics: std::iter::once(Some(Default::default())).collect(),
+                ..Default::default()
+            },
+        };
+        let res = convert_event_items(
+            vec![event],
+            &empty_decoder(),
+            false,
+            &[
+                BlockField::Number,
+                BlockField::Hash,
+                BlockField::Timestamp,
+                BlockField::BaseFeePerGas,
+            ],
+            &[],
+        )
+        .expect("expected success when only nullable fields are absent");
+        assert_eq!(res.len(), 1);
+    }
+
+    #[test]
+    fn missing_transaction_field_with_transaction_present() {
+        let mut block = simple_types::Block::default();
+        block.number = Some(1u64.into());
+        block.hash = Some(Default::default());
+        block.timestamp = Some(Default::default());
+        let tx = simple_types::Transaction::default(); // hash absent
+        let event = simple_types::Event {
+            transaction: Some(tx.into()),
+            block: Some(block.into()),
+            log: simple_types::Log {
+                log_index: Some(0.into()),
+                address: Some(Default::default()),
+                data: Some(Default::default()),
+                topics: std::iter::once(Some(Default::default())).collect(),
+                ..Default::default()
+            },
+        };
+        let err = convert_event_items(
+            vec![event],
+            &empty_decoder(),
+            false,
+            &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
+            &[TransactionField::Hash],
+        )
+        .err()
+        .expect("expected MissingFields error");
+
+        match err {
+            ConvertError::MissingFields(fields) => {
+                assert_eq!(fields, vec!["transaction.hash".to_string()])
+            }
+            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_error_serializes_as_expected_json() {
+        let err = ConvertError::MissingFields(vec![
+            "block.timestamp".to_string(),
+            "transaction.hash".to_string(),
+        ]);
+        let napi_err = convert_error_to_napi(err);
+        // The reason field carries the JSON payload that the ReScript side
+        // parses with JSON.parse.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&format!("{}", napi_err.reason)).expect("payload must be JSON");
+        assert_eq!(parsed["kind"], "MissingFields");
+        assert_eq!(parsed["fields"][0], "block.timestamp");
+        assert_eq!(parsed["fields"][1], "transaction.hash");
+    }
 }

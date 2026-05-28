@@ -226,13 +226,15 @@ fn encode_prefix_hex(bytes: &[u8]) -> String {
 }
 
 fn map_address_string(v: &Option<FixedSizeData<20>>, should_checksum: bool) -> Option<String> {
-    v.as_ref().map(|v| {
-        if should_checksum {
-            alloy_primitives::Address(alloy_primitives::FixedBytes(***v)).to_checksum(None)
-        } else {
-            v.encode_hex()
-        }
-    })
+    v.as_ref().map(|v| encode_address(v, should_checksum))
+}
+
+pub(crate) fn encode_address(addr: &FixedSizeData<20>, should_checksum: bool) -> String {
+    if should_checksum {
+        alloy_primitives::Address(alloy_primitives::FixedBytes(***addr)).to_checksum(None)
+    } else {
+        addr.encode_hex()
+    }
 }
 
 fn map_hex_string<T: Hex>(v: &Option<T>) -> Option<String> {

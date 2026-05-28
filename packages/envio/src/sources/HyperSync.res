@@ -1,21 +1,11 @@
-type hyperSyncPage<'item> = {
-  items: array<'item>,
+type logsQueryPageItem = HyperSyncClient.EventItems.item
+
+type logsQueryPage = {
+  items: array<logsQueryPageItem>,
   nextBlock: int,
   archiveHeight: int,
   rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
 }
-
-type logsQueryPageItem = {
-  logIndex: int,
-  srcAddress: Address.t,
-  topic0: EvmTypes.Hex.t,
-  topicCount: int,
-  block: HyperSyncClient.ResponseTypes.block,
-  transaction: Internal.eventTransaction,
-  params: Nullable.t<Internal.eventParams>,
-}
-
-type logsQueryPage = hyperSyncPage<logsQueryPageItem>
 
 type missingParams = {
   queryName: string,
@@ -66,27 +56,28 @@ module GetLogs = {
     fieldSelection,
   }
 
-  // Rust's MissingFieldsError surfaces as a JS Error whose `.message` Debug
-  // string starts with this marker. Detecting it here lets the source treat
-  // it as ImpossibleForTheQuery, matching the pre-refactor behavior.
-  let missingFieldsMarker = "MissingFields: "
-
+  // Rust encodes structured failures as a JSON payload in the napi error's
+  // message: `{"kind":"MissingFields","fields":["block.timestamp", ...]}`.
+  // JSON.parse + shape check is the recovery protocol — no string-grepping
+  // on anyhow's Debug format.
   let extractMissingParams = (exn: exn): option<array<string>> => {
     let message = switch exn {
     | JsExn(jsExn) => jsExn->JsExn.message
     | _ => None
     }
     switch message {
-    | Some(msg) =>
-      switch msg->String.indexOf(missingFieldsMarker) {
-      | -1 => None
-      | start =>
-        let tail = msg->String.slice(~start=start + missingFieldsMarker->String.length)
-        let comma = tail->String.indexOf("\n")
-        let list = comma == -1 ? tail : tail->String.slice(~start=0, ~end=comma)
-        Some(list->String.split(","))
-      }
     | None => None
+    | Some(msg) =>
+      switch msg->JSON.parseOrThrow->JSON.Decode.object {
+      | exception _ => None
+      | None => None
+      | Some(obj) =>
+        switch (obj->Dict.get("kind"), obj->Dict.get("fields")) {
+        | (Some(String("MissingFields")), Some(Array(fields))) =>
+          Some(fields->Array.filterMap(JSON.Decode.string))
+        | _ => None
+        }
+      }
     }
   }
 
@@ -130,9 +121,7 @@ module GetLogs = {
     }
 
     {
-      items: res.items->(
-        Utils.magic: array<HyperSyncClient.EventItems.item> => array<logsQueryPageItem>
-      ),
+      items: res.items,
       nextBlock: res.nextBlock,
       archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
       rollbackGuard: res.rollbackGuard,

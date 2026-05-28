@@ -341,9 +341,6 @@ module Decoder = {
 }
 
 module EventItems = {
-  /// Flat shape produced by the Rust client. Only the fields HyperSyncSource
-  /// actually reads are exposed; `srcAddress` and `topic0` are pre-unwrapped
-  /// (and checksummed when the config asks for it).
   type item = {
     logIndex: int,
     srcAddress: Address.t,
@@ -351,8 +348,6 @@ module EventItems = {
     topicCount: int,
     block: ResponseTypes.block,
     transaction: ResponseTypes.transaction,
-    /// `Null` when the log's topic0/topic-count didn't match any signature
-    /// passed to the client constructor.
     params: Nullable.t<Internal.eventParams>,
   }
 
@@ -366,8 +361,6 @@ module EventItems = {
 
 type t = {
   get: (~query: query) => promise<queryResponse>,
-  /// The Rust side derives the response-shape validation list from
-  /// `query.fieldSelection`, so no extra args are needed.
   getEventItems: (~query: query) => promise<EventItems.response>,
 }
 
@@ -395,7 +388,7 @@ let make = (
   ~apiToken,
   ~httpReqTimeoutMillis,
   ~maxNumRetries,
-  ~eventParams=[],
+  ~eventParams,
   ~enableChecksumAddresses=true,
   ~serializationFormat=?,
   ~enableQueryCaching=?,

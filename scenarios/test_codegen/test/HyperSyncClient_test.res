@@ -5,14 +5,9 @@ let testApiToken =
     ~message="ENVIO_API_TOKEN env var must be set to run HyperSyncClient tests",
   )
 
-// USDC on Ethereum mainnet. The Transfer event is the most common event on
-// chain — this 5-block range almost certainly contains hits and the response
-// shape is stable.
-let usdcAddress =
-  "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"->Address.unsafeFromString
+let usdcAddress = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"->Address.unsafeFromString
 
-let transferSighash =
-  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
 let transferParams: array<Internal.paramMeta> = [
   {name: "from", abiType: "address", indexed: true},
@@ -62,72 +57,96 @@ let runQuery = async (~client: HyperSyncClient.t) =>
   )
 
 describe("HyperSync client getEventItems (live)", () => {
-  Async.it(
-    "returns event items with decoded params for a real block range",
-    async t => {
-      let client = makeClient(~eventParams=[transferEventParam])
-      let res = await runQuery(~client)
+  Async.it("returns decoded event items for a real block range", async t => {
+    let client = makeClient(~eventParams=[transferEventParam])
+    let res = await runQuery(~client)
 
-      t.expect(res.items->Array.length > 0).toBe(true)
+    let summary = {
+      "hasItems": res.items->Array.length > 0,
+      "everyTopic0IsTransfer": res.items->Array.every(item =>
+        item.topic0->EvmTypes.Hex.toString == transferSighash
+      ),
+      "everyTopicCountIsThree": res.items->Array.every(item => item.topicCount == 3),
+      "everySrcAddressIsUsdc": res.items->Array.every(item =>
+        item.srcAddress->Address.toString->String.toLowerCase ==
+          usdcAddress->Address.toString->String.toLowerCase
+      ),
+      "everyBlockInRange": res.items->Array.every(item => {
+        let n = item.block.number->Option.getUnsafe
+        n >= fromBlock && n <= toBlock
+      }),
+      "everyParamsDecoded": res.items->Array.every(item =>
+        switch item.params->Nullable.toOption {
+        | Some(p) =>
+          let obj = p->(Utils.magic: Internal.eventParams => {..})
+          obj["from"]->typeof == #string &&
+          obj["to"]->typeof == #string &&
+          obj["value"]->typeof == #bigint
+        | None => false
+        }
+      ),
+      "nextBlockPastRequest": res.nextBlock > fromBlock,
+      "archiveHeightAheadOfNext": res.archiveHeight->Option.getOr(0) >= res.nextBlock,
+    }
 
-      let first = res.items->Array.getUnsafe(0)
+    t
+      .expect(summary)
+      .toEqual({
+        "hasItems": true,
+        "everyTopic0IsTransfer": true,
+        "everyTopicCountIsThree": true,
+        "everySrcAddressIsUsdc": true,
+        "everyBlockInRange": true,
+        "everyParamsDecoded": true,
+        "nextBlockPastRequest": true,
+        "archiveHeightAheadOfNext": true,
+      })
+  })
 
-      // Flattened item: pre-unwrapped src address, separate topic0 + count
-      t.expect(first.srcAddress->Address.toString->String.length).toBe(42)
-      t.expect(first.topicCount).toBe(3)
-      t.expect(first.topic0->EvmTypes.Hex.toString).toBe(transferSighash)
+  Async.it("leaves params null when topic0 doesn't match any registered sig", async t => {
+    let unrelatedEventParam: HyperSyncClient.Decoder.eventParamsInput = {
+      sighash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+      topicCount: 1,
+      eventName: "Unrelated",
+      params: [],
+    }
+    let client = makeClient(~eventParams=[unrelatedEventParam])
+    let res = await runQuery(~client)
 
-      // Block fields all populated
-      let block = first.block
-      t.expect(block.number->Option.isSome).toBe(true)
-      t.expect(block.hash->Option.isSome).toBe(true)
-      t.expect(block.timestamp->Option.isSome).toBe(true)
-      let blockNumber = block.number->Option.getUnsafe
-      t.expect(blockNumber >= fromBlock && blockNumber <= toBlock).toBe(true)
+    t
+      .expect({
+        "hasItems": res.items->Array.length > 0,
+        "everyParamsNull": res.items->Array.every(item =>
+          item.params->Nullable.toOption->Option.isNone
+        ),
+      })
+      .toEqual({"hasItems": true, "everyParamsNull": true})
+  })
+})
 
-      // Transaction
-      t.expect(first.transaction.hash->Option.isSome).toBe(true)
+describe("HyperSync GetLogs.extractMissingParams", () => {
+  it("parses the JSON payload Rust emits for MissingFields", t => {
+    let jsErr =
+      %raw(`(msg) => { const e = new Error(msg); return e; }`)(
+        `{"kind":"MissingFields","fields":["block.timestamp","transaction.hash"]}`,
+      )
+    let exn = jsErr->JsExn.anyToExnInternal
 
-      // Decoded params present and well-shaped
-      switch first.params->Nullable.toOption {
-      | Some(params) =>
-        let asObj = params->(Utils.magic: Internal.eventParams => {..})
-        t
-          .expect(asObj["from"]->(Utils.magic: 'a => string)->String.length)
-          .toBe(42)
-        t
-          .expect(asObj["to"]->(Utils.magic: 'a => string)->String.length)
-          .toBe(42)
-        t
-          .expect(asObj["value"]->(Utils.magic: 'a => bigint) >= 0n)
-          .toBe(true)
-      | None => t.expect(false).toBe(true) // fail: should have decoded
-      }
+    t
+      .expect(HyperSync.GetLogs.extractMissingParams(exn))
+      .toEqual(Some(["block.timestamp", "transaction.hash"]))
+  })
 
-      // Pagination cursor
-      t.expect(res.nextBlock > fromBlock).toBe(true)
-      t
-        .expect(res.archiveHeight->Option.getOr(0) >= res.nextBlock)
-        .toBe(true)
-    },
-  )
+  it("returns None for unrelated errors", t => {
+    let exn = (%raw(`new Error("some unrelated message")`))->JsExn.anyToExnInternal
 
-  Async.it(
-    "leaves params null when topic0 doesn't match any registered signature",
-    async t => {
-      // Register a different sighash; the Transfer logs we fetch won't match.
-      let unrelatedEventParam: HyperSyncClient.Decoder.eventParamsInput = {
-        sighash: "0x0000000000000000000000000000000000000000000000000000000000000001",
-        topicCount: 1,
-        eventName: "Unrelated",
-        params: [],
-      }
-      let client = makeClient(~eventParams=[unrelatedEventParam])
-      let res = await runQuery(~client)
+    t.expect(HyperSync.GetLogs.extractMissingParams(exn)).toEqual(None)
+  })
 
-      t.expect(res.items->Array.length > 0).toBe(true)
-      let first = res.items->Array.getUnsafe(0)
-      t.expect(first.params->Nullable.toOption->Option.isNone).toBe(true)
-    },
-  )
+  it("returns None when JSON parses but kind doesn't match", t => {
+    let exn =
+      (%raw(`(msg) => new Error(msg)`))(`{"kind":"SomethingElse","fields":["x"]}`)->JsExn.anyToExnInternal
+
+    t.expect(HyperSync.GetLogs.extractMissingParams(exn)).toEqual(None)
+  })
 })

@@ -11,11 +11,13 @@ use crate::hypersync_source::{
     types::{sol_value_to_param, Event, EventParamsInput, Log, ParamMeta, ParamValue},
 };
 
+type MetaKey = ([u8; 32], u8);
+
 #[derive(Clone)]
 pub(crate) struct DecoderCore {
     inner: Arc<hypersync_client::Decoder>,
-    pub(crate) checksummed_addresses: bool,
-    param_meta: Arc<HashMap<String, Vec<ParamMeta>>>,
+    checksummed_addresses: bool,
+    param_meta: Arc<HashMap<MetaKey, Vec<ParamMeta>>>,
 }
 
 impl DecoderCore {
@@ -31,9 +33,10 @@ impl DecoderCore {
         let inner = hypersync_client::Decoder::from_signatures(&signatures)
             .context("create inner decoder")?;
 
-        let mut param_meta = HashMap::new();
+        let mut param_meta: HashMap<MetaKey, Vec<ParamMeta>> = HashMap::new();
         for ep in event_params {
-            let key = meta_key(&ep.sighash, ep.topic_count as usize);
+            let key = parse_meta_key(&ep.sighash, ep.topic_count)
+                .with_context(|| format!("parse meta key for {}", ep.event_name))?;
             param_meta.insert(key, ep.params);
         }
 
@@ -45,7 +48,7 @@ impl DecoderCore {
     }
 
     pub(crate) fn decode_napi(&self, log: &Log) -> Result<Option<ParamValue>> {
-        let topics = log
+        let topics: Vec<Option<LogArgument>> = log
             .topics
             .iter()
             .map(|v| {
@@ -53,7 +56,7 @@ impl DecoderCore {
                     .map(|v| LogArgument::decode_hex(v).context("decode topic"))
                     .transpose()
             })
-            .collect::<Result<Vec<_>>>()
+            .collect::<Result<_>>()
             .context("decode topics")?;
         let data = log.data.as_ref().context("get log.data")?;
         let data = Data::decode_hex(data).context("decode data")?;
@@ -61,9 +64,8 @@ impl DecoderCore {
     }
 
     pub(crate) fn decode_simple(&self, log: &simple_types::Log) -> Result<Option<ParamValue>> {
-        let topics: Vec<Option<LogArgument>> = log.topics.iter().cloned().collect();
         let data = log.data.as_ref().context("get log.data")?;
-        self.decode_with_topics_and_data(&topics, data)
+        self.decode_with_topics_and_data(&log.topics, data)
     }
 
     fn decode_with_topics_and_data(
@@ -86,12 +88,13 @@ impl DecoderCore {
             None => return Ok(None),
         };
 
-        let sighash = format!("0x{}", faster_hex::hex_string(topic0.as_slice()));
-        let topic_count = topics
+        let topic_count: u8 = topics
             .iter()
             .rposition(|t| t.is_some())
-            .map_or(0, |i| i + 1);
-        let key = meta_key(&sighash, topic_count);
+            .map_or(0, |i| i + 1)
+            .try_into()
+            .context("topic_count overflow")?;
+        let key: MetaKey = (***topic0, topic_count);
 
         let params = match self.param_meta.get(&key) {
             Some(p) => p,
@@ -133,8 +136,10 @@ impl DecoderCore {
     }
 }
 
-fn meta_key(sighash: &str, topic_count: usize) -> String {
-    format!("{}_{}", sighash, topic_count)
+fn parse_meta_key(sighash: &str, topic_count: i32) -> Result<MetaKey> {
+    let bytes = LogArgument::decode_hex(sighash).context("decode sighash hex")?;
+    let count: u8 = u8::try_from(topic_count).context("topic_count out of u8 range")?;
+    Ok((**bytes, count))
 }
 
 fn reconstruct_signature(event_name: &str, params: &[ParamMeta]) -> String {
@@ -152,8 +157,6 @@ fn reconstruct_signature(event_name: &str, params: &[ParamMeta]) -> String {
     format!("{}({})", event_name, params_str)
 }
 
-/// Decoder for Ethereum events. Kept as a public NAPI binding so RpcSource can
-/// reuse the HyperSync decoding logic over its `eth_getLogs` results.
 #[napi]
 #[derive(Clone)]
 pub struct Decoder {

@@ -1,21 +1,11 @@
-type hyperSyncPage<'item> = {
-  items: array<'item>,
+type logsQueryPageItem = HyperSyncClient.EventItems.item
+
+type logsQueryPage = {
+  items: array<logsQueryPageItem>,
   nextBlock: int,
   archiveHeight: int,
   rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
 }
-
-type logsQueryPageItem = {
-  logIndex: int,
-  srcAddress: Address.t,
-  topic0: EvmTypes.Hex.t,
-  topicCount: int,
-  block: HyperSyncClient.ResponseTypes.block,
-  transaction: Internal.eventTransaction,
-  params: Nullable.t<Internal.eventParams>,
-}
-
-type logsQueryPage = hyperSyncPage<logsQueryPageItem>
 
 type missingParams = {
   queryName: string,
@@ -34,6 +24,8 @@ module GetLogs: {
     | WrongInstance
 
   exception Error(error)
+
+  let extractMissingParams: exn => option<array<string>>
 
   let query: (
     ~client: HyperSyncClient.t,
