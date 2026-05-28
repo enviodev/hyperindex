@@ -324,22 +324,21 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
     let pageFetchRef = Hrtime.makeTimer()
 
     let instructionSelections = buildInstructionSelections(eventConfigs)
-    let fields = if needsTokenBalances {
-      Some(
-        (
-          {
-            tokenBalance: [Slot, TransactionIndex, Account, Mint, Owner, PreAmount, PostAmount],
-          }: HyperSyncSolanaClient.QueryTypes.fieldSelection
-        ),
-      )
+    let fields: HyperSyncSolanaClient.QueryTypes.fieldSelection = if needsTokenBalances {
+      {
+        block: [Slot, BlockTime],
+        tokenBalance: [Slot, TransactionIndex, Account, Mint, Owner, PreAmount, PostAmount],
+      }
     } else {
-      None
+      {
+        block: [Slot, BlockTime],
+      }
     }
     let query: HyperSyncSolanaClient.query = {
       fromSlot: fromBlock,
       toSlot: ?toBlock,
       instructions: instructionSelections,
-      fields: ?fields,
+      fields,
     }
 
     Prometheus.SourceRequestCount.increment(
@@ -369,6 +368,16 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
     let pageFetchTime = pageFetchRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let parsingRef = Hrtime.makeTimer()
+
+    // Per-slot unix timestamp lookup from the response's `blocks` table. Slots
+    // without a block row (rare; usually skipped slots) fall back to `None`.
+    let blockTimeBySlot = Dict.make()
+    resp.data.blocks->Belt.Array.forEach(b => {
+      switch b.blockTime {
+      | Some(t) => blockTimeBySlot->Dict.set(b.slot->Int.toString, t)
+      | None => ()
+      }
+    })
 
     // Per (slot, transaction_index) lookup for parent transactions.
     let txByKey = Dict.make()
@@ -467,6 +476,9 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
               }),
           )
 
+        let slotKey = instr.slot->Int.toString
+        let blockTime =
+          blockTimeBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
         let payload: Envio.svmInstructionEvent = {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,
@@ -474,14 +486,10 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
           transaction: eventConfig.includeTransaction ? maybeTx : None,
           logs: eventConfig.includeLogs ? maybeLogs : None,
           slot: instr.slot,
-          blockTime: None,
-          // Mirror EVM/Fuel: the shared ecosystem getter reads `block.height`
-          // / `block.time` / `block.hash`. C2 doesn't fetch block data, so
-          // `time` is 0 and `hash` is "" — populated by the future
-          // reorg-guard `queryBlockHash(slot)` route.
+          blockTime,
           block: {
             height: instr.slot,
-            time: 0,
+            time: blockTime->Option.getOr(0),
             hash: "",
           },
         }
@@ -507,6 +515,10 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
 
     let parsingTimeElapsed = parsingRef->Hrtime.timeSince->Hrtime.toSecondsFloat
     let heighestSlot = resp.nextSlot - 1
+    let latestBlockTime =
+      blockTimeBySlot
+      ->Utils.Dict.dangerouslyGetNonOption(heighestSlot->Int.toString)
+      ->Option.getOr(0)
 
     // C2 ships a no-op reorg guard for SVM: finalized commitment + extremely
     // rare reorgs at finality. C3 wires the extra `queryBlockHash(slot)`
@@ -515,7 +527,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
       rangeLastBlock: (
         {
           blockNumber: heighestSlot,
-          blockTimestamp: 0,
+          blockTimestamp: latestBlockTime,
           blockHash: "",
         }: ReorgDetection.blockDataWithTimestamp
       )->ReorgDetection.generalizeBlockDataWithTimestamp,
@@ -525,7 +537,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
     let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     {
-      latestFetchedBlockTimestamp: 0,
+      latestFetchedBlockTimestamp: latestBlockTime,
       parsedQueueItems,
       latestFetchedBlockNumber: heighestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
