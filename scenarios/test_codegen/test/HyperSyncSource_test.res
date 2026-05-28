@@ -20,8 +20,6 @@ describe("HyperSyncSource - getSelectionConfig", () => {
           transaction: [],
         },
         getLogSelectionOrThrow: selectionConfig.getLogSelectionOrThrow,
-        nonOptionalBlockFieldNames: [],
-        nonOptionalTransactionFieldNames: [],
       })
       t.expect(
         selectionConfig.getLogSelectionOrThrow(~addressesByContractName=Dict.make()),
@@ -78,8 +76,6 @@ describe("HyperSyncSource - getSelectionConfig", () => {
           log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
         },
         getLogSelectionOrThrow: selectionConfig.getLogSelectionOrThrow,
-        nonOptionalBlockFieldNames: ["hash", "number", "timestamp"],
-        nonOptionalTransactionFieldNames: ["hash"],
       })
     },
   )
@@ -108,8 +104,6 @@ describe("HyperSyncSource - getSelectionConfig", () => {
         log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
       },
       getLogSelectionOrThrow: selectionConfig.getLogSelectionOrThrow,
-      nonOptionalBlockFieldNames: ["hash", "number", "timestamp"],
-      nonOptionalTransactionFieldNames: ["hash"],
     })
   })
 

@@ -41,8 +41,6 @@ module GetLogs: {
     ~toBlock: option<int>,
     ~logSelections: array<LogSelection.t>,
     ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
-    ~nonOptionalBlockFieldNames: array<string>,
-    ~nonOptionalTransactionFieldNames: array<string>,
   ) => promise<logsQueryPage>
 }
 

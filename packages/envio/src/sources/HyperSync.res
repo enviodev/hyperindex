@@ -96,8 +96,6 @@ module GetLogs = {
     ~toBlock,
     ~logSelections: array<LogSelection.t>,
     ~fieldSelection,
-    ~nonOptionalBlockFieldNames,
-    ~nonOptionalTransactionFieldNames,
   ): logsQueryPage => {
     let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
       topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
@@ -118,11 +116,7 @@ module GetLogs = {
       ~fieldSelection,
     )
 
-    let res = switch await client.getEventItems(
-      ~query,
-      ~nonOptionalBlockFieldNames,
-      ~nonOptionalTransactionFieldNames,
-    ) {
+    let res = switch await client.getEventItems(~query) {
     | res => res
     | exception exn =>
       switch extractMissingParams(exn) {

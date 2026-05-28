@@ -5,13 +5,9 @@ type selectionConfig = {
     ~addressesByContractName: dict<array<Address.t>>,
   ) => array<LogSelection.t>,
   fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
-  nonOptionalBlockFieldNames: array<string>,
-  nonOptionalTransactionFieldNames: array<string>,
 }
 
 let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
-  let nonOptionalBlockFieldNames = Utils.Set.make()
-  let nonOptionalTransactionFieldNames = Utils.Set.make()
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
 
@@ -33,22 +29,18 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   }) => {
     selectedBlockFields
     ->Utils.Set.toArray
-    ->Array.forEach(name => {
-      let nameStr = (name :> string)
-      if !(Internal.evmNullableBlockFields->Utils.Set.has(name)) {
-        nonOptionalBlockFieldNames->Utils.Set.add(nameStr)->ignore
-      }
-      capitalizedBlockFields->Utils.Set.add(nameStr->Utils.String.capitalize)->ignore
-    })
+    ->Array.forEach(name =>
+      capitalizedBlockFields
+      ->Utils.Set.add((name :> string)->Utils.String.capitalize)
+      ->ignore
+    )
     selectedTransactionFields
     ->Utils.Set.toArray
-    ->Array.forEach(name => {
-      let nameStr = (name :> string)
-      if !(Internal.evmNullableTransactionFields->Utils.Set.has(name)) {
-        nonOptionalTransactionFieldNames->Utils.Set.add(nameStr)->ignore
-      }
-      capitalizedTransactionFields->Utils.Set.add(nameStr->Utils.String.capitalize)->ignore
-    })
+    ->Array.forEach(name =>
+      capitalizedTransactionFields
+      ->Utils.Set.add((name :> string)->Utils.String.capitalize)
+      ->ignore
+    )
 
     let eventFilters = getEventFiltersOrThrow(chain)
     if dependsOnAddresses {
@@ -130,8 +122,6 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   {
     getLogSelectionOrThrow,
     fieldSelection,
-    nonOptionalBlockFieldNames: nonOptionalBlockFieldNames->Utils.Set.toArray,
-    nonOptionalTransactionFieldNames: nonOptionalTransactionFieldNames->Utils.Set.toArray,
   }
 }
 
@@ -261,8 +251,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~toBlock,
       ~logSelections,
       ~fieldSelection=selectionConfig.fieldSelection,
-      ~nonOptionalBlockFieldNames=selectionConfig.nonOptionalBlockFieldNames,
-      ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
       throw(

@@ -366,11 +366,9 @@ module EventItems = {
 
 type t = {
   get: (~query: query) => promise<queryResponse>,
-  getEventItems: (
-    ~query: query,
-    ~nonOptionalBlockFieldNames: array<string>,
-    ~nonOptionalTransactionFieldNames: array<string>,
-  ) => promise<EventItems.response>,
+  /// The Rust side derives the response-shape validation list from
+  /// `query.fieldSelection`, so no extra args are needed.
+  getEventItems: (~query: query) => promise<EventItems.response>,
 }
 
 @send

@@ -11,6 +11,7 @@ mod types;
 use config::ClientConfig;
 use decode::DecoderCore;
 use query::Query;
+use query::{BlockField, TransactionField};
 use types::{Block, EventParamsInput, Log, ParamValue, RollbackGuard, Transaction};
 
 static LOGGER_INIT: Once = Once::new();
@@ -75,12 +76,17 @@ impl HypersyncClient {
     }
 
     #[napi]
-    pub async fn get_event_items(
-        &self,
-        query: Query,
-        non_optional_block_fields: Vec<String>,
-        non_optional_transaction_fields: Vec<String>,
-    ) -> napi::Result<EventItemsResponse> {
+    pub async fn get_event_items(&self, query: Query) -> napi::Result<EventItemsResponse> {
+        // The requested fields drive the response-shape validation. Anything
+        // the user asked for that the server didn't return (and that isn't
+        // inherently nullable per-row) is a defect we want to surface clearly.
+        let requested_block_fields = query.field_selection.block.clone().unwrap_or_default();
+        let requested_transaction_fields = query
+            .field_selection
+            .transaction
+            .clone()
+            .unwrap_or_default();
+
         let query = query.try_into().context("parse query").map_err(map_err)?;
         let res = self
             .inner
@@ -99,8 +105,8 @@ impl HypersyncClient {
                 res.data,
                 &self.decoder,
                 self.enable_checksum_addresses,
-                &non_optional_block_fields,
-                &non_optional_transaction_fields,
+                &requested_block_fields,
+                &requested_transaction_fields,
             )
         })
         .map_err(map_err)?;
@@ -228,18 +234,18 @@ fn convert_event_items(
     events: Vec<hypersync_client::simple_types::Event>,
     decoder: &DecoderCore,
     should_checksum: bool,
-    non_optional_block_fields: &[String],
-    non_optional_transaction_fields: &[String],
+    requested_block_fields: &[BlockField],
+    requested_transaction_fields: &[TransactionField],
 ) -> Result<Vec<EventItem>> {
     let mut items = Vec::with_capacity(events.len());
     for event in events {
         let mut missing: Vec<String> = Vec::new();
 
         match &event.block {
-            None if !non_optional_block_fields.is_empty() => missing.push("block".into()),
+            None if !requested_block_fields.is_empty() => missing.push("block".into()),
             Some(block) => {
-                for name in non_optional_block_fields {
-                    if !block_field_present(block, name) {
+                for &field in requested_block_fields {
+                    if let Some(name) = block_field_missing(block, field) {
                         missing.push(format!("block.{}", name));
                     }
                 }
@@ -248,12 +254,10 @@ fn convert_event_items(
         }
 
         match &event.transaction {
-            None if !non_optional_transaction_fields.is_empty() => {
-                missing.push("transaction".into())
-            }
+            None if !requested_transaction_fields.is_empty() => missing.push("transaction".into()),
             Some(transaction) => {
-                for name in non_optional_transaction_fields {
-                    if !transaction_field_present(transaction, name) {
+                for &field in requested_transaction_fields {
+                    if let Some(name) = transaction_field_missing(transaction, field) {
                         missing.push(format!("transaction.{}", name));
                     }
                 }
@@ -344,78 +348,102 @@ impl std::fmt::Display for MissingFieldsError {
 
 impl std::error::Error for MissingFieldsError {}
 
-fn block_field_present(block: &hypersync_client::simple_types::Block, name: &str) -> bool {
-    match name {
-        "number" => block.number.is_some(),
-        "hash" => block.hash.is_some(),
-        "parentHash" => block.parent_hash.is_some(),
-        "nonce" => block.nonce.is_some(),
-        "sha3Uncles" => block.sha3_uncles.is_some(),
-        "logsBloom" => block.logs_bloom.is_some(),
-        "transactionsRoot" => block.transactions_root.is_some(),
-        "stateRoot" => block.state_root.is_some(),
-        "receiptsRoot" => block.receipts_root.is_some(),
-        "miner" => block.miner.is_some(),
-        "difficulty" => block.difficulty.is_some(),
-        "totalDifficulty" => block.total_difficulty.is_some(),
-        "extraData" => block.extra_data.is_some(),
-        "size" => block.size.is_some(),
-        "gasLimit" => block.gas_limit.is_some(),
-        "gasUsed" => block.gas_used.is_some(),
-        "timestamp" => block.timestamp.is_some(),
-        "uncles" => block.uncles.is_some(),
-        "baseFeePerGas" => block.base_fee_per_gas.is_some(),
-        "blobGasUsed" => block.blob_gas_used.is_some(),
-        "excessBlobGas" => block.excess_blob_gas.is_some(),
-        "parentBeaconBlockRoot" => block.parent_beacon_block_root.is_some(),
-        "withdrawalsRoot" => block.withdrawals_root.is_some(),
-        "withdrawals" => block.withdrawals.is_some(),
-        "l1BlockNumber" => block.l1_block_number.is_some(),
-        "sendCount" => block.send_count.is_some(),
-        "sendRoot" => block.send_root.is_some(),
-        "mixHash" => block.mix_hash.is_some(),
-        _ => true,
+/// Returns `Some(camelCaseFieldName)` if the user requested this field but the
+/// server's response omits it AND the field isn't inherently nullable per-row.
+/// `None` means "fine" — either the field is present, or it belongs to the
+/// nullable set (legit chain/block-dependent absence).
+fn block_field_missing(
+    block: &hypersync_client::simple_types::Block,
+    field: BlockField,
+) -> Option<&'static str> {
+    use BlockField::*;
+    match field {
+        // Inherently nullable: pre-EIP-1559 blocks, L2-only fields, etc.
+        Nonce
+        | Difficulty
+        | TotalDifficulty
+        | Uncles
+        | BaseFeePerGas
+        | BlobGasUsed
+        | ExcessBlobGas
+        | ParentBeaconBlockRoot
+        | WithdrawalsRoot
+        | L1BlockNumber
+        | SendCount
+        | SendRoot
+        | MixHash => None,
+        // Always-present-when-requested:
+        Number => block.number.is_none().then_some("number"),
+        Hash => block.hash.is_none().then_some("hash"),
+        ParentHash => block.parent_hash.is_none().then_some("parentHash"),
+        Sha3Uncles => block.sha3_uncles.is_none().then_some("sha3Uncles"),
+        LogsBloom => block.logs_bloom.is_none().then_some("logsBloom"),
+        TransactionsRoot => block
+            .transactions_root
+            .is_none()
+            .then_some("transactionsRoot"),
+        StateRoot => block.state_root.is_none().then_some("stateRoot"),
+        ReceiptsRoot => block.receipts_root.is_none().then_some("receiptsRoot"),
+        Miner => block.miner.is_none().then_some("miner"),
+        ExtraData => block.extra_data.is_none().then_some("extraData"),
+        Size => block.size.is_none().then_some("size"),
+        GasLimit => block.gas_limit.is_none().then_some("gasLimit"),
+        GasUsed => block.gas_used.is_none().then_some("gasUsed"),
+        Timestamp => block.timestamp.is_none().then_some("timestamp"),
+        Withdrawals => block.withdrawals.is_none().then_some("withdrawals"),
     }
 }
 
-fn transaction_field_present(tx: &hypersync_client::simple_types::Transaction, name: &str) -> bool {
-    match name {
-        "blockHash" => tx.block_hash.is_some(),
-        "blockNumber" => tx.block_number.is_some(),
-        "from" => tx.from.is_some(),
-        "gas" => tx.gas.is_some(),
-        "gasPrice" => tx.gas_price.is_some(),
-        "hash" => tx.hash.is_some(),
-        "input" => tx.input.is_some(),
-        "nonce" => tx.nonce.is_some(),
-        "to" => tx.to.is_some(),
-        "transactionIndex" => tx.transaction_index.is_some(),
-        "value" => tx.value.is_some(),
-        "v" => tx.v.is_some(),
-        "r" => tx.r.is_some(),
-        "s" => tx.s.is_some(),
-        "yParity" => tx.y_parity.is_some(),
-        "maxPriorityFeePerGas" => tx.max_priority_fee_per_gas.is_some(),
-        "maxFeePerGas" => tx.max_fee_per_gas.is_some(),
-        "chainId" => tx.chain_id.is_some(),
-        "accessList" => tx.access_list.is_some(),
-        "authorizationList" => tx.authorization_list.is_some(),
-        "maxFeePerBlobGas" => tx.max_fee_per_blob_gas.is_some(),
-        "blobVersionedHashes" => tx.blob_versioned_hashes.is_some(),
-        "cumulativeGasUsed" => tx.cumulative_gas_used.is_some(),
-        "effectiveGasPrice" => tx.effective_gas_price.is_some(),
-        "gasUsed" => tx.gas_used.is_some(),
-        "contractAddress" => tx.contract_address.is_some(),
-        "logsBloom" => tx.logs_bloom.is_some(),
-        "type" => tx.type_.is_some(),
-        "root" => tx.root.is_some(),
-        "status" => tx.status.is_some(),
-        "l1Fee" => tx.l1_fee.is_some(),
-        "l1GasPrice" => tx.l1_gas_price.is_some(),
-        "l1GasUsed" => tx.l1_gas_used.is_some(),
-        "l1FeeScalar" => tx.l1_fee_scalar.is_some(),
-        "gasUsedForL1" => tx.gas_used_for_l1.is_some(),
-        _ => true,
+fn transaction_field_missing(
+    tx: &hypersync_client::simple_types::Transaction,
+    field: TransactionField,
+) -> Option<&'static str> {
+    use TransactionField::*;
+    match field {
+        // Inherently nullable: type-dependent signature fields, optimism-only,
+        // contract-creation `to`, etc.
+        GasPrice | V | R | S | YParity | MaxPriorityFeePerGas | MaxFeePerGas | MaxFeePerBlobGas
+        | BlobVersionedHashes | ContractAddress | Root | Status | L1Fee | L1GasPrice
+        | L1GasUsed | L1FeeScalar | GasUsedForL1 | From | To | Type => None,
+        // Always-present-when-requested:
+        BlockHash => tx.block_hash.is_none().then_some("blockHash"),
+        BlockNumber => tx.block_number.is_none().then_some("blockNumber"),
+        Gas => tx.gas.is_none().then_some("gas"),
+        Hash => tx.hash.is_none().then_some("hash"),
+        Input => tx.input.is_none().then_some("input"),
+        Nonce => tx.nonce.is_none().then_some("nonce"),
+        TransactionIndex => tx.transaction_index.is_none().then_some("transactionIndex"),
+        Value => tx.value.is_none().then_some("value"),
+        ChainId => tx.chain_id.is_none().then_some("chainId"),
+        AccessList => tx.access_list.is_none().then_some("accessList"),
+        AuthorizationList => tx
+            .authorization_list
+            .is_none()
+            .then_some("authorizationList"),
+        CumulativeGasUsed => tx
+            .cumulative_gas_used
+            .is_none()
+            .then_some("cumulativeGasUsed"),
+        EffectiveGasPrice => tx
+            .effective_gas_price
+            .is_none()
+            .then_some("effectiveGasPrice"),
+        GasUsed => tx.gas_used.is_none().then_some("gasUsed"),
+        LogsBloom => tx.logs_bloom.is_none().then_some("logsBloom"),
+        // Fields exposed via the typed enum but not represented on the
+        // simple_types::Transaction struct in this crate version — treat as
+        // never-missing (no-op).
+        L1BlockNumber
+        | L1BaseFeeScalar
+        | L1BlobBaseFee
+        | L1BlobBaseFeeScalar
+        | Sighash
+        | BlobGasPrice
+        | BlobGasUsed
+        | DepositNonce
+        | DepositReceiptVersion
+        | Mint
+        | SourceHash => None,
     }
 }
 

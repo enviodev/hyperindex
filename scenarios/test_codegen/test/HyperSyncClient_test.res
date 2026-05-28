@@ -59,8 +59,6 @@ let runQuery = async (~client: HyperSyncClient.t) =>
         transaction: [Hash, From, To],
       },
     },
-    ~nonOptionalBlockFieldNames=["number", "hash", "timestamp"],
-    ~nonOptionalTransactionFieldNames=["hash"],
   )
 
 describe("HyperSync client getEventItems (live)", () => {
