@@ -336,20 +336,18 @@ let writeBatch = (
 
 let prepareRollbackDiff = async (
   persistence: t,
+  ~inMemoryStore: InMemoryStore.t,
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
 ) => {
-  let inMemStore = InMemoryStore.make(
-    ~entities=persistence.allEntities,
-    ~rollbackTargetCheckpointId,
-  )
+  inMemoryStore.rollbackTargetCheckpointId = Some(rollbackTargetCheckpointId)
 
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
 
   let _ = await persistence.allEntities
   ->Belt.Array.map(async entityConfig => {
-    let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
+    let entityTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
     let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
       ~entityConfig,
@@ -388,7 +386,6 @@ let prepareRollbackDiff = async (
   ->Promise.all
 
   {
-    "inMemStore": inMemStore,
     "deletedEntities": deletedEntities,
     "setEntities": setEntities,
   }
