@@ -1,0 +1,105 @@
+# Inline programs_experimental fragments (Stream B) - 2026-05-28
+#
+# Ready-to-paste config.yaml entries for the NON-IDL (inline-decoded) programs.
+# Paste these as siblings of the Jupiter/Drift/Kamino (idl:) entries under
+#   chains[0].programs_experimental
+# Schema verified against packages/envio/svm.schema.json:
+#   instruction keys = { name, discriminator, args:[{name,type}], accounts:[str], field_selection, is_inner, account_filters }
+#   args .type accepts bare-string primitives ("u64","u8",...).
+#   field_selection.token_balance_fields: true  implies transaction_fields: true.
+#
+# Every instruction below sets field_selection.token_balance_fields: true per spec.
+# is_inner is left absent on all (== null == matches both inner+outer), per spec.
+
+      # ---------------------------------------------------------------------
+      # SPL Token program
+      # ---------------------------------------------------------------------
+      - name: SplToken
+        program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+        instructions:
+          - name: Transfer
+            discriminator: "0x03"
+            args:
+              - { name: amount, type: u64 }
+            accounts: [source, destination, authority]
+            field_selection:
+              token_balance_fields: true
+          - name: TransferChecked
+            discriminator: "0x0c"
+            args:
+              - { name: amount, type: u64 }
+              - { name: decimals, type: u8 }
+            accounts: [source, mint, destination, authority]
+            field_selection:
+              token_balance_fields: true
+          - name: MintTo
+            discriminator: "0x07"
+            args:
+              - { name: amount, type: u64 }
+            accounts: [mint, destination, authority]
+            field_selection:
+              token_balance_fields: true
+          - name: Burn
+            discriminator: "0x08"
+            args:
+              - { name: amount, type: u64 }
+            accounts: [account, mint, authority]
+            field_selection:
+              token_balance_fields: true
+
+      # ---------------------------------------------------------------------
+      # System program
+      # disc is the little-endian u32 instruction index (Transfer == 2).
+      # ---------------------------------------------------------------------
+      - name: System
+        program_id: "11111111111111111111111111111111"
+        instructions:
+          - name: Transfer
+            discriminator: "0x02000000"
+            args:
+              - { name: lamports, type: u64 }
+            accounts: [source, destination]
+            field_selection:
+              token_balance_fields: true
+
+      # ---------------------------------------------------------------------
+      # Raydium Liquidity Pool AMM v4
+      # swap (SwapBaseIn), disc byte 0x09.
+      # VERIFY: Raydium v4 has no Anchor IDL; account list is positional and
+      #   varies by serum-vs-openbook market wiring. The 17-account ordering
+      #   below is the canonical SwapBaseIn layout (raydium-amm program source /
+      #   raydium-sdk Liquidity.makeSwapInstruction). Confirm against a real tx
+      #   before relying on named accounts; the amountIn/minAmountOut args are
+      #   stable. Account count can be 17 (legacy serum) or 18 (extra signer);
+      #   surplus accounts surface as extra_accounts, so this is safe to ship.
+      # ---------------------------------------------------------------------
+      - name: Raydium
+        program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+        instructions:
+          - name: swap
+            discriminator: "0x09"
+            args:
+              - { name: amountIn, type: u64 }
+              - { name: minAmountOut, type: u64 }
+            # VERIFY this ordering against a live SwapBaseIn tx:
+            accounts:
+              - tokenProgram          # 0
+              - amm                    # 1
+              - ammAuthority           # 2
+              - ammOpenOrders          # 3
+              - ammTargetOrders        # 4  (present in legacy layout; some routes omit)
+              - poolCoinTokenAccount   # 5
+              - poolPcTokenAccount     # 6
+              - serumProgram           # 7
+              - serumMarket            # 8
+              - serumBids              # 9
+              - serumAsks              # 10
+              - serumEventQueue        # 11
+              - serumCoinVaultAccount  # 12
+              - serumPcVaultAccount    # 13
+              - serumVaultSigner       # 14
+              - userSourceTokenAccount # 15
+              - userDestTokenAccount   # 16
+              - userSourceOwner        # 17 (signer)
+            field_selection:
+              token_balance_fields: true
