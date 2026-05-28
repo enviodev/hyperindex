@@ -7,6 +7,7 @@ type blockInfo = {
   number: int,
   timestamp: int,
   hash: string,
+  parentHash: string,
 }
 
 let getKnownRawBlock = async (~client, ~blockNumber) =>
@@ -28,6 +29,9 @@ let parseBlockInfo = (json: JSON.t): blockInfo => {
     ->S.parseOrThrow(Rpc.hexIntSchema),
     hash: jsonDict
     ->Dict.getUnsafe("hash")
+    ->S.parseOrThrow(S.string),
+    parentHash: jsonDict
+    ->Dict.getUnsafe("parentHash")
     ->S.parseOrThrow(S.string),
   }
 }
@@ -1182,16 +1186,27 @@ let make = (
 
     let totalTimeElapsed = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    let reorgGuard: ReorgDetection.reorgGuard = {
-      prevRangeLastBlock: optFirstBlockParent->Option.map(b => {
-        ReorgDetection.blockNumber: b.number,
-        blockHash: b.hash,
-      }),
-      rangeLastBlock: {
-        blockNumber: latestFetchedBlockInfo.number,
-        blockHash: latestFetchedBlockInfo.hash,
-      },
+    // Every fetched block carries `hash` and `parentHash`, so each one yields
+    // two confirmed (number, hash) pairs for reorg detection at no extra cost.
+    let blockHashes = []
+    let pushBlockInfo = (b: blockInfo) => {
+      blockHashes->Array.push({ReorgDetection.blockNumber: b.number, blockHash: b.hash})->ignore
+      if b.number > 0 {
+        blockHashes
+        ->Array.push({ReorgDetection.blockNumber: b.number - 1, blockHash: b.parentHash})
+        ->ignore
+      }
     }
+    pushBlockInfo(latestFetchedBlockInfo)
+    switch optFirstBlockParent {
+    | Some(b) => pushBlockInfo(b)
+    | None => ()
+    }
+    logs->Belt.Array.forEach(log =>
+      blockHashes
+      ->Array.push({ReorgDetection.blockNumber: log.blockNumber, blockHash: log.blockHash})
+      ->ignore
+    )
 
     {
       latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
@@ -1201,19 +1216,20 @@ let make = (
         totalTimeElapsed: totalTimeElapsed,
       },
       knownHeight,
-      reorgGuard,
+      blockHashes,
       fromBlockQueried: fromBlock,
     }
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
-    // Clear cache by creating a fresh LazyLoader
-    // This is important, since we call this
-    // function when a reorg is detected
+  let onReorg = (~rollbackTargetBlock as _) => {
+    // Drop cached block/transaction/receipt data — after a reorg the cached
+    // entries may refer to orphaned-chain values.
     blockLoader := makeBlockLoader()
     transactionLoader := makeTransactionLoader()
     receiptLoader := makeReceiptLoader()
+  }
 
+  let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
     blockNumbers
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
@@ -1247,6 +1263,7 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
+    onReorg,
     getHeightOrThrow: async () => {
       let timerRef = Hrtime.makeTimer()
       let height = try {
