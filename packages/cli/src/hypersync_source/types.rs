@@ -7,7 +7,7 @@ use hypersync_client::{
     format::{self, FixedSizeData, Hex},
     net_types, simple_types,
 };
-use napi::bindgen_prelude::{BigInt, ToNapiValue};
+use napi::bindgen_prelude::{BigInt, FromNapiValue, ToNapiValue};
 use napi_derive::napi;
 
 /// Data relating to a single event (log)
@@ -479,6 +479,17 @@ pub enum ParamValue {
     Str(String),
     Arr(Vec<ParamValue>),
     Obj(Vec<(String, ParamValue)>),
+}
+
+impl FromNapiValue for ParamValue {
+    unsafe fn from_napi_value(
+        _env: napi::sys::napi_env,
+        _val: napi::sys::napi_value,
+    ) -> napi::Result<Self> {
+        Err(napi::Error::from_reason(
+            "ParamValue is decode-only; it cannot be constructed from JS",
+        ))
+    }
 }
 
 impl ToNapiValue for ParamValue {

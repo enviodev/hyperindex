@@ -1,26 +1,17 @@
-module Log = {
-  type t = {
-    address: Address.t,
-    data: string,
-    topics: array<EvmTypes.Hex.t>,
-    logIndex: int,
-  }
-
-  let fieldNames = ["address", "data", "topics", "logIndex"]
-}
+module Log = HyperSyncClient.EventItems.Log
 
 type hyperSyncPage<'item> = {
   items: array<'item>,
   nextBlock: int,
   archiveHeight: int,
   rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
-  events: array<HyperSyncClient.ResponseTypes.event>,
 }
 
 type logsQueryPageItem = {
   log: Log.t,
   block: HyperSyncClient.ResponseTypes.block,
   transaction: Internal.eventTransaction,
+  params: Nullable.t<Internal.eventParams>,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
@@ -74,84 +65,28 @@ module GetLogs = {
     fieldSelection,
   }
 
-  @inline
-  let addMissingParams = (acc, fieldNames, returnedObj, ~prefix) => {
-    if fieldNames->Utils.Array.notEmpty {
-      if !(returnedObj->Obj.magic) {
-        acc->Array.push(prefix)->ignore
-      } else {
-        for idx in 0 to fieldNames->Array.length - 1 {
-          let fieldName = fieldNames->Array.getUnsafe(idx)
-          switch returnedObj
-          ->(Utils.magic: 'a => dict<unknown>)
-          ->Utils.Dict.dangerouslyGetNonOption(fieldName) {
-          | Some(_) => ()
-          | None => acc->Array.push(prefix ++ "." ++ fieldName)->ignore
-          }
-        }
+  // Rust's MissingFieldsError surfaces as a JS Error whose `.message` Debug
+  // string starts with this marker. Detecting it here lets the source treat
+  // it as ImpossibleForTheQuery, matching the pre-refactor behavior.
+  let missingFieldsMarker = "MissingFields: "
+
+  let extractMissingParams = (exn: exn): option<array<string>> => {
+    let message = switch exn {
+    | JsExn(jsExn) => jsExn->JsExn.message
+    | _ => None
+    }
+    switch message {
+    | Some(msg) =>
+      switch msg->String.indexOf(missingFieldsMarker) {
+      | -1 => None
+      | start =>
+        let tail = msg->String.slice(~start=start + missingFieldsMarker->String.length)
+        let comma = tail->String.indexOf("\n")
+        let list = comma == -1 ? tail : tail->String.slice(~start=0, ~end=comma)
+        Some(list->String.split(","))
       }
+    | None => None
     }
-  }
-
-  //Note this function can throw an error
-  let convertEvent = (
-    event: HyperSyncClient.ResponseTypes.event,
-    ~nonOptionalBlockFieldNames,
-    ~nonOptionalTransactionFieldNames,
-  ): logsQueryPageItem => {
-    let missingParams = []
-    missingParams->addMissingParams(Log.fieldNames, event.log, ~prefix="log")
-    missingParams->addMissingParams(nonOptionalBlockFieldNames, event.block, ~prefix="block")
-    missingParams->addMissingParams(
-      nonOptionalTransactionFieldNames,
-      event.transaction,
-      ~prefix="transaction",
-    )
-    if missingParams->Array.length > 0 {
-      throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
-    }
-
-    //Topics can be nullable and still need to be filtered
-    let logUnsanitized: Log.t = event.log->(Utils.magic: HyperSyncClient.ResponseTypes.log => Log.t)
-    let topics = event.log.topics->Option.getUnsafe->Array.filterMap(Nullable.toOption)
-    let address = event.log.address->Option.getUnsafe
-    let log = {
-      ...logUnsanitized,
-      topics,
-      address,
-    }
-
-    {
-      log,
-      block: event.block->(
-        Utils.magic: option<
-          HyperSyncClient.ResponseTypes.block,
-        > => HyperSyncClient.ResponseTypes.block
-      ),
-      transaction: event.transaction->(
-        Utils.magic: option<HyperSyncClient.ResponseTypes.transaction> => Internal.eventTransaction
-      ),
-    }
-  }
-
-  let convertResponse = (
-    res: HyperSyncClient.ResponseTypes.eventResponse,
-    ~nonOptionalBlockFieldNames,
-    ~nonOptionalTransactionFieldNames,
-  ): logsQueryPage => {
-    let {nextBlock, archiveHeight, rollbackGuard} = res
-    let items =
-      res.data->Array.map(item =>
-        item->convertEvent(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
-      )
-    let page: logsQueryPage = {
-      items,
-      nextBlock,
-      archiveHeight: archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
-      events: res.data,
-      rollbackGuard,
-    }
-    page
   }
 
   let query = async (
@@ -182,13 +117,31 @@ module GetLogs = {
       ~fieldSelection,
     )
 
-    let res = await client.getEvents(~query)
+    let res = switch await client.getEventItems(
+      ~query,
+      ~nonOptionalBlockFieldNames,
+      ~nonOptionalTransactionFieldNames,
+    ) {
+    | res => res
+    | exception exn =>
+      switch extractMissingParams(exn) {
+      | Some(missingParams) => throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
+      | None => throw(exn)
+      }
+    }
     if res.nextBlock <= fromBlock {
       // Might happen when /height response was from another instance of HyperSync
       throw(Error(WrongInstance))
     }
 
-    res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
+    {
+      items: res.items->(
+        Utils.magic: array<HyperSyncClient.EventItems.item> => array<logsQueryPageItem>
+      ),
+      nextBlock: res.nextBlock,
+      archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
+      rollbackGuard: res.rollbackGuard,
+    }
   }
 }
 

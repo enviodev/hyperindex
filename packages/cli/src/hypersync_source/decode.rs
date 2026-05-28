@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
+use hypersync_client::simple_types;
 use napi_derive::napi;
 
 use crate::hypersync_source::{
@@ -10,49 +11,25 @@ use crate::hypersync_source::{
     types::{sol_value_to_param, Event, EventParamsInput, Log, ParamMeta, ParamValue},
 };
 
-/// Decoder for Ethereum events
-#[napi]
 #[derive(Clone)]
-pub struct Decoder {
+pub(crate) struct DecoderCore {
     inner: Arc<hypersync_client::Decoder>,
-    checksummed_addresses: bool,
+    pub(crate) checksummed_addresses: bool,
     param_meta: Arc<HashMap<String, Vec<ParamMeta>>>,
 }
 
-fn meta_key(sighash: &str, topic_count: usize) -> String {
-    format!("{}_{}", sighash, topic_count)
-}
-
-fn reconstruct_signature(event_name: &str, params: &[ParamMeta]) -> String {
-    let params_str = params
-        .iter()
-        .map(|p| {
-            if p.indexed {
-                format!("{} indexed {}", p.abi_type, p.name)
-            } else {
-                format!("{} {}", p.abi_type, p.name)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{}({})", event_name, params_str)
-}
-
-#[napi]
-impl Decoder {
-    #[napi(factory)]
-    pub fn from_params(
+impl DecoderCore {
+    pub(crate) fn from_params(
         event_params: Vec<EventParamsInput>,
-        checksum_addresses: Option<bool>,
-    ) -> napi::Result<Decoder> {
+        checksum_addresses: bool,
+    ) -> Result<Self> {
         let signatures: Vec<String> = event_params
             .iter()
             .map(|ep| reconstruct_signature(&ep.event_name, &ep.params))
             .collect();
 
         let inner = hypersync_client::Decoder::from_signatures(&signatures)
-            .context("create inner decoder")
-            .map_err(map_err)?;
+            .context("create inner decoder")?;
 
         let mut param_meta = HashMap::new();
         for ep in event_params {
@@ -62,25 +39,12 @@ impl Decoder {
 
         Ok(Self {
             inner: Arc::new(inner),
-            checksummed_addresses: checksum_addresses.unwrap_or(false),
+            checksummed_addresses: checksum_addresses,
             param_meta: Arc::new(param_meta),
         })
     }
 
-    #[napi]
-    pub async fn decode_logs(&self, events: Vec<Event>) -> napi::Result<Vec<Option<ParamValue>>> {
-        let decoder = self.clone();
-        tokio::task::spawn_blocking(move || {
-            events
-                .iter()
-                .map(|event| decoder.decode_to_params(&event.log).ok().flatten())
-                .collect::<Vec<_>>()
-        })
-        .await
-        .map_err(|e| map_err(anyhow::anyhow!("decode_logs worker join failure: {e}")))
-    }
-
-    fn decode_to_params(&self, log: &Log) -> Result<Option<ParamValue>> {
+    pub(crate) fn decode_napi(&self, log: &Log) -> Result<Option<ParamValue>> {
         let topics = log
             .topics
             .iter()
@@ -91,19 +55,31 @@ impl Decoder {
             })
             .collect::<Result<Vec<_>>>()
             .context("decode topics")?;
+        let data = log.data.as_ref().context("get log.data")?;
+        let data = Data::decode_hex(data).context("decode data")?;
+        self.decode_with_topics_and_data(&topics, &data)
+    }
 
+    pub(crate) fn decode_simple(&self, log: &simple_types::Log) -> Result<Option<ParamValue>> {
+        let topics: Vec<Option<LogArgument>> = log.topics.iter().cloned().collect();
+        let data = log.data.as_ref().context("get log.data")?;
+        self.decode_with_topics_and_data(&topics, data)
+    }
+
+    fn decode_with_topics_and_data(
+        &self,
+        topics: &[Option<LogArgument>],
+        data: &Data,
+    ) -> Result<Option<ParamValue>> {
         let topic0 = topics
             .first()
             .context("get topic0")?
             .as_ref()
             .context("topic0 is null")?;
 
-        let data = log.data.as_ref().context("get log.data")?;
-        let data = Data::decode_hex(data).context("decode data")?;
-
         let decoded = match self
             .inner
-            .decode(topic0.as_slice(), &topics, &data)
+            .decode(topic0.as_slice(), topics, data)
             .context("decode log")?
         {
             Some(v) => v,
@@ -154,5 +130,58 @@ impl Decoder {
         }
 
         Ok(Some(ParamValue::Obj(fields)))
+    }
+}
+
+fn meta_key(sighash: &str, topic_count: usize) -> String {
+    format!("{}_{}", sighash, topic_count)
+}
+
+fn reconstruct_signature(event_name: &str, params: &[ParamMeta]) -> String {
+    let params_str = params
+        .iter()
+        .map(|p| {
+            if p.indexed {
+                format!("{} indexed {}", p.abi_type, p.name)
+            } else {
+                format!("{} {}", p.abi_type, p.name)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{}({})", event_name, params_str)
+}
+
+/// Decoder for Ethereum events. Kept as a public NAPI binding so RpcSource can
+/// reuse the HyperSync decoding logic over its `eth_getLogs` results.
+#[napi]
+#[derive(Clone)]
+pub struct Decoder {
+    core: DecoderCore,
+}
+
+#[napi]
+impl Decoder {
+    #[napi(factory)]
+    pub fn from_params(
+        event_params: Vec<EventParamsInput>,
+        checksum_addresses: Option<bool>,
+    ) -> napi::Result<Decoder> {
+        let core = DecoderCore::from_params(event_params, checksum_addresses.unwrap_or(false))
+            .map_err(map_err)?;
+        Ok(Self { core })
+    }
+
+    #[napi]
+    pub async fn decode_logs(&self, events: Vec<Event>) -> napi::Result<Vec<Option<ParamValue>>> {
+        let core = self.core.clone();
+        tokio::task::spawn_blocking(move || {
+            events
+                .iter()
+                .map(|event| core.decode_napi(&event.log).ok().flatten())
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|e| map_err(anyhow::anyhow!("decode_logs worker join failure: {e}")))
     }
 }

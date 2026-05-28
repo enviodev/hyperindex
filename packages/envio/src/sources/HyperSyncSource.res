@@ -179,35 +179,22 @@ Set the ENVIO_API_TOKEN environment variable in your .env file.
 Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   }
 
-  let client = HyperSyncClient.make(
+  let client = switch HyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,
     ~maxNumRetries=clientMaxRetries,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
+    ~eventParams=allEventParams,
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
     ~logLevel,
-  )
-
-  let hscDecoder: ref<option<HyperSyncClient.Decoder.tWithParams>> = ref(None)
-  let getHscDecoder = () => {
-    switch hscDecoder.contents {
-    | Some(decoder) => decoder
-    | None =>
-      switch HyperSyncClient.Decoder.fromParams(
-        allEventParams,
-        ~checksumAddresses=!lowercaseAddresses,
-      ) {
-      | exception exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI",
-        )
-      | decoder =>
-        hscDecoder := Some(decoder)
-        decoder
-      }
-    }
+  ) {
+  | client => client
+  | exception exn =>
+    exn->ErrorHandling.mkLogAndRaise(
+      ~msg="Failed to instantiate the hypersync client, please double check your ABI",
+    )
   }
 
   exception UndefinedValue
@@ -419,16 +406,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }
     }
 
-    //Parse page items into queue items
-    let parsedEvents = switch await getHscDecoder().decodeLogs(pageUnsafe.events) {
-    | exception exn =>
-      exn->mkLogAndRaise(
-        ~msg="Failed to parse events using hypersync client, please double check your ABI.",
-      )
-    | parsedEvents => parsedEvents
-    }
-
-    pageUnsafe.items->Belt.Array.forEachWithIndex((index, item) => {
+    pageUnsafe.items->Belt.Array.forEach(item => {
       let {block, log} = item
       let chainId = chain->ChainMap.Chain.toChainId
       let topic0 = log.topics->Utils.Array.firstUnsafe
@@ -442,9 +420,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ~contractAddress=log.address,
           ~blockNumber=block.number->Belt.Option.getUnsafe,
         )
-      let maybeDecodedEvent = parsedEvents->Array.getUnsafe(index)
 
-      switch (maybeEventConfig, maybeDecodedEvent) {
+      switch (maybeEventConfig, item.params) {
       | (Some(eventConfig), Value(decoded)) =>
         parsedQueueItems
         ->Array.push(makeEventBatchQueueItem(item, ~params=decoded, ~eventConfig))

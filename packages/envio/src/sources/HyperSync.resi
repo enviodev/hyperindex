@@ -3,15 +3,14 @@ type hyperSyncPage<'item> = {
   nextBlock: int,
   archiveHeight: int,
   rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
-  events: array<HyperSyncClient.ResponseTypes.event>,
 }
 
 module Log: {
-  type t = {
+  type t = HyperSyncClient.EventItems.Log.t = {
+    logIndex: int,
     address: Address.t,
     data: string,
     topics: array<EvmTypes.Hex.t>,
-    logIndex: int,
   }
 }
 
@@ -19,6 +18,7 @@ type logsQueryPageItem = {
   log: Log.t,
   block: HyperSyncClient.ResponseTypes.block,
   transaction: Internal.eventTransaction,
+  params: Nullable.t<Internal.eventParams>,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
