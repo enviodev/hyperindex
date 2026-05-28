@@ -37,7 +37,7 @@ module Entity = {
     mutable entityIndices?: Utils.Set.t<TableIndices.Index.t>,
   }
   type t = {
-    table: t<string, entityWithIndices>,
+    dict: dict<entityWithIndices>,
     fieldNameIndices: indexFieldNameToIndices,
   }
 
@@ -71,7 +71,7 @@ module Entity = {
   }
 
   let make = (): t => {
-    table: make(~hash=str => str),
+    dict: Dict.make(),
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
   }
 
@@ -142,7 +142,7 @@ module Entity = {
   ) => {
     let shouldWriteEntity =
       allowOverWriteEntity ||
-      inMemTable.table.dict->Dict.get(key->inMemTable.table.hash)->Option.isNone
+      inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone
 
     //Only initialize a row in the case where it is none
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
@@ -158,7 +158,7 @@ module Entity = {
         inMemTable->updateIndices(~entity, ~row)
       | None => ()
       }
-      inMemTable.table.dict->Dict.set(key->inMemTable.table.hash, row)
+      inMemTable.dict->Dict.set(key, row)
     }
   }
 
@@ -185,7 +185,7 @@ module Entity = {
     | Delete(_) => None
     }
 
-    let updatedEntityRecord: entityWithIndices = switch inMemTable.table->get(
+    let updatedEntityRecord: entityWithIndices = switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(
       change->Change.getEntityId,
     ) {
     | None => {latest, status: newStatus()}
@@ -217,7 +217,7 @@ module Entity = {
     | Set({entity}) => inMemTable->updateIndices(~entity, ~row=updatedEntityRecord)
     | Delete({entityId}) => inMemTable->deleteEntityFromIndices(~entityId, ~row=updatedEntityRecord)
     }
-    inMemTable.table->setRow(change->Change.getEntityId, updatedEntityRecord)
+    inMemTable.dict->Dict.set(change->Change.getEntityId, updatedEntityRecord)
   }
 
   let rowToEntity = row => row.latest
@@ -230,7 +230,7 @@ module Entity = {
   It's needed to prevent an additional round trips to the database for deleted entities. */
   let getUnsafe = (inMemTable: t) =>
     (key: string) =>
-      inMemTable.table.dict
+      inMemTable.dict
       ->Dict.getUnsafe(key)
       ->rowToEntity
 
@@ -265,7 +265,7 @@ module Entity = {
                 relatedEntityIds
                 ->Utils.Set.toArray
                 ->Array.filterMap(entityId => {
-                  switch hasByHash(inMemTable.table, entityId) {
+                  switch inMemTable.dict->Utils.Dict.has(entityId) {
                   | true => getEntity(entityId)
                   | false => None
                   }
@@ -282,8 +282,8 @@ module Entity = {
     let fieldName = index->TableIndices.Index.getFieldName
     let relatedEntityIds = Utils.Set.make()
 
-    inMemTable.table
-    ->values
+    inMemTable.dict
+    ->Dict.valuesToArray
     ->Array.forEach(row => {
       switch row->rowToEntity {
       | Some(entity) =>
@@ -331,8 +331,8 @@ module Entity = {
     }
 
   let updates = (inMemTable: t) => {
-    inMemTable.table
-    ->values
+    inMemTable.dict
+    ->Dict.valuesToArray
     ->Array.filterMap(v =>
       switch v.status {
       | Updated(update) => Some(update)
@@ -342,8 +342,8 @@ module Entity = {
   }
 
   let values = (inMemTable: t) => {
-    inMemTable.table
-    ->values
+    inMemTable.dict
+    ->Dict.valuesToArray
     ->Array.filterMap(rowToEntity)
   }
 }
