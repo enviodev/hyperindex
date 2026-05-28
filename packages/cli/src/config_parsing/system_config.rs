@@ -443,21 +443,23 @@ pub struct Storage {
     pub postgres: bool,
     pub clickhouse: bool,
     pub duckdb: bool,
+    pub ducklake: bool,
 }
 
 impl Storage {
     pub fn resolve(config: Option<&human_config::StorageConfig>) -> Result<Self> {
-        let (postgres, clickhouse, duckdb) = match config {
+        let (postgres, clickhouse, duckdb, ducklake) = match config {
             // Default: only Postgres enabled
-            None => (true, false, false),
+            None => (true, false, false, false),
             Some(s) => {
                 let clickhouse = s.clickhouse.unwrap_or(false);
                 let duckdb = s.duckdb.unwrap_or(false);
+                let ducklake = s.ducklake.unwrap_or(false);
                 // When a sink is enabled, postgres must be set explicitly so
                 // that the validation below catches a sink-only config instead
                 // of silently defaulting postgres to true.
-                let postgres = s.postgres.unwrap_or(!(clickhouse || duckdb));
-                (postgres, clickhouse, duckdb)
+                let postgres = s.postgres.unwrap_or(!(clickhouse || duckdb || ducklake));
+                (postgres, clickhouse, duckdb, ducklake)
             }
         };
         if clickhouse && !postgres {
@@ -472,7 +474,13 @@ impl Storage {
                  alongside DuckDB in the `storage` config."
             ));
         }
-        if !postgres && !clickhouse && !duckdb {
+        if ducklake && !postgres {
+            return Err(anyhow!(
+                "DuckLake is not supported as a single storage yet. Please enable Postgres \
+                 alongside DuckLake in the `storage` config."
+            ));
+        }
+        if !postgres && !clickhouse && !duckdb && !ducklake {
             return Err(anyhow!(
                 "At least one storage backend must be enabled. Please set `postgres: true` \
                  in the `storage` config (or omit the `storage` section entirely to use the \
@@ -483,6 +491,7 @@ impl Storage {
             postgres,
             clickhouse,
             duckdb,
+            ducklake,
         })
     }
 
@@ -2610,10 +2619,11 @@ mod test {
     fn test_storage_resolve() {
         use super::human_config::StorageConfig;
 
-        let s = |postgres, clickhouse, duckdb| StorageConfig {
+        let s = |postgres, clickhouse, duckdb, ducklake| StorageConfig {
             postgres,
             clickhouse,
             duckdb,
+            ducklake,
         };
 
         // Default (None) -> postgres only
@@ -2623,41 +2633,57 @@ mod test {
                 postgres: true,
                 clickhouse: false,
                 duckdb: false,
+                ducklake: false,
             }
         );
 
         // Empty struct -> defaults
         assert_eq!(
-            super::Storage::resolve(Some(&s(None, None, None))).unwrap(),
+            super::Storage::resolve(Some(&s(None, None, None, None))).unwrap(),
             super::Storage {
                 postgres: true,
                 clickhouse: false,
                 duckdb: false,
+                ducklake: false,
             }
         );
 
         // Both enabled -> ok
         assert_eq!(
-            super::Storage::resolve(Some(&s(Some(true), Some(true), None))).unwrap(),
+            super::Storage::resolve(Some(&s(Some(true), Some(true), None, None))).unwrap(),
             super::Storage {
                 postgres: true,
                 clickhouse: true,
                 duckdb: false,
+                ducklake: false,
             }
         );
 
         // DuckDB enabled with Postgres -> ok
         assert_eq!(
-            super::Storage::resolve(Some(&s(Some(true), None, Some(true)))).unwrap(),
+            super::Storage::resolve(Some(&s(Some(true), None, Some(true), None))).unwrap(),
             super::Storage {
                 postgres: true,
                 clickhouse: false,
                 duckdb: true,
+                ducklake: false,
+            }
+        );
+
+        // DuckLake enabled with Postgres -> ok
+        assert_eq!(
+            super::Storage::resolve(Some(&s(Some(true), None, None, Some(true)))).unwrap(),
+            super::Storage {
+                postgres: true,
+                clickhouse: false,
+                duckdb: false,
+                ducklake: true,
             }
         );
 
         // ClickHouse without Postgres -> user-friendly error
-        let err = super::Storage::resolve(Some(&s(Some(false), Some(true), None))).unwrap_err();
+        let err =
+            super::Storage::resolve(Some(&s(Some(false), Some(true), None, None))).unwrap_err();
         assert!(
             err.to_string()
                 .contains("ClickHouse is not supported as a single storage yet"),
@@ -2666,7 +2692,7 @@ mod test {
 
         // ClickHouse enabled with Postgres omitted -> same error; user must
         // opt in to Postgres explicitly rather than relying on the default.
-        let err = super::Storage::resolve(Some(&s(None, Some(true), None))).unwrap_err();
+        let err = super::Storage::resolve(Some(&s(None, Some(true), None, None))).unwrap_err();
         assert!(
             err.to_string()
                 .contains("ClickHouse is not supported as a single storage yet"),
@@ -2674,15 +2700,24 @@ mod test {
         );
 
         // DuckDB enabled with Postgres omitted -> same rule as ClickHouse.
-        let err = super::Storage::resolve(Some(&s(None, None, Some(true)))).unwrap_err();
+        let err = super::Storage::resolve(Some(&s(None, None, Some(true), None))).unwrap_err();
         assert!(
             err.to_string()
                 .contains("DuckDB is not supported as a single storage yet"),
             "Unexpected error: {err}"
         );
 
+        // DuckLake enabled with Postgres omitted -> same rule.
+        let err = super::Storage::resolve(Some(&s(None, None, None, Some(true)))).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("DuckLake is not supported as a single storage yet"),
+            "Unexpected error: {err}"
+        );
+
         // All storages disabled -> user-friendly error
-        let err = super::Storage::resolve(Some(&s(Some(false), Some(false), None))).unwrap_err();
+        let err =
+            super::Storage::resolve(Some(&s(Some(false), Some(false), None, None))).unwrap_err();
         assert!(
             err.to_string()
                 .contains("At least one storage backend must be enabled"),
@@ -2690,7 +2725,7 @@ mod test {
         );
 
         // postgres explicitly false with clickhouse omitted -> same error
-        let err = super::Storage::resolve(Some(&s(Some(false), None, None))).unwrap_err();
+        let err = super::Storage::resolve(Some(&s(Some(false), None, None, None))).unwrap_err();
         assert!(
             err.to_string()
                 .contains("At least one storage backend must be enabled"),
@@ -2731,6 +2766,7 @@ mod test {
                 postgres: true,
                 clickhouse: false,
                 duckdb: false,
+                ducklake: false,
             };
             assert!(validate_entity_storage(&storage, &schema).is_ok());
         }
@@ -2742,6 +2778,7 @@ mod test {
                 postgres: true,
                 clickhouse: false,
                 duckdb: false,
+                ducklake: false,
             };
             assert!(validate_entity_storage(&storage, &schema).is_ok());
         }
@@ -2754,6 +2791,7 @@ mod test {
                 postgres: true,
                 clickhouse: false,
                 duckdb: false,
+                ducklake: false,
             };
             let err = validate_entity_storage(&storage, &schema).unwrap_err();
             assert_eq!(
@@ -2779,6 +2817,7 @@ mod test {
                 postgres: true,
                 clickhouse: true,
                 duckdb: false,
+                ducklake: false,
             };
             assert!(validate_entity_storage(&storage, &schema).is_ok());
         }
@@ -2794,6 +2833,7 @@ mod test {
                 postgres: true,
                 clickhouse: true,
                 duckdb: false,
+                ducklake: false,
             };
             let err = validate_entity_storage(&storage, &schema).unwrap_err();
             assert_eq!(
@@ -2826,6 +2866,7 @@ mod test {
                 postgres: true,
                 clickhouse: true,
                 duckdb: false,
+                ducklake: false,
             };
             let err = validate_entity_storage(&storage, &schema).unwrap_err();
             assert!(

@@ -47,9 +47,28 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
   }
 }
 
-// DuckDB is a full mirror of every persisted entity, backed by a local file.
-// The connection is opened lazily because instance/connect are async and the
-// file path's parent directory must exist first.
+// DuckDB / DuckLake are full mirrors of every persisted entity. Both run the
+// same DDL/DML; they differ only in how the connection is opened, so the sink
+// body is shared and each variant supplies its own lazy connection factory.
+let makeDuckSink = (~name, ~getConn): t => {
+  name,
+  shouldStoreEntity: _ => true,
+  initialize: async (~chainConfigs as _=[], ~entities=[], ~enums as _=[]) => {
+    let conn = await getConn()
+    await DuckDb.initialize(conn, ~entities)
+  },
+  resume: async (~checkpointId) => {
+    let conn = await getConn()
+    await DuckDb.resume(conn, ~checkpointId)
+  },
+  writeBatch: async (~batch, ~updatedEntities) => {
+    let conn = await getConn()
+    await DuckDb.writeBatch(conn, ~batch, ~updatedEntities)
+  },
+}
+
+// Single local file. Single-writer: external readers are locked out while the
+// indexer runs.
 let makeDuckDb = (~path): t => {
   let connRef = ref(None)
   let getConn = async () =>
@@ -63,21 +82,41 @@ let makeDuckDb = (~path): t => {
       connRef := Some(p)
       await p
     }
+  makeDuckSink(~name="duckdb", ~getConn)
+}
 
-  {
-    name: "duckdb",
-    shouldStoreEntity: _ => true,
-    initialize: async (~chainConfigs as _=[], ~entities=[], ~enums as _=[]) => {
-      let conn = await getConn()
-      await DuckDb.initialize(conn, ~entities)
-    },
-    resume: async (~checkpointId) => {
-      let conn = await getConn()
-      await DuckDb.resume(conn, ~checkpointId)
-    },
-    writeBatch: async (~batch, ~updatedEntities) => {
-      let conn = await getConn()
-      await DuckDb.writeBatch(conn, ~batch, ~updatedEntities)
-    },
-  }
+// DuckLake: Parquet data files + a SQLite catalog under `dir`. The DuckDB
+// engine is in-memory (just the attach point); persistence lives in the
+// catalog + Parquet files, which lets other processes read concurrently while
+// the indexer writes. The ducklake/sqlite extensions are installed on first
+// run (needs network).
+let makeDuckLake = (~dir): t => {
+  let connRef = ref(None)
+  let getConn = async () =>
+    switch connRef.contents {
+    | Some(p) => await p
+    | None =>
+      let dirPath = NodeJs.Path.resolve([dir])
+      let filesPath = dirPath->NodeJs.Path.join("files")
+      let catalogStr = dirPath->NodeJs.Path.join("catalog.sqlite")->NodeJs.Path.toString
+      let filesStr = filesPath->NodeJs.Path.toString
+      let p =
+        NodeJs.Fs.Promises.mkdir(~path=filesPath, ~options={recursive: true})
+        ->Promise.then(() => DuckDb.createInstance(":memory:"))
+        ->Promise.then(instance => instance->DuckDb.connect)
+        ->Promise.then(async conn => {
+          await conn->DuckDb.run("INSTALL ducklake")
+          await conn->DuckDb.run("INSTALL sqlite")
+          await conn->DuckDb.run("LOAD ducklake")
+          await conn->DuckDb.run("LOAD sqlite")
+          await conn->DuckDb.run(
+            `ATTACH 'ducklake:sqlite:${catalogStr}' AS envio_lake (DATA_PATH '${filesStr}/')`,
+          )
+          await conn->DuckDb.run("USE envio_lake")
+          conn
+        })
+      connRef := Some(p)
+      await p
+    }
+  makeDuckSink(~name="ducklake", ~getConn)
 }

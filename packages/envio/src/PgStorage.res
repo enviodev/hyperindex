@@ -1765,6 +1765,17 @@ let makeStorageFromEnv = (
         sinks->Array.push(Sink.makeDuckDb(~path))->ignore
       }
 
+      // DuckLake syncs to Parquet + a SQLite catalog under a directory, which
+      // allows concurrent reads while indexing. Dir comes from
+      // ENVIO_DUCKLAKE_PATH, or defaults to the project's .envio directory.
+      if config.storage.ducklake {
+        let dir = switch Env.DuckLake.path() {
+        | Some(p) => p
+        | None => NodeJs.Path.resolve([".envio", "ducklake"])->NodeJs.Path.toString
+        }
+        sinks->Array.push(Sink.makeDuckLake(~dir))->ignore
+      }
+
       sinks
     },
     ~onInitialize=?{

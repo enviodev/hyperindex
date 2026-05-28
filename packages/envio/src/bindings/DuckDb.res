@@ -121,7 +121,7 @@ let initialize = async (conn, ~entities: array<Internal.entityConfig>) => {
   try {
     // Wipe the dedicated Envio file for a clean slate. Drop views before
     // tables so view→table dependencies don't block the drops.
-    let existing = await conn->runAndReadAll(`SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'main'`)
+    let existing = await conn->runAndReadAll(`SELECT table_name, table_type FROM information_schema.tables WHERE table_catalog = current_database() AND table_schema = 'main'`)
     let rows: array<{"table_name": string, "table_type": string}> = existing->getRowObjects
     let (views, tables) = rows->Belt.Array.partition(r => r["table_type"] === "VIEW")
     await views
@@ -156,7 +156,7 @@ let resume = async (conn, ~checkpointId: Internal.checkpointId) => {
   try {
     let id = checkpointId->BigInt.toString
     let tablesResult = await conn->runAndReadAll(
-      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_name LIKE '${EntityHistory.historyTablePrefix}%'`,
+      `SELECT table_name FROM information_schema.tables WHERE table_catalog = current_database() AND table_schema = 'main' AND table_name LIKE '${EntityHistory.historyTablePrefix}%'`,
     )
     let tables: array<{"table_name": string}> = tablesResult->getRowObjects
     await tables

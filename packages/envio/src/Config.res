@@ -58,6 +58,7 @@ type storage = {
   postgres: bool,
   clickhouse: bool,
   duckdb: bool,
+  ducklake: bool,
 }
 
 type contractHandler = {
@@ -459,6 +460,7 @@ let publicConfigStorageSchema = S.schema(s =>
     "postgres": s.matches(S.bool),
     "clickhouse": s.matches(S.option(S.bool)),
     "duckdb": s.matches(S.option(S.bool)),
+    "ducklake": s.matches(S.option(S.bool)),
   }
 )
 
@@ -776,6 +778,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     postgres: publicConfig["storage"]["postgres"],
     clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
     duckdb: publicConfig["storage"]["duckdb"]->Option.getOr(false),
+    ducklake: publicConfig["storage"]["ducklake"]->Option.getOr(false),
   }
 
   let userEntities =

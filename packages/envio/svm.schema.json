@@ -91,6 +91,13 @@
             "boolean",
             "null"
           ]
+        },
+        "ducklake": {
+          "description": "Whether to additionally sync the indexed data to a local DuckLake (Parquet + SQLite catalog), which allows concurrent reads while indexing. Requires Postgres to be enabled (default: false).",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,
@@ -138,6 +145,28 @@
             },
             "required": [
               "duckdb"
+            ]
+          },
+          "then": {
+            "properties": {
+              "postgres": {
+                "const": true
+              }
+            },
+            "required": [
+              "postgres"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "ducklake": {
+                "const": true
+              }
+            },
+            "required": [
+              "ducklake"
             ]
           },
           "then": {

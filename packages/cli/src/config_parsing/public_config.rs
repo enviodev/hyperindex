@@ -55,6 +55,8 @@ struct StorageConfig {
     clickhouse: bool,
     #[serde(skip_serializing_if = "is_false")]
     duckdb: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    ducklake: bool,
 }
 
 impl From<&system_config::Storage> for StorageConfig {
@@ -63,6 +65,7 @@ impl From<&system_config::Storage> for StorageConfig {
             postgres: s.postgres,
             clickhouse: s.clickhouse,
             duckdb: s.duckdb,
+            ducklake: s.ducklake,
         }
     }
 }

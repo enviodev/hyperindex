@@ -99,6 +99,8 @@ pub struct StorageConfig {
     pub clickhouse: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duckdb: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ducklake: Option<bool>,
 }
 
 // Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
@@ -127,6 +129,13 @@ impl JsonSchema for StorageConfig {
                     "description": "Whether to additionally sync the indexed data to a local \
                                     DuckDB file. Requires Postgres to be enabled (default: false).",
                     "type": ["boolean", "null"]
+                },
+                "ducklake": {
+                    "description": "Whether to additionally sync the indexed data to a local \
+                                    DuckLake (Parquet + SQLite catalog), which allows concurrent \
+                                    reads while indexing. Requires Postgres to be enabled \
+                                    (default: false).",
+                    "type": ["boolean", "null"]
                 }
             },
             "additionalProperties": false,
@@ -136,8 +145,9 @@ impl JsonSchema for StorageConfig {
             //      to all-backends-disabled.
             //   2. `clickhouse: true` without an explicit `postgres: true` —
             //      the user must opt in to Postgres alongside ClickHouse.
-            //   3. `duckdb: true` without an explicit `postgres: true` —
-            //      same rule: DuckDB is a sink layered on Postgres.
+            //   3. `duckdb: true` / `ducklake: true` without an explicit
+            //      `postgres: true` — same rule: they are sinks layered on
+            //      Postgres.
             "allOf": [
                 {
                     "not": {
@@ -167,6 +177,20 @@ impl JsonSchema for StorageConfig {
                             "duckdb": { "const": true }
                         },
                         "required": ["duckdb"]
+                    },
+                    "then": {
+                        "properties": {
+                            "postgres": { "const": true }
+                        },
+                        "required": ["postgres"]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "ducklake": { "const": true }
+                        },
+                        "required": ["ducklake"]
                     },
                     "then": {
                         "properties": {
@@ -1315,6 +1339,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 postgres: Some(true),
                 clickhouse: Some(true),
                 duckdb: None,
+                ducklake: None,
             }
         );
 
@@ -1327,6 +1352,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 postgres: None,
                 clickhouse: Some(true),
                 duckdb: None,
+                ducklake: None,
             }
         );
 
@@ -1339,6 +1365,20 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 postgres: Some(true),
                 clickhouse: None,
                 duckdb: Some(true),
+                ducklake: None,
+            }
+        );
+
+        // DuckLake set
+        let yaml = "postgres: true\nducklake: true\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: Some(true),
+                clickhouse: None,
+                duckdb: None,
+                ducklake: Some(true),
             }
         );
 
@@ -1370,6 +1410,7 @@ chains:
                 postgres: Some(true),
                 clickhouse: Some(true),
                 duckdb: None,
+                ducklake: None,
             })
         );
     }
