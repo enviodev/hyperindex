@@ -349,7 +349,7 @@ let validatePartitionQueryResponse = (
     latestFetchedBlockNumber,
     stats,
     knownHeight,
-    reorgGuard,
+    blockHashes,
     fromBlockQueried,
   } = response
 
@@ -373,7 +373,7 @@ let validatePartitionQueryResponse = (
   )
 
   let (updatedReorgDetection, reorgResult: ReorgDetection.reorgResult) =
-    chainFetcher.reorgDetection->ReorgDetection.registerReorgGuard(~reorgGuard, ~knownHeight)
+    chainFetcher.reorgDetection->ReorgDetection.registerReorgGuard(~blockHashes, ~knownHeight)
 
   let updatedChainFetcher = {
     ...chainFetcher,
@@ -1036,6 +1036,10 @@ let injectedTaskReducer = (
           dispatchAction(StartFindingReorgDepth)
           let rollbackTargetBlockNumber = await chainFetcher->getLastKnownValidBlock(
             ~reorgBlockNumber,
+          )
+
+          chainFetcher.sourceManager->SourceManager.onReorg(
+            ~rollbackTargetBlock=rollbackTargetBlockNumber,
           )
 
           dispatchAction(FindReorgDepth({chain, rollbackTargetBlockNumber}))

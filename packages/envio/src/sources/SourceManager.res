@@ -36,6 +36,15 @@ type t = {
 
 let getActiveSource = sourceManager => sourceManager.activeSource
 
+let onReorg = (sourceManager: t, ~rollbackTargetBlock) => {
+  sourceManager.sourcesState->Array.forEach(({source}) => {
+    switch source.onReorg {
+    | Some(cb) => cb(~rollbackTargetBlock)
+    | None => ()
+    }
+  })
+}
+
 type sourceRole = Primary | Secondary
 
 // Determines whether a source is Primary or Secondary given the current mode.

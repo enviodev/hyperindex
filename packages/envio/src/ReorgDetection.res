@@ -12,11 +12,6 @@ type blockData = {
 
 external generalizeBlockDataWithTimestamp: blockDataWithTimestamp => blockData = "%identity"
 
-type reorgGuard = {
-  rangeLastBlock: blockData,
-  prevRangeLastBlock: option<blockData>,
-}
-
 type reorgDetected = {
   scannedBlock: blockData,
   receivedBlock: blockData,
@@ -94,75 +89,57 @@ let getDataByBlockNumberCopyInThreshold = ({dataByBlockNumber, maxReorgDepth}: t
   copy
 }
 
-/** Registers a new reorg guard, prunes unneeded data, and returns the updated state.
- * Resets internal state if shouldRollbackOnReorg is false (detect-only mode)
-  */
+/** Registers observed (blockNumber, blockHash) pairs from a range fetch, prunes
+ * unneeded data, and returns the updated state.
+ *
+ * Iterates the provided block hashes, skips entries outside the reorg threshold,
+ * and compares each one against the previously scanned data. Returns on the first
+ * mismatch as `ReorgDetected`.
+ *
+ * Resets internal state if shouldRollbackOnReorg is false (detect-only mode).
+ */
 let registerReorgGuard = (
   {maxReorgDepth, shouldRollbackOnReorg} as self: t,
-  ~reorgGuard: reorgGuard,
+  ~blockHashes: array<blockData>,
   ~knownHeight,
 ) => {
   let dataByBlockNumberCopyInThreshold = self->getDataByBlockNumberCopyInThreshold(~knownHeight)
+  let thresholdBlockNumber = knownHeight - maxReorgDepth
 
-  let {rangeLastBlock, prevRangeLastBlock} = reorgGuard
-
-  let maybeReorgDetected = switch dataByBlockNumberCopyInThreshold->Utils.Dict.dangerouslyGetNonOption(
-    rangeLastBlock.blockNumber->Int.toString,
-  ) {
-  | Some(scannedBlock) if scannedBlock.blockHash !== rangeLastBlock.blockHash =>
-    Some({
-      receivedBlock: rangeLastBlock,
-      scannedBlock,
-    })
-  | _ =>
-    switch prevRangeLastBlock {
-    //If parentHash is None, then it's the genesis block (no reorg)
-    //Need to check that parentHash matches because of the dynamic contracts
-    | None => None
-    | Some(prevRangeLastBlock) =>
-      switch dataByBlockNumberCopyInThreshold->Utils.Dict.dangerouslyGetNonOption(
-        prevRangeLastBlock.blockNumber->Int.toString,
-      ) {
-      | Some(scannedBlock) if scannedBlock.blockHash !== prevRangeLastBlock.blockHash =>
-        Some({
-          receivedBlock: prevRangeLastBlock,
-          scannedBlock,
-        })
-      | _ => None
+  let maybeReorgDetected = ref(None)
+  let idx = ref(0)
+  while maybeReorgDetected.contents === None && idx.contents < blockHashes->Array.length {
+    let receivedBlock = blockHashes->Array.getUnsafe(idx.contents)
+    if receivedBlock.blockNumber >= thresholdBlockNumber {
+      let key = receivedBlock.blockNumber->Int.toString
+      // The working copy contains both previously scanned blocks AND blocks
+      // already written by earlier iterations of this same call, so a duplicate
+      // block number with a mismatching hash inside `blockHashes` itself is
+      // flagged as a reorg.
+      switch dataByBlockNumberCopyInThreshold->Utils.Dict.dangerouslyGetNonOption(key) {
+      | Some(scannedBlock) if scannedBlock.blockHash !== receivedBlock.blockHash =>
+        maybeReorgDetected := Some({receivedBlock, scannedBlock})
+      | _ => dataByBlockNumberCopyInThreshold->Dict.set(key, receivedBlock)
       }
     }
+    idx := idx.contents + 1
   }
 
-  switch maybeReorgDetected {
+  switch maybeReorgDetected.contents {
   | Some(reorgDetected) => (
       shouldRollbackOnReorg
         ? self
         : make(~chainReorgCheckpoints=[], ~maxReorgDepth, ~shouldRollbackOnReorg),
       ReorgDetected(reorgDetected),
     )
-  | None => {
-      dataByBlockNumberCopyInThreshold->Dict.set(
-        rangeLastBlock.blockNumber->Int.toString,
-        rangeLastBlock,
-      )
-      switch prevRangeLastBlock {
-      | None => ()
-      | Some(prevRangeLastBlock) =>
-        dataByBlockNumberCopyInThreshold->Dict.set(
-          prevRangeLastBlock.blockNumber->Int.toString,
-          prevRangeLastBlock,
-        )
-      }
-
-      (
-        {
-          maxReorgDepth,
-          dataByBlockNumber: dataByBlockNumberCopyInThreshold,
-          shouldRollbackOnReorg,
-        },
-        NoReorg,
-      )
-    }
+  | None => (
+      {
+        maxReorgDepth,
+        dataByBlockNumber: dataByBlockNumberCopyInThreshold,
+        shouldRollbackOnReorg,
+      },
+      NoReorg,
+    )
   }
 }
 
