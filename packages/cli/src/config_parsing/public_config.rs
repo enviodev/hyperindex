@@ -562,6 +562,7 @@ impl SystemConfig {
                     let svm_abi = match &contract.abi {
                         Abi::Svm(SvmAbi {
                             program_id,
+                            instructions: _,
                             defined_types,
                             source,
                         }) => Some(SvmAbiJson {

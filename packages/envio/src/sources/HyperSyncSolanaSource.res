@@ -114,12 +114,19 @@ let buildSchemaHandles = (
       let hasSchema = ec.accounts->Array.length > 0 || ec.args !== JSON.Null
       let discriminator = ec.discriminator->Option.getOr("")
       if hasSchema && discriminator !== "" {
+        // Inline-schema programs declare no custom types, so `definedTypes`
+        // arrives as JSON.Null; the Rust descriptor's `#[serde(default)]` only
+        // covers an absent field, not an explicit null, so coalesce here.
+        let definedTypes = switch ec.definedTypes {
+        | JSON.Null => JSON.Object(Dict.make())
+        | other => other
+        }
         let existing = descriptorsByProgram->Dict.get(programIdString)
         let descriptor = switch existing {
         | Some(d) => d
         | None => {
             "programId": programIdString,
-            "definedTypes": ec.definedTypes,
+            "definedTypes": definedTypes,
             "instructions": [],
           }
         }

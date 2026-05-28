@@ -37,7 +37,8 @@ use std::{
 
 use hypersync_client_solana::decode::{
     metaplex_token_metadata, schema_from_anchor_idl_json, EnumVariant as SvmEnumVariant,
-    FieldType as SvmFieldType, NamedField as SvmNamedField, ProgramSchema as SvmProgramSchema,
+    FieldType as SvmFieldType, InstructionSchema as SvmInstructionSchema,
+    NamedField as SvmNamedField, ProgramSchema as SvmProgramSchema,
 };
 
 type ContractNameKey = String;
@@ -1010,8 +1011,6 @@ impl SystemConfig {
                                     program.name, program.program_id
                                 )
                             })?;
-                        let program_schema = lookup_program_schema(&svm_abi);
-
                         let events = program
                             .instructions
                             .iter()
@@ -1025,15 +1024,10 @@ impl SystemConfig {
                                         }
                                         None => (None, 0u8),
                                     };
-                                let (accounts, args) = resolve_instruction_layout(
-                                    program,
-                                    instr,
-                                    program_schema,
-                                    &svm_abi.source,
-                                )
-                                .with_context(|| {
-                                    format!("Layout for instruction '{}'", instr.name)
-                                })?;
+                                let (accounts, args) = resolve_instruction_layout(instr, &svm_abi)
+                                    .with_context(|| {
+                                        format!("Layout for instruction '{}'", instr.name)
+                                    })?;
                                 let fs = instr.field_selection.as_ref();
                                 let include_token_balances = fs
                                     .and_then(|f| f.token_balance_fields.as_ref())
@@ -1516,6 +1510,7 @@ fn resolve_program_schema(
             .with_context(|| format!("parsing IDL at '{}'", abs.display()))?;
         return Ok(SvmAbi {
             program_id: program.program_id.clone(),
+            instructions: schema.instructions,
             defined_types: schema.defined_types,
             source: SvmSchemaSource::AnchorIdl {
                 path: idl_path.to_string(),
@@ -1531,6 +1526,7 @@ fn resolve_program_schema(
             let schema = getter();
             return Ok(SvmAbi {
                 program_id: program.program_id.clone(),
+                instructions: schema.instructions.clone(),
                 defined_types: schema.defined_types.clone(),
                 source: SvmSchemaSource::Bundled { name },
             });
@@ -1539,32 +1535,21 @@ fn resolve_program_schema(
 
     Ok(SvmAbi {
         program_id: program.program_id.clone(),
+        instructions: BTreeMap::new(),
         defined_types: BTreeMap::new(),
         source: SvmSchemaSource::Inline,
     })
 }
 
-fn lookup_program_schema(abi: &SvmAbi) -> Option<&'static SvmProgramSchema> {
-    match abi.source {
-        SvmSchemaSource::Bundled { .. } => bundled_program_schemas()
-            .into_iter()
-            .find(|(pid, _, _)| *pid == abi.program_id.as_str())
-            .map(|(_, _, getter)| getter()),
-        _ => None,
-    }
-}
-
 /// Resolve per-instruction `(accounts, args)` from one of:
 /// 1. YAML per-instruction `accounts`/`args` overrides (highest priority).
-/// 2. The matching `InstructionSchema` on a bundled `ProgramSchema`, keyed
-///    by the YAML `discriminator` bytes.
+/// 2. The matching `InstructionSchema` on the program's resolved schema
+///    (bundled OR Anchor IDL), keyed by the YAML `discriminator` bytes.
 /// 3. An empty pair (`accounts: []`, `args: []`) so existing untyped
 ///    handlers keep working.
 fn resolve_instruction_layout(
-    _program: &human_config::svm::Program,
     instr: &human_config::svm::Instruction,
-    program_schema: Option<&SvmProgramSchema>,
-    source: &SvmSchemaSource,
+    abi: &SvmAbi,
 ) -> Result<(Vec<String>, Vec<SvmNamedField>)> {
     if let (Some(accounts_yaml), Some(args_yaml)) = (&instr.accounts, &instr.args) {
         let args = args_yaml
@@ -1581,15 +1566,11 @@ fn resolve_instruction_layout(
         ));
     }
 
-    if let (Some(schema), SvmSchemaSource::Bundled { .. } | SvmSchemaSource::AnchorIdl { .. }) =
-        (program_schema, source)
-    {
-        if let Some(disc_bytes) = disc_to_bytes(instr.discriminator.as_deref())? {
-            if let Some(ix_schema) = schema.instructions.get(&disc_bytes) {
-                let accounts = ix_schema.accounts.iter().map(|a| a.name.clone()).collect();
-                let args = ix_schema.args.clone();
-                return Ok((accounts, args));
-            }
+    if let Some(disc_bytes) = disc_to_bytes(instr.discriminator.as_deref())? {
+        if let Some(ix_schema) = abi.instructions.get(&disc_bytes) {
+            let accounts = ix_schema.accounts.iter().map(|a| a.name.clone()).collect();
+            let args = ix_schema.args.clone();
+            return Ok((accounts, args));
         }
     }
 
@@ -1753,6 +1734,10 @@ pub enum Abi {
 pub struct SvmAbi {
     /// Base58 program id this schema describes.
     pub program_id: String,
+    /// Per-instruction Borsh layout (accounts + args), keyed by full
+    /// discriminator bytes. Populated from an Anchor IDL's `instructions` or the
+    /// bundled-schema registry; empty for inline (per-instruction YAML) schemas.
+    pub instructions: BTreeMap<Vec<u8>, SvmInstructionSchema>,
     /// Nominal-type registry referenced by `SvmFieldType::Defined`. Populated
     /// from an Anchor IDL's `types:` block, the bundled-schema registry, or
     /// empty for hand-written ad-hoc schemas.
