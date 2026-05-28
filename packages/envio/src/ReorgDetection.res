@@ -100,21 +100,22 @@ let getDataByBlockNumberCopyInThreshold = ({dataByBlockNumber, maxReorgDepth}: t
  */
 let registerReorgGuard = (
   {maxReorgDepth, shouldRollbackOnReorg} as self: t,
-  ~blockHashes: dict<blockData>,
+  ~blockHashes: array<blockData>,
   ~knownHeight,
 ) => {
   let dataByBlockNumberCopyInThreshold = self->getDataByBlockNumberCopyInThreshold(~knownHeight)
   let thresholdBlockNumber = knownHeight - maxReorgDepth
 
-  // Js engine orders numeric object keys ascending, matching the iteration
-  // order of the internal dataByBlockNumber map.
-  let keys = blockHashes->Dict.keysToArray
   let maybeReorgDetected = ref(None)
   let idx = ref(0)
-  while maybeReorgDetected.contents === None && idx.contents < keys->Array.length {
-    let key = keys->Array.getUnsafe(idx.contents)
-    let receivedBlock = blockHashes->Dict.getUnsafe(key)
+  while maybeReorgDetected.contents === None && idx.contents < blockHashes->Array.length {
+    let receivedBlock = blockHashes->Array.getUnsafe(idx.contents)
     if receivedBlock.blockNumber >= thresholdBlockNumber {
+      let key = receivedBlock.blockNumber->Int.toString
+      // The working copy contains both previously scanned blocks AND blocks
+      // already written by earlier iterations of this same call, so a duplicate
+      // block number with a mismatching hash inside `blockHashes` itself is
+      // flagged as a reorg.
       switch dataByBlockNumberCopyInThreshold->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(scannedBlock) if scannedBlock.blockHash !== receivedBlock.blockHash =>
         maybeReorgDetected := Some({receivedBlock, scannedBlock})

@@ -735,7 +735,14 @@ module Source = {
                   | Some(latestFetchedBlockHash) => latestFetchedBlockHash
                   | None => `0x${latestFetchedBlockNumber->Int.toString}`
                   }
-                  let blockHashes = Dict.make()
+                  let blockHashes = [
+                    (
+                      {
+                        blockNumber: latestFetchedBlockNumber,
+                        blockHash: latestFetchedBlockHash,
+                      }: ReorgDetection.blockData
+                    ),
+                  ]
                   let prevEntry = switch prevRangeLastBlock {
                   | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
                   | None =>
@@ -753,13 +760,9 @@ module Source = {
                     }
                   }
                   switch prevEntry {
-                  | Some(prev) => blockHashes->Dict.set(prev.blockNumber->Int.toString, prev)
+                  | Some(prev) => blockHashes->Array.unshift(prev)->ignore
                   | None => ()
                   }
-                  blockHashes->Dict.set(
-                    latestFetchedBlockNumber->Int.toString,
-                    {blockNumber: latestFetchedBlockNumber, blockHash: latestFetchedBlockHash},
-                  )
                   resolve({
                     Source.knownHeight,
                     blockHashes,

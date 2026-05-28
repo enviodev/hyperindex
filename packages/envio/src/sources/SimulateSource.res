@@ -39,7 +39,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       let reportedHeight = max(endBlock, 1)
       Promise.resolve({
         Source.knownHeight: reportedHeight,
-        blockHashes: Dict.make(),
+        blockHashes: [],
         parsedQueueItems: result,
         fromBlockQueried: 0,
         latestFetchedBlockNumber: reportedHeight,

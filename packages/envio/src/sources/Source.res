@@ -12,10 +12,11 @@ Thes response returned from a block range fetch
 */
 type blockRangeFetchResponse = {
   knownHeight: int,
-  // Best-effort (blockNumber, blockHash) pairs observed while fetching this range,
-  // keyed by blockNumber as string. Used by reorg detection; gaps are OK, no
-  // extra requests are made to fill them.
-  blockHashes: dict<ReorgDetection.blockData>,
+  // Best-effort (blockNumber, blockHash) pairs observed while fetching this range.
+  // Used by reorg detection; gaps are OK, no extra requests are made to fill them.
+  // Duplicates with the same block number are allowed — registerReorgGuard treats
+  // a within-array hash mismatch on the same block number as a reorg.
+  blockHashes: array<ReorgDetection.blockData>,
   parsedQueueItems: array<Internal.item>,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,

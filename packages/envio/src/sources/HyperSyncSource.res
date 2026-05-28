@@ -407,21 +407,26 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
 
     // Collect (blockNumber, blockHash) pairs we already have from the response —
     // one per item's block plus, when present, the rollbackGuard's head block
-    // and the parent of the range's first block.
-    let blockHashes = Dict.make()
-    let setBlockHash = (blockNumber, blockHash) =>
-      blockHashes->Dict.set(blockNumber->Int.toString, {ReorgDetection.blockNumber, blockHash})
+    // and the parent of the range's first block. Duplicates are allowed; reorg
+    // detection notices same-block-number-different-hash collisions itself.
+    let blockHashes = []
     pageUnsafe.items->Belt.Array.forEach(({block}) => {
       switch (block.number, block.hash) {
-      | (Some(blockNumber), Some(blockHash)) => setBlockHash(blockNumber, blockHash)
+      | (Some(blockNumber), Some(blockHash)) =>
+        blockHashes->Array.push({ReorgDetection.blockNumber, blockHash})->ignore
       | _ => ()
       }
     })
     switch pageUnsafe.rollbackGuard {
     | None => ()
     | Some({blockNumber, hash, firstBlockNumber, firstParentHash}) => {
-        setBlockHash(blockNumber, hash)
-        setBlockHash(firstBlockNumber - 1, firstParentHash)
+        blockHashes->Array.push({ReorgDetection.blockNumber, blockHash: hash})->ignore
+        blockHashes
+        ->Array.push({
+          ReorgDetection.blockNumber: firstBlockNumber - 1,
+          blockHash: firstParentHash,
+        })
+        ->ignore
       }
     }
 

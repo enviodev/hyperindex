@@ -71,13 +71,11 @@ describe("Validate reorg detection functions", () => {
     ).toEqual([50, 300, 500])
   })
 
-  let makeBlocks = (entries): dict<ReorgDetection.blockData> => {
-    let d = Dict.make()
-    entries->Array.forEach(((blockNumber, blockHash)) =>
-      d->Dict.set(blockNumber->Int.toString, {ReorgDetection.blockNumber, blockHash})
-    )
-    d
-  }
+  let makeBlocks = (entries): array<ReorgDetection.blockData> =>
+    entries->Array.map(((blockNumber, blockHash)) => {
+      ReorgDetection.blockNumber,
+      blockHash,
+    })
 
   it("The registerReorgGuard should correctly add scanned data", t => {
     let knownHeight = 500
@@ -243,6 +241,47 @@ describe("Validate reorg detection functions", () => {
       }),
     ))
   })
+
+  it(
+    "Should detect reorg when blockHashes contains the same block number with different hashes",
+    t => {
+      let blockHashes = makeBlocks([(10, "0x10"), (10, "0x10-different")])
+
+      t.expect(
+        mock([], ~maxReorgDepth=2)->ReorgDetection.registerReorgGuard(
+          ~blockHashes,
+          ~knownHeight=10,
+        ),
+        ~message="The first entry writes 0x10 into the working copy; the second entry collides on block 10 with a different hash, so we treat it as a reorg.",
+      ).toEqual((
+        mock([], ~maxReorgDepth=2),
+        ReorgDetected({
+          scannedBlock: {
+            blockNumber: 10,
+            blockHash: "0x10",
+          },
+          receivedBlock: {
+            blockNumber: 10,
+            blockHash: "0x10-different",
+          },
+        }),
+      ))
+    },
+  )
+
+  it(
+    "Duplicate block numbers with the same hash inside blockHashes are accepted",
+    t => {
+      let blockHashes = makeBlocks([(10, "0x10"), (10, "0x10")])
+
+      let reorgDetection =
+        mock([], ~maxReorgDepth=2)
+        ->ReorgDetection.registerReorgGuard(~blockHashes, ~knownHeight=10)
+        ->pipeNoReorg
+
+      t.expect(reorgDetection).toEqual(mock([(10, "0x10")], ~maxReorgDepth=2))
+    },
+  )
 
   it("rollbackToValidBlockNumber works as expected", t => {
     let reorgDetection = mock(scannedHashesFixture, ~maxReorgDepth=200)
