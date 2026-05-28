@@ -250,3 +250,26 @@ FROM co_programs cp
 LEFT JOIN public.v_tx_value v ON v.tx_sig = cp.tx_sig
 GROUP BY cp.program
 ORDER BY tx_count DESC, total_gross_usd DESC;
+
+-- v_protocol_contagion: generalized contagion for ANY hub program (not just
+-- Drift). For each hub_program, the other programs sharing a tx with it, ranked
+-- by tx_count + value. This is the Ring-3 /contagion sankey source that has LIVE
+-- data on the current (Drift-less) endpoint - filter hub_program='Jupiter' for
+-- the live cross-DEX contagion, or 'Drift' for the headline once Drift data lands
+-- (then it matches mv_drift_contagion). Symmetric pairs (A->B and B->A both
+-- present) let the frontend pick any hub.
+CREATE OR REPLACE VIEW public.v_protocol_contagion AS
+WITH tx_programs AS (
+  SELECT DISTINCT n."txSig" AS tx_sig, n."program" AS program
+  FROM public."InstructionNode" AS n
+)
+SELECT
+  a.program                          AS hub_program,
+  b.program                          AS touched_program,
+  count(DISTINCT a.tx_sig)           AS tx_count,
+  COALESCE(sum(v.gross_usd), 0)      AS total_gross_usd
+FROM tx_programs a
+JOIN tx_programs b ON a.tx_sig = b.tx_sig AND a.program <> b.program
+LEFT JOIN public.v_tx_value v ON v.tx_sig = a.tx_sig
+GROUP BY a.program, b.program
+ORDER BY a.program, tx_count DESC;
