@@ -7,6 +7,7 @@ type blockInfo = {
   number: int,
   timestamp: int,
   hash: string,
+  parentHash: string,
 }
 
 let getKnownRawBlock = async (~client, ~blockNumber) =>
@@ -28,6 +29,9 @@ let parseBlockInfo = (json: JSON.t): blockInfo => {
     ->S.parseOrThrow(Rpc.hexIntSchema),
     hash: jsonDict
     ->Dict.getUnsafe("hash")
+    ->S.parseOrThrow(S.string),
+    parentHash: jsonDict
+    ->Dict.getUnsafe("parentHash")
     ->S.parseOrThrow(S.string),
   }
 }
@@ -1181,6 +1185,14 @@ let make = (
         }: ReorgDetection.blockData
       ),
     ]
+    if latestFetchedBlockInfo.number > 0 {
+      blockHashes
+      ->Array.push({
+        ReorgDetection.blockNumber: latestFetchedBlockInfo.number - 1,
+        blockHash: latestFetchedBlockInfo.parentHash,
+      })
+      ->ignore
+    }
     logs->Belt.Array.forEach(log =>
       blockHashes
       ->Array.push({ReorgDetection.blockNumber: log.blockNumber, blockHash: log.blockHash})
