@@ -71,11 +71,13 @@ describe("Validate reorg detection functions", () => {
     ).toEqual([50, 300, 500])
   })
 
-  let makeBlocks = (entries): array<ReorgDetection.blockData> =>
-    entries->Array.map(((blockNumber, blockHash)) => {
-      ReorgDetection.blockNumber,
-      blockHash,
-    })
+  let makeBlocks = (entries): dict<ReorgDetection.blockData> => {
+    let d = Dict.make()
+    entries->Array.forEach(((blockNumber, blockHash)) =>
+      d->Dict.set(blockNumber->Int.toString, {ReorgDetection.blockNumber, blockHash})
+    )
+    d
+  }
 
   it("The registerReorgGuard should correctly add scanned data", t => {
     let knownHeight = 500
@@ -188,9 +190,11 @@ describe("Validate reorg detection functions", () => {
       blockHash: "0x10-invalid",
     }
 
+    let blockHashes = makeBlocks([(10, "0x10")])
+
     t.expect(
       mock([(10, "0x10-invalid")], ~shouldRollbackOnReorg=true)->ReorgDetection.registerReorgGuard(
-        ~blockHashes=[receivedBlock],
+        ~blockHashes,
         ~knownHeight=10,
       ),
     ).toEqual((
@@ -203,7 +207,7 @@ describe("Validate reorg detection functions", () => {
 
     t.expect(
       mock([(10, "0x10-invalid")], ~shouldRollbackOnReorg=false)->ReorgDetection.registerReorgGuard(
-        ~blockHashes=[receivedBlock],
+        ~blockHashes,
         ~knownHeight=10,
       ),
       ~message=`Correctly detects reorg when shouldRollbackOnReorg is false.

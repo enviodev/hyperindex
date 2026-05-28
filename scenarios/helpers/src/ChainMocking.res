@@ -244,17 +244,17 @@ module Make = () => {
     let heighstBlock = unfilteredBlocks->getLast->Option.getOrThrow
     let knownHeight = self->getHeight
 
-    let blockHashes = unfilteredBlocks->Array.map(b => {
-      ReorgDetection.blockNumber: b.blockNumber,
-      blockHash: b.blockHash,
-    })
+    let blockHashes = Dict.make()
+    let setBlockHash = (b: block) =>
+      blockHashes->Dict.set(
+        b.blockNumber->Int.toString,
+        {ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash},
+      )
     switch self->getBlock(~blockNumber=fromBlock - 1) {
-    | Some(b) =>
-      blockHashes
-      ->Array.unshift({ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
-      ->ignore
+    | Some(b) => setBlockHash(b)
     | None => ()
     }
+    unfilteredBlocks->Array.forEach(setBlockHash)
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
       let addresses = query.addressesByContractName->Dict.get(c.name)->Option.getOr([])

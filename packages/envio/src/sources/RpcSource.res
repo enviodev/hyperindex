@@ -1173,19 +1173,11 @@ let make = (
 
     let totalTimeElapsed = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    let blockHashes = []
-    let seenBlockNumbers = Dict.make()
-    let pushBlockHash = (blockNumber, blockHash) => {
-      let key = blockNumber->Int.toString
-      if !(seenBlockNumbers->Dict.has(key)) {
-        seenBlockNumbers->Dict.set(key, true)
-        blockHashes
-        ->Array.push({ReorgDetection.blockNumber, blockHash})
-        ->ignore
-      }
-    }
-    pushBlockHash(latestFetchedBlockInfo.number, latestFetchedBlockInfo.hash)
-    logs->Belt.Array.forEach(log => pushBlockHash(log.blockNumber, log.blockHash))
+    let blockHashes = Dict.make()
+    let setBlockHash = (blockNumber, blockHash) =>
+      blockHashes->Dict.set(blockNumber->Int.toString, {ReorgDetection.blockNumber, blockHash})
+    setBlockHash(latestFetchedBlockInfo.number, latestFetchedBlockInfo.hash)
+    logs->Belt.Array.forEach(log => setBlockHash(log.blockNumber, log.blockHash))
 
     {
       latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,

@@ -406,30 +406,22 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     // Collect (blockNumber, blockHash) pairs we already have from the response —
-    // one per item's block (deduped) plus, when present, the rollbackGuard's
-    // head block and the parent of the range's first block.
-    let blockHashes = []
-    let seenBlockNumbers = Dict.make()
-    let pushBlockHash = (blockNumber, blockHash) => {
-      let key = blockNumber->Int.toString
-      if !(seenBlockNumbers->Dict.has(key)) {
-        seenBlockNumbers->Dict.set(key, true)
-        blockHashes
-        ->Array.push({ReorgDetection.blockNumber, blockHash})
-        ->ignore
-      }
-    }
+    // one per item's block plus, when present, the rollbackGuard's head block
+    // and the parent of the range's first block.
+    let blockHashes = Dict.make()
+    let setBlockHash = (blockNumber, blockHash) =>
+      blockHashes->Dict.set(blockNumber->Int.toString, {ReorgDetection.blockNumber, blockHash})
     pageUnsafe.items->Belt.Array.forEach(({block}) => {
       switch (block.number, block.hash) {
-      | (Some(blockNumber), Some(blockHash)) => pushBlockHash(blockNumber, blockHash)
+      | (Some(blockNumber), Some(blockHash)) => setBlockHash(blockNumber, blockHash)
       | _ => ()
       }
     })
     switch pageUnsafe.rollbackGuard {
     | None => ()
     | Some({blockNumber, hash, firstBlockNumber, firstParentHash}) => {
-        pushBlockHash(blockNumber, hash)
-        pushBlockHash(firstBlockNumber - 1, firstParentHash)
+        setBlockHash(blockNumber, hash)
+        setBlockHash(firstBlockNumber - 1, firstParentHash)
       }
     }
 

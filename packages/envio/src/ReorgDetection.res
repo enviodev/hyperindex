@@ -100,27 +100,25 @@ let getDataByBlockNumberCopyInThreshold = ({dataByBlockNumber, maxReorgDepth}: t
  */
 let registerReorgGuard = (
   {maxReorgDepth, shouldRollbackOnReorg} as self: t,
-  ~blockHashes: array<blockData>,
+  ~blockHashes: dict<blockData>,
   ~knownHeight,
 ) => {
   let dataByBlockNumberCopyInThreshold = self->getDataByBlockNumberCopyInThreshold(~knownHeight)
   let thresholdBlockNumber = knownHeight - maxReorgDepth
 
+  // Js engine orders numeric object keys ascending, matching the iteration
+  // order of the internal dataByBlockNumber map.
+  let keys = blockHashes->Dict.keysToArray
   let maybeReorgDetected = ref(None)
   let idx = ref(0)
-  while maybeReorgDetected.contents === None && idx.contents < blockHashes->Array.length {
-    let receivedBlock = blockHashes->Array.getUnsafe(idx.contents)
+  while maybeReorgDetected.contents === None && idx.contents < keys->Array.length {
+    let key = keys->Array.getUnsafe(idx.contents)
+    let receivedBlock = blockHashes->Dict.getUnsafe(key)
     if receivedBlock.blockNumber >= thresholdBlockNumber {
-      switch dataByBlockNumberCopyInThreshold->Utils.Dict.dangerouslyGetNonOption(
-        receivedBlock.blockNumber->Int.toString,
-      ) {
+      switch dataByBlockNumberCopyInThreshold->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(scannedBlock) if scannedBlock.blockHash !== receivedBlock.blockHash =>
         maybeReorgDetected := Some({receivedBlock, scannedBlock})
-      | _ =>
-        dataByBlockNumberCopyInThreshold->Dict.set(
-          receivedBlock.blockNumber->Int.toString,
-          receivedBlock,
-        )
+      | _ => dataByBlockNumberCopyInThreshold->Dict.set(key, receivedBlock)
       }
     }
     idx := idx.contents + 1

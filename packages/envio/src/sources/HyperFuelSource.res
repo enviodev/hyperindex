@@ -415,16 +415,12 @@ let make = ({chain, endpointUrl}: options): t => {
 
     // Fuel never rolls back on reorg, so block hashes here are purely informational
     // for detect-only logging via ReorgDetection.
-    let blockHashes = []
-    let seenBlockNumbers = Dict.make()
+    let blockHashes = Dict.make()
     pageUnsafe.items->Belt.Array.forEach(({block}) => {
-      let key = block.height->Int.toString
-      if !(seenBlockNumbers->Dict.has(key)) {
-        seenBlockNumbers->Dict.set(key, true)
-        blockHashes
-        ->Array.push({ReorgDetection.blockNumber: block.height, blockHash: block.id})
-        ->ignore
-      }
+      blockHashes->Dict.set(
+        block.height->Int.toString,
+        {ReorgDetection.blockNumber: block.height, blockHash: block.id},
+      )
     })
 
     let latestFetchedBlockTimestamp = switch pageUnsafe.items->Belt.Array.get(
