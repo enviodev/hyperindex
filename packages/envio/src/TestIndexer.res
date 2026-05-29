@@ -43,76 +43,55 @@ let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingA
   registrationBlock: dc.registrationBlock,
 }
 
-let handleLoadByIds = (
-  state: testIndexerState,
-  ~tableName: string,
-  ~ids: array<string>,
-): JSON.t => {
+let handleLoadByIds = (state: testIndexerState, ~tableName: string, ~ids: array<string>): array<
+  Internal.entity,
+> => {
   let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
-  let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
   let results = []
   ids->Array.forEach(id => {
     switch entityDict->Dict.get(id) {
-    | Some(entity) =>
-      // Serialize entity back to JSON for worker thread
-      let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
-      results->Array.push(jsonEntity)->ignore
+    | Some(entity) => results->Array.push(entity)->ignore
     | None => ()
     }
   })
-  results->JSON.Encode.array
+  results
 }
 
 let handleLoadByField = (
   state: testIndexerState,
   ~tableName: string,
   ~fieldName: string,
-  ~fieldValue: JSON.t,
+  ~fieldValue: TableIndices.FieldValue.t,
   ~operator: Persistence.operator,
-): JSON.t => {
+): array<Internal.entity> => {
   let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
-  let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
   let results = []
 
-  // Get the field schema from the entity's table to properly parse the JSON field value
-  let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(fieldName) {
-  | Some(Table.Field({fieldSchema})) => fieldSchema
-  | _ => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
-  }
-
-  // Parse JSON field value to typed value using the field's schema
-  let parsedFieldValue = fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
-
-  // Compare using TableIndices.FieldValue logic (same approach as InMemoryTable)
-  // This properly handles bigint and BigDecimal comparisons
   entityDict
   ->Dict.valuesToArray
   ->Array.forEach(entity => {
-    // Cast entity to dict of field values (same approach as InMemoryTable)
     let entityAsDict = entity->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
     switch entityAsDict->Dict.get(fieldName) {
     | Some(entityFieldValue) => {
         let matches = switch operator {
-        | #"=" => entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
-        | #">" => entityFieldValue->TableIndices.FieldValue.gt(parsedFieldValue)
-        | #"<" => entityFieldValue->TableIndices.FieldValue.lt(parsedFieldValue)
+        | #"=" => entityFieldValue->TableIndices.FieldValue.eq(fieldValue)
+        | #">" => entityFieldValue->TableIndices.FieldValue.gt(fieldValue)
+        | #"<" => entityFieldValue->TableIndices.FieldValue.lt(fieldValue)
         }
         if matches {
-          // Serialize entity back to JSON for worker thread
-          let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
-          results->Array.push(jsonEntity)->ignore
+          results->Array.push(entity)->ignore
         }
       }
     | None => ()
     }
   })
 
-  results->JSON.Encode.array
+  results
 }
 
 let handleWriteBatch = (
   state: testIndexerState,
-  ~updatedEntities: array<TestIndexerProxyStorage.serializableUpdatedEntity>,
+  ~updatedEntities: array<Persistence.updatedEntity>,
   ~checkpointIds: array<bigint>,
   ~checkpointChainIds: array<int>,
   ~checkpointBlockNumbers: array<int>,
@@ -122,7 +101,8 @@ let handleWriteBatch = (
   // checkpointId -> entityName -> entityChange
   let changesByCheckpoint: dict<dict<entityChange>> = Dict.make()
 
-  updatedEntities->Array.forEach(({entityName, updates}) => {
+  updatedEntities->Array.forEach(({entityConfig, updates}: Persistence.updatedEntity) => {
+    let entityName = entityConfig.name
     let entityDict = switch state.entities->Dict.get(entityName) {
     | Some(dict) => dict
     | None =>
@@ -130,21 +110,13 @@ let handleWriteBatch = (
       state.entities->Dict.set(entityName, dict)
       dict
     }
-    let entityConfig = state.entityConfigs->Dict.getUnsafe(entityName)
 
     updates->Array.forEach(update => {
-      // Helper to process a single change (Set or Delete)
-      let processChange = (change: TestIndexerProxyStorage.serializableChange) => {
+      let processChange = (change: Change.t<Internal.entity>) => {
         switch change {
         | Set({entityId, entity, checkpointId}) =>
-          // Parse entity immediately to store decoded values for proper comparisons
-          // (bigint/BigDecimal need actual values, not JSON strings)
-          let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
+          entityDict->Dict.set(entityId, entity)
 
-          // Update entities dict with parsed entity for load operations
-          entityDict->Dict.set(entityId, parsedEntity)
-
-          // Track change by checkpoint
           let checkpointKey = checkpointId->BigInt.toString
           let entityChanges = switch changesByCheckpoint->Dict.get(checkpointKey) {
           | Some(changes) => changes
@@ -160,13 +132,11 @@ let handleWriteBatch = (
             entityChanges->Dict.set(entityName, change)
             change
           }
-          entityChange.sets->Array.push(parsedEntity->Utils.magic)->ignore
+          entityChange.sets->Array.push(entity->Utils.magic)->ignore
 
         | Delete({entityId, checkpointId}) =>
-          // Update entities dict for load operations
           Dict.delete(entityDict->Obj.magic, entityId)
 
-          // Track change by checkpoint
           let checkpointKey = checkpointId->BigInt.toString
           let entityChanges = switch changesByCheckpoint->Dict.get(checkpointKey) {
           | Some(changes) => changes
@@ -495,17 +465,81 @@ type entityOperations = {
   set: Internal.entity => unit,
 }
 
-type workerData = {
-  chainId: int,
-  startBlock: int,
-  endBlock: option<int>,
-  simulate: option<array<JSON.t>>,
-  initialState: Persistence.initialState,
+let makeInProcessStorage = (
+  ~state: testIndexerState,
+  ~initialState: Persistence.initialState,
+): Persistence.storage => {
+  name: "test-in-process",
+  isInitialized: async () => true,
+  initialize: async (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?, ~envioInfo as _) => {
+    JsError.throwWithMessage(
+      "TestIndexer: initialize should not be called. Use resumeInitialState instead.",
+    )
+  },
+  resumeInitialState: async () => initialState,
+  loadByIdsOrThrow: async (~ids, ~table: Table.table, ~rowsSchema as _) => {
+    state->handleLoadByIds(~tableName=table.tableName, ~ids)->Utils.magic
+  },
+  loadByFieldOrThrow: async (
+    ~fieldName,
+    ~fieldSchema as _,
+    ~fieldValue,
+    ~operator,
+    ~table: Table.table,
+    ~rowsSchema as _,
+  ) => {
+    state
+    ->handleLoadByField(
+      ~tableName=table.tableName,
+      ~fieldName,
+      ~fieldValue=fieldValue->TableIndices.FieldValue.castFrom,
+      ~operator,
+    )
+    ->Utils.magic
+  },
+  writeBatch: async (
+    ~batch: Batch.t,
+    ~rawEvents as _,
+    ~rollbackTargetCheckpointId as _,
+    ~isInReorgThreshold as _,
+    ~config as _,
+    ~allEntities as _,
+    ~updatedEffectsCache as _,
+    ~updatedEntities,
+  ) => {
+    state->handleWriteBatch(
+      ~updatedEntities,
+      ~checkpointIds=batch.checkpointIds,
+      ~checkpointChainIds=batch.checkpointChainIds,
+      ~checkpointBlockNumbers=batch.checkpointBlockNumbers,
+      ~checkpointEventsProcessed=batch.checkpointEventsProcessed,
+    )
+  },
+  dumpEffectCache: async () => (),
+  reset: async () => (),
+  setChainMeta: async _ => Obj.magic(),
+  pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
+  pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
+    (),
+  getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) => {
+    JsError.throwWithMessage(
+      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+    )
+  },
+  getRollbackProgressDiff: async (~rollbackTargetCheckpointId as _) => {
+    JsError.throwWithMessage(
+      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+    )
+  },
+  getRollbackData: async (~entityConfig as _, ~rollbackTargetCheckpointId as _) => {
+    JsError.throwWithMessage(
+      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+    )
+  },
+  close: async () => (),
 }
 
-let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
-  unit => t<'processConfig>
-) => {
+let makeCreateTestIndexer = (~config: Config.t): (unit => t<'processConfig>) => {
   () => {
     let allEntities = config.allEntities
     let entities = Dict.make()
@@ -709,9 +743,9 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
           // Reset processChanges for this run
           state.processChanges = []
 
-          let runChainWorker = ((
+          let runChain = ((
             chainIdStr,
-            chainId,
+            _chainId,
             rawChainConfig: rawChainConfig,
             processChainConfig,
           )) => {
@@ -746,97 +780,85 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
               ~indexingAddressesByChain,
             )
 
+            // auto-exit mode: no endBlock means fetch first block with events and exit
+            let exitAfterFirstEventBlock = processChainConfig.endBlock->Option.isNone
+
+            // Build processConfig JSON for SimulateItems.patchConfig
+            let resolvedChainDict: dict<unknown> = Dict.make()
+            resolvedChainDict->Dict.set(
+              "startBlock",
+              processChainConfig.startBlock->(Utils.magic: int => unknown),
+            )
+            switch processChainConfig.endBlock {
+            | Some(eb) => resolvedChainDict->Dict.set("endBlock", eb->(Utils.magic: int => unknown))
+            | None => ()
+            }
+            switch rawChainConfig.simulate {
+            | Some(s) =>
+              resolvedChainDict->Dict.set("simulate", s->(Utils.magic: array<JSON.t> => unknown))
+            | None => ()
+            }
+            let resolvedChainsDict: dict<unknown> = Dict.make()
+            resolvedChainsDict->Dict.set(
+              chainIdStr,
+              resolvedChainDict->(Utils.magic: dict<unknown> => unknown),
+            )
+            let processConfig =
+              {"chains": resolvedChainsDict}->(Utils.magic: {"chains": dict<unknown>} => JSON.t)
+
+            let storage = makeInProcessStorage(~state, ~initialState)
+            let persistence = Persistence.make(
+              ~userEntities=config.userEntities,
+              ~allEnums=config.allEnums,
+              ~storage,
+            )
+
+            let patchConfig = (config, _registrations) => {
+              let config = SimulateItems.patchConfig(~config, ~processConfig)
+              if exitAfterFirstEventBlock {
+                {...config, batchSize: 1}
+              } else {
+                config
+              }
+            }
+
             Promise.make((resolve, reject) => {
-              let workerData: workerData = {
-                chainId,
-                startBlock: processChainConfig.startBlock,
-                endBlock: processChainConfig.endBlock,
-                simulate: rawChainConfig.simulate,
-                initialState,
-              }
-              let worker = try {
-                NodeJs.WorkerThreads.makeWorker(
-                  workerPath,
-                  {
-                    workerData: workerData->(Utils.magic: workerData => JSON.t),
-                    // Explicitly forward parent env so handlers running in
-                    // the worker observe the same environment as the test
-                    // process (e.g. E2E_EXPECTED_END_BLOCK).
-                    env: %raw(`process.env`),
-                  },
-                )
-              } catch {
-              | exn =>
-                reject(exn->Utils.magic)
-                throw(exn)
-              }
-
-              // Handle messages from worker
-              worker->NodeJs.WorkerThreads.onMessage((
-                msg: TestIndexerProxyStorage.workerMessage,
-              ) => {
-                let respond = data =>
-                  worker->NodeJs.WorkerThreads.workerPostMessage(
-                    {
-                      TestIndexerProxyStorage.id: msg.id,
-                      payload: TestIndexerProxyStorage.Response({data: data}),
-                    }->Utils.magic,
-                  )
-
-                switch msg.payload {
-                | LoadByIds({tableName, ids}) => state->handleLoadByIds(~tableName, ~ids)->respond
-
-                | LoadByField({tableName, fieldName, fieldValue, operator}) =>
-                  state
-                  ->handleLoadByField(~tableName, ~fieldName, ~fieldValue, ~operator)
-                  ->respond
-
-                | WriteBatch({
-                    updatedEntities,
-                    checkpointIds,
-                    checkpointChainIds,
-                    checkpointBlockNumbers,
-                    checkpointBlockHashes: _,
-                    checkpointEventsProcessed,
-                  }) =>
-                  state->handleWriteBatch(
-                    ~updatedEntities,
-                    ~checkpointIds,
-                    ~checkpointChainIds,
-                    ~checkpointBlockNumbers,
-                    ~checkpointEventsProcessed,
-                  )
-                  JSON.Encode.null->respond
+              let onExit = result =>
+                switch result {
+                | Ok() => resolve()
+                | Error(exn) => reject(exn)
                 }
+              Main.start(
+                ~persistence,
+                ~isTest=true,
+                ~patchConfig,
+                ~exitAfterFirstEventBlock,
+                ~onExit,
+              )
+              ->Promise.catch(exn => {
+                reject(exn)
+                Promise.resolve()
               })
-
-              worker->NodeJs.WorkerThreads.onError(err => {
-                worker->NodeJs.WorkerThreads.terminate->ignore
-                reject(err)
-              })
-
-              worker->NodeJs.WorkerThreads.onExit(code => {
-                if code !== 0 {
-                  reject(Utils.Error.make(`Worker exited with code ${code->Int.toString}`))
-                } else {
-                  resolve()
-                }
-              })
+              ->ignore
             })
           }
 
-          // Set flag before starting workers
+          // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
+          switch Env.userLogLevel {
+          | None => Logging.setLogLevel(#silent)
+          | Some(_) => ()
+          }
+
+          // Set flag before starting chain runs
           state.processInProgress = true
 
-          // Run worker threads sequentially, one chain at a time
+          // Run chains sequentially, one at a time
           let rec runChains = idx => {
             if idx >= chainEntries->Array.length {
               state.processInProgress = false
               Promise.resolve({changes: state.processChanges})
             } else {
-              runChainWorker(chainEntries->Array.getUnsafe(idx))->Promise.then(_ =>
-                runChains(idx + 1)
-              )
+              runChain(chainEntries->Array.getUnsafe(idx))->Promise.then(_ => runChains(idx + 1))
             }
           }
 
@@ -849,75 +871,5 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
     )
 
     result->(Utils.magic: dict<unknown> => t<'processConfig>)
-  }
-}
-
-let initTestWorker = () => {
-  if NodeJs.WorkerThreads.isMainThread {
-    JsError.throwWithMessage("initTestWorker must be called from a worker thread")
-  }
-
-  let parentPort = switch NodeJs.WorkerThreads.parentPort->Nullable.toOption {
-  | Some(port) => port
-  | None => JsError.throwWithMessage("initTestWorker: No parent port available")
-  }
-
-  let workerData: option<workerData> = NodeJs.WorkerThreads.workerData->Nullable.toOption
-  switch workerData {
-  | Some({chainId, startBlock, endBlock, simulate, initialState}) =>
-    let chainIdStr = chainId->Int.toString
-
-    // auto-exit mode: no endBlock means fetch first block with events and exit
-    let exitAfterFirstEventBlock = endBlock->Option.isNone
-
-    // Build processConfig JSON for SimulateItems.patchConfig
-    let resolvedChainDict: dict<unknown> = Dict.make()
-    resolvedChainDict->Dict.set("startBlock", startBlock->(Utils.magic: int => unknown))
-    switch endBlock {
-    | Some(eb) => resolvedChainDict->Dict.set("endBlock", eb->(Utils.magic: int => unknown))
-    | None => ()
-    }
-    switch simulate {
-    | Some(s) => resolvedChainDict->Dict.set("simulate", s->(Utils.magic: array<JSON.t> => unknown))
-    | None => ()
-    }
-    let resolvedChainsDict: dict<unknown> = Dict.make()
-    resolvedChainsDict->Dict.set(
-      chainIdStr,
-      resolvedChainDict->(Utils.magic: dict<unknown> => unknown),
-    )
-    let processConfig =
-      {"chains": resolvedChainsDict}->(Utils.magic: {"chains": dict<unknown>} => JSON.t)
-
-    // Create proxy storage that communicates with main thread
-    let proxy = TestIndexerProxyStorage.make(~parentPort, ~initialState)
-    let storage = TestIndexerProxyStorage.makeStorage(proxy)
-    let config = Config.loadWithoutRegistrations()
-    let persistence = Persistence.make(
-      ~userEntities=config.userEntities,
-      ~allEnums=config.allEnums,
-      ~storage,
-    )
-
-    // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
-    switch Env.userLogLevel {
-    | None => Logging.setLogLevel(#silent)
-    | Some(_) => ()
-    }
-
-    let patchConfig = (config, _registrations) => {
-      let config = SimulateItems.patchConfig(~config, ~processConfig)
-
-      // In auto-exit mode, set batchSize=1 to process one block checkpoint at a time
-      if exitAfterFirstEventBlock {
-        {...config, batchSize: 1}
-      } else {
-        config
-      }
-    }
-    Main.start(~persistence, ~isTest=true, ~patchConfig, ~exitAfterFirstEventBlock)->ignore
-  | None =>
-    Logging.error("TestIndexerWorker: No worker data provided")
-    NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }

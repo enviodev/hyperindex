@@ -640,6 +640,7 @@ let start = async (
   ~isTest=false,
   ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
+  ~onExit: option<result<unit, exn> => unit>=?,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
   let explicitTui = switch mainArgs.tuiOff {
@@ -765,8 +766,14 @@ let start = async (
     ~isDevelopmentMode,
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,
+    ~onExit?,
   )
-  let gsManager = globalState->GlobalStateManager.make
+  let gsManager = globalState->GlobalStateManager.make(
+    ~onError=?switch onExit {
+    | Some(onExit) => Some(e => onExit(Error(e)))
+    | None => None
+    },
+  )
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)
   }

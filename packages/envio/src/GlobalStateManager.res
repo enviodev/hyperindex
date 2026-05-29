@@ -14,13 +14,12 @@ module type State = {
 module MakeManager = (S: State) => {
   type t = {mutable state: S.t, onError: exn => unit}
 
-  let make = (
-    state: S.t,
-    ~onError=e => {
-      e->ErrorHandling.make(~msg="Indexer has failed with an unexpected error")->ErrorHandling.log
-      NodeJs.process->NodeJs.exitWithCode(Failure)
-    },
-  ) => {
+  let defaultOnError = e => {
+    e->ErrorHandling.make(~msg="Indexer has failed with an unexpected error")->ErrorHandling.log
+    NodeJs.process->NodeJs.exitWithCode(Failure)
+  }
+
+  let make = (state: S.t, ~onError=defaultOnError) => {
     state,
     onError,
   }

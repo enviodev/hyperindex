@@ -48,6 +48,10 @@ type t = {
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
   exitAfterFirstEventBlock: bool,
+  // When set, replaces the default `process.exit` call on terminal exit so a
+  // host (e.g. the in-process test indexer) can observe completion instead of
+  // having the whole node process die.
+  onExit: option<result<unit, exn> => unit>,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
@@ -59,6 +63,7 @@ let make = (
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
+  ~onExit=?,
 ) => {
   {
     ctx,
@@ -71,6 +76,7 @@ let make = (
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
+    onExit,
     id: 0,
   }
 }
@@ -777,12 +783,18 @@ let actionReducer = (state: t, action: action) => {
     )
   | SuccessExit => {
       Logging.info("Exiting with success")
-      NodeJs.process->NodeJs.exitWithCode(Success)
+      switch state.onExit {
+      | Some(onExit) => onExit(Ok())
+      | None => NodeJs.process->NodeJs.exitWithCode(Success)
+      }
       (state, [])
     }
   | ErrorExit(errHandler) =>
     errHandler->ErrorHandling.log
-    NodeJs.process->NodeJs.exitWithCode(Failure)
+    switch state.onExit {
+    | Some(onExit) => onExit(Error(errHandler.exn))
+    | None => NodeJs.process->NodeJs.exitWithCode(Failure)
+    }
     (state, [])
   }
 }

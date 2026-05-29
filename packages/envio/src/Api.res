@@ -4,12 +4,7 @@
 let indexer: unknown = Main.getGlobalIndexer()
 
 let createTestIndexer: unit => unknown = () => {
-  let workerPath =
-    NodeJs.Path.join(
-      NodeJs.Path.getDirname(NodeJs.ImportMeta.importMeta),
-      "TestIndexerWorker.res.mjs",
-    )->NodeJs.Path.toString
-  TestIndexer.makeCreateTestIndexer(~config=Config.loadWithoutRegistrations(), ~workerPath)()->(
+  TestIndexer.makeCreateTestIndexer(~config=Config.loadWithoutRegistrations())()->(
     Utils.magic: TestIndexer.t<'a> => unknown
   )
 }
