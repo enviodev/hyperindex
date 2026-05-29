@@ -35,8 +35,10 @@ type queryResult<'a>
 @send
 external query: (client, queryParams) => promise<queryResult<'a>> = "query"
 
+// The default `JSON` query format resolves to a `ResponseJSON` wrapper whose
+// rows live under `data`, not at the top level.
 @send
-external json: queryResult<'a> => promise<'a> = "json"
+external json: queryResult<'a> => promise<{"data": array<'a>}> = "json"
 
 let getClickHouseFieldType = (
   ~fieldType: Table.fieldType,
@@ -442,7 +444,7 @@ let initialize = async (
         let existingResult = await client->query({
           query: `SELECT engine FROM system.databases WHERE name = '${database}'`,
         })
-        let rows: array<{"engine": string}> = await existingResult->json
+        let rows = (await existingResult->json)["data"]
         switch rows->Array.get(0) {
         | Some(row) if row["engine"] !== expectedEngineName =>
           JsError.throwWithMessage(
@@ -501,7 +503,7 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
     let tablesResult = await client->query({
       query: `SHOW TABLES FROM ${database} LIKE '${EntityHistory.historyTablePrefix}%'`,
     })
-    let tables: array<{"name": string}> = await tablesResult->json
+    let tables = (await tablesResult->json)["data"]
 
     // Delete rows with checkpoint IDs higher than the target for each history table
     await Promise.all(
