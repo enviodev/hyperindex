@@ -227,7 +227,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     ~retry,
     ~logger,
   ) => {
-    let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     let totalTimeRef = Hrtime.makeTimer()
 
     let selectionConfig = selection->getSelectionConfig
