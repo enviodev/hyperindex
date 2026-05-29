@@ -341,12 +341,12 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
       fields,
       // Cap chunk size so the server can stream a response within its per-request
       // budget. Without this, asking for a multi-day window blows the response
-      // size and the server resets the connection mid-stream. The fetcher will
-      // pick up at the returned `next_slot` on the next iteration.
-      maxNumBlocks: 4000,
-      maxNumTransactions: 5000,
-      maxNumInstructions: 20000,
-      maxNumTokenBalances: 40000,
+      // size and the server times out / resets the connection mid-stream. The
+      // fetcher will pick up at the returned `next_slot` on the next iteration.
+      maxNumBlocks: 1000,
+      maxNumTransactions: 2000,
+      maxNumInstructions: 8000,
+      maxNumTokenBalances: 16000,
     }
 
     Prometheus.SourceRequestCount.increment(

@@ -11,11 +11,12 @@ chains:
     hypersync_config:
       url: https://solana.hypersync.xyz
     # As of 2026-05-29 the public endpoint is at mainnet head (~422.11M) and the
-    # v0.0.4 server returns token_balances for every matched tx. Start ~50k slots
-    # behind head (~5.5h of chain time) — small enough that backfill chunks fit
-    # under the server's per-response limit (avoids connection-reset on huge
-    # ranges), big enough to cover the demo window.
-    start_block: 422060000
+    # v0.0.4 server returns token_balances for every matched tx. Start ~10k slots
+    # behind head (~70min of chain time) — small enough to backfill quickly
+    # under the server's per-request budget, big enough for the demo window.
+    # Once upstream HOS-1304 lands ("queries won't time out so easily") we can
+    # widen this back to a multi-hour window.
+    start_block: 422100000
     programs_experimental:
       # --- IDL-decoded protocols ---
       - name: Jupiter

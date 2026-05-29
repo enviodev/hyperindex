@@ -1,3 +1,13 @@
 [workspace]
 members = ["packages/cli"]
 resolver = "2"
+
+# Local patch: published hypersync-client-solana 0.0.4 uses reqwest with
+# feature `rustls-tls` (webpki-roots only), which fails TLS verification of
+# Let's Encrypt R13-signed certs on this host. The local copy is identical
+# except it uses `rustls-tls-native-roots` so the system keychain seeds the
+# trust store. Remove once an upstream release ships that change.
+[patch.crates-io]
+hypersync-client-solana = { path = "/Users/jasonsmythe/Documents/enviodev/hack/flow-x-ray/hypersync-client-solana/main/hypersync-client-solana" }
+hypersync-solana-net-types = { path = "/Users/jasonsmythe/Documents/enviodev/hack/flow-x-ray/hypersync-client-solana/main/hypersync-solana-net-types" }
+hypersync-solana-schema = { path = "/Users/jasonsmythe/Documents/enviodev/hack/flow-x-ray/hypersync-client-solana/main/hypersync-solana-schema" }

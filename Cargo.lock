@@ -2278,7 +2278,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots",
 ]
 
 [[package]]
@@ -2374,8 +2373,6 @@ dependencies = [
 [[package]]
 name = "hypersync-client-solana"
 version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a0e3522a3853bc9dada7db1dffa5c0762780b64cb9d6097017caefa52c909fd"
 dependencies = [
  "anyhow",
  "arrow",
@@ -2440,8 +2437,6 @@ dependencies = [
 [[package]]
 name = "hypersync-solana-net-types"
 version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1167a025c51005ec5dcdddd318d0ccb639068192a46e4d8af2345ff7a9fa6f37"
 dependencies = [
  "schemars",
  "serde",
@@ -2452,8 +2447,6 @@ dependencies = [
 [[package]]
 name = "hypersync-solana-schema"
 version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff42f3c10a939b155b6d9b88eb6c5ca7cc6e5586bc44c03a37a85cd7017be91e"
 dependencies = [
  "arrow",
 ]
@@ -3940,7 +3933,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
- "webpki-roots",
 ]
 
 [[package]]
@@ -5301,15 +5293,6 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "1.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
-dependencies = [
- "rustls-pki-types",
 ]
 
 [[package]]
