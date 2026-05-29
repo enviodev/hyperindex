@@ -35,8 +35,10 @@ type queryResult<'a>
 @send
 external query: (client, queryParams) => promise<queryResult<'a>> = "query"
 
+// The default `JSON` query format resolves to a `ResponseJSON` wrapper whose
+// rows live under `data`, not at the top level.
 @send
-external json: queryResult<'a> => promise<'a> = "json"
+external json: queryResult<'a> => promise<{"data": array<'a>}> = "json"
 
 let getClickHouseFieldType = (
   ~fieldType: Table.fieldType,
@@ -76,13 +78,13 @@ let getClickHouseFieldType = (
   | Json => "String"
   | Date => "DateTime64(3, 'UTC')"
   | Enum({config}) => {
-      let variantsLength = config.variants->Belt.Array.length
+      let variantsLength = config.variants->Array.length
       // Theoretically we can store 256 variants in Enum8,
       // but it'd require to explicitly start with a negative index (probably)
       let enumType = variantsLength <= 127 ? "Enum8" : "Enum16"
       let enumValues =
         config.variants
-        ->Belt.Array.map(variant => {
+        ->Array.map(variant => {
           let variantStr = variant->(Utils.magic: 'a => string)
           `'${variantStr}'`
         })
@@ -105,7 +107,7 @@ let getClickHouseFieldType = (
 let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
   S.schema(s => {
     let dict = Dict.make()
-    table.fields->Belt.Array.forEach(field => {
+    table.fields->Array.forEach(field => {
       switch field {
       | Field(f) => {
           let fieldName = f->Table.getDbFieldName
@@ -203,11 +205,11 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
     for idx in 0 to checkpointsCount - 1 {
       checkpointRows
       ->Array.push((
-        batch.checkpointIds->Belt.Array.getUnsafe(idx)->BigInt.toString,
-        batch.checkpointChainIds->Belt.Array.getUnsafe(idx),
-        batch.checkpointBlockNumbers->Belt.Array.getUnsafe(idx),
-        batch.checkpointBlockHashes->Belt.Array.getUnsafe(idx),
-        batch.checkpointEventsProcessed->Belt.Array.getUnsafe(idx),
+        batch.checkpointIds->Array.getUnsafe(idx)->BigInt.toString,
+        batch.checkpointChainIds->Array.getUnsafe(idx),
+        batch.checkpointBlockNumbers->Array.getUnsafe(idx),
+        batch.checkpointBlockHashes->Array.getUnsafe(idx),
+        batch.checkpointEventsProcessed->Array.getUnsafe(idx),
       ))
       ->ignore
     }
@@ -280,13 +282,9 @@ let setUpdatesOrThrow = async (
     }
 
     try {
-      // Convert entity updates to ClickHouse row format
-      let values =
-        changes
-        ->Internal.groupChangesByEntityId
-        ->Array.map(update => {
-          update.latestChange->convertOrThrow
-        })
+      // The entity history table is the source of truth for ClickHouse, so every
+      // intermediate change must be persisted, not only the current value.
+      let values = changes->Array.map(change => change->convertOrThrow)
 
       await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
     } catch {
@@ -308,7 +306,7 @@ let makeCreateHistoryTableQuery = (
   ~replicated: bool=false,
 ) => {
   let tableEngine = replicated ? "ReplicatedMergeTree" : "MergeTree()"
-  let fieldDefinitions = entityConfig.table.fields->Belt.Array.keepMap(field => {
+  let fieldDefinitions = entityConfig.table.fields->Array.filterMap(field => {
     switch field {
     | Field(field) =>
       Some({
@@ -392,7 +390,7 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
 
   let entityFields =
     entityConfig.table.fields
-    ->Belt.Array.keepMap(field => {
+    ->Array.filterMap(field => {
       switch field {
       | Field(field) => {
           let fieldName = field->Table.getDbFieldName
@@ -436,12 +434,12 @@ let initialize = async (
 
     switch databaseEngine {
     | Some(engineSpec) => {
-        let expectedEngineName = engineSpec->String.split("(")->Belt.Array.getUnsafe(0)->String.trim
+        let expectedEngineName = engineSpec->String.split("(")->Array.getUnsafe(0)->String.trim
         let existingResult = await client->query({
           query: `SELECT engine FROM system.databases WHERE name = '${database}'`,
         })
-        let rows: array<{"engine": string}> = await existingResult->json
-        switch rows->Belt.Array.get(0) {
+        let rows = (await existingResult->json)["data"]
+        switch rows->Array.get(0) {
         | Some(row) if row["engine"] !== expectedEngineName =>
           JsError.throwWithMessage(
             `ClickHouse database "${database}" exists with engine "${row["engine"]}" but ENVIO_CLICKHOUSE_DATABASE_ENGINE specifies "${expectedEngineName}". Drop the database manually to change its engine.`,
@@ -459,14 +457,14 @@ let initialize = async (
     await client->exec({query: `USE ${database}`})
 
     await Promise.all(
-      entities->Belt.Array.map(entityConfig =>
+      entities->Array.map(entityConfig =>
         client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database, ~replicated)})
       ),
     )->Utils.Promise.ignoreValue
     await client->exec({query: makeCreateCheckpointsTableQuery(~database, ~replicated)})
 
     await Promise.all(
-      entities->Belt.Array.map(entityConfig =>
+      entities->Array.map(entityConfig =>
         client->exec({query: makeCreateViewQuery(~entityConfig, ~database)})
       ),
     )->Utils.Promise.ignoreValue
@@ -499,11 +497,11 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
     let tablesResult = await client->query({
       query: `SHOW TABLES FROM ${database} LIKE '${EntityHistory.historyTablePrefix}%'`,
     })
-    let tables: array<{"name": string}> = await tablesResult->json
+    let tables = (await tablesResult->json)["data"]
 
     // Delete rows with checkpoint IDs higher than the target for each history table
     await Promise.all(
-      tables->Belt.Array.map(table => {
+      tables->Array.map(table => {
         let tableName = table["name"]
         client->exec({
           query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString}`,
