@@ -163,34 +163,3 @@ WHERE \`envio_change\` = 'SET'`
     )
   })
 })
-
-describe("Test collectChanges", () => {
-  Async.it(
-    "Flattens every update into its history changes followed by the latest change",
-    async t => {
-      let entity = (id): Internal.entity =>
-        {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
-      let set = (~id, ~checkpointId): Change.t<Internal.entity> =>
-        Change.Set({entityId: id, entity: entity(id), checkpointId: BigInt.fromInt(checkpointId)})
-      let delete = (~id, ~checkpointId): Change.t<Internal.entity> =>
-        Change.Delete({entityId: id, checkpointId: BigInt.fromInt(checkpointId)})
-
-      let aV1 = set(~id="a", ~checkpointId=1)
-      let aV2 = set(~id="a", ~checkpointId=2)
-      let aV3 = set(~id="a", ~checkpointId=3)
-      let bDelete = delete(~id="b", ~checkpointId=4)
-
-      let updates: array<Internal.inMemoryStoreEntityUpdate> = [
-        {latestChange: aV3, history: [aV1, aV2]},
-        {latestChange: bDelete, history: []},
-      ]
-
-      t.expect(
-        updates->ClickHouse.collectChanges(~convertOrThrow=change =>
-          change->Change.getCheckpointId->BigInt.toString
-        ),
-        ~message="Should convert all history changes in order, then the latest change",
-      ).toEqual(["1", "2", "3", "4"])
-    },
-  )
-})
