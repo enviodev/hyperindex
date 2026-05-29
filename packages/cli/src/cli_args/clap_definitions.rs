@@ -70,7 +70,7 @@ pub enum CommandType {
     ///
     ///  Earliest USDC transfers on Base:
     ///
-    ///  ```
+    ///  ```text
     ///  envio data block.number log.srcAddress log.transactionHash \
     ///    --chain=base \
     ///    --where='{
@@ -81,7 +81,7 @@ pub enum CommandType {
     ///
     ///  Current archive height:
     ///
-    ///  ```
+    ///  ```text
     ///  envio data knownHeight --chain=arbitrum-one
     ///  ```
     Data(DataArgs),
