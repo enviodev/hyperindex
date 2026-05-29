@@ -61,6 +61,31 @@ pub enum CommandType {
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
     Metrics,
 
+    ///Query raw blockchain data — blocks, logs, transactions on EVM chains
+    ///using the same `where` syntax as indexer filters.
+    ///
+    ///Output is TOON (token-oriented) tabular form.
+    ///
+    ///Examples:
+    ///
+    ///  Earliest USDC transfers on Base:
+    ///
+    ///  ```text
+    ///  envio data block.number log.srcAddress log.transactionHash \
+    ///    --chain=base \
+    ///    --where='{
+    ///      block: { number: { _gte: 0 } },
+    ///      log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+    ///    }'
+    ///  ```
+    ///
+    ///  Current archive height:
+    ///
+    ///  ```text
+    ///  envio data knownHeight --chain=arbitrum-one
+    ///  ```
+    Data(DataArgs),
+
     ///Manage Envio-provided Claude Code skills under `.claude/skills/`
     #[command(subcommand)]
     Skills(SkillsSubcommand),
@@ -128,6 +153,31 @@ pub enum JsonSchema {
     Evm,
     Fuel,
     Svm,
+}
+
+#[derive(Debug, Args)]
+pub struct DataArgs {
+    ///Fields to fetch (e.g. `block.number`, `log.srcAddress`,
+    ///`transaction.transactionIndex`). Use `knownHeight` to get the
+    ///chain's current archive height.
+    #[arg(value_name = "FIELD")]
+    pub fields: Vec<String>,
+
+    ///Chain id (e.g. `8453`) or kebab-case name (e.g. `base`,
+    ///`arbitrum-one`). Solana is not supported yet.
+    #[arg(long)]
+    pub chain: String,
+
+    ///Filter in indexer `where` form, as JSON5 — JSON-style braces with
+    ///relaxed syntax: unquoted keys, single quotes, trailing commas, and
+    ///`//` comments are all accepted. Example:
+    ///
+    ///  --where='{
+    ///    block: { number: { _gte: 1000, _lte: 2000 } },
+    ///    log:   { srcAddress: "0xa0b8..." },
+    ///  }'
+    #[arg(long = "where")]
+    pub where_filter: Option<String>,
 }
 
 #[derive(Debug, Args)]

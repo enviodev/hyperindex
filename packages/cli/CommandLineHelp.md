@@ -29,6 +29,7 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
 * [`envio start`↴](#envio-start)
 * [`envio metrics`↴](#envio-metrics)
+* [`envio data`↴](#envio-data)
 * [`envio skills`↴](#envio-skills)
 * [`envio skills update`↴](#envio-skills-update)
 * [`envio tools`↴](#envio-tools)
@@ -50,6 +51,7 @@ This document contains the help content for the `envio` command-line program.
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 * `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
+* `data` — Query raw blockchain data — blocks, logs, transactions on EVM chains using the same `where` syntax as indexer filters
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
 * `tools` — Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
 * `config` — Inspect the indexer config
@@ -378,6 +380,37 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 
 **Usage:** `envio metrics`
+
+
+
+## `envio data`
+
+Query raw blockchain data — blocks, logs, transactions on EVM chains using the same `where` syntax as indexer filters.
+
+Output is TOON (token-oriented) tabular form.
+
+Examples:
+
+Earliest USDC transfers on Base:
+
+```text envio data block.number log.srcAddress log.transactionHash \ --chain=base \ --where='{ block: { number: { _gte: 0 } }, log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }, }' ```
+
+Current archive height:
+
+```text envio data knownHeight --chain=arbitrum-one ```
+
+**Usage:** `envio data [OPTIONS] --chain <CHAIN> [FIELD]...`
+
+###### **Arguments:**
+
+* `<FIELD>` — Fields to fetch (e.g. `block.number`, `log.srcAddress`, `transaction.transactionIndex`). Use `knownHeight` to get the chain's current archive height
+
+###### **Options:**
+
+* `--chain <CHAIN>` — Chain id (e.g. `8453`) or kebab-case name (e.g. `base`, `arbitrum-one`). Solana is not supported yet
+* `--where <WHERE_FILTER>` — Filter in indexer `where` form, as JSON5 — JSON-style braces with relaxed syntax: unquoted keys, single quotes, trailing commas, and `//` comments are all accepted. Example:
+
+   --where='{ block: { number: { _gte: 1000, _lte: 2000 } }, log:   { srcAddress: "0xa0b8..." }, }'
 
 
 

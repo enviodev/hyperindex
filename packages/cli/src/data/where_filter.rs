@@ -1,0 +1,379 @@
+use anyhow::{anyhow, bail, Context, Result};
+use serde_json::Value;
+
+use hypersync_client::net_types::{FieldSelection, LogFilter, Query, TransactionFilter};
+
+use super::mapping::{self, Section, TypedField};
+
+#[derive(Debug, Clone)]
+pub struct FieldFilter {
+    pub indexer_name: String,
+    pub field: TypedField,
+    pub values: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WhereFilter {
+    pub from_block: Option<u64>,
+    pub to_block_exclusive: Option<u64>,
+    pub log_filters: Vec<FieldFilter>,
+    pub transaction_filters: Vec<FieldFilter>,
+}
+
+impl WhereFilter {
+    pub fn parse(raw: Option<&str>) -> Result<Self> {
+        let Some(raw) = raw else {
+            return Ok(Self::default());
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Ok(Self::default());
+        }
+
+        let value: Value = parse_where(trimmed)?;
+        let root = match value {
+            Value::Object(map) => map,
+            _ => bail!("`--where` must be an object/mapping at the top level."),
+        };
+
+        let mut out = WhereFilter::default();
+        for (section_raw, body) in root {
+            if section_raw == "knownHeight" {
+                bail!("`knownHeight` is not a filter — pass it as a positional field instead.");
+            }
+            let section = mapping::parse_section(&section_raw).ok_or_else(|| {
+                anyhow!(
+                    "Unknown section `{section_raw}` in --where. Valid sections: {sections}.",
+                    sections = mapping::ALLOWED_SECTIONS.join(", "),
+                )
+            })?;
+            let fields = match body {
+                Value::Object(m) => m,
+                other => bail!(
+                    "Expected object under `{section_raw}` in --where, got {t}.",
+                    t = type_name(&other),
+                ),
+            };
+            for (field_raw, field_body) in fields {
+                let typed_field = mapping::lookup(section, &field_raw).ok_or_else(|| {
+                    let valid = mapping::valid_indexer_names(section).join(", ");
+                    anyhow!("Unknown field `{section_raw}.{field_raw}` in --where. Valid: {valid}.")
+                })?;
+                apply_field(&mut out, section, &field_raw, typed_field, field_body)?;
+            }
+        }
+
+        if let (Some(from), Some(to_excl)) = (out.from_block, out.to_block_exclusive) {
+            if to_excl <= from {
+                bail!("Block range is empty: from_block={from}, to_block(exclusive)={to_excl}.");
+            }
+        }
+
+        Ok(out)
+    }
+
+    pub fn has_section_filters(&self) -> bool {
+        !self.log_filters.is_empty() || !self.transaction_filters.is_empty()
+    }
+
+    pub fn build_net_query(&self, field_selection: FieldSelection) -> Result<Query> {
+        let mut query = Query::new().from_block(self.from_block.unwrap_or(0));
+        if let Some(to) = self.to_block_exclusive {
+            query = query.to_block_excl(to);
+        }
+        query.field_selection = field_selection;
+
+        if !self.log_filters.is_empty() {
+            let mut lf = LogFilter::all();
+            for f in &self.log_filters {
+                let refs = filter_values_as_strs(&f.values);
+                let refs: Vec<&str> = refs.iter().map(|s| s.as_str()).collect();
+                use hypersync_client::net_types::log::LogField;
+                let TypedField::Log(log_field) = f.field else {
+                    unreachable!()
+                };
+                match log_field {
+                    LogField::Address => {
+                        lf = lf.and_address(refs).context("invalid address")?;
+                    }
+                    LogField::Topic0 => {
+                        lf = lf.and_topic0(refs).context("invalid topic0")?;
+                    }
+                    LogField::Topic1 => {
+                        lf = lf.and_topic1(refs).context("invalid topic1")?;
+                    }
+                    LogField::Topic2 => {
+                        lf = lf.and_topic2(refs).context("invalid topic2")?;
+                    }
+                    LogField::Topic3 => {
+                        lf = lf.and_topic3(refs).context("invalid topic3")?;
+                    }
+                    _ => bail!(
+                        "Filtering on `log.{}` is not supported in --where.",
+                        f.indexer_name
+                    ),
+                }
+            }
+            query = query.where_logs(lf);
+        }
+
+        if !self.transaction_filters.is_empty() {
+            let mut tf = TransactionFilter::all();
+            for f in &self.transaction_filters {
+                let refs = filter_values_as_strs(&f.values);
+                let refs: Vec<&str> = refs.iter().map(|s| s.as_str()).collect();
+                use hypersync_client::net_types::transaction::TransactionField;
+                let TypedField::Transaction(tx_field) = f.field else {
+                    unreachable!()
+                };
+                match tx_field {
+                    TransactionField::From => {
+                        tf = tf.and_from(refs).context("invalid from address")?;
+                    }
+                    TransactionField::To => {
+                        tf = tf.and_to(refs).context("invalid to address")?;
+                    }
+                    TransactionField::Sighash => {
+                        tf = tf.and_sighash(refs).context("invalid sighash")?;
+                    }
+                    _ => bail!(
+                        "Filtering on `transaction.{}` is not supported in --where.",
+                        f.indexer_name
+                    ),
+                }
+            }
+            query = query.where_transactions(tf);
+        }
+
+        Ok(query)
+    }
+}
+
+fn parse_where(raw: &str) -> Result<Value> {
+    json5::from_str::<Value>(raw).context(
+        "Failed to parse --where. Expected JSON-like object, e.g.\n\
+         --where='{ block: { number: { _gte: 1000, _lte: 2000 } }, log: { srcAddress: \"0xabc\" } }'",
+    )
+}
+
+fn type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn filter_values_as_strs(values: &[Value]) -> Vec<String> {
+    values
+        .iter()
+        .map(|v| match v {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        })
+        .collect()
+}
+
+fn apply_field(
+    out: &mut WhereFilter,
+    section: Section,
+    indexer_name: &str,
+    typed_field: TypedField,
+    body: Value,
+) -> Result<()> {
+    use hypersync_client::net_types::block::BlockField;
+    if matches!(typed_field, TypedField::Block(BlockField::Number)) {
+        return apply_block_range(out, indexer_name, body);
+    }
+
+    let dest = match section {
+        Section::Log => &mut out.log_filters,
+        Section::Transaction => &mut out.transaction_filters,
+        Section::Block => bail!(
+            "Filtering on `block.{indexer_name}` is not supported. Only `block.number` (with _gte/_lt/_lte/_gt) is a block filter.",
+        ),
+    };
+
+    let values = normalize_to_list(section, indexer_name, body)?;
+    dest.push(FieldFilter {
+        indexer_name: indexer_name.to_string(),
+        field: typed_field,
+        values,
+    });
+    Ok(())
+}
+
+fn apply_block_range(out: &mut WhereFilter, field_name: &str, body: Value) -> Result<()> {
+    let map = match body {
+        Value::Object(m) => m,
+        _ => bail!("Expected operator object under `block.{field_name}` (e.g. `_gte: 1000`).",),
+    };
+
+    for (op, val) in map {
+        let n = value_to_u64(&val).with_context(|| {
+            format!(
+                "Operator `{op}` on `block.{field_name}` expects a non-negative integer, got {val}",
+            )
+        })?;
+        match op.as_str() {
+            "_gte" => {
+                out.from_block = Some(out.from_block.map_or(n, |cur| cur.max(n)));
+            }
+            "_gt" => {
+                let c = n.saturating_add(1);
+                out.from_block = Some(out.from_block.map_or(c, |cur| cur.max(c)));
+            }
+            "_lte" => {
+                let c = n.saturating_add(1);
+                out.to_block_exclusive = Some(out.to_block_exclusive.map_or(c, |cur| cur.min(c)));
+            }
+            "_lt" => {
+                out.to_block_exclusive = Some(out.to_block_exclusive.map_or(n, |cur| cur.min(n)));
+            }
+            other => bail!(
+                "Unsupported operator `{other}` on `block.{field_name}`. Use `_gte`, `_gt`, `_lte`, `_lt`.",
+            ),
+        }
+    }
+
+    Ok(())
+}
+
+fn value_to_u64(v: &Value) -> Result<u64> {
+    match v {
+        Value::Number(n) => n
+            .as_u64()
+            .ok_or_else(|| anyhow!("Expected non-negative integer, got {n}")),
+        Value::String(s) => s.parse::<u64>().context("Failed to parse integer"),
+        _ => Err(anyhow!("Expected integer, got {}", type_name(v))),
+    }
+}
+
+fn normalize_to_list(section: Section, name: &str, body: Value) -> Result<Vec<Value>> {
+    let label = || format!("{}.{name}", section.as_indexer_str());
+    match body {
+        Value::String(_) | Value::Number(_) | Value::Bool(_) => Ok(vec![body]),
+        Value::Array(arr) => Ok(arr),
+        Value::Object(map) => {
+            let mut values = Vec::new();
+            for (k, v) in &map {
+                match k.as_str() {
+                    "_eq" => values.push(v.clone()),
+                    "_in" => {
+                        let arr = v.as_array().ok_or_else(|| {
+                            anyhow!("`_in` on `{}` expects an array, got {}", label(), type_name(v))
+                        })?;
+                        values.extend(arr.iter().cloned());
+                    }
+                    other => bail!(
+                        "Unsupported operator `{other}` on `{}`. Use a scalar, an array, `_eq`, or `_in`.",
+                        label(),
+                    ),
+                }
+            }
+            Ok(values)
+        }
+        Value::Null => bail!("`{}` cannot be null", label()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn pf(raw: &str) -> WhereFilter {
+        WhereFilter::parse(Some(raw)).unwrap()
+    }
+
+    #[test]
+    fn json5_block_range_and_address() {
+        let f =
+            pf("{ block: { number: { _gte: 1000, _lte: 2000 } }, log: { srcAddress: '0xa0b8' } }");
+        assert_eq!(
+            (f.from_block, f.to_block_exclusive),
+            (Some(1000), Some(2001))
+        );
+        assert_eq!(
+            (f.log_filters.len(), f.log_filters[0].indexer_name.as_str()),
+            (1, "srcAddress")
+        );
+    }
+
+    #[test]
+    fn gt_and_lt_off_by_one() {
+        let f = pf("{ block: { number: { _gt: 100, _lt: 200 } } }");
+        assert_eq!((f.from_block, f.to_block_exclusive), (Some(101), Some(200)));
+    }
+
+    #[test]
+    fn empty_where_defaults() {
+        let f = WhereFilter::parse(None).unwrap();
+        let q = f.build_net_query(FieldSelection::default()).unwrap();
+        assert_eq!((q.from_block, q.to_block), (0, None));
+    }
+
+    #[test]
+    fn known_height_in_where_errors() {
+        let err = WhereFilter::parse(Some("{ knownHeight: 100 }"))
+            .unwrap_err()
+            .to_string();
+        insta::assert_snapshot!(err, @"`knownHeight` is not a filter — pass it as a positional field instead.");
+    }
+
+    #[test]
+    fn unknown_field_errors() {
+        let err = WhereFilter::parse(Some("{ log: { foo: 'x' } }"))
+            .unwrap_err()
+            .to_string();
+        insta::assert_snapshot!(err, @"Unknown field `log.foo` in --where. Valid: transactionHash, blockHash, blockNumber, transactionIndex, logIndex, srcAddress, data, removed, topic0, topic1, topic2, topic3.");
+    }
+
+    #[test]
+    fn empty_range_errors() {
+        let err = WhereFilter::parse(Some("{ block: { number: { _gte: 100, _lt: 100 } } }"))
+            .unwrap_err()
+            .to_string();
+        insta::assert_snapshot!(err, @"Block range is empty: from_block=100, to_block(exclusive)=100.");
+    }
+
+    #[test]
+    fn malformed_input_error() {
+        let err = WhereFilter::parse(Some("{ block: }"))
+            .unwrap_err()
+            .to_string();
+        insta::assert_snapshot!(err, @r#"Failed to parse --where. Expected JSON-like object, e.g.
+--where='{ block: { number: { _gte: 1000, _lte: 2000 } }, log: { srcAddress: "0xabc" } }'"#);
+    }
+
+    #[test]
+    fn transaction_filters() {
+        let f = pf("{ transaction: { from: '0xa0b8', sighash: '0xdead' } }");
+        assert_eq!(f.transaction_filters.len(), 2);
+    }
+
+    #[test]
+    fn trailing_commas_and_comments() {
+        let f = pf(
+            "{ // comment\n  block: { number: { _gte: 100, } },\n  log: { srcAddress: '0xa', }, }",
+        );
+        assert_eq!((f.from_block, f.log_filters.len()), (Some(100), 1));
+    }
+
+    #[test]
+    fn case_insensitive_block_range() {
+        let f = pf("{ block: { NUMBER: { _gte: 500 } } }");
+        assert_eq!(f.from_block, Some(500));
+    }
+
+    #[test]
+    fn case_insensitive_where_fields() {
+        let f = pf("{ log: { src_address: '0xa', TOPIC0: '0xb' } }");
+        assert_eq!(f.log_filters.len(), 2);
+        assert_eq!(f.log_filters[0].indexer_name, "src_address");
+        assert_eq!(f.log_filters[1].indexer_name, "TOPIC0");
+    }
+}

@@ -22,13 +22,16 @@ async fn main() -> Result<()> {
     )
     .context("Failed parsing command line arguments")?;
 
-    // Guard against accidental misuse — only `script` subcommands go through
-    // this path. Everything else (init/codegen/dev/start/...) runs via the
-    // NAPI host and would be missing the JS dispatch side if invoked here.
-    if !matches!(command_line_args.command, CommandType::Script(_)) {
+    // Guard against accidental misuse — only commands that finish entirely
+    // in Rust (no JS dispatch needed) go through this path. Everything else
+    // (init/codegen/dev/start/...) runs via the NAPI host.
+    if !matches!(
+        command_line_args.command,
+        CommandType::Script(_) | CommandType::Data(_)
+    ) {
         anyhow::bail!(
-            "This example only supports `script` subcommands. Run envio via the NAPI host \
-             (packages/envio/bin.mjs) for init/codegen/dev/start/etc."
+            "This example only supports `script` and `data` subcommands. Run envio via the NAPI \
+             host (packages/envio/bin.mjs) for init/codegen/dev/start/etc."
         );
     }
 
