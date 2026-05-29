@@ -107,7 +107,6 @@ let runEventHandlerOrThrow = async (
   ~inMemoryStore,
   ~loadManager,
   ~persistence,
-  ~shouldSaveHistory,
   ~chains: Internal.chains,
   ~config: Config.t,
 ) => {
@@ -123,7 +122,6 @@ let runEventHandlerOrThrow = async (
       inMemoryStore,
       loadManager,
       persistence,
-      shouldSaveHistory,
       isPreload: false,
       chains,
       config,
@@ -162,7 +160,6 @@ let runHandlerOrThrow = async (
   ~inMemoryStore,
   ~loadManager,
   ~ctx: Ctx.t,
-  ~shouldSaveHistory,
   ~chains: Internal.chains,
 ) => {
   switch item {
@@ -173,7 +170,6 @@ let runHandlerOrThrow = async (
         inMemoryStore,
         loadManager,
         persistence: ctx.persistence,
-        shouldSaveHistory,
         checkpointId,
         isPreload: false,
         chains,
@@ -207,7 +203,6 @@ let runHandlerOrThrow = async (
           ~inMemoryStore,
           ~loadManager,
           ~persistence=ctx.persistence,
-          ~shouldSaveHistory,
           ~chains,
           ~config=ctx.config,
         )
@@ -265,7 +260,6 @@ let preloadBatchOrThrow = async (
                   persistence,
                   checkpointId,
                   isPreload: true,
-                  shouldSaveHistory: false,
                   chains,
                   isResolved: false,
                   config,
@@ -300,7 +294,6 @@ let preloadBatchOrThrow = async (
                   persistence,
                   checkpointId,
                   isPreload: true,
-                  shouldSaveHistory: false,
                   chains,
                   isResolved: false,
                   config,
@@ -325,7 +318,6 @@ let runBatchHandlersOrThrow = async (
   ~inMemoryStore,
   ~loadManager,
   ~ctx,
-  ~shouldSaveHistory,
   ~chains: Internal.chains,
 ) => {
   let itemIdx = ref(0)
@@ -337,15 +329,7 @@ let runBatchHandlersOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
 
-      await runHandlerOrThrow(
-        item,
-        ~checkpointId,
-        ~inMemoryStore,
-        ~loadManager,
-        ~ctx,
-        ~shouldSaveHistory,
-        ~chains,
-      )
+      await runHandlerOrThrow(item, ~checkpointId, ~inMemoryStore, ~loadManager, ~ctx, ~chains)
     }
     itemIdx := itemIdx.contents + checkpointEventsProcessed
   }
@@ -414,13 +398,7 @@ let processEventBatch = async (
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     if batch.items->Utils.Array.notEmpty {
-      await batch->runBatchHandlersOrThrow(
-        ~inMemoryStore,
-        ~loadManager,
-        ~ctx,
-        ~shouldSaveHistory=ctx.config->Config.shouldSaveHistory(~isInReorgThreshold),
-        ~chains,
-      )
+      await batch->runBatchHandlersOrThrow(~inMemoryStore, ~loadManager, ~ctx, ~chains)
     }
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat

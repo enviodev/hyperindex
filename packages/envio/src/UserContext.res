@@ -7,7 +7,6 @@ type contextParams = {
   loadManager: LoadManager.t,
   persistence: Persistence.t,
   isPreload: bool,
-  shouldSaveHistory: bool,
   chains: Internal.chains,
   config: Config.t,
   mutable isResolved: bool,
@@ -228,7 +227,6 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               checkpointId: params.checkpointId,
               entity,
             }),
-            ~shouldSaveHistory=params.shouldSaveHistory,
           )
         }
 
@@ -333,7 +331,6 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               entityId,
               checkpointId: params.checkpointId,
             }),
-            ~shouldSaveHistory=params.shouldSaveHistory,
           )
         }
       }->(Utils.magic: (string => unit) => unknown)
@@ -379,7 +376,6 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
           inMemoryStore: params.inMemoryStore,
           loadManager: params.loadManager,
           persistence: params.persistence,
-          shouldSaveHistory: params.shouldSaveHistory,
           checkpointId: params.checkpointId,
           chains: params.chains,
           isResolved: params.isResolved,
