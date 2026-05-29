@@ -235,7 +235,7 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
 
 type setUpdatesCache = {
   tableName: string,
-  convertOrThrow: Change.t<Internal.entity> => JSON.t,
+  convertOrThrow: array<Change.t<Internal.entity>> => array<JSON.t>,
 }
 
 let setUpdatesOrThrow = async (
@@ -257,23 +257,29 @@ let setUpdatesOrThrow = async (
             ~entityIndex=entityConfig.index,
           )}\``,
         convertOrThrow: S.compile(
-          S.union([
-            EntityHistory.makeSetUpdateSchema(makeClickHouseEntitySchema(entityConfig.table)),
-            S.object(s => {
-              s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
-              Change.Delete({
-                entityId: s.field(Table.idFieldName, S.string),
-                checkpointId: s.field(
-                  EntityHistory.checkpointIdFieldName,
-                  EntityHistory.unsafeCheckpointIdSchema,
-                ),
-              })
-            }),
-          ]),
+          S.array(
+            S.union([
+              EntityHistory.makeSetUpdateSchema(makeClickHouseEntitySchema(entityConfig.table)),
+              S.object(s => {
+                s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
+                Change.Delete({
+                  entityId: s.field(Table.idFieldName, S.string),
+                  checkpointId: s.field(
+                    EntityHistory.checkpointIdFieldName,
+                    EntityHistory.unsafeCheckpointIdSchema,
+                  ),
+                })
+              }),
+            ]),
+          ),
           ~input=Value,
           ~output=Json,
           ~typeValidation=false,
           ~mode=Sync,
+        )->(
+          Utils.magic: (array<Change.t<Internal.entity>> => JSON.t) => array<
+            Change.t<Internal.entity>,
+          > => array<JSON.t>
         ),
       }
 
@@ -284,7 +290,7 @@ let setUpdatesOrThrow = async (
     try {
       // The entity history table is the source of truth for ClickHouse, so every
       // intermediate change must be persisted, not only the current value.
-      let values = changes->Array.map(change => change->convertOrThrow)
+      let values = changes->convertOrThrow
 
       await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
     } catch {

@@ -596,32 +596,3 @@ type reorgCheckpoint = {
   @as("block_hash")
   blockHash: string,
 }
-
-type inMemoryStoreEntityUpdate = {
-  latestChange: Change.t<entity>,
-  history: array<Change.t<entity>>,
-}
-
-// Splits a batch's flat change log per entity id. The latest change for an id
-// is its last entry in `changes`; everything before it is history, oldest first.
-let groupChangesByEntityId = (changes: array<Change.t<entity>>): array<
-  inMemoryStoreEntityUpdate,
-> => {
-  let byId = Dict.make()
-  changes->Belt.Array.forEach(change => {
-    let entityId = change->Change.getEntityId
-    switch byId->Utils.Dict.dangerouslyGetNonOption(entityId) {
-    | Some(arr) => arr->Array.push(change)
-    | None => byId->Dict.set(entityId, [change])
-    }
-  })
-  byId
-  ->Dict.valuesToArray
-  ->Belt.Array.map(arr => {
-    let lastIdx = arr->Array.length - 1
-    {
-      latestChange: arr->Array.getUnsafe(lastIdx),
-      history: arr->Array.slice(~start=0, ~end=lastIdx),
-    }
-  })
-}

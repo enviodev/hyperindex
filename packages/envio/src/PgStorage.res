@@ -746,14 +746,28 @@ let rec writeBatch = async (
     )
 
     let setEntities = updatedEntities->Belt.Array.map(({entityConfig, changes}) => {
-      let updates = changes->Internal.groupChangesByEntityId
       let entitiesToSet = []
       let idsToDelete = []
 
-      updates->Array.forEach(row => {
-        switch row {
-        | {latestChange: Set({entity})} => entitiesToSet->Belt.Array.push(entity)
-        | {latestChange: Delete({entityId})} => idsToDelete->Belt.Array.push(entityId)
+      // Group the flat change log per entity id in a single pass, preserving
+      // order; an id's latest change is the last one in its group.
+      let changesById = Dict.make()
+      let groupedChanges = []
+      changes->Belt.Array.forEach(change => {
+        let entityId = change->Change.getEntityId
+        switch changesById->Utils.Dict.dangerouslyGetNonOption(entityId) {
+        | Some(group) => group->Belt.Array.push(change)
+        | None =>
+          let group = [change]
+          changesById->Dict.set(entityId, group)
+          groupedChanges->Belt.Array.push(group)
+        }
+      })
+
+      groupedChanges->Belt.Array.forEach(group => {
+        switch group->Belt.Array.getUnsafe(group->Belt.Array.length - 1) {
+        | Set({entity}) => entitiesToSet->Belt.Array.push(entity)
+        | Delete({entityId}) => idsToDelete->Belt.Array.push(entityId)
         }
       })
 
@@ -787,28 +801,28 @@ let rec writeBatch = async (
 
             let diffCheckpointId = rollback->Option.map(r => r.diffCheckpointId)
 
-            updates->Array.forEach(update => {
-              let {latestChange, history} = update
+            groupedChanges->Belt.Array.forEach(group => {
+              let lastIdx = group->Belt.Array.length - 1
+              let latestChange = group->Belt.Array.getUnsafe(lastIdx)
               let latestChangeIsDiff =
                 Some(latestChange->Change.getCheckpointId) === diffCheckpointId
               // The rollback-diff change, when demoted by a later indexer
-              // write, always sits at history[0]. When still current it lives
-              // on `latestChange`.
-              let historyHadDiff = switch history->Belt.Array.get(0) {
-              | Some(first) => Some(first->Change.getCheckpointId) === diffCheckpointId
-              | None => false
-              }
+              // write, always sits at the start of the group. When still
+              // current it is the latest change.
+              let historyHadDiff =
+                lastIdx > 0 &&
+                  Some(group->Belt.Array.getUnsafe(0)->Change.getCheckpointId) === diffCheckpointId
               if !(latestChangeIsDiff || historyHadDiff) {
                 backfillHistoryIds
                 ->Utils.Set.add(latestChange->Change.getEntityId)
                 ->ignore
               }
-              history->Array.forEach(
-                change =>
-                  if Some(change->Change.getCheckpointId) !== diffCheckpointId {
-                    pushChange(change)
-                  },
-              )
+              for i in 0 to lastIdx - 1 {
+                let change = group->Belt.Array.getUnsafe(i)
+                if Some(change->Change.getCheckpointId) !== diffCheckpointId {
+                  pushChange(change)
+                }
+              }
 
               // The rollback-diff change belongs in the entity table only,
               // never the entity history table.
