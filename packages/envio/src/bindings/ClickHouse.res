@@ -412,12 +412,75 @@ FROM (
 WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> string)}'`
 }
 
+// Name mirrors the Postgres envio_info table — singleton row keyed on id=1,
+// holds the JSON config used for the resume compat check.
+let envioInfoTableName = "envio_info"
+
+let makeCreateEnvioInfoTableQuery = (~database: string, ~replicated: bool=false) => {
+  let tableEngine = replicated ? "ReplicatedReplacingMergeTree" : "ReplacingMergeTree"
+  `CREATE TABLE IF NOT EXISTS ${database}.\`${envioInfoTableName}\` (
+  \`id\` UInt8,
+  \`config\` String
+)
+ENGINE = ${tableEngine}
+ORDER BY (id)`
+}
+
+// `FINAL` collapses duplicates from prior inserts so we always see the
+// latest config. The table only ever holds a single logical row (id=1).
+let readEnvioInfo = async (client, ~database: string): option<JSON.t> => {
+  try {
+    let result = await client->query({
+      query: `SELECT \`config\` FROM ${database}.\`${envioInfoTableName}\` FINAL LIMIT 1 FORMAT JSON`,
+    })
+    let parsed: {"data": array<{"config": string}>} = await result->json
+    switch parsed["data"]->Belt.Array.get(0) {
+    | Some(row) => Some(row["config"]->JSON.parseOrThrow)
+    | None => None
+    }
+  } catch {
+  | _ => None
+  }
+}
+
+let writeEnvioInfo = async (client, ~database: string, ~envioInfo: JSON.t) => {
+  await client->insert({
+    table: `${database}.\`${envioInfoTableName}\``,
+    values: [(1, envioInfo->JSON.stringify)],
+    format: "JSONCompactEachRow",
+  })
+}
+
+let hasEnvioInfoTable = async (client, ~database: string): bool => {
+  try {
+    let result = await client->query({
+      query: `SELECT count() AS c FROM system.tables WHERE database = '${database}' AND name = '${envioInfoTableName}' FORMAT JSON`,
+    })
+    let parsed: {"data": array<{"c": string}>} = await result->json
+    switch parsed["data"]->Belt.Array.get(0) {
+    | Some(row) =>
+      switch row["c"]->Belt.Int.fromString {
+      | Some(n) => n > 0
+      | None => false
+      }
+    | None => false
+    }
+  } catch {
+  | _ => false
+  }
+}
+
+let dropDatabase = async (client, ~database: string) => {
+  await client->exec({query: `DROP DATABASE IF EXISTS ${database}`})
+}
+
 // Initialize ClickHouse tables for entities
 let initialize = async (
   client,
   ~database: string,
   ~entities: array<Internal.entityConfig>,
   ~enums as _: array<Table.enumConfig<Table.enum>>,
+  ~envioInfo: JSON.t,
 ) => {
   try {
     let replicated = Env.ClickHouse.replicated()
@@ -445,11 +508,12 @@ let initialize = async (
     | None => ()
     }
 
-    await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}`})
     await client->exec({
       query: `CREATE DATABASE IF NOT EXISTS ${database}${databaseEngineClause}`,
     })
     await client->exec({query: `USE ${database}`})
+
+    await client->exec({query: makeCreateEnvioInfoTableQuery(~database, ~replicated)})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
@@ -464,30 +528,48 @@ let initialize = async (
       ),
     )->Utils.Promise.ignoreValue
 
-    Logging.trace("ClickHouse sink initialization completed successfully")
+    await writeEnvioInfo(client, ~database, ~envioInfo)
+
+    Logging.trace("ClickHouse storage initialization completed successfully")
   } catch {
   | exn => {
-      Logging.errorWithExn(exn, "Failed to initialize ClickHouse sink")
+      Logging.errorWithExn(exn, "Failed to initialize ClickHouse storage")
       JsError.throwWithMessage("ClickHouse initialization failed")
     }
   }
 }
 
-// Resume ClickHouse sink after reorg by deleting rows with checkpoint IDs higher than target
-let resume = async (client, ~database: string, ~checkpointId: Internal.checkpointId) => {
+let isInitialized = async (client, ~database: string): bool => {
   try {
-    // Try to use the database - will throw if it doesn't exist
-    try {
-      await client->exec({query: `USE ${database}`})
-    } catch {
-    | exn =>
-      Logging.errorWithExn(
-        exn,
-        `ClickHouse sink database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
-      )
-      JsError.throwWithMessage("ClickHouse resume failed")
+    let result = await client->query({
+      query: `SELECT count() AS c FROM system.databases WHERE name = '${database}' FORMAT JSON`,
+    })
+    let parsed: {"data": array<{"c": string}>} = await result->json
+    let dbExists = switch parsed["data"]->Belt.Array.get(0) {
+    | Some(row) =>
+      switch row["c"]->Belt.Int.fromString {
+      | Some(n) => n > 0
+      | None => false
+      }
+    | None => false
     }
+    if dbExists {
+      // Database might exist as a leftover even though we never finished
+      // initializing it; require the envio_info table to call it ours.
+      // Without this check an interrupted prior `initialize` would look
+      // initialized and we'd resume against partial schemas.
+      await hasEnvioInfoTable(client, ~database)
+    } else {
+      false
+    }
+  } catch {
+  | _ => false
+  }
+}
 
+// Delete rows newer than the rollback target from history + checkpoints tables.
+let rollback = async (client, ~database: string, ~checkpointId: Internal.checkpointId) => {
+  try {
     // Get all history tables
     let tablesResult = await client->query({
       query: `SHOW TABLES FROM ${database} LIKE '${EntityHistory.historyTablePrefix}%'`,
@@ -511,8 +593,8 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
   } catch {
   | Persistence.StorageError(_) as exn => throw(exn)
   | exn => {
-      Logging.errorWithExn(exn, "Failed to resume ClickHouse sink")
-      JsError.throwWithMessage("ClickHouse resume failed")
+      Logging.errorWithExn(exn, "Failed to rollback ClickHouse storage")
+      JsError.throwWithMessage("ClickHouse rollback failed")
     }
   }
 }

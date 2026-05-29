@@ -917,11 +917,12 @@ GROUP BY "chain_id";`
   })
 })
 
-describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
-  // Exercises the validation path in makeStorageFromEnv that's only taken
-  // when `storage.clickhouse: true` in config.yaml. The test suite does not
-  // set any ENVIO_CLICKHOUSE_* vars, so this should throw a user-friendly
-  // error listing every missing required env var in a single message.
+describe("ClickHouseStorage env var validation", () => {
+  // The ClickHouse env-var validation runs when `Persistence` is assembled
+  // via `makePersistenceFromConfig` and `storage.clickhouse: true` is set.
+  // The test suite does not set any ENVIO_CLICKHOUSE_* vars, so this should
+  // throw a user-friendly error listing every missing required env var in a
+  // single message.
   Async.it(
     "Throws listing all missing ENVIO_CLICKHOUSE_* env vars when storage.clickhouse=true",
     async t => {
@@ -930,7 +931,10 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
         storage: ({postgres: true, clickhouse: true}: Config.storage),
       }
       let message = switch try {
-        let _ = PgStorage.makeStorageFromEnv(~config)
+        let _ = PgStorage.makePersistenceFromConfig(
+          ~config,
+          ~storage=PgStorage.makeStorageFromEnv(~config),
+        )
         None
       } catch {
       | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
@@ -956,7 +960,10 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
         storage: ({postgres: true, clickhouse: false}: Config.storage),
       }
       // Just ensure construction succeeds without touching ClickHouse env vars.
-      let _ = PgStorage.makeStorageFromEnv(~config)
+      let _ = PgStorage.makePersistenceFromConfig(
+        ~config,
+        ~storage=PgStorage.makeStorageFromEnv(~config),
+      )
       t.expect(true, ~message="Expected no throw when clickhouse is disabled").toBe(true)
     },
   )
@@ -965,7 +972,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
   // AFTER Env.res has been imported. If Env.ClickHouse cached reads at module
   // load, those late writes would be invisible and validation would still
   // throw. This test simulates that timing by writing the vars to process.env
-  // right before calling makeStorageFromEnv.
+  // right before assembling the persistence layer.
   Async.it(
     "Picks up ENVIO_CLICKHOUSE_* vars set after Env.res has been loaded",
     async t => {
@@ -980,7 +987,10 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
         storage: ({postgres: true, clickhouse: true}: Config.storage),
       }
       let result = try {
-        let _ = PgStorage.makeStorageFromEnv(~config)
+        let _ = PgStorage.makePersistenceFromConfig(
+          ~config,
+          ~storage=PgStorage.makeStorageFromEnv(~config),
+        )
         Ok()
       } catch {
       | JsExn(e) => Error(e->JsExn.message->Option.getOr(""))

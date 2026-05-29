@@ -144,6 +144,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
     ~allEntities as _,
     ~updatedEffectsCache as _,
     ~updatedEntities,
+    ~siblingTxHooks as _=[],
   ) => {
     // Encode entities to JSON for serialization across worker boundary
     let serializableEntities = updatedEntities->Array.map((
@@ -201,5 +202,6 @@ let makeStorage = (proxy: t): Persistence.storage => {
       "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
     )
   },
+  alignToCheckpoint: (~checkpointId as _) => Promise.resolve(),
   close: async () => (),
 }

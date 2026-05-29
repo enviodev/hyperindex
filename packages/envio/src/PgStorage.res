@@ -724,7 +724,7 @@ let rec writeBatch = async (
   ~setEffectCacheOrThrow,
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
-  ~sinkPromise: option<promise<option<exn>>>,
+  ~siblingTxHooks: array<promise<option<exn>>>,
   ~escapeTables=?,
 ) => {
   try {
@@ -980,13 +980,15 @@ let rec writeBatch = async (
           ->Promise.all
           ->Utils.Promise.ignoreValue
 
-          switch sinkPromise {
-          | Some(sinkPromise) =>
-            switch await sinkPromise {
-            | Some(exn) => throw(exn)
-            | None => ()
+          // Await any peer-storage writes (e.g. ClickHouse) before COMMIT.
+          // First settled error aborts the transaction so the PG side rolls
+          // back on a peer failure.
+          if siblingTxHooks->Utils.Array.notEmpty {
+            let settled = await Promise.all(siblingTxHooks)
+            switch settled->Belt.Array.getBy(o => o->Belt.Option.isSome) {
+            | Some(Some(exn)) => throw(exn)
+            | _ => ()
             }
-          | None => ()
           }
         }),
         // Since effect cache currently doesn't support rollback,
@@ -1033,7 +1035,7 @@ let rec writeBatch = async (
       ~updatedEffectsCache,
       ~allEntities,
       ~updatedEntities,
-      ~sinkPromise,
+      ~siblingTxHooks,
     )
   }
 }
@@ -1095,7 +1097,6 @@ let make = (
   ~pgDatabase,
   ~pgPassword,
   ~isHasuraEnabled,
-  ~sink: option<Sink.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
@@ -1208,11 +1209,10 @@ let make = (
     ~enums=[],
     ~envioInfo,
   ): Persistence.initialState => {
-    // Per-entity storage routing: PG owns tables only for entities that
-    // opted into Postgres; the sink mirrors only those that opted into
-    // ClickHouse.
+    // PG owns tables only for entities that opted into Postgres. Other
+    // backends (e.g. ClickHouse) plug in as peer Persistence.storage values
+    // and own their own entity routing.
     let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
-    let chEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse)
 
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
@@ -1237,12 +1237,6 @@ let make = (
       JsError.throwWithMessage(
         `Cannot run Envio migrations on PostgreSQL schema "${pgSchema}" because it contains non-Envio tables. Running migrations would delete all data in this schema.\n\nTo resolve this:\n1. If you want to use this schema, first backup any important data, then drop it with: "pnpm envio local db-migrate down"\n2. Or specify a different schema name by setting the "ENVIO_PG_SCHEMA" environment variable\n3. Or manually drop the schema in your database if you're certain the data is not needed.`,
       )
-    }
-
-    // Call sink.initialize before executing PG queries
-    switch sink {
-    | Some(sink) => await sink.initialize(~chainConfigs, ~entities=chEntities, ~enums)
-    | None => ()
     }
 
     let queries = makeInitializeTransaction(
@@ -1545,12 +1539,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       blockHash: raw["block_hash"],
     })
 
-    // Resume sink if present - needed to rollback any reorg changes
-    switch sink {
-    | Some(sink) => await sink.resume(~checkpointId)
-    | None => ()
-    }
-
     {
       cleanRun: false,
       reorgCheckpoints,
@@ -1624,40 +1612,13 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~config,
     ~allEntities,
     ~updatedEffectsCache,
-    ~updatedEntities,
+    ~updatedEntities: array<Persistence.updatedEntity>,
+    ~siblingTxHooks=[],
   ) => {
-    let pgUpdates = []
-    let chUpdates = []
-    for i in 0 to updatedEntities->Array.length - 1 {
-      let update = updatedEntities->Array.getUnsafe(i)
-      let {entityConfig}: Persistence.updatedEntity = update
-      if entityConfig.storage.postgres {
-        pgUpdates->Array.push(update)
-      }
-      if entityConfig.storage.clickhouse {
-        chUpdates->Array.push(update)
-      }
-    }
-
-    // Initialize sink if configured
-    let sinkPromise = switch sink {
-    | Some(sink) => {
-        let timerRef = Hrtime.makeTimer()
-        Some(
-          sink.writeBatch(~batch, ~updatedEntities=chUpdates)
-          ->Promise.thenResolve(_ => {
-            Prometheus.StorageWrite.increment(
-              ~storage=sink.name,
-              ~timeSeconds=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
-            )
-            None
-          })
-          // Otherwise it fails with unhandled exception
-          ->Utils.Promise.catchResolve(exn => Some(exn)),
-        )
-      }
-    | None => None
-    }
+    let pgUpdates =
+      updatedEntities->Array.filter(({entityConfig}: Persistence.updatedEntity) =>
+        entityConfig.storage.postgres
+      )
 
     let primaryTimerRef = Hrtime.makeTimer()
     await writeBatch(
@@ -1672,7 +1633,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
       ~updatedEntities=pgUpdates,
-      ~sinkPromise,
+      ~siblingTxHooks,
     )
     Prometheus.StorageWrite.increment(
       ~storage="postgres",
@@ -1698,6 +1659,8 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     getRollbackProgressDiff,
     getRollbackData,
     writeBatch: writeBatchMethod,
+    // PG is the source of truth — no realignment work to do.
+    alignToCheckpoint: (~checkpointId as _) => Promise.resolve(),
     close,
   }
 }
@@ -1716,42 +1679,6 @@ let makeStorageFromEnv = (
     ~pgPort=Env.Db.port,
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
-    ~sink=?{
-      // Internally ClickHouse storage is implemented as a sync of the
-      // Postgres storage. Required env vars are validated here only when
-      // the user opts in via `storage.clickhouse: true` in config.yaml.
-      if config.storage.clickhouse {
-        let host = Env.ClickHouse.host()
-        let username = Env.ClickHouse.username()
-        let password = Env.ClickHouse.password()
-        let missing = []
-        let checkEnv = (opt, name) =>
-          switch opt {
-          | Some(_) => ()
-          | None => missing->Array.push(name)->ignore
-          }
-        host->checkEnv("ENVIO_CLICKHOUSE_HOST")
-        username->checkEnv("ENVIO_CLICKHOUSE_USERNAME")
-        password->checkEnv("ENVIO_CLICKHOUSE_PASSWORD")
-        if missing->Array.length > 0 {
-          JsError.throwWithMessage(
-            `ClickHouse storage is enabled but required env vars are not set: ${missing->Array.joinUnsafe(
-                ", ",
-              )}. Please set them, disable clickhouse in the \`storage\` config, or run \`envio dev\` for a pre-configured local ClickHouse.`,
-          )
-        }
-        Some(
-          Sink.makeClickHouse(
-            ~host=host->Option.getUnsafe,
-            ~database=Env.ClickHouse.database(),
-            ~username=username->Option.getUnsafe,
-            ~password=password->Option.getUnsafe,
-          ),
-        )
-      } else {
-        None
-      }
-    },
     ~onInitialize=?{
       if isHasuraEnabled {
         Some(
@@ -1804,6 +1731,30 @@ let makeStorageFromEnv = (
   )
 }
 
-let makePersistenceFromConfig = (~config: Config.t, ~storage=makeStorageFromEnv(~config)) => {
-  Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage)
+let makePersistenceFromConfig = (
+  ~config: Config.t,
+  ~storage=makeStorageFromEnv(~config),
+  ~additionalStorages=?,
+) => {
+  let additionalStorages = switch additionalStorages {
+  | Some(storages) => storages
+  | None =>
+    // Each backend opt-in in config.yaml maps to one peer storage. ClickHouse
+    // env vars are validated lazily here so users without it set never trip
+    // the check.
+    if config.storage.clickhouse {
+      switch ClickHouseStorage.makeFromEnv() {
+      | Some(s) => [s]
+      | None => []
+      }
+    } else {
+      []
+    }
+  }
+  Persistence.make(
+    ~userEntities=config.userEntities,
+    ~allEnums=config.allEnums,
+    ~storage,
+    ~additionalStorages,
+  )
 }

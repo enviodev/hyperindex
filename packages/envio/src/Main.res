@@ -623,14 +623,14 @@ let migrate = async (~reset) => {
     ~envioInfo=getEnvioInfo(),
     ~resetCommand="envio local db-migrate setup",
   )
-  await persistence.storage.close()
+  await persistence->Persistence.closeAll
 }
 
 let dropSchema = async () => {
   let config = Config.loadWithoutRegistrations()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
-  await persistence.storage.reset()
-  await persistence.storage.close()
+  await persistence->Persistence.resetAll
+  await persistence->Persistence.closeAll
 }
 
 let start = async (

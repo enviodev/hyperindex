@@ -11,7 +11,8 @@ let loadById = (
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (idsToLoad, ~onError as _) => {
-    let storage = persistence->Persistence.getInitializedStorageOrThrow
+    let _ = persistence->Persistence.getInitializedStorageOrThrow
+    let storage = persistence->Persistence.getPrimaryStorageForEntity(~entityConfig)
     let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
 
     // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
@@ -361,7 +362,8 @@ let loadByField = (
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (fieldValues: array<'fieldValue>, ~onError as _) => {
-    let storage = persistence->Persistence.getInitializedStorageOrThrow
+    let _ = persistence->Persistence.getInitializedStorageOrThrow
+    let storage = persistence->Persistence.getPrimaryStorageForEntity(~entityConfig)
     let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
 
     let size = ref(0)

@@ -201,7 +201,9 @@ module Storage = {
           ~allEntities as _,
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
+          ~siblingTxHooks as _=[],
         ) => JsError.throwWithMessage("Not implemented"),
+        alignToCheckpoint: (~checkpointId as _) => Promise.resolve(),
         close: () => Promise.resolve(),
       },
     }

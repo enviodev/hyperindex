@@ -40,6 +40,9 @@ describe("Test Persistence layer init", () => {
     ).toEqual([])
 
     storageMock.resolveIsInitialized(false)
+    // Two microtask flushes: one for the inner isInitialized promise, one
+    // for the Promise.all wrapper that fans out across all storages.
+    let _ = await Promise.resolve()
     let _ = await Promise.resolve()
 
     t.expect(
@@ -143,6 +146,9 @@ describe("Test Persistence layer init", () => {
       persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd)
 
     storageMock.resolveIsInitialized(true)
+    // Two flushes — Persistence fans out via Promise.all over storages,
+    // adding a microtask hop before resumeInitialState gets called.
+    let _ = await Promise.resolve()
     let _ = await Promise.resolve()
 
     let initialState: Persistence.initialState = {
@@ -183,6 +189,8 @@ Although it should load effect caches metadata.`,
         ~resetCommand=resetCmd,
       )
     storageMock.resolveIsInitialized(true)
+    // Two flushes — same Promise.all microtask hop as above.
+    let _ = await Promise.resolve()
     let _ = await Promise.resolve()
     let initialState: Persistence.initialState = {
       cleanRun: false,
