@@ -505,6 +505,46 @@ describe("LoadLayer", () => {
     ).toEqual(2)
   })
 
+  Async.it("Increments readCount on entity.get, but not on preload", async t => {
+    let storageMock = MockIndexer.Storage.make([#loadByIdsOrThrow])
+    let inMemoryStore = MockIndexer.InMemoryStore.make()
+    let loadManager = LoadManager.make()
+    let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+    let config = Config.loadWithoutRegistrations()
+
+    let makeContext = (~isPreload) =>
+      UserContext.getHandlerContext({
+        item,
+        loadManager,
+        persistence: storageMock->MockIndexer.Storage.toPersistence,
+        inMemoryStore,
+        shouldSaveHistory: false,
+        isPreload,
+        checkpointId: 0n,
+        chains: Dict.make(),
+        isResolved: false,
+        config,
+      })->(Utils.magic: Internal.handlerContext => Indexer.handlerContext)
+
+    let getReadCount = entityId => {
+      let inMemTable =
+        inMemoryStore->InMemoryStore.getInMemTable(~entityConfig=MockIndexer.entityConfig(User))
+      switch inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(entityId) {
+      | Some(row) => Some(row.readCount)
+      | None => None
+      }
+    }
+
+    let normalCtx = makeContext(~isPreload=false)
+    let preloadCtx = makeContext(~isPreload=true)
+
+    let _ = await normalCtx.\"User".get("1")
+    let _ = await normalCtx.\"User".get("1")
+    let _ = await preloadCtx.\"User".get("1")
+
+    t.expect(getReadCount("1")).toEqual(Some(2))
+  })
+
   Async.it(
     "Correctly gets entity from inMemoryStore by index if the entity set after the index creation",
     async t => {

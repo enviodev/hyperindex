@@ -35,6 +35,7 @@ module Entity = {
     latest: option<Internal.entity>,
     status: Internal.inMemoryStoreEntityStatus,
     mutable entityIndices?: Utils.Set.t<TableIndices.Index.t>,
+    mutable readCount: int,
   }
   type t = {
     entities: dict<entityWithIndices>,
@@ -150,6 +151,7 @@ module Entity = {
       let row: entityWithIndices = {
         latest: entity,
         status: Loaded,
+        readCount: 0,
       }
       switch entity {
       | Some(entity) =>
@@ -188,10 +190,15 @@ module Entity = {
     let updatedEntityRecord: entityWithIndices = switch inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(
       change->Change.getEntityId,
     ) {
-    | None => {latest, status: newStatus()}
+    | None => {latest, status: newStatus(), readCount: 0}
     | Some(prev) =>
       switch prev.status {
-      | Loaded => {latest, status: newStatus(), entityIndices: ?prev.entityIndices}
+      | Loaded => {
+          latest,
+          status: newStatus(),
+          entityIndices: ?prev.entityIndices,
+          readCount: prev.readCount,
+        }
       | Updated(previous_values) =>
         let newStatus = Internal.Updated({
           latestChange: change,
@@ -209,7 +216,12 @@ module Entity = {
           },
           containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
         })
-        {latest, status: newStatus, entityIndices: ?prev.entityIndices}
+        {
+          latest,
+          status: newStatus,
+          entityIndices: ?prev.entityIndices,
+          readCount: prev.readCount,
+        }
       }
     }
 
@@ -233,6 +245,12 @@ module Entity = {
       inMemTable.entities
       ->Dict.getUnsafe(key)
       ->rowToEntity
+
+  let incrementReadCount = (inMemTable: t, ~entityId: string) =>
+    switch inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(entityId) {
+    | Some(row) => row.readCount = row.readCount + 1
+    | None => ()
+    }
 
   let hasIndex = (inMemTable: t, ~fieldName, ~operator: TableIndices.Operator.t) =>
     fieldValueHash => {
