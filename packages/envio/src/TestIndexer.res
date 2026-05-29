@@ -187,21 +187,19 @@ let handleWriteBatch = (
     // Regroup the flat change log per id (mirrors PgStorage.res): the latest
     // change for an id is its last entry, the rest is history oldest-first.
     let changesByEntityId = Dict.make()
-    let orderedIds = []
     changes->Array.forEach(change => {
       let entityId = switch change {
       | Set({entityId}) | Delete({entityId}) => entityId
       }
       switch changesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
       | Some(arr) => arr->Array.push(change)
-      | None =>
-        changesByEntityId->Dict.set(entityId, [change])
-        orderedIds->Array.push(entityId)
+      | None => changesByEntityId->Dict.set(entityId, [change])
       }
     })
 
-    orderedIds->Array.forEach(entityId => {
-      let entityChanges = changesByEntityId->Dict.getUnsafe(entityId)
+    changesByEntityId
+    ->Dict.valuesToArray
+    ->Array.forEach(entityChanges => {
       let lastIdx = entityChanges->Array.length - 1
       let history = entityChanges->Array.slice(~start=0, ~end=lastIdx)
       history->Array.forEach(processChange)

@@ -608,18 +608,16 @@ let groupChangesByEntityId = (changes: array<Change.t<entity>>): array<
   inMemoryStoreEntityUpdate,
 > => {
   let byId = Dict.make()
-  let orderedIds = []
   changes->Belt.Array.forEach(change => {
     let entityId = change->Change.getEntityId
     switch byId->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | Some(arr) => arr->Array.push(change)
-    | None =>
-      byId->Dict.set(entityId, [change])
-      orderedIds->Array.push(entityId)
+    | None => byId->Dict.set(entityId, [change])
     }
   })
-  orderedIds->Belt.Array.map(entityId => {
-    let arr = byId->Dict.getUnsafe(entityId)
+  byId
+  ->Dict.valuesToArray
+  ->Belt.Array.map(arr => {
     let lastIdx = arr->Array.length - 1
     {
       latestChange: arr->Array.getUnsafe(lastIdx),

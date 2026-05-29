@@ -424,7 +424,10 @@ module Indexer = {
           ),
         )
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(
+          // Rows aren't ordered by the query, and insert order isn't meaningful
+          // since checkpointId is the source of truth. Sort for stable assertions.
+          items
+          ->S.parseOrThrow(
             S.array(
               S.union([
                 PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
@@ -441,6 +444,16 @@ module Indexer = {
               ]),
             ),
           )
+          ->Array.toSorted((a, b) => {
+            switch String.compare(a->Change.getEntityId, b->Change.getEntityId) {
+            | 0. =>
+              Float.compare(
+                a->Change.getCheckpointId->BigInt.toFloat,
+                b->Change.getCheckpointId->BigInt.toFloat,
+              )
+            | order => order
+            }
+          })
         })
         ->(
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
