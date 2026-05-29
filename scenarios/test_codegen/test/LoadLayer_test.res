@@ -529,10 +529,7 @@ describe("LoadLayer", () => {
     let getReadCount = entityId => {
       let inMemTable =
         inMemoryStore->InMemoryStore.getInMemTable(~entityConfig=MockIndexer.entityConfig(User))
-      switch inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(entityId) {
-      | Some(row) => Some(row.readCount)
-      | None => None
-      }
+      inMemTable.readCounts->Utils.Dict.dangerouslyGetNonOption(entityId)
     }
 
     let normalCtx = makeContext(~isPreload=false)
@@ -541,8 +538,9 @@ describe("LoadLayer", () => {
     let _ = await normalCtx.\"User".get("1")
     let _ = await normalCtx.\"User".get("1")
     let _ = await preloadCtx.\"User".get("1")
+    let _ = await normalCtx.\"User".get("2")
 
-    t.expect(getReadCount("1")).toEqual(Some(2.))
+    t.expect((getReadCount("1"), getReadCount("2"))).toEqual((Some(2.), Some(1.)))
   })
 
   Async.it(

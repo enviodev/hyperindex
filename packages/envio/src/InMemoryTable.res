@@ -35,11 +35,11 @@ module Entity = {
     latest: option<Internal.entity>,
     status: Internal.inMemoryStoreEntityStatus,
     mutable entityIndices?: Utils.Set.t<TableIndices.Index.t>,
-    mutable readCount: float,
   }
   type t = {
     entities: dict<entityWithIndices>,
     fieldNameIndices: indexFieldNameToIndices,
+    readCounts: dict<float>,
   }
 
   // Helper to extract entity ID from any entity
@@ -74,6 +74,7 @@ module Entity = {
   let make = (): t => {
     entities: Dict.make(),
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
+    readCounts: Dict.make(),
   }
 
   let updateIndices = (self: t, ~entity: Internal.entity, ~row: entityWithIndices) => {
@@ -151,7 +152,6 @@ module Entity = {
       let row: entityWithIndices = {
         latest: entity,
         status: Loaded,
-        readCount: 0.,
       }
       switch entity {
       | Some(entity) =>
@@ -190,15 +190,10 @@ module Entity = {
     let updatedEntityRecord: entityWithIndices = switch inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(
       change->Change.getEntityId,
     ) {
-    | None => {latest, status: newStatus(), readCount: 0.}
+    | None => {latest, status: newStatus()}
     | Some(prev) =>
       switch prev.status {
-      | Loaded => {
-          latest,
-          status: newStatus(),
-          entityIndices: ?prev.entityIndices,
-          readCount: prev.readCount,
-        }
+      | Loaded => {latest, status: newStatus(), entityIndices: ?prev.entityIndices}
       | Updated(previous_values) =>
         let newStatus = Internal.Updated({
           latestChange: change,
@@ -216,12 +211,7 @@ module Entity = {
           },
           containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
         })
-        {
-          latest,
-          status: newStatus,
-          entityIndices: ?prev.entityIndices,
-          readCount: prev.readCount,
-        }
+        {latest, status: newStatus, entityIndices: ?prev.entityIndices}
       }
     }
 
@@ -246,11 +236,10 @@ module Entity = {
       ->Dict.getUnsafe(key)
       ->rowToEntity
 
-  let incrementReadCount = (inMemTable: t, ~entityId: string) =>
-    switch inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(entityId) {
-    | Some(row) => row.readCount = row.readCount +. 1.
-    | None => ()
-    }
+  let incrementReadCount = (inMemTable: t, ~entityId: string) => {
+    let prev = inMemTable.readCounts->Utils.Dict.dangerouslyGetNonOption(entityId)->Option.getOr(0.)
+    inMemTable.readCounts->Dict.set(entityId, prev +. 1.)
+  }
 
   let hasIndex = (inMemTable: t, ~fieldName, ~operator: TableIndices.Operator.t) =>
     fieldValueHash => {

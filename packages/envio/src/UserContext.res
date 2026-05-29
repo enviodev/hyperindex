@@ -239,8 +239,14 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           Utils.magic: (string => promise<option<Internal.entity>>) => unknown
         )
       } else {
+        let inMemTable =
+          params.inMemoryStore->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
+
         (
-          entityId =>
+          entityId => {
+            if !params.isPreload {
+              inMemTable->InMemoryTable.Entity.incrementReadCount(~entityId)
+            }
             LoadLayer.loadById(
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
@@ -249,14 +255,8 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId,
-            )->Promise.thenResolve(result => {
-              if !params.isPreload {
-                params.inMemoryStore
-                ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
-                ->InMemoryTable.Entity.incrementReadCount(~entityId)
-              }
-              result
-            })
+            )
+          }
         )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
       }
     | "getWhere" =>
