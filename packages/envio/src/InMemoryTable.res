@@ -307,15 +307,4 @@ module Entity = {
       | Some((_index, relatedEntityIds)) => relatedEntityIds->Utils.Set.add(entityId)->ignore
       }
     }
-
-  let values = (inMemTable: t) => {
-    let acc = []
-    inMemTable.entities->Utils.Dict.forEach(v =>
-      switch v->rowToEntity {
-      | Some(entity) => acc->Array.push(entity)
-      | None => ()
-      }
-    )
-    acc
-  }
 }
