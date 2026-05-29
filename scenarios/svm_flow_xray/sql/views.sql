@@ -187,7 +187,20 @@ SELECT
   (f.protocol_count >= 2
      AND COALESCE(v.distinct_mints, 0) >= 2
      AND COALESCE(v.gross_usd, 0) > 10000)             AS is_arb_like,
-  f.has_liquidation                                    AS has_liquidation
+  f.has_liquidation                                    AS has_liquidation,
+  -- interest_score: composite ranking so the feed leads with whales / cross-
+  -- protocol / liquidations instead of just whatever happens to be at the head
+  -- slot. Weight order: liquidation > whale > cross-protocol > arb shape >
+  -- log(gross_usd) as a tie-breaker.
+  (
+    CASE WHEN f.has_liquidation               THEN 5000 ELSE 0 END +
+    CASE WHEN COALESCE(v.gross_usd, 0) > 100000 THEN 4000 ELSE 0 END +
+    CASE WHEN f.protocol_count >= 3           THEN 2000 ELSE 0 END +
+    CASE WHEN f.protocol_count >= 2
+              AND COALESCE(v.distinct_mints, 0) >= 2
+              AND COALESCE(v.gross_usd, 0) > 10000 THEN 1000 ELSE 0 END +
+    LEAST(500, ln(COALESCE(v.gross_usd, 0) + 1) * 30)::int
+  )                                                    AS interest_score
 FROM public.v_tx_flow AS f
 LEFT JOIN public.v_tx_value AS v ON v.tx_sig = f.tx_sig
 WHERE f.protocol_count >= 2          -- baseline: only multi-protocol txs are "interesting"
