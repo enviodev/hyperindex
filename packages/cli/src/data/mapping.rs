@@ -117,21 +117,20 @@ pub fn lookup(section: Section, user_input: &str) -> Option<TypedField> {
 
     match section {
         Section::Block => BlockField::iter()
-            .find(|f| normalize(&f.to_string()) == key)
+            .find(|f| normalize(f.as_ref()) == key)
             .map(TypedField::Block),
         Section::Transaction => TransactionField::iter()
-            .find(|f| normalize(&f.to_string()) == key)
+            .find(|f| normalize(f.as_ref()) == key)
             .map(TypedField::Transaction),
         Section::Log => LogField::iter()
-            .find(|f| normalize(&f.to_string()) == key)
+            .find(|f| normalize(f.as_ref()) == key)
             .map(TypedField::Log),
     }
 }
 
 fn to_camel(snake: &str) -> String {
-    match snake {
-        "address" => return "srcAddress".to_string(),
-        _ => {}
+    if snake == "address" {
+        return "srcAddress".to_string();
     }
     let mut out = String::with_capacity(snake.len());
     let mut capitalize_next = false;
@@ -150,13 +149,11 @@ fn to_camel(snake: &str) -> String {
 
 pub fn valid_indexer_names(section: Section) -> Vec<String> {
     match section {
-        Section::Block => BlockField::iter()
-            .map(|f| to_camel(&f.to_string()))
-            .collect(),
+        Section::Block => BlockField::iter().map(|f| to_camel(f.as_ref())).collect(),
         Section::Transaction => TransactionField::iter()
-            .map(|f| to_camel(&f.to_string()))
+            .map(|f| to_camel(f.as_ref()))
             .collect(),
-        Section::Log => LogField::iter().map(|f| to_camel(&f.to_string())).collect(),
+        Section::Log => LogField::iter().map(|f| to_camel(f.as_ref())).collect(),
     }
 }
 
