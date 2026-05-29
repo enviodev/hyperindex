@@ -56,7 +56,7 @@ let loadById = (
     ~shouldGroup,
     ~hasher=LoadManager.noopHasher,
     ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafe,
-    ~hasInMemory=hash => inMemTable.table->InMemoryTable.hasByHash(hash),
+    ~hasInMemory=hash => inMemTable.entities->Dict.has(hash),
     ~input=entityId,
   )
 }
@@ -253,7 +253,7 @@ let loadEffect = (
 
     if (
       switch persistence.storageStatus {
-      | Ready({cache}) => cache->Utils.Dict.has(effectName)
+      | Ready({cache}) => cache->Dict.has(effectName)
       | _ => false
       }
     ) {
@@ -335,7 +335,7 @@ let loadEffect = (
     ~shouldGroup,
     ~hasher=args => args.cacheKey,
     ~getUnsafeInMemory=hash => inMemTable.dict->Dict.getUnsafe(hash),
-    ~hasInMemory=hash => inMemTable.dict->Utils.Dict.has(hash),
+    ~hasInMemory=hash => inMemTable.dict->Dict.has(hash),
     ~input=effectArgs,
   )
 }
