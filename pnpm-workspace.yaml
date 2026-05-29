@@ -1,6 +1,7 @@
 packages:
   - "packages/*"
   - "scenarios/*"
+  - "scenarios/test_codegen/helpers"
 onlyBuiltDependencies:
   - rescript
   - esbuild

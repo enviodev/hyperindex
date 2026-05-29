@@ -19,7 +19,7 @@
     "@rescript/react": "0.14.1",
     "rescript-envsafe": "5.0.0",
     "rescript-schema": "9.5.1",
-    "envio": "file:../../packages/envio"
+    "envio": "file:../../../packages/envio"
   },
   "engines": {
     "node": ">=22.0.0"
