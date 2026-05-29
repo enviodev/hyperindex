@@ -542,7 +542,7 @@ describe("LoadLayer", () => {
     let _ = await normalCtx.\"User".get("1")
     let _ = await preloadCtx.\"User".get("1")
 
-    t.expect(getReadCount("1")).toEqual(Some(2))
+    t.expect(getReadCount("1")).toEqual(Some(2.))
   })
 
   Async.it(

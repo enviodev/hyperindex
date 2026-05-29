@@ -35,7 +35,7 @@ module Entity = {
     latest: option<Internal.entity>,
     status: Internal.inMemoryStoreEntityStatus,
     mutable entityIndices?: Utils.Set.t<TableIndices.Index.t>,
-    mutable readCount: int,
+    mutable readCount: float,
   }
   type t = {
     entities: dict<entityWithIndices>,
@@ -151,7 +151,7 @@ module Entity = {
       let row: entityWithIndices = {
         latest: entity,
         status: Loaded,
-        readCount: 0,
+        readCount: 0.,
       }
       switch entity {
       | Some(entity) =>
@@ -190,7 +190,7 @@ module Entity = {
     let updatedEntityRecord: entityWithIndices = switch inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(
       change->Change.getEntityId,
     ) {
-    | None => {latest, status: newStatus(), readCount: 0}
+    | None => {latest, status: newStatus(), readCount: 0.}
     | Some(prev) =>
       switch prev.status {
       | Loaded => {
@@ -248,7 +248,7 @@ module Entity = {
 
   let incrementReadCount = (inMemTable: t, ~entityId: string) =>
     switch inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(entityId) {
-    | Some(row) => row.readCount = row.readCount + 1
+    | Some(row) => row.readCount = row.readCount +. 1.
     | None => ()
     }
 
