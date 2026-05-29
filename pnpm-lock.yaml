@@ -202,9 +202,6 @@ importers:
       envio:
         specifier: file:../../packages/envio
         version: link:../../packages/envio
-      helpers:
-        specifier: workspace:*
-        version: link:helpers
       ts-expect:
         specifier: 1.3.0
         version: 1.3.0
@@ -236,27 +233,6 @@ importers:
       vitest:
         specifier: 4.1.0
         version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
-
-  scenarios/test_codegen/helpers:
-    dependencies:
-      '@rescript/react':
-        specifier: 0.14.1
-        version: 0.14.1(react-dom@19.2.3(react@19.2.5))(react@19.2.5)
-      '@rescript/runtime':
-        specifier: 12.2.0
-        version: 12.2.0
-      envio:
-        specifier: file:../../../packages/envio
-        version: link:../../../packages/envio
-      rescript:
-        specifier: 12.2.0
-        version: 12.2.0
-      rescript-envsafe:
-        specifier: 5.0.0
-        version: 5.0.0(rescript-schema@9.5.1(rescript@12.2.0))(rescript@12.2.0)
-      rescript-schema:
-        specifier: 9.5.1
-        version: 9.5.1(rescript@12.2.0)
 
 packages:
 
@@ -2359,12 +2335,6 @@ packages:
 
   requires-port@1.0.0:
     resolution: {integrity: sha512-KigOCHcocU3XODJxsu8i/j8T9tzT4adHiecwORRQ0ZZFcp7ahwXuRU1m+yuO90C5ZUyGeGfocHDI14M3L3yDAQ==}
-
-  rescript-envsafe@5.0.0:
-    resolution: {integrity: sha512-xSQbNsFSSQEynvLWUYtI7GJJhzicACLTq5aO1tjgK0N2Vcm9qlrkcLSmnU8tTohebEu9zgm1V/xYY+oGeQgLvA==}
-    peerDependencies:
-      rescript: 11.x
-      rescript-schema: 9.x
 
   rescript-schema@9.5.1:
     resolution: {integrity: sha512-g2UEMqZ0IVkW8Os7vDs3JrcSS9pyQNubksY+doa3wgt86Y+c9ruvynikDrZLvZYQyQyF1vLJc05r0r2/jLdeZQ==}
@@ -5249,11 +5219,6 @@ snapshots:
   require-directory@2.1.1: {}
 
   requires-port@1.0.0: {}
-
-  rescript-envsafe@5.0.0(rescript-schema@9.5.1(rescript@12.2.0))(rescript@12.2.0):
-    dependencies:
-      rescript: 12.2.0
-      rescript-schema: 9.5.1(rescript@12.2.0)
 
   rescript-schema@9.5.1(rescript@12.2.0):
     optionalDependencies:
