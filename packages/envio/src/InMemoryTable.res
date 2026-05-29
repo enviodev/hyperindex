@@ -31,13 +31,11 @@ module Entity = {
   type indicesSerializedToValue = t<TableIndices.Index.t, indexWithRelatedIds>
   type indexFieldNameToIndices = t<TableIndices.Index.t, indicesSerializedToValue>
 
-  type entityWithIndices = {
-    latest: option<Internal.entity>,
-    status: Internal.inMemoryStoreEntityStatus,
-    mutable entityIndices?: Utils.Set.t<TableIndices.Index.t>,
-  }
+  type entityIndices = Utils.Set.t<TableIndices.Index.t>
   type t = {
-    entities: dict<entityWithIndices>,
+    latestEntityChangeById: dict<Change.t<Internal.entity>>,
+    prevEntityChanges: array<Change.t<Internal.entity>>,
+    indicesByEntityId: dict<entityIndices>,
     fieldNameIndices: indexFieldNameToIndices,
   }
 
@@ -52,12 +50,12 @@ module Entity = {
       )
     }
 
-  let getOrCreateEntityIndices = (row: entityWithIndices) =>
-    switch row.entityIndices {
+  let getOrCreateEntityIndices = (self: t, ~entityId) =>
+    switch self.indicesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | Some(s) => s
     | None =>
       let s = Utils.Set.make()
-      row.entityIndices = Some(s)
+      self.indicesByEntityId->Dict.set(entityId, s)
       s
     }
 
@@ -71,13 +69,16 @@ module Entity = {
   }
 
   let make = (): t => {
-    entities: Dict.make(),
+    latestEntityChangeById: Dict.make(),
+    prevEntityChanges: [],
+    indicesByEntityId: Dict.make(),
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
   }
 
-  let updateIndices = (self: t, ~entity: Internal.entity, ~row: entityWithIndices) => {
+  let updateIndices = (self: t, ~entity: Internal.entity) => {
+    let entityId = entity->getEntityIdUnsafe
     //Remove any invalid indices on entity
-    switch row.entityIndices {
+    switch self.indicesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | None => ()
     | Some(entityIndices) =>
       entityIndices->Utils.Set.forEach(index => {
@@ -108,17 +109,17 @@ module Entity = {
       ->Array.forEach(((index, relatedEntityIds)) => {
         if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
           //Add entity id to indices and add index to entity indicies
-          relatedEntityIds->Utils.Set.add(getEntityIdUnsafe(entity))->ignore
-          row->getOrCreateEntityIndices->Utils.Set.add(index)->ignore
+          relatedEntityIds->Utils.Set.add(entityId)->ignore
+          self->getOrCreateEntityIndices(~entityId)->Utils.Set.add(index)->ignore
         } else {
-          relatedEntityIds->Utils.Set.delete(getEntityIdUnsafe(entity))->ignore
+          relatedEntityIds->Utils.Set.delete(entityId)->ignore
         }
       })
     })
   }
 
-  let deleteEntityFromIndices = (self: t, ~entityId: string, ~row: entityWithIndices) =>
-    switch row.entityIndices {
+  let deleteEntityFromIndices = (self: t, ~entityId: string) =>
+    switch self.indicesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | None => ()
     | Some(entityIndices) =>
       entityIndices->Utils.Set.forEach(index => {
@@ -142,65 +143,53 @@ module Entity = {
   ) => {
     let shouldWriteEntity =
       allowOverWriteEntity ||
-      inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone
+      inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone
 
     //Only initialize a row in the case where it is none
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
     if shouldWriteEntity {
-      let row: entityWithIndices = {
-        latest: entity,
-        status: Loaded,
+      // checkpointId 0n marks a value loaded from the db, which never becomes history
+      let change: Change.t<Internal.entity> = switch entity {
+      | Some(entity) => Set({entityId: key, entity, checkpointId: 0n})
+      | None => Delete({entityId: key, checkpointId: 0n})
       }
       switch entity {
       | Some(entity) =>
         //update table indices in the case where there
         //is an already set entity
-        inMemTable->updateIndices(~entity, ~row)
+        inMemTable->updateIndices(~entity)
       | None => ()
       }
-      inMemTable.entities->Dict.set(key, row)
+      inMemTable.latestEntityChangeById->Dict.set(key, change)
     }
   }
 
   let setRow = set
   let set = (inMemTable: t, change: Change.t<Internal.entity>) => {
-    let emptyHistory =
-      Utils.Array.immutableEmpty->(Utils.magic: array<unknown> => array<Change.t<Internal.entity>>)
-    let latest = switch change {
-    | Set({entity}) => Some(entity)
-    | Delete(_) => None
-    }
-
-    let updatedEntityRecord: entityWithIndices = switch inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(
-      change->Change.getEntityId,
-    ) {
-    | None => {latest, status: Internal.Updated({latestChange: change, history: emptyHistory})}
+    let entityId = change->Change.getEntityId
+    switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | Some(prev) =>
-      switch prev.status {
-      | Loaded => {
-          latest,
-          status: Internal.Updated({latestChange: change, history: emptyHistory}),
-          entityIndices: ?prev.entityIndices,
-        }
-      | Updated({latestChange: prevLatest, history}) =>
-        let newStatus = Internal.Updated({
-          latestChange: change,
-          history: prevLatest->Change.getCheckpointId === change->Change.getCheckpointId
-            ? history
-            : [...history, prevLatest],
-        })
-        {latest, status: newStatus, entityIndices: ?prev.entityIndices}
+      let prevCheckpointId = prev->Change.getCheckpointId
+
+      // checkpointId 0n marks a value loaded from the db, which never becomes history
+      if prevCheckpointId !== 0n && prevCheckpointId !== change->Change.getCheckpointId {
+        inMemTable.prevEntityChanges->Array.push(prev)
       }
+    | None => ()
     }
 
     switch change {
-    | Set({entity}) => inMemTable->updateIndices(~entity, ~row=updatedEntityRecord)
-    | Delete({entityId}) => inMemTable->deleteEntityFromIndices(~entityId, ~row=updatedEntityRecord)
+    | Set({entity}) => inMemTable->updateIndices(~entity)
+    | Delete({entityId}) => inMemTable->deleteEntityFromIndices(~entityId)
     }
-    inMemTable.entities->Dict.set(change->Change.getEntityId, updatedEntityRecord)
+    inMemTable.latestEntityChangeById->Dict.set(entityId, change)
   }
 
-  let rowToEntity = row => row.latest
+  let rowToEntity = (change: Change.t<Internal.entity>) =>
+    switch change {
+    | Set({entity}) => Some(entity)
+    | Delete(_) => None
+    }
 
   let getRow = get
 
@@ -210,7 +199,7 @@ module Entity = {
   It's needed to prevent an additional round trips to the database for deleted entities. */
   let getUnsafe = (inMemTable: t) =>
     (key: string) =>
-      inMemTable.entities
+      inMemTable.latestEntityChangeById
       ->Dict.getUnsafe(key)
       ->rowToEntity
 
@@ -245,7 +234,7 @@ module Entity = {
                 relatedEntityIds
                 ->Utils.Set.toArray
                 ->Array.filterMap(entityId => {
-                  switch inMemTable.entities->Dict.has(entityId) {
+                  switch inMemTable.latestEntityChangeById->Dict.has(entityId) {
                   | true => getEntity(entityId)
                   | false => None
                   }
@@ -262,16 +251,17 @@ module Entity = {
     let fieldName = index->TableIndices.Index.getFieldName
     let relatedEntityIds = Utils.Set.make()
 
-    inMemTable.entities->Utils.Dict.forEach(row => {
-      switch row->rowToEntity {
+    inMemTable.latestEntityChangeById->Utils.Dict.forEach(change => {
+      switch change->rowToEntity {
       | Some(entity) =>
         let fieldValue =
           entity
           ->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
           ->Dict.getUnsafe(fieldName)
         if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
-          let _ = row->getOrCreateEntityIndices->Utils.Set.add(index)
-          let _ = relatedEntityIds->Utils.Set.add(entity->getEntityIdUnsafe)
+          let entityId = entity->getEntityIdUnsafe
+          let _ = inMemTable->getOrCreateEntityIndices(~entityId)->Utils.Set.add(index)
+          let _ = relatedEntityIds->Utils.Set.add(entityId)
         }
       | None => ()
       }

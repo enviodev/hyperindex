@@ -598,8 +598,3 @@ type inMemoryStoreEntityUpdate = {
   latestChange: Change.t<entity>,
   history: array<Change.t<entity>>,
 }
-
-@unboxed
-type inMemoryStoreEntityStatus =
-  | Updated(inMemoryStoreEntityUpdate)
-  | Loaded // This means there is no change from the db.
