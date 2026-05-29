@@ -10,12 +10,11 @@ chains:
   - rpc: https://api.mainnet-beta.solana.com
     hypersync_config:
       url: https://solana.hypersync.xyz
-    # As of 2026-05-29 the public endpoint is at mainnet head (~422.11M) and the
-    # v0.0.4 server returns token_balances for every matched tx. Start ~10k slots
-    # behind head (~70min of chain time) — small enough to backfill quickly
-    # under the server's per-request budget, big enough for the demo window.
-    # Once upstream HOS-1304 lands ("queries won't time out so easily") we can
-    # widen this back to a multi-hour window.
+    # As of 2026-05-29 the public endpoint is at mainnet head (~422.33M) and
+    # the v0.0.4 server returns token_balances for every matched tx. Start
+    # ~220k slots behind head (~24h of chain time) — empirically the widest
+    # window that backfills cleanly with Orca + Meteora swap added. Widen
+    # further once HOS-1304 lands.
     start_block: 422100000
     programs_experimental:
       # --- IDL-decoded protocols ---
@@ -115,5 +114,24 @@ chains:
               - userSourceTokenAccount
               - userDestTokenAccount
               - userSourceOwner
+            field_selection:
+              token_balance_fields: true
+      # Orca + Meteora narrow swap match (sha256("global:swap")[..8] =
+      # 0xf8c69e91e17587c8). Jupiter routes CPI into both constantly, so this
+      # is the difference between "Jupiter-only" tx cards and a real cross-
+      # protocol Sankey/CPI tree. Discriminator-filtered (not program-wide) so
+      # the response stays well inside the per-request budget.
+      - name: Orca
+        program_id: whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc
+        instructions:
+          - name: swap
+            discriminator: "0xf8c69e91e17587c8"
+            field_selection:
+              token_balance_fields: true
+      - name: Meteora
+        program_id: LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo
+        instructions:
+          - name: swap
+            discriminator: "0xf8c69e91e17587c8"
             field_selection:
               token_balance_fields: true

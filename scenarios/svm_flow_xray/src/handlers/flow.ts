@@ -223,3 +223,8 @@ register("Drift", "settlePnl", driftSettlePnl);
 // SplToken + System are not matched (volume); see config.yaml. Their mapArgs
 // (splAmount / systemTransfer) are kept for a future tight-window deep dive.
 register("Raydium", "swap", raydiumSwap);
+
+// Orca + Meteora swap: discriminator-filtered (not program-wide), so the
+// CPI tree gets the protocol nodes Jupiter routes through.
+register("Orca", "swap");
+register("Meteora", "swap");
