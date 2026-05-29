@@ -172,7 +172,7 @@ module Entity = {
       let prevCheckpointId = prev->Change.getCheckpointId
       if (
         prevCheckpointId !== Internal.loadedFromDbCheckpointId &&
-          prevCheckpointId !== change->Change.getCheckpointId
+          prevCheckpointId < change->Change.getCheckpointId
       ) {
         inMemTable.prevEntityChanges->Array.push(prev)
       }
