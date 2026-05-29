@@ -223,9 +223,3 @@ register("Drift", "settlePnl", driftSettlePnl);
 // SplToken + System are not matched (volume); see config.yaml. Their mapArgs
 // (splAmount / systemTransfer) are kept for a future tight-window deep dive.
 register("Raydium", "swap", raydiumSwap);
-
-// Orca + Meteora are matched program-wide via the discriminator-free
-// "programIx" instruction. We don't decode their args; the storyline is the
-// CPI node + the token deltas the parent tx carries.
-register("Orca", "programIx");
-register("Meteora", "programIx");

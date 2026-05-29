@@ -49,24 +49,15 @@ INSERT INTO public.mint_price (mint, symbol, usd_price, decimals) VALUES
   ('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'USDC',    1.0,   6),
   ('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', 'USDT',    1.0,   6),
   ('2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo', 'PYUSD',   1.0,   6),
-  ('USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB',  'USD1',    1.0,   6),
-  -- BTC wrappers
-  ('cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij',  'cbBTC',   100000.0, 8),
   -- SOL + liquid staking derivatives
   ('So11111111111111111111111111111111111111112',  'wSOL',    150.0, 9),
   ('mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',  'mSOL',    185.0, 9),
   ('J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', 'JitoSOL', 180.0, 9),
-  -- DeFi tokens
-  ('JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',  'JUP',     0.55,  6),
-  ('27G8MtK7VtTcCHkpASjSDdkWWYfoqT6ggEuKidVJidD4', 'JLP',     4.50,  6),
-  ('KMNo3nJsBXfcpJTVhZcXLW7RmTwTt4GVFE7suUBo9sS',  'KMNO',    0.13,  6),
-  ('4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', 'RAY',     2.50,  6),
-  ('orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',  'ORCA',    3.20,  6),
-  ('PythFTbVuGv1Q2pWj2vQk1mvDqkjvkqK1XcZBKbsj4G',  'PYTH',    0.20,  6),
   -- Majors / memes (approx spot, snapshot)
+  ('JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',  'JUP',     0.55,  6),
+  ('4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', 'RAY',     2.50,  6),
   ('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', 'BONK',    0.000022, 5),
-  ('EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', 'WIF',     1.80,  6),
-  ('7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr', 'POPCAT',  1.20,  9);
+  ('EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', 'WIF',     1.80,  6);
 
 -- TODO (add ONLY with verified mint addresses): jitoSOL alt mints,
 -- additional stables (FDUSD, USDS), other LSTs (bSOL, INF). Wrong
