@@ -95,33 +95,18 @@ let writeBatch = async (
   | Initializing(_) =>
     JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
-    let emptyHistory =
-      Utils.Array.immutableEmpty->(Utils.magic: array<unknown> => array<Change.t<Internal.entity>>)
     let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
       let table = inMemoryStore->getInMemTable(~entityConfig)
-      let historyByEntityId = Dict.make()
-      table.prevEntityChanges->Array.forEach(change =>
-        historyByEntityId->Utils.Dict.push(change->Change.getEntityId, change)
-      )
-      let updates = []
+      let changes = table.prevEntityChanges->Belt.Array.copy
       table.latestEntityChangeById->Utils.Dict.forEach(change =>
-        if change->Change.getCheckpointId !== 0n {
-          updates->Array.push(
-            (
-              {
-                latestChange: change,
-                history: historyByEntityId
-                ->Utils.Dict.dangerouslyGetNonOption(change->Change.getEntityId)
-                ->Option.getOr(emptyHistory),
-              }: Internal.inMemoryStoreEntityUpdate
-            ),
-          )
+        if change->Change.getCheckpointId !== Internal.loadedFromDbCheckpointId {
+          changes->Array.push(change)
         }
       )
-      if updates->Utils.Array.isEmpty {
+      if changes->Utils.Array.isEmpty {
         None
       } else {
-        Some(({entityConfig, updates}: Persistence.updatedEntity))
+        Some(({entityConfig, changes}: Persistence.updatedEntity))
       }
     })
     await persistence.storage.writeBatch(

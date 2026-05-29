@@ -745,7 +745,8 @@ let rec writeBatch = async (
       ~items=rawEvents,
     )
 
-    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
+    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, changes}) => {
+      let updates = changes->Internal.groupChangesByEntityId
       let entitiesToSet = []
       let idsToDelete = []
 

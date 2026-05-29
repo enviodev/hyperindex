@@ -583,6 +583,9 @@ type noOnEventWhere
 
 type checkpointId = bigint
 
+// Assigned to changes loaded from the db, which never become history.
+let loadedFromDbCheckpointId: checkpointId = 0n
+
 type reorgCheckpoint = {
   @as("id")
   checkpointId: bigint,
@@ -597,4 +600,30 @@ type reorgCheckpoint = {
 type inMemoryStoreEntityUpdate = {
   latestChange: Change.t<entity>,
   history: array<Change.t<entity>>,
+}
+
+// Splits a batch's flat change log per entity id. The latest change for an id
+// is its last entry in `changes`; everything before it is history, oldest first.
+let groupChangesByEntityId = (changes: array<Change.t<entity>>): array<
+  inMemoryStoreEntityUpdate,
+> => {
+  let byId = Dict.make()
+  let orderedIds = []
+  changes->Belt.Array.forEach(change => {
+    let entityId = change->Change.getEntityId
+    switch byId->Utils.Dict.dangerouslyGetNonOption(entityId) {
+    | Some(arr) => arr->Array.push(change)
+    | None =>
+      byId->Dict.set(entityId, [change])
+      orderedIds->Array.push(entityId)
+    }
+  })
+  orderedIds->Belt.Array.map(entityId => {
+    let arr = byId->Dict.getUnsafe(entityId)
+    let lastIdx = arr->Array.length - 1
+    {
+      latestChange: arr->Array.getUnsafe(lastIdx),
+      history: arr->Array.slice(~start=0, ~end=lastIdx),
+    }
+  })
 }

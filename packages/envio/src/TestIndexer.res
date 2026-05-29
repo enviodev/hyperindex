@@ -122,7 +122,7 @@ let handleWriteBatch = (
   // checkpointId -> entityName -> entityChange
   let changesByCheckpoint: dict<dict<entityChange>> = Dict.make()
 
-  updatedEntities->Array.forEach(({entityName, updates}) => {
+  updatedEntities->Array.forEach(({entityName, changes}) => {
     let entityDict = switch state.entities->Dict.get(entityName) {
     | Some(dict) => dict
     | None =>
@@ -132,66 +132,81 @@ let handleWriteBatch = (
     }
     let entityConfig = state.entityConfigs->Dict.getUnsafe(entityName)
 
-    updates->Array.forEach(update => {
-      // Helper to process a single change (Set or Delete)
-      let processChange = (change: TestIndexerProxyStorage.serializableChange) => {
-        switch change {
-        | Set({entityId, entity, checkpointId}) =>
-          // Parse entity immediately to store decoded values for proper comparisons
-          // (bigint/BigDecimal need actual values, not JSON strings)
-          let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
+    let processChange = (change: TestIndexerProxyStorage.serializableChange) => {
+      switch change {
+      | Set({entityId, entity, checkpointId}) =>
+        // Parse entity immediately to store decoded values for proper comparisons
+        // (bigint/BigDecimal need actual values, not JSON strings)
+        let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
 
-          // Update entities dict with parsed entity for load operations
-          entityDict->Dict.set(entityId, parsedEntity)
+        // Update entities dict with parsed entity for load operations
+        entityDict->Dict.set(entityId, parsedEntity)
 
-          // Track change by checkpoint
-          let checkpointKey = checkpointId->BigInt.toString
-          let entityChanges = switch changesByCheckpoint->Dict.get(checkpointKey) {
-          | Some(changes) => changes
-          | None =>
-            let changes = Dict.make()
-            changesByCheckpoint->Dict.set(checkpointKey, changes)
-            changes
-          }
-          let entityChange = switch entityChanges->Dict.get(entityName) {
-          | Some(change) => change
-          | None =>
-            let change = {sets: [], deleted: []}
-            entityChanges->Dict.set(entityName, change)
-            change
-          }
-          entityChange.sets->Array.push(parsedEntity->Utils.magic)->ignore
-
-        | Delete({entityId, checkpointId}) =>
-          // Update entities dict for load operations
-          Dict.delete(entityDict->Obj.magic, entityId)
-
-          // Track change by checkpoint
-          let checkpointKey = checkpointId->BigInt.toString
-          let entityChanges = switch changesByCheckpoint->Dict.get(checkpointKey) {
-          | Some(changes) => changes
-          | None =>
-            let changes = Dict.make()
-            changesByCheckpoint->Dict.set(checkpointKey, changes)
-            changes
-          }
-          let entityChange = switch entityChanges->Dict.get(entityName) {
-          | Some(change) => change
-          | None =>
-            let change = {sets: [], deleted: []}
-            entityChanges->Dict.set(entityName, change)
-            change
-          }
-          entityChange.deleted->Array.push(entityId)->ignore
+        // Track change by checkpoint
+        let checkpointKey = checkpointId->BigInt.toString
+        let entityChanges = switch changesByCheckpoint->Dict.get(checkpointKey) {
+        | Some(changes) => changes
+        | None =>
+          let changes = Dict.make()
+          changesByCheckpoint->Dict.set(checkpointKey, changes)
+          changes
         }
+        let entityChange = switch entityChanges->Dict.get(entityName) {
+        | Some(change) => change
+        | None =>
+          let change = {sets: [], deleted: []}
+          entityChanges->Dict.set(entityName, change)
+          change
+        }
+        entityChange.sets->Array.push(parsedEntity->Utils.magic)->ignore
+
+      | Delete({entityId, checkpointId}) =>
+        // Update entities dict for load operations
+        Dict.delete(entityDict->Obj.magic, entityId)
+
+        // Track change by checkpoint
+        let checkpointKey = checkpointId->BigInt.toString
+        let entityChanges = switch changesByCheckpoint->Dict.get(checkpointKey) {
+        | Some(changes) => changes
+        | None =>
+          let changes = Dict.make()
+          changesByCheckpoint->Dict.set(checkpointKey, changes)
+          changes
+        }
+        let entityChange = switch entityChanges->Dict.get(entityName) {
+        | Some(change) => change
+        | None =>
+          let change = {sets: [], deleted: []}
+          entityChanges->Dict.set(entityName, change)
+          change
+        }
+        entityChange.deleted->Array.push(entityId)->ignore
       }
+    }
 
-      // Iterate over all history entries (mirroring PgStorage.res behavior)
-      update.history->Array.forEach(processChange)
+    // Regroup the flat change log per id (mirrors PgStorage.res): the latest
+    // change for an id is its last entry, the rest is history oldest-first.
+    let changesByEntityId = Dict.make()
+    let orderedIds = []
+    changes->Array.forEach(change => {
+      let entityId = switch change {
+      | Set({entityId}) | Delete({entityId}) => entityId
+      }
+      switch changesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
+      | Some(arr) => arr->Array.push(change)
+      | None =>
+        changesByEntityId->Dict.set(entityId, [change])
+        orderedIds->Array.push(entityId)
+      }
+    })
 
-      // Also include latestChange if history is empty (fallback for backwards compatibility)
-      if update.history->Array.length === 0 {
-        processChange(update.latestChange)
+    orderedIds->Array.forEach(entityId => {
+      let entityChanges = changesByEntityId->Dict.getUnsafe(entityId)
+      let lastIdx = entityChanges->Array.length - 1
+      let history = entityChanges->Array.slice(~start=0, ~end=lastIdx)
+      history->Array.forEach(processChange)
+      if history->Array.length === 0 {
+        processChange(entityChanges->Array.getUnsafe(lastIdx))
       }
     })
   })

@@ -148,10 +148,10 @@ module Entity = {
     //Only initialize a row in the case where it is none
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
     if shouldWriteEntity {
-      // checkpointId 0n marks a value loaded from the db, which never becomes history
       let change: Change.t<Internal.entity> = switch entity {
-      | Some(entity) => Set({entityId: key, entity, checkpointId: 0n})
-      | None => Delete({entityId: key, checkpointId: 0n})
+      | Some(entity) =>
+        Set({entityId: key, entity, checkpointId: Internal.loadedFromDbCheckpointId})
+      | None => Delete({entityId: key, checkpointId: Internal.loadedFromDbCheckpointId})
       }
       switch entity {
       | Some(entity) =>
@@ -170,9 +170,10 @@ module Entity = {
     switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | Some(prev) =>
       let prevCheckpointId = prev->Change.getCheckpointId
-
-      // checkpointId 0n marks a value loaded from the db, which never becomes history
-      if prevCheckpointId !== 0n && prevCheckpointId !== change->Change.getCheckpointId {
+      if (
+        prevCheckpointId !== Internal.loadedFromDbCheckpointId &&
+          prevCheckpointId !== change->Change.getCheckpointId
+      ) {
         inMemTable.prevEntityChanges->Array.push(prev)
       }
     | None => ()
@@ -185,7 +186,7 @@ module Entity = {
     inMemTable.latestEntityChangeById->Dict.set(entityId, change)
   }
 
-  let rowToEntity = (change: Change.t<Internal.entity>) =>
+  let mapChangeToEntity = (change: Change.t<Internal.entity>) =>
     switch change {
     | Set({entity}) => Some(entity)
     | Delete(_) => None
@@ -201,7 +202,7 @@ module Entity = {
     (key: string) =>
       inMemTable.latestEntityChangeById
       ->Dict.getUnsafe(key)
-      ->rowToEntity
+      ->mapChangeToEntity
 
   let hasIndex = (inMemTable: t, ~fieldName, ~operator: TableIndices.Operator.t) =>
     fieldValueHash => {
@@ -252,7 +253,7 @@ module Entity = {
     let relatedEntityIds = Utils.Set.make()
 
     inMemTable.latestEntityChangeById->Utils.Dict.forEach(change => {
-      switch change->rowToEntity {
+      switch change->mapChangeToEntity {
       | Some(entity) =>
         let fieldValue =
           entity

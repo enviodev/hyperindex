@@ -239,11 +239,11 @@ type setUpdatesCache = {
 let setUpdatesOrThrow = async (
   client,
   ~cache: Utils.WeakMap.t<Internal.entityConfig, setUpdatesCache>,
-  ~updates: array<Internal.inMemoryStoreEntityUpdate>,
+  ~changes: array<Change.t<Internal.entity>>,
   ~entityConfig: Internal.entityConfig,
   ~database: string,
 ) => {
-  if updates->Array.length === 0 {
+  if changes->Array.length === 0 {
     ()
   } else {
     let {convertOrThrow, tableName} = switch cache->Utils.WeakMap.get(entityConfig) {
@@ -281,9 +281,12 @@ let setUpdatesOrThrow = async (
 
     try {
       // Convert entity updates to ClickHouse row format
-      let values = updates->Array.map(update => {
-        update.latestChange->convertOrThrow
-      })
+      let values =
+        changes
+        ->Internal.groupChangesByEntityId
+        ->Array.map(update => {
+          update.latestChange->convertOrThrow
+        })
 
       await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
     } catch {
