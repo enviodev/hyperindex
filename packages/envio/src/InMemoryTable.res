@@ -308,17 +308,6 @@ module Entity = {
       }
     }
 
-  let updates = (inMemTable: t) => {
-    let acc = []
-    inMemTable.entities->Utils.Dict.forEach(v =>
-      switch v.status {
-      | Updated(update) => acc->Array.push(update)
-      | Loaded => ()
-      }
-    )
-    acc
-  }
-
   let values = (inMemTable: t) => {
     let acc = []
     inMemTable.entities->Utils.Dict.forEach(v =>

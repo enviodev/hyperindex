@@ -53,15 +53,9 @@ type rollback = {
   diffCheckpointId: Internal.checkpointId,
 }
 
-type entityUpdate = {
-  latestChange: Change.t<Internal.entity>,
-  history: array<Change.t<Internal.entity>>,
-  containsRollbackDiffChange: bool,
-}
-
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
-  updates: array<entityUpdate>,
+  updates: array<Internal.inMemoryStoreEntityUpdate>,
 }
 
 type storage = {

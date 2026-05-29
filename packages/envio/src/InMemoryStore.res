@@ -95,55 +95,24 @@ let writeBatch = async (
   | Initializing(_) =>
     JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
-    let shouldSaveHistory = config->Config.shouldSaveHistory(~isInReorgThreshold)
-    let rollback = inMemoryStore.rollback
     let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
-      let rawUpdates =
-        inMemoryStore
-        ->getInMemTable(~entityConfig)
-        ->InMemoryTable.Entity.updates
-      if rawUpdates->Utils.Array.isEmpty {
+      let updates = []
+      (inMemoryStore->getInMemTable(~entityConfig)).entities->Utils.Dict.forEach(row =>
+        switch row.status {
+        | Updated(update) => updates->Array.push(update)
+        | Loaded => ()
+        }
+      )
+      if updates->Utils.Array.isEmpty {
         None
       } else {
-        let updates = rawUpdates->Belt.Array.map((update): Persistence.entityUpdate => {
-          let latestChangeIsDiff = switch rollback {
-          | Some({diffCheckpointId}) =>
-            update.latestChange->Change.getCheckpointId === diffCheckpointId
-          | None => false
-          }
-          let history = if !shouldSaveHistory {
-            []
-          } else {
-            switch rollback {
-            | Some({diffCheckpointId}) =>
-              update.history->Array.filter(c => c->Change.getCheckpointId !== diffCheckpointId)
-            | None => update.history
-            }
-          }
-          // History of an entity contains the rollback-diff change only at
-          // index 0 (when a later indexer write demoted it). When it has not
-          // been demoted it survives as `latestChange`.
-          let historyHadDiff = switch rollback {
-          | Some({diffCheckpointId}) =>
-            switch update.history->Belt.Array.get(0) {
-            | Some(first) => first->Change.getCheckpointId === diffCheckpointId
-            | None => false
-            }
-          | None => false
-          }
-          {
-            latestChange: update.latestChange,
-            history,
-            containsRollbackDiffChange: latestChangeIsDiff || historyHadDiff,
-          }
-        })
         Some(({entityConfig, updates}: Persistence.updatedEntity))
       }
     })
     await persistence.storage.writeBatch(
       ~batch,
       ~rawEvents=inMemoryStore.rawEvents->InMemoryTable.values,
-      ~rollback,
+      ~rollback=inMemoryStore.rollback,
       ~isInReorgThreshold,
       ~config,
       ~allEntities=persistence.allEntities,

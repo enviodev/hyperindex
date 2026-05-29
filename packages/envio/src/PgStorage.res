@@ -787,17 +787,31 @@ let rec writeBatch = async (
             let diffCheckpointId = rollback->Option.map(r => r.diffCheckpointId)
 
             updates->Array.forEach(update => {
-              let {latestChange, history, containsRollbackDiffChange} = update
-              if !containsRollbackDiffChange {
+              let {latestChange, history} = update
+              let latestChangeIsDiff =
+                Some(latestChange->Change.getCheckpointId) === diffCheckpointId
+              // The rollback-diff change, when demoted by a later indexer
+              // write, always sits at history[0]. When still current it lives
+              // on `latestChange`.
+              let historyHadDiff = switch history->Belt.Array.get(0) {
+              | Some(first) => Some(first->Change.getCheckpointId) === diffCheckpointId
+              | None => false
+              }
+              if !(latestChangeIsDiff || historyHadDiff) {
                 backfillHistoryIds
                 ->Utils.Set.add(latestChange->Change.getEntityId)
                 ->ignore
               }
-              history->Array.forEach(pushChange)
+              history->Array.forEach(
+                change =>
+                  if Some(change->Change.getCheckpointId) !== diffCheckpointId {
+                    pushChange(change)
+                  },
+              )
 
               // The rollback-diff change belongs in the entity table only,
               // never the entity history table.
-              if Some(latestChange->Change.getCheckpointId) !== diffCheckpointId {
+              if !latestChangeIsDiff {
                 pushChange(latestChange)
               }
             })

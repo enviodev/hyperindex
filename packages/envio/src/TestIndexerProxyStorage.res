@@ -161,7 +161,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
       }
       {
         entityName: entityConfig.name,
-        updates: updates->Array.map((update: Persistence.entityUpdate) => {
+        updates: updates->Array.map(update => {
           latestChange: encodeChange(update.latestChange),
           history: update.history->Array.map(encodeChange),
         }),
