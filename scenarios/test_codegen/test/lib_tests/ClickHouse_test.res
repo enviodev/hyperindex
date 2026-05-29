@@ -186,9 +186,11 @@ describe("Test collectChanges", () => {
       ]
 
       t.expect(
-        ClickHouse.collectChanges(updates),
-        ~message="Should write all history changes in order, then the latest change",
-      ).toEqual([aV1, aV2, aV3, bDelete])
+        updates->ClickHouse.collectChanges(~convertOrThrow=change =>
+          change->Change.getCheckpointId->BigInt.toString
+        ),
+        ~message="Should convert all history changes in order, then the latest change",
+      ).toEqual(["1", "2", "3", "4"])
     },
   )
 })

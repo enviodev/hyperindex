@@ -240,15 +240,16 @@ type setUpdatesCache = {
 // intermediate change must be persisted, not only the current value. Per
 // entity update, history holds the older changes in chronological order and
 // latestChange the most recent one.
-let collectChanges = (updates: array<Internal.inMemoryStoreEntityUpdate>): array<
-  Change.t<Internal.entity>,
-> => {
-  let changes = []
+let collectChanges = (
+  updates: array<Internal.inMemoryStoreEntityUpdate>,
+  ~convertOrThrow: Change.t<Internal.entity> => 'a,
+): array<'a> => {
+  let values = []
   updates->Belt.Array.forEach(update => {
-    update.history->Belt.Array.forEach(change => changes->Array.push(change)->ignore)
-    changes->Array.push(update.latestChange)->ignore
+    update.history->Belt.Array.forEach(change => values->Array.push(change->convertOrThrow)->ignore)
+    values->Array.push(update.latestChange->convertOrThrow)->ignore
   })
-  changes
+  values
 }
 
 let setUpdatesOrThrow = async (
@@ -295,7 +296,7 @@ let setUpdatesOrThrow = async (
     }
 
     try {
-      let values = updates->collectChanges->Array.map(convertOrThrow)
+      let values = updates->collectChanges(~convertOrThrow)
 
       await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
     } catch {
