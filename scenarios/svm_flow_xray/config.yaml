@@ -117,3 +117,19 @@ chains:
               - userSourceOwner
             field_selection:
               token_balance_fields: true
+      # Orca + Meteora are matched program-wide (no discriminator) so every
+      # ix (including the inner ones called via Jupiter route) shows up as a
+      # CPI tree node and contributes to the cross-protocol count. We don't
+      # need args decoded here — token deltas are the storyline.
+      - name: Orca
+        program_id: whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc
+        instructions:
+          - name: programIx
+            field_selection:
+              token_balance_fields: true
+      - name: Meteora
+        program_id: LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo
+        instructions:
+          - name: programIx
+            field_selection:
+              token_balance_fields: true
