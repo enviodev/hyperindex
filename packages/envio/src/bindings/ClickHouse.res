@@ -236,6 +236,21 @@ type setUpdatesCache = {
   convertOrThrow: Change.t<Internal.entity> => JSON.t,
 }
 
+// The entity history table is the source of truth for ClickHouse, so every
+// intermediate change must be persisted, not only the current value. Per
+// entity update, history holds the older changes in chronological order and
+// latestChange the most recent one.
+let collectChanges = (updates: array<Internal.inMemoryStoreEntityUpdate>): array<
+  Change.t<Internal.entity>,
+> => {
+  let changes = []
+  updates->Belt.Array.forEach(update => {
+    update.history->Belt.Array.forEach(change => changes->Array.push(change)->ignore)
+    changes->Array.push(update.latestChange)->ignore
+  })
+  changes
+}
+
 let setUpdatesOrThrow = async (
   client,
   ~cache: Utils.WeakMap.t<Internal.entityConfig, setUpdatesCache>,
@@ -280,10 +295,7 @@ let setUpdatesOrThrow = async (
     }
 
     try {
-      // Convert entity updates to ClickHouse row format
-      let values = updates->Array.map(update => {
-        update.latestChange->convertOrThrow
-      })
+      let values = updates->collectChanges->Array.map(convertOrThrow)
 
       await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
     } catch {
