@@ -129,11 +129,13 @@ module QueryTypes = {
     transactions?: array<transactionSelection>,
     logs?: array<logSelection>,
     includeAllBlocks?: bool,
+    includeTokenBalances?: bool,
     fields?: fieldSelection,
     maxNumBlocks?: int,
     maxNumTransactions?: int,
     maxNumInstructions?: int,
     maxNumLogs?: int,
+    maxNumTokenBalances?: int,
   }
 }
 

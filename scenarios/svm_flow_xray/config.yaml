@@ -10,10 +10,12 @@ chains:
   - rpc: https://api.mainnet-beta.solana.com
     hypersync_config:
       url: https://solana.hypersync.xyz
-    # The public endpoint we can reach (solana-demo2 via the /etc/hosts pin to
-    # 213.190.30.141) tails ~420.66M, ~2M slots behind mainnet (see Solana
-    # Issues P0). Start ~10k slots below its head for a quick backfill + tail.
-    start_block: 420650000
+    # As of 2026-05-29 the public endpoint is at mainnet head (~422.11M) and the
+    # v0.0.4 server returns token_balances for every matched tx. Start ~50k slots
+    # behind head (~5.5h of chain time) — small enough that backfill chunks fit
+    # under the server's per-response limit (avoids connection-reset on huge
+    # ranges), big enough to cover the demo window.
+    start_block: 422060000
     programs_experimental:
       # --- IDL-decoded protocols ---
       - name: Jupiter

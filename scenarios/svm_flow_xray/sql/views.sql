@@ -70,7 +70,7 @@ INSERT INTO public.mint_price (mint, symbol, usd_price, decimals) VALUES
 -- Unknown mint -> NULL price -> coalesced to 0.
 --
 -- Slot -> unix milliseconds (approximate, for time bucketing only):
---   unix_ms = 1748000000000 + (slot - 422700000) * 400
+--   unix_ms = 1780000000000 + (slot - 422700000) * 400
 --   (anchor ~2026-05-28; 400ms/slot). Inlined where needed.
 -- ---------------------------------------------------------------------
 
@@ -104,7 +104,7 @@ SELECT
   max(n."depth")                             AS max_depth,
   count(*)                                   AS ix_count,
   bool_or(lower(n."ixName") LIKE '%liquidate%') AS has_liquidation,
-  (1748000000000 + (max(n."slot") - 422700000) * 400)::bigint AS unix_ms
+  (1780000000000 + (max(n."slot") - 422700000) * 400)::bigint AS unix_ms
 FROM public."InstructionNode" AS n
 GROUP BY n."txSig";
 
@@ -212,7 +212,7 @@ SELECT
   (l."slot" / 25)                          AS slot_bucket,
   min(l."slot")                            AS bucket_start_slot,
   max(l."slot")                            AS bucket_end_slot,
-  (1748000000000 + (min(l."slot") - 422700000) * 400)::bigint AS bucket_start_ms,
+  (1780000000000 + (min(l."slot") - 422700000) * 400)::bigint AS bucket_start_ms,
   count(*)                                 AS liq_count,
   count(DISTINCT l."txSig")                AS tx_count,
   count(DISTINCT l."marketIndex")          AS distinct_markets,

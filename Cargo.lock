@@ -2373,9 +2373,9 @@ dependencies = [
 
 [[package]]
 name = "hypersync-client-solana"
-version = "0.0.3-rc.1"
+version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2aa93d6ff4e9762eec970287b8490e6d1eb8f68448bd2000e5eb8e4be3494d98"
+checksum = "1a0e3522a3853bc9dada7db1dffa5c0762780b64cb9d6097017caefa52c909fd"
 dependencies = [
  "anyhow",
  "arrow",
@@ -2439,9 +2439,9 @@ dependencies = [
 
 [[package]]
 name = "hypersync-solana-net-types"
-version = "0.0.3-rc.1"
+version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a7857f66e8e8e525e93621885e922e7d11258cf336addaee384cfbe40e355c3"
+checksum = "1167a025c51005ec5dcdddd318d0ccb639068192a46e4d8af2345ff7a9fa6f37"
 dependencies = [
  "schemars",
  "serde",
@@ -2451,9 +2451,9 @@ dependencies = [
 
 [[package]]
 name = "hypersync-solana-schema"
-version = "0.0.3-rc.1"
+version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0888b9349b6de9f1ff2e0c10db6d6fab5723b09e30d06003cbb308597810cee"
+checksum = "ff42f3c10a939b155b6d9b88eb6c5ca7cc6e5586bc44c03a37a85cd7017be91e"
 dependencies = [
  "arrow",
 ]
