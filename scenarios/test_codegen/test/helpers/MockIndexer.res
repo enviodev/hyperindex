@@ -17,7 +17,6 @@ module InMemoryStore = {
         checkpointId: 0n,
         entity,
       }),
-      ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold=false),
     )
   }
 
@@ -195,7 +194,7 @@ module Storage = {
         writeBatch: (
           ~batch as _,
           ~rawEvents as _,
-          ~rollbackTargetCheckpointId as _,
+          ~rollback as _,
           ~isInReorgThreshold as _,
           ~config as _,
           ~allEntities as _,

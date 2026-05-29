@@ -239,7 +239,7 @@ type setUpdatesCache = {
 let setUpdatesOrThrow = async (
   client,
   ~cache: Utils.WeakMap.t<Internal.entityConfig, setUpdatesCache>,
-  ~updates: array<Internal.inMemoryStoreEntityUpdate>,
+  ~updates: array<Persistence.entityUpdate>,
   ~entityConfig: Internal.entityConfig,
   ~database: string,
 ) => {

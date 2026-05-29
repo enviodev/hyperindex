@@ -40,22 +40,22 @@ type t = {
   mutable rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
   mutable entities: dict<InMemoryTable.Entity.t>,
   mutable effects: dict<effectCacheInMemTable>,
-  mutable rollbackTargetCheckpointId: option<Internal.checkpointId>,
+  mutable rollback: option<Persistence.rollback>,
 }
 
-let make = (~entities: array<Internal.entityConfig>, ~rollbackTargetCheckpointId=?): t => {
+let make = (~entities: array<Internal.entityConfig>): t => {
   allEntities: entities,
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
   entities: EntityTables.make(entities),
   effects: Dict.make(),
-  rollbackTargetCheckpointId,
+  rollback: None,
 }
 
 let clear = (self: t) => {
   self.rawEvents = InMemoryTable.make(~hash=hashRawEventsKey)
   self.entities = EntityTables.make(self.allEntities)
   self.effects = Dict.make()
-  self.rollbackTargetCheckpointId = None
+  self.rollback = None
 }
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
@@ -81,7 +81,7 @@ let getInMemTable = (
   inMemoryStore.entities->EntityTables.get(~entityName=entityConfig.name)
 }
 
-let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpointId !== None
+let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollback !== None
 
 let writeBatch = async (
   inMemoryStore: t,
@@ -95,21 +95,55 @@ let writeBatch = async (
   | Initializing(_) =>
     JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
+    let shouldSaveHistory = config->Config.shouldSaveHistory(~isInReorgThreshold)
+    let rollback = inMemoryStore.rollback
     let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
-      let updates =
+      let rawUpdates =
         inMemoryStore
         ->getInMemTable(~entityConfig)
         ->InMemoryTable.Entity.updates
-      if updates->Utils.Array.isEmpty {
+      if rawUpdates->Utils.Array.isEmpty {
         None
       } else {
+        let updates = rawUpdates->Belt.Array.map((update): Persistence.entityUpdate => {
+          let latestChangeIsDiff = switch rollback {
+          | Some({diffCheckpointId}) =>
+            update.latestChange->Change.getCheckpointId === diffCheckpointId
+          | None => false
+          }
+          let history = if !shouldSaveHistory {
+            []
+          } else {
+            switch rollback {
+            | Some({diffCheckpointId}) =>
+              update.history->Array.filter(c => c->Change.getCheckpointId !== diffCheckpointId)
+            | None => update.history
+            }
+          }
+          // History of an entity contains the rollback-diff change only at
+          // index 0 (when a later indexer write demoted it). When it has not
+          // been demoted it survives as `latestChange`.
+          let historyHadDiff = switch rollback {
+          | Some({diffCheckpointId}) =>
+            switch update.history->Belt.Array.get(0) {
+            | Some(first) => first->Change.getCheckpointId === diffCheckpointId
+            | None => false
+            }
+          | None => false
+          }
+          {
+            latestChange: update.latestChange,
+            history,
+            containsRollbackDiffChange: latestChangeIsDiff || historyHadDiff,
+          }
+        })
         Some(({entityConfig, updates}: Persistence.updatedEntity))
       }
     })
     await persistence.storage.writeBatch(
       ~batch,
       ~rawEvents=inMemoryStore.rawEvents->InMemoryTable.values,
-      ~rollbackTargetCheckpointId=inMemoryStore.rollbackTargetCheckpointId,
+      ~rollback,
       ~isInReorgThreshold,
       ~config,
       ~allEntities=persistence.allEntities,
@@ -163,7 +197,10 @@ let prepareRollbackDiff = async (
   ~rollbackDiffCheckpointId,
 ) => {
   inMemoryStore->clear
-  inMemoryStore.rollbackTargetCheckpointId = Some(rollbackTargetCheckpointId)
+  inMemoryStore.rollback = Some({
+    targetCheckpointId: rollbackTargetCheckpointId,
+    diffCheckpointId: rollbackDiffCheckpointId,
+  })
 
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
@@ -184,8 +221,6 @@ let prepareRollbackDiff = async (
           entityId: data["id"],
           checkpointId: rollbackDiffCheckpointId,
         }),
-        ~shouldSaveHistory=false,
-        ~containsRollbackDiffChange=true,
       )
     })
 
@@ -199,8 +234,6 @@ let prepareRollbackDiff = async (
           checkpointId: rollbackDiffCheckpointId,
           entity,
         }),
-        ~shouldSaveHistory=false,
-        ~containsRollbackDiffChange=true,
       )
     })
   })
@@ -212,7 +245,7 @@ let prepareRollbackDiff = async (
   }
 }
 
-let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
+let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t) => {
   let inMemTable =
     inMemoryStore->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
 
@@ -246,7 +279,6 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
               checkpointId,
               entity: entity->InternalTable.EnvioAddresses.castToInternal,
             }),
-            ~shouldSaveHistory,
           )
         }
       }

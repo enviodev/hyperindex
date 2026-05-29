@@ -48,9 +48,20 @@ type updatedEffectCache = {
   shouldInitialize: bool,
 }
 
+type rollback = {
+  targetCheckpointId: Internal.checkpointId,
+  diffCheckpointId: Internal.checkpointId,
+}
+
+type entityUpdate = {
+  latestChange: Change.t<Internal.entity>,
+  history: array<Change.t<Internal.entity>>,
+  containsRollbackDiffChange: bool,
+}
+
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
-  updates: array<Internal.inMemoryStoreEntityUpdate>,
+  updates: array<entityUpdate>,
 }
 
 type storage = {
@@ -122,7 +133,7 @@ type storage = {
   writeBatch: (
     ~batch: Batch.t,
     ~rawEvents: array<InternalTable.RawEvents.t>,
-    ~rollbackTargetCheckpointId: option<Internal.checkpointId>,
+    ~rollback: option<rollback>,
     ~isInReorgThreshold: bool,
     ~config: Config.t,
     ~allEntities: array<Internal.entityConfig>,

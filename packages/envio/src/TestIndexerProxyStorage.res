@@ -10,7 +10,6 @@ type serializableChange =
 type serializableEntityUpdate = {
   latestChange: serializableChange,
   history: array<serializableChange>,
-  containsRollbackDiffChange: bool,
 }
 
 type serializableUpdatedEntity = {
@@ -138,7 +137,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
   writeBatch: async (
     ~batch,
     ~rawEvents as _,
-    ~rollbackTargetCheckpointId as _,
+    ~rollback as _,
     ~isInReorgThreshold as _,
     ~config as _,
     ~allEntities as _,
@@ -162,10 +161,9 @@ let makeStorage = (proxy: t): Persistence.storage => {
       }
       {
         entityName: entityConfig.name,
-        updates: updates->Array.map(update => {
+        updates: updates->Array.map((update: Persistence.entityUpdate) => {
           latestChange: encodeChange(update.latestChange),
           history: update.history->Array.map(encodeChange),
-          containsRollbackDiffChange: update.containsRollbackDiffChange,
         }),
       }
     })

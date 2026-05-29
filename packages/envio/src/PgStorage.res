@@ -717,7 +717,7 @@ let rec writeBatch = async (
   ~batch: Batch.t,
   ~rawEvents,
   ~pgSchema,
-  ~rollbackTargetCheckpointId,
+  ~rollback: option<Persistence.rollback>,
   ~isInReorgThreshold,
   ~config: Config.t,
   ~allEntities: array<Internal.entityConfig>,
@@ -772,25 +772,33 @@ let rec writeBatch = async (
             let batchDeleteCheckpointIds = []
             let batchDeleteEntityIds = []
 
+            let pushChange = (change: Change.t<'a>) => {
+              switch change {
+              | Delete({entityId}) => {
+                  batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
+                  batchDeleteCheckpointIds
+                  ->Belt.Array.push(change->Change.getCheckpointId)
+                  ->ignore
+                }
+              | Set(_) => batchSetUpdates->Array.push(change)->ignore
+              }
+            }
+
+            let diffCheckpointId = rollback->Option.map(r => r.diffCheckpointId)
+
             updates->Array.forEach(update => {
-              switch update {
-              | {history, containsRollbackDiffChange} =>
-                history->Array.forEach(
-                  (change: Change.t<'a>) => {
-                    if !containsRollbackDiffChange {
-                      backfillHistoryIds->Utils.Set.add(change->Change.getEntityId)->ignore
-                    }
-                    switch change {
-                    | Delete({entityId}) => {
-                        batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
-                        batchDeleteCheckpointIds
-                        ->Belt.Array.push(change->Change.getCheckpointId)
-                        ->ignore
-                      }
-                    | Set(_) => batchSetUpdates->Array.push(change)->ignore
-                    }
-                  },
-                )
+              let {latestChange, history, containsRollbackDiffChange} = update
+              if !containsRollbackDiffChange {
+                backfillHistoryIds
+                ->Utils.Set.add(latestChange->Change.getEntityId)
+                ->ignore
+              }
+              history->Array.forEach(pushChange)
+
+              // The rollback-diff change belongs in the entity table only,
+              // never the entity history table.
+              if Some(latestChange->Change.getCheckpointId) !== diffCheckpointId {
+                pushChange(latestChange)
               }
             })
 
@@ -913,8 +921,8 @@ let rec writeBatch = async (
     //In the event of a rollback, rollback all meta tables based on the given
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
-    let rollbackTables = switch rollbackTargetCheckpointId {
-    | Some(rollbackTargetCheckpointId) =>
+    let rollbackTables = switch rollback {
+    | Some({targetCheckpointId: rollbackTargetCheckpointId}) =>
       Some(
         sql => {
           let promises = allEntities->Array.map(entityConfig => {
@@ -1026,7 +1034,7 @@ let rec writeBatch = async (
       ~rawEvents,
       ~batch,
       ~pgSchema,
-      ~rollbackTargetCheckpointId,
+      ~rollback,
       ~isInReorgThreshold,
       ~config,
       ~setEffectCacheOrThrow,
@@ -1619,7 +1627,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   let writeBatchMethod = async (
     ~batch,
     ~rawEvents,
-    ~rollbackTargetCheckpointId,
+    ~rollback,
     ~isInReorgThreshold,
     ~config,
     ~allEntities,
@@ -1665,7 +1673,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~batch,
       ~rawEvents,
       ~pgSchema,
-      ~rollbackTargetCheckpointId,
+      ~rollback,
       ~isInReorgThreshold,
       ~config,
       ~allEntities,

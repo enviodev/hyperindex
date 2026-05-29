@@ -163,23 +163,9 @@ module Entity = {
   }
 
   let setRow = set
-  let set = (
-    inMemTable: t,
-    change: Change.t<Internal.entity>,
-    ~shouldSaveHistory,
-    ~containsRollbackDiffChange=false,
-  ) => {
-    //New entity row with only the latest update
-    @inline
-    let newStatus = () => Internal.Updated({
-      latestChange: change,
-      history: shouldSaveHistory
-        ? [change]
-        : Utils.Array.immutableEmpty->(
-            Utils.magic: array<unknown> => array<Change.t<Internal.entity>>
-          ),
-      containsRollbackDiffChange,
-    })
+  let set = (inMemTable: t, change: Change.t<Internal.entity>) => {
+    let emptyHistory =
+      Utils.Array.immutableEmpty->(Utils.magic: array<unknown> => array<Change.t<Internal.entity>>)
     let latest = switch change {
     | Set({entity}) => Some(entity)
     | Delete(_) => None
@@ -188,26 +174,20 @@ module Entity = {
     let updatedEntityRecord: entityWithIndices = switch inMemTable.entities->Utils.Dict.dangerouslyGetNonOption(
       change->Change.getEntityId,
     ) {
-    | None => {latest, status: newStatus()}
+    | None => {latest, status: Internal.Updated({latestChange: change, history: emptyHistory})}
     | Some(prev) =>
       switch prev.status {
-      | Loaded => {latest, status: newStatus(), entityIndices: ?prev.entityIndices}
-      | Updated(previous_values) =>
+      | Loaded => {
+          latest,
+          status: Internal.Updated({latestChange: change, history: emptyHistory}),
+          entityIndices: ?prev.entityIndices,
+        }
+      | Updated({latestChange: prevLatest, history}) =>
         let newStatus = Internal.Updated({
           latestChange: change,
-          history: switch shouldSaveHistory {
-          // This prevents two db actions in the same event on the same entity from being recorded to the history table.
-          | true
-            if previous_values.latestChange->Change.getCheckpointId ===
-              change->Change.getCheckpointId =>
-            previous_values.history->Utils.Array.setIndexImmutable(
-              previous_values.history->Array.length - 1,
-              change,
-            )
-          | true => [...previous_values.history, change]
-          | false => previous_values.history
-          },
-          containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
+          history: prevLatest->Change.getCheckpointId === change->Change.getCheckpointId
+            ? history
+            : [...history, prevLatest],
         })
         {latest, status: newStatus, entityIndices: ?prev.entityIndices}
       }
