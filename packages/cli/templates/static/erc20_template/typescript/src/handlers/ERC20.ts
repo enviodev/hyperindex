@@ -4,27 +4,26 @@ indexer.onEvent(
   { contract: "ERC20", event: "Approval" },
   async ({ event, context }) => {
     //  getting the owner Account entity
-    let ownerAccount = await context.Account.get(event.params.owner.toString());
+    let ownerAccount = await context.Account.get(event.params.owner);
 
     if (ownerAccount === undefined) {
       // Usually an account that is being approved already has/has had a balance, but it is possible they haven't.
 
       // create the account
       let accountObject: Account = {
-        id: event.params.owner.toString(),
+        id: event.params.owner,
         balance: 0n,
       };
       context.Account.set(accountObject);
     }
 
-    let approvalId =
-      event.params.owner.toString() + "-" + event.params.spender.toString();
+    let approvalId = event.params.owner + "-" + event.params.spender;
 
     let approvalObject: Approval = {
       id: approvalId,
       amount: event.params.value,
-      owner_id: event.params.owner.toString(),
-      spender_id: event.params.spender.toString(),
+      owner_id: event.params.owner,
+      spender_id: event.params.spender,
     };
 
     // this is the same for create or update as the amount is overwritten
@@ -35,13 +34,16 @@ indexer.onEvent(
 indexer.onEvent(
   { contract: "ERC20", event: "Transfer" },
   async ({ event, context }) => {
-    let senderAccount = await context.Account.get(event.params.from.toString());
+    let [senderAccount, receiverAccount] = await Promise.all([
+      context.Account.get(event.params.from),
+      context.Account.get(event.params.to),
+    ]);
 
     if (senderAccount === undefined) {
       // create the account
       // This is likely only ever going to be the zero address in the case of the first mint
       let accountObject: Account = {
-        id: event.params.from.toString(),
+        id: event.params.from,
         balance: 0n - event.params.value,
       };
 
@@ -55,12 +57,10 @@ indexer.onEvent(
       context.Account.set(accountObject);
     }
 
-    let receiverAccount = await context.Account.get(event.params.to.toString());
-
     if (receiverAccount === undefined) {
       // create new account
       let accountObject: Account = {
-        id: event.params.to.toString(),
+        id: event.params.to,
         balance: event.params.value,
       };
       context.Account.set(accountObject);
