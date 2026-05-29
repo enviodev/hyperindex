@@ -12,8 +12,11 @@ open Vitest
 // Each row here carries a 5MB contract_name so ~120 rows already push the
 // aggregate past the limit. repeat('x', ...) is highly compressible, so the
 // table stays tiny on disk while the decoded json string blows past the cap.
+// Skipped by default: it pushes ~600MB through Postgres to cross the V8 string
+// limit, which is too slow/heavy for every CI run. Run it manually to guard the
+// fix for #1242.
 describe("Dynamic contracts startup size", () => {
-  Async.it(
+  Async.it_skip(
     "getInitialState loads all dynamic contracts when the aggregate exceeds the V8 string limit",
     async t => {
       let sourceMock = MockIndexer.Source.make(
@@ -52,6 +55,5 @@ FROM generate_series(1, ${rowCount->Int.toString}) AS g;`,
         ~message=`All registered dynamic contracts should load even when the aggregated json exceeds the V8 string limit`,
       ).toBe(rowCount)
     },
-    ~timeout=120_000,
   )
 })
