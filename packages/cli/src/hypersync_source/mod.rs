@@ -26,21 +26,6 @@ fn init_logger(log_level: Option<&str>) {
     });
 }
 
-#[napi(object)]
-pub struct NapiRateLimitInfo {
-    pub remaining: Option<i64>,
-    pub reset_secs: Option<i64>,
-    pub limit: Option<i64>,
-}
-
-fn convert_rate_limit_info(info: &hypersync_client::RateLimitInfo) -> NapiRateLimitInfo {
-    NapiRateLimitInfo {
-        remaining: info.remaining.map(|v| v as i64),
-        reset_secs: info.reset_secs.map(|v| v as i64),
-        limit: info.limit.map(|v| v as i64),
-    }
-}
-
 fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
     let reset_ms = info.suggested_wait_secs().unwrap_or(1) * 1000;
     napi::Error::from_reason(format!("RATE_LIMITED:{reset_ms}"))
@@ -90,12 +75,8 @@ impl HypersyncClient {
             .context("run inner query")
             .map_err(map_err)?;
         match res {
-            RateLimitResponse::Success {
-                response,
-                rate_limit,
-            } => {
-                let rate_limit = convert_rate_limit_info(&rate_limit);
-                convert_response(response, self.enable_checksum_addresses, rate_limit)
+            RateLimitResponse::Success { response, .. } => {
+                convert_response(response, self.enable_checksum_addresses)
                     .context("convert response")
                     .map_err(map_err)
             }
@@ -125,11 +106,8 @@ impl HypersyncClient {
             .context("run inner query")
             .map_err(map_err)?;
 
-        let (response, rate_limit) = match res {
-            RateLimitResponse::Success {
-                response,
-                rate_limit,
-            } => (response, convert_rate_limit_info(&rate_limit)),
+        let response = match res {
+            RateLimitResponse::Success { response, .. } => response,
             RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
         };
 
@@ -163,7 +141,6 @@ impl HypersyncClient {
                 .transpose()
                 .context("convert rollback guard")
                 .map_err(map_err)?,
-            rate_limit,
         })
     }
 }
@@ -182,7 +159,6 @@ pub struct QueryResponse {
     pub total_execution_time: i64,
     pub data: QueryResponseData,
     pub rollback_guard: Option<RollbackGuard>,
-    pub rate_limit: NapiRateLimitInfo,
 }
 
 #[napi(object)]
@@ -205,13 +181,11 @@ pub struct EventItemsResponse {
     pub next_block: i64,
     pub items: Vec<EventItem>,
     pub rollback_guard: Option<RollbackGuard>,
-    pub rate_limit: NapiRateLimitInfo,
 }
 
 fn convert_response(
     res: hypersync_client::QueryResponse,
     should_checksum: bool,
-    rate_limit: NapiRateLimitInfo,
 ) -> Result<QueryResponse> {
     let blocks = res
         .data
@@ -261,7 +235,6 @@ fn convert_response(
             .map(RollbackGuard::try_from)
             .transpose()
             .context("convert rollback guard")?,
-        rate_limit,
     })
 }
 

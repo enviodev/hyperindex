@@ -301,12 +301,6 @@ module ResponseTypes = {
   }
 }
 
-type rateLimitInfo = {
-  remaining?: int,
-  resetSecs?: int,
-  limit?: int,
-}
-
 type query = QueryTypes.query
 
 type queryResponseData = {
@@ -321,7 +315,6 @@ type queryResponse = {
   totalExecutionTime: int,
   data: queryResponseData,
   rollbackGuard: option<ResponseTypes.rollbackGuard>,
-  rateLimit: rateLimitInfo,
 }
 
 module Decoder = {
@@ -363,7 +356,6 @@ module EventItems = {
     nextBlock: int,
     items: array<item>,
     rollbackGuard: option<ResponseTypes.rollbackGuard>,
-    rateLimit: rateLimitInfo,
   }
 }
 
