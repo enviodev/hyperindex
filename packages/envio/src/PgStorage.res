@@ -717,7 +717,7 @@ let rec writeBatch = async (
   ~batch: Batch.t,
   ~rawEvents,
   ~pgSchema,
-  ~rollbackTargetCheckpointId,
+  ~rollback: option<Persistence.rollback>,
   ~isInReorgThreshold,
   ~config: Config.t,
   ~allEntities: array<Internal.entityConfig>,
@@ -745,14 +745,55 @@ let rec writeBatch = async (
       ~items=rawEvents,
     )
 
-    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
+    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, changes}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
-      updates->Array.forEach(row => {
-        switch row {
-        | {latestChange: Set({entity})} => entitiesToSet->Belt.Array.push(entity)
-        | {latestChange: Delete({entityId})} => idsToDelete->Belt.Array.push(entityId)
+      // The rollback-diff change is written to the entity table only, never the
+      // history table; when present it is an id's oldest change.
+      let diffCheckpointId = rollback->Option.map(r => r.diffCheckpointId)
+
+      // History batches, populated only when saving history.
+      let batchSetUpdates = []
+      let batchDeleteEntityIds = []
+      let batchDeleteCheckpointIds = []
+      let idsWithDiff = Utils.Set.make()
+
+      // Single pass over the change log: track each id's latest change (the last
+      // one seen) and, when saving history, fan every non-diff change out to the
+      // history-table batches.
+      let latestChangeById = Dict.make()
+      let orderedIds = []
+      changes->Belt.Array.forEach(change => {
+        let entityId = change->Change.getEntityId
+        if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityId)->Option.isNone {
+          orderedIds->Belt.Array.push(entityId)
+        }
+        latestChangeById->Dict.set(entityId, change)
+        if shouldSaveHistory {
+          if Some(change->Change.getCheckpointId) === diffCheckpointId {
+            idsWithDiff->Utils.Set.add(entityId)->ignore
+          } else {
+            switch change {
+            | Delete({entityId, checkpointId}) =>
+              batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
+              batchDeleteCheckpointIds->Belt.Array.push(checkpointId)->ignore
+            | Set(_) => batchSetUpdates->Belt.Array.push(change)->ignore
+            }
+          }
+        }
+      })
+
+      let backfillHistoryIds = Utils.Set.make()
+      orderedIds->Belt.Array.forEach(entityId => {
+        switch latestChangeById->Dict.getUnsafe(entityId) {
+        | Set({entity}) => entitiesToSet->Belt.Array.push(entity)
+        | Delete({entityId}) => idsToDelete->Belt.Array.push(entityId)
+        }
+
+        // An id needs a history backfill iff none of its changes is the diff.
+        if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityId)) {
+          backfillHistoryIds->Utils.Set.add(entityId)->ignore
         }
       })
 
@@ -766,34 +807,6 @@ let rec writeBatch = async (
           let promises = []
 
           if shouldSaveHistory {
-            let backfillHistoryIds = Utils.Set.make()
-            let batchSetUpdates = []
-            // Use unnest approach
-            let batchDeleteCheckpointIds = []
-            let batchDeleteEntityIds = []
-
-            updates->Array.forEach(update => {
-              switch update {
-              | {history, containsRollbackDiffChange} =>
-                history->Array.forEach(
-                  (change: Change.t<'a>) => {
-                    if !containsRollbackDiffChange {
-                      backfillHistoryIds->Utils.Set.add(change->Change.getEntityId)->ignore
-                    }
-                    switch change {
-                    | Delete({entityId}) => {
-                        batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
-                        batchDeleteCheckpointIds
-                        ->Belt.Array.push(change->Change.getCheckpointId)
-                        ->ignore
-                      }
-                    | Set(_) => batchSetUpdates->Array.push(change)->ignore
-                    }
-                  },
-                )
-              }
-            })
-
             if backfillHistoryIds->Utils.Set.size !== 0 {
               // This must run before updating entity or entity history tables
               await EntityHistory.backfillHistory(
@@ -913,8 +926,8 @@ let rec writeBatch = async (
     //In the event of a rollback, rollback all meta tables based on the given
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
-    let rollbackTables = switch rollbackTargetCheckpointId {
-    | Some(rollbackTargetCheckpointId) =>
+    let rollbackTables = switch rollback {
+    | Some({targetCheckpointId: rollbackTargetCheckpointId}) =>
       Some(
         sql => {
           let promises = allEntities->Array.map(entityConfig => {
@@ -1026,7 +1039,7 @@ let rec writeBatch = async (
       ~rawEvents,
       ~batch,
       ~pgSchema,
-      ~rollbackTargetCheckpointId,
+      ~rollback,
       ~isInReorgThreshold,
       ~config,
       ~setEffectCacheOrThrow,
@@ -1619,7 +1632,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   let writeBatchMethod = async (
     ~batch,
     ~rawEvents,
-    ~rollbackTargetCheckpointId,
+    ~rollback,
     ~isInReorgThreshold,
     ~config,
     ~allEntities,
@@ -1665,7 +1678,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~batch,
       ~rawEvents,
       ~pgSchema,
-      ~rollbackTargetCheckpointId,
+      ~rollback,
       ~isInReorgThreshold,
       ~config,
       ~allEntities,

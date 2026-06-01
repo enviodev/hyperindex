@@ -165,8 +165,4 @@ curl --request POST \
 
 Returns the earliest matching blocks. Use `from_block` to paginate forward. Pick a tight range (50–200 blocks) for fast, deterministic tests.
 
-Full HyperSync query reference: https://docs.envio.dev/docs/HyperSync-LLM/hypersync-complete
-
-## Deep Documentation
-
-Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

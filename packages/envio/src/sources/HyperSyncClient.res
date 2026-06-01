@@ -299,27 +299,15 @@ module ResponseTypes = {
     firstBlockNumber: int,
     firstParentHash: string,
   }
-
-  type rateLimitInfo = {
-    remaining?: int,
-    resetSecs?: int,
-    limit?: int,
-  }
-
-  type eventResponse = {
-    archiveHeight: option<int>,
-    nextBlock: int,
-    totalExecutionTime: int,
-    data: array<event>,
-    rollbackGuard: option<rollbackGuard>,
-    rateLimit: option<rateLimitInfo>,
-  }
 }
 
-type rateLimitInfo = ResponseTypes.rateLimitInfo
+type rateLimitInfo = {
+  remaining?: int,
+  resetSecs?: int,
+  limit?: int,
+}
 
 type query = QueryTypes.query
-type eventResponse = ResponseTypes.eventResponse
 
 type queryResponseData = {
   blocks: array<ResponseTypes.block>,
@@ -336,16 +324,60 @@ type queryResponse = {
   rateLimit: rateLimitInfo,
 }
 
+module Decoder = {
+  type eventParamsInput = {
+    sighash: string,
+    topicCount: int,
+    eventName: string,
+    params: array<Internal.paramMeta>,
+  }
+
+  type tWithParams = {
+    decodeLogs: array<ResponseTypes.event> => promise<array<Nullable.t<Internal.eventParams>>>,
+  }
+
+  @send
+  external classFromParams: (
+    Core.decoderCtor,
+    array<eventParamsInput>,
+    ~checksumAddresses: bool=?,
+  ) => tWithParams = "fromParams"
+
+  let fromParams = (eventParams, ~checksumAddresses=?) =>
+    Core.getAddon().decoder->classFromParams(eventParams, ~checksumAddresses?)
+}
+
+module EventItems = {
+  type item = {
+    logIndex: int,
+    srcAddress: Address.t,
+    topic0: EvmTypes.Hex.t,
+    topicCount: int,
+    block: ResponseTypes.block,
+    transaction: ResponseTypes.transaction,
+    params: Nullable.t<Internal.eventParams>,
+  }
+
+  type response = {
+    archiveHeight: option<int>,
+    nextBlock: int,
+    items: array<item>,
+    rollbackGuard: option<ResponseTypes.rollbackGuard>,
+    rateLimit: rateLimitInfo,
+  }
+}
+
 type t = {
   get: (~query: query) => promise<queryResponse>,
-  getEvents: (~query: query) => promise<eventResponse>,
+  getEventItems: (~query: query) => promise<EventItems.response>,
 }
 
 @send
-external classNewWithAgent: (Core.hypersyncClientCtor, cfg, string) => t = "newWithAgent"
+external classNew: (Core.hypersyncClientCtor, cfg, string, array<Decoder.eventParamsInput>) => t =
+  "new"
 
-let makeWithAgent = (cfg, ~userAgent) =>
-  Core.getAddon().hypersyncClient->classNewWithAgent(cfg, userAgent)
+let makeWithAgent = (cfg, ~userAgent, ~eventParams) =>
+  Core.getAddon().hypersyncClient->classNew(cfg, userAgent, eventParams)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
@@ -364,6 +396,7 @@ let make = (
   ~apiToken,
   ~httpReqTimeoutMillis,
   ~maxNumRetries,
+  ~eventParams,
   ~enableChecksumAddresses=true,
   ~serializationFormat=?,
   ~enableQueryCaching=?,
@@ -388,50 +421,6 @@ let make = (
       logLevel: logLevelToString(logLevel),
     },
     ~userAgent=`hyperindex/${envioVersion}`,
+    ~eventParams,
   )
-}
-
-module Decoder = {
-  type rec decodedSolType<'a> = {val: 'a}
-
-  @unboxed
-  type rec decodedRaw =
-    | DecodedBool(bool)
-    | DecodedStr(string)
-    | DecodedNum(bigint)
-    | DecodedVal(decodedSolType<decodedRaw>)
-    | DecodedArr(array<decodedRaw>)
-
-  @unboxed
-  type rec decodedUnderlying =
-    | Bool(bool)
-    | Str(string)
-    | Num(bigint)
-    | Arr(array<decodedUnderlying>)
-
-  let rec toUnderlying = (d: decodedRaw): decodedUnderlying => {
-    switch d {
-    | DecodedVal(v) => v.val->toUnderlying
-    | DecodedBool(v) => Bool(v)
-    | DecodedStr(v) => Str(v)
-    | DecodedNum(v) => Num(v)
-    | DecodedArr(v) => v->Belt.Array.map(toUnderlying)->Arr
-    }
-  }
-
-  type decodedEvent = {
-    indexed: array<decodedRaw>,
-    body: array<decodedRaw>,
-  }
-
-  type t = {
-    decodeEvents: array<ResponseTypes.event> => promise<array<Nullable.t<decodedEvent>>>,
-  }
-
-  @send
-  external classFromSignatures: (Core.decoderCtor, array<string>, ~checksumAddresses: bool=?) => t =
-    "fromSignatures"
-
-  let fromSignatures = (signatures, ~checksumAddresses=?) =>
-    Core.getAddon().decoder->classFromSignatures(signatures, ~checksumAddresses?)
 }

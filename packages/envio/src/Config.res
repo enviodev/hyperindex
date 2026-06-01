@@ -15,8 +15,6 @@ type contract = {
   addresses: array<Address.t>,
   events: array<Internal.eventConfig>,
   startBlock: option<int>,
-  // EVM-specific: event sighashes for HyperSync queries
-  eventSignatures: array<string>,
 }
 
 // Sources are instantiated lazily in ChainFetcher from this config.
@@ -198,10 +196,9 @@ let publicConfigChainSchema = S.schema(s =>
 
 let contractEventItemSchema = S.schema(s =>
   {
-    "event": s.matches(S.string),
     "name": s.matches(S.string),
     "sighash": s.matches(S.string),
-    "params": s.matches(S.option(S.array(EventConfigBuilder.eventParamSchema))),
+    "params": s.matches(S.option(S.array(EventConfigBuilder.paramMetaSchema))),
     "kind": s.matches(S.option(S.string)),
     "blockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
     "transactionFields": s.matches(S.option(S.array(Internal.evmTransactionFieldSchema))),
@@ -542,12 +539,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => (Utils.Set.fromArray(EventConfigBuilder.alwaysIncludedBlockFields), Utils.Set.make())
   }
 
-  // Build contract data lookup: ABI, event signatures, event configs (keyed by capitalized name)
-  let contractDataByName: dict<{
-    "abi": EvmTypes.Abi.t,
-    "eventSignatures": array<string>,
-    "events": option<array<_>>,
-  }> = Dict.make()
+  let contractDataByName: dict<{"abi": EvmTypes.Abi.t, "events": option<array<_>>}> = Dict.make()
   switch publicContractsConfig {
   | Some(contractsDict) =>
     contractsDict
@@ -555,13 +547,9 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ->Array.forEach(((contractName, contractConfig)) => {
       let capitalizedName = contractName->Utils.String.capitalize
       let abi = contractConfig["abi"]->(Utils.magic: JSON.t => EvmTypes.Abi.t)
-      let eventSignatures = switch contractConfig["events"] {
-      | Some(events) => events->Array.map(eventItem => eventItem["event"])
-      | None => []
-      }
       contractDataByName->Dict.set(
         capitalizedName,
-        {"abi": abi, "eventSignatures": eventSignatures, "events": contractConfig["events"]},
+        {"abi": abi, "events": contractConfig["events"]},
       )
     })
   | None => ()
@@ -689,7 +677,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             addresses,
             events,
             startBlock,
-            eventSignatures: contractData["eventSignatures"],
           }
         })
 

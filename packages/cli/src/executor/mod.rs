@@ -15,6 +15,7 @@ pub mod init;
 mod local;
 mod metrics;
 mod skills;
+mod tools;
 
 use anyhow::{Context, Result};
 use schemars::schema_for;
@@ -88,6 +89,11 @@ pub async fn execute(
 
         CommandType::Skills(SkillsSubcommand::Update) => {
             skills::run_update(&parsed_project_paths)?;
+            Ok(None)
+        }
+
+        CommandType::Tools(tools_subcommand) => {
+            tools::run(tools_subcommand).await?;
             Ok(None)
         }
 

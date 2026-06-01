@@ -242,11 +242,19 @@ module Make = () => {
 
     let unfilteredBlocks = self->getBlocks(~fromBlock, ~toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getOrThrow
-    let prevRangeLastBlock =
-      self
-      ->getBlock(~blockNumber=fromBlock - 1)
-      ->Option.map(b => {ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
     let knownHeight = self->getHeight
+
+    let blockHashes = unfilteredBlocks->Array.map(b => {
+      ReorgDetection.blockNumber: b.blockNumber,
+      blockHash: b.blockHash,
+    })
+    switch self->getBlock(~blockNumber=fromBlock - 1) {
+    | Some(b) =>
+      blockHashes
+      ->Array.unshift({ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
+      ->ignore
+    | None => ()
+    }
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
       let addresses = query.addressesByContractName->Dict.get(c.name)->Option.getOr([])
@@ -262,13 +270,7 @@ module Make = () => {
 
     {
       knownHeight,
-      reorgGuard: {
-        rangeLastBlock: {
-          blockHash: heighstBlock.blockHash,
-          blockNumber: heighstBlock.blockNumber,
-        },
-        prevRangeLastBlock,
-      },
+      blockHashes,
       parsedQueueItems,
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,

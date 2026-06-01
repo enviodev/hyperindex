@@ -330,17 +330,11 @@ type genericHandlerWithLoader<'loader, 'handler, 'where> = {
 // param (or any nested field) is a Solidity struct. `name` is always non-empty —
 // the CLI fills in `"0"`, `"1"`, ... for anonymous components in mixed-name
 // tuples — so the runtime can always rebuild a keyed object.
-type rec eventParamComponent = {
-  name: string,
-  abiType: string,
-  components?: array<eventParamComponent>,
-}
-
-type eventParam = {
+type rec paramMeta = {
   name: string,
   abiType: string,
   indexed: bool,
-  components?: array<eventParamComponent>,
+  components?: array<paramMeta>,
 }
 
 // This is private so it's not manually constructed internally
@@ -398,15 +392,11 @@ type eventFilters =
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
-  convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
   selectedTransactionFields: Utils.Set.t<evmTransactionField>,
-  // Retained so `HandlerLoader.applyRegistrations` can re-run
-  // `LogSelection.parseEventFiltersOrThrow` after handler modules register
-  // with a `where:` filter. Only indexed params are kept — they're all the
-  // filter parser needs for topic-getter construction + key validation.
   sighash: string,
-  indexedParams: array<eventParam>,
+  topicCount: int,
+  paramsMetadata: array<paramMeta>,
 }
 
 // Shared formula for `eventConfig.dependsOnAddresses`. Kept here so
@@ -593,6 +583,12 @@ type noOnEventWhere
 
 type checkpointId = bigint
 
+// Assigned to changes loaded from the db, which never become history.
+let loadedFromDbCheckpointId: checkpointId = 0n
+
+// Committed checkpoint before any batch is written.
+let initialCheckpointId: checkpointId = 0n
+
 type reorgCheckpoint = {
   @as("id")
   checkpointId: bigint,
@@ -603,21 +599,3 @@ type reorgCheckpoint = {
   @as("block_hash")
   blockHash: string,
 }
-
-type inMemoryStoreEntityUpdate<'entity> = {
-  latestChange: Change.t<'entity>,
-  history: array<Change.t<'entity>>,
-  // In the event of a rollback, some entity updates may have been
-  // been affected by a rollback diff. If there was no rollback diff
-  // this will always be false.
-  // If there was a rollback diff, this will be false in the case of a
-  // new entity update (where entity affected is not present in the diff) b
-  // but true if the update is related to an entity that is
-  // currently present in the diff
-  containsRollbackDiffChange: bool,
-}
-
-@unboxed
-type inMemoryStoreEntityStatus<'entity> =
-  | Updated(inMemoryStoreEntityUpdate<'entity>)
-  | Loaded // This means there is no change from the db.

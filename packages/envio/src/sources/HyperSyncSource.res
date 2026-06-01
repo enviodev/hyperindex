@@ -5,13 +5,9 @@ type selectionConfig = {
     ~addressesByContractName: dict<array<Address.t>>,
   ) => array<LogSelection.t>,
   fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
-  nonOptionalBlockFieldNames: array<string>,
-  nonOptionalTransactionFieldNames: array<string>,
 }
 
 let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
-  let nonOptionalBlockFieldNames = Utils.Set.make()
-  let nonOptionalTransactionFieldNames = Utils.Set.make()
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
 
@@ -33,22 +29,18 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   }) => {
     selectedBlockFields
     ->Utils.Set.toArray
-    ->Array.forEach(name => {
-      let nameStr = (name :> string)
-      if !(Internal.evmNullableBlockFields->Utils.Set.has(name)) {
-        nonOptionalBlockFieldNames->Utils.Set.add(nameStr)->ignore
-      }
-      capitalizedBlockFields->Utils.Set.add(nameStr->Utils.String.capitalize)->ignore
-    })
+    ->Array.forEach(name =>
+      capitalizedBlockFields
+      ->Utils.Set.add((name :> string)->Utils.String.capitalize)
+      ->ignore
+    )
     selectedTransactionFields
     ->Utils.Set.toArray
-    ->Array.forEach(name => {
-      let nameStr = (name :> string)
-      if !(Internal.evmNullableTransactionFields->Utils.Set.has(name)) {
-        nonOptionalTransactionFieldNames->Utils.Set.add(nameStr)->ignore
-      }
-      capitalizedTransactionFields->Utils.Set.add(nameStr->Utils.String.capitalize)->ignore
-    })
+    ->Array.forEach(name =>
+      capitalizedTransactionFields
+      ->Utils.Set.add((name :> string)->Utils.String.capitalize)
+      ->ignore
+    )
 
     let eventFilters = getEventFiltersOrThrow(chain)
     if dependsOnAddresses {
@@ -130,8 +122,6 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   {
     getLogSelectionOrThrow,
     fieldSelection,
-    nonOptionalBlockFieldNames: nonOptionalBlockFieldNames->Utils.Set.toArray,
-    nonOptionalTransactionFieldNames: nonOptionalTransactionFieldNames->Utils.Set.toArray,
   }
 }
 
@@ -141,7 +131,7 @@ let memoGetSelectionConfig = (~chain) =>
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
-  allEventSignatures: array<string>,
+  allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   apiToken: option<string>,
   clientMaxRetries: int,
@@ -156,7 +146,7 @@ let make = (
   {
     chain,
     endpointUrl,
-    allEventSignatures,
+    allEventParams,
     eventRouter,
     apiToken,
     clientMaxRetries,
@@ -179,43 +169,32 @@ Set the ENVIO_API_TOKEN environment variable in your .env file.
 Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   }
 
-  let client = HyperSyncClient.make(
+  let client = switch HyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,
     ~maxNumRetries=clientMaxRetries,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
+    ~eventParams=allEventParams,
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
     ~logLevel,
-  )
-
-  let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
-  let getHscDecoder = () => {
-    switch hscDecoder.contents {
-    | Some(decoder) => decoder
-    | None =>
-      switch HyperSyncClient.Decoder.fromSignatures(
-        allEventSignatures,
-        ~checksumAddresses=!lowercaseAddresses,
-      ) {
-      | exception exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI",
-        )
-      | decoder => decoder
-      }
-    }
+  ) {
+  | client => client
+  | exception exn =>
+    exn->ErrorHandling.mkLogAndRaise(
+      ~msg="Failed to instantiate the hypersync client, please double check your ABI",
+    )
   }
 
   exception UndefinedValue
 
   let makeEventBatchQueueItem = (
-    item: HyperSync.logsQueryPageItem,
+    item: HyperSyncClient.EventItems.item,
     ~params: Internal.eventParams,
     ~eventConfig: Internal.evmEventConfig,
   ): Internal.item => {
-    let {block, log, transaction} = item
+    let {block, transaction, logIndex, srcAddress} = item
     let chainId = chain->ChainMap.Chain.toChainId
 
     Internal.Event({
@@ -223,7 +202,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       timestamp: block.timestamp->Belt.Option.getUnsafe,
       chain,
       blockNumber: block.number->Belt.Option.getUnsafe,
-      logIndex: log.logIndex,
+      logIndex,
       event: {
         contractName: eventConfig.contractName,
         eventName: eventConfig.name,
@@ -231,8 +210,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         params,
         transaction,
         block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
-        srcAddress: log.address,
-        logIndex: log.logIndex,
+        srcAddress,
+        logIndex,
       }->Internal.fromGenericEvent,
     })
   }
@@ -248,7 +227,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     ~retry,
     ~logger,
   ) => {
-    let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     let totalTimeRef = Hrtime.makeTimer()
 
     let selectionConfig = selection->getSelectionConfig
@@ -272,8 +250,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~toBlock,
       ~logSelections,
       ~fieldSelection=selectionConfig.fieldSelection,
-      ~nonOptionalBlockFieldNames=selectionConfig.nonOptionalBlockFieldNames,
-      ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
       throw(
@@ -330,64 +306,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     //In the query
     let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-    let lastBlockQueriedPromise = switch pageUnsafe.rollbackGuard {
-    //In the case a rollbackGuard is returned (this only happens at the head for unconfirmed blocks)
-    //use these values
-    | Some({blockNumber, timestamp, hash}) =>
-      (
-        {
-          blockNumber,
-          blockTimestamp: timestamp,
-          blockHash: hash,
-        }: ReorgDetection.blockDataWithTimestamp
-      )->Promise.resolve
-    | None =>
-      //The optional block and timestamp of the last item returned by the query
-      //(Optional in the case that there are no logs returned in the query)
-      switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
-      | Some({block}) if block.number->Belt.Option.getUnsafe == heighestBlockQueried =>
-        //If the last log item in the current page is equal to the
-        //heighest block acounted for in the query. Simply return this
-        //value without making an extra query
-
-        (
-          {
-            blockNumber: block.number->Belt.Option.getUnsafe,
-            blockTimestamp: block.timestamp->Belt.Option.getUnsafe,
-            blockHash: block.hash->Belt.Option.getUnsafe,
-          }: ReorgDetection.blockDataWithTimestamp
-        )->Promise.resolve
-      //If it does not match it means that there were no matching logs in the last
-      //block so we should fetch the block data
-      | Some(_)
-      | None =>
-        //If there were no logs at all in the current page query then fetch the
-        //timestamp of the heighest block accounted for
-        HyperSync.queryBlockData(
-          ~client,
-          ~blockNumber=heighestBlockQueried,
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~logger,
-        )->Promise.thenResolve(res =>
-          switch res {
-          | Ok(Some(blockData)) => blockData
-          | Ok(None) =>
-            mkLogAndRaise(
-              Not_found,
-              ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
-            )
-          | Error(e) =>
-            HyperSync.queryErrorToMsq(e)
-            ->Obj.magic
-            ->mkLogAndRaise(
-              ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
-            )
-          }
-        )
-      }
-    }
-
     let parsingTimeRef = Hrtime.makeTimer()
 
     //Parse page items into queue items
@@ -418,47 +336,29 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }
     }
 
-    //Parse page items into queue items
-    let parsedEvents = switch await getHscDecoder().decodeEvents(pageUnsafe.events) {
-    | exception exn =>
-      exn->mkLogAndRaise(
-        ~msg="Failed to parse events using hypersync client, please double check your ABI.",
-      )
-    | parsedEvents => parsedEvents
-    }
-
-    pageUnsafe.items->Belt.Array.forEachWithIndex((index, item) => {
-      let {block, log} = item
+    pageUnsafe.items->Belt.Array.forEach(item => {
       let chainId = chain->ChainMap.Chain.toChainId
-      let topic0 = log.topics->Utils.Array.firstUnsafe
       let maybeEventConfig =
         eventRouter->EventRouter.get(
           ~tag=EventRouter.getEvmEventId(
-            ~sighash=topic0->EvmTypes.Hex.toString,
-            ~topicCount=log.topics->Array.length,
+            ~sighash=item.topic0->EvmTypes.Hex.toString,
+            ~topicCount=item.topicCount,
           ),
           ~indexingAddresses,
-          ~contractAddress=log.address,
-          ~blockNumber=block.number->Belt.Option.getUnsafe,
+          ~contractAddress=item.srcAddress,
+          ~blockNumber=item.block.number->Belt.Option.getUnsafe,
         )
-      let maybeDecodedEvent = parsedEvents->Array.getUnsafe(index)
 
-      switch (maybeEventConfig, maybeDecodedEvent) {
+      switch (maybeEventConfig, item.params) {
       | (Some(eventConfig), Value(decoded)) =>
         parsedQueueItems
-        ->Array.push(
-          makeEventBatchQueueItem(
-            item,
-            ~params=decoded->eventConfig.convertHyperSyncEventArgs,
-            ~eventConfig,
-          ),
-        )
+        ->Array.push(makeEventBatchQueueItem(item, ~params=decoded, ~eventConfig))
         ->ignore
       | (Some(eventConfig), Null | Undefined) =>
         handleDecodeFailure(
           ~eventConfig,
-          ~logIndex=log.logIndex,
-          ~blockNumber=block.number->Belt.Option.getUnsafe,
+          ~logIndex=item.logIndex,
+          ~blockNumber=item.block.number->Belt.Option.getUnsafe,
           ~chainId,
           ~exn=UndefinedValue,
         )
@@ -468,14 +368,43 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
 
     let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    let rangeLastBlock = await lastBlockQueriedPromise
+    // Collect (blockNumber, blockHash) pairs we already have from the response —
+    // one per item's block plus, when present, the rollbackGuard's head block
+    // and the parent of the range's first block. Duplicates are allowed; reorg
+    // detection notices same-block-number-different-hash collisions itself.
+    let blockHashes = []
+    pageUnsafe.items->Belt.Array.forEach(({block}) => {
+      switch (block.number, block.hash) {
+      | (Some(blockNumber), Some(blockHash)) =>
+        blockHashes->Array.push({ReorgDetection.blockNumber, blockHash})->ignore
+      | _ => ()
+      }
+    })
+    switch pageUnsafe.rollbackGuard {
+    | None => ()
+    | Some({blockNumber, hash, firstBlockNumber, firstParentHash}) => {
+        blockHashes->Array.push({ReorgDetection.blockNumber, blockHash: hash})->ignore
+        blockHashes
+        ->Array.push({
+          ReorgDetection.blockNumber: firstBlockNumber - 1,
+          blockHash: firstParentHash,
+        })
+        ->ignore
+      }
+    }
 
-    let reorgGuard: ReorgDetection.reorgGuard = {
-      rangeLastBlock: rangeLastBlock->ReorgDetection.generalizeBlockDataWithTimestamp,
-      prevRangeLastBlock: pageUnsafe.rollbackGuard->Option.map(v => {
-        ReorgDetection.blockHash: v.firstParentHash,
-        blockNumber: v.firstBlockNumber - 1,
-      }),
+    // Best-effort timestamp for the queried-range head: prefer the rollbackGuard
+    // (set at the head for unconfirmed blocks), otherwise the last item if it
+    // happens to be in the range's last block. 0 is a tolerated placeholder
+    // when neither is available (FetchState already uses 0 in several spots).
+    let latestFetchedBlockTimestamp = switch pageUnsafe.rollbackGuard {
+    | Some({timestamp}) => timestamp
+    | None =>
+      switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
+      | Some({block}) if block.number->Belt.Option.getUnsafe == heighestBlockQueried =>
+        block.timestamp->Belt.Option.getUnsafe
+      | _ => 0
+      }
     }
 
     let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
@@ -487,12 +416,12 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     }
 
     {
-      latestFetchedBlockTimestamp: rangeLastBlock.blockTimestamp,
+      latestFetchedBlockTimestamp,
       parsedQueueItems,
-      latestFetchedBlockNumber: rangeLastBlock.blockNumber,
+      latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
-      reorgGuard,
+      blockHashes,
       fromBlockQueried: fromBlock,
     }
   }

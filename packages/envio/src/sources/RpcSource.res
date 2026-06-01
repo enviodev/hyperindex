@@ -7,6 +7,7 @@ type blockInfo = {
   number: int,
   timestamp: int,
   hash: string,
+  parentHash: string,
 }
 
 let getKnownRawBlock = async (~client, ~blockNumber) =>
@@ -28,6 +29,9 @@ let parseBlockInfo = (json: JSON.t): blockInfo => {
     ->S.parseOrThrow(Rpc.hexIntSchema),
     hash: jsonDict
     ->Dict.getUnsafe("hash")
+    ->S.parseOrThrow(S.string),
+    parentHash: jsonDict
+    ->Dict.getUnsafe("parentHash")
     ->S.parseOrThrow(S.string),
   }
 }
@@ -838,7 +842,7 @@ type options = {
   url: string,
   chain: ChainMap.Chain.t,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
-  allEventSignatures: array<string>,
+  allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   lowercaseAddresses: bool,
   ws?: string,
 }
@@ -850,7 +854,7 @@ let make = (
     url,
     chain,
     eventRouter,
-    allEventSignatures,
+    allEventParams,
     lowercaseAddresses,
     ?ws,
   }: options,
@@ -993,12 +997,16 @@ let make = (
     {log: hyperSyncLog}
   }
 
-  let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
+  let hscDecoder: ref<option<HyperSyncClient.Decoder.tWithParams>> = ref(None)
   let getHscDecoder = () => {
     switch hscDecoder.contents {
     | Some(decoder) => decoder
     | None => {
-        let decoder = HyperSyncClient.Decoder.fromSignatures(allEventSignatures)
+        let decoder = HyperSyncClient.Decoder.fromParams(
+          allEventParams,
+          ~checksumAddresses=!lowercaseAddresses,
+        )
+        hscDecoder := Some(decoder)
         decoder
       }
     }
@@ -1071,7 +1079,7 @@ let make = (
     // We also don't care about it when we have a hard max block interval
     if (
       executedBlockInterval >= suggestedBlockInterval &&
-        !(mutSuggestedBlockIntervals->Utils.Dict.has(maxSuggestedBlockIntervalKey))
+        !(mutSuggestedBlockIntervals->Dict.has(maxSuggestedBlockIntervalKey))
     ) {
       // Increase batch size going forward, but do not increase past a configured maximum
       // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
@@ -1088,7 +1096,7 @@ let make = (
     let hyperSyncEvents = logs->Belt.Array.map(convertLogToHyperSyncEvent)
 
     // Decode using HyperSyncClient decoder
-    let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
+    let parsedEvents = try await getHscDecoder().decodeLogs(hyperSyncEvents) catch {
     | exn =>
       throw(
         Source.GetItemsError(
@@ -1107,7 +1115,7 @@ let make = (
     ->Array.zip(parsedEvents)
     ->Array.filterMap(((
       log: Rpc.GetLogs.log,
-      maybeDecodedEvent: Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
+      maybeDecodedEvent: Nullable.t<Internal.eventParams>,
     )) => {
       let topic0 = log.topics[0]->Option.getOr("0x0")
       let routedAddress = if lowercaseAddresses {
@@ -1158,7 +1166,7 @@ let make = (
                     contractName: eventConfig.contractName,
                     eventName: eventConfig.name,
                     chainId: chain->ChainMap.Chain.toChainId,
-                    params: decoded->eventConfig.convertHyperSyncEventArgs,
+                    params: decoded,
                     transaction,
                     block,
                     srcAddress: routedAddress,
@@ -1178,16 +1186,27 @@ let make = (
 
     let totalTimeElapsed = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    let reorgGuard: ReorgDetection.reorgGuard = {
-      prevRangeLastBlock: optFirstBlockParent->Option.map(b => {
-        ReorgDetection.blockNumber: b.number,
-        blockHash: b.hash,
-      }),
-      rangeLastBlock: {
-        blockNumber: latestFetchedBlockInfo.number,
-        blockHash: latestFetchedBlockInfo.hash,
-      },
+    // Every fetched block carries `hash` and `parentHash`, so each one yields
+    // two confirmed (number, hash) pairs for reorg detection at no extra cost.
+    let blockHashes = []
+    let pushBlockInfo = (b: blockInfo) => {
+      blockHashes->Array.push({ReorgDetection.blockNumber: b.number, blockHash: b.hash})->ignore
+      if b.number > 0 {
+        blockHashes
+        ->Array.push({ReorgDetection.blockNumber: b.number - 1, blockHash: b.parentHash})
+        ->ignore
+      }
     }
+    pushBlockInfo(latestFetchedBlockInfo)
+    switch optFirstBlockParent {
+    | Some(b) => pushBlockInfo(b)
+    | None => ()
+    }
+    logs->Belt.Array.forEach(log =>
+      blockHashes
+      ->Array.push({ReorgDetection.blockNumber: log.blockNumber, blockHash: log.blockHash})
+      ->ignore
+    )
 
     {
       latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
@@ -1197,19 +1216,20 @@ let make = (
         totalTimeElapsed: totalTimeElapsed,
       },
       knownHeight,
-      reorgGuard,
+      blockHashes,
       fromBlockQueried: fromBlock,
     }
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
-    // Clear cache by creating a fresh LazyLoader
-    // This is important, since we call this
-    // function when a reorg is detected
+  let onReorg = (~rollbackTargetBlock as _) => {
+    // Drop cached block/transaction/receipt data — after a reorg the cached
+    // entries may refer to orphaned-chain values.
     blockLoader := makeBlockLoader()
     transactionLoader := makeTransactionLoader()
     receiptLoader := makeReceiptLoader()
+  }
 
+  let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
     blockNumbers
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
@@ -1243,6 +1263,7 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
+    onReorg,
     getHeightOrThrow: async () => {
       let timerRef = Hrtime.makeTimer()
       let height = try {

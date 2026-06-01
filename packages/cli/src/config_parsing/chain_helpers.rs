@@ -402,9 +402,6 @@ pub enum Network {
     Tangle = 5845,
 
     #[subenum(HypersyncChain)]
-    Taraxa = 841,
-
-    #[subenum(HypersyncChain)]
     Tempo = 4217,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -603,7 +600,6 @@ impl Network {
             | Network::Sonic
             | Network::SonicTestnet
             | Network::Swell
-            | Network::Taraxa
             | Network::Citrea
             | Network::Hoodi
             | Network::Injective
@@ -615,99 +611,25 @@ impl Network {
     }
 }
 
-#[derive(Deserialize, Debug, PartialEq, strum::Display)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum ChainTier {
-    Gold,
-    Silver,
-    Bronze,
-    #[serde(alias = "TESTNET")]
-    Stone,
-    #[serde(alias = "HIDDEN", alias = "EXPERIMENTAL")]
-    Internal,
-}
-
-impl ChainTier {
-    pub fn get_icon(&self) -> &str {
-        match self {
-            Self::Gold => "🥇",
-            Self::Silver => "🥈",
-            Self::Bronze => "🥉",
-            Self::Stone => "🪨",
-            Self::Internal => "🔒",
-        }
-    }
-
-    pub fn is_public(&self) -> bool {
-        match self {
-            Self::Gold | Self::Silver | Self::Bronze | Self::Stone => true,
-            Self::Internal => false,
-        }
-    }
-}
-
 impl HypersyncChain {
-    // This is a custom iterator that returns all the HypersyncChain enums that is made public accross crates (for convenience)
     pub fn iter_hypersync_chains() -> impl Iterator<Item = HypersyncChain> {
         HypersyncChain::iter()
-    }
-    pub fn get_tier(&self) -> ChainTier {
-        use ChainTier::*;
-        use HypersyncChain::*;
-        match self {
-            EthereumMainnet | Optimism | MonadTestnet | Monad | Gnosis | Sei | Base => Gold,
-
-            Xdc | Polygon | ArbitrumOne | MegaethTestnet | MegaethTestnet2 | Sonic | Megaeth => {
-                Silver
-            }
-
-            Linea | Berachain | Blast | Amoy | ZksyncEra | ArbitrumNova | Avalanche | Bsc
-            | Taraxa | Plasma | Lukso | CitreaTestnet | Injective | Citrea | Katana | Etherlink => {
-                Bronze
-            }
-
-            Curtis | PolygonZkevm | Abstract | Zora | Unichain | Aurora | Zeta | Manta | Kroma
-            | Flare | Mantle | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet | BscTestnet
-            | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky
-            | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
-            | Merlin | Mode | XdcTestnet | Morph | Harmony | Saakuru | Cyber | Superseed
-            | Worldchain | Sophon | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid
-            | Swell | Moonbeam | Plume | Scroll | Ab | ArcTestnet | SonicTestnet | SeiTestnet
-            | Hoodi | StatusSepolia | Tempo => Stone,
-        }
     }
 
     pub fn get_plain_name(&self) -> String {
         Network::from(*self).to_string()
     }
-
-    pub fn get_pretty_name(&self) -> String {
-        let name = Network::from(*self).to_string();
-        let tier = self.get_tier();
-        let icon = tier.get_icon();
-        format!("{name} {icon}")
-    }
 }
 
 impl fmt::Display for HypersyncChain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.get_pretty_name())
-    }
-}
-
-impl NetworkWithExplorer {
-    pub fn get_pretty_name(&self) -> String {
-        let network = Network::from(*self);
-        match HypersyncChain::try_from(network) {
-            Ok(hypersync_chain) => hypersync_chain.get_pretty_name(),
-            Err(_) => network.to_string(),
-        }
+        write!(f, "{}", self.get_plain_name())
     }
 }
 
 impl fmt::Display for NetworkWithExplorer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.get_pretty_name())
+        write!(f, "{}", Network::from(*self))
     }
 }
 

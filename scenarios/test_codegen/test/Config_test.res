@@ -178,7 +178,7 @@ describe("Field selection enum schemas", () => {
 
 describe("EventConfigBuilder", () => {
   it("buildParamsSchema handles simple types", t => {
-    let params: array<EventConfigBuilder.eventParam> = [
+    let params: array<EventConfigBuilder.paramMeta> = [
       {name: "from", abiType: "address", indexed: true},
       {name: "to", abiType: "address", indexed: true},
       {name: "value", abiType: "uint256", indexed: false},
@@ -199,7 +199,7 @@ describe("EventConfigBuilder", () => {
   })
 
   it("buildParamsSchema handles tuple params", t => {
-    let params: array<EventConfigBuilder.eventParam> = [
+    let params: array<EventConfigBuilder.paramMeta> = [
       {name: "id", abiType: "uint256", indexed: false},
       {name: "details", abiType: "(string,string)", indexed: false},
     ]
@@ -210,7 +210,7 @@ describe("EventConfigBuilder", () => {
   })
 
   it("buildParamsSchema handles nested tuple params", t => {
-    let params: array<EventConfigBuilder.eventParam> = [
+    let params: array<EventConfigBuilder.paramMeta> = [
       {name: "data", abiType: "(uint256,(uint256,string))", indexed: false},
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)
@@ -220,203 +220,13 @@ describe("EventConfigBuilder", () => {
   })
 
   it("buildParamsSchema handles array types", t => {
-    let params: array<EventConfigBuilder.eventParam> = [
+    let params: array<EventConfigBuilder.paramMeta> = [
       {name: "ids", abiType: "uint256[]", indexed: false},
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)
     let testParams: Internal.eventParams = {"ids": [1n, 2n, 3n]}->Utils.magic
     let json = testParams->S.reverseConvertToJsonOrThrow(schema)
     t.expect(json).toEqual(%raw(`{"ids": ["1", "2", "3"]}`))
-  })
-
-  it("buildHyperSyncDecoder produces correct field names", t => {
-    let params: array<EventConfigBuilder.eventParam> = [
-      {name: "from", abiType: "address", indexed: true},
-      {name: "to", abiType: "address", indexed: true},
-      {name: "value", abiType: "uint256", indexed: false},
-    ]
-    let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
-    // decodedRaw values are @unboxed - at JS level they're just the raw values
-    let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
-      indexed: ["0xabc"->Utils.magic, "0xdef"->Utils.magic],
-      body: [100n->Utils.magic],
-    }
-    let result = decoder(mockDecodedEvent)
-    t.expect(result).toEqual({"from": "0xabc", "to": "0xdef", "value": 100n}->Utils.magic)
-  })
-
-  it("buildHyperSyncDecoder handles empty params", t => {
-    let decoder = EventConfigBuilder.buildHyperSyncDecoder([])
-    let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
-      indexed: [],
-      body: [],
-    }
-    let result = decoder(mockDecodedEvent)
-    t.expect(result).toEqual(()->Utils.magic)
-  })
-
-  it("schema and decoder field names are consistent", t => {
-    let params: array<EventConfigBuilder.eventParam> = [
-      {name: "id", abiType: "uint256", indexed: false},
-      {name: "contactDetails", abiType: "(string,string)", indexed: false},
-    ]
-    let schema = EventConfigBuilder.buildParamsSchema(params)
-    let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
-
-    // Decoder produces an object with the correct field names
-    let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
-      indexed: [],
-      body: [42n->Utils.magic, ("Alice", "alice@example.com")->Utils.magic],
-    }
-    let decoded = decoder(mockDecodedEvent)
-
-    // Schema can serialize the decoded result — proves field names match
-    let json = decoded->S.reverseConvertToJsonOrThrow(schema)
-    t.expect(json).toEqual(%raw(`{"id": "42", "contactDetails": ["Alice", "alice@example.com"]}`))
-  })
-
-  it(
-    "issue #1213 — paramsRawEventSchema serializes struct/tuple params decoded as named dicts",
-    t => {
-      // Reproduces https://github.com/enviodev/hyperindex/issues/1213
-      //
-      // When an event has a tuple/struct param with `components`, the
-      // HyperSync decoder turns the positional tuple into a named dict
-      // (componentsToRemapper). With raw_events: true, addItemToRawEvents
-      // calls S.reverseConvertOrThrow(event.params, paramsRawEventSchema).
-      // buildParamsSchema must therefore mirror the decoder shape — keyed by
-      // component names — otherwise the reverse-convert reads index N from a
-      // dict, gets undefined, and throws
-      // `TypeError: Cannot read properties of undefined (reading 'length')`.
-      let params: array<EventConfigBuilder.eventParam> = [
-        {name: "deployer", abiType: "address", indexed: true},
-        {name: "vehicle", abiType: "address", indexed: false},
-        {
-          name: "params",
-          abiType: "(address,address,address[],uint256,address)",
-          indexed: false,
-          components: [
-            {name: "asset", abiType: "address"},
-            {name: "poolAddressesProvider", abiType: "address"},
-            {name: "forbiddenAddresses", abiType: "address[]"},
-            {name: "initialExpectedSupply", abiType: "uint256"},
-            {name: "registry", abiType: "address"},
-          ],
-        },
-      ]
-
-      let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
-      let schema = EventConfigBuilder.buildParamsSchema(params)
-
-      let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
-        indexed: ["0xdeployer"->Utils.magic],
-        body: [
-          "0xvehicle"->Utils.magic,
-          (
-            "0xasset",
-            "0xpap",
-            ["0xforbidden1", "0xforbidden2"],
-            1000n,
-            "0xregistry",
-          )->Utils.magic,
-        ],
-      }
-
-      let decoded = decoder(mockDecodedEvent)
-
-      t.expect(decoded).toEqual(
-        {
-          "deployer": "0xdeployer",
-          "vehicle": "0xvehicle",
-          "params": {
-            "asset": "0xasset",
-            "poolAddressesProvider": "0xpap",
-            "forbiddenAddresses": ["0xforbidden1", "0xforbidden2"],
-            "initialExpectedSupply": 1000n,
-            "registry": "0xregistry",
-          },
-        }->(Utils.magic: {..} => Internal.eventParams),
-      )
-
-      let json = decoded->S.reverseConvertToJsonOrThrow(schema)
-
-      t.expect(json).toEqual(
-        %raw(`{
-          "deployer": "0xdeployer",
-          "vehicle": "0xvehicle",
-          "params": {
-            "asset": "0xasset",
-            "poolAddressesProvider": "0xpap",
-            "forbiddenAddresses": ["0xforbidden1", "0xforbidden2"],
-            "initialExpectedSupply": "1000",
-            "registry": "0xregistry"
-          }
-        }`),
-      )
-    },
-  )
-
-  it("buildHyperSyncDecoder remaps mixed-name tuple components using index keys", t => {
-    // Issue #538 follow-up: when a tuple has some named and some unnamed
-    // components, the CLI emits `"0"`, `"1"`, ... for unnamed slots. The
-    // runtime decoder must honour those keys so handlers can access unnamed
-    // fields via `value["1"]`.
-    let params: array<EventConfigBuilder.eventParam> = [
-      {
-        name: "mixed",
-        abiType: "(string,uint256,address,bool)",
-        indexed: false,
-        components: [
-          {name: "label", abiType: "string"},
-          {name: "1", abiType: "uint256"},
-          {name: "recipient", abiType: "address"},
-          {name: "3", abiType: "bool"},
-        ],
-      },
-    ]
-    let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
-    let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
-      indexed: [],
-      body: [
-        ("hi", 42n, "0xabc", true)->(
-          Utils.magic: ((string, bigint, string, bool)) => HyperSyncClient.Decoder.decodedRaw
-        ),
-      ],
-    }
-    let decoded = decoder(mockDecodedEvent)
-    t.expect(decoded).toEqual(
-      {"mixed": {"label": "hi", "1": 42n, "recipient": "0xabc", "3": true}}->(
-        Utils.magic: {..} => Internal.eventParams
-      ),
-    )
-  })
-
-  it("buildHyperSyncDecoder leaves indexed struct params as topic hashes", t => {
-    // Indexed structs/tuples are delivered as keccak256 topic hashes (single
-    // hex strings), not positional arrays. Even if `components` metadata is
-    // present, the decoder must NOT try to rebuild a named record from them —
-    // doing so would treat the hash as an array and read garbage.
-    let params: array<EventConfigBuilder.eventParam> = [
-      {
-        name: "indexedStruct",
-        abiType: "(address,uint256)",
-        indexed: true,
-        components: [
-          {name: "owner", abiType: "address"},
-          {name: "amount", abiType: "uint256"},
-        ],
-      },
-    ]
-    let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
-    let topicHash = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-    let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
-      indexed: [topicHash->(Utils.magic: string => HyperSyncClient.Decoder.decodedRaw)],
-      body: [],
-    }
-    let decoded = decoder(mockDecodedEvent)
-    t.expect(decoded).toEqual(
-      {"indexedStruct": topicHash}->(Utils.magic: {..} => Internal.eventParams),
-    )
   })
 
   it("abiTypeToSchema throws on unsupported types", t => {

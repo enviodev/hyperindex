@@ -64,6 +64,4 @@ chains:
           - 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
 ```
 
-## Deep Documentation
-
-Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

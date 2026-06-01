@@ -277,7 +277,6 @@ fn abi_type_to_components(
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct ContractEventItem {
-    event: String,
     name: String,
     sighash: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -449,7 +448,6 @@ impl SystemConfig {
                                 }
                             };
                             ContractEventItem {
-                                event: e.event_signature.clone(),
                                 name: e.name.clone(),
                                 sighash: e.sighash.clone(),
                                 params,

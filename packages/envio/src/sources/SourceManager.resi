@@ -22,6 +22,8 @@ let make: (
 
 let getActiveSource: t => Source.t
 
+let onReorg: (t, ~rollbackTargetBlock: int) => unit
+
 let fetchNext: (
   t,
   ~fetchState: FetchState.t,

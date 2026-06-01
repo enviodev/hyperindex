@@ -41,6 +41,7 @@ describe("SourceManager rate limit handling with real HyperSync client", () => {
         ~apiToken=rateLimitedApiToken,
         ~maxNumRetries=0,
         ~httpReqTimeoutMillis=120_000,
+        ~eventParams=[],
       )
 
       let source = makeHyperSyncSource(~client)

@@ -12,12 +12,12 @@ module InMemoryStore = {
     let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
+      ~committedCheckpointId=inMemoryStore.committedCheckpointId,
       Set({
         entityId: (entity: Internal.entity).id,
         checkpointId: 0n,
         entity,
       }),
-      ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold=false),
     )
   }
 
@@ -195,7 +195,7 @@ module Storage = {
         writeBatch: (
           ~batch as _,
           ~rawEvents as _,
-          ~rollbackTargetCheckpointId as _,
+          ~rollback as _,
           ~isInReorgThreshold as _,
           ~config as _,
           ~allEntities as _,
@@ -331,6 +331,7 @@ module Indexer = {
       Ctx.registrations,
       config,
       persistence,
+      inMemoryStore: InMemoryStore.make(),
     }
 
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
@@ -424,7 +425,10 @@ module Indexer = {
           ),
         )
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(
+          // Rows aren't ordered by the query, and insert order isn't meaningful
+          // since checkpointId is the source of truth. Sort for stable assertions.
+          items
+          ->S.parseOrThrow(
             S.array(
               S.union([
                 PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
@@ -441,6 +445,16 @@ module Indexer = {
               ]),
             ),
           )
+          ->Array.toSorted((a, b) => {
+            switch String.compare(a->Change.getEntityId, b->Change.getEntityId) {
+            | 0. =>
+              Float.compare(
+                a->Change.getCheckpointId->BigInt.toFloat,
+                b->Change.getCheckpointId->BigInt.toFloat,
+              )
+            | order => order
+            }
+          })
         })
         ->(
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
@@ -731,29 +745,41 @@ module Source = {
                   let latestFetchedBlockNumber =
                     latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
-                  resolve({
-                    Source.knownHeight,
-                    reorgGuard: {
-                      rangeLastBlock: {
+                  let latestFetchedBlockHash = switch latestFetchedBlockHash {
+                  | Some(latestFetchedBlockHash) => latestFetchedBlockHash
+                  | None => `0x${latestFetchedBlockNumber->Int.toString}`
+                  }
+                  let blockHashes = [
+                    (
+                      {
                         blockNumber: latestFetchedBlockNumber,
-                        blockHash: switch latestFetchedBlockHash {
-                        | Some(latestFetchedBlockHash) => latestFetchedBlockHash
-                        | None => `0x${latestFetchedBlockNumber->Int.toString}`
-                        },
-                      },
-                      prevRangeLastBlock: switch prevRangeLastBlock {
-                      | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
-                      | None =>
-                        if fromBlock > 0 {
-                          Some({
+                        blockHash: latestFetchedBlockHash,
+                      }: ReorgDetection.blockData
+                    ),
+                  ]
+                  let prevEntry = switch prevRangeLastBlock {
+                  | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
+                  | None =>
+                    if fromBlock > 0 {
+                      Some(
+                        (
+                          {
                             blockNumber: fromBlock - 1,
                             blockHash: `0x${(fromBlock - 1)->Int.toString}`,
-                          })
-                        } else {
-                          None
-                        }
-                      },
-                    },
+                          }: ReorgDetection.blockData
+                        ),
+                      )
+                    } else {
+                      None
+                    }
+                  }
+                  switch prevEntry {
+                  | Some(prev) => blockHashes->Array.unshift(prev)->ignore
+                  | None => ()
+                  }
+                  resolve({
+                    Source.knownHeight,
+                    blockHashes,
                     parsedQueueItems: items->Array.map(
                       item => {
                         Internal.Event({
@@ -800,12 +826,11 @@ module Source = {
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ =>
                               JsError.throwWithMessage("Not implemented"),
-                            convertHyperSyncEventArgs: _ =>
-                              JsError.throwWithMessage("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
                             selectedTransactionFields: Utils.Set.make(),
                             sighash: "",
-                            indexedParams: [],
+                            topicCount: 1,
+                            paramsMetadata: [],
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -961,10 +986,10 @@ let evmEventConfig = (
           },
         ])
       },
-    convertHyperSyncEventArgs: _ => JsError.throwWithMessage("Not implemented"),
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
     sighash: id,
-    indexedParams: [],
+    topicCount: 1,
+    paramsMetadata: [],
   }
 }

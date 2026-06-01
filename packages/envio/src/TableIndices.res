@@ -69,9 +69,14 @@ module SingleIndex = {
     operator,
   }
 
-  // Should much hashing logic in InMemoryTable
+  // Lookups against the in-memory index table reconstruct this key from raw
+  // (fieldName, operator, serialized value) parts, so this is the single
+  // source of truth for the key format.
+  let toStringByParts = (~fieldName, ~operator: Operator.t, ~fieldValueHash) =>
+    `${fieldName}:${(operator :> string)}:${fieldValueHash}`
+
   let toString = ({fieldName, fieldValue, operator}) =>
-    `${fieldName}:${(operator :> string)}:${fieldValue->FieldValue.toString}`
+    toStringByParts(~fieldName, ~operator, ~fieldValueHash=fieldValue->FieldValue.toString)
 
   let evaluate = (self: t, ~fieldName, ~fieldValue) =>
     self.fieldName === fieldName &&
@@ -100,6 +105,8 @@ module Index = {
     switch index {
     | Single(index) => index->SingleIndex.toString
     }
+
+  let toStringByParts = SingleIndex.toStringByParts
 
   let evaluate = (index: t, ~fieldName, ~fieldValue) =>
     switch index {

@@ -456,13 +456,13 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
     step += 1;
     let _ = writeln!(out, "  {step}. To continue, call:");
     out.push('\n');
-    out.push_str("       pnpx envio init contract-import explorer \\\n");
-    out.push_str("         -n ${indexer-name} \\\n");
-    out.push_str("         -c ${address} \\\n");
-    out.push_str("         -b ${chainId} \\\n");
-    out.push_str("         --single-contract \\\n");
-    out.push_str("         --all-events \\\n");
-    out.push_str("         -d ${directory}\n");
+    out.push_str("pnpx envio init contract-import explorer \\\n");
+    out.push_str("  -n ${indexer-name} \\\n");
+    out.push_str("  -c ${address} \\\n");
+    out.push_str("  -b ${chainId} \\\n");
+    out.push_str("  --single-contract \\\n");
+    out.push_str("  --all-events \\\n");
+    out.push_str("  -d ${directory}\n");
     out.push('\n');
     out.push_str(
         "Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep \

@@ -4,7 +4,7 @@ type rollbackState =
   | ReorgDetected({chain: chain, blockNumber: int})
   | FindingReorgDepth
   | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
-  | RollbackReady({diffInMemoryStore: InMemoryStore.t, eventsProcessedDiffByChain: dict<float>})
+  | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
 module WriteThrottlers = {
   type t = {
@@ -132,7 +132,6 @@ type action =
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
   | SetRollbackState({
-      diffInMemoryStore: InMemoryStore.t,
       rollbackedChainManager: ChainManager.t,
       eventsProcessedDiffByChain: dict<float>,
     })
@@ -331,10 +330,6 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
 
   {
     ...chainManager,
-    committedCheckpointId: switch batch.checkpointIds->Utils.Array.last {
-    | Some(checkpointId) => checkpointId
-    | None => chainManager.committedCheckpointId
-    },
     chainFetchers,
     isRealtime: chainManager.isRealtime || allChainsReady.contents,
   }
@@ -350,7 +345,7 @@ let validatePartitionQueryResponse = (
     latestFetchedBlockNumber,
     stats,
     knownHeight,
-    reorgGuard,
+    blockHashes,
     fromBlockQueried,
   } = response
 
@@ -374,7 +369,7 @@ let validatePartitionQueryResponse = (
   )
 
   let (updatedReorgDetection, reorgResult: ReorgDetection.reorgResult) =
-    chainFetcher.reorgDetection->ReorgDetection.registerReorgGuard(~reorgGuard, ~knownHeight)
+    chainFetcher.reorgDetection->ReorgDetection.registerReorgGuard(~blockHashes, ~knownHeight)
 
   let updatedChainFetcher = {
     ...chainFetcher,
@@ -764,12 +759,11 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(CheckAllChains)],
     )
-  | SetRollbackState({diffInMemoryStore, rollbackedChainManager, eventsProcessedDiffByChain}) => (
+  | SetRollbackState({rollbackedChainManager, eventsProcessedDiffByChain}) => (
       {
         ...state,
         rollbackState: RollbackReady({
-          diffInMemoryStore,
-          eventsProcessedDiffByChain,
+          eventsProcessedDiffByChain: eventsProcessedDiffByChain,
         }),
         chainManager: rollbackedChainManager,
       },
@@ -946,23 +940,21 @@ let injectedTaskReducer = (
       }
     | ProcessEventBatch =>
       if !state.currentlyProcessingBatch && !isPreparingRollback(state) {
-        //In the case of a rollback, use the provided in memory store
-        //With rolled back values
-        let rollbackInMemStore = switch state.rollbackState {
-        | RollbackReady({diffInMemoryStore}) => Some(diffInMemoryStore)
-        | _ => None
+        let isRollbackBatch = switch state.rollbackState {
+        | RollbackReady(_) => true
+        | _ => false
         }
 
         let batch =
           state.chainManager->ChainManager.createBatch(
+            ~committedCheckpointId=state.ctx.inMemoryStore.committedCheckpointId,
             ~batchSizeTarget=state.ctx.config.batchSize,
-            ~isRollback=rollbackInMemStore !== None,
+            ~isRollback=isRollbackBatch,
           )
 
         let progressedChainsById = batch.progressedChainsById
 
         let isInReorgThreshold = state.chainManager.isInReorgThreshold
-        let shouldSaveHistory = state.ctx.config->Config.shouldSaveHistory(~isInReorgThreshold)
 
         let isBelowReorgThreshold =
           !state.chainManager.isInReorgThreshold && state.ctx.config.shouldRollbackOnReorg
@@ -1002,12 +994,8 @@ let injectedTaskReducer = (
           dispatchAction(StartProcessingBatch)
           dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
-          let inMemoryStore =
-            rollbackInMemStore->Option.getOr(
-              InMemoryStore.make(~entities=state.ctx.persistence.allEntities),
-            )
-
-          inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
+          let inMemoryStore = state.ctx.inMemoryStore
+          inMemoryStore->InMemoryStore.setBatchDcs(~batch)
 
           switch await EventProcessing.processEventBatch(
             ~batch,
@@ -1045,6 +1033,10 @@ let injectedTaskReducer = (
           let rollbackTargetBlockNumber = await chainFetcher->getLastKnownValidBlock(
             ~reorgBlockNumber,
             ~isRealtime=state.chainManager.isRealtime,
+          )
+
+          chainFetcher.sourceManager->SourceManager.onReorg(
+            ~rollbackTargetBlock=rollbackTargetBlockNumber,
           )
 
           dispatchAction(FindReorgDepth({chain, rollbackTargetBlockNumber}))
@@ -1185,10 +1177,10 @@ let injectedTaskReducer = (
           }
         })
 
-        // Construct in Memory store with rollback diff
-        let diff = await state.ctx.persistence->Persistence.prepareRollbackDiff(
+        let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(
+          ~persistence=state.ctx.persistence,
           ~rollbackTargetCheckpointId,
-          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->BigInt.add(1n),
+          ~rollbackDiffCheckpointId=state.ctx.inMemoryStore.committedCheckpointId->BigInt.add(1n),
         )
 
         let chainManager = {
@@ -1203,7 +1195,7 @@ let injectedTaskReducer = (
             "upserted": diff["setEntities"],
           },
           "rollbackedEvents": rollbackedProcessedEvents.contents,
-          "beforeCheckpointId": state.chainManager.committedCheckpointId,
+          "beforeCheckpointId": state.ctx.inMemoryStore.committedCheckpointId,
           "targetCheckpointId": rollbackTargetCheckpointId,
         })
         Prometheus.RollbackSuccess.increment(
@@ -1213,7 +1205,6 @@ let injectedTaskReducer = (
 
         dispatchAction(
           SetRollbackState({
-            diffInMemoryStore: diff["inMemStore"],
             rollbackedChainManager: chainManager,
             eventsProcessedDiffByChain,
           }),
