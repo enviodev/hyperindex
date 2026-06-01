@@ -53,8 +53,8 @@ let make = (~entities: array<Internal.entityConfig>): t => {
   commitedCheckpointId: Internal.loadedFromDbCheckpointId,
 }
 
-// Above this size we drop the entities kept in memory after a batch write,
-// so the store doesn't grow unbounded on long running indexers.
+// Once the store holds this many entities across all tables, we drop them
+// after a batch write so it doesn't grow unbounded on long running indexers.
 let keepLatestChangesLimit = 50_000
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
@@ -164,12 +164,18 @@ let writeBatch = async (
     | Some(checkpointId) => checkpointId
     | None => commitedCheckpointId
     }
+    let totalLatestChanges = ref(0)
+    persistence.allEntities->Belt.Array.forEach(entityConfig => {
+      totalLatestChanges :=
+        totalLatestChanges.contents +
+        (inMemoryStore->getInMemTable(~entityConfig)).latestEntityChangeById->Utils.Dict.size
+    })
+    let keepLatestChanges = totalLatestChanges.contents < keepLatestChangesLimit
     persistence.allEntities->Belt.Array.forEach(entityConfig => {
       let table = inMemoryStore->getInMemTable(~entityConfig)
-      let resetTable =
-        table.latestEntityChangeById->Utils.Dict.size >= keepLatestChangesLimit
-          ? InMemoryTable.Entity.make()
-          : table->InMemoryTable.Entity.resetButKeepLatestChanges
+      let resetTable = keepLatestChanges
+        ? table->InMemoryTable.Entity.resetButKeepLatestChanges
+        : InMemoryTable.Entity.make()
       inMemoryStore.entities->Dict.set((entityConfig.name :> string), resetTable)
     })
   }
