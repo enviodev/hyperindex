@@ -200,6 +200,7 @@ let svmEventDescriptorSchema = S.schema(s =>
     "discriminatorByteLen": s.matches(S.int),
     "includeTransaction": s.matches(S.bool),
     "includeLogs": s.matches(S.bool),
+    "includeTokenBalances": s.matches(S.bool),
     "accountFilters": s.matches(
       S.option(
         S.array(

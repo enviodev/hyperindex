@@ -1,0 +1,61 @@
+# Flow X-Ray entities: raw facts only. All tree/edge/flow/contagion
+# aggregation lives in SQL views (sql/views.sql), not in handler state.
+# Handlers do flat, append-only, idempotent writes keyed by txSig + addrPath.
+
+type InstructionNode {
+  id: ID! # "${txSig}:${addrPath}"
+  txSig: String! @index
+  slot: Int!
+  addrPath: String! # "0", "0.1", "0.1.2" (instructionAddress joined by ".")
+  depth: Int! # instructionAddress.length - 1
+  parentPath: String # addrPath minus last segment; null at top level
+  program: String! @index # config name: Jupiter/Kamino/Drift/Raydium/SplToken/System
+  programId: String!
+  ixName: String! # decoded.name, or "unknown"
+  isInner: Boolean!
+  feePayer: String
+  success: Boolean
+  fee: BigInt
+  computeUnits: BigInt
+  argU64A: BigInt # opportunistic decoded args (amountIn / depositAmount / ...)
+  argU64B: BigInt
+  argMintA: String
+  argMintB: String
+  argMarketIndex: Int
+}
+
+type TokenDelta {
+  id: ID! # "${txSig}:${account}"
+  txSig: String! @index
+  slot: Int!
+  account: String!
+  mint: String! @index
+  owner: String
+  preAmount: BigInt!
+  postAmount: BigInt!
+  delta: BigInt! # post - pre (signed)
+}
+
+type FlowTx {
+  id: ID! # txSig
+  slot: Int!
+  feePayer: String
+  success: Boolean
+  fee: BigInt
+  computeUnits: BigInt
+}
+
+type LiquidationEvent {
+  id: ID! # "${txSig}:${addrPath}"
+  txSig: String! @index
+  slot: Int!
+  ixName: String! # liquidatePerp / liquidateSpot
+  marketIndex: Int
+  liabilityAmount: BigInt
+}
+
+type IndexerStats {
+  id: ID! # "global"
+  lastSlot: Int!
+  totalInstructions: BigInt!
+}
