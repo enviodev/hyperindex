@@ -181,7 +181,7 @@ let parseEventFiltersOrThrow = {
     // parameters of the event — TS type checking doesn't catch this when
     // `where` is a callback.
     let paramsRecordToTopicSelection = (paramsFilter: dict<JSON.t>) => {
-      if paramsFilter->Utils.Dict.size === 0 {
+      if paramsFilter->Utils.Dict.isEmpty {
         default
       } else {
         paramsFilter->Utils.Dict.forEachWithKey((_, key) => {
