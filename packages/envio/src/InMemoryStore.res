@@ -166,11 +166,13 @@ let writeBatch = async (
     | Some(checkpointId) => checkpointId
     | None => committedCheckpointId
     }
-    let totalLatestChanges =
-      persistence.allEntities->Belt.Array.reduce(0, (acc, entityConfig) =>
-        acc + (inMemoryStore->getInMemTable(~entityConfig)).latestEntityChangeById->Utils.Dict.size
-      )
-    let keepLatestChanges = totalLatestChanges < keepLatestChangesLimit
+    let totalLatestChanges = ref(0)
+    persistence.allEntities->Belt.Array.forEach(entityConfig => {
+      totalLatestChanges :=
+        totalLatestChanges.contents +
+        (inMemoryStore->getInMemTable(~entityConfig)).latestEntityChangeById->Utils.Dict.size
+    })
+    let keepLatestChanges = totalLatestChanges.contents < keepLatestChangesLimit
     persistence.allEntities->Belt.Array.forEach(entityConfig => {
       let table = inMemoryStore->getInMemTable(~entityConfig)
       let resetTable = keepLatestChanges
