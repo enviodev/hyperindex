@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  react-dom: 19.2.3
+
 pnpmfileChecksum: sha256-68GiYU4nGd1kYnAW+nvoKGsEuNkxbotxkJJ/6uzWq80=
 
 importers:
