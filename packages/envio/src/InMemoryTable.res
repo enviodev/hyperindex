@@ -75,6 +75,14 @@ module Entity = {
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
   }
 
+  // Drops the per-batch index state and rollback history, but keeps the
+  // already committed entities so the next batch can read them without
+  // hitting the database.
+  let resetButKeepLatestChanges = (self: t): t => {
+    ...make(),
+    latestEntityChangeById: self.latestEntityChangeById,
+  }
+
   let updateIndices = (self: t, ~entity: Internal.entity) => {
     let entityId = entity->getEntityIdUnsafe
     //Remove any invalid indices on entity
@@ -165,14 +173,13 @@ module Entity = {
   }
 
   let setRow = set
-  let set = (inMemTable: t, change: Change.t<Internal.entity>) => {
+  let set = (inMemTable: t, ~committedCheckpointId, change: Change.t<Internal.entity>) => {
     let entityId = change->Change.getEntityId
     switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | Some(prev) =>
       let prevCheckpointId = prev->Change.getCheckpointId
       if (
-        prevCheckpointId !== Internal.loadedFromDbCheckpointId &&
-          prevCheckpointId < change->Change.getCheckpointId
+        prevCheckpointId > committedCheckpointId && prevCheckpointId < change->Change.getCheckpointId
       ) {
         inMemTable.prevEntityChanges->Array.push(prev)
       }

@@ -586,6 +586,9 @@ type checkpointId = bigint
 // Assigned to changes loaded from the db, which never become history.
 let loadedFromDbCheckpointId: checkpointId = 0n
 
+// Committed checkpoint before any batch is written.
+let initialCheckpointId: checkpointId = 0n
+
 type reorgCheckpoint = {
   @as("id")
   checkpointId: bigint,

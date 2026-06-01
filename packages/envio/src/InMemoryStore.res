@@ -41,6 +41,7 @@ type t = {
   mutable entities: dict<InMemoryTable.Entity.t>,
   mutable effects: dict<effectCacheInMemTable>,
   mutable rollback: option<Persistence.rollback>,
+  mutable committedCheckpointId: Internal.checkpointId,
 }
 
 let make = (~entities: array<Internal.entityConfig>): t => {
@@ -49,14 +50,12 @@ let make = (~entities: array<Internal.entityConfig>): t => {
   entities: EntityTables.make(entities),
   effects: Dict.make(),
   rollback: None,
+  committedCheckpointId: Internal.initialCheckpointId,
 }
 
-let clear = (self: t) => {
-  self.rawEvents = InMemoryTable.make(~hash=hashRawEventsKey)
-  self.entities = EntityTables.make(self.allEntities)
-  self.effects = Dict.make()
-  self.rollback = None
-}
+// Once the store holds this many entities across all tables, we drop them
+// after a batch write so it doesn't grow unbounded on long running indexers.
+let keepLatestChangesLimit = 50_000
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   let key = effect.name
@@ -95,11 +94,14 @@ let writeBatch = async (
   | Initializing(_) =>
     JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
+    let committedCheckpointId = inMemoryStore.committedCheckpointId
     let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
       let table = inMemoryStore->getInMemTable(~entityConfig)
-      let changes = table.prevEntityChanges->Belt.Array.copy
+      // Safe to mutate prevEntityChanges directly since the table gets a fresh
+      // one in the reset below.
+      let changes = table.prevEntityChanges
       table.latestEntityChangeById->Utils.Dict.forEach(change =>
-        if change->Change.getCheckpointId !== Internal.loadedFromDbCheckpointId {
+        if change->Change.getCheckpointId > committedCheckpointId {
           changes->Array.push(change)
         }
       )
@@ -156,7 +158,28 @@ let writeBatch = async (
         acc
       },
     )
-    inMemoryStore->clear
+
+    inMemoryStore.rawEvents = InMemoryTable.make(~hash=hashRawEventsKey)
+    inMemoryStore.effects = Dict.make()
+    inMemoryStore.rollback = None
+    inMemoryStore.committedCheckpointId = switch batch.checkpointIds->Utils.Array.last {
+    | Some(checkpointId) => checkpointId
+    | None => committedCheckpointId
+    }
+    let totalLatestChanges = ref(0)
+    persistence.allEntities->Belt.Array.forEach(entityConfig => {
+      totalLatestChanges :=
+        totalLatestChanges.contents +
+        (inMemoryStore->getInMemTable(~entityConfig)).latestEntityChangeById->Utils.Dict.size
+    })
+    let keepLatestChanges = totalLatestChanges.contents < keepLatestChangesLimit
+    persistence.allEntities->Belt.Array.forEach(entityConfig => {
+      let table = inMemoryStore->getInMemTable(~entityConfig)
+      let resetTable = keepLatestChanges
+        ? table->InMemoryTable.Entity.resetButKeepLatestChanges
+        : InMemoryTable.Entity.make()
+      inMemoryStore.entities->Dict.set((entityConfig.name :> string), resetTable)
+    })
   }
 
 let prepareRollbackDiff = async (
@@ -165,7 +188,9 @@ let prepareRollbackDiff = async (
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
 ) => {
-  inMemoryStore->clear
+  inMemoryStore.rawEvents = InMemoryTable.make(~hash=hashRawEventsKey)
+  inMemoryStore.entities = EntityTables.make(inMemoryStore.allEntities)
+  inMemoryStore.effects = Dict.make()
   inMemoryStore.rollback = Some({
     targetCheckpointId: rollbackTargetCheckpointId,
     diffCheckpointId: rollbackDiffCheckpointId,
@@ -186,6 +211,7 @@ let prepareRollbackDiff = async (
     removedIdsResult->Array.forEach(data => {
       deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
       entityTable->InMemoryTable.Entity.set(
+        ~committedCheckpointId=inMemoryStore.committedCheckpointId,
         Delete({
           entityId: data["id"],
           checkpointId: rollbackDiffCheckpointId,
@@ -198,6 +224,7 @@ let prepareRollbackDiff = async (
     restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
       setEntities->Utils.Dict.push(entityConfig.name, entity.id)
       entityTable->InMemoryTable.Entity.set(
+        ~committedCheckpointId=inMemoryStore.committedCheckpointId,
         Set({
           entityId: entity.id,
           checkpointId: rollbackDiffCheckpointId,
@@ -243,6 +270,7 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t) => {
           }
 
           inMemTable->InMemoryTable.Entity.set(
+            ~committedCheckpointId=inMemoryStore.committedCheckpointId,
             Set({
               entityId: entity.id,
               checkpointId,
