@@ -149,26 +149,6 @@ module Entity = {
       })
     }
 
-  let initValue = (inMemTable: t, ~key: string, ~entity: option<Internal.entity>) => {
-    //Only initialize a row in the case where it is none
-    if inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone {
-      let change: Change.t<Internal.entity> = switch entity {
-      | Some(entity) =>
-        Set({entityId: key, entity, checkpointId: Internal.loadedFromDbCheckpointId})
-      | None => Delete({entityId: key, checkpointId: Internal.loadedFromDbCheckpointId})
-      }
-      switch entity {
-      | Some(entity) =>
-        //update table indices in the case where there
-        //is an already set entity
-        inMemTable->updateIndices(~entity)
-      | None => ()
-      }
-      inMemTable.changesCount = inMemTable.changesCount +. 1.
-      inMemTable.latestEntityChangeById->Dict.set(key, change)
-    }
-  }
-
   let setRow = set
   let set = (inMemTable: t, ~committedCheckpointId, change: Change.t<Internal.entity>) => {
     let entityId = change->Change.getEntityId
@@ -191,6 +171,23 @@ module Entity = {
     }
     inMemTable.latestEntityChangeById->Dict.set(entityId, change)
   }
+
+  // Only writes when the id isn't already present, so set always takes its
+  // None branch here (committedCheckpointId is never read).
+  let initValue = (
+    inMemTable: t,
+    ~committedCheckpointId,
+    ~key: string,
+    ~entity: option<Internal.entity>,
+  ) =>
+    if inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone {
+      let change: Change.t<Internal.entity> = switch entity {
+      | Some(entity) =>
+        Set({entityId: key, entity, checkpointId: Internal.loadedFromDbCheckpointId})
+      | None => Delete({entityId: key, checkpointId: Internal.loadedFromDbCheckpointId})
+      }
+      inMemTable->set(~committedCheckpointId, change)
+    }
 
   let mapChangeToEntity = (change: Change.t<Internal.entity>) =>
     switch change {
