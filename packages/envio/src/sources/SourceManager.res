@@ -32,9 +32,40 @@ type t = {
   mutable fetchingPartitionsCount: int,
   recoveryTimeout: float,
   mutable hasRealtime: bool,
+  mutable rateLimitTimeMs: float,
+  mutable rateLimitWaiters: int,
+  mutable rateLimitStartTime: option<Hrtime.timeRef>,
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
+
+let getRateLimitTimeMs = sourceManager =>
+  sourceManager.rateLimitTimeMs +.
+  switch sourceManager.rateLimitStartTime {
+  | Some(startTime) => startTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
+  | None => 0.0
+  }
+
+let startRateLimitTimeout = sourceManager => {
+  if sourceManager.rateLimitWaiters === 0 {
+    sourceManager.rateLimitStartTime = Some(Hrtime.makeTimer())
+  }
+  sourceManager.rateLimitWaiters = sourceManager.rateLimitWaiters + 1
+}
+
+let stopRateLimitTimeout = sourceManager => {
+  sourceManager.rateLimitWaiters = sourceManager.rateLimitWaiters - 1
+  if sourceManager.rateLimitWaiters === 0 {
+    switch sourceManager.rateLimitStartTime {
+    | Some(startTime) =>
+      sourceManager.rateLimitTimeMs =
+        sourceManager.rateLimitTimeMs +.
+        startTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
+      sourceManager.rateLimitStartTime = None
+    | None => ()
+    }
+  }
+}
 
 let onReorg = (sourceManager: t, ~rollbackTargetBlock) => {
   sourceManager.sourcesState->Array.forEach(({source}) => {
@@ -129,6 +160,9 @@ let make = (
     statusStart: Hrtime.makeTimer(),
     status: Idle,
     hasRealtime,
+    rateLimitTimeMs: 0.0,
+    rateLimitWaiters: 0,
+    rateLimitStartTime: None,
   }
 }
 
@@ -608,6 +642,26 @@ let executeQuery = async (
       sourceState.lastFailedAt = None
       responseRef := Some(response)
     } catch {
+    | Source.RateLimited({resetMs}) =>
+      // resetMs is the server's `reset_secs` (rounded down to whole seconds)
+      // converted to ms. Without a safety buffer we race the window edge and
+      // immediately hit another 429. Cap at 5 minutes to protect against
+      // pathologically large server values.
+      let waitMs = Pervasives.min(resetMs + 1000, 300_000)
+      // Escalate from trace to warn after a few rate-limit retries so the
+      // indexer doesn't go silent while waiting on a chronically-throttled
+      // token.
+      let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
+      logger->log({
+        "msg": "Rate limited by HyperSync. Upgrade your plan at https://app.envio.dev/api-tokens for higher limits.",
+        "retry": retry,
+        "waitMs": waitMs,
+      })
+      sourceManager->startRateLimitTimeout
+      await Utils.delay(waitMs)
+      sourceManager->stopRateLimitTimeout
+      retryRef := retryRef.contents + 1
+
     | Source.GetItemsError(error) =>
       switch error {
       | UnsupportedSelection(_)
@@ -703,6 +757,86 @@ let executeQuery = async (
 
     // TODO: Handle more error cases and hang/retry instead of throwing
     | exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to fetch block Range")
+    }
+  }
+
+  responseRef.contents->Option.getUnsafe
+}
+
+let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isRealtime: bool) => {
+  let responseRef = ref(None)
+  let retryRef = ref(0)
+
+  while responseRef.contents->Option.isNone {
+    let sourceState = switch sourceManager->getNextSource(~isRealtime) {
+    | Some(s) => s
+    | None =>
+      let logger = Logging.createChild(
+        ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
+      )
+      %raw(`null`)->ErrorHandling.mkLogAndRaise(
+        ~logger,
+        ~msg="No data-sources available for fetching block hashes.",
+      )
+    }
+    sourceManager.activeSource = sourceState.source
+    let source = sourceState.source
+    let retry = retryRef.contents
+
+    let logger = Logging.createChild(
+      ~params={
+        "chainId": source.chain->ChainMap.Chain.toChainId,
+        "logType": "Block Hash Query",
+        "source": source.name,
+        "retry": retry,
+      },
+    )
+
+    try {
+      let res = await source.getBlockHashes(~blockNumbers, ~logger)
+      switch res {
+      | Ok(data) =>
+        sourceState.lastFailedAt = None
+        responseRef := Some(data)
+      | Error(exn) => throw(exn)
+      }
+    } catch {
+    | Source.RateLimited({resetMs}) =>
+      let waitMs = Pervasives.min(resetMs + 1000, 300_000)
+      let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
+      logger->log({
+        "msg": "Rate limited by HyperSync. Upgrade your plan at https://app.envio.dev/api-tokens for higher limits.",
+        "retry": retry,
+        "waitMs": waitMs,
+      })
+      sourceManager->startRateLimitTimeout
+      await Utils.delay(waitMs)
+      sourceManager->stopRateLimitTimeout
+      retryRef := retryRef.contents + 1
+
+    | exn =>
+      let backoffMillis = switch retry {
+      | 0 => 500
+      | _ => 1000 * retry
+      }
+      let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
+      logger->log({
+        "msg": "Failed to fetch block hashes. Retrying.",
+        "retry": retry,
+        "backOffMilliseconds": backoffMillis,
+        "err": exn->Utils.prettifyExn,
+      })
+
+      let shouldSwitch = switch retry {
+      | 0 | 1 => false
+      | _ => retry->mod(2) === 0
+      }
+
+      if shouldSwitch {
+        sourceState.lastFailedAt = Some(Date.now())
+      }
+      await Utils.delay(Pervasives.min(backoffMillis, 60_000))
+      retryRef := retryRef.contents + 1
     }
   }
 

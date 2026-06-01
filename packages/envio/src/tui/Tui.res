@@ -210,6 +210,7 @@ module App = {
             poweredByHyperSync: (
               cf.sourceManager->SourceManager.getActiveSource
             ).poweredByHyperSync,
+            rateLimitTimeMs: cf.sourceManager->SourceManager.getRateLimitTimeMs,
           }: TuiData.chain
         )
       })
@@ -257,6 +258,18 @@ module App = {
         eventsPerSecond={SyncETA.isIndexerFullySynced(chains) ? None : eventsPerSecond}
       />
       <SyncETA chains indexerStartTime=state.indexerStartTime />
+      {
+        let maxRateLimitTimeMs =
+          chains->Array.reduce(0., (acc, chain) => Pervasives.max(acc, chain.rateLimitTimeMs))
+        maxRateLimitTimeMs > 1000.
+          ? {
+              let rateLimitSecs = Math.round(maxRateLimitTimeMs /. 1000.)
+              <Text color={Danger}>
+                {`Rate limited: ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting — upgrade at https://app.envio.dev/api-tokens`->React.string}
+              </Text>
+            }
+          : React.null
+      }
       <Newline />
       <Box flexDirection={Row}>
         <Text> {"GraphQL: "->React.string} </Text>

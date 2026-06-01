@@ -1,6 +1,7 @@
 use std::sync::Once;
 
 use anyhow::{Context, Result};
+use hypersync_client::RateLimitResponse;
 use napi_derive::napi;
 
 mod config;
@@ -23,6 +24,11 @@ fn init_logger(log_level: Option<&str>) {
             env_logger::Builder::new().parse_filters(filter).init();
         }
     });
+}
+
+fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
+    let reset_ms = info.suggested_wait_secs().unwrap_or(1) * 1000;
+    napi::Error::from_reason(format!("RATE_LIMITED:{reset_ms}"))
 }
 
 #[napi]
@@ -64,13 +70,18 @@ impl HypersyncClient {
         let query = query.try_into().context("parse query").map_err(map_err)?;
         let res = self
             .inner
-            .get(&query)
+            .get_with_rate_limit(&query)
             .await
             .context("run inner query")
             .map_err(map_err)?;
-        convert_response(res, self.enable_checksum_addresses)
-            .context("convert response")
-            .map_err(map_err)
+        match res {
+            RateLimitResponse::Success { response, .. } => {
+                convert_response(response, self.enable_checksum_addresses)
+                    .context("convert response")
+                    .map_err(map_err)
+            }
+            RateLimitResponse::RateLimited(info) => Err(make_rate_limit_err(&info)),
+        }
     }
 
     #[napi]
@@ -90,14 +101,19 @@ impl HypersyncClient {
         let query = query.try_into().context("parse query").map_err(map_err)?;
         let res = self
             .inner
-            .get_events(query)
+            .get_events_with_rate_limit(query)
             .await
             .context("run inner query")
             .map_err(map_err)?;
 
+        let response = match res {
+            RateLimitResponse::Success { response, .. } => response,
+            RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
+        };
+
         let items = tokio::task::block_in_place(|| {
             convert_event_items(
-                res.data,
+                response.data,
                 &self.decoder,
                 self.enable_checksum_addresses,
                 &requested_block_fields,
@@ -107,19 +123,19 @@ impl HypersyncClient {
         .map_err(convert_error_to_napi)?;
 
         Ok(EventItemsResponse {
-            archive_height: res
+            archive_height: response
                 .archive_height
                 .map(|h| h.try_into())
                 .transpose()
                 .context("convert archive_height")
                 .map_err(map_err)?,
-            next_block: res
+            next_block: response
                 .next_block
                 .try_into()
                 .context("convert next_block")
                 .map_err(map_err)?,
             items,
-            rollback_guard: res
+            rollback_guard: response
                 .rollback_guard
                 .map(RollbackGuard::try_from)
                 .transpose()

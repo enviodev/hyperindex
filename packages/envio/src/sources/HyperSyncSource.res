@@ -277,6 +277,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           }),
         ),
       )
+    | Source.RateLimited(_) as exn => throw(exn)
     | exn =>
       throw(
         Source.GetItemsError(
