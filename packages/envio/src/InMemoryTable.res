@@ -65,6 +65,29 @@ module Entity = {
     changesCount: self.changesCount,
   }
 
+  // Like resetButKeepLatestChanges, but only keeps entities loaded from the db
+  // (changes carrying loadedFromDbCheckpointId), dropping everything written in
+  // a batch. Returns the kept count so the store can size itself before
+  // deciding whether even these reads are worth keeping.
+  let resetButKeepLoadedFromDbChanges = (self: t): (t, int) => {
+    let latestEntityChangeById = Dict.make()
+    let keptCount = ref(0)
+    self.latestEntityChangeById->Utils.Dict.forEachWithKey((change, key) =>
+      if change->Change.getCheckpointId === Internal.loadedFromDbCheckpointId {
+        latestEntityChangeById->Dict.set(key, change)
+        keptCount := keptCount.contents + 1
+      }
+    )
+    (
+      {
+        ...make(),
+        latestEntityChangeById,
+        changesCount: keptCount.contents->Int.toFloat,
+      },
+      keptCount.contents,
+    )
+  }
+
   let updateIndices = (self: t, ~entity: Internal.entity) => {
     let entityId = entity->getEntityIdUnsafe
     //Remove any invalid indices on entity

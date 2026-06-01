@@ -227,6 +227,35 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     },
   )
 
+  it(
+    "resetButKeepLoadedFromDbChanges keeps only entities loaded from the db with their count",
+    t => {
+      let makeEntity = (id): Internal.entity =>
+        {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
+      let committedCheckpointId = Internal.initialCheckpointId
+
+      let table = InMemoryTable.Entity.make()
+      table->InMemoryTable.Entity.initValue(
+        ~committedCheckpointId,
+        ~key="loaded-set",
+        ~entity=Some(makeEntity("loaded-set")),
+      )
+      table->InMemoryTable.Entity.initValue(~committedCheckpointId, ~key="loaded-deleted", ~entity=None)
+      table->InMemoryTable.Entity.set(
+        ~committedCheckpointId,
+        Set({entityId: "written", entity: makeEntity("written"), checkpointId: 5n}),
+      )
+
+      let (resetTable, keptCount) = table->InMemoryTable.Entity.resetButKeepLoadedFromDbChanges
+
+      t.expect((
+        keptCount,
+        resetTable.changesCount,
+        resetTable.latestEntityChangeById->Dict.keysToArray,
+      )).toEqual((2, 2., ["loaded-set", "loaded-deleted"]))
+    },
+  )
+
   Async.it("Test getWhere queries with eq and gt operators", async t => {
     let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
