@@ -250,8 +250,8 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
 
       t.expect((
         resetTable.changesCount,
-        resetTable.latestEntityChangeById->Dict.keysToArray,
-      )).toEqual((2., ["loaded-set", "loaded-deleted"]))
+        resetTable.latestEntityChangeById->Dict.keysToArray->Array.toSorted(String.compare),
+      )).toEqual((2., ["loaded-deleted", "loaded-set"]))
     },
   )
 
