@@ -98,17 +98,22 @@ impl HypersyncClient {
         let query = query.try_into().context("parse query").map_err(map_err)?;
         let res = self
             .inner
-            .get_events(query)
+            .get_events_with_rate_limit(query)
             .await
             .context("run inner query")
             .map_err(map_err)?;
-        let rate_limit = self
-            .inner
-            .rate_limit_info()
-            .map(|info| convert_rate_limit_info(&info));
-        convert_event_response(res, self.enable_checksum_addresses, rate_limit)
-            .context("convert response")
-            .map_err(map_err)
+        match res {
+            RateLimitResponse::Success {
+                response,
+                rate_limit,
+            } => {
+                let rate_limit = Some(convert_rate_limit_info(&rate_limit));
+                convert_event_response(response, self.enable_checksum_addresses, rate_limit)
+                    .context("convert response")
+                    .map_err(map_err)
+            }
+            RateLimitResponse::RateLimited(info) => Err(make_rate_limit_err(&info)),
+        }
     }
 }
 
