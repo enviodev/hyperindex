@@ -34,8 +34,9 @@ module Entity = {
   type entityIndices = Utils.Set.t<TableIndices.Index.t>
   type t = {
     latestEntityChangeById: dict<Change.t<Internal.entity>>,
-    // Number of distinct ids in latestEntityChangeById, kept in sync manually
-    // so InMemoryStore can size the store without scanning every dict.
+    // Counts every recorded change (new latest ids and pushes to
+    // prevEntityChanges), kept in sync manually so InMemoryStore can gauge the
+    // store size without scanning every dict.
     mutable changesCount: float,
     prevEntityChanges: array<Change.t<Internal.entity>>,
     indicesByEntityId: dict<entityIndices>,
@@ -178,6 +179,7 @@ module Entity = {
           prevCheckpointId < change->Change.getCheckpointId
       ) {
         inMemTable.prevEntityChanges->Array.push(prev)
+        inMemTable.changesCount = inMemTable.changesCount +. 1.
       }
     | None => inMemTable.changesCount = inMemTable.changesCount +. 1.
     }
