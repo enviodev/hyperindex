@@ -8,8 +8,6 @@ let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   ->Option.getOrThrow
 
 module InMemoryStore = {
-  let flushPendingPersistence = InMemoryStore.flushPendingPersistence
-
   let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
@@ -383,9 +381,14 @@ module Indexer = {
           while before >= (gsManager->GlobalStateManager.getState).processedBatches {
             await Utils.delay(1)
           }
-          // The batch write is fired concurrently with processing, so wait for
-          // the in-flight write to land before resolving and asserting DB state.
-          await ctx.inMemoryStore->InMemoryStore.flushPendingPersistence
+          // The batch write is fired concurrently with processing. Await the
+          // in-flight write (without clearing it — the indexer owns flushing, and
+          // clearing here would let it fire the next write concurrently) so DB
+          // state assertions see the committed batch.
+          switch ctx.inMemoryStore.pendingPersistence {
+          | Some({promise}) => await promise
+          | None => ()
+          }
           // Skip extra microtasks for indexer to fire follow-up actions
           // (e.g. the NextQuery dispatch that schedules the next
           // getItemsOrThrow call). Without this, callers that immediately

@@ -690,7 +690,10 @@ let start = async (
     Ctx.registrations,
     config,
     persistence,
-    inMemoryStore: InMemoryStore.make(~entities=persistence.allEntities),
+    inMemoryStore: InMemoryStore.make(
+      ~entities=persistence.allEntities,
+      ~committedCheckpointId=(persistence->Persistence.getInitializedState).checkpointId,
+    ),
   }
 
   let envioVersion = Utils.EnvioPackage.value.version

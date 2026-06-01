@@ -1,39 +1,18 @@
-type t<'key, 'val> = {
-  dict: dict<'val>,
-  hash: 'key => string,
-}
-
-let make = (~hash): t<'key, 'val> => {
-  dict: Dict.make(),
-  hash,
-}
-
-let set = (self: t<'key, 'val>, key, value) => self.dict->Dict.set(key->self.hash, value)
-
-let setByHash = (self: t<'key, 'val>, hash, value) => self.dict->Dict.set(hash, value)
-
-let hasByHash = (self: t<'key, 'val>, hash) => {
-  self.dict->Dict.has(hash)
-}
-
-let getUnsafeByHash = (self: t<'key, 'val>, hash) => {
-  self.dict->Dict.getUnsafe(hash)
-}
-
-let get = (self: t<'key, 'val>, key: 'key) =>
-  self.dict->Utils.Dict.dangerouslyGetNonOption(key->self.hash)
-
-let values = (self: t<'key, 'val>) => self.dict->Dict.valuesToArray
-
 module Entity = {
   type relatedEntityId = string
   type indexWithRelatedIds = (TableIndices.Index.t, Utils.Set.t<relatedEntityId>)
-  type indicesSerializedToValue = t<TableIndices.Index.t, indexWithRelatedIds>
-  type indexFieldNameToIndices = t<TableIndices.Index.t, indicesSerializedToValue>
+  // Keyed by TableIndices.Index.toString
+  type indicesSerializedToValue = dict<indexWithRelatedIds>
+  // Keyed by TableIndices.Index.getFieldName
+  type indexFieldNameToIndices = dict<indicesSerializedToValue>
 
   type entityIndices = Utils.Set.t<TableIndices.Index.t>
   type t = {
     latestEntityChangeById: dict<Change.t<Internal.entity>>,
+    // Counts every recorded change (new latest ids and pushes to
+    // prevEntityChanges), kept in sync manually so InMemoryStore can gauge the
+    // store size without scanning every dict.
+    mutable changesCount: float,
     prevEntityChanges: array<Change.t<Internal.entity>>,
     indicesByEntityId: dict<entityIndices>,
     fieldNameIndices: indexFieldNameToIndices,
@@ -63,16 +42,17 @@ module Entity = {
     ~index,
     ~relatedEntityIds=Utils.Set.make(),
   ): indicesSerializedToValue => {
-    let empty = make(~hash=TableIndices.Index.toString)
-    empty->set(index, (index, relatedEntityIds))
+    let empty = Dict.make()
+    empty->Dict.set(index->TableIndices.Index.toString, (index, relatedEntityIds))
     empty
   }
 
   let make = (): t => {
     latestEntityChangeById: Dict.make(),
+    changesCount: 0.,
     prevEntityChanges: [],
     indicesByEntityId: Dict.make(),
-    fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
+    fieldNameIndices: Dict.make(),
   }
 
   // Drops the per-batch index state and rollback history, but keeps the
@@ -81,6 +61,8 @@ module Entity = {
   let resetButKeepLatestChanges = (self: t): t => {
     ...make(),
     latestEntityChangeById: self.latestEntityChangeById,
+    // writeBatch already mutated this to subtract the dropped prevEntityChanges.
+    changesCount: self.changesCount,
   }
 
   let updateIndices = (self: t, ~entity: Internal.entity) => {
@@ -101,10 +83,10 @@ module Entity = {
       })
     }
 
-    self.fieldNameIndices.dict
+    self.fieldNameIndices
     ->Dict.keysToArray
     ->Array.forEach(fieldName => {
-      let indices = self.fieldNameIndices.dict->Dict.getUnsafe(fieldName)
+      let indices = self.fieldNameIndices->Dict.getUnsafe(fieldName)
       // A missing key reads as `undefined`, which matches the `None` arm of
       // `FieldValue.t` (`option<...>`). Mirror `addEmptyIndex` so nullable
       // FK columns that were omitted on the set entity don't crash.
@@ -112,9 +94,7 @@ module Entity = {
         entity
         ->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
         ->Dict.getUnsafe(fieldName)
-      indices
-      ->values
-      ->Array.forEach(((index, relatedEntityIds)) => {
+      indices->Utils.Dict.forEach(((index, relatedEntityIds)) => {
         if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
           //Add entity id to indices and add index to entity indicies
           relatedEntityIds->Utils.Set.add(entityId)->ignore
@@ -132,8 +112,10 @@ module Entity = {
     | Some(entityIndices) =>
       entityIndices->Utils.Set.forEach(index => {
         switch self.fieldNameIndices
-        ->get(index)
-        ->Option.flatMap(get(_, index)) {
+        ->Utils.Dict.dangerouslyGetNonOption(index->TableIndices.Index.getFieldName)
+        ->Option.flatMap(indices =>
+          indices->Utils.Dict.dangerouslyGetNonOption(index->TableIndices.Index.toString)
+        ) {
         | Some((_index, relatedEntityIds)) =>
           let _wasRemoved = relatedEntityIds->Utils.Set.delete(entityId)
         | None => () //Unexpected index should exist if it is entityIndices
@@ -142,48 +124,19 @@ module Entity = {
       })
     }
 
-  let initValue = (
-    inMemTable: t,
-    ~key: string,
-    ~entity: option<Internal.entity>,
-    // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
-    ~allowOverWriteEntity=false,
-  ) => {
-    let shouldWriteEntity =
-      allowOverWriteEntity ||
-      inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone
-
-    //Only initialize a row in the case where it is none
-    //or if allowOverWriteEntity is true (used for mockDb in test helpers)
-    if shouldWriteEntity {
-      let change: Change.t<Internal.entity> = switch entity {
-      | Some(entity) =>
-        Set({entityId: key, entity, checkpointId: Internal.loadedFromDbCheckpointId})
-      | None => Delete({entityId: key, checkpointId: Internal.loadedFromDbCheckpointId})
-      }
-      switch entity {
-      | Some(entity) =>
-        //update table indices in the case where there
-        //is an already set entity
-        inMemTable->updateIndices(~entity)
-      | None => ()
-      }
-      inMemTable.latestEntityChangeById->Dict.set(key, change)
-    }
-  }
-
-  let setRow = set
   let set = (inMemTable: t, ~committedCheckpointId, change: Change.t<Internal.entity>) => {
     let entityId = change->Change.getEntityId
     switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | Some(prev) =>
       let prevCheckpointId = prev->Change.getCheckpointId
       if (
-        prevCheckpointId > committedCheckpointId && prevCheckpointId < change->Change.getCheckpointId
+        prevCheckpointId > committedCheckpointId &&
+          prevCheckpointId < change->Change.getCheckpointId
       ) {
         inMemTable.prevEntityChanges->Array.push(prev)
+        inMemTable.changesCount = inMemTable.changesCount +. 1.
       }
-    | None => ()
+    | None => inMemTable.changesCount = inMemTable.changesCount +. 1.
     }
 
     switch change {
@@ -193,13 +146,28 @@ module Entity = {
     inMemTable.latestEntityChangeById->Dict.set(entityId, change)
   }
 
+  // Only writes when the id isn't already present, so set always takes its
+  // None branch here (committedCheckpointId is never read).
+  let initValue = (
+    inMemTable: t,
+    ~committedCheckpointId,
+    ~key: string,
+    ~entity: option<Internal.entity>,
+  ) =>
+    if inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone {
+      let change: Change.t<Internal.entity> = switch entity {
+      | Some(entity) =>
+        Set({entityId: key, entity, checkpointId: Internal.loadedFromDbCheckpointId})
+      | None => Delete({entityId: key, checkpointId: Internal.loadedFromDbCheckpointId})
+      }
+      inMemTable->set(~committedCheckpointId, change)
+    }
+
   let mapChangeToEntity = (change: Change.t<Internal.entity>) =>
     switch change {
     | Set({entity}) => Some(entity)
     | Delete(_) => None
     }
-
-  let getRow = get
 
   /** It returns option<option<'entity>> where the first option means
   that the entity is not set to the in memory store,
@@ -213,12 +181,11 @@ module Entity = {
 
   let hasIndex = (inMemTable: t, ~fieldName, ~operator: TableIndices.Operator.t) =>
     fieldValueHash => {
-      switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+      switch inMemTable.fieldNameIndices->Utils.Dict.dangerouslyGetNonOption(fieldName) {
       | None => false
       | Some(indicesSerializedToValue) => {
-          // Should match TableIndices.toString logic
-          let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
-          indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) !== None
+          let key = TableIndices.Index.toStringByParts(~fieldName, ~operator, ~fieldValueHash)
+          indicesSerializedToValue->Utils.Dict.dangerouslyGetNonOption(key) !== None
         }
       }
     }
@@ -226,13 +193,12 @@ module Entity = {
   let getUnsafeOnIndex = (inMemTable: t, ~fieldName, ~operator: TableIndices.Operator.t) => {
     let getEntity = inMemTable->getUnsafe
     fieldValueHash => {
-      switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+      switch inMemTable.fieldNameIndices->Utils.Dict.dangerouslyGetNonOption(fieldName) {
       | None =>
         JsError.throwWithMessage(`Unexpected error. Must have an index on field ${fieldName}`)
       | Some(indicesSerializedToValue) => {
-          // Should match TableIndices.toString logic
-          let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
-          switch indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) {
+          let key = TableIndices.Index.toStringByParts(~fieldName, ~operator, ~fieldValueHash)
+          switch indicesSerializedToValue->Utils.Dict.dangerouslyGetNonOption(key) {
           | None =>
             JsError.throwWithMessage(
               `Unexpected error. Must have an index for the value ${fieldValueHash} on field ${fieldName}`,
@@ -274,35 +240,23 @@ module Entity = {
       | None => ()
       }
     })
-    switch inMemTable.fieldNameIndices->getRow(index) {
+    switch inMemTable.fieldNameIndices->Utils.Dict.dangerouslyGetNonOption(fieldName) {
     | None =>
-      inMemTable.fieldNameIndices->setRow(
-        index,
+      inMemTable.fieldNameIndices->Dict.set(
+        fieldName,
         makeIndicesSerializedToValue(~index, ~relatedEntityIds),
       )
     | Some(indicesSerializedToValue) =>
-      switch indicesSerializedToValue->getRow(index) {
-      | None => indicesSerializedToValue->setRow(index, (index, relatedEntityIds))
+      switch indicesSerializedToValue->Utils.Dict.dangerouslyGetNonOption(
+        index->TableIndices.Index.toString,
+      ) {
+      | None =>
+        indicesSerializedToValue->Dict.set(
+          index->TableIndices.Index.toString,
+          (index, relatedEntityIds),
+        )
       | Some(_) => () //Should not happen, this means the index already exists
       }
     }
   }
-
-  let addIdToIndex = (inMemTable: t, ~index, ~entityId) =>
-    switch inMemTable.fieldNameIndices->getRow(index) {
-    | None =>
-      inMemTable.fieldNameIndices->setRow(
-        index,
-        makeIndicesSerializedToValue(
-          ~index,
-          ~relatedEntityIds=Utils.Set.make()->Utils.Set.add(entityId),
-        ),
-      )
-    | Some(indicesSerializedToValue) =>
-      switch indicesSerializedToValue->getRow(index) {
-      | None =>
-        indicesSerializedToValue->setRow(index, (index, Utils.Set.make()->Utils.Set.add(entityId)))
-      | Some((_index, relatedEntityIds)) => relatedEntityIds->Utils.Set.add(entityId)->ignore
-      }
-    }
 }

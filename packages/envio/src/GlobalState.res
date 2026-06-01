@@ -330,10 +330,6 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
 
   {
     ...chainManager,
-    committedCheckpointId: switch batch.checkpointIds->Utils.Array.last {
-    | Some(checkpointId) => checkpointId
-    | None => chainManager.committedCheckpointId
-    },
     chainFetchers,
     isRealtime: chainManager.isRealtime || allChainsReady.contents,
   }
@@ -953,6 +949,7 @@ let injectedTaskReducer = (
 
         let batch =
           state.chainManager->ChainManager.createBatch(
+            ~committedCheckpointId=state.ctx.inMemoryStore.committedCheckpointId,
             ~batchSizeTarget=state.ctx.config.batchSize,
             ~isRollback=isRollbackBatch,
           )
@@ -981,7 +978,7 @@ let injectedTaskReducer = (
           dispatchAction(EnterReorgThreshold)
         }
 
-        if progressedChainsById->Utils.Dict.isEmpty {
+        if progressedChainsById->Utils.Dict.isEmpty && batch.totalBatchSize == 0 {
           // When resuming from persisted state, all events may already be processed.
           // Log the same completion message and handle exit just like EventBatchProcessed does.
           if EventProcessing.allChainsEventsProcessedToEndblock(state.chainManager.chainFetchers) {
@@ -1189,7 +1186,7 @@ let injectedTaskReducer = (
         let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(
           ~persistence=state.ctx.persistence,
           ~rollbackTargetCheckpointId,
-          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->BigInt.add(1n),
+          ~rollbackDiffCheckpointId=state.ctx.inMemoryStore.committedCheckpointId->BigInt.add(1n),
         )
 
         let chainManager = {
@@ -1204,7 +1201,7 @@ let injectedTaskReducer = (
             "upserted": diff["setEntities"],
           },
           "rollbackedEvents": rollbackedProcessedEvents.contents,
-          "beforeCheckpointId": state.chainManager.committedCheckpointId,
+          "beforeCheckpointId": state.ctx.inMemoryStore.committedCheckpointId,
           "targetCheckpointId": rollbackTargetCheckpointId,
         })
         Prometheus.RollbackSuccess.increment(
