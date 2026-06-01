@@ -36,7 +36,7 @@ let loadById = (
     }
     idsToLoad->Array.forEach(entityId => {
       inMemTable->InMemoryTable.Entity.initValue(
-        ~allowOverWriteEntity=false,
+        ~committedCheckpointId=inMemoryStore.committedCheckpointId,
         ~key=entityId,
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
       )
@@ -397,7 +397,7 @@ let loadByField = (
 
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(
-            ~allowOverWriteEntity=false,
+            ~committedCheckpointId=inMemoryStore.committedCheckpointId,
             ~key=entity.id,
             ~entity=Some(entity),
           )
