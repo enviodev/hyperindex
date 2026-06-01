@@ -165,13 +165,37 @@ let writeBatch = async (
     | Some(checkpointId) => checkpointId
     | None => committedCheckpointId
     }
-    persistence.allEntities->Array.forEach(entityConfig => {
-      let table = inMemoryStore->getInMemTable(~entityConfig)
-      let resetTable = keepLatestChanges
-        ? table->InMemoryTable.Entity.resetButKeepLatestChanges
-        : InMemoryTable.Entity.make()
-      inMemoryStore.entities->Dict.set((entityConfig.name :> string), resetTable)
-    })
+    if keepLatestChanges {
+      persistence.allEntities->Array.forEach(entityConfig => {
+        let table = inMemoryStore->getInMemTable(~entityConfig)
+        inMemoryStore.entities->Dict.set(
+          (entityConfig.name :> string),
+          table->InMemoryTable.Entity.resetButKeepLatestChanges,
+        )
+      })
+    } else {
+      // Over the limit: drop everything written in a batch and keep only the
+      // entities loaded from the db, so the next batch can still read them
+      // without hitting the database.
+      let loadedFromDbCount = ref(0.)
+      let resetTables = persistence.allEntities->Array.map(entityConfig => {
+        let resetTable =
+          inMemoryStore
+          ->getInMemTable(~entityConfig)
+          ->InMemoryTable.Entity.resetButKeepLoadedFromDbChanges
+        loadedFromDbCount := loadedFromDbCount.contents +. resetTable.changesCount
+        resetTable
+      })
+      // Even the loaded-from-db entities alone exceed the limit, so there's no
+      // point keeping them around - drop everything.
+      let dropEverything = loadedFromDbCount.contents >= keepLatestChangesLimit
+      persistence.allEntities->Array.forEachWithIndex((entityConfig, idx) => {
+        inMemoryStore.entities->Dict.set(
+          (entityConfig.name :> string),
+          dropEverything ? InMemoryTable.Entity.make() : resetTables->Array.getUnsafe(idx),
+        )
+      })
+    }
   }
 
 let prepareRollbackDiff = async (

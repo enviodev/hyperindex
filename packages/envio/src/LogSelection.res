@@ -181,23 +181,21 @@ let parseEventFiltersOrThrow = {
     // parameters of the event — TS type checking doesn't catch this when
     // `where` is a callback.
     let paramsRecordToTopicSelection = (paramsFilter: dict<JSON.t>) => {
-      let filterKeys = paramsFilter->Dict.keysToArray
-      switch filterKeys {
-      | [] => default
-      | _ => {
-          filterKeys->Array.forEach(key => {
-            if params->Array.includes(key)->not {
-              JsError.throwWithMessage(
-                `Invalid where configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
-              )
-            }
-          })
-          {
-            Internal.topic0,
-            topic1: topic1(paramsFilter),
-            topic2: topic2(paramsFilter),
-            topic3: topic3(paramsFilter),
+      if paramsFilter->Utils.Dict.isEmpty {
+        default
+      } else {
+        paramsFilter->Utils.Dict.forEachWithKey((_, key) => {
+          if params->Array.includes(key)->not {
+            JsError.throwWithMessage(
+              `Invalid where configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
+            )
           }
+        })
+        {
+          Internal.topic0,
+          topic1: topic1(paramsFilter),
+          topic2: topic2(paramsFilter),
+          topic3: topic3(paramsFilter),
         }
       }
     }
@@ -236,9 +234,7 @@ let parseEventFiltersOrThrow = {
         | Object(obj) => {
             // Catch typos (e.g. `parmas:`) and the legacy flat-filter
             // shape (`{from: ...}`) by rejecting any unknown sibling.
-            obj
-            ->Dict.keysToArray
-            ->Array.forEach(key => {
+            obj->Utils.Dict.forEachWithKey((_, key) => {
               if acceptedWhereKeys->Array.includes(key)->not {
                 JsError.throwWithMessage(
                   `Invalid where configuration. Unknown field "${key}". Indexed parameter filters must be nested under \`params\` and block-range filters under \`block\``,
