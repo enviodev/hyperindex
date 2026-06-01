@@ -93,9 +93,7 @@ let addItemToRawEvents = (
     params,
   }
 
-  let eventIdStr = eventId->BigInt.toString
-
-  inMemoryStore.rawEvents->InMemoryTable.set({chainId, eventId: eventIdStr}, rawEvent)
+  inMemoryStore.rawEvents->Array.push(rawEvent)
 }
 
 exception ProcessingError({message: string, exn: exn, item: Internal.item})
