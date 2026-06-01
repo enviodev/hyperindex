@@ -173,13 +173,13 @@ module Entity = {
   }
 
   let setRow = set
-  let set = (inMemTable: t, ~commitedCheckpointId, change: Change.t<Internal.entity>) => {
+  let set = (inMemTable: t, ~committedCheckpointId, change: Change.t<Internal.entity>) => {
     let entityId = change->Change.getEntityId
     switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | Some(prev) =>
       let prevCheckpointId = prev->Change.getCheckpointId
       if (
-        prevCheckpointId > commitedCheckpointId && prevCheckpointId < change->Change.getCheckpointId
+        prevCheckpointId > committedCheckpointId && prevCheckpointId < change->Change.getCheckpointId
       ) {
         inMemTable.prevEntityChanges->Array.push(prev)
       }
