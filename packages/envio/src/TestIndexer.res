@@ -83,12 +83,12 @@ let handleLoadByField = (
   // Parse JSON field value to typed value using the field's schema
   let parsedFieldValue = fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
 
-  // Compare using TableIndices.FieldValue logic (same approach as InMemoryTable)
+  // Compare using TableIndices.FieldValue logic (same approach as InMemoryEntityTable)
   // This properly handles bigint and BigDecimal comparisons
   entityDict
   ->Dict.valuesToArray
   ->Array.forEach(entity => {
-    // Cast entity to dict of field values (same approach as InMemoryTable)
+    // Cast entity to dict of field values (same approach as InMemoryEntityTable)
     let entityAsDict = entity->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
     switch entityAsDict->Dict.get(fieldName) {
     | Some(entityFieldValue) => {

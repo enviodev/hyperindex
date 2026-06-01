@@ -35,7 +35,7 @@ let loadById = (
       entitiesMap->Dict.set(entity.id, entity)
     }
     idsToLoad->Array.forEach(entityId => {
-      inMemTable->InMemoryTable.Entity.initValue(
+      inMemTable->InMemoryEntityTable.initValue(
         ~committedCheckpointId=inMemoryStore.committedCheckpointId,
         ~key=entityId,
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
@@ -55,7 +55,7 @@ let loadById = (
     ~load,
     ~shouldGroup,
     ~hasher=LoadManager.noopHasher,
-    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafe,
+    ~getUnsafeInMemory=inMemTable->InMemoryEntityTable.getUnsafe,
     ~hasInMemory=hash => inMemTable.latestEntityChangeById->Dict.has(hash),
     ~input=entityId,
   )
@@ -376,7 +376,7 @@ let loadByField = (
 
     let _ = await indiciesToLoad
     ->Array.map(async index => {
-      inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
+      inMemTable->InMemoryEntityTable.addEmptyIndex(~index)
       try {
         let entities = await storage.loadByFieldOrThrow(
           ~operator=switch index {
@@ -396,7 +396,7 @@ let loadByField = (
         )
 
         entities->Array.forEach(entity => {
-          inMemTable->InMemoryTable.Entity.initValue(
+          inMemTable->InMemoryEntityTable.initValue(
             ~committedCheckpointId=inMemoryStore.committedCheckpointId,
             ~key=entity.id,
             ~entity=Some(entity),
@@ -437,7 +437,7 @@ let loadByField = (
     ~shouldGroup,
     ~hasher=fieldValue =>
       fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString,
-    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex(~fieldName, ~operator),
-    ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex(~fieldName, ~operator),
+    ~getUnsafeInMemory=inMemTable->InMemoryEntityTable.getUnsafeOnIndex(~fieldName, ~operator),
+    ~hasInMemory=inMemTable->InMemoryEntityTable.hasIndex(~fieldName, ~operator),
   )
 }
