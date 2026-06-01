@@ -1,11 +1,3 @@
-type rawEventsKey = {
-  chainId: int,
-  eventId: string,
-}
-
-let hashRawEventsKey = (key: rawEventsKey) =>
-  EventUtils.getEventIdKeyString(~chainId=key.chainId, ~eventId=key.eventId)
-
 module EntityTables = {
   type t = dict<InMemoryTable.Entity.t>
   exception UndefinedEntity({entityName: string})
@@ -37,7 +29,7 @@ type effectCacheInMemTable = {
 
 type t = {
   allEntities: array<Internal.entityConfig>,
-  mutable rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
+  mutable rawEvents: dict<InternalTable.RawEvents.t>,
   mutable entities: dict<InMemoryTable.Entity.t>,
   mutable effects: dict<effectCacheInMemTable>,
   mutable rollback: option<Persistence.rollback>,
@@ -46,7 +38,7 @@ type t = {
 
 let make = (~entities: array<Internal.entityConfig>): t => {
   allEntities: entities,
-  rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
+  rawEvents: Dict.make(),
   entities: EntityTables.make(entities),
   effects: Dict.make(),
   rollback: None,
@@ -113,7 +105,7 @@ let writeBatch = async (
     })
     await persistence.storage.writeBatch(
       ~batch,
-      ~rawEvents=inMemoryStore.rawEvents->InMemoryTable.values,
+      ~rawEvents=inMemoryStore.rawEvents->Dict.valuesToArray,
       ~rollback=inMemoryStore.rollback,
       ~isInReorgThreshold,
       ~config,
@@ -159,7 +151,7 @@ let writeBatch = async (
       },
     )
 
-    inMemoryStore.rawEvents = InMemoryTable.make(~hash=hashRawEventsKey)
+    inMemoryStore.rawEvents = Dict.make()
     inMemoryStore.effects = Dict.make()
     inMemoryStore.rollback = None
     inMemoryStore.committedCheckpointId = switch batch.checkpointIds->Utils.Array.last {
@@ -188,7 +180,7 @@ let prepareRollbackDiff = async (
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
 ) => {
-  inMemoryStore.rawEvents = InMemoryTable.make(~hash=hashRawEventsKey)
+  inMemoryStore.rawEvents = Dict.make()
   inMemoryStore.entities = EntityTables.make(inMemoryStore.allEntities)
   inMemoryStore.effects = Dict.make()
   inMemoryStore.rollback = Some({
