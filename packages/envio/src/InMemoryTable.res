@@ -147,20 +147,9 @@ module Entity = {
       })
     }
 
-  let initValue = (
-    inMemTable: t,
-    ~key: string,
-    ~entity: option<Internal.entity>,
-    // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
-    ~allowOverWriteEntity=false,
-  ) => {
-    let isNew =
-      inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone
-    let shouldWriteEntity = allowOverWriteEntity || isNew
-
+  let initValue = (inMemTable: t, ~key: string, ~entity: option<Internal.entity>) => {
     //Only initialize a row in the case where it is none
-    //or if allowOverWriteEntity is true (used for mockDb in test helpers)
-    if shouldWriteEntity {
+    if inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone {
       let change: Change.t<Internal.entity> = switch entity {
       | Some(entity) =>
         Set({entityId: key, entity, checkpointId: Internal.loadedFromDbCheckpointId})
@@ -173,9 +162,7 @@ module Entity = {
         inMemTable->updateIndices(~entity)
       | None => ()
       }
-      if isNew {
-        inMemTable.changesCount = inMemTable.changesCount +. 1.
-      }
+      inMemTable.changesCount = inMemTable.changesCount +. 1.
       inMemTable.latestEntityChangeById->Dict.set(key, change)
     }
   }

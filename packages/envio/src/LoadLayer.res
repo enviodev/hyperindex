@@ -36,7 +36,6 @@ let loadById = (
     }
     idsToLoad->Array.forEach(entityId => {
       inMemTable->InMemoryTable.Entity.initValue(
-        ~allowOverWriteEntity=false,
         ~key=entityId,
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
       )
@@ -396,11 +395,7 @@ let loadByField = (
         )
 
         entities->Array.forEach(entity => {
-          inMemTable->InMemoryTable.Entity.initValue(
-            ~allowOverWriteEntity=false,
-            ~key=entity.id,
-            ~entity=Some(entity),
-          )
+          inMemTable->InMemoryTable.Entity.initValue(~key=entity.id, ~entity=Some(entity))
         })
 
         size := size.contents + entities->Array.length
