@@ -56,12 +56,3 @@ let packEventIndex = (~blockNumber, ~logIndex) => {
 // let packEventIndexFromRecord = (eventIndex: eventIndex) => {
 //   packEventIndex(~blockNumber=eventIndex.blockNumber, ~logIndex=eventIndex.logIndex)
 // }
-
-//Returns unique string id for an event using its chain id combined with event id
-//Used in IO for the key in the in mem rawEvents table
-let getEventIdKeyString = (~chainId: int, ~eventId: string) => {
-  let chainIdStr = chainId->Belt.Int.toString
-  let key = chainIdStr ++ "_" ++ eventId
-
-  key
-}
