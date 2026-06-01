@@ -129,7 +129,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
   (
     {
       ChainManager.chainFetchers,
-      committedCheckpointId: 0n,
       isInReorgThreshold: false,
       isRealtime: false,
     },

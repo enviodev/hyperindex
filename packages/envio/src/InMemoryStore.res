@@ -44,13 +44,16 @@ type t = {
   mutable committedCheckpointId: Internal.checkpointId,
 }
 
-let make = (~entities: array<Internal.entityConfig>): t => {
+let make = (
+  ~entities: array<Internal.entityConfig>,
+  ~committedCheckpointId=Internal.initialCheckpointId,
+): t => {
   allEntities: entities,
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
   entities: EntityTables.make(entities),
   effects: Dict.make(),
   rollback: None,
-  committedCheckpointId: Internal.initialCheckpointId,
+  committedCheckpointId,
 }
 
 // Once the store holds this many entities across all tables, we drop them
