@@ -135,7 +135,7 @@ let nextItemIsNone = (chainManager: t): bool => {
 
 let createBatch = (
   chainManager: t,
-  ~committedCheckpointId=Internal.initialCheckpointId,
+  ~committedCheckpointId,
   ~batchSizeTarget: int,
   ~isRollback: bool,
 ): Batch.t => {
