@@ -61,6 +61,7 @@ module Entity = {
   let resetButKeepLatestChanges = (self: t): t => {
     ...make(),
     latestEntityChangeById: self.latestEntityChangeById,
+    // writeBatch already mutated this to subtract the dropped prevEntityChanges.
     changesCount: self.changesCount,
   }
 
