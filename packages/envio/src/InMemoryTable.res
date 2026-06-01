@@ -34,6 +34,9 @@ module Entity = {
   type entityIndices = Utils.Set.t<TableIndices.Index.t>
   type t = {
     latestEntityChangeById: dict<Change.t<Internal.entity>>,
+    // Number of distinct ids in latestEntityChangeById, kept in sync manually
+    // so InMemoryStore can size the store without scanning every dict.
+    mutable changesCount: float,
     prevEntityChanges: array<Change.t<Internal.entity>>,
     indicesByEntityId: dict<entityIndices>,
     fieldNameIndices: indexFieldNameToIndices,
@@ -70,6 +73,7 @@ module Entity = {
 
   let make = (): t => {
     latestEntityChangeById: Dict.make(),
+    changesCount: 0.,
     prevEntityChanges: [],
     indicesByEntityId: Dict.make(),
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
@@ -81,6 +85,7 @@ module Entity = {
   let resetButKeepLatestChanges = (self: t): t => {
     ...make(),
     latestEntityChangeById: self.latestEntityChangeById,
+    changesCount: self.changesCount,
   }
 
   let updateIndices = (self: t, ~entity: Internal.entity) => {
@@ -149,9 +154,9 @@ module Entity = {
     // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
     ~allowOverWriteEntity=false,
   ) => {
-    let shouldWriteEntity =
-      allowOverWriteEntity ||
+    let isNew =
       inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone
+    let shouldWriteEntity = allowOverWriteEntity || isNew
 
     //Only initialize a row in the case where it is none
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
@@ -168,6 +173,9 @@ module Entity = {
         inMemTable->updateIndices(~entity)
       | None => ()
       }
+      if isNew {
+        inMemTable.changesCount = inMemTable.changesCount +. 1.
+      }
       inMemTable.latestEntityChangeById->Dict.set(key, change)
     }
   }
@@ -179,11 +187,12 @@ module Entity = {
     | Some(prev) =>
       let prevCheckpointId = prev->Change.getCheckpointId
       if (
-        prevCheckpointId > committedCheckpointId && prevCheckpointId < change->Change.getCheckpointId
+        prevCheckpointId > committedCheckpointId &&
+          prevCheckpointId < change->Change.getCheckpointId
       ) {
         inMemTable.prevEntityChanges->Array.push(prev)
       }
-    | None => ()
+    | None => inMemTable.changesCount = inMemTable.changesCount +. 1.
     }
 
     switch change {
