@@ -86,8 +86,7 @@ module Entity = {
   let resetButKeepLatestChanges = (self: t): t => {
     ...make(),
     latestEntityChangeById: self.latestEntityChangeById,
-    // prevEntityChanges is dropped, so only the retained latest changes count.
-    changesCount: self.changesCount -. self.prevEntityChanges->Array.length->Int.toFloat,
+    changesCount: self.changesCount,
   }
 
   let updateIndices = (self: t, ~entity: Internal.entity) => {

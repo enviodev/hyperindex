@@ -95,11 +95,23 @@ let writeBatch = async (
     JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
     let committedCheckpointId = inMemoryStore.committedCheckpointId
+    // Decide before the keepMap below trims prevEntityChanges from changesCount,
+    // so the signal still reflects every change currently held in memory.
+    let keepLatestChanges = {
+      let totalChanges = ref(0.)
+      persistence.allEntities->Belt.Array.forEach(entityConfig => {
+        totalChanges :=
+          totalChanges.contents +. (inMemoryStore->getInMemTable(~entityConfig)).changesCount
+      })
+      totalChanges.contents < keepLatestChangesLimit
+    }
     let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
       let table = inMemoryStore->getInMemTable(~entityConfig)
-      // Copy so prevEntityChanges keeps its real length for the reset below,
-      // which decrements changesCount by it.
-      let changes = table.prevEntityChanges->Array.copy
+
+      // The reset below drops prevEntityChanges and we reuse the array as the
+      // write buffer here, so drop it from the count before appending to it.
+      table.changesCount = table.changesCount -. table.prevEntityChanges->Array.length->Int.toFloat
+      let changes = table.prevEntityChanges
       table.latestEntityChangeById->Utils.Dict.forEach(change =>
         if change->Change.getCheckpointId > committedCheckpointId {
           changes->Array.push(change)
@@ -166,12 +178,6 @@ let writeBatch = async (
     | Some(checkpointId) => checkpointId
     | None => committedCheckpointId
     }
-    let totalLatestChanges = ref(0.)
-    persistence.allEntities->Belt.Array.forEach(entityConfig => {
-      totalLatestChanges :=
-        totalLatestChanges.contents +. (inMemoryStore->getInMemTable(~entityConfig)).changesCount
-    })
-    let keepLatestChanges = totalLatestChanges.contents < keepLatestChangesLimit
     persistence.allEntities->Belt.Array.forEach(entityConfig => {
       let table = inMemoryStore->getInMemTable(~entityConfig)
       let resetTable = keepLatestChanges
