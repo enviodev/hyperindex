@@ -50,7 +50,7 @@ let make = (~entities: array<Internal.entityConfig>): t => {
   entities: EntityTables.make(entities),
   effects: Dict.make(),
   rollback: None,
-  commitedCheckpointId: Internal.loadedFromDbCheckpointId,
+  commitedCheckpointId: Internal.initialCheckpointId,
 }
 
 // Once the store holds this many entities across all tables, we drop them
