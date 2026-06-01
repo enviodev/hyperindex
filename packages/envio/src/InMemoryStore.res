@@ -35,6 +35,14 @@ type effectCacheInMemTable = {
   effect: Internal.effect,
 }
 
+// A batch write that has been fired off but not yet awaited. We keep the
+// in-flight effects snapshot so the next batch can serve effect cache hits
+// from it instead of recomputing or reading the not-yet-committed DB rows.
+type pendingPersistence = {
+  promise: promise<unit>,
+  effects: dict<effectCacheInMemTable>,
+}
+
 type t = {
   allEntities: array<Internal.entityConfig>,
   mutable rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
@@ -42,6 +50,7 @@ type t = {
   mutable effects: dict<effectCacheInMemTable>,
   mutable rollback: option<Persistence.rollback>,
   mutable committedCheckpointId: Internal.checkpointId,
+  mutable pendingPersistence: option<pendingPersistence>,
 }
 
 let make = (~entities: array<Internal.entityConfig>): t => {
@@ -51,6 +60,7 @@ let make = (~entities: array<Internal.entityConfig>): t => {
   effects: Dict.make(),
   rollback: None,
   committedCheckpointId: Internal.initialCheckpointId,
+  pendingPersistence: None,
 }
 
 // Once the store holds this many entities across all tables, we drop them
@@ -82,10 +92,25 @@ let getInMemTable = (
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollback !== None
 
-let writeBatch = async (
+// Awaits an in-flight batch write so the DB reflects everything up to the last
+// fired batch. Must run before any read of committed state (rollback, exit).
+let flushPendingPersistence = async (inMemoryStore: t) =>
+  switch inMemoryStore.pendingPersistence {
+  | Some({promise}) =>
+    inMemoryStore.pendingPersistence = None
+    await promise
+  | None => ()
+  }
+
+// Synchronously snapshots the batch for writing and resets the store so the next
+// batch can start processing immediately. Returns the not-yet-awaited storage
+// write together with whether the entity tables kept their latest changes (and
+// thus may be persisted concurrently) and the effects snapshot handed to the
+// write (kept for read-through while the write is in flight).
+let prepareWriteBatch = (
   inMemoryStore: t,
   ~persistence: Persistence.t,
-  ~batch,
+  ~batch: Batch.t,
   ~config,
   ~isInReorgThreshold,
 ) =>
@@ -111,53 +136,49 @@ let writeBatch = async (
         Some(({entityConfig, changes}: Persistence.updatedEntity))
       }
     })
-    await persistence.storage.writeBatch(
-      ~batch,
-      ~rawEvents=inMemoryStore.rawEvents->InMemoryTable.values,
-      ~rollback=inMemoryStore.rollback,
-      ~isInReorgThreshold,
-      ~config,
-      ~allEntities=persistence.allEntities,
-      ~updatedEntities,
-      ~updatedEffectsCache={
-        let acc = []
-        inMemoryStore.effects->Utils.Dict.forEach(inMemTable => {
-          let {idsToStore, dict, effect, invalidationsCount} = inMemTable
-          switch idsToStore {
-          | [] => ()
-          | ids =>
-            let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
-            ids->Belt.Array.forEachWithIndex((index, id) => {
-              items->Array.setUnsafe(
-                index,
-                (
-                  {
-                    id,
-                    output: dict->Dict.getUnsafe(id),
-                  }: Internal.effectCacheItem
-                ),
-              )
-            })
-            let effectName = effect.name
-            let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
-            | Some(c) => c
-            | None =>
-              let c: Persistence.effectCacheRecord = {effectName, count: 0}
-              cache->Dict.set(effectName, c)
-              c
-            }
-            let shouldInitialize = effectCacheRecord.count === 0
-            effectCacheRecord.count =
-              effectCacheRecord.count + items->Array.length - invalidationsCount
-            Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
-            acc
-            ->Array.push(({effect, items, shouldInitialize}: Persistence.updatedEffectCache))
-            ->ignore
+
+    let effectsSnapshot = inMemoryStore.effects
+    let updatedEffectsCache = {
+      let acc = []
+      effectsSnapshot->Utils.Dict.forEach(inMemTable => {
+        let {idsToStore, dict, effect, invalidationsCount} = inMemTable
+        switch idsToStore {
+        | [] => ()
+        | ids =>
+          let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+          ids->Belt.Array.forEachWithIndex((index, id) => {
+            items->Array.setUnsafe(
+              index,
+              (
+                {
+                  id,
+                  output: dict->Dict.getUnsafe(id),
+                }: Internal.effectCacheItem
+              ),
+            )
+          })
+          let effectName = effect.name
+          let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
+          | Some(c) => c
+          | None =>
+            let c: Persistence.effectCacheRecord = {effectName, count: 0}
+            cache->Dict.set(effectName, c)
+            c
           }
-        })
-        acc
-      },
-    )
+          let shouldInitialize = effectCacheRecord.count === 0
+          effectCacheRecord.count =
+            effectCacheRecord.count + items->Array.length - invalidationsCount
+          Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
+          acc
+          ->Array.push(({effect, items, shouldInitialize}: Persistence.updatedEffectCache))
+          ->ignore
+        }
+      })
+      acc
+    }
+
+    let rawEvents = inMemoryStore.rawEvents->InMemoryTable.values
+    let rollback = inMemoryStore.rollback
 
     inMemoryStore.rawEvents = InMemoryTable.make(~hash=hashRawEventsKey)
     inMemoryStore.effects = Dict.make()
@@ -166,6 +187,7 @@ let writeBatch = async (
     | Some(checkpointId) => checkpointId
     | None => committedCheckpointId
     }
+
     let totalLatestChanges = ref(0)
     persistence.allEntities->Belt.Array.forEach(entityConfig => {
       totalLatestChanges :=
@@ -180,7 +202,50 @@ let writeBatch = async (
         : InMemoryTable.Entity.make()
       inMemoryStore.entities->Dict.set((entityConfig.name :> string), resetTable)
     })
+
+    let write = () =>
+      persistence.storage.writeBatch(
+        ~batch,
+        ~rawEvents,
+        ~rollback,
+        ~isInReorgThreshold,
+        ~config,
+        ~allEntities=persistence.allEntities,
+        ~updatedEntities,
+        ~updatedEffectsCache,
+      )
+
+    (write, keepLatestChanges, effectsSnapshot)
   }
+
+let writeBatch = async (
+  inMemoryStore: t,
+  ~persistence: Persistence.t,
+  ~batch,
+  ~config,
+  ~isInReorgThreshold,
+) => {
+  // Await the previous batch's write before snapshotting the new one, so at most
+  // one write is ever in flight and writes land in batch order.
+  await inMemoryStore->flushPendingPersistence
+
+  let (write, keepLatestChanges, effects) =
+    inMemoryStore->prepareWriteBatch(~persistence, ~batch, ~config, ~isInReorgThreshold)
+
+  if keepLatestChanges {
+    // Entities stay in memory, so the next batch reads them without hitting the
+    // not-yet-committed DB. Fire the write and return control.
+    let promise = write()
+    // Mark the promise handled so an early rejection doesn't crash the process
+    // before flushPendingPersistence awaits it.
+    let _ = promise->Utils.Promise.silentCatch
+    inMemoryStore.pendingPersistence = Some({promise, effects})
+  } else {
+    // The store dropped its latest changes, so the next batch may read these
+    // entities from the DB. Await the write to keep the DB consistent first.
+    await write()
+  }
+}
 
 let prepareRollbackDiff = async (
   inMemoryStore: t,
@@ -188,6 +253,10 @@ let prepareRollbackDiff = async (
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
 ) => {
+  // The rollback reads committed state from the DB, so the in-flight write must
+  // land before we clear the in-memory store.
+  await inMemoryStore->flushPendingPersistence
+
   inMemoryStore.rawEvents = InMemoryTable.make(~hash=hashRawEventsKey)
   inMemoryStore.entities = EntityTables.make(inMemoryStore.allEntities)
   inMemoryStore.effects = Dict.make()

@@ -914,6 +914,8 @@ let injectedTaskReducer = (
           ~throttler=writeThrottlers.chainMetaData,
           ~persistence=state.ctx.persistence,
         )
+        // Let the last in-flight batch write land before the process exits.
+        await state.ctx.inMemoryStore->InMemoryStore.flushPendingPersistence
         dispatchAction(SuccessExit)
       | ExitWithError(msg) =>
         dispatchAction(ErrorExit(ErrorHandling.make(JsError.throwWithMessage(msg))))
@@ -990,6 +992,7 @@ let injectedTaskReducer = (
                 ~persistence=state.ctx.persistence,
                 ~throttler=state.writeThrottlers.chainMetaData,
               )
+              await state.ctx.inMemoryStore->InMemoryStore.flushPendingPersistence
               dispatchAction(SuccessExit)
             }
           }
@@ -1069,6 +1072,10 @@ let injectedTaskReducer = (
         )
 
         let reorgChainId = reorgChain->ChainMap.Chain.toChainId
+
+        // The rollback queries committed checkpoint and progress state, so the
+        // in-flight batch write must land before we read from the DB.
+        await state.ctx.inMemoryStore->InMemoryStore.flushPendingPersistence
 
         let rollbackTargetCheckpointId = {
           switch await state.ctx.persistence.storage.getRollbackTargetCheckpoint(

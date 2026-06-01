@@ -248,14 +248,38 @@ let loadEffect = (
   let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
 
   let load = async (args, ~onError) => {
-    let idsToLoad = args->Array.map((arg: Internal.effectArgs) => arg.cacheKey)
     let idsFromCache = Utils.Set.make()
 
-    if (
-      switch persistence.storageStatus {
-      | Ready({cache}) => cache->Dict.has(effectName)
-      | _ => false
+    // Serve cache hits from the in-flight batch write before touching the DB,
+    // since those rows may not be committed yet.
+    switch inMemoryStore.pendingPersistence {
+    | Some({effects}) =>
+      switch effects->Utils.Dict.dangerouslyGetNonOption(effectName) {
+      | Some(pending) =>
+        args->Array.forEach((arg: Internal.effectArgs) =>
+          switch pending.dict->Utils.Dict.dangerouslyGetNonOption(arg.cacheKey) {
+          | Some(output) =>
+            idsFromCache->Utils.Set.add(arg.cacheKey)->ignore
+            inMemTable.dict->Dict.set(arg.cacheKey, output)
+          | None => ()
+          }
+        )
+      | None => ()
       }
+    | None => ()
+    }
+
+    let idsToLoad =
+      args->Belt.Array.keepMap((arg: Internal.effectArgs) =>
+        idsFromCache->Utils.Set.has(arg.cacheKey) ? None : Some(arg.cacheKey)
+      )
+
+    if (
+      idsToLoad->Utils.Array.notEmpty &&
+        switch persistence.storageStatus {
+        | Ready({cache}) => cache->Dict.has(effectName)
+        | _ => false
+        }
     ) {
       let storage = persistence->Persistence.getInitializedStorageOrThrow
       let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
@@ -307,7 +331,7 @@ let loadEffect = (
       )
     }
 
-    let remainingCallsCount = idsToLoad->Array.length - idsFromCache->Utils.Set.size
+    let remainingCallsCount = args->Array.length - idsFromCache->Utils.Set.size
     if remainingCallsCount > 0 {
       let argsToCall = []
       for idx in 0 to args->Array.length - 1 {
