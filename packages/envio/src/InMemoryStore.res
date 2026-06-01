@@ -1,10 +1,10 @@
 module EntityTables = {
-  type t = dict<InMemoryEntityTable.t>
+  type t = dict<InMemoryTable.Entity.t>
   exception UndefinedEntity({entityName: string})
   let make = (entities: array<Internal.entityConfig>): t => {
     let init = Dict.make()
     entities->Array.forEach(entityConfig => {
-      init->Dict.set((entityConfig.name :> string), InMemoryEntityTable.make())
+      init->Dict.set((entityConfig.name :> string), InMemoryTable.Entity.make())
     })
     init
   }
@@ -14,7 +14,7 @@ module EntityTables = {
     | Some(table) => table
     | None =>
       UndefinedEntity({entityName: entityName})->ErrorHandling.mkLogAndRaise(
-        ~msg="Unexpected, InMemoryEntityTable is undefined",
+        ~msg="Unexpected, entity InMemoryTable is undefined",
       )
     }
   }
@@ -30,7 +30,7 @@ type effectCacheInMemTable = {
 type t = {
   allEntities: array<Internal.entityConfig>,
   mutable rawEvents: array<InternalTable.RawEvents.t>,
-  mutable entities: dict<InMemoryEntityTable.t>,
+  mutable entities: dict<InMemoryTable.Entity.t>,
   mutable effects: dict<effectCacheInMemTable>,
   mutable rollback: option<Persistence.rollback>,
   mutable committedCheckpointId: Internal.checkpointId,
@@ -71,7 +71,7 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
 let getInMemTable = (
   inMemoryStore: t,
   ~entityConfig: Internal.entityConfig,
-): InMemoryEntityTable.t => {
+): InMemoryTable.Entity.t => {
   inMemoryStore.entities->EntityTables.get(~entityName=entityConfig.name)
 }
 
@@ -170,7 +170,7 @@ let writeBatch = async (
         let table = inMemoryStore->getInMemTable(~entityConfig)
         inMemoryStore.entities->Dict.set(
           (entityConfig.name :> string),
-          table->InMemoryEntityTable.resetButKeepLatestChanges,
+          table->InMemoryTable.Entity.resetButKeepLatestChanges,
         )
       })
     } else {
@@ -182,7 +182,7 @@ let writeBatch = async (
         let resetTable =
           inMemoryStore
           ->getInMemTable(~entityConfig)
-          ->InMemoryEntityTable.resetButKeepLoadedFromDbChanges
+          ->InMemoryTable.Entity.resetButKeepLoadedFromDbChanges
         loadedFromDbCount := loadedFromDbCount.contents +. resetTable.changesCount
         resetTable
       })
@@ -192,7 +192,7 @@ let writeBatch = async (
       persistence.allEntities->Array.forEachWithIndex((entityConfig, idx) => {
         inMemoryStore.entities->Dict.set(
           (entityConfig.name :> string),
-          dropEverything ? InMemoryEntityTable.make() : resetTables->Array.getUnsafe(idx),
+          dropEverything ? InMemoryTable.Entity.make() : resetTables->Array.getUnsafe(idx),
         )
       })
     }
@@ -226,7 +226,7 @@ let prepareRollbackDiff = async (
 
     removedIdsResult->Array.forEach(data => {
       deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
-      entityTable->InMemoryEntityTable.set(
+      entityTable->InMemoryTable.Entity.set(
         ~committedCheckpointId=inMemoryStore.committedCheckpointId,
         Delete({
           entityId: data["id"],
@@ -239,7 +239,7 @@ let prepareRollbackDiff = async (
 
     restoredEntities->Array.forEach((entity: Internal.entity) => {
       setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-      entityTable->InMemoryEntityTable.set(
+      entityTable->InMemoryTable.Entity.set(
         ~committedCheckpointId=inMemoryStore.committedCheckpointId,
         Set({
           entityId: entity.id,
@@ -285,7 +285,7 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t) => {
             registrationLogIndex: eventItem.logIndex,
           }
 
-          inMemTable->InMemoryEntityTable.set(
+          inMemTable->InMemoryTable.Entity.set(
             ~committedCheckpointId=inMemoryStore.committedCheckpointId,
             Set({
               entityId: entity.id,

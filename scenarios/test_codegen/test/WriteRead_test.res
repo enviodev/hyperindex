@@ -234,19 +234,19 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
         {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
       let committedCheckpointId = Internal.initialCheckpointId
 
-      let table = InMemoryEntityTable.make()
-      table->InMemoryEntityTable.initValue(
+      let table = InMemoryTable.Entity.make()
+      table->InMemoryTable.Entity.initValue(
         ~committedCheckpointId,
         ~key="loaded-set",
         ~entity=Some(makeEntity("loaded-set")),
       )
-      table->InMemoryEntityTable.initValue(~committedCheckpointId, ~key="loaded-deleted", ~entity=None)
-      table->InMemoryEntityTable.set(
+      table->InMemoryTable.Entity.initValue(~committedCheckpointId, ~key="loaded-deleted", ~entity=None)
+      table->InMemoryTable.Entity.set(
         ~committedCheckpointId,
         Set({entityId: "written", entity: makeEntity("written"), checkpointId: 5n}),
       )
 
-      let resetTable = table->InMemoryEntityTable.resetButKeepLoadedFromDbChanges
+      let resetTable = table->InMemoryTable.Entity.resetButKeepLoadedFromDbChanges
 
       t.expect((
         resetTable.changesCount,

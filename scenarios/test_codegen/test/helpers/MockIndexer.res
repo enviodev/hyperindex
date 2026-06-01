@@ -11,7 +11,7 @@ module InMemoryStore = {
   let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
-    inMemTable->InMemoryEntityTable.set(
+    inMemTable->InMemoryTable.Entity.set(
       ~committedCheckpointId=inMemoryStore.committedCheckpointId,
       Set({
         entityId: (entity: Internal.entity).id,
