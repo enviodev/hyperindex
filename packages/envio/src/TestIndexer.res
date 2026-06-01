@@ -184,29 +184,9 @@ let handleWriteBatch = (
       }
     }
 
-    // Regroup the flat change log per id (mirrors PgStorage.res): the latest
-    // change for an id is its last entry, the rest is history oldest-first.
-    let changesByEntityId = Dict.make()
-    changes->Array.forEach(change => {
-      let entityId = switch change {
-      | Set({entityId}) | Delete({entityId}) => entityId
-      }
-      switch changesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
-      | Some(arr) => arr->Array.push(change)
-      | None => changesByEntityId->Dict.set(entityId, [change])
-      }
-    })
-
-    changesByEntityId
-    ->Dict.valuesToArray
-    ->Array.forEach(entityChanges => {
-      let lastIdx = entityChanges->Array.length - 1
-      let history = entityChanges->Array.slice(~start=0, ~end=lastIdx)
-      history->Array.forEach(processChange)
-      if history->Array.length === 0 {
-        processChange(entityChanges->Array.getUnsafe(lastIdx))
-      }
-    })
+    // Every change carries its own checkpointId and each (id, checkpointId)
+    // appears at most once in the batch, so record them all into their buckets.
+    changes->Array.forEach(processChange)
   })
 
   // Build combined checkpoint + entity changes objects
