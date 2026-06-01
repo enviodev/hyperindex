@@ -87,9 +87,7 @@ module Entity = {
         entity
         ->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
         ->Dict.getUnsafe(fieldName)
-      indices
-      ->Dict.valuesToArray
-      ->Array.forEach(((index, relatedEntityIds)) => {
+      indices->Utils.Dict.forEach(((index, relatedEntityIds)) => {
         if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
           //Add entity id to indices and add index to entity indicies
           relatedEntityIds->Utils.Set.add(entityId)->ignore

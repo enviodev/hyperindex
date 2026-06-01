@@ -29,7 +29,7 @@ type effectCacheInMemTable = {
 
 type t = {
   allEntities: array<Internal.entityConfig>,
-  mutable rawEvents: dict<InternalTable.RawEvents.t>,
+  mutable rawEvents: array<InternalTable.RawEvents.t>,
   mutable entities: dict<InMemoryTable.Entity.t>,
   mutable effects: dict<effectCacheInMemTable>,
   mutable rollback: option<Persistence.rollback>,
@@ -38,7 +38,7 @@ type t = {
 
 let make = (~entities: array<Internal.entityConfig>): t => {
   allEntities: entities,
-  rawEvents: Dict.make(),
+  rawEvents: [],
   entities: EntityTables.make(entities),
   effects: Dict.make(),
   rollback: None,
@@ -105,7 +105,7 @@ let writeBatch = async (
     })
     await persistence.storage.writeBatch(
       ~batch,
-      ~rawEvents=inMemoryStore.rawEvents->Dict.valuesToArray,
+      ~rawEvents=inMemoryStore.rawEvents,
       ~rollback=inMemoryStore.rollback,
       ~isInReorgThreshold,
       ~config,
@@ -151,7 +151,7 @@ let writeBatch = async (
       },
     )
 
-    inMemoryStore.rawEvents = Dict.make()
+    inMemoryStore.rawEvents = []
     inMemoryStore.effects = Dict.make()
     inMemoryStore.rollback = None
     inMemoryStore.committedCheckpointId = switch batch.checkpointIds->Utils.Array.last {
@@ -180,7 +180,7 @@ let prepareRollbackDiff = async (
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
 ) => {
-  inMemoryStore.rawEvents = Dict.make()
+  inMemoryStore.rawEvents = []
   inMemoryStore.entities = EntityTables.make(inMemoryStore.allEntities)
   inMemoryStore.effects = Dict.make()
   inMemoryStore.rollback = Some({
