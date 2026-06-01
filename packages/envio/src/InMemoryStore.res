@@ -97,9 +97,9 @@ let writeBatch = async (
     let committedCheckpointId = inMemoryStore.committedCheckpointId
     let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
       let table = inMemoryStore->getInMemTable(~entityConfig)
-      // Safe to mutate prevEntityChanges directly since the table gets a fresh
-      // one in the reset below.
-      let changes = table.prevEntityChanges
+      // Copy so prevEntityChanges keeps its real length for the reset below,
+      // which decrements changesCount by it.
+      let changes = table.prevEntityChanges->Array.copy
       table.latestEntityChangeById->Utils.Dict.forEach(change =>
         if change->Change.getCheckpointId > committedCheckpointId {
           changes->Array.push(change)
