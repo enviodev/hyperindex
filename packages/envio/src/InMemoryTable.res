@@ -189,8 +189,7 @@ module Entity = {
       switch inMemTable.fieldNameIndices->Utils.Dict.dangerouslyGetNonOption(fieldName) {
       | None => false
       | Some(indicesSerializedToValue) => {
-          // Should match TableIndices.toString logic
-          let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
+          let key = TableIndices.Index.toStringByParts(~fieldName, ~operator, ~fieldValueHash)
           indicesSerializedToValue->Utils.Dict.dangerouslyGetNonOption(key) !== None
         }
       }
@@ -203,8 +202,7 @@ module Entity = {
       | None =>
         JsError.throwWithMessage(`Unexpected error. Must have an index on field ${fieldName}`)
       | Some(indicesSerializedToValue) => {
-          // Should match TableIndices.toString logic
-          let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
+          let key = TableIndices.Index.toStringByParts(~fieldName, ~operator, ~fieldValueHash)
           switch indicesSerializedToValue->Utils.Dict.dangerouslyGetNonOption(key) {
           | None =>
             JsError.throwWithMessage(
