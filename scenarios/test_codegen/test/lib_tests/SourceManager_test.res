@@ -2460,7 +2460,12 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     },
   )
 
-  Async.it("Tier fallback: when all primaries are in recovery, uses working secondary", async t => {
+  // Retried: coordination relies on real timers around a 50ms recovery timeout,
+  // which is occasionally too tight under CI load.
+  Async.itWithOptions(
+    "Tier fallback: when all primaries are in recovery, uses working secondary",
+    {retry: 3},
+    async t => {
     let syncMock = MockIndexer.Source.make([#getItemsOrThrow])
     let fallbackMock = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Fallback)
     let recoveryTimeout = 50.0

@@ -807,22 +807,27 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
 "ready_at" as "timestampCaughtUpToHeadOrEndblock",
 "events_processed"::float8 as "numEventsProcessed",
 "progress_block" as "progressBlockNumber",
-"source_block" as "sourceBlockNumber",
-(
-  -- envio_addresses.id is a composite "{chainId}-{address}" string produced by
-  -- Config.EnvioAddresses.makeId; extract the address by taking everything
-  -- after the first '-'. Keep in sync with makeId / getAddress.
-  SELECT COALESCE(json_agg(json_build_object(
-    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
-    'contractName', "contract_name",
-    'registrationBlock', "registration_block"
-  )), '[]'::json)
-  FROM "test_schema"."envio_addresses"
-  WHERE "chain_id" = chains."id"
-) as "indexingAddresses"
-FROM "test_schema"."envio_chains" as chains;`
+"source_block" as "sourceBlockNumber"
+FROM "test_schema"."envio_chains";`
 
         t.expect(query, ~message="Initial state SQL should match exactly").toBe(expectedQuery)
+      },
+    )
+  })
+
+  describe("InternalTable.Chains.makeGetIndexingAddressesQuery", () => {
+    Async.it(
+      "Should create correct SQL for indexing addresses query",
+      async t => {
+        let query = InternalTable.Chains.makeGetIndexingAddressesQuery(~pgSchema="test_schema")
+
+        let expectedQuery = `SELECT "chain_id" as "chainId",
+SUBSTRING("id" FROM POSITION('-' IN "id") + 1) as "address",
+"contract_name" as "contractName",
+"registration_block" as "registrationBlock"
+FROM "test_schema"."envio_addresses";`
+
+        t.expect(query, ~message="Indexing addresses SQL should match exactly").toBe(expectedQuery)
       },
     )
   })
