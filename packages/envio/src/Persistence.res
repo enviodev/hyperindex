@@ -55,7 +55,7 @@ type rollback = {
 
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
-  updates: array<Internal.inMemoryStoreEntityUpdate>,
+  changes: array<Change.t<Internal.entity>>,
 }
 
 type storage = {

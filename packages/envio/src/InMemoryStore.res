@@ -96,17 +96,17 @@ let writeBatch = async (
     JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
     let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
-      let updates = []
-      (inMemoryStore->getInMemTable(~entityConfig)).entities->Utils.Dict.forEach(row =>
-        switch row.status {
-        | Updated(update) => updates->Array.push(update)
-        | Loaded => ()
+      let table = inMemoryStore->getInMemTable(~entityConfig)
+      let changes = table.prevEntityChanges->Belt.Array.copy
+      table.latestEntityChangeById->Utils.Dict.forEach(change =>
+        if change->Change.getCheckpointId !== Internal.loadedFromDbCheckpointId {
+          changes->Array.push(change)
         }
       )
-      if updates->Utils.Array.isEmpty {
+      if changes->Utils.Array.isEmpty {
         None
       } else {
-        Some(({entityConfig, updates}: Persistence.updatedEntity))
+        Some(({entityConfig, changes}: Persistence.updatedEntity))
       }
     })
     await persistence.storage.writeBatch(

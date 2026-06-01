@@ -745,14 +745,55 @@ let rec writeBatch = async (
       ~items=rawEvents,
     )
 
-    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
+    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, changes}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
-      updates->Array.forEach(row => {
-        switch row {
-        | {latestChange: Set({entity})} => entitiesToSet->Belt.Array.push(entity)
-        | {latestChange: Delete({entityId})} => idsToDelete->Belt.Array.push(entityId)
+      // The rollback-diff change is written to the entity table only, never the
+      // history table; when present it is an id's oldest change.
+      let diffCheckpointId = rollback->Option.map(r => r.diffCheckpointId)
+
+      // History batches, populated only when saving history.
+      let batchSetUpdates = []
+      let batchDeleteEntityIds = []
+      let batchDeleteCheckpointIds = []
+      let idsWithDiff = Utils.Set.make()
+
+      // Single pass over the change log: track each id's latest change (the last
+      // one seen) and, when saving history, fan every non-diff change out to the
+      // history-table batches.
+      let latestChangeById = Dict.make()
+      let orderedIds = []
+      changes->Belt.Array.forEach(change => {
+        let entityId = change->Change.getEntityId
+        if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityId)->Option.isNone {
+          orderedIds->Belt.Array.push(entityId)
+        }
+        latestChangeById->Dict.set(entityId, change)
+        if shouldSaveHistory {
+          if Some(change->Change.getCheckpointId) === diffCheckpointId {
+            idsWithDiff->Utils.Set.add(entityId)->ignore
+          } else {
+            switch change {
+            | Delete({entityId, checkpointId}) =>
+              batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
+              batchDeleteCheckpointIds->Belt.Array.push(checkpointId)->ignore
+            | Set(_) => batchSetUpdates->Belt.Array.push(change)->ignore
+            }
+          }
+        }
+      })
+
+      let backfillHistoryIds = Utils.Set.make()
+      orderedIds->Belt.Array.forEach(entityId => {
+        switch latestChangeById->Dict.getUnsafe(entityId) {
+        | Set({entity}) => entitiesToSet->Belt.Array.push(entity)
+        | Delete({entityId}) => idsToDelete->Belt.Array.push(entityId)
+        }
+
+        // An id needs a history backfill iff none of its changes is the diff.
+        if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityId)) {
+          backfillHistoryIds->Utils.Set.add(entityId)->ignore
         }
       })
 
@@ -766,56 +807,6 @@ let rec writeBatch = async (
           let promises = []
 
           if shouldSaveHistory {
-            let backfillHistoryIds = Utils.Set.make()
-            let batchSetUpdates = []
-            // Use unnest approach
-            let batchDeleteCheckpointIds = []
-            let batchDeleteEntityIds = []
-
-            let pushChange = (change: Change.t<'a>) => {
-              switch change {
-              | Delete({entityId}) => {
-                  batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
-                  batchDeleteCheckpointIds
-                  ->Belt.Array.push(change->Change.getCheckpointId)
-                  ->ignore
-                }
-              | Set(_) => batchSetUpdates->Array.push(change)->ignore
-              }
-            }
-
-            let diffCheckpointId = rollback->Option.map(r => r.diffCheckpointId)
-
-            updates->Array.forEach(update => {
-              let {latestChange, history} = update
-              let latestChangeIsDiff =
-                Some(latestChange->Change.getCheckpointId) === diffCheckpointId
-              // The rollback-diff change, when demoted by a later indexer
-              // write, always sits at history[0]. When still current it lives
-              // on `latestChange`.
-              let historyHadDiff = switch history->Belt.Array.get(0) {
-              | Some(first) => Some(first->Change.getCheckpointId) === diffCheckpointId
-              | None => false
-              }
-              if !(latestChangeIsDiff || historyHadDiff) {
-                backfillHistoryIds
-                ->Utils.Set.add(latestChange->Change.getEntityId)
-                ->ignore
-              }
-              history->Array.forEach(
-                change =>
-                  if Some(change->Change.getCheckpointId) !== diffCheckpointId {
-                    pushChange(change)
-                  },
-              )
-
-              // The rollback-diff change belongs in the entity table only,
-              // never the entity history table.
-              if !latestChangeIsDiff {
-                pushChange(latestChange)
-              }
-            })
-
             if backfillHistoryIds->Utils.Set.size !== 0 {
               // This must run before updating entity or entity history tables
               await EntityHistory.backfillHistory(

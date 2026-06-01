@@ -583,6 +583,9 @@ type noOnEventWhere
 
 type checkpointId = bigint
 
+// Assigned to changes loaded from the db, which never become history.
+let loadedFromDbCheckpointId: checkpointId = 0n
+
 type reorgCheckpoint = {
   @as("id")
   checkpointId: bigint,
@@ -593,13 +596,3 @@ type reorgCheckpoint = {
   @as("block_hash")
   blockHash: string,
 }
-
-type inMemoryStoreEntityUpdate = {
-  latestChange: Change.t<entity>,
-  history: array<Change.t<entity>>,
-}
-
-@unboxed
-type inMemoryStoreEntityStatus =
-  | Updated(inMemoryStoreEntityUpdate)
-  | Loaded // This means there is no change from the db.

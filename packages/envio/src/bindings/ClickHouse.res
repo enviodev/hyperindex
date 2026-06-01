@@ -235,17 +235,17 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
 
 type setUpdatesCache = {
   tableName: string,
-  convertOrThrow: Change.t<Internal.entity> => JSON.t,
+  convertOrThrow: array<Change.t<Internal.entity>> => array<JSON.t>,
 }
 
 let setUpdatesOrThrow = async (
   client,
   ~cache: Utils.WeakMap.t<Internal.entityConfig, setUpdatesCache>,
-  ~updates: array<Internal.inMemoryStoreEntityUpdate>,
+  ~changes: array<Change.t<Internal.entity>>,
   ~entityConfig: Internal.entityConfig,
   ~database: string,
 ) => {
-  if updates->Array.length === 0 {
+  if changes->Array.length === 0 {
     ()
   } else {
     let {convertOrThrow, tableName} = switch cache->Utils.WeakMap.get(entityConfig) {
@@ -257,23 +257,29 @@ let setUpdatesOrThrow = async (
             ~entityIndex=entityConfig.index,
           )}\``,
         convertOrThrow: S.compile(
-          S.union([
-            EntityHistory.makeSetUpdateSchema(makeClickHouseEntitySchema(entityConfig.table)),
-            S.object(s => {
-              s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
-              Change.Delete({
-                entityId: s.field(Table.idFieldName, S.string),
-                checkpointId: s.field(
-                  EntityHistory.checkpointIdFieldName,
-                  EntityHistory.unsafeCheckpointIdSchema,
-                ),
-              })
-            }),
-          ]),
+          S.array(
+            S.union([
+              EntityHistory.makeSetUpdateSchema(makeClickHouseEntitySchema(entityConfig.table)),
+              S.object(s => {
+                s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
+                Change.Delete({
+                  entityId: s.field(Table.idFieldName, S.string),
+                  checkpointId: s.field(
+                    EntityHistory.checkpointIdFieldName,
+                    EntityHistory.unsafeCheckpointIdSchema,
+                  ),
+                })
+              }),
+            ]),
+          ),
           ~input=Value,
           ~output=Json,
           ~typeValidation=false,
           ~mode=Sync,
+        )->(
+          Utils.magic: (array<Change.t<Internal.entity>> => JSON.t) => array<
+            Change.t<Internal.entity>,
+          > => array<JSON.t>
         ),
       }
 
@@ -283,14 +289,8 @@ let setUpdatesOrThrow = async (
 
     try {
       // The entity history table is the source of truth for ClickHouse, so every
-      // intermediate change must be persisted, not only the current value. Per
-      // entity update, history holds the older changes in chronological order
-      // and latestChange the most recent one.
-      let values = []
-      updates->Array.forEach(update => {
-        update.history->Array.forEach(change => values->Array.push(change->convertOrThrow))
-        values->Array.push(update.latestChange->convertOrThrow)
-      })
+      // intermediate change must be persisted, not only the current value.
+      let values = changes->convertOrThrow
 
       await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
     } catch {

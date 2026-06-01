@@ -56,7 +56,7 @@ let loadById = (
     ~shouldGroup,
     ~hasher=LoadManager.noopHasher,
     ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafe,
-    ~hasInMemory=hash => inMemTable.entities->Dict.has(hash),
+    ~hasInMemory=hash => inMemTable.latestEntityChangeById->Dict.has(hash),
     ~input=entityId,
   )
 }
