@@ -134,7 +134,6 @@ type options = {
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   apiToken: option<string>,
-  clientMaxRetries: int,
   clientTimeoutMillis: int,
   lowercaseAddresses: bool,
   serializationFormat: HyperSyncClient.serializationFormat,
@@ -149,7 +148,6 @@ let make = (
     allEventParams,
     eventRouter,
     apiToken,
-    clientMaxRetries,
     clientTimeoutMillis,
     lowercaseAddresses,
     serializationFormat,
@@ -172,7 +170,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   let client = switch HyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,
-    ~maxNumRetries=clientMaxRetries,
+    // Retries are handled internally by the indexer, not the binary client
+    ~maxNumRetries=0,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~eventParams=allEventParams,
     ~enableChecksumAddresses=!lowercaseAddresses,

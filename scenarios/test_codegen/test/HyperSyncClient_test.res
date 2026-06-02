@@ -26,7 +26,7 @@ let makeClient = (~eventParams) =>
   HyperSyncClient.make(
     ~url="https://eth.hypersync.xyz",
     ~apiToken=testApiToken,
-    ~maxNumRetries=Env.hyperSyncClientMaxRetries,
+    ~maxNumRetries=0,
     ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
     ~eventParams,
     ~enableChecksumAddresses=false,
