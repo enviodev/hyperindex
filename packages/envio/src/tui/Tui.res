@@ -273,14 +273,14 @@ module App = {
               <Box flexDirection={Column}>
                 <Newline />
                 <Text color={Danger}>
-                  {`HyperSync source is rate-limited — ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting${activeSuffix}`->React.string}
+                  {`HyperSync source is rate-limited — ${rateLimitSecs->TuiData.formatFloatLocaleString}s lost to rate limits, your backfill could be that much faster${activeSuffix}`->React.string}
                 </Text>
                 <Text color={Danger}>
-                  <Text color={Danger}> {"Upgrade your plan at "->React.string} </Text>
+                  <Text color={Danger}> {"Upgrade at "->React.string} </Text>
                   <Text color={Danger} underline=true>
                     {"https://envio.dev/app/api-tokens"->React.string}
                   </Text>
-                  <Text color={Danger}> {" for higher limits."->React.string} </Text>
+                  <Text color={Danger}> {" for higher rate limits."->React.string} </Text>
                 </Text>
               </Box>
             }
