@@ -449,7 +449,7 @@ let make = ({chain, endpointUrl}: options): t => {
   let getBlockHashes = (~blockNumbers as _, ~logger as _) =>
     JsError.throwWithMessage("HyperFuel does not support getting block hashes")
 
-  let jsonApiClient = Rest.client(endpointUrl)
+  let jsonApiClient = EnvioApiClient.make(endpointUrl)
 
   {
     name,

@@ -1,3 +1,19 @@
+let reraisIfRateLimited = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(e) =>
+    switch e->JsExn.message {
+    | Some(msg) if msg->String.startsWith("RATE_LIMITED:") =>
+      let resetMs =
+        msg
+        ->String.slice(~start=13, ~end=msg->String.length)
+        ->Int.fromString
+        ->Option.getOr(1000)
+      throw(Source.RateLimited({resetMs: resetMs}))
+    | _ => ()
+    }
+  | _ => ()
+  }
+
 type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
   nextBlock: int,
@@ -108,6 +124,7 @@ module GetLogs = {
     let res = switch await client.getEventItems(~query) {
     | res => res
     | exception exn =>
+      reraisIfRateLimited(exn)
       switch extractMissingParams(exn) {
       | Some(missingParams) => throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
       | None => throw(exn)
@@ -193,7 +210,9 @@ module BlockData = {
 
     Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="getBlockHashes")
     let maybeSuccessfulRes = switch await client.get(~query=body) {
-    | exception _ => None
+    | exception exn =>
+      reraisIfRateLimited(exn)
+      None
     | res if res.nextBlock <= fromBlock => None
     | res => Some(res)
     }

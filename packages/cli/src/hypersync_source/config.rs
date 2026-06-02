@@ -56,7 +56,7 @@ impl From<ClientConfig> for hypersync_client::ClientConfig {
                 .filter(|v| *v >= 0)
                 .map_or(Cfg::default_retry_ceiling_ms(), |v| v as u64),
             serialization_format,
-            proactive_rate_limit_sleep: Cfg::default_proactive_rate_limit_sleep(),
+            proactive_rate_limit_sleep: false,
         }
     }
 }
