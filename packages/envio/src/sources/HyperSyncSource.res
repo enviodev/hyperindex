@@ -451,7 +451,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       | JsExn(e) =>
         switch e->JsExn.message {
         | Some(message) if message->isUnauthorizedError =>
-          Logging.error(`Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not be able to fetch events. Update the token and restart the indexer using 'pnpm envio start'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
+          Logging.error(`Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
           // Retrying an unauthorized request can never succeed, so block forever
           let _ = await Promise.make((_, _) => ())
           0
