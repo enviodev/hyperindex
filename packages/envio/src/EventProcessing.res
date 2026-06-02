@@ -353,7 +353,6 @@ type logPartitionInfo = {
 let processEventBatch = async (
   ~batch: Batch.t,
   ~inMemoryStore: InMemoryStore.t,
-  ~isInReorgThreshold,
   ~loadManager,
   ~ctx: Ctx.t,
   ~chainFetchers: ChainMap.t<ChainFetcher.t>,
@@ -400,7 +399,7 @@ let processEventBatch = async (
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    inMemoryStore->InMemoryStore.commitBatch(~batch, ~isInReorgThreshold)
+    inMemoryStore->InMemoryStore.commitBatch(~batch)
 
     let loaderDuration = elapsedTimeAfterLoaders
     let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration

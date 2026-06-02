@@ -140,6 +140,7 @@ let createBatch = (
   ~isRollback: bool,
 ): Batch.t => {
   Batch.make(
+    ~isInReorgThreshold=chainManager.isInReorgThreshold,
     ~checkpointIdBeforeBatch=processedCheckpointId->BigInt.add(
       // Since for rollback we have a diff checkpoint id.
       // This is needed to currectly overwrite old state

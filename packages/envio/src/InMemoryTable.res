@@ -86,19 +86,30 @@ module Entity = {
     }
   }
 
-  // Pull out the changes that need to be persisted for checkpoints above
-  // committedCheckpointId. Reuses prevEntityChanges as the write buffer and
-  // installs a fresh one, so concurrent processing keeps accumulating into the
-  // table while these changes are written to the db in the background.
-  let snapshotChanges = (self: t, ~committedCheckpointId): array<Change.t<Internal.entity>> => {
-    let changes = self.prevEntityChanges
-    self.prevEntityChanges = []
-    self.changesCount = self.changesCount -. changes->Array.length->Int.toFloat
-    self.latestEntityChangeById->Utils.Dict.forEach(change =>
-      if change->Change.getCheckpointId > committedCheckpointId {
+  // Pull out the changes to persist for checkpoints in
+  // (committedCheckpointId, upToCheckpointId]. Changes above upToCheckpointId
+  // stay in the table for a later write (they belong to batches past a change in
+  // isInReorgThreshold). Concurrent processing keeps accumulating meanwhile.
+  let snapshotChanges = (self: t, ~committedCheckpointId, ~upToCheckpointId): array<
+    Change.t<Internal.entity>,
+  > => {
+    let changes = []
+    let keptPrev = []
+    self.prevEntityChanges->Array.forEach(change =>
+      if change->Change.getCheckpointId > upToCheckpointId {
+        keptPrev->Array.push(change)
+      } else {
         changes->Array.push(change)
       }
     )
+    self.prevEntityChanges = keptPrev
+    self.changesCount = self.changesCount -. changes->Array.length->Int.toFloat
+    self.latestEntityChangeById->Utils.Dict.forEach(change => {
+      let checkpointId = change->Change.getCheckpointId
+      if checkpointId > committedCheckpointId && !(checkpointId > upToCheckpointId) {
+        changes->Array.push(change)
+      }
+    })
     changes
   }
 

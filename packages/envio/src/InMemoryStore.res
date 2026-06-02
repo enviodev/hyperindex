@@ -43,8 +43,9 @@ type t = {
   // Last checkpoint applied in memory (processing frontier). Runs ahead of
   // committedCheckpointId while the persistence cycle writes in the background.
   mutable processedCheckpointId: Internal.checkpointId,
-  // Per-batch checkpoint metadata accumulated since the last write started.
-  mutable pendingBatches: array<Batch.t>,
+  // Batches processed in memory but not yet written. The cycle drains them,
+  // splitting at any change in isInReorgThreshold so each write is consistent.
+  mutable processedBatches: array<Batch.t>,
   // The single in-flight write loop, None when idle. Strictly one at a time.
   mutable writeFiber: option<promise<unit>>,
   // A failed background write is surfaced at the next batch boundary / flush.
@@ -54,7 +55,6 @@ type t = {
   // Static for the store's lifetime - only the persistence cycle reads them.
   persistence: option<Persistence.t>,
   config: option<Config.t>,
-  mutable isInReorgThreshold: bool,
   // Latest chain metadata and what was last persisted. The cycle folds the
   // stale diff into the batch transaction, so it never races the batch write.
   mutable currentChainMeta: option<dict<InternalTable.Chains.metaFields>>,
@@ -74,13 +74,12 @@ let make = (
   rollback: None,
   committedCheckpointId,
   processedCheckpointId: committedCheckpointId,
-  pendingBatches: [],
+  processedBatches: [],
   writeFiber: None,
   persistenceError: None,
   commitWaiters: [],
   persistence,
   config,
-  isInReorgThreshold: false,
   currentChainMeta: None,
   committedChainMeta: None,
 }
@@ -168,10 +167,27 @@ let waitForCommit = (inMemoryStore: t): promise<unit> =>
     inMemoryStore.commitWaiters->Array.push(resolve)->ignore
   })
 
-let mergePendingBatches = (pendingBatches: array<Batch.t>): Batch.t => {
+// Drains the leading run of processed batches that share isInReorgThreshold and
+// accumulates them into one persistence object. Batches past a change in
+// isInReorgThreshold stay queued for the next write, so a single write never
+// mixes history-saving modes. Mutates inMemoryStore.processedBatches.
+let drainBatchRun = (inMemoryStore: t): Batch.t => {
+  let all = inMemoryStore.processedBatches
+  let isInReorgThreshold = (all->Array.getUnsafe(0)).isInReorgThreshold
+  let run = []
+  let rest = []
+  all->Array.forEach(batch => {
+    if rest->Utils.Array.isEmpty && batch.isInReorgThreshold == isInReorgThreshold {
+      run->Array.push(batch)
+    } else {
+      rest->Array.push(batch)
+    }
+  })
+  inMemoryStore.processedBatches = rest
+
   let progressedChainsById = Dict.make()
   let totalBatchSize = ref(0)
-  pendingBatches->Array.forEach(batch => {
+  run->Array.forEach(batch => {
     batch.progressedChainsById->Utils.Dict.forEachWithKey((chainAfterBatch, key) =>
       progressedChainsById->Dict.set(key, chainAfterBatch)
     )
@@ -181,17 +197,14 @@ let mergePendingBatches = (pendingBatches: array<Batch.t>): Batch.t => {
     totalBatchSize: totalBatchSize.contents,
     items: [],
     progressedChainsById,
-    checkpointIds: pendingBatches->Belt.Array.map(b => b.checkpointIds)->Belt.Array.concatMany,
-    checkpointChainIds: pendingBatches
-    ->Belt.Array.map(b => b.checkpointChainIds)
-    ->Belt.Array.concatMany,
-    checkpointBlockNumbers: pendingBatches
+    isInReorgThreshold,
+    checkpointIds: run->Belt.Array.map(b => b.checkpointIds)->Belt.Array.concatMany,
+    checkpointChainIds: run->Belt.Array.map(b => b.checkpointChainIds)->Belt.Array.concatMany,
+    checkpointBlockNumbers: run
     ->Belt.Array.map(b => b.checkpointBlockNumbers)
     ->Belt.Array.concatMany,
-    checkpointBlockHashes: pendingBatches
-    ->Belt.Array.map(b => b.checkpointBlockHashes)
-    ->Belt.Array.concatMany,
-    checkpointEventsProcessed: pendingBatches
+    checkpointBlockHashes: run->Belt.Array.map(b => b.checkpointBlockHashes)->Belt.Array.concatMany,
+    checkpointEventsProcessed: run
     ->Belt.Array.map(b => b.checkpointEventsProcessed)
     ->Belt.Array.concatMany,
   }
@@ -240,14 +253,16 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
   }
 
   let committedCheckpointId = inMemoryStore.committedCheckpointId
-  let pendingBatches = inMemoryStore.pendingBatches
-  inMemoryStore.pendingBatches = []
-  let batch = mergePendingBatches(pendingBatches)
-  let snapshotCheckpointId = switch batch.checkpointIds->Utils.Array.last {
+  let batch = inMemoryStore->drainBatchRun
+  // The run's last checkpoint - entity changes above it belong to later batches
+  // (a different isInReorgThreshold) and stay queued for the next write.
+  let upToCheckpointId = switch batch.checkpointIds->Utils.Array.last {
   | Some(checkpointId) => checkpointId
   | None => committedCheckpointId
   }
 
+  // rawEvents and the effect cache aren't gated by isInReorgThreshold, so they're
+  // flushed in full with this write rather than split at the run boundary.
   let rawEvents = inMemoryStore.rawEvents
   inMemoryStore.rawEvents = []
   let rollback = inMemoryStore.rollback
@@ -255,7 +270,8 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
 
   let updatedEntities = persistence.allEntities->Array.filterMap(entityConfig => {
     let table = inMemoryStore->getInMemTable(~entityConfig)
-    let changes = table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId)
+    let changes =
+      table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
     if changes->Utils.Array.isEmpty {
       None
     } else {
@@ -270,7 +286,7 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
     ~batch,
     ~rawEvents,
     ~rollback,
-    ~isInReorgThreshold=inMemoryStore.isInReorgThreshold,
+    ~isInReorgThreshold=batch.isInReorgThreshold,
     ~config,
     ~allEntities=persistence.allEntities,
     ~updatedEntities,
@@ -278,7 +294,7 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
     ~chainMetaData,
   )
 
-  inMemoryStore.committedCheckpointId = snapshotCheckpointId
+  inMemoryStore.committedCheckpointId = upToCheckpointId
   inMemoryStore.committedChainMeta = chainMetaSnapshot
   inMemoryStore.effects->Utils.Dict.forEach(inMemTable => inMemTable.pendingDict = Dict.make())
 }
@@ -314,9 +330,8 @@ let kick = (inMemoryStore: t) =>
 
 // Records a processed batch in memory and triggers the background persistence
 // cycle. Returns immediately - the db write happens off the processing path.
-let commitBatch = (inMemoryStore: t, ~batch: Batch.t, ~isInReorgThreshold) => {
-  inMemoryStore.isInReorgThreshold = isInReorgThreshold
-  inMemoryStore.pendingBatches->Array.push(batch)->ignore
+let commitBatch = (inMemoryStore: t, ~batch: Batch.t) => {
+  inMemoryStore.processedBatches->Array.push(batch)->ignore
   switch batch.checkpointIds->Utils.Array.last {
   | Some(checkpointId) => inMemoryStore.processedCheckpointId = checkpointId
   | None => ()

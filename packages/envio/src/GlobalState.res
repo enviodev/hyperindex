@@ -932,8 +932,6 @@ let injectedTaskReducer = (
 
         let progressedChainsById = batch.progressedChainsById
 
-        let isInReorgThreshold = state.chainManager.isInReorgThreshold
-
         let isBelowReorgThreshold =
           !state.chainManager.isInReorgThreshold && state.ctx.config.shouldRollbackOnReorg
         let shouldEnterReorgThreshold =
@@ -975,7 +973,6 @@ let injectedTaskReducer = (
           switch await EventProcessing.processEventBatch(
             ~batch,
             ~inMemoryStore,
-            ~isInReorgThreshold,
             ~loadManager=state.loadManager,
             ~ctx=state.ctx,
             ~chainFetchers=state.chainManager.chainFetchers,
