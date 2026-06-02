@@ -128,6 +128,11 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
 let memoGetSelectionConfig = (~chain) =>
   Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
 
+// Surfaced by HyperSyncClient.getHeight (Rust) when HyperSync rejects the API
+// token. The corrupted-token test feeds the real server error through this
+// check so it can't silently drift away from what getHeightOrThrow guards on.
+let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
+
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
@@ -440,7 +445,19 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     getBlockHashes,
     getHeightOrThrow: async () => {
       let timerRef = Hrtime.makeTimer()
-      let result = await client.getHeight()
+      let result = try {
+        await client.getHeight()
+      } catch {
+      | JsExn(e) =>
+        switch e->JsExn.message {
+        | Some(message) if message->isUnauthorizedError =>
+          Logging.error(`Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not be able to fetch events. Update the token and restart the indexer using 'pnpm envio start'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
+          // Retrying an unauthorized request can never succeed, so block forever
+          let _ = await Promise.make((_, _) => ())
+          0
+        | _ => throw(JsExn(e))
+        }
+      }
       let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
       Prometheus.SourceRequestCount.increment(
         ~sourceName=name,

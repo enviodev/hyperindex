@@ -131,10 +131,11 @@ describe("HyperSync client getEventItems (live)", () => {
 })
 
 describe("HyperSync client getHeight with corrupted token", () => {
-  // A corrupted token makes the server reply 401, so getHeight throws rather
-  // than blocking. The error then propagates to SourceManager's retry loop.
+  // A corrupted token makes the server reply 401, so getHeight throws. The error
+  // must keep matching HyperSyncSource.isUnauthorizedError, otherwise
+  // getHeightOrThrow's block-forever guard silently stops working.
   Async.it(
-    "throws an Unauthorized error",
+    "is detected by HyperSyncSource.isUnauthorizedError",
     async t => {
       let client = HyperSyncClient.make(
         ~url="https://eth.hypersync.xyz",
@@ -144,17 +145,15 @@ describe("HyperSync client getHeight with corrupted token", () => {
         ~enableChecksumAddresses=false,
       )
 
-      let result = try {
-        let height = await client.getHeight()
-        #Resolved(height)
+      let detected = try {
+        let _ = await client.getHeight()
+        false
       } catch {
-      | JsExn(e) => #Threw(e->JsExn.message->Option.getOr(""))
-      | _ => #ThrewNonJsExn
+      | JsExn(e) => e->JsExn.message->Option.getOr("")->HyperSyncSource.isUnauthorizedError
+      | _ => false
       }
 
-      t.expect(result).toEqual(
-        #Threw("Failed to get HyperSync height: http response status code 401 Unauthorized"),
-      )
+      t.expect(detected).toEqual(true)
     },
     ~timeout=60000,
   )
