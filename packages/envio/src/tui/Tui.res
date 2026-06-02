@@ -273,7 +273,7 @@ module App = {
               <Box flexDirection={Column}>
                 <Newline />
                 <Text color={Danger}>
-                  {`HyperSync source is rate-limited — ${rateLimitSecs->TuiData.formatFloatLocaleString}s lost to rate limits, your backfill could be that much faster${activeSuffix}`->React.string}
+                  {`${rateLimitSecs->TuiData.formatFloatLocaleString}s lost to rate limits, your backfill could be that much faster${activeSuffix}`->React.string}
                 </Text>
                 <Text color={Danger}>
                   <Text color={Danger}> {"Upgrade at "->React.string} </Text>
