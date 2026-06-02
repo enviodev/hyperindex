@@ -271,11 +271,16 @@ module App = {
               let rateLimitSecs = Math.round(maxRateLimitTimeMs /. 1000.)
               let activeSuffix = anyCurrentlyRateLimited ? " (currently waiting)" : ""
               <Box flexDirection={Column}>
+                <Newline />
                 <Text color={Danger}>
-                  {`⏳ HyperSync source is rate-limited — ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting${activeSuffix}`->React.string}
+                  {`HyperSync source is rate-limited — ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting${activeSuffix} ⏳`->React.string}
                 </Text>
                 <Text color={Danger}>
-                  {"Upgrade your plan at https://envio.dev/app/api-tokens for higher limits."->React.string}
+                  <Text color={Danger}> {"Upgrade your plan at "->React.string} </Text>
+                  <Text color={Danger} underline=true>
+                    {"https://envio.dev/app/api-tokens"->React.string}
+                  </Text>
+                  <Text color={Danger}> {" for higher limits."->React.string} </Text>
                 </Text>
               </Box>
             }
