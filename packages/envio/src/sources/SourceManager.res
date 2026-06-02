@@ -42,9 +42,6 @@ type t = {
 
 let getActiveSource = sourceManager => sourceManager.activeSource
 
-let getCommittedRateLimitTimeMs = sourceManager => sourceManager.committedRateLimitTimeMs
-let getActiveRateLimitStartMs = sourceManager => sourceManager.activeRateLimitStartMs
-
 let getRateLimitTimeMs = sourceManager =>
   sourceManager.committedRateLimitTimeMs +.
   switch sourceManager.activeRateLimitStartMs {
@@ -73,17 +70,16 @@ let stopRateLimitTimeout = sourceManager => {
 }
 
 // Shared between executeQuery and getBlockHashes: wait out the server's
-// suggested reset window with a 1s safety buffer (server's `reset_secs` is
-// rounded down to whole seconds — waiting exactly that long races the
-// window edge and hits another 429 immediately). Cap at 5 minutes to
-// protect against pathologically large server values. Escalates the log
-// from trace to warn after the second consecutive retry so the indexer
-// doesn't go silent under chronic throttling.
+// suggested reset window. Cap at 5 minutes to protect against
+// pathologically large server values. Escalates the log from trace to
+// warn after the second consecutive retry so the indexer doesn't go
+// silent under chronic throttling.
 let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) => {
-  let waitMs = Pervasives.min(resetMs + 1000, 300_000)
+  let waitMs = Pervasives.min(resetMs, 300_000)
   let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
   logger->log({
-    "msg": "Rate limited by HyperSync. Upgrade your plan at https://app.envio.dev/api-tokens for higher limits.",
+    "msg": `Rate limited by HyperSync — not critical, the indexer will retry in ${(waitMs / 1000)
+        ->Int.toString}s. For higher limits upgrade your plan at https://envio.dev/app/api-tokens.`,
     "retry": retry,
     "waitMs": waitMs,
   })

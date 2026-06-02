@@ -30,11 +30,7 @@ type chain = {
   progress: progress,
   latestFetchedBlockNumber: int,
   knownHeight: int,
-  // Committed rate-limit time across closed windows. The TUI adds the
-  // in-progress portion via (Date.now() - activeRateLimitStartMs) so the
-  // display ticks up every render without SourceManager doing UI math.
-  committedRateLimitTimeMs: float,
-  activeRateLimitStartMs: option<float>,
+  rateLimitTimeMs: float,
 }
 
 let minOfOption: (int, option<int>) => int = (a: int, b: option<int>) => {

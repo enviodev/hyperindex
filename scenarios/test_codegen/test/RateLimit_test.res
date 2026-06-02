@@ -46,9 +46,8 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
 
 describe("SourceManager.getBlockHashes rate limit handling", () => {
   Async.it("recovers after a rate limit and tracks wait time", async t => {
-    // Short resetMs so the test completes quickly. SourceManager waits
-    // resetMs + 1000ms safety buffer.
-    let source = makeMockSource(~rateLimitedCalls=2, ~resetMs=100)
+    // 500ms resetMs * 2 rate-limited calls = ~1s minimum total wait
+    let source = makeMockSource(~rateLimitedCalls=2, ~resetMs=500)
     let sourceManager = SourceManager.make(
       ~sources=[source],
       ~maxPartitionConcurrency=1,
@@ -63,8 +62,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
 
     t.expect(result->Array.length).toEqual(3)
     t.expect(result->Array.map(r => r.blockNumber)).toEqual(blockNumbers)
-    // Two rate-limit waits at ~1.1s each = ~2.2s minimum
-    t.expect(sourceManager->SourceManager.getRateLimitTimeMs > 2000.0).toEqual(true)
+    t.expect(sourceManager->SourceManager.getRateLimitTimeMs > 900.0).toEqual(true)
   })
 
   Async.it("succeeds immediately when no rate limit", async t => {
@@ -87,16 +85,16 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
   Async.it(
     "concurrent rate-limited calls only count the overlapping wall-clock window once",
     async t => {
-      let source = makeMockSource(~rateLimitedCalls=4, ~resetMs=200)
+      let source = makeMockSource(~rateLimitedCalls=4, ~resetMs=500)
       let sourceManager = SourceManager.make(
         ~sources=[source],
         ~maxPartitionConcurrency=2,
         ~isRealtime=false,
       )
 
-      // Two parallel calls — each hits 2 rate limits before succeeding.
-      // Sequential accounting would yield ~4 * 1.2s = 4.8s; the dedup'd
-      // wall-clock total should be roughly half that (~2.4s).
+      // Two parallel calls — each hits 2 rate limits at ~500ms each.
+      // Sequential accounting would yield ~4 * 500ms = 2000ms; the dedup'd
+      // wall-clock total should be roughly half that (~1000ms).
       let start = Date.now()
       let _ =
         await [
@@ -106,7 +104,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
       let elapsed = Date.now() -. start
 
       let rateLimitTime = sourceManager->SourceManager.getRateLimitTimeMs
-      t.expect(rateLimitTime > 1000.0 && rateLimitTime < elapsed +. 100.0).toEqual(true)
+      t.expect(rateLimitTime > 400.0 && rateLimitTime < elapsed +. 100.0).toEqual(true)
     },
   )
 })
