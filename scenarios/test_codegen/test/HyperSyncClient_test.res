@@ -131,6 +131,39 @@ describe("HyperSync client getEventItems (live)", () => {
   })
 })
 
+describe("HyperSync client getHeight with corrupted token", () => {
+  // A corrupted token makes the server reply 401, so getHeight throws rather
+  // than blocking. The error then propagates to SourceManager's retry loop.
+  Async.it(
+    "throws an Unauthorized error",
+    async t => {
+      let client = HyperSyncClient.make(
+        ~url="https://eth.hypersync.xyz",
+        ~apiToken="this-is-a-corrupted-token",
+        ~maxNumRetries=0,
+        ~httpReqTimeoutMillis=5000,
+        ~eventParams=[],
+        ~enableChecksumAddresses=false,
+      )
+
+      let result = try {
+        let height = await client.getHeight()
+        #Resolved(height)
+      } catch {
+      | JsExn(e) =>
+        let message = e->JsExn.message->Option.getOr("")
+        message->String.includes("401") && message->String.includes("Unauthorized")
+          ? #ThrewUnauthorized
+          : #ThrewOther(message)
+      | _ => #ThrewNonJsExn
+      }
+
+      t.expect(result).toEqual(#ThrewUnauthorized)
+    },
+    ~timeout=60000,
+  )
+})
+
 describe("HyperSync GetLogs.extractMissingParams", () => {
   it("parses the JSON payload Rust emits for MissingFields", t => {
     let jsErr =
