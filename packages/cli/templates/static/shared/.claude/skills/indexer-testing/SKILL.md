@@ -135,3 +135,5 @@ pnpm test -- -u        # Update snapshots
 ```
 
 > If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
+
+> To look up block ranges or query raw chain data for a test, use the `envio-data` skill instead of curl or web searches.

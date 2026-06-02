@@ -9,15 +9,14 @@ metadata:
 
 # `envio data`
 
-Query blocks, logs, and transactions on EVM chains. Uses the same `where`
-syntax as indexer filters. **Do NOT web-search for block ranges.**
+**Do NOT web-search for block ranges.** Use `envio data` instead.
 
 ```bash
 envio data <field>... --chain=<id|name> [--where='<json5>']
 ```
 
-- **Fields**: any block/log/transaction field is supported — `block.number`,
-  `log.srcAddress`, `transaction.hash`, `knownHeight`, etc.
+- **Fields**: any EVM block/log/transaction field, plus `knownHeight`.
+  Examples: `block.number`, `log.srcAddress`, `transaction.hash`.
   Case-insensitive — `gasLimit`, `gas_limit`, `GASLIMIT` all work.
 - **--chain**: numeric id (`8453`) or name (`base`, `arbitrum-one`).
 - **--where**: JSON5 with the indexer `where` syntax. Filter on any field with
