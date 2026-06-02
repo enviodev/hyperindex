@@ -26,7 +26,6 @@ let makeClient = (~eventParams) =>
   HyperSyncClient.make(
     ~url="https://eth.hypersync.xyz",
     ~apiToken=testApiToken,
-    ~maxNumRetries=0,
     ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
     ~eventParams,
     ~enableChecksumAddresses=false,
@@ -140,7 +139,6 @@ describe("HyperSync client getHeight with corrupted token", () => {
       let client = HyperSyncClient.make(
         ~url="https://eth.hypersync.xyz",
         ~apiToken="this-is-a-corrupted-token",
-        ~maxNumRetries=0,
         ~httpReqTimeoutMillis=5000,
         ~eventParams=[],
         ~enableChecksumAddresses=false,
@@ -150,15 +148,13 @@ describe("HyperSync client getHeight with corrupted token", () => {
         let height = await client.getHeight()
         #Resolved(height)
       } catch {
-      | JsExn(e) =>
-        let message = e->JsExn.message->Option.getOr("")
-        message->String.includes("401") && message->String.includes("Unauthorized")
-          ? #ThrewUnauthorized
-          : #ThrewOther(message)
+      | JsExn(e) => #Threw(e->JsExn.message->Option.getOr(""))
       | _ => #ThrewNonJsExn
       }
 
-      t.expect(result).toEqual(#ThrewUnauthorized)
+      t.expect(result).toEqual(
+        #Threw("Failed to get HyperSync height: http response status code 401 Unauthorized"),
+      )
     },
     ~timeout=60000,
   )

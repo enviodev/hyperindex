@@ -170,8 +170,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   let client = switch HyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,
-    // Retries are handled internally by the indexer, not the binary client
-    ~maxNumRetries=0,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~eventParams=allEventParams,
     ~enableChecksumAddresses=!lowercaseAddresses,
