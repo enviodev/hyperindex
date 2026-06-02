@@ -328,7 +328,8 @@ let getSourceNewHeight = async (
   let retry = ref(0)
 
   // Stalled-rate REST poll interval with jitter, so many indexers falling back at
-  // the same time don't poll the height endpoint in lockstep.
+  // the same time don't poll the height endpoint in lockstep. For a
+  // stalledPollingInterval of x, the delay is uniform in [x/2, 1.5x) (mean x).
   let nextFallbackDelay = () => {
     let base = sourceManager.stalledPollingInterval
     base / 2 + (Math.random() *. base->Belt.Int.toFloat)->Belt.Float.toInt
