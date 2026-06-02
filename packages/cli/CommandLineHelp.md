@@ -389,15 +389,9 @@ Query raw blockchain data — blocks, logs, transactions on EVM chains using the
 
 Output is TOON (token-oriented) tabular form.
 
-Examples:
+Example — earliest USDC transfers on Base: `envio data block.number log.srcAddress --chain=base --where='{ block: { number: { _gte: 0 } }, log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" } }'`
 
-Earliest USDC transfers on Base:
-
-```text envio data block.number log.srcAddress log.transactionHash \ --chain=base \ --where='{ block: { number: { _gte: 0 } }, log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }, }' ```
-
-Current archive height:
-
-```text envio data knownHeight --chain=arbitrum-one ```
+Example — current archive height: `envio data knownHeight --chain=arbitrum-one`
 
 **Usage:** `envio data [OPTIONS] --chain <CHAIN> [FIELD]...`
 
