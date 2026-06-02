@@ -13,12 +13,10 @@ pub struct Selection {
 #[derive(Debug, Clone)]
 pub struct Column {
     pub section: Section,
-    pub indexer_name: String,
     pub field: TypedField,
 }
 
 impl Selection {
-    // FIXME: field names and examples are EVM-specific — update when adding Solana support.
     pub fn parse(positionals: &[String]) -> Result<Self> {
         if positionals.is_empty() {
             return Err(anyhow!(
@@ -53,11 +51,7 @@ impl Selection {
                 anyhow!("Unknown field `{raw}`. Valid `{section_raw}.*` fields: {valid}.")
             })?;
 
-            sel.columns.push(Column {
-                section,
-                indexer_name: field_raw.to_string(),
-                field,
-            });
+            sel.columns.push(Column { section, field });
         }
 
         Ok(sel)
@@ -102,20 +96,20 @@ mod tests {
         ])
         .unwrap();
 
-        let cols: Vec<(Section, &str)> = sel
+        let cols: Vec<(Section, String)> = sel
             .columns
             .iter()
-            .map(|c| (c.section, c.indexer_name.as_str()))
+            .map(|c| (c.section, c.field.camel_name()))
             .collect();
 
         assert_eq!(
             (cols, sel.known_height),
             (
                 vec![
-                    (Section::Block, "number"),
-                    (Section::Block, "hash"),
-                    (Section::Log, "srcAddress"),
-                    (Section::Transaction, "transactionIndex"),
+                    (Section::Block, "number".to_string()),
+                    (Section::Block, "hash".to_string()),
+                    (Section::Log, "srcAddress".to_string()),
+                    (Section::Transaction, "transactionIndex".to_string()),
                 ],
                 true,
             ),
@@ -161,12 +155,8 @@ Valid sections: block, transaction, log."#);
             "transaction.transaction_index".into(),
         ])
         .unwrap();
-        let names: Vec<&str> = sel
-            .columns
-            .iter()
-            .map(|c| c.indexer_name.as_str())
-            .collect();
-        assert_eq!(names, vec!["gas_limit", "src_address", "transaction_index"]);
+        let names: Vec<String> = sel.columns.iter().map(|c| c.field.camel_name()).collect();
+        assert_eq!(names, vec!["gasLimit", "srcAddress", "transactionIndex"]);
     }
 
     #[test]

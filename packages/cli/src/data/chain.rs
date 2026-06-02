@@ -12,17 +12,15 @@ pub struct Chain {
 pub fn resolve(input: &str) -> Result<Chain> {
     let normalized = input.trim().to_ascii_lowercase();
 
-    if normalized == "solana" || normalized == "svm" {
+    let unsupported_family = match normalized.as_str() {
+        "solana" | "svm" => Some("Solana"),
+        "fuel" | "fuel-testnet" => Some("Fuel"),
+        _ => None,
+    };
+    if let Some(family) = unsupported_family {
         return Err(anyhow!(
             "`--chain={input}` is not supported yet.\n\
-             Solana support is on the roadmap. For now use an EVM chain (e.g. `--chain=base`).",
-        ));
-    }
-
-    if normalized == "fuel" || normalized == "fuel-testnet" {
-        return Err(anyhow!(
-            "`--chain={input}` is not supported yet.\n\
-             Fuel support is on the roadmap. For now use an EVM chain (e.g. `--chain=base`).",
+             {family} support is on the roadmap. For now use an EVM chain (e.g. `--chain=base`).",
         ));
     }
 

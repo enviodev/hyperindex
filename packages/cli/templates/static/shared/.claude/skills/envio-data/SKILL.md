@@ -19,8 +19,11 @@ envio data <field>... --chain=<id|name> [--where='<json5>']
   Examples: `block.number`, `log.srcAddress`, `transaction.hash`.
   Case-insensitive — `gasLimit`, `gas_limit`, `GASLIMIT` all work.
 - **--chain**: numeric id (`8453`) or name (`base`, `arbitrum-one`).
-- **--where**: JSON5 with the indexer `where` syntax. Filter on any field with
-  `_eq`, `_in`, `_gte`, `_lte`, `_gt`, `_lt`.
+- **--where**: JSON5 with the indexer `where` syntax. Supported filters:
+  - `block.number` with range ops (`_gte`, `_gt`, `_lte`, `_lt`).
+  - `log.srcAddress`, `log.topic0..3` — scalar, array, `_eq`, or `_in`.
+  - `transaction.from`, `transaction.to`, `transaction.sighash` — same ops as log filters.
+  Other fields can be selected for output but cannot be filtered on.
 
 ## Examples
 

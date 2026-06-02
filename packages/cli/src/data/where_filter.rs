@@ -7,7 +7,6 @@ use super::mapping::{self, Section, TypedField};
 
 #[derive(Debug, Clone)]
 pub struct FieldFilter {
-    pub indexer_name: String,
     pub field: TypedField,
     pub values: Vec<Value>,
 }
@@ -86,33 +85,7 @@ impl WhereFilter {
         if !self.log_filters.is_empty() {
             let mut lf = LogFilter::all();
             for f in &self.log_filters {
-                let refs = filter_values_as_strs(&f.values);
-                let refs: Vec<&str> = refs.iter().map(|s| s.as_str()).collect();
-                use hypersync_client::net_types::log::LogField;
-                let TypedField::Log(log_field) = f.field else {
-                    unreachable!()
-                };
-                match log_field {
-                    LogField::Address => {
-                        lf = lf.and_address(refs).context("invalid address")?;
-                    }
-                    LogField::Topic0 => {
-                        lf = lf.and_topic0(refs).context("invalid topic0")?;
-                    }
-                    LogField::Topic1 => {
-                        lf = lf.and_topic1(refs).context("invalid topic1")?;
-                    }
-                    LogField::Topic2 => {
-                        lf = lf.and_topic2(refs).context("invalid topic2")?;
-                    }
-                    LogField::Topic3 => {
-                        lf = lf.and_topic3(refs).context("invalid topic3")?;
-                    }
-                    _ => bail!(
-                        "Filtering on `log.{}` is not supported in --where.",
-                        f.indexer_name
-                    ),
-                }
+                lf = apply_log_filter(lf, f)?;
             }
             query = query.where_logs(lf);
         }
@@ -120,33 +93,53 @@ impl WhereFilter {
         if !self.transaction_filters.is_empty() {
             let mut tf = TransactionFilter::all();
             for f in &self.transaction_filters {
-                let refs = filter_values_as_strs(&f.values);
-                let refs: Vec<&str> = refs.iter().map(|s| s.as_str()).collect();
-                use hypersync_client::net_types::transaction::TransactionField;
-                let TypedField::Transaction(tx_field) = f.field else {
-                    unreachable!()
-                };
-                match tx_field {
-                    TransactionField::From => {
-                        tf = tf.and_from(refs).context("invalid from address")?;
-                    }
-                    TransactionField::To => {
-                        tf = tf.and_to(refs).context("invalid to address")?;
-                    }
-                    TransactionField::Sighash => {
-                        tf = tf.and_sighash(refs).context("invalid sighash")?;
-                    }
-                    _ => bail!(
-                        "Filtering on `transaction.{}` is not supported in --where.",
-                        f.indexer_name
-                    ),
-                }
+                tf = apply_tx_filter(tf, f)?;
             }
             query = query.where_transactions(tf);
         }
 
         Ok(query)
     }
+}
+
+fn apply_log_filter(filter: LogFilter, f: &FieldFilter) -> Result<LogFilter> {
+    use hypersync_client::net_types::log::LogField;
+    let TypedField::Log(log_field) = f.field else {
+        unreachable!("log_filters only holds Log fields")
+    };
+    let owned = filter_values_as_strs(&f.values);
+    let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
+    let (filter, ctx) = match log_field {
+        LogField::Address => (filter.and_address(refs), "invalid address"),
+        LogField::Topic0 => (filter.and_topic0(refs), "invalid topic0"),
+        LogField::Topic1 => (filter.and_topic1(refs), "invalid topic1"),
+        LogField::Topic2 => (filter.and_topic2(refs), "invalid topic2"),
+        LogField::Topic3 => (filter.and_topic3(refs), "invalid topic3"),
+        _ => bail!(
+            "Filtering on `log.{}` is not supported in --where.",
+            f.field.camel_name()
+        ),
+    };
+    filter.context(ctx)
+}
+
+fn apply_tx_filter(filter: TransactionFilter, f: &FieldFilter) -> Result<TransactionFilter> {
+    use hypersync_client::net_types::transaction::TransactionField;
+    let TypedField::Transaction(tx_field) = f.field else {
+        unreachable!("transaction_filters only holds Transaction fields")
+    };
+    let owned = filter_values_as_strs(&f.values);
+    let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
+    let (filter, ctx) = match tx_field {
+        TransactionField::From => (filter.and_from(refs), "invalid from address"),
+        TransactionField::To => (filter.and_to(refs), "invalid to address"),
+        TransactionField::Sighash => (filter.and_sighash(refs), "invalid sighash"),
+        _ => bail!(
+            "Filtering on `transaction.{}` is not supported in --where.",
+            f.field.camel_name()
+        ),
+    };
+    filter.context(ctx)
 }
 
 fn parse_where(raw: &str) -> Result<Value> {
@@ -199,7 +192,6 @@ fn apply_field(
 
     let values = normalize_to_list(section, indexer_name, body)?;
     dest.push(FieldFilter {
-        indexer_name: indexer_name.to_string(),
         field: typed_field,
         values,
     });
@@ -298,8 +290,8 @@ mod tests {
             (Some(1000), Some(2001))
         );
         assert_eq!(
-            (f.log_filters.len(), f.log_filters[0].indexer_name.as_str()),
-            (1, "srcAddress")
+            (f.log_filters.len(), f.log_filters[0].field.camel_name()),
+            (1, "srcAddress".to_string())
         );
     }
 
@@ -372,8 +364,7 @@ mod tests {
     #[test]
     fn case_insensitive_where_fields() {
         let f = pf("{ log: { src_address: '0xa', TOPIC0: '0xb' } }");
-        assert_eq!(f.log_filters.len(), 2);
-        assert_eq!(f.log_filters[0].indexer_name, "src_address");
-        assert_eq!(f.log_filters[1].indexer_name, "TOPIC0");
+        let names: Vec<String> = f.log_filters.iter().map(|f| f.field.camel_name()).collect();
+        assert_eq!(names, vec!["srcAddress", "topic0"]);
     }
 }

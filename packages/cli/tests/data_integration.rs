@@ -30,26 +30,10 @@ impl std::fmt::Display for Output {
 
 impl Output {
     fn stderr_template(&self) -> String {
-        self.stderr
-            .trim()
-            .lines()
-            .map(|line| {
-                let mut result = String::new();
-                let mut chars = line.chars().peekable();
-                while let Some(ch) = chars.next() {
-                    if ch.is_ascii_digit() {
-                        while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
-                            chars.next();
-                        }
-                        result.push_str("<N>");
-                    } else {
-                        result.push(ch);
-                    }
-                }
-                result
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        regex::Regex::new(r"\d+")
+            .unwrap()
+            .replace_all(self.stderr.trim(), "<N>")
+            .into_owned()
     }
 }
 

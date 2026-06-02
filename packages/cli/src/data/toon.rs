@@ -7,14 +7,14 @@ use hypersync_client::ArrowResponse;
 use super::field_selection::{Column, Selection};
 use super::mapping::{ColumnFormat, Section};
 
-pub fn render_table(name: &str, columns: &[&str], rows: &[Vec<String>]) -> String {
+pub fn render_table(name: &str, columns: &[impl AsRef<str>], rows: &[Vec<String>]) -> String {
     let mut out = String::new();
     let _ = write!(out, "{name}[{n}]{{", n = rows.len());
     for (i, c) in columns.iter().enumerate() {
         if i > 0 {
             out.push(',');
         }
-        out.push_str(c);
+        out.push_str(c.as_ref());
     }
     out.push_str("}:\n");
     for row in rows {
@@ -58,7 +58,7 @@ pub fn render_arrow_response(selection: &Selection, response: &ArrowResponse) ->
             .iter()
             .filter(|c| c.section == *section)
             .collect();
-        let col_names: Vec<&str> = cols.iter().map(|c| c.indexer_name.as_str()).collect();
+        let col_names: Vec<String> = cols.iter().map(|c| c.field.camel_name()).collect();
         let (plural, batches) = match section {
             Section::Block => ("blocks", &response.data.blocks),
             Section::Transaction => ("transactions", &response.data.transactions),
@@ -121,7 +121,7 @@ fn cell_to_string(col: &dyn Array, row: usize, fmt: ColumnFormat) -> String {
                 ColumnFormat::Hex => format!("0x{}", faster_hex::hex_string(bytes)),
             }
         }
-        _ => String::new(),
+        dt => unreachable!("unexpected arrow data type {dt:?} for envio data column"),
     }
 }
 
@@ -133,11 +133,7 @@ fn binary_as_decimal(bytes: &[u8]) -> String {
     val.to_string()
 }
 
-pub fn render_height(value: i64) -> String {
-    format!("knownHeight: {value}\n")
-}
-
-pub fn render_archive_height(value: i64) -> String {
+pub fn render_height(value: u64) -> String {
     format!("knownHeight: {value}\n")
 }
 

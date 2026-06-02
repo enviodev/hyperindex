@@ -10,13 +10,14 @@ use crate::data::{
     where_filter::WhereFilter,
 };
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+enum PaginationState {
+    RangeDone,
+    ReachedHead,
+    MorePages,
+}
 
 pub async fn run(args: DataArgs) -> Result<()> {
     let token = resolve_api_token().ok_or_else(missing_token_error)?;
-    if token.trim().is_empty() {
-        return Err(missing_token_error());
-    }
 
     let chain = chain::resolve(&args.chain)?;
     let selection = Selection::parse(&args.fields)?;
@@ -33,7 +34,7 @@ pub async fn run(args: DataArgs) -> Result<()> {
             .get_height()
             .await
             .context("Failed fetching chain height")?;
-        print!("{}", toon::render_height(height as i64));
+        print!("{}", toon::render_height(height));
         eprintln!();
         eprintln!("Chain {} is at height {}.", chain.display, height);
         return Ok(());
@@ -54,30 +55,38 @@ pub async fn run(args: DataArgs) -> Result<()> {
     let archive_height = response.archive_height.unwrap_or(0);
 
     if selection.known_height {
-        out.push_str(&toon::render_archive_height(archive_height as i64));
+        out.push_str(&toon::render_height(archive_height));
     }
 
     print!("{out}");
 
     let next_block = response.next_block;
-    let range_done = matches!(filter.to_block_exclusive, Some(end) if next_block >= end);
-    let reached_head = !range_done && next_block >= archive_height;
-    let more_pages = !range_done && !reached_head;
+    let state = if matches!(filter.to_block_exclusive, Some(end) if next_block >= end) {
+        PaginationState::RangeDone
+    } else if next_block >= archive_height {
+        PaginationState::ReachedHead
+    } else {
+        PaginationState::MorePages
+    };
 
-    if reached_head {
-        eprintln!();
-        eprintln!(
-            "Reached the chain head at block {next_block}. \
-             Rerun the following command later to fetch newly available data:"
-        );
-        print_next_command(&args, &chain, &filter, next_block);
-    } else if more_pages {
-        eprintln!();
-        eprintln!(
-            "Got a response up to block {next_block}. \
-             To get the next page, run the following command:"
-        );
-        print_next_command(&args, &chain, &filter, next_block);
+    match state {
+        PaginationState::RangeDone => {}
+        PaginationState::ReachedHead => {
+            eprintln!();
+            eprintln!(
+                "Reached the chain head at block {next_block}. \
+                 Rerun the following command later to fetch newly available data:"
+            );
+            print_next_command(&args, &chain, &filter, next_block);
+        }
+        PaginationState::MorePages => {
+            eprintln!();
+            eprintln!(
+                "Got a response up to block {next_block}. \
+                 To get the next page, run the following command:"
+            );
+            print_next_command(&args, &chain, &filter, next_block);
+        }
     }
 
     Ok(())
@@ -101,7 +110,7 @@ fn build_client(chain: &Chain, token: &str) -> Result<hypersync_client::Client> 
         hypersync_client::ClientConfig {
             url: chain.base_url.clone(),
             api_token: token.to_string(),
-            http_req_timeout_millis: REQUEST_TIMEOUT.as_millis() as u64,
+            http_req_timeout_millis: Duration::from_secs(60).as_millis() as u64,
             ..Default::default()
         },
         user_agent,
@@ -141,26 +150,33 @@ fn section_part(
         .iter()
         .map(|f| {
             let v = if f.values.len() == 1 {
-                short_value(&f.values[0])
+                json_string(&f.values[0])
             } else {
-                short_value(&Value::Array(f.values.clone()))
+                json_string(&Value::Array(f.values.clone()))
             };
-            format!("{name}: {v}", name = f.indexer_name)
+            format!("{name}: {v}", name = f.field.camel_name())
         })
         .collect();
     Some(format!("{section}: {{ {} }}", body.join(", ")))
 }
 
+fn json_string(v: &Value) -> String {
+    serde_json::to_string(v).unwrap_or_else(|_| "<unprintable>".into())
+}
+
 fn resolve_api_token() -> Option<String> {
-    if let Ok(val) = std::env::var("ENVIO_API_TOKEN") {
-        return Some(val);
-    }
-    use dotenvy::{EnvLoader, EnvSequence};
-    EnvLoader::with_path(".env")
-        .sequence(EnvSequence::InputOnly)
-        .load()
-        .ok()
-        .and_then(|m| m.var("ENVIO_API_TOKEN").ok())
+    let from_env = std::env::var("ENVIO_API_TOKEN").ok();
+    let from_dotenv = || {
+        use dotenvy::{EnvLoader, EnvSequence};
+        EnvLoader::with_path(".env")
+            .sequence(EnvSequence::InputOnly)
+            .load()
+            .ok()
+            .and_then(|m| m.var("ENVIO_API_TOKEN").ok())
+    };
+    from_env
+        .or_else(from_dotenv)
+        .filter(|s| !s.trim().is_empty())
 }
 
 fn missing_token_error() -> anyhow::Error {
@@ -169,8 +185,4 @@ fn missing_token_error() -> anyhow::Error {
          Set the ENVIO_API_TOKEN environment variable in your .env file.\n\
          Get a free API token at: https://envio.dev/app/api-tokens"
     )
-}
-
-fn short_value(v: &Value) -> String {
-    serde_json::to_string(v).unwrap_or_else(|_| "<unprintable>".into())
 }

@@ -42,6 +42,10 @@ impl TypedField {
         }
     }
 
+    pub fn camel_name(self) -> String {
+        to_camel(&self.column_name())
+    }
+
     pub fn column_format(self) -> ColumnFormat {
         match self {
             TypedField::Block(f) => match f {
