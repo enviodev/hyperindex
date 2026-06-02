@@ -328,14 +328,18 @@ let getSourceNewHeight = async (
   let retry = ref(0)
 
   while newHeight.contents <= knownHeight && status.contents !== Done {
-    // If subscription exists, wait for next height event
     switch sourceState.unsubscribe {
     | Some(_) =>
       let subscriptionPromise = Promise.make((resolve, _reject) => {
         sourceState.pendingHeightResolvers->Array.push(resolve)
       })
-      // If subscription goes quiet for half the stall timeout, fall back to REST polling
-      let pollingFallback = Utils.delay(stallTimeout / 2)->Promise.then(async () => {
+      // If the subscription goes quiet for half the stall timeout, fall back to REST
+      // polling. Jitter the trigger across [stallTimeout/2, stallTimeout) so indexers
+      // that go quiet together don't all start polling at the same instant.
+      let half = stallTimeout / 2
+      let pollingFallback = Utils.delay(
+        half + (Math.random() *. half->Belt.Int.toFloat)->Belt.Float.toInt,
+      )->Promise.then(async () => {
         logger->Logging.childTrace({
           "msg": "onHeight subscription stale, switching to polling fallback",
           "source": source.name,
@@ -374,11 +378,15 @@ let getSourceNewHeight = async (
           switch source.createHeightSubscription {
           | Some(createSubscription) if isRealtime =>
             let unsubscribe = createSubscription(~onHeight=newHeight => {
-              sourceState.knownHeight = newHeight
-              // Resolve all pending height resolvers
-              let resolvers = sourceState.pendingHeightResolvers
-              sourceState.pendingHeightResolvers = []
-              resolvers->Array.forEach(resolve => resolve(newHeight))
+              // Ignore non-increasing heights. The height stream re-emits the current
+              // head on every (re)connect; waking the wait loop on a height we already
+              // know spins it and leaks fallback pollers (#1270).
+              if newHeight > sourceState.knownHeight {
+                sourceState.knownHeight = newHeight
+                let resolvers = sourceState.pendingHeightResolvers
+                sourceState.pendingHeightResolvers = []
+                resolvers->Array.forEach(resolve => resolve(newHeight))
+              }
             })
             sourceState.unsubscribe = Some(unsubscribe)
           | _ =>
