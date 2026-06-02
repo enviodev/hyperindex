@@ -67,6 +67,26 @@ let stopRateLimitTimeout = sourceManager => {
   }
 }
 
+// Shared between executeQuery and getBlockHashes: wait out the server's
+// suggested reset window with a 1s safety buffer (server's `reset_secs` is
+// rounded down to whole seconds — waiting exactly that long races the
+// window edge and hits another 429 immediately). Cap at 5 minutes to
+// protect against pathologically large server values. Escalates the log
+// from trace to warn after the second consecutive retry so the indexer
+// doesn't go silent under chronic throttling.
+let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) => {
+  let waitMs = Pervasives.min(resetMs + 1000, 300_000)
+  let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
+  logger->log({
+    "msg": "Rate limited by HyperSync. Upgrade your plan at https://app.envio.dev/api-tokens for higher limits.",
+    "retry": retry,
+    "waitMs": waitMs,
+  })
+  sourceManager->startRateLimitTimeout
+  await Utils.delay(waitMs)
+  sourceManager->stopRateLimitTimeout
+}
+
 let onReorg = (sourceManager: t, ~rollbackTargetBlock) => {
   sourceManager.sourcesState->Array.forEach(({source}) => {
     switch source.onReorg {
@@ -643,23 +663,7 @@ let executeQuery = async (
       responseRef := Some(response)
     } catch {
     | Source.RateLimited({resetMs}) =>
-      // resetMs is the server's `reset_secs` (rounded down to whole seconds)
-      // converted to ms. Without a safety buffer we race the window edge and
-      // immediately hit another 429. Cap at 5 minutes to protect against
-      // pathologically large server values.
-      let waitMs = Pervasives.min(resetMs + 1000, 300_000)
-      // Escalate from trace to warn after a few rate-limit retries so the
-      // indexer doesn't go silent while waiting on a chronically-throttled
-      // token.
-      let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
-      logger->log({
-        "msg": "Rate limited by HyperSync. Upgrade your plan at https://app.envio.dev/api-tokens for higher limits.",
-        "retry": retry,
-        "waitMs": waitMs,
-      })
-      sourceManager->startRateLimitTimeout
-      await Utils.delay(waitMs)
-      sourceManager->stopRateLimitTimeout
+      await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
     | Source.GetItemsError(error) =>
@@ -802,16 +806,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       }
     } catch {
     | Source.RateLimited({resetMs}) =>
-      let waitMs = Pervasives.min(resetMs + 1000, 300_000)
-      let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
-      logger->log({
-        "msg": "Rate limited by HyperSync. Upgrade your plan at https://app.envio.dev/api-tokens for higher limits.",
-        "retry": retry,
-        "waitMs": waitMs,
-      })
-      sourceManager->startRateLimitTimeout
-      await Utils.delay(waitMs)
-      sourceManager->stopRateLimitTimeout
+      await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
     | exn =>
