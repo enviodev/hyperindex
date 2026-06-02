@@ -62,3 +62,6 @@ let getBlockHashes: (
 // Total time the indexer spent waiting on rate limits, including any
 // currently-in-progress window measured against Date.now() at call time.
 let getRateLimitTimeMs: t => float
+
+// True if at least one request is currently waiting on a rate-limit reset.
+let isRateLimited: t => bool

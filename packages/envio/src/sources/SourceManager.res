@@ -49,6 +49,8 @@ let getRateLimitTimeMs = sourceManager =>
   | None => 0.0
   }
 
+let isRateLimited = sourceManager => sourceManager.activeRateLimitStartMs->Option.isSome
+
 let startRateLimitTimeout = sourceManager => {
   if sourceManager.rateLimitWaiters === 0 {
     sourceManager.activeRateLimitStartMs = Some(Date.now())

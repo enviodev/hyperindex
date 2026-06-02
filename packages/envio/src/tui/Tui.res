@@ -133,11 +133,17 @@ module App = {
   let make = (~getState) => {
     let stdoutColumns = Hooks.useStdoutColumns()
     let (state: GlobalState.t, setState) = React.useState(() => getState())
+    // GlobalState is mutated in place — the ref returned by getState() never
+    // changes, so React.useState bails out via Object.is and the component
+    // wouldn't re-render. Tick a counter every 500ms to force a re-render
+    // regardless, so values computed at render time (Date.now()-derived rate
+    // limit elapsed) tick forward.
+    let (_, setTick) = React.useState(() => 0)
 
-    // useEffect to refresh state every 500ms
     React.useEffect(() => {
       let intervalId = setInterval(() => {
         setState(_ => getState())
+        setTick(t => t + 1)
       }, 500)
 
       Some(
@@ -211,6 +217,7 @@ module App = {
               cf.sourceManager->SourceManager.getActiveSource
             ).poweredByHyperSync,
             rateLimitTimeMs: cf.sourceManager->SourceManager.getRateLimitTimeMs,
+            isRateLimited: cf.sourceManager->SourceManager.isRateLimited,
           }: TuiData.chain
         )
       })
@@ -261,12 +268,19 @@ module App = {
       {
         let maxRateLimitTimeMs =
           chains->Array.reduce(0., (acc, chain) => Pervasives.max(acc, chain.rateLimitTimeMs))
+        let anyCurrentlyRateLimited = chains->Array.some(c => c.isRateLimited)
         maxRateLimitTimeMs > 1000.
           ? {
               let rateLimitSecs = Math.round(maxRateLimitTimeMs /. 1000.)
-              <Text color={Danger}>
-                {`HyperSync source is rate-limited — ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting. Upgrade your plan at https://envio.dev/app/api-tokens for higher limits.`->React.string}
-              </Text>
+              let activeSuffix = anyCurrentlyRateLimited ? " (currently waiting)" : ""
+              <Box flexDirection={Column}>
+                <Text color={Danger}>
+                  {`⏳ HyperSync source is rate-limited — ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting${activeSuffix}`->React.string}
+                </Text>
+                <Text color={Gray}>
+                  {"Upgrade your plan at https://envio.dev/app/api-tokens for higher limits."->React.string}
+                </Text>
+              </Box>
             }
           : React.null
       }
