@@ -53,8 +53,8 @@ type t = {
   // Resolved after every commit so capacity/flush waiters can re-evaluate.
   mutable commitWaiters: array<unit => unit>,
   // Static for the store's lifetime - only the persistence cycle reads them.
-  persistence: option<Persistence.t>,
-  config: option<Config.t>,
+  persistence: Persistence.t,
+  config: Config.t,
   // Latest chain metadata and what was last persisted. The cycle folds the
   // stale diff into the batch transaction, so it never races the batch write.
   mutable currentChainMeta: option<dict<InternalTable.Chains.metaFields>>,
@@ -64,8 +64,8 @@ type t = {
 let make = (
   ~entities: array<Internal.entityConfig>,
   ~committedCheckpointId=Internal.initialCheckpointId,
-  ~persistence=?,
-  ~config=?,
+  ~persistence: Persistence.t,
+  ~config: Config.t,
 ): t => {
   allEntities: entities,
   rawEvents: [],
@@ -168,45 +168,51 @@ let waitForCommit = (inMemoryStore: t): promise<unit> =>
   })
 
 // Drains the leading run of processed batches that share isInReorgThreshold and
-// accumulates them into one persistence object. Batches past a change in
-// isInReorgThreshold stay queued for the next write, so a single write never
-// mixes history-saving modes. Mutates inMemoryStore.processedBatches.
+// accumulates them into one persistence object in a single pass. Batches past a
+// change in isInReorgThreshold stay queued for the next write, so a single write
+// never mixes history-saving modes. The caller (runOneWrite) only invokes this
+// when processedBatches is non-empty, so the first element is safe to read.
 let drainBatchRun = (inMemoryStore: t): Batch.t => {
   let all = inMemoryStore.processedBatches
   let isInReorgThreshold = (all->Array.getUnsafe(0)).isInReorgThreshold
-  let run = []
+
   let rest = []
+  let progressedChainsById = Dict.make()
+  let totalBatchSize = ref(0)
+  let checkpointIds = []
+  let checkpointChainIds = []
+  let checkpointBlockNumbers = []
+  let checkpointBlockHashes = []
+  let checkpointEventsProcessed = []
   all->Array.forEach(batch => {
+    // Once a batch lands in rest (the reorg-threshold boundary), every later one
+    // follows it, preserving order.
     if rest->Utils.Array.isEmpty && batch.isInReorgThreshold == isInReorgThreshold {
-      run->Array.push(batch)
+      batch.progressedChainsById->Utils.Dict.forEachWithKey((chainAfterBatch, key) =>
+        progressedChainsById->Dict.set(key, chainAfterBatch)
+      )
+      totalBatchSize := totalBatchSize.contents + batch.totalBatchSize
+      checkpointIds->Array.pushMany(batch.checkpointIds)
+      checkpointChainIds->Array.pushMany(batch.checkpointChainIds)
+      checkpointBlockNumbers->Array.pushMany(batch.checkpointBlockNumbers)
+      checkpointBlockHashes->Array.pushMany(batch.checkpointBlockHashes)
+      checkpointEventsProcessed->Array.pushMany(batch.checkpointEventsProcessed)
     } else {
       rest->Array.push(batch)
     }
   })
   inMemoryStore.processedBatches = rest
 
-  let progressedChainsById = Dict.make()
-  let totalBatchSize = ref(0)
-  run->Array.forEach(batch => {
-    batch.progressedChainsById->Utils.Dict.forEachWithKey((chainAfterBatch, key) =>
-      progressedChainsById->Dict.set(key, chainAfterBatch)
-    )
-    totalBatchSize := totalBatchSize.contents + batch.totalBatchSize
-  })
   {
     totalBatchSize: totalBatchSize.contents,
     items: [],
     progressedChainsById,
     isInReorgThreshold,
-    checkpointIds: run->Belt.Array.map(b => b.checkpointIds)->Belt.Array.concatMany,
-    checkpointChainIds: run->Belt.Array.map(b => b.checkpointChainIds)->Belt.Array.concatMany,
-    checkpointBlockNumbers: run
-    ->Belt.Array.map(b => b.checkpointBlockNumbers)
-    ->Belt.Array.concatMany,
-    checkpointBlockHashes: run->Belt.Array.map(b => b.checkpointBlockHashes)->Belt.Array.concatMany,
-    checkpointEventsProcessed: run
-    ->Belt.Array.map(b => b.checkpointEventsProcessed)
-    ->Belt.Array.concatMany,
+    checkpointIds,
+    checkpointChainIds,
+    checkpointBlockNumbers,
+    checkpointBlockHashes,
+    checkpointEventsProcessed,
   }
 }
 
@@ -300,20 +306,20 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
 }
 
 let runWriteLoop = async (inMemoryStore: t) => {
-  switch (inMemoryStore.persistence, inMemoryStore.config) {
-  | (Some(persistence), Some(config)) =>
-    while (
-      inMemoryStore.processedCheckpointId > inMemoryStore.committedCheckpointId &&
-        inMemoryStore.persistenceError->Option.isNone
-    ) {
-      try {
-        await runOneWrite(inMemoryStore, ~persistence, ~config)
-        inMemoryStore->wakeCommitWaiters
-      } catch {
-      | exn => inMemoryStore.persistenceError = Some(exn)
-      }
+  while (
+    inMemoryStore.processedBatches->Utils.Array.notEmpty &&
+      inMemoryStore.persistenceError->Option.isNone
+  ) {
+    try {
+      await runOneWrite(
+        inMemoryStore,
+        ~persistence=inMemoryStore.persistence,
+        ~config=inMemoryStore.config,
+      )
+      inMemoryStore->wakeCommitWaiters
+    } catch {
+    | exn => inMemoryStore.persistenceError = Some(exn)
     }
-  | _ => ()
   }
   inMemoryStore.writeFiber = None
   inMemoryStore->wakeCommitWaiters
@@ -323,7 +329,7 @@ let kick = (inMemoryStore: t) =>
   if (
     inMemoryStore.writeFiber->Option.isNone &&
     inMemoryStore.persistenceError->Option.isNone &&
-    inMemoryStore.processedCheckpointId > inMemoryStore.committedCheckpointId
+    inMemoryStore.processedBatches->Utils.Array.notEmpty
   ) {
     inMemoryStore.writeFiber = Some(runWriteLoop(inMemoryStore))
   }

@@ -10,6 +10,18 @@ let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
 // Keep a handle to the real module before the local shadow below.
 module RealInMemoryStore = InMemoryStore
 
+// In-memory-only test stores never run the persistence cycle, but the store
+// still requires a persistence/config; reuse one for all of them.
+let defaultPersistence = PgStorage.makePersistenceFromConfig(
+  ~config,
+  ~storage=PgStorage.makeStorageFromEnv(
+    ~config,
+    ~sql=PgStorage.makeClient(),
+    ~pgSchema=Env.Db.publicSchema,
+    ~isHasuraEnabled=false,
+  ),
+)
+
 module InMemoryStore = {
   let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
@@ -25,7 +37,8 @@ module InMemoryStore = {
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=config.allEntities)
+    let inMemoryStore =
+      RealInMemoryStore.make(~entities=config.allEntities, ~persistence=defaultPersistence, ~config)
     entities->Array.forEach(((entityConfig, items)) => {
       items->Array.forEach(entity => {
         inMemoryStore->setEntity(~entityConfig, entity)
