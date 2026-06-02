@@ -132,17 +132,14 @@ module App = {
   @react.component
   let make = (~getState) => {
     let stdoutColumns = Hooks.useStdoutColumns()
-    let (state: GlobalState.t, setState) = React.useState(() => getState())
-    // GlobalState is mutated in place — the ref returned by getState() never
-    // changes, so React.useState bails out via Object.is and the component
-    // wouldn't re-render. Tick a counter every 500ms to force a re-render
-    // regardless, so values computed at render time (Date.now()-derived rate
-    // limit elapsed) tick forward.
+    // GlobalState is mutated in place — passing the same ref to useState
+    // would bail out via Object.is and skip the re-render. Tick a counter
+    // instead and read state freshly from getState() on every render.
     let (_, setTick) = React.useState(() => 0)
+    let state: GlobalState.t = getState()
 
     React.useEffect(() => {
       let intervalId = setInterval(() => {
-        setState(_ => getState())
         setTick(t => t + 1)
       }, 500)
 
