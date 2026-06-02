@@ -227,33 +227,27 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     },
   )
 
-  it(
-    "resetButKeepLoadedFromDbChanges keeps only entities loaded from the db, counted via changesCount",
-    t => {
-      let makeEntity = (id): Internal.entity =>
-        {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
-      let committedCheckpointId = Internal.initialCheckpointId
+  it("dropCommittedChanges keeps only uncommitted changes (checkpointId > committed)", t => {
+    let makeEntity = (id): Internal.entity =>
+      {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
 
-      let table = InMemoryTable.Entity.make()
-      table->InMemoryTable.Entity.initValue(
-        ~committedCheckpointId,
-        ~key="loaded-set",
-        ~entity=Some(makeEntity("loaded-set")),
-      )
-      table->InMemoryTable.Entity.initValue(~committedCheckpointId, ~key="loaded-deleted", ~entity=None)
+    let table = InMemoryTable.Entity.make()
+    let add = (id, checkpointId) =>
       table->InMemoryTable.Entity.set(
-        ~committedCheckpointId,
-        Set({entityId: "written", entity: makeEntity("written"), checkpointId: 5n}),
+        ~committedCheckpointId=Internal.initialCheckpointId,
+        Set({entityId: id, entity: makeEntity(id), checkpointId}),
       )
+    add("loaded", Internal.loadedFromDbCheckpointId)
+    add("committed", 5n)
+    add("uncommitted", 6n)
 
-      let resetTable = table->InMemoryTable.Entity.resetButKeepLoadedFromDbChanges
+    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId=5n)
 
-      t.expect((
-        resetTable.changesCount,
-        resetTable.latestEntityChangeById->Dict.keysToArray->Array.toSorted(String.compare),
-      )).toEqual((2., ["loaded-deleted", "loaded-set"]))
-    },
-  )
+    t.expect((
+      table.changesCount,
+      table.latestEntityChangeById->Dict.keysToArray->Array.toSorted(String.compare),
+    )).toEqual((1., ["uncommitted"]))
+  })
 
   Async.it("Test getWhere queries with eq and gt operators", async t => {
     let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])

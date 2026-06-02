@@ -360,8 +360,14 @@ let rec awaitCapacity = async (inMemoryStore: t) => {
         ~committedCheckpointId=inMemoryStore.committedCheckpointId,
       )
     )
-    if inMemoryStore->getChangesCount >= keepLatestChangesLimit {
-      // What's left is uncommitted, so wait for the cycle to persist more.
+
+    // What's left is uncommitted. Only wait if the cycle can actually free it by
+    // writing a queued batch - otherwise (e.g. a large rollback diff staged
+    // without a batch) waiting would deadlock, so let processing proceed instead.
+    if (
+      inMemoryStore->getChangesCount >= keepLatestChangesLimit &&
+        inMemoryStore.processedBatches->Utils.Array.notEmpty
+    ) {
       inMemoryStore->kick
       await inMemoryStore->waitForCommit
       await inMemoryStore->awaitCapacity

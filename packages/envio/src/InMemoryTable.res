@@ -57,35 +57,6 @@ module Entity = {
     fieldNameIndices: Dict.make(),
   }
 
-  // Drops the per-batch index state and rollback history, but keeps the
-  // already committed entities so the next batch can read them without
-  // hitting the database.
-  let resetButKeepLatestChanges = (self: t): t => {
-    ...make(),
-    latestEntityChangeById: self.latestEntityChangeById,
-    // writeBatch already mutated this to subtract the dropped prevEntityChanges.
-    changesCount: self.changesCount,
-  }
-
-  // Like resetButKeepLatestChanges, but only keeps entities loaded from the db
-  // (changes carrying loadedFromDbCheckpointId), dropping everything written in
-  // a batch. The kept count is exposed through the table's changesCount.
-  let resetButKeepLoadedFromDbChanges = (self: t): t => {
-    let latestEntityChangeById = Dict.make()
-    let keptCount = ref(0.)
-    self.latestEntityChangeById->Utils.Dict.forEachWithKey((change, key) =>
-      if change->Change.getCheckpointId === Internal.loadedFromDbCheckpointId {
-        latestEntityChangeById->Dict.set(key, change)
-        keptCount := keptCount.contents +. 1.
-      }
-    )
-    {
-      ...make(),
-      latestEntityChangeById,
-      changesCount: keptCount.contents,
-    }
-  }
-
   // Pull out the changes to persist for checkpoints in
   // (committedCheckpointId, upToCheckpointId]. Changes above upToCheckpointId
   // stay in the table for a later write (they belong to batches past a change in
