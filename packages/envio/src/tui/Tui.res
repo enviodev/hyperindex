@@ -269,11 +269,11 @@ module App = {
         maxRateLimitTimeMs > 1000.
           ? {
               let rateLimitSecs = Math.round(maxRateLimitTimeMs /. 1000.)
-              let activeSuffix = anyCurrentlyRateLimited ? " (currently waiting)" : ""
+              let activeSuffix = anyCurrentlyRateLimited ? " (currently waiting ⏳)" : ""
               <Box flexDirection={Column}>
                 <Newline />
                 <Text color={Danger}>
-                  {`HyperSync source is rate-limited — ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting${activeSuffix} ⏳`->React.string}
+                  {`HyperSync source is rate-limited — ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting${activeSuffix}`->React.string}
                 </Text>
                 <Text color={Danger}>
                   <Text color={Danger}> {"Upgrade your plan at "->React.string} </Text>
