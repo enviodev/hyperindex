@@ -1032,6 +1032,7 @@ let injectedTaskReducer = (
           dispatchAction(StartFindingReorgDepth)
           let rollbackTargetBlockNumber = await chainFetcher->getLastKnownValidBlock(
             ~reorgBlockNumber,
+            ~isRealtime=state.chainManager.isRealtime,
           )
 
           chainFetcher.sourceManager->SourceManager.onReorg(
@@ -1215,6 +1216,6 @@ let injectedTaskReducer = (
 let taskReducer = injectedTaskReducer(
   ~waitForNewBlock=SourceManager.waitForNewBlock,
   ~executeQuery=SourceManager.executeQuery,
-  ~getLastKnownValidBlock=(chainFetcher, ~reorgBlockNumber) =>
-    chainFetcher->ChainFetcher.getLastKnownValidBlock(~reorgBlockNumber),
+  ~getLastKnownValidBlock=(chainFetcher, ~reorgBlockNumber, ~isRealtime) =>
+    chainFetcher->ChainFetcher.getLastKnownValidBlock(~reorgBlockNumber, ~isRealtime),
 )

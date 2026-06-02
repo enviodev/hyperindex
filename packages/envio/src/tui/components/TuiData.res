@@ -30,6 +30,9 @@ type chain = {
   progress: progress,
   latestFetchedBlockNumber: int,
   knownHeight: int,
+  rateLimitTimeMs: float,
+  isRateLimited: bool,
+  rateLimitResetInMs: option<float>,
 }
 
 let minOfOption: (int, option<int>) => int = (a: int, b: option<int>) => {
