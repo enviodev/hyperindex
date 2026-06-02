@@ -62,7 +62,11 @@ napi-derive = "=3.5.4"
 
 [features]
 hypersync_health = []
-data_integration_tests = []
+# Compatibility alias for the previous feature name. Older CI workflows
+# (still on main until this PR merges) reference `integration_tests`;
+# enabling it must keep the hypersync health check working. Drop after
+# main picks up the renamed workflow step.
+integration_tests = ["hypersync_health"]
 
 [build-dependencies]
 napi-build = "=2.3.1"

@@ -1,15 +1,19 @@
 //! End-to-end integration tests for `envio data`.
 //!
 //! Invokes the CLI binary (via the `script` example) and asserts on stdout/stderr.
-//! Gated behind `--features data_integration_tests` so default `cargo test`
-//! stays offline and the hypersync endpoint health-check job doesn't pick this up.
-//! Requires `ENVIO_API_TOKEN` in the environment.
-//!
-//! Run with:
-//!   cargo test -p envio --features data_integration_tests --test data_integration
-#![cfg(feature = "data_integration_tests")]
+//! Runs as part of the normal `cargo test` flow; each test silently skips when
+//! `ENVIO_API_TOKEN` is absent so the suite stays green locally and on forks
+//! that don't have access to the secret.
 
 use std::process::Command;
+
+fn skip_without_token() -> bool {
+    let has_token = std::env::var_os("ENVIO_API_TOKEN").is_some_and(|v| !v.is_empty());
+    if !has_token {
+        eprintln!("skipping: ENVIO_API_TOKEN not set");
+    }
+    !has_token
+}
 
 struct Output {
     stdout: String,
@@ -31,7 +35,10 @@ impl std::fmt::Display for Output {
 
 impl Output {
     fn stderr_template(&self) -> String {
-        regex::Regex::new(r"\d+")
+        // `\b\d+\b` only matches standalone integer literals — digits embedded
+        // in hex strings like `0xdAC17F958...` keep their literal characters
+        // so the assertion can compare the address bytes exactly.
+        regex::Regex::new(r"\b\d+\b")
             .unwrap()
             .replace_all(self.stderr.trim(), "<N>")
             .into_owned()
@@ -53,6 +60,9 @@ fn envio_data(args: &[&str]) -> Output {
 
 #[test]
 fn height_returns_a_number() {
+    if skip_without_token() {
+        return;
+    }
     let out = envio_data(&["knownHeight", "--chain=base"]);
     assert!(out.ok, "envio data failed:\n{out}");
 
@@ -68,7 +78,7 @@ fn height_returns_a_number() {
 
     assert_eq!(
         out.stderr_template(),
-        "Chain <N> is at height <N>.",
+        "Chain base is at height <N>.",
         "unexpected stderr:\n{out}",
     );
 }
@@ -77,6 +87,9 @@ fn height_returns_a_number() {
 /// Queries USDT Transfer events (11 in this block).
 #[test]
 fn query_returns_deterministic_block_and_log_data() {
+    if skip_without_token() {
+        return;
+    }
     let out = envio_data(&[
         "block.number",
         "block.gasUsed",
@@ -111,21 +124,27 @@ logs[11]{srcAddress,logIndex}:
     assert_eq!(out.stderr_template(), "", "unexpected stderr:\n{out}");
 }
 
+/// Deterministic large range that hypersync cannot return in one batch.
+/// Verifies the executor prints the "next page" hint and echoes back the
+/// original chain input plus the unchanged upper bound.
 #[test]
-fn no_where_pages_forward_from_genesis() {
-    let out = envio_data(&["block.number", "--chain=base"]);
+fn paginates_when_range_exceeds_one_batch() {
+    if skip_without_token() {
+        return;
+    }
+    let out = envio_data(&[
+        "block.number",
+        "log.srcAddress",
+        "--chain=1",
+        "--where={ block: { number: { _gte: 18000000, _lte: 19000000 } }, log: { srcAddress: \"0xdAC17F958D2ee523a2206206994597C13D831ec7\" } }",
+    ]);
     assert!(out.ok, "envio data failed:\n{out}");
-
-    assert_eq!(
-        out.stdout, "blocks[0]{number}:\n",
-        "unexpected stdout:\n{out}",
-    );
 
     let expected = [
         "Got a response up to block <N>. To get the next page, run the following command:",
-        "  envio data block.number \\",
-        "    --chain=base \\",
-        "    --where='{ block: { number: { _gte: <N> } } }'",
+        "  envio data block.number log.srcAddress \\",
+        "    --chain=<N> \\",
+        "    --where='{ block: { number: { _gte: <N>, _lte: <N> } }, log: { srcAddress: \"0xdAC17F958D2ee523a2206206994597C13D831ec7\" } }'",
     ]
     .join("\n");
     assert_eq!(out.stderr_template(), expected, "unexpected stderr:\n{out}");

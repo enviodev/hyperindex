@@ -38,7 +38,7 @@ pub fn resolve(input: &str) -> Result<Chain> {
 
     Ok(Chain {
         base_url: format!("https://{chain_id}.hypersync.xyz"),
-        display: chain_id.to_string(),
+        display: normalized,
     })
 }
 
@@ -51,7 +51,7 @@ mod tests {
         let c = resolve("base").unwrap();
         assert_eq!(
             (c.base_url.as_str(), c.display.as_str()),
-            ("https://8453.hypersync.xyz", "8453")
+            ("https://8453.hypersync.xyz", "base")
         );
     }
 
@@ -62,6 +62,12 @@ mod tests {
             (c.base_url.as_str(), c.display.as_str()),
             ("https://42161.hypersync.xyz", "42161")
         );
+    }
+
+    #[test]
+    fn display_normalizes_user_input() {
+        let c = resolve("  BASE ").unwrap();
+        assert_eq!(c.display, "base");
     }
 
     #[test]
