@@ -12,7 +12,7 @@ metadata:
 Query blocks, logs, and transactions on EVM chains. Uses the same `where`
 syntax as indexer filters. **Do NOT web-search for block ranges.**
 
-```
+```bash
 envio data <field>... --chain=<id|name> [--where='<json5>']
 ```
 
