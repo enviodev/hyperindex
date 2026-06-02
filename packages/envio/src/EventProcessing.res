@@ -400,12 +400,7 @@ let processEventBatch = async (
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    inMemoryStore->InMemoryStore.commitBatch(
-      ~persistence=ctx.persistence,
-      ~batch,
-      ~config=ctx.config,
-      ~isInReorgThreshold,
-    )
+    inMemoryStore->InMemoryStore.commitBatch(~batch, ~isInReorgThreshold)
 
     let loaderDuration = elapsedTimeAfterLoaders
     let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration

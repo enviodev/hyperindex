@@ -7,22 +7,8 @@ type rollbackState =
   | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
 module WriteThrottlers = {
-  type t = {
-    chainMetaData: Throttler.t,
-    pruneStaleEntityHistory: Throttler.t,
-  }
+  type t = {pruneStaleEntityHistory: Throttler.t}
   let make = (): t => {
-    let chainMetaData = {
-      let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
-      let logger = Logging.createChild(
-        ~params={
-          "context": "Throttler for chain metadata writes",
-          "intervalMillis": intervalMillis,
-        },
-      )
-      Throttler.make(~intervalMillis, ~logger)
-    }
-
     let pruneStaleEntityHistory = {
       let intervalMillis = Env.ThrottleWrites.pruneStaleDataIntervalMillis
       let logger = Logging.createChild(
@@ -33,7 +19,7 @@ module WriteThrottlers = {
       )
       Throttler.make(~intervalMillis, ~logger)
     }
-    {chainMetaData, pruneStaleEntityHistory}
+    {pruneStaleEntityHistory: pruneStaleEntityHistory}
   }
 }
 
@@ -145,12 +131,7 @@ type task =
   | Rollback
   | PruneStaleEntityHistory
 
-let updateChainMetadataTable = (
-  cm: ChainManager.t,
-  ~persistence: Persistence.t,
-  ~throttler: Throttler.t,
-  ~inMemoryStore: InMemoryStore.t,
-) => {
+let updateChainMetadataTable = (cm: ChainManager.t, ~inMemoryStore: InMemoryStore.t) => {
   let chainsData: dict<InternalTable.Chains.metaFields> = Dict.make()
 
   cm.chainFetchers
@@ -167,14 +148,8 @@ let updateChainMetadataTable = (
     )
   })
 
-  // Don't await this set, it can happen in its own time. Route it through the
-  // store's serializer so it never overlaps a background batch write on the
-  // chains table.
-  throttler->Throttler.schedule(() =>
-    inMemoryStore->InMemoryStore.serializeDbWrite(() =>
-      persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
-    )
-  )
+  // Stage it; the persistence cycle folds the stale diff into the next batch write.
+  inMemoryStore->InMemoryStore.setChainMeta(chainsData)
 }
 
 /**
@@ -716,12 +691,18 @@ let actionReducer = (state: t, action: action) => {
           NoExit
         }
 
-    (
-      state,
+    // Once we've decided to exit, stop the processing loop. Persistence now
+    // happens off the processing path, so the exit flush is async - continuing
+    // to dispatch ProcessEventBatch would process further batches while it runs.
+    let tasks = switch shouldExit {
+    | ExitWithSuccess
+    | ExitWithError(_) => [UpdateChainMetaDataAndCheckForExit(shouldExit)]
+    | NoExit =>
       [UpdateChainMetaDataAndCheckForExit(shouldExit), ProcessEventBatch]->Array.concat(
         maybePruneEntityHistory,
-      ),
-    )
+      )
+    }
+    (state, tasks)
 
   | StartProcessingBatch => ({...state, currentlyProcessingBatch: true}, [])
   | StartFindingReorgDepth => ({...state, rollbackState: FindingReorgDepth}, [])
@@ -907,26 +888,15 @@ let injectedTaskReducer = (
       state.writeThrottlers.pruneStaleEntityHistory->Throttler.schedule(runPrune)
 
     | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
-      let {chainManager, writeThrottlers} = state
+      let {chainManager} = state
       switch shouldExit {
       | ExitWithSuccess =>
-        updateChainMetadataTable(
-          chainManager,
-          ~throttler=writeThrottlers.chainMetaData,
-          ~persistence=state.ctx.persistence,
-          ~inMemoryStore=state.ctx.inMemoryStore,
-        )
+        updateChainMetadataTable(chainManager, ~inMemoryStore=state.ctx.inMemoryStore)
         await state.ctx.inMemoryStore->InMemoryStore.flush
         dispatchAction(SuccessExit)
       | ExitWithError(msg) =>
         dispatchAction(ErrorExit(ErrorHandling.make(JsError.throwWithMessage(msg))))
-      | NoExit =>
-        updateChainMetadataTable(
-          chainManager,
-          ~throttler=writeThrottlers.chainMetaData,
-          ~persistence=state.ctx.persistence,
-          ~inMemoryStore=state.ctx.inMemoryStore,
-        )->ignore
+      | NoExit => updateChainMetadataTable(chainManager, ~inMemoryStore=state.ctx.inMemoryStore)
       }
     | NextQuery(chainCheck) =>
       let fetchForChain = checkAndFetchForChain(
@@ -990,12 +960,7 @@ let injectedTaskReducer = (
           if EventProcessing.allChainsEventsProcessedToEndblock(state.chainManager.chainFetchers) {
             Logging.info("All chains are caught up to end blocks.")
             if !state.keepProcessAlive {
-              updateChainMetadataTable(
-                state.chainManager,
-                ~persistence=state.ctx.persistence,
-                ~throttler=state.writeThrottlers.chainMetaData,
-                ~inMemoryStore=state.ctx.inMemoryStore,
-              )
+              updateChainMetadataTable(state.chainManager, ~inMemoryStore=state.ctx.inMemoryStore)
               await state.ctx.inMemoryStore->InMemoryStore.flush
               dispatchAction(SuccessExit)
             }

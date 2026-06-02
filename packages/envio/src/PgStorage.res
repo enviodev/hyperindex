@@ -725,6 +725,7 @@ let rec writeBatch = async (
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
   ~sinkPromise: option<promise<option<exn>>>,
+  ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
   ~escapeTables=?,
 ) => {
   try {
@@ -975,6 +976,16 @@ let rec writeBatch = async (
             setRawEvents,
           ]->Belt.Array.concat(setEntities)
 
+          switch chainMetaData {
+          | Some(chainsData) =>
+            setOperations
+            ->Array.push(sql =>
+              sql->InternalTable.Chains.setMeta(~pgSchema, ~chainsData)->Utils.Promise.ignoreValue
+            )
+            ->ignore
+          | None => ()
+          }
+
           if shouldSaveHistory {
             setOperations->Belt.Array.push(sql =>
               sql->InternalTable.Checkpoints.insert(
@@ -1047,6 +1058,7 @@ let rec writeBatch = async (
       ~allEntities,
       ~updatedEntities,
       ~sinkPromise,
+      ~chainMetaData,
     )
   }
 }
@@ -1638,6 +1650,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~allEntities,
     ~updatedEffectsCache,
     ~updatedEntities,
+    ~chainMetaData,
   ) => {
     let pgUpdates = []
     let chUpdates = []
@@ -1686,6 +1699,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~updatedEffectsCache,
       ~updatedEntities=pgUpdates,
       ~sinkPromise,
+      ~chainMetaData,
     )
     Prometheus.StorageWrite.increment(
       ~storage="postgres",

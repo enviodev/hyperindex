@@ -693,6 +693,8 @@ let start = async (
     inMemoryStore: InMemoryStore.make(
       ~entities=persistence.allEntities,
       ~committedCheckpointId=(persistence->Persistence.getInitializedState).checkpointId,
+      ~persistence,
+      ~config,
     ),
   }
 

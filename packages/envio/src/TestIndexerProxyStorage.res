@@ -138,6 +138,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
     ~allEntities as _,
     ~updatedEffectsCache as _,
     ~updatedEntities,
+    ~chainMetaData as _,
   ) => {
     // Encode entities to JSON for serialization across worker boundary
     let serializableEntities = updatedEntities->Array.map((

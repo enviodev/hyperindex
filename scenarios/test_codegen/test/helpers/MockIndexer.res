@@ -204,6 +204,7 @@ module Storage = {
           ~allEntities as _,
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
+          ~chainMetaData as _,
         ) => JsError.throwWithMessage("Not implemented"),
         close: () => Promise.resolve(),
       },
@@ -334,7 +335,7 @@ module Indexer = {
       Ctx.registrations,
       config,
       persistence,
-      inMemoryStore: InMemoryStore.make(),
+      inMemoryStore: RealInMemoryStore.make(~entities=config.allEntities, ~persistence, ~config),
     }
 
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
