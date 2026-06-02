@@ -7,8 +7,22 @@ type rollbackState =
   | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
 module WriteThrottlers = {
-  type t = {pruneStaleEntityHistory: Throttler.t}
+  type t = {
+    chainMetaData: Throttler.t,
+    pruneStaleEntityHistory: Throttler.t,
+  }
   let make = (): t => {
+    let chainMetaData = {
+      let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
+      let logger = Logging.createChild(
+        ~params={
+          "context": "Throttler for chain metadata writes",
+          "intervalMillis": intervalMillis,
+        },
+      )
+      Throttler.make(~intervalMillis, ~logger)
+    }
+
     let pruneStaleEntityHistory = {
       let intervalMillis = Env.ThrottleWrites.pruneStaleDataIntervalMillis
       let logger = Logging.createChild(
@@ -19,7 +33,7 @@ module WriteThrottlers = {
       )
       Throttler.make(~intervalMillis, ~logger)
     }
-    {pruneStaleEntityHistory: pruneStaleEntityHistory}
+    {chainMetaData, pruneStaleEntityHistory}
   }
 }
 
@@ -134,6 +148,7 @@ type task =
 let updateChainMetadataTable = (
   cm: ChainManager.t,
   ~persistence: Persistence.t,
+  ~throttler: Throttler.t,
   ~inMemoryStore: InMemoryStore.t,
 ) => {
   let chainsData: dict<InternalTable.Chains.metaFields> = Dict.make()
@@ -152,7 +167,14 @@ let updateChainMetadataTable = (
     )
   })
 
-  inMemoryStore->InMemoryStore.setChainMeta(~persistence, chainsData)
+  // Don't await this set, it can happen in its own time. Route it through the
+  // store's serializer so it never overlaps a background batch write on the
+  // chains table.
+  throttler->Throttler.schedule(() =>
+    inMemoryStore->InMemoryStore.serializeDbWrite(() =>
+      persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+    )
+  )
 }
 
 /**
@@ -885,11 +907,12 @@ let injectedTaskReducer = (
       state.writeThrottlers.pruneStaleEntityHistory->Throttler.schedule(runPrune)
 
     | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
-      let {chainManager} = state
+      let {chainManager, writeThrottlers} = state
       switch shouldExit {
       | ExitWithSuccess =>
         updateChainMetadataTable(
           chainManager,
+          ~throttler=writeThrottlers.chainMetaData,
           ~persistence=state.ctx.persistence,
           ~inMemoryStore=state.ctx.inMemoryStore,
         )
@@ -900,6 +923,7 @@ let injectedTaskReducer = (
       | NoExit =>
         updateChainMetadataTable(
           chainManager,
+          ~throttler=writeThrottlers.chainMetaData,
           ~persistence=state.ctx.persistence,
           ~inMemoryStore=state.ctx.inMemoryStore,
         )->ignore
@@ -969,6 +993,7 @@ let injectedTaskReducer = (
               updateChainMetadataTable(
                 state.chainManager,
                 ~persistence=state.ctx.persistence,
+                ~throttler=state.writeThrottlers.chainMetaData,
                 ~inMemoryStore=state.ctx.inMemoryStore,
               )
               await state.ctx.inMemoryStore->InMemoryStore.flush
@@ -1164,7 +1189,7 @@ let injectedTaskReducer = (
 
         // Let the background persistence cycle finish so committedCheckpointId
         // reflects the db before we compute the rollback diff against it.
-        await state.ctx.inMemoryStore->InMemoryStore.drainForRollback
+        await state.ctx.inMemoryStore->InMemoryStore.flush
 
         let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(
           ~persistence=state.ctx.persistence,
