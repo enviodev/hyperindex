@@ -16,10 +16,12 @@ syntax as indexer filters. **Do NOT web-search for block ranges.**
 envio data <field>... --chain=<id|name> [--where='<json5>']
 ```
 
-- **Fields**: `block.number`, `log.srcAddress`, `transaction.hash`, `knownHeight`, etc.
+- **Fields**: any block/log/transaction field is supported — `block.number`,
+  `log.srcAddress`, `transaction.hash`, `knownHeight`, etc.
   Case-insensitive — `gasLimit`, `gas_limit`, `GASLIMIT` all work.
 - **--chain**: numeric id (`8453`) or name (`base`, `arbitrum-one`).
-- **--where**: JSON5 with the indexer `where` operator syntax.
+- **--where**: JSON5 with the indexer `where` syntax. Filter on any field with
+  `_eq`, `_in`, `_gte`, `_lte`, `_gt`, `_lt`.
 
 ## Examples
 
@@ -39,13 +41,3 @@ Get the current chain height:
 ```bash
 envio data knownHeight --chain=arbitrum-one
 ```
-
-## Filter operators
-
-| Form | Meaning |
-|---|---|
-| `srcAddress: "0xabc"` | equals |
-| `srcAddress: ["0xa", "0xb"]` | in set |
-| `block.number._gte: 1000` | inclusive lower bound |
-| `block.number._lte: 2000` | inclusive upper bound |
-| `block.number._gt` / `_lt` | exclusive variants |
