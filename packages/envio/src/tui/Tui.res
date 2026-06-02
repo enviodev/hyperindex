@@ -92,7 +92,7 @@ module EventsPerSecond = {
     }
   }
 
-  let use = (~totalEventsProcessed: float) => {
+  let use = (~totalEventsProcessed: float, ~tick: int) => {
     let (samples, setSamples) = React.useState((): array<sample> => [])
 
     React.useEffect1(() => {
@@ -103,7 +103,7 @@ module EventsPerSecond = {
         kept->Array.concat([{time: now, events: totalEventsProcessed}])
       })
       None
-    }, [totalEventsProcessed])
+    }, [tick])
 
     computeEps(samples)
   }
@@ -135,7 +135,7 @@ module App = {
     // GlobalState is mutated in place — passing the same ref to useState
     // would bail out via Object.is and skip the re-render. Tick a counter
     // instead and read state freshly from getState() on every render.
-    let (_, setTick) = React.useState(() => 0)
+    let (tick, setTick) = React.useState(() => 0)
     let state: GlobalState.t = getState()
 
     React.useEffect(() => {
@@ -231,7 +231,7 @@ module App = {
         acc
       }
     })
-    let eventsPerSecond = EventsPerSecond.use(~totalEventsProcessed)
+    let eventsPerSecond = EventsPerSecond.use(~totalEventsProcessed, ~tick)
 
     <Box flexDirection={Column}>
       <BigText
