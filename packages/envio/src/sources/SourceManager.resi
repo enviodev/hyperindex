@@ -65,3 +65,7 @@ let getRateLimitTimeMs: t => float
 
 // True if at least one request is currently waiting on a rate-limit reset.
 let isRateLimited: t => bool
+
+// Milliseconds remaining until the longest active rate-limit window resets,
+// or None if not currently waiting (or the window has already elapsed).
+let getRateLimitResetInMs: t => option<float>

@@ -32,6 +32,7 @@ type chain = {
   knownHeight: int,
   rateLimitTimeMs: float,
   isRateLimited: bool,
+  rateLimitResetInMs: option<float>,
 }
 
 let minOfOption: (int, option<int>) => int = (a: int, b: option<int>) => {

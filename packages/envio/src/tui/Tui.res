@@ -215,6 +215,7 @@ module App = {
             ).poweredByHyperSync,
             rateLimitTimeMs: cf.sourceManager->SourceManager.getRateLimitTimeMs,
             isRateLimited: cf.sourceManager->SourceManager.isRateLimited,
+            rateLimitResetInMs: cf.sourceManager->SourceManager.getRateLimitResetInMs,
           }: TuiData.chain
         )
       })
@@ -265,11 +266,19 @@ module App = {
       {
         let maxRateLimitTimeMs =
           chains->Array.reduce(0., (acc, chain) => Pervasives.max(acc, chain.rateLimitTimeMs))
-        let anyCurrentlyRateLimited = chains->Array.some(c => c.isRateLimited)
+        let maxResetInMs =
+          chains->Array.reduce(0.0, (acc, chain) =>
+            Pervasives.max(acc, chain.rateLimitResetInMs->Option.getOr(0.0))
+          )
         maxRateLimitTimeMs > 1000.
           ? {
               let rateLimitSecs = Math.round(maxRateLimitTimeMs /. 1000.)
-              let activeSuffix = anyCurrentlyRateLimited ? " (currently waiting ⏳)" : ""
+              let activeSuffix = if maxResetInMs > 0.0 {
+                let resetSecs = Pervasives.max(1.0, Math.ceil(maxResetInMs /. 1000.))
+                ` (waiting ${resetSecs->TuiData.formatFloatLocaleString}s until reset ⏳)`
+              } else {
+                ""
+              }
               <Box flexDirection={Column}>
                 <Newline />
                 <Text color={Danger}>

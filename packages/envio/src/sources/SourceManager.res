@@ -38,6 +38,10 @@ type t = {
   // started, or None if not currently waiting. Wall-clock so consumers
   // (TUI) can compute elapsed time with their own Date.now() reads.
   mutable activeRateLimitStartMs: option<float>,
+  // Wall-clock timestamp by which the server expects the longest current
+  // wait to clear. Tracks the latest reset across concurrent waiters so
+  // the displayed countdown reflects when the indexer will actually retry.
+  mutable activeRateLimitResetAtMs: option<float>,
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
@@ -51,9 +55,23 @@ let getRateLimitTimeMs = sourceManager =>
 
 let isRateLimited = sourceManager => sourceManager.activeRateLimitStartMs->Option.isSome
 
-let startRateLimitTimeout = sourceManager => {
+let getRateLimitResetInMs = sourceManager =>
+  switch sourceManager.activeRateLimitResetAtMs {
+  | Some(resetAt) =>
+    let remaining = resetAt -. Date.now()
+    remaining > 0.0 ? Some(remaining) : None
+  | None => None
+  }
+
+let startRateLimitTimeout = (sourceManager, ~resetMs) => {
+  let now = Date.now()
   if sourceManager.rateLimitWaiters === 0 {
-    sourceManager.activeRateLimitStartMs = Some(Date.now())
+    sourceManager.activeRateLimitStartMs = Some(now)
+  }
+  let resetAt = now +. resetMs->Int.toFloat
+  sourceManager.activeRateLimitResetAtMs = switch sourceManager.activeRateLimitResetAtMs {
+  | Some(existing) => Some(Pervasives.max(existing, resetAt))
+  | None => Some(resetAt)
   }
   sourceManager.rateLimitWaiters = sourceManager.rateLimitWaiters + 1
 }
@@ -68,6 +86,7 @@ let stopRateLimitTimeout = sourceManager => {
       sourceManager.activeRateLimitStartMs = None
     | None => ()
     }
+    sourceManager.activeRateLimitResetAtMs = None
   }
 }
 
@@ -85,7 +104,7 @@ let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) 
     "retry": retry,
     "waitMs": waitMs,
   })
-  sourceManager->startRateLimitTimeout
+  sourceManager->startRateLimitTimeout(~resetMs=waitMs)
   await Utils.delay(waitMs)
   sourceManager->stopRateLimitTimeout
 }
@@ -186,6 +205,7 @@ let make = (
     committedRateLimitTimeMs: 0.0,
     rateLimitWaiters: 0,
     activeRateLimitStartMs: None,
+    activeRateLimitResetAtMs: None,
   }
 }
 
