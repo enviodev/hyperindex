@@ -2937,6 +2937,65 @@ describe("SourceManager height subscription", () => {
     },
   )
 
+  Async.it(
+    "REPRO #1270: stale SSE heights leak concurrent polling fallbacks (req rate >> pollingInterval)",
+    async t => {
+      let stallTimeout = 200
+      let pollingInterval = 100
+      let mock = MockIndexer.Source.make(
+        [#getHeightOrThrow, #createHeightSubscription],
+        ~pollingInterval,
+      )
+      let sourceManager = SourceManager.make(
+        ~isRealtime=true,
+        ~sources=[mock.source],
+        ~maxPartitionConcurrency=10,
+        ~newBlockStallTimeoutRealtime=stallTimeout,
+      )
+
+      // Call 1: create the subscription and advance the source to height 101 so the
+      // next call starts caught-up (initialHeight == knownHeight == 101).
+      let p1 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
+      mock.resolveGetHeightOrThrow(100)
+      await Utils.delay(0)
+      mock.triggerHeightSubscription(101)
+      t.expect(await p1).toEqual(101)
+
+      let pollsBefore = mock.getHeightOrThrowCalls->Array.length
+
+      // Call 2: caught up at the head. The SSE stream now delivers a burst of STALE
+      // heights (== knownHeight) — exactly what a flapping/reconnecting height stream
+      // re-emits on each reconnect. onHeight does not filter non-increasing heights.
+      let p2 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=101, ~reducedPolling=false)
+      await Utils.delay(0)
+
+      let staleEvents = 20
+      for _i in 1 to staleEvents {
+        mock.triggerHeightSubscription(101)
+        await Utils.delay(0)
+      }
+
+      // Let every leaked pollingFallback pass stallTimeout/2 and start polling.
+      await Utils.delay(stallTimeout / 2 + 40)
+
+      let pollsAfterBurst = mock.getHeightOrThrowCalls->Array.length - pollsBefore
+
+      // Documents #1270: each stale (non-increasing) SSE height leaks another
+      // uncancelled pollingFallback, so N stale events spawn ~N concurrent /height
+      // poll loops instead of one bounded loop. A bounded fallback keeps this at ~1.
+      // Flip this assertion to an upper bound once the leak is fixed.
+      t.expect(
+        pollsAfterBurst,
+        ~message="stale SSE heights should not multiply concurrent /height polls",
+      ).toBeGreaterThanOrEqual(staleEvents)
+
+      // Cleanup: release everything so the test ends without dangling timers.
+      mock.resolveGetHeightOrThrow(999)
+      mock.triggerHeightSubscription(999)
+      let _ = await p2
+    },
+  )
+
   Async.it("Ignores subscription heights lower than or equal to knownHeight", async t => {
     let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
