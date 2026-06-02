@@ -46,6 +46,34 @@ impl TypedField {
         to_camel(&self.column_name())
     }
 
+    pub fn section(self) -> Section {
+        match self {
+            TypedField::Block(_) => Section::Block,
+            TypedField::Transaction(_) => Section::Transaction,
+            TypedField::Log(_) => Section::Log,
+        }
+    }
+
+    /// Fields Hypersync can filter server-side via set-membership.
+    pub fn server_filterable(self) -> bool {
+        matches!(
+            self,
+            TypedField::Log(
+                LogField::Address
+                    | LogField::Topic0
+                    | LogField::Topic1
+                    | LogField::Topic2
+                    | LogField::Topic3,
+            ) | TypedField::Transaction(
+                TransactionField::From
+                    | TransactionField::To
+                    | TransactionField::Sighash
+                    | TransactionField::Hash
+                    | TransactionField::ContractAddress,
+            )
+        )
+    }
+
     pub fn column_format(self) -> ColumnFormat {
         match self {
             TypedField::Block(f) => match f {

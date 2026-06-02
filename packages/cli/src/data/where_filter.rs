@@ -3,12 +3,45 @@ use serde_json::Value;
 
 use hypersync_client::net_types::{FieldSelection, LogFilter, Query, TransactionFilter};
 
-use super::mapping::{self, Section, TypedField};
+use super::mapping::{self, ColumnFormat, Section, TypedField};
 
 #[derive(Debug, Clone)]
 pub struct FieldFilter {
     pub field: TypedField,
     pub values: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmpOp {
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+}
+
+impl CmpOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CmpOp::Gt => "_gt",
+            CmpOp::Gte => "_gte",
+            CmpOp::Lt => "_lt",
+            CmpOp::Lte => "_lte",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Cond {
+    In(Vec<Value>),
+    Cmp(CmpOp, Value),
+}
+
+/// A filter evaluated client-side because the field or operator can't be pushed
+/// to the Hypersync query. All conditions are AND'd together.
+#[derive(Debug, Clone)]
+pub struct ClientFilter {
+    pub field: TypedField,
+    pub conds: Vec<Cond>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -17,6 +50,7 @@ pub struct WhereFilter {
     pub to_block_exclusive: Option<u64>,
     pub log_filters: Vec<FieldFilter>,
     pub transaction_filters: Vec<FieldFilter>,
+    pub client_filters: Vec<ClientFilter>,
 }
 
 impl WhereFilter {
@@ -72,7 +106,15 @@ impl WhereFilter {
     }
 
     pub fn has_section_filters(&self) -> bool {
-        !self.log_filters.is_empty() || !self.transaction_filters.is_empty()
+        !self.log_filters.is_empty()
+            || !self.transaction_filters.is_empty()
+            || !self.client_filters.is_empty()
+    }
+
+    /// Fields referenced by client-side filters. These must be fetched even when
+    /// not part of the user's output selection so the predicate can be evaluated.
+    pub fn client_filter_fields(&self) -> Vec<TypedField> {
+        self.client_filters.iter().map(|f| f.field).collect()
     }
 
     pub fn build_net_query(&self, field_selection: FieldSelection) -> Result<Query> {
@@ -115,10 +157,7 @@ fn apply_log_filter(filter: LogFilter, f: &FieldFilter) -> Result<LogFilter> {
         LogField::Topic1 => (filter.and_topic1(refs), "invalid topic1"),
         LogField::Topic2 => (filter.and_topic2(refs), "invalid topic2"),
         LogField::Topic3 => (filter.and_topic3(refs), "invalid topic3"),
-        _ => bail!(
-            "Filtering on `log.{}` is not supported in --where.",
-            f.field.camel_name()
-        ),
+        _ => unreachable!("log_filters only holds server-filterable fields"),
     };
     filter.context(ctx)
 }
@@ -134,10 +173,12 @@ fn apply_tx_filter(filter: TransactionFilter, f: &FieldFilter) -> Result<Transac
         TransactionField::From => (filter.and_from(refs), "invalid from address"),
         TransactionField::To => (filter.and_to(refs), "invalid to address"),
         TransactionField::Sighash => (filter.and_sighash(refs), "invalid sighash"),
-        _ => bail!(
-            "Filtering on `transaction.{}` is not supported in --where.",
-            f.field.camel_name()
+        TransactionField::Hash => (filter.and_hash(refs), "invalid transaction hash"),
+        TransactionField::ContractAddress => (
+            filter.and_contract_address(refs),
+            "invalid contract address",
         ),
+        _ => unreachable!("transaction_filters only holds server-filterable fields"),
     };
     filter.context(ctx)
 }
@@ -182,20 +223,82 @@ fn apply_field(
         return apply_block_range(out, indexer_name, body);
     }
 
-    let dest = match section {
-        Section::Log => &mut out.log_filters,
-        Section::Transaction => &mut out.transaction_filters,
-        Section::Block => bail!(
-            "Filtering on `block.{indexer_name}` is not supported. Only `block.number` (with _gte/_lt/_lte/_gt) is a block filter.",
-        ),
-    };
+    let conds = parse_conditions(section, indexer_name, typed_field, body)?;
+    let has_cmp = conds.iter().any(|c| matches!(c, Cond::Cmp(..)));
 
-    let values = normalize_to_list(section, indexer_name, body)?;
-    dest.push(FieldFilter {
-        field: typed_field,
-        values,
-    });
+    if typed_field.server_filterable() && !has_cmp {
+        let values = conds
+            .into_iter()
+            .flat_map(|c| match c {
+                Cond::In(v) => v,
+                Cond::Cmp(..) => Vec::new(),
+            })
+            .collect();
+        let dest = match section {
+            Section::Log => &mut out.log_filters,
+            Section::Transaction => &mut out.transaction_filters,
+            Section::Block => unreachable!("no block field is server-filterable"),
+        };
+        dest.push(FieldFilter {
+            field: typed_field,
+            values,
+        });
+    } else {
+        out.client_filters.push(ClientFilter {
+            field: typed_field,
+            conds,
+        });
+    }
     Ok(())
+}
+
+fn parse_conditions(
+    section: Section,
+    name: &str,
+    field: TypedField,
+    body: Value,
+) -> Result<Vec<Cond>> {
+    let label = || format!("{}.{name}", section.as_indexer_str());
+    match body {
+        Value::String(_) | Value::Number(_) | Value::Bool(_) => Ok(vec![Cond::In(vec![body])]),
+        Value::Array(arr) => Ok(vec![Cond::In(arr)]),
+        Value::Object(map) => {
+            let mut conds = Vec::new();
+            for (k, v) in map {
+                let cond = match k.as_str() {
+                    "_eq" => Cond::In(vec![v]),
+                    "_in" => {
+                        let arr = v.as_array().ok_or_else(|| {
+                            anyhow!("`_in` on `{}` expects an array, got {}", label(), type_name(&v))
+                        })?;
+                        Cond::In(arr.clone())
+                    }
+                    "_gt" | "_gte" | "_lt" | "_lte" => {
+                        if field.column_format() == ColumnFormat::Hex {
+                            bail!(
+                                "Comparison operators are not supported on hex field `{}`. Use `_eq` or `_in`.",
+                                label(),
+                            );
+                        }
+                        let op = match k.as_str() {
+                            "_gt" => CmpOp::Gt,
+                            "_gte" => CmpOp::Gte,
+                            "_lt" => CmpOp::Lt,
+                            _ => CmpOp::Lte,
+                        };
+                        Cond::Cmp(op, v)
+                    }
+                    other => bail!(
+                        "Unsupported operator `{other}` on `{}`. Use a scalar, an array, `_eq`, `_in`, `_gt`, `_gte`, `_lt`, or `_lte`.",
+                        label(),
+                    ),
+                };
+                conds.push(cond);
+            }
+            Ok(conds)
+        }
+        Value::Null => bail!("`{}` cannot be null", label()),
+    }
 }
 
 fn apply_block_range(out: &mut WhereFilter, field_name: &str, body: Value) -> Result<()> {
@@ -241,34 +344,6 @@ fn value_to_u64(v: &Value) -> Result<u64> {
             .ok_or_else(|| anyhow!("Expected non-negative integer, got {n}")),
         Value::String(s) => s.parse::<u64>().context("Failed to parse integer"),
         _ => Err(anyhow!("Expected integer, got {}", type_name(v))),
-    }
-}
-
-fn normalize_to_list(section: Section, name: &str, body: Value) -> Result<Vec<Value>> {
-    let label = || format!("{}.{name}", section.as_indexer_str());
-    match body {
-        Value::String(_) | Value::Number(_) | Value::Bool(_) => Ok(vec![body]),
-        Value::Array(arr) => Ok(arr),
-        Value::Object(map) => {
-            let mut values = Vec::new();
-            for (k, v) in &map {
-                match k.as_str() {
-                    "_eq" => values.push(v.clone()),
-                    "_in" => {
-                        let arr = v.as_array().ok_or_else(|| {
-                            anyhow!("`_in` on `{}` expects an array, got {}", label(), type_name(v))
-                        })?;
-                        values.extend(arr.iter().cloned());
-                    }
-                    other => bail!(
-                        "Unsupported operator `{other}` on `{}`. Use a scalar, an array, `_eq`, or `_in`.",
-                        label(),
-                    ),
-                }
-            }
-            Ok(values)
-        }
-        Value::Null => bail!("`{}` cannot be null", label()),
     }
 }
 
@@ -345,6 +420,25 @@ mod tests {
     fn transaction_filters() {
         let f = pf("{ transaction: { from: '0xa0b8', sighash: '0xdead' } }");
         assert_eq!(f.transaction_filters.len(), 2);
+    }
+
+    #[test]
+    fn hash_and_contract_address_are_server_side() {
+        let f = pf("{ transaction: { hash: '0xa0b8', contractAddress: '0xdead' } }");
+        assert_eq!(
+            (f.transaction_filters.len(), f.client_filters.len()),
+            (2, 0),
+        );
+    }
+
+    #[test]
+    fn numeric_field_with_membership_is_client_side() {
+        // `transaction.gas` has no Hypersync builder → client-side even for `_in`.
+        let f = pf("{ transaction: { gas: [21000, 50000] } }");
+        assert_eq!(
+            (f.transaction_filters.len(), f.client_filters.len()),
+            (0, 1),
+        );
     }
 
     #[test]

@@ -5,9 +5,11 @@ use std::time::Duration;
 use crate::cli_args::clap_definitions::DataArgs;
 use crate::data::{
     chain::{self, Chain},
+    client_filter,
     field_selection::Selection,
+    mapping::Section,
     toon,
-    where_filter::WhereFilter,
+    where_filter::{ClientFilter, Cond, FieldFilter, WhereFilter},
 };
 
 enum PaginationState {
@@ -44,13 +46,15 @@ pub async fn run(args: DataArgs) -> Result<()> {
         bail!("No data fields requested. Pass at least one positional field.");
     }
 
-    let query = filter.build_net_query(selection.build_net_field_selection())?;
+    let field_selection = selection.build_net_field_selection_with(&filter.client_filter_fields());
+    let query = filter.build_net_query(field_selection)?;
     let response = client
         .get_arrow(&query)
         .await
         .context("Failed querying blockchain data")?;
 
-    let mut out = toon::render_arrow_response(&selection, &response);
+    let masks = client_filter::compute_masks(&response, &filter.client_filters)?;
+    let mut out = toon::render_arrow_response(&selection, &response, &masks);
 
     let archive_height = response.archive_height.unwrap_or(0);
 
@@ -119,7 +123,9 @@ fn build_client(chain: &Chain, token: &str) -> Result<hypersync_client::Client> 
 }
 
 fn render_where_hint(filter: &WhereFilter, next_block: u64) -> String {
-    let mut parts: Vec<String> = Vec::new();
+    let mut block: Vec<String> = Vec::new();
+    let mut transaction: Vec<String> = Vec::new();
+    let mut log: Vec<String> = Vec::new();
 
     let mut range = format!("number: {{ _gte: {next_block}");
     if let Some(end_excl) = filter.to_block_exclusive {
@@ -127,37 +133,60 @@ fn render_where_hint(filter: &WhereFilter, next_block: u64) -> String {
         range.push_str(&format!(", _lte: {lte}"));
     }
     range.push_str(" }");
-    parts.push(format!("block: {{ {range} }}"));
+    block.push(range);
 
-    if let Some(s) = section_part("log", &filter.log_filters) {
-        parts.push(s);
+    for f in &filter.log_filters {
+        log.push(render_server_field(f));
     }
-    if let Some(s) = section_part("transaction", &filter.transaction_filters) {
-        parts.push(s);
+    for f in &filter.transaction_filters {
+        transaction.push(render_server_field(f));
+    }
+    for c in &filter.client_filters {
+        let entry = render_client_field(c);
+        match c.field.section() {
+            Section::Block => block.push(entry),
+            Section::Transaction => transaction.push(entry),
+            Section::Log => log.push(entry),
+        }
     }
 
+    let parts: Vec<String> = [("block", block), ("transaction", transaction), ("log", log)]
+        .into_iter()
+        .filter(|(_, entries)| !entries.is_empty())
+        .map(|(name, entries)| format!("{name}: {{ {} }}", entries.join(", ")))
+        .collect();
     format!("{{ {} }}", parts.join(", "))
 }
 
-fn section_part(
-    section: &str,
-    filters: &[crate::data::where_filter::FieldFilter],
-) -> Option<String> {
-    if filters.is_empty() {
-        return None;
+fn render_server_field(f: &FieldFilter) -> String {
+    let v = if f.values.len() == 1 {
+        json_string(&f.values[0])
+    } else {
+        json_string(&Value::Array(f.values.clone()))
+    };
+    format!("{name}: {v}", name = f.field.camel_name())
+}
+
+fn render_client_field(c: &ClientFilter) -> String {
+    let name = c.field.camel_name();
+    if let [Cond::In(vals)] = c.conds.as_slice() {
+        let v = if vals.len() == 1 {
+            json_string(&vals[0])
+        } else {
+            json_string(&Value::Array(vals.clone()))
+        };
+        return format!("{name}: {v}");
     }
-    let body: Vec<String> = filters
+    let ops: Vec<String> = c
+        .conds
         .iter()
-        .map(|f| {
-            let v = if f.values.len() == 1 {
-                json_string(&f.values[0])
-            } else {
-                json_string(&Value::Array(f.values.clone()))
-            };
-            format!("{name}: {v}", name = f.field.camel_name())
+        .map(|cond| match cond {
+            Cond::In(vals) if vals.len() == 1 => format!("_eq: {}", json_string(&vals[0])),
+            Cond::In(vals) => format!("_in: {}", json_string(&Value::Array(vals.clone()))),
+            Cond::Cmp(op, v) => format!("{}: {}", op.as_str(), json_string(v)),
         })
         .collect();
-    Some(format!("{section}: {{ {} }}", body.join(", ")))
+    format!("{name}: {{ {} }}", ops.join(", "))
 }
 
 fn json_string(v: &Value) -> String {
@@ -185,4 +214,23 @@ fn missing_token_error() -> anyhow::Error {
          Set the ENVIO_API_TOKEN environment variable in your .env file.\n\
          Get a free API token at: https://envio.dev/app/api-tokens"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn hint_round_trips_server_and_client_filters() {
+        let filter = WhereFilter::parse(Some(
+            "{ block: { number: { _lte: 2000 } }, log: { srcAddress: '0xabc', data: '0xdead' }, transaction: { value: { _gt: 1000 } } }",
+        ))
+        .unwrap();
+        let hint = render_where_hint(&filter, 1500);
+        assert_eq!(
+            hint,
+            "{ block: { number: { _gte: 1500, _lte: 2000 } }, transaction: { value: { _gt: 1000 } }, log: { srcAddress: \"0xabc\", data: \"0xdead\" } }",
+        );
+    }
 }

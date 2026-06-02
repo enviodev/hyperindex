@@ -4,6 +4,7 @@ use arrow::array::{Array, AsArray, RecordBatch};
 use arrow::datatypes::DataType;
 use hypersync_client::ArrowResponse;
 
+use super::client_filter::Masks;
 use super::field_selection::{Column, Selection};
 use super::mapping::{ColumnFormat, Section};
 
@@ -43,7 +44,11 @@ fn escape_cell(s: &str) -> String {
     format!("\"{escaped}\"")
 }
 
-pub fn render_arrow_response(selection: &Selection, response: &ArrowResponse) -> String {
+pub fn render_arrow_response(
+    selection: &Selection,
+    response: &ArrowResponse,
+    masks: &Masks,
+) -> String {
     let mut section_order: Vec<Section> = Vec::new();
     for col in &selection.columns {
         if !section_order.contains(&col.section) {
@@ -59,16 +64,20 @@ pub fn render_arrow_response(selection: &Selection, response: &ArrowResponse) ->
             .filter(|c| c.section == *section)
             .collect();
         let col_names: Vec<String> = cols.iter().map(|c| c.field.camel_name()).collect();
-        let (plural, batches) = match section {
-            Section::Block => ("blocks", &response.data.blocks),
-            Section::Transaction => ("transactions", &response.data.transactions),
-            Section::Log => ("logs", &response.data.logs),
+        let (plural, batches, mask) = match section {
+            Section::Block => ("blocks", &response.data.blocks, masks.block.as_deref()),
+            Section::Transaction => (
+                "transactions",
+                &response.data.transactions,
+                masks.transaction.as_deref(),
+            ),
+            Section::Log => ("logs", &response.data.logs, masks.log.as_deref()),
         };
 
         let column_keys: Vec<String> = cols.iter().map(|c| c.field.column_name()).collect();
         let column_formats: Vec<ColumnFormat> =
             cols.iter().map(|c| c.field.column_format()).collect();
-        let rows = extract_rows(batches, &column_keys, &column_formats);
+        let rows = extract_rows(batches, &column_keys, &column_formats, mask);
         out.push_str(&render_table(plural, &col_names, &rows));
     }
     out
@@ -78,14 +87,20 @@ fn extract_rows(
     batches: &[RecordBatch],
     column_keys: &[String],
     column_formats: &[ColumnFormat],
+    mask: Option<&[bool]>,
 ) -> Vec<Vec<String>> {
     let mut rows = Vec::new();
+    let mut row_offset = 0;
     for batch in batches {
         let arrays: Vec<Option<&dyn Array>> = column_keys
             .iter()
             .map(|key| batch.column_by_name(key).map(|c| c.as_ref()))
             .collect();
         for row_idx in 0..batch.num_rows() {
+            let keep = mask.is_none_or(|m| m[row_offset + row_idx]);
+            if !keep {
+                continue;
+            }
             let row: Vec<String> = arrays
                 .iter()
                 .zip(column_formats.iter())
@@ -96,6 +111,7 @@ fn extract_rows(
                 .collect();
             rows.push(row);
         }
+        row_offset += batch.num_rows();
     }
     rows
 }
@@ -150,7 +166,7 @@ mod tests {
 
     #[test]
     fn empty_batches_render_zero_rows() {
-        let s = extract_rows(&[], &["number".to_string()], &[ColumnFormat::Decimal]);
+        let s = extract_rows(&[], &["number".to_string()], &[ColumnFormat::Decimal], None);
         assert!(s.is_empty());
     }
 }
