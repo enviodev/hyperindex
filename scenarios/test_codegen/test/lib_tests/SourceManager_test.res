@@ -2922,8 +2922,8 @@ describe("SourceManager height subscription", () => {
       // Second call - subscription exists but won't deliver
       let p2 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=101, ~reducedPolling=false)
 
-      // Wait for stallTimeout/2 to trigger REST polling fallback
-      await Utils.delay(stallTimeout / 2 + 5)
+      // Wait past the jittered fallback trigger (< stallTimeout)
+      await Utils.delay(stallTimeout + 30)
 
       t.expect(
         mock.getHeightOrThrowCalls->Array.length,
@@ -2975,8 +2975,8 @@ describe("SourceManager height subscription", () => {
         await Utils.delay(0)
       }
 
-      // Let every leaked pollingFallback pass stallTimeout/2 and start polling.
-      await Utils.delay(stallTimeout / 2 + 40)
+      // Wait past the jittered fallback trigger so the single poller has polled once.
+      await Utils.delay(stallTimeout + 40)
 
       let pollsAfterBurst = mock.getHeightOrThrowCalls->Array.length - pollsBefore
 

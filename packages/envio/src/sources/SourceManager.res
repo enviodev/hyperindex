@@ -345,7 +345,7 @@ let getSourceNewHeight = async (
       // additional pollers (#1270).
       let waitForSubscription = async () => {
         let h = ref(initialHeight)
-        while h.contents <= knownHeight && status.contents !== Done {
+        while h.contents <= knownHeight {
           h :=
             (
               await Promise.make((resolve, _reject) => {
@@ -355,16 +355,21 @@ let getSourceNewHeight = async (
         }
         h.contents
       }
-      // A single fallback poller, started only once the subscription has been
-      // quiet for half the stall timeout.
+      // A single fallback poller, started only after the subscription has been
+      // quiet for half the stall timeout. The trigger is jittered across
+      // [stallTimeout/2, stallTimeout) so indexers that go quiet together don't
+      // all start polling at the same instant.
       let pollFallback = async () => {
-        await Utils.delay(stallTimeout / 2)
+        let half = stallTimeout / 2
+        await Utils.delay(half + (Math.random() *. half->Belt.Int.toFloat)->Belt.Float.toInt)
         logger->Logging.childTrace({
           "msg": "onHeight subscription stale, switching to polling fallback",
           "source": source.name,
           "chainId": source.chain->ChainMap.Chain.toChainId,
         })
         let h = ref(initialHeight)
+        // The status check stops an orphaned poller from hammering a lagging
+        // instance forever once another source has found a new block.
         while h.contents <= knownHeight && status.contents !== Done {
           h := try await source.getHeightOrThrow() catch {
             | _ => h.contents
