@@ -65,6 +65,25 @@ module Entity = {
     changesCount: self.changesCount,
   }
 
+  // Like resetButKeepLatestChanges, but only keeps entities loaded from the db
+  // (changes carrying loadedFromDbCheckpointId), dropping everything written in
+  // a batch. The kept count is exposed through the table's changesCount.
+  let resetButKeepLoadedFromDbChanges = (self: t): t => {
+    let latestEntityChangeById = Dict.make()
+    let keptCount = ref(0.)
+    self.latestEntityChangeById->Utils.Dict.forEachWithKey((change, key) =>
+      if change->Change.getCheckpointId === Internal.loadedFromDbCheckpointId {
+        latestEntityChangeById->Dict.set(key, change)
+        keptCount := keptCount.contents +. 1.
+      }
+    )
+    {
+      ...make(),
+      latestEntityChangeById,
+      changesCount: keptCount.contents,
+    }
+  }
+
   let updateIndices = (self: t, ~entity: Internal.entity) => {
     let entityId = entity->getEntityIdUnsafe
     //Remove any invalid indices on entity
@@ -83,10 +102,7 @@ module Entity = {
       })
     }
 
-    self.fieldNameIndices
-    ->Dict.keysToArray
-    ->Array.forEach(fieldName => {
-      let indices = self.fieldNameIndices->Dict.getUnsafe(fieldName)
+    self.fieldNameIndices->Utils.Dict.forEachWithKey((indices, fieldName) => {
       // A missing key reads as `undefined`, which matches the `None` arm of
       // `FieldValue.t` (`option<...>`). Mirror `addEmptyIndex` so nullable
       // FK columns that were omitted on the set entity don't crash.
