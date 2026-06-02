@@ -435,7 +435,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
 
-  let jsonApiClient = Rest.client(endpointUrl)
+  let jsonApiClient = EnvioApiClient.make(endpointUrl)
 
   let malformedTokenMessage = `Your token is malformed. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens.`
 

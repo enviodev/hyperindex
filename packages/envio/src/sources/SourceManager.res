@@ -327,34 +327,54 @@ let getSourceNewHeight = async (
   let newHeight = ref(initialHeight)
   let retry = ref(0)
 
+  // Stalled-rate REST poll interval with jitter, so many indexers falling back at
+  // the same time don't poll the height endpoint in lockstep.
+  let nextFallbackDelay = () => {
+    let base = sourceManager.stalledPollingInterval
+    base / 2 + (Math.random() *. base->Belt.Int.toFloat)->Belt.Float.toInt
+  }
+
   while newHeight.contents <= knownHeight && status.contents !== Done {
-    // If subscription exists, wait for next height event
     switch sourceState.unsubscribe {
     | Some(_) =>
-      let subscriptionPromise = Promise.make((resolve, _reject) => {
-        sourceState.pendingHeightResolvers->Array.push(resolve)
-      })
-      // If subscription goes quiet for half the stall timeout, fall back to REST polling
-      let pollingFallback = Utils.delay(stallTimeout / 2)->Promise.then(async () => {
+      // Wait for the next height greater than knownHeight from either the
+      // subscription or a single REST polling fallback. Both waiters loop
+      // internally until they observe a qualifying height, so a burst of stale
+      // (non-increasing) height events can't spin the outer loop and spawn
+      // additional pollers (#1270).
+      let waitForSubscription = async () => {
+        let h = ref(initialHeight)
+        while h.contents <= knownHeight && status.contents !== Done {
+          h :=
+            (
+              await Promise.make((resolve, _reject) => {
+                sourceState.pendingHeightResolvers->Array.push(resolve)
+              })
+            )
+        }
+        h.contents
+      }
+      // A single fallback poller, started only once the subscription has been
+      // quiet for half the stall timeout.
+      let pollFallback = async () => {
+        await Utils.delay(stallTimeout / 2)
         logger->Logging.childTrace({
           "msg": "onHeight subscription stale, switching to polling fallback",
           "source": source.name,
           "chainId": source.chain->ChainMap.Chain.toChainId,
         })
         let h = ref(initialHeight)
-        while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
-          try {
-            h := (await source.getHeightOrThrow())
-          } catch {
-          | _ => ()
-          }
-          if h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
-            await Utils.delay(source.pollingInterval)
+        while h.contents <= knownHeight && status.contents !== Done {
+          h := try await source.getHeightOrThrow() catch {
+            | _ => h.contents
+            }
+          if h.contents <= knownHeight && status.contents !== Done {
+            await Utils.delay(nextFallbackDelay())
           }
         }
         h.contents
-      })
-      let height = await Promise.race([subscriptionPromise, pollingFallback])
+      }
+      let height = await Promise.race([waitForSubscription(), pollFallback()])
 
       // Only accept heights greater than initialHeight
       if height > initialHeight {

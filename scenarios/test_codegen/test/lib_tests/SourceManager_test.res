@@ -2938,7 +2938,7 @@ describe("SourceManager height subscription", () => {
   )
 
   Async.it(
-    "REPRO #1270: stale SSE heights leak concurrent polling fallbacks (req rate >> pollingInterval)",
+    "Stale SSE heights do not multiply concurrent /height polls (#1270)",
     async t => {
       let stallTimeout = 200
       let pollingInterval = 100
@@ -2980,14 +2980,14 @@ describe("SourceManager height subscription", () => {
 
       let pollsAfterBurst = mock.getHeightOrThrowCalls->Array.length - pollsBefore
 
-      // Documents #1270: each stale (non-increasing) SSE height leaks another
-      // uncancelled pollingFallback, so N stale events spawn ~N concurrent /height
-      // poll loops instead of one bounded loop. A bounded fallback keeps this at ~1.
-      // Flip this assertion to an upper bound once the leak is fixed.
+      // Before #1270 each stale (non-increasing) SSE height leaked another
+      // uncancelled pollingFallback, so N stale events produced ~N concurrent
+      // /height poll loops. The fix uses a single fallback poller, so the count
+      // stays bounded regardless of how many stale events arrive.
       t.expect(
         pollsAfterBurst,
         ~message="stale SSE heights should not multiply concurrent /height polls",
-      ).toBeGreaterThanOrEqual(staleEvents)
+      ).toBeLessThanOrEqual(1)
 
       // Cleanup: release everything so the test ends without dangling timers.
       mock.resolveGetHeightOrThrow(999)
