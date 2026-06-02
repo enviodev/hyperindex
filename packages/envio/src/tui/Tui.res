@@ -210,7 +210,8 @@ module App = {
             poweredByHyperSync: (
               cf.sourceManager->SourceManager.getActiveSource
             ).poweredByHyperSync,
-            rateLimitTimeMs: cf.sourceManager->SourceManager.getRateLimitTimeMs,
+            committedRateLimitTimeMs: cf.sourceManager->SourceManager.getCommittedRateLimitTimeMs,
+            activeRateLimitStartMs: cf.sourceManager->SourceManager.getActiveRateLimitStartMs,
           }: TuiData.chain
         )
       })
@@ -259,8 +260,14 @@ module App = {
       />
       <SyncETA chains indexerStartTime=state.indexerStartTime />
       {
-        let maxRateLimitTimeMs =
-          chains->Array.reduce(0., (acc, chain) => Pervasives.max(acc, chain.rateLimitTimeMs))
+        let now = Date.now()
+        let maxRateLimitTimeMs = chains->Array.reduce(0., (acc, chain) => {
+          let inProgress = switch chain.activeRateLimitStartMs {
+          | Some(startMs) => now -. startMs
+          | None => 0.0
+          }
+          Pervasives.max(acc, chain.committedRateLimitTimeMs +. inProgress)
+        })
         maxRateLimitTimeMs > 1000.
           ? {
               let rateLimitSecs = Math.round(maxRateLimitTimeMs /. 1000.)

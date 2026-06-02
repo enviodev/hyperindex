@@ -32,23 +32,29 @@ type t = {
   mutable fetchingPartitionsCount: int,
   recoveryTimeout: float,
   mutable hasRealtime: bool,
-  mutable rateLimitTimeMs: float,
+  mutable committedRateLimitTimeMs: float,
   mutable rateLimitWaiters: int,
-  mutable rateLimitStartTime: option<Hrtime.timeRef>,
+  // Wall-clock timestamp (Date.now()) when the current rate-limit window
+  // started, or None if not currently waiting. Wall-clock so consumers
+  // (TUI) can compute elapsed time with their own Date.now() reads.
+  mutable activeRateLimitStartMs: option<float>,
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
 
+let getCommittedRateLimitTimeMs = sourceManager => sourceManager.committedRateLimitTimeMs
+let getActiveRateLimitStartMs = sourceManager => sourceManager.activeRateLimitStartMs
+
 let getRateLimitTimeMs = sourceManager =>
-  sourceManager.rateLimitTimeMs +.
-  switch sourceManager.rateLimitStartTime {
-  | Some(startTime) => startTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
+  sourceManager.committedRateLimitTimeMs +.
+  switch sourceManager.activeRateLimitStartMs {
+  | Some(startMs) => Date.now() -. startMs
   | None => 0.0
   }
 
 let startRateLimitTimeout = sourceManager => {
   if sourceManager.rateLimitWaiters === 0 {
-    sourceManager.rateLimitStartTime = Some(Hrtime.makeTimer())
+    sourceManager.activeRateLimitStartMs = Some(Date.now())
   }
   sourceManager.rateLimitWaiters = sourceManager.rateLimitWaiters + 1
 }
@@ -56,12 +62,11 @@ let startRateLimitTimeout = sourceManager => {
 let stopRateLimitTimeout = sourceManager => {
   sourceManager.rateLimitWaiters = sourceManager.rateLimitWaiters - 1
   if sourceManager.rateLimitWaiters === 0 {
-    switch sourceManager.rateLimitStartTime {
-    | Some(startTime) =>
-      sourceManager.rateLimitTimeMs =
-        sourceManager.rateLimitTimeMs +.
-        startTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
-      sourceManager.rateLimitStartTime = None
+    switch sourceManager.activeRateLimitStartMs {
+    | Some(startMs) =>
+      sourceManager.committedRateLimitTimeMs =
+        sourceManager.committedRateLimitTimeMs +. Date.now() -. startMs
+      sourceManager.activeRateLimitStartMs = None
     | None => ()
     }
   }
@@ -180,9 +185,9 @@ let make = (
     statusStart: Hrtime.makeTimer(),
     status: Idle,
     hasRealtime,
-    rateLimitTimeMs: 0.0,
+    committedRateLimitTimeMs: 0.0,
     rateLimitWaiters: 0,
-    rateLimitStartTime: None,
+    activeRateLimitStartMs: None,
   }
 }
 

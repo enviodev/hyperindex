@@ -59,4 +59,15 @@ let getBlockHashes: (
   ~isRealtime: bool,
 ) => promise<array<ReorgDetection.blockDataWithTimestamp>>
 
+// Total time the indexer spent waiting on rate limits, including any
+// currently-in-progress window measured against Date.now() at call time.
 let getRateLimitTimeMs: t => float
+
+// Cumulative time from completed rate-limit windows. Stable between
+// calls — does NOT include the current in-progress window.
+let getCommittedRateLimitTimeMs: t => float
+
+// Wall-clock timestamp (Date.now() ms) when the current rate-limit
+// window started, or None if not currently rate-limited. Pair with
+// Date.now() in the consumer to compute live elapsed time.
+let getActiveRateLimitStartMs: t => option<float>
