@@ -28,7 +28,7 @@ type effectCacheInMemTable = {
   mutable dict: dict<Internal.effectOutput>,
   // Outputs of the in-flight write, kept readable until the write completes so
   // the cache stays warm without growing the live dict after a commit.
-  mutable pendingDict: option<dict<Internal.effectOutput>>,
+  mutable pendingDict: dict<Internal.effectOutput>,
   effect: Internal.effect,
 }
 
@@ -54,9 +54,9 @@ type t = {
   mutable persistence: option<Persistence.t>,
   mutable config: option<Config.t>,
   mutable isInReorgThreshold: bool,
-  // Tail of the serialized db-write queue. Keeps background batch writes and the
-  // throttled chain-metadata writes from touching the same rows concurrently.
-  mutable dbWriteTail: promise<unit>,
+  // Latest chain metadata to persist. Written by the cycle alongside batch
+  // writes so it never races them on the chains table.
+  mutable pendingChainMeta: option<dict<InternalTable.Chains.metaFields>>,
 }
 
 let make = (
@@ -77,7 +77,7 @@ let make = (
   persistence: None,
   config: None,
   isInReorgThreshold: false,
-  dbWriteTail: Promise.resolve(),
+  pendingChainMeta: None,
 }
 
 // The store may hold up to this many uncommitted changes before processing has
@@ -92,7 +92,7 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
     let table = {
       idsToStore: [],
       dict: Dict.make(),
-      pendingDict: None,
+      pendingDict: Dict.make(),
       invalidationsCount: 0,
       effect,
     }
@@ -105,11 +105,7 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
 let getEffectOutput = (inMemTable: effectCacheInMemTable, key) =>
   switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(_) as found => found
-  | None =>
-    switch inMemTable.pendingDict {
-    | Some(pending) => pending->Utils.Dict.dangerouslyGetNonOption(key)
-    | None => None
-    }
+  | None => inMemTable.pendingDict->Utils.Dict.dangerouslyGetNonOption(key)
   }
 
 let getInMemTable = (
@@ -127,15 +123,6 @@ let getChangesCount = (inMemoryStore: t) => {
     total := total.contents +. (inMemoryStore->getInMemTable(~entityConfig)).changesCount
   })
   total.contents
-}
-
-// Runs fn after any pending db write completes, blocking subsequent db writes
-// until it finishes, so writes to shared tables never overlap.
-let serializeDbWrite = (inMemoryStore: t, fn: unit => promise<'a>): promise<'a> => {
-  let run = inMemoryStore.dbWriteTail->Promise.then(_ => fn())
-  inMemoryStore.dbWriteTail =
-    run->Promise.then(_ => Promise.resolve())->Promise.catch(_ => Promise.resolve())
-  run
 }
 
 let wakeCommitWaiters = (inMemoryStore: t) => {
@@ -204,7 +191,7 @@ let snapshotEffects = (inMemoryStore: t, ~cache): array<Persistence.updatedEffec
       Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
       acc->Array.push(({effect, items, shouldInitialize}: Persistence.updatedEffectCache))->ignore
     }
-    inMemTable.pendingDict = Some(dict)
+    inMemTable.pendingDict = dict
     inMemTable.dict = Dict.make()
     inMemTable.idsToStore = []
     inMemTable.invalidationsCount = 0
@@ -245,38 +232,50 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
   })
   let updatedEffectsCache = snapshotEffects(inMemoryStore, ~cache)
 
-  await inMemoryStore->serializeDbWrite(() =>
-    persistence.storage.writeBatch(
-      ~batch,
-      ~rawEvents,
-      ~rollback,
-      ~isInReorgThreshold=inMemoryStore.isInReorgThreshold,
-      ~config,
-      ~allEntities=persistence.allEntities,
-      ~updatedEntities,
-      ~updatedEffectsCache,
-    )
+  await persistence.storage.writeBatch(
+    ~batch,
+    ~rawEvents,
+    ~rollback,
+    ~isInReorgThreshold=inMemoryStore.isInReorgThreshold,
+    ~config,
+    ~allEntities=persistence.allEntities,
+    ~updatedEntities,
+    ~updatedEffectsCache,
   )
 
   inMemoryStore.committedCheckpointId = snapshotCheckpointId
-  inMemoryStore.effects->Utils.Dict.forEach(inMemTable => inMemTable.pendingDict = None)
+  inMemoryStore.effects->Utils.Dict.forEach(inMemTable => inMemTable.pendingDict = Dict.make())
 }
 
+// True while the cycle still has something to persist: a processed batch, or
+// fresh chain metadata.
+let hasPendingWrite = (inMemoryStore: t) =>
+  inMemoryStore.processedCheckpointId > inMemoryStore.committedCheckpointId ||
+    inMemoryStore.pendingChainMeta->Option.isSome
+
 let runWriteLoop = async (inMemoryStore: t) => {
-  switch (inMemoryStore.persistence, inMemoryStore.config) {
-  | (Some(persistence), Some(config)) =>
-    while (
-      inMemoryStore.processedCheckpointId > inMemoryStore.committedCheckpointId &&
-        inMemoryStore.persistenceError->Option.isNone
-    ) {
+  switch inMemoryStore.persistence {
+  | Some(persistence) =>
+    while inMemoryStore->hasPendingWrite && inMemoryStore.persistenceError->Option.isNone {
       try {
-        await runOneWrite(inMemoryStore, ~persistence, ~config)
+        switch inMemoryStore.config {
+        | Some(config)
+          if inMemoryStore.processedCheckpointId > inMemoryStore.committedCheckpointId =>
+          await runOneWrite(inMemoryStore, ~persistence, ~config)
+        | _ => ()
+        }
+        switch inMemoryStore.pendingChainMeta {
+        | Some(chainsData) =>
+          inMemoryStore.pendingChainMeta = None
+          await persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+        | None => ()
+        }
         inMemoryStore->wakeCommitWaiters
       } catch {
       | exn => inMemoryStore.persistenceError = Some(exn)
       }
     }
-  | _ => ()
+  | None => ()
   }
   inMemoryStore.writeFiber = None
   inMemoryStore->wakeCommitWaiters
@@ -286,10 +285,22 @@ let kick = (inMemoryStore: t) =>
   if (
     inMemoryStore.writeFiber->Option.isNone &&
     inMemoryStore.persistenceError->Option.isNone &&
-    inMemoryStore.processedCheckpointId > inMemoryStore.committedCheckpointId
+    inMemoryStore->hasPendingWrite
   ) {
     inMemoryStore.writeFiber = Some(runWriteLoop(inMemoryStore))
   }
+
+// Queues the latest chain metadata for the cycle to persist alongside batch
+// writes, so it never races them on the chains table.
+let setChainMeta = (
+  inMemoryStore: t,
+  ~persistence: Persistence.t,
+  chainsData: dict<InternalTable.Chains.metaFields>,
+) => {
+  inMemoryStore.persistence = Some(persistence)
+  inMemoryStore.pendingChainMeta = Some(chainsData)
+  inMemoryStore->kick
+}
 
 // Records a processed batch in memory and triggers the background persistence
 // cycle. Returns immediately - the db write happens off the processing path.
