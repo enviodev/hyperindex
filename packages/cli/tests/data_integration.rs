@@ -71,13 +71,12 @@ fn height_returns_a_number() {
     let out = envio_data(&["knownHeight", "--chain=base"]);
     assert!(out.ok, "envio data failed:\n{out}");
 
-    let lines: Vec<&str> = out.stdout.lines().collect();
-    assert_eq!(
-        lines[0], "knownHeight[1]{value}:",
-        "unexpected stdout:\n{out}"
-    );
-    let height: u64 = lines[1]
-        .trim()
+    let stripped = out
+        .stdout
+        .strip_prefix("knownHeight: ")
+        .and_then(|s| s.strip_suffix('\n'))
+        .unwrap_or_else(|| panic!("unexpected stdout:\n{out}"));
+    let height: u64 = stripped
         .parse()
         .unwrap_or_else(|_| panic!("height should be a number:\n{out}"));
     assert!(height > 1_000_000, "height suspiciously low:\n{out}");
