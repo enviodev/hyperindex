@@ -149,6 +149,7 @@ let updateChainMetadataTable = (
   cm: ChainManager.t,
   ~persistence: Persistence.t,
   ~throttler: Throttler.t,
+  ~inMemoryStore: InMemoryStore.t,
 ) => {
   let chainsData: dict<InternalTable.Chains.metaFields> = Dict.make()
 
@@ -168,7 +169,9 @@ let updateChainMetadataTable = (
 
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
-    persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+    inMemoryStore->InMemoryStore.serializeDbWrite(() =>
+      persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+    )
   )
 }
 
@@ -909,7 +912,9 @@ let injectedTaskReducer = (
           chainManager,
           ~throttler=writeThrottlers.chainMetaData,
           ~persistence=state.ctx.persistence,
+          ~inMemoryStore=state.ctx.inMemoryStore,
         )
+        await state.ctx.inMemoryStore->InMemoryStore.flush
         dispatchAction(SuccessExit)
       | ExitWithError(msg) =>
         dispatchAction(ErrorExit(ErrorHandling.make(JsError.throwWithMessage(msg))))
@@ -918,6 +923,7 @@ let injectedTaskReducer = (
           chainManager,
           ~throttler=writeThrottlers.chainMetaData,
           ~persistence=state.ctx.persistence,
+          ~inMemoryStore=state.ctx.inMemoryStore,
         )->ignore
       }
     | NextQuery(chainCheck) =>
@@ -947,7 +953,7 @@ let injectedTaskReducer = (
 
         let batch =
           state.chainManager->ChainManager.createBatch(
-            ~committedCheckpointId=state.ctx.inMemoryStore.committedCheckpointId,
+            ~processedCheckpointId=state.ctx.inMemoryStore.processedCheckpointId,
             ~batchSizeTarget=state.ctx.config.batchSize,
             ~isRollback=isRollbackBatch,
           )
@@ -986,7 +992,9 @@ let injectedTaskReducer = (
                 state.chainManager,
                 ~persistence=state.ctx.persistence,
                 ~throttler=state.writeThrottlers.chainMetaData,
+                ~inMemoryStore=state.ctx.inMemoryStore,
               )
+              await state.ctx.inMemoryStore->InMemoryStore.flush
               dispatchAction(SuccessExit)
             }
           }
@@ -1176,6 +1184,10 @@ let injectedTaskReducer = (
             }
           }
         })
+
+        // Let the background persistence cycle finish so committedCheckpointId
+        // reflects the db before we compute the rollback diff against it.
+        await state.ctx.inMemoryStore->InMemoryStore.drainForRollback
 
         let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(
           ~persistence=state.ctx.persistence,

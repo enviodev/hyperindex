@@ -13,9 +13,11 @@ module Entity = {
     // prevEntityChanges), kept in sync manually so InMemoryStore can gauge the
     // store size without scanning every dict.
     mutable changesCount: float,
-    prevEntityChanges: array<Change.t<Internal.entity>>,
-    indicesByEntityId: dict<entityIndices>,
-    fieldNameIndices: indexFieldNameToIndices,
+    // Swapped out wholesale when a write starts so processing can keep appending
+    // while the previous changes are persisted in the background.
+    mutable prevEntityChanges: array<Change.t<Internal.entity>>,
+    mutable indicesByEntityId: dict<entityIndices>,
+    mutable fieldNameIndices: indexFieldNameToIndices,
   }
 
   // Helper to extract entity ID from any entity
@@ -82,6 +84,39 @@ module Entity = {
       latestEntityChangeById,
       changesCount: keptCount.contents,
     }
+  }
+
+  // Pull out the changes that need to be persisted for checkpoints above
+  // committedCheckpointId. Reuses prevEntityChanges as the write buffer and
+  // installs a fresh one, so concurrent processing keeps accumulating into the
+  // table while these changes are written to the db in the background.
+  let snapshotChanges = (self: t, ~committedCheckpointId): array<Change.t<Internal.entity>> => {
+    let changes = self.prevEntityChanges
+    self.prevEntityChanges = []
+    self.changesCount = self.changesCount -. changes->Array.length->Int.toFloat
+    self.latestEntityChangeById->Utils.Dict.forEach(change =>
+      if change->Change.getCheckpointId > committedCheckpointId {
+        changes->Array.push(change)
+      }
+    )
+    changes
+  }
+
+  // Free memory held by changes already committed to the db: drop every latest
+  // entry at or below committedCheckpointId (re-readable from the db) and clear
+  // the per-batch indices so they get rebuilt on the next getWhere. Uncommitted
+  // changes (checkpointId > committedCheckpointId) must be kept.
+  let dropCommittedChanges = (self: t, ~committedCheckpointId) => {
+    let keysToDelete = []
+    self.latestEntityChangeById->Utils.Dict.forEachWithKey((change, key) =>
+      if !(change->Change.getCheckpointId > committedCheckpointId) {
+        keysToDelete->Array.push(key)
+      }
+    )
+    keysToDelete->Array.forEach(key => self.latestEntityChangeById->Utils.Dict.deleteInPlace(key))
+    self.changesCount = self.changesCount -. keysToDelete->Array.length->Int.toFloat
+    self.indicesByEntityId = Dict.make()
+    self.fieldNameIndices = Dict.make()
   }
 
   let updateIndices = (self: t, ~entity: Internal.entity) => {

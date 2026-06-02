@@ -383,6 +383,11 @@ let processEventBatch = async (
   try {
     let timeRef = Hrtime.makeTimer()
 
+    // Block until the in-memory store has capacity, so processing can't outrun
+    // the background persistence cycle by more than keepLatestChangesLimit.
+    // Also surfaces any error from a previous background write.
+    await inMemoryStore->InMemoryStore.awaitCapacity
+
     if batch.items->Utils.Array.notEmpty {
       await batch->preloadBatchOrThrow(
         ~loadManager,
@@ -401,34 +406,33 @@ let processEventBatch = async (
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    try {
-      await inMemoryStore->InMemoryStore.writeBatch(
-        ~persistence=ctx.persistence,
-        ~batch,
-        ~config=ctx.config,
-        ~isInReorgThreshold,
-      )
+    // Hand the batch to the in-memory store and continue. The db write runs as a
+    // standalone cycle owned by the store, off the processing path.
+    inMemoryStore->InMemoryStore.commitBatch(
+      ~persistence=ctx.persistence,
+      ~batch,
+      ~config=ctx.config,
+      ~isInReorgThreshold,
+    )
 
-      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-      let loaderDuration = elapsedTimeAfterLoaders
-      let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
-      let dbWriteDuration = elapsedTimeAfterDbWrite -. elapsedTimeAfterProcessing
-      registerProcessEventBatchMetrics(
-        ~logger,
-        ~loadDuration=loaderDuration,
-        ~handlerDuration,
-        ~dbWriteDuration,
-      )
-      Ok()
-    } catch {
-    | Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.make(~msg=message, ~logger)->Error
-    | exn => exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
-    }
+    let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let loaderDuration = elapsedTimeAfterLoaders
+    let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
+    let dbWriteDuration = elapsedTimeAfterDbWrite -. elapsedTimeAfterProcessing
+    registerProcessEventBatchMetrics(
+      ~logger,
+      ~loadDuration=loaderDuration,
+      ~handlerDuration,
+      ~dbWriteDuration,
+    )
+    Ok()
   } catch {
+  | Persistence.StorageError({message, reason}) =>
+    reason->ErrorHandling.make(~msg=message, ~logger)->Error
   | ProcessingError({message, exn, item}) =>
     exn
     ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
     ->Error
+  | exn => exn->ErrorHandling.make(~msg="Failed processing batch", ~logger)->Error
   }
 }
