@@ -1730,10 +1730,7 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   let addressesToRemove = Utils.Set.make()
   let indexingAddresses = Dict.make()
 
-  fetchState.indexingAddresses
-  ->Dict.keysToArray
-  ->Array.forEach(address => {
-    let indexingContract = fetchState.indexingAddresses->Dict.getUnsafe(address)
+  fetchState.indexingAddresses->Utils.Dict.forEachWithKey((indexingContract, address) => {
     if indexingContract.registrationBlock > targetBlockNumber {
       let _ = addressesToRemove->Utils.Set.add(address->Address.unsafeFromString)
     } else {
