@@ -60,6 +60,17 @@ impl HypersyncClient {
     }
 
     #[napi]
+    pub async fn get_height(&self) -> napi::Result<i64> {
+        let height = self
+            .inner
+            .get_height()
+            .await
+            .context("get height")
+            .map_err(map_err)?;
+        height.try_into().context("convert height").map_err(map_err)
+    }
+
+    #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
         let query = query.try_into().context("parse query").map_err(map_err)?;
         let res = self

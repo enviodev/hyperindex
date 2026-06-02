@@ -103,6 +103,13 @@ describe("HyperSync client getEventItems (live)", () => {
       })
   })
 
+  Async.it("getHeight returns a height past the queried range", async t => {
+    let client = makeClient(~eventParams=[transferEventParam])
+    let height = await client.getHeight()
+
+    t.expect(height > toBlock).toEqual(true)
+  })
+
   Async.it("leaves params null when topic0 doesn't match any registered sig", async t => {
     let unrelatedEventParam: HyperSyncClient.Decoder.eventParamsInput = {
       sighash: "0x0000000000000000000000000000000000000000000000000000000000000001",

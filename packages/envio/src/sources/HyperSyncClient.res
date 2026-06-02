@@ -362,6 +362,7 @@ module EventItems = {
 type t = {
   get: (~query: query) => promise<queryResponse>,
   getEventItems: (~query: query) => promise<EventItems.response>,
+  getHeight: unit => promise<int>,
 }
 
 @send
