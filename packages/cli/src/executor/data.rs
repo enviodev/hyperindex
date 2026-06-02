@@ -60,19 +60,15 @@ pub async fn run(args: DataArgs) -> Result<()> {
     print!("{out}");
 
     let next_block = response.next_block;
-    eprintln!();
-    eprintln!("archive_height: {archive_height}");
-    eprintln!("next_block: {next_block}");
-
     let exhausted = matches!(filter.to_block_exclusive, Some(end) if next_block >= end)
         || next_block >= archive_height;
 
-    if exhausted {
+    if !exhausted {
         eprintln!();
-        eprintln!("Done — next_block ({next_block}) reached the end of the requested range.");
-    } else {
-        eprintln!();
-        eprintln!("Next page:");
+        eprintln!(
+            "Got a response up to block {next_block} (chain height: {archive_height}). \
+             To get the next page, send the following query:"
+        );
         eprintln!("  envio data {} \\", args.fields.join(" "));
         eprintln!("    --chain={} \\", chain.display);
         eprintln!(

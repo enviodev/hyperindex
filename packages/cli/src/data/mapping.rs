@@ -45,32 +45,53 @@ impl TypedField {
     pub fn column_format(self) -> ColumnFormat {
         match self {
             TypedField::Block(f) => match f {
-                BlockField::Difficulty
-                | BlockField::TotalDifficulty
+                BlockField::Number
                 | BlockField::Size
                 | BlockField::GasLimit
                 | BlockField::GasUsed
                 | BlockField::Timestamp
+                | BlockField::Nonce
+                | BlockField::Difficulty
+                | BlockField::TotalDifficulty
                 | BlockField::BaseFeePerGas
                 | BlockField::BlobGasUsed
                 | BlockField::ExcessBlobGas
+                | BlockField::L1BlockNumber
                 | BlockField::SendCount => ColumnFormat::Decimal,
-                _ => ColumnFormat::Hex,
+                BlockField::Hash
+                | BlockField::ParentHash
+                | BlockField::Sha3Uncles
+                | BlockField::LogsBloom
+                | BlockField::TransactionsRoot
+                | BlockField::StateRoot
+                | BlockField::ReceiptsRoot
+                | BlockField::Miner
+                | BlockField::ExtraData
+                | BlockField::MixHash
+                | BlockField::Uncles
+                | BlockField::ParentBeaconBlockRoot
+                | BlockField::WithdrawalsRoot
+                | BlockField::Withdrawals
+                | BlockField::SendRoot => ColumnFormat::Hex,
             },
             TypedField::Transaction(f) => match f {
-                TransactionField::Gas
-                | TransactionField::GasPrice
+                TransactionField::BlockNumber
+                | TransactionField::Gas
                 | TransactionField::Nonce
+                | TransactionField::TransactionIndex
                 | TransactionField::Value
+                | TransactionField::CumulativeGasUsed
+                | TransactionField::EffectiveGasPrice
+                | TransactionField::GasUsed
+                | TransactionField::GasPrice
                 | TransactionField::V
                 | TransactionField::R
                 | TransactionField::S
                 | TransactionField::MaxPriorityFeePerGas
                 | TransactionField::MaxFeePerGas
                 | TransactionField::ChainId
-                | TransactionField::CumulativeGasUsed
-                | TransactionField::EffectiveGasPrice
-                | TransactionField::GasUsed
+                | TransactionField::Type
+                | TransactionField::Status
                 | TransactionField::YParity
                 | TransactionField::L1Fee
                 | TransactionField::L1GasPrice
@@ -87,9 +108,34 @@ impl TypedField {
                 | TransactionField::L1BlobBaseFee
                 | TransactionField::L1BlobBaseFeeScalar
                 | TransactionField::L1BlockNumber => ColumnFormat::Decimal,
-                _ => ColumnFormat::Hex,
+                TransactionField::BlockHash
+                | TransactionField::Hash
+                | TransactionField::Input
+                | TransactionField::LogsBloom
+                | TransactionField::From
+                | TransactionField::To
+                | TransactionField::ContractAddress
+                | TransactionField::Root
+                | TransactionField::AccessList
+                | TransactionField::AuthorizationList
+                | TransactionField::BlobVersionedHashes
+                | TransactionField::Sighash
+                | TransactionField::SourceHash => ColumnFormat::Hex,
             },
-            TypedField::Log(_) => ColumnFormat::Hex,
+            TypedField::Log(f) => match f {
+                LogField::BlockNumber | LogField::TransactionIndex | LogField::LogIndex => {
+                    ColumnFormat::Decimal
+                }
+                LogField::TransactionHash
+                | LogField::BlockHash
+                | LogField::Address
+                | LogField::Data
+                | LogField::Removed
+                | LogField::Topic0
+                | LogField::Topic1
+                | LogField::Topic2
+                | LogField::Topic3 => ColumnFormat::Hex,
+            },
         }
     }
 }

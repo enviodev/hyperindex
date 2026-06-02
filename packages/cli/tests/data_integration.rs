@@ -124,14 +124,7 @@ logs[11]{srcAddress,logIndex}:
         "unexpected stdout:\n{out}",
     );
 
-    assert_eq!(
-        out.stderr_template(),
-        "archive_height: <N>\n\
-         next_block: <N>\n\
-         \n\
-         Done \u{2014} next_block (<N>) reached the end of the requested range.",
-        "unexpected stderr:\n{out}",
-    );
+    assert_eq!(out.stderr_template(), "", "unexpected stderr:\n{out}");
 }
 
 #[test]
@@ -144,12 +137,5 @@ fn no_where_pages_forward_from_genesis() {
         "unexpected stdout:\n{out}",
     );
 
-    assert_eq!(
-        out.stderr_template(),
-        "archive_height: <N>\n\
-         next_block: <N>\n\
-         \n\
-         Done \u{2014} next_block (<N>) reached the end of the requested range.",
-        "unexpected stderr:\n{out}",
-    );
+    assert_eq!(out.stderr_template(), "", "unexpected stderr:\n{out}");
 }
