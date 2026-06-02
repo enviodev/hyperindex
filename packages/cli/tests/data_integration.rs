@@ -1,12 +1,13 @@
 //! End-to-end integration tests for `envio data`.
 //!
 //! Invokes the CLI binary (via the `script` example) and asserts on stdout/stderr.
-//! Gated behind `--features integration_tests` so default `cargo test` stays offline.
+//! Gated behind `--features data_integration_tests` so default `cargo test`
+//! stays offline and the hypersync endpoint health-check job doesn't pick this up.
 //! Requires `ENVIO_API_TOKEN` in the environment.
 //!
 //! Run with:
-//!   cargo test -p envio --features integration_tests --test data_integration
-#![cfg(feature = "integration_tests")]
+//!   cargo test -p envio --features data_integration_tests --test data_integration
+#![cfg(feature = "data_integration_tests")]
 
 use std::process::Command;
 

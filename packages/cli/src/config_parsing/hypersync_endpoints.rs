@@ -34,11 +34,11 @@ mod test {
     }
 }
 
-/// Integration tests that require network access.
-/// Run with: cargo test --features integration_tests
+/// Hypersync endpoint health checks that require network access.
+/// Run with: cargo test --features hypersync_health
 #[cfg(test)]
-#[cfg(feature = "integration_tests")]
-mod integration_tests {
+#[cfg(feature = "hypersync_health")]
+mod hypersync_health {
     use super::{network_to_hypersync_url, HypersyncChain};
     use crate::scripts::print_missing_networks::Diff;
     use strum::IntoEnumIterator;
