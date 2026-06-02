@@ -60,24 +60,36 @@ pub async fn run(args: DataArgs) -> Result<()> {
     print!("{out}");
 
     let next_block = response.next_block;
-    let exhausted = matches!(filter.to_block_exclusive, Some(end) if next_block >= end)
-        || next_block >= archive_height;
+    let range_done = matches!(filter.to_block_exclusive, Some(end) if next_block >= end);
+    let reached_head = !range_done && next_block >= archive_height;
+    let more_pages = !range_done && !reached_head;
 
-    if !exhausted {
+    if reached_head {
         eprintln!();
         eprintln!(
-            "Got a response up to block {next_block} (chain height: {archive_height}). \
-             To get the next page, send the following query:"
+            "Reached the chain head at block {next_block}. \
+             Rerun the following command later to fetch newly available data:"
         );
-        eprintln!("  envio data {} \\", args.fields.join(" "));
-        eprintln!("    --chain={} \\", chain.display);
+        print_next_command(&args, &chain, &filter, next_block);
+    } else if more_pages {
+        eprintln!();
         eprintln!(
-            "    --where='{body}'",
-            body = render_where_hint(&filter, next_block),
+            "Got a response up to block {next_block}. \
+             To get the next page, run the following command:"
         );
+        print_next_command(&args, &chain, &filter, next_block);
     }
 
     Ok(())
+}
+
+fn print_next_command(args: &DataArgs, chain: &Chain, filter: &WhereFilter, next_block: u64) {
+    eprintln!("  envio data {} \\", args.fields.join(" "));
+    eprintln!("    --chain={} \\", chain.display);
+    eprintln!(
+        "    --where='{body}'",
+        body = render_where_hint(filter, next_block),
+    );
 }
 
 fn build_client(chain: &Chain, token: &str) -> Result<hypersync_client::Client> {

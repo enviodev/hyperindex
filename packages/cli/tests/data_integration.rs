@@ -137,5 +137,12 @@ fn no_where_pages_forward_from_genesis() {
         "unexpected stdout:\n{out}",
     );
 
-    assert_eq!(out.stderr_template(), "", "unexpected stderr:\n{out}");
+    let expected = [
+        "Got a response up to block <N>. To get the next page, run the following command:",
+        "  envio data block.number \\",
+        "    --chain=base \\",
+        "    --where='{ block: { number: { _gte: <N> } } }'",
+    ]
+    .join("\n");
+    assert_eq!(out.stderr_template(), expected, "unexpected stderr:\n{out}");
 }
