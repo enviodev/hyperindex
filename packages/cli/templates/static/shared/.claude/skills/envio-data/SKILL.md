@@ -1,7 +1,7 @@
 ---
 name: envio-data
 description: >-
-  Query raw blockchain data — block ranges, event lookups, chain height —
+  Query raw blockchain data — block ranges, event lookups, transactions, chain height —
   via `envio data`. Use instead of curl or web searches for block discovery.
 metadata:
   managed-by: envio
