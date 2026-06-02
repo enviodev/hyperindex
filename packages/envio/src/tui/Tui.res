@@ -275,7 +275,7 @@ module App = {
               let rateLimitSecs = Math.round(maxRateLimitTimeMs /. 1000.)
               let activeSuffix = if maxResetInMs > 0.0 {
                 let resetSecs = Pervasives.max(1.0, Math.ceil(maxResetInMs /. 1000.))
-                ` (waiting ${resetSecs->TuiData.formatFloatLocaleString}s until reset ⏳)`
+                ` (⏳ ${resetSecs->TuiData.formatFloatLocaleString}s until reset)`
               } else {
                 ""
               }
