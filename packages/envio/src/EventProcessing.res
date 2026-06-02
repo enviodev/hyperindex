@@ -333,17 +333,11 @@ let runBatchHandlersOrThrow = async (
   }
 }
 
-let registerProcessEventBatchMetrics = (
-  ~logger,
-  ~loadDuration,
-  ~handlerDuration,
-  ~dbWriteDuration,
-) => {
+let registerProcessEventBatchMetrics = (~logger, ~loadDuration, ~handlerDuration) => {
   logger->Logging.childTrace({
     "msg": "Finished processing batch",
     "loader_time_elapsed": loadDuration,
     "handlers_time_elapsed": handlerDuration,
-    "write_time_elapsed": dbWriteDuration,
   })
 
   Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration)
@@ -381,12 +375,12 @@ let processEventBatch = async (
   })
 
   try {
-    let timeRef = Hrtime.makeTimer()
-
     // Block until the in-memory store has capacity, so processing can't outrun
     // the background persistence cycle by more than keepLatestChangesLimit.
     // Also surfaces any error from a previous background write.
     await inMemoryStore->InMemoryStore.awaitCapacity
+
+    let timeRef = Hrtime.makeTimer()
 
     if batch.items->Utils.Array.notEmpty {
       await batch->preloadBatchOrThrow(
@@ -406,8 +400,6 @@ let processEventBatch = async (
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    // Hand the batch to the in-memory store and continue. The db write runs as a
-    // standalone cycle owned by the store, off the processing path.
     inMemoryStore->InMemoryStore.commitBatch(
       ~persistence=ctx.persistence,
       ~batch,
@@ -415,16 +407,9 @@ let processEventBatch = async (
       ~isInReorgThreshold,
     )
 
-    let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
     let loaderDuration = elapsedTimeAfterLoaders
     let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
-    let dbWriteDuration = elapsedTimeAfterDbWrite -. elapsedTimeAfterProcessing
-    registerProcessEventBatchMetrics(
-      ~logger,
-      ~loadDuration=loaderDuration,
-      ~handlerDuration,
-      ~dbWriteDuration,
-    )
+    registerProcessEventBatchMetrics(~logger, ~loadDuration=loaderDuration, ~handlerDuration)
     Ok()
   } catch {
   | Persistence.StorageError({message, reason}) =>
