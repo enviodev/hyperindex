@@ -282,7 +282,7 @@ module App = {
               <Box flexDirection={Column}>
                 <Newline />
                 <Text color={Danger}>
-                  {`${rateLimitSecs->TuiData.formatFloatLocaleString}s lost to rate limits, your backfill could be that much faster${activeSuffix}`->React.string}
+                  {`Backfill ${rateLimitSecs->TuiData.formatFloatLocaleString}s slower due to your plan's rate limit${activeSuffix}`->React.string}
                 </Text>
                 <Text color={Danger}>
                   <Text color={Danger}> {"Upgrade at "->React.string} </Text>
