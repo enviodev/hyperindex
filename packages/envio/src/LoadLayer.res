@@ -251,11 +251,14 @@ let loadEffect = (
     let idsFromCache = Utils.Set.make()
 
     // Serve cache hits from the in-flight batch write before touching the DB,
-    // since those rows may not be committed yet.
+    // since those rows may not be committed yet. Only when it's the same effect
+    // instance though: a different effect sharing the name (e.g. an updated
+    // output schema) must go through the DB-load path below, which re-validates
+    // and invalidates stale outputs.
     switch inMemoryStore.pendingPersistence {
     | Some({effects}) =>
       switch effects->Utils.Dict.dangerouslyGetNonOption(effectName) {
-      | Some(pending) =>
+      | Some(pending) if pending.effect === effect =>
         args->Array.forEach((arg: Internal.effectArgs) =>
           switch pending.dict->Utils.Dict.dangerouslyGetNonOption(arg.cacheKey) {
           | Some(output) =>
@@ -264,7 +267,7 @@ let loadEffect = (
           | None => ()
           }
         )
-      | None => ()
+      | _ => ()
       }
     | None => ()
     }

@@ -8,6 +8,8 @@ let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   ->Option.getOrThrow
 
 module InMemoryStore = {
+  let flushPendingPersistence = InMemoryStore.flushPendingPersistence
+
   let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
@@ -509,13 +511,16 @@ module Indexer = {
         | None => []
         }
       },
-      restart: () => {
+      restart: async () => {
         let state = gsManager->GlobalStateManager.getState
         gsManager->GlobalStateManager.setState({
           ...gsManager->GlobalStateManager.getState,
           id: state.id + 1,
         })
-        make(
+        // Flush the in-flight concurrent write before the new indexer starts on
+        // the same DB, otherwise the old and new writes race.
+        await ctx.inMemoryStore->InMemoryStore.flushPendingPersistence
+        await make(
           ~chains,
           ~enableHasura,
           ~enableRawEvents,
