@@ -29,6 +29,8 @@ type getItemsRetry =
   | WithBackoff({message: string, backoffMillis: int})
   | ImpossibleForTheQuery({message: string})
 
+exception RateLimited({resetMs: int})
+
 type getItemsError =
   | UnsupportedSelection({message: string})
   | FailedGettingFieldSelection({exn: exn, blockNumber: int, logIndex: int, message: string})
