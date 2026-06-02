@@ -277,7 +277,7 @@ module App = {
                 <Text color={Danger}>
                   {`⏳ HyperSync source is rate-limited — ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting${activeSuffix}`->React.string}
                 </Text>
-                <Text color={Gray}>
+                <Text color={Danger}>
                   {"Upgrade your plan at https://envio.dev/app/api-tokens for higher limits."->React.string}
                 </Text>
               </Box>
