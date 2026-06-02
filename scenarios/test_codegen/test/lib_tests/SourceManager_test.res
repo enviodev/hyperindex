@@ -2964,8 +2964,8 @@ describe("SourceManager height subscription", () => {
       let pollsBefore = mock.getHeightOrThrowCalls->Array.length
 
       // Call 2: caught up at the head. The SSE stream now delivers a burst of STALE
-      // heights (== knownHeight) — exactly what a flapping/reconnecting height stream
-      // re-emits on each reconnect. onHeight does not filter non-increasing heights.
+      // heights (== knownHeight), exactly what a flapping/reconnecting height stream
+      // re-emits on each reconnect.
       let p2 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=101, ~reducedPolling=false)
       await Utils.delay(0)
 
@@ -2975,15 +2975,15 @@ describe("SourceManager height subscription", () => {
         await Utils.delay(0)
       }
 
-      // Wait past the jittered fallback trigger so the single poller has polled once.
+      // Wait past the jittered fallback trigger so the single fallback poll has run.
       await Utils.delay(stallTimeout + 40)
 
       let pollsAfterBurst = mock.getHeightOrThrowCalls->Array.length - pollsBefore
 
-      // Before #1270 each stale (non-increasing) SSE height leaked another
-      // uncancelled pollingFallback, so N stale events produced ~N concurrent
-      // /height poll loops. The fix uses a single fallback poller, so the count
-      // stays bounded regardless of how many stale events arrive.
+      // Before #1270 each stale (non-increasing) SSE height woke the wait loop and
+      // spawned another uncancelled pollingFallback, so N stale events produced ~N
+      // concurrent /height poll loops. onHeight now drops non-increasing heights, so
+      // stale re-emits don't wake the loop and the poll count stays bounded.
       t.expect(
         pollsAfterBurst,
         ~message="stale SSE heights should not multiply concurrent /height polls",

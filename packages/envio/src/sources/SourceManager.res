@@ -327,60 +327,38 @@ let getSourceNewHeight = async (
   let newHeight = ref(initialHeight)
   let retry = ref(0)
 
-  // Stalled-rate REST poll interval with jitter, so many indexers falling back at
-  // the same time don't poll the height endpoint in lockstep. For a
-  // stalledPollingInterval of x, the delay is uniform in [x/2, 1.5x) (mean x).
-  let nextFallbackDelay = () => {
-    let base = sourceManager.stalledPollingInterval
-    base / 2 + (Math.random() *. base->Belt.Int.toFloat)->Belt.Float.toInt
-  }
-
   while newHeight.contents <= knownHeight && status.contents !== Done {
     switch sourceState.unsubscribe {
     | Some(_) =>
-      // Wait for the next height greater than knownHeight from either the
-      // subscription or a single REST polling fallback. Both waiters loop
-      // internally until they observe a qualifying height, so a burst of stale
-      // (non-increasing) height events can't spin the outer loop and spawn
-      // additional pollers (#1270).
-      let waitForSubscription = async () => {
-        let h = ref(initialHeight)
-        while h.contents <= knownHeight {
-          h :=
-            (
-              await Promise.make((resolve, _reject) => {
-                sourceState.pendingHeightResolvers->Array.push(resolve)
-              })
-            )
-        }
-        h.contents
-      }
-      // A single fallback poller, started only after the subscription has been
-      // quiet for half the stall timeout. The trigger is jittered across
-      // [stallTimeout/2, stallTimeout) so indexers that go quiet together don't
-      // all start polling at the same instant.
-      let pollFallback = async () => {
-        let half = stallTimeout / 2
-        await Utils.delay(half + (Math.random() *. half->Belt.Int.toFloat)->Belt.Float.toInt)
+      let subscriptionPromise = Promise.make((resolve, _reject) => {
+        sourceState.pendingHeightResolvers->Array.push(resolve)
+      })
+      // If the subscription goes quiet for half the stall timeout, fall back to REST
+      // polling. Jitter the trigger across [stallTimeout/2, stallTimeout) so indexers
+      // that go quiet together don't all start polling at the same instant.
+      let half = stallTimeout / 2
+      let pollingFallback = Utils.delay(
+        half + (Math.random() *. half->Belt.Int.toFloat)->Belt.Float.toInt,
+      )->Promise.then(async () => {
         logger->Logging.childTrace({
           "msg": "onHeight subscription stale, switching to polling fallback",
           "source": source.name,
           "chainId": source.chain->ChainMap.Chain.toChainId,
         })
         let h = ref(initialHeight)
-        // The status check stops an orphaned poller from hammering a lagging
-        // instance forever once another source has found a new block.
-        while h.contents <= knownHeight && status.contents !== Done {
-          h := try await source.getHeightOrThrow() catch {
-            | _ => h.contents
-            }
-          if h.contents <= knownHeight && status.contents !== Done {
-            await Utils.delay(nextFallbackDelay())
+        while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
+          try {
+            h := (await source.getHeightOrThrow())
+          } catch {
+          | _ => ()
+          }
+          if h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
+            await Utils.delay(source.pollingInterval)
           }
         }
         h.contents
-      }
-      let height = await Promise.race([waitForSubscription(), pollFallback()])
+      })
+      let height = await Promise.race([subscriptionPromise, pollingFallback])
 
       // Only accept heights greater than initialHeight
       if height > initialHeight {
@@ -400,11 +378,15 @@ let getSourceNewHeight = async (
           switch source.createHeightSubscription {
           | Some(createSubscription) if isRealtime =>
             let unsubscribe = createSubscription(~onHeight=newHeight => {
-              sourceState.knownHeight = newHeight
-              // Resolve all pending height resolvers
-              let resolvers = sourceState.pendingHeightResolvers
-              sourceState.pendingHeightResolvers = []
-              resolvers->Array.forEach(resolve => resolve(newHeight))
+              // Ignore non-increasing heights. The height stream re-emits the current
+              // head on every (re)connect; waking the wait loop on a height we already
+              // know spins it and leaks fallback pollers (#1270).
+              if newHeight > sourceState.knownHeight {
+                sourceState.knownHeight = newHeight
+                let resolvers = sourceState.pendingHeightResolvers
+                sourceState.pendingHeightResolvers = []
+                resolvers->Array.forEach(resolve => resolve(newHeight))
+              }
             })
             sourceState.unsubscribe = Some(unsubscribe)
           | _ =>
