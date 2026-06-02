@@ -78,7 +78,7 @@ let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) 
   let waitMs = Pervasives.min(resetMs, 300_000)
   let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
   logger->log({
-    "msg": `Rate limited by HyperSync — not critical, the indexer will retry in ${(waitMs / 1000)
+    "msg": `HyperSync source is rate-limited — not critical, the indexer will retry in ${(waitMs / 1000)
         ->Int.toString}s. For higher limits upgrade your plan at https://envio.dev/app/api-tokens.`,
     "retry": retry,
     "waitMs": waitMs,

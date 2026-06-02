@@ -265,7 +265,7 @@ module App = {
           ? {
               let rateLimitSecs = Math.round(maxRateLimitTimeMs /. 1000.)
               <Text color={Danger}>
-                {`Rate limited: ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting — upgrade at https://envio.dev/app/api-tokens`->React.string}
+                {`HyperSync source is rate-limited — ${rateLimitSecs->TuiData.formatFloatLocaleString}s spent waiting. Upgrade your plan at https://envio.dev/app/api-tokens for higher limits.`->React.string}
               </Text>
             }
           : React.null
