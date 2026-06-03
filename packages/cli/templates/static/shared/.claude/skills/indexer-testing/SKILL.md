@@ -134,35 +134,6 @@ pnpm test              # Run all tests
 pnpm test -- -u        # Update snapshots
 ```
 
-## Advanced: Finding Block Ranges with HyperSync
-
-Auto-exit mode eliminates the need for manual block discovery in most cases. Use this when you need specific block ranges for pinned snapshots.
-
-**Do NOT web-search for block ranges.** Query HyperSync directly. Endpoint pattern: `https://{chainId}.hypersync.xyz` (e.g., chain 1 → `https://1.hypersync.xyz`).
-
-Common chain IDs: 1 (Ethereum), 8453 (Base), 42161 (Arbitrum), 10 (Optimism), 137 (Polygon), 56 (BSC), 43114 (Avalanche), 100 (Gnosis), 59144 (Linea), 534352 (Scroll), 81457 (Blast), 42220 (Celo).
-
-```bash
-curl --request POST \
-  --url https://1.hypersync.xyz/query \
-  --header 'Content-Type: application/json' \
-  --header "Authorization: Bearer $ENVIO_API_TOKEN" \
-  --data '{
-    "from_block": 0,
-    "logs": [
-      {
-        "address": ["0xYOUR_CONTRACT_ADDRESS"],
-        "topics": [
-          ["0xYOUR_EVENT_TOPIC0"]
-        ]
-      }
-    ],
-    "field_selection": {
-      "log": ["block_number"]
-    }
-  }'
-```
-
-Returns the earliest matching blocks. Use `from_block` to paginate forward. Pick a tight range (50–200 blocks) for fast, deterministic tests.
-
 > If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
+
+> To look up block ranges or query raw chain data for a test, use the `envio-data` skill instead of curl or web searches.

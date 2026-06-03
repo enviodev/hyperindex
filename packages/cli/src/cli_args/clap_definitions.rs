@@ -61,6 +61,18 @@ pub enum CommandType {
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
     Metrics,
 
+    ///Query raw blockchain data — blocks, logs, transactions on EVM chains
+    ///using the same `where` syntax as indexer filters.
+    ///
+    ///Output is TOON (token-oriented) tabular form.
+    ///
+    ///Example — earliest USDC transfers on Base:
+    ///`envio data block.number log.srcAddress --chain=base --where='{ block: { number: { _gte: 0 } }, log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" } }'`
+    ///
+    ///Example — current archive height:
+    ///`envio data knownHeight --chain=arbitrum-one`
+    Data(DataArgs),
+
     ///Manage Envio-provided Claude Code skills under `.claude/skills/`
     #[command(subcommand)]
     Skills(SkillsSubcommand),
@@ -128,6 +140,28 @@ pub enum JsonSchema {
     Evm,
     Fuel,
     Svm,
+}
+
+#[derive(Debug, Args)]
+pub struct DataArgs {
+    ///Fields to fetch (e.g. `block.number`, `log.srcAddress`,
+    ///`transaction.transactionIndex`). Use `knownHeight` to get the
+    ///chain's current archive height.
+    #[arg(value_name = "FIELD")]
+    pub fields: Vec<String>,
+
+    ///Chain id (e.g. `8453`) or kebab-case name (e.g. `base`,
+    ///`arbitrum-one`). Solana is not supported yet.
+    #[arg(long)]
+    pub chain: String,
+
+    ///Filter rows (JSON5: unquoted keys, single quotes, trailing commas,
+    ///`//` comments). Group fields under `block`, `transaction`, `log`.
+    ///Match any field with a value, array, or `_eq`/`_in`; numeric fields
+    ///also take `_gt`/`_gte`/`_lt`/`_lte`. Example:
+    ///--where='{ block: { number: { _gte: 1000, _lte: 2000 } }, log: { srcAddress: "0xa0b8..." } }'
+    #[arg(long = "where")]
+    pub where_filter: Option<String>,
 }
 
 #[derive(Debug, Args)]
