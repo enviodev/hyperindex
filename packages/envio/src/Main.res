@@ -686,6 +686,12 @@ let start = async (
   | Some(patchConfig) => patchConfig(config, registrations)
   | None => config
   }
+  // The single fatal-error handler: log and exit. Shared by the in-memory store
+  // (background write failures), the ErrorExit action, and the manager's catch.
+  let onError = (errHandler: ErrorHandling.t) => {
+    errHandler->ErrorHandling.log
+    NodeJs.process->NodeJs.exitWithCode(Failure)
+  }
   let ctx = {
     Ctx.registrations,
     config,
@@ -695,15 +701,7 @@ let start = async (
       ~committedCheckpointId=(persistence->Persistence.getInitializedState).checkpointId,
       ~persistence,
       ~config,
-      ~onError=exn => {
-        let errHandler = exn->ErrorHandling.make(~msg="Failed writing batch to the database")
-        switch globalGsManagerRef.contents {
-        | Some(gsManager) => gsManager->GlobalStateManager.dispatchAction(ErrorExit(errHandler))
-        | None =>
-          errHandler->ErrorHandling.log
-          NodeJs.process->NodeJs.exitWithCode(Failure)
-        }
-      },
+      ~onError=exn => onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
     ),
   }
 
@@ -774,8 +772,12 @@ let start = async (
     ~isDevelopmentMode,
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,
+    ~onError,
   )
-  let gsManager = globalState->GlobalStateManager.make
+  let gsManager =
+    globalState->GlobalStateManager.make(~onError=exn =>
+      onError(exn->ErrorHandling.make(~msg="Indexer has failed with an unexpected error"))
+    )
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)
   }

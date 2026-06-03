@@ -353,7 +353,10 @@ module Indexer = {
     )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
-    let gsManagerRef = ref(None)
+    let onError = (errHandler: ErrorHandling.t) => {
+      errHandler->ErrorHandling.log
+      NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
+    }
 
     let ctx = {
       Ctx.registrations,
@@ -363,13 +366,8 @@ module Indexer = {
         ~entities=config.allEntities,
         ~persistence,
         ~config,
-        ~onError=exn => {
-          let errHandler = exn->ErrorHandling.make(~msg="Failed writing batch to the database")
-          switch gsManagerRef.contents {
-          | Some(gsManager) => gsManager->GlobalStateManager.dispatchAction(ErrorExit(errHandler))
-          | None => errHandler->ErrorHandling.log
-          }
-        },
+        ~onError=exn =>
+          onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
       ),
     }
 
@@ -400,9 +398,9 @@ module Indexer = {
       ~chainManager,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
+      ~onError,
     )
     let gsManager = globalState->GlobalStateManager.make
-    gsManagerRef := Some(gsManager)
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
     /*
         NOTE:

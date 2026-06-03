@@ -34,6 +34,9 @@ type t = {
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
   exitAfterFirstEventBlock: bool,
+  // The single fatal-error handler. ErrorExit delegates to it, and it's the same
+  // callback the in-memory store calls when a background write fails.
+  onError: ErrorHandling.t => unit,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
@@ -45,6 +48,7 @@ let make = (
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
+  ~onError: ErrorHandling.t => unit,
 ) => {
   {
     ctx,
@@ -57,6 +61,7 @@ let make = (
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
+    onError,
     id: 0,
   }
 }
@@ -761,8 +766,7 @@ let actionReducer = (state: t, action: action) => {
       (state, [])
     }
   | ErrorExit(errHandler) =>
-    errHandler->ErrorHandling.log
-    NodeJs.process->NodeJs.exitWithCode(Failure)
+    state.onError(errHandler)
     (state, [])
   }
 }
