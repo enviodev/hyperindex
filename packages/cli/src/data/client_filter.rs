@@ -351,4 +351,79 @@ mod tests {
             Section::Log,
         );
     }
+
+    // End-to-end: parse a `--where` with several client-only filters, build an
+    // Arrow response, then mask + render. Exercises numeric range, `_in`, and a
+    // big-endian binary numeric comparison across two independent sections.
+    #[test]
+    fn advanced_client_filtering_end_to_end() {
+        use crate::data::field_selection::Selection;
+        use crate::data::toon::render_arrow_response;
+        use hypersync_client::{ArrowResponse, ArrowResponseData};
+
+        let selection = Selection::parse(&[
+            "log.blockNumber".into(),
+            "log.logIndex".into(),
+            "transaction.value".into(),
+        ])
+        .unwrap();
+
+        let filter = WhereFilter::parse(Some(
+            "{ log: { blockNumber: { _gte: 10, _lt: 20 }, logIndex: { _in: [0, 2] } }, \
+               transaction: { value: { _gt: 100 } } }",
+        ))
+        .unwrap();
+        assert_eq!(
+            (filter.server_filters.len(), filter.client_filters.len()),
+            (0, 3),
+        );
+
+        let log_schema = Schema::new(vec![
+            Field::new("block_number", DataType::UInt64, false),
+            Field::new("log_index", DataType::UInt64, false),
+        ]);
+        let logs = RecordBatch::try_new(
+            Arc::new(log_schema),
+            vec![
+                Arc::new(UInt64Array::from(vec![5u64, 10, 15, 15, 20, 19])),
+                Arc::new(UInt64Array::from(vec![0u64, 0, 1, 2, 2, 0])),
+            ],
+        )
+        .unwrap();
+
+        // `transaction.value` is a numeric field stored as big-endian bytes.
+        let value_bytes: Vec<Vec<u8>> = [50u64, 150, 100, 200]
+            .iter()
+            .map(|n| n.to_be_bytes().to_vec())
+            .collect();
+        let tx_schema = Schema::new(vec![Field::new("value", DataType::Binary, false)]);
+        let transactions = RecordBatch::try_new(
+            Arc::new(tx_schema),
+            vec![Arc::new(BinaryArray::from(
+                value_bytes.iter().map(|v| v.as_slice()).collect::<Vec<_>>(),
+            ))],
+        )
+        .unwrap();
+
+        let response = ArrowResponse {
+            archive_height: Some(1000),
+            next_block: 1000,
+            total_execution_time: 0,
+            data: ArrowResponseData {
+                logs: vec![logs],
+                transactions: vec![transactions],
+                ..Default::default()
+            },
+            rollback_guard: None,
+        };
+
+        let masks = compute_masks(&response, &filter.client_filters).unwrap();
+        let out = render_arrow_response(&selection, &response, &masks);
+
+        assert_eq!(
+            out,
+            "logs[3]{blockNumber,logIndex}:\n  10,0\n  15,2\n  19,0\n\
+             transactions[2]{value}:\n  150\n  200\n",
+        );
+    }
 }

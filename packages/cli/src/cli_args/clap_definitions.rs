@@ -155,17 +155,11 @@ pub struct DataArgs {
     #[arg(long)]
     pub chain: String,
 
-    ///Filter rows, as JSON5 (relaxed JSON: unquoted keys, single quotes,
-    ///trailing commas, `//` comments). Group filters under `block`,
-    ///`transaction`, and `log`. Match any field with a value, an array, or
-    ///`_eq`/`_in`; compare numeric fields with `_gt`/`_gte`/`_lt`/`_lte`.
-    ///Example:
-    ///
-    ///  --where='{
-    ///    block:       { number: { _gte: 1000, _lte: 2000 } },
-    ///    log:         { srcAddress: "0xa0b8..." },
-    ///    transaction: { value: { _gt: 1000000000000000000 } },
-    ///  }'
+    ///Filter rows (JSON5: unquoted keys, single quotes, trailing commas,
+    ///`//` comments). Group fields under `block`, `transaction`, `log`.
+    ///Match any field with a value, array, or `_eq`/`_in`; numeric fields
+    ///also take `_gt`/`_gte`/`_lt`/`_lte`. Example:
+    ///--where='{ block: { number: { _gte: 1000, _lte: 2000 } }, log: { srcAddress: "0xa0b8..." } }'
     #[arg(long = "where")]
     pub where_filter: Option<String>,
 }
