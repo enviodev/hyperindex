@@ -288,6 +288,27 @@ mod tests {
     }
 
     #[test]
+    fn block_number_in_mask() {
+        let filters = client_filters("{ block: { number: { _in: [10, 12] } } }");
+        let schema = Schema::new(vec![Field::new("number", DataType::UInt64, false)]);
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(UInt64Array::from(vec![10u64, 11, 12]))],
+        )
+        .unwrap();
+        let mask = compute_section_mask(
+            &[batch],
+            &filters
+                .iter()
+                .map(CompiledFilter::compile)
+                .collect::<Result<Vec<_>>>()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(mask, vec![true, false, true]);
+    }
+
+    #[test]
     fn hex_eq_mask() {
         let filters = client_filters("{ log: { data: '0xABCD' } }");
         let schema = Schema::new(vec![Field::new("data", DataType::Binary, false)]);

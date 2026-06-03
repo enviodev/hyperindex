@@ -110,6 +110,14 @@ impl WhereFilter {
         !self.server_filters.is_empty() || !self.client_filters.is_empty()
     }
 
+    fn narrow_from(&mut self, n: u64) {
+        self.from_block = Some(self.from_block.map_or(n, |cur| cur.max(n)));
+    }
+
+    fn narrow_to_excl(&mut self, n: u64) {
+        self.to_block_exclusive = Some(self.to_block_exclusive.map_or(n, |cur| cur.min(n)));
+    }
+
     /// Fields referenced by client-side filters. These must be fetched even when
     /// not part of the user's output selection so the predicate can be evaluated.
     pub fn client_filter_fields(&self) -> Vec<TypedField> {
@@ -274,7 +282,7 @@ fn apply_field(
 ) -> Result<()> {
     use hypersync_client::net_types::block::BlockField;
     if matches!(typed_field, TypedField::Block(BlockField::Number)) {
-        return apply_block_range(out, indexer_name, body);
+        return apply_block_number(out, typed_field, body);
     }
 
     let conds = parse_conditions(section, indexer_name, typed_field, body)?;
@@ -361,39 +369,49 @@ fn parse_conditions(
     }
 }
 
-fn apply_block_range(out: &mut WhereFilter, field_name: &str, body: Value) -> Result<()> {
-    let map = match body {
-        Value::Object(m) => m,
-        _ => bail!("Expected operator object under `block.{field_name}` (e.g. `_gte: 1000`).",),
+/// `block.number` scopes the scan window rather than mapping to a row filter, so
+/// it desugars to `from_block`/`to_block`. A scalar or `_eq` pins a single block;
+/// an array or `_in` scans `[min, max]` and drops the rest with a client filter.
+fn apply_block_number(out: &mut WhereFilter, field: TypedField, body: Value) -> Result<()> {
+    let to_block = |v: &Value| {
+        value_to_u64(v)
+            .with_context(|| format!("`block.number` expects a non-negative integer, got {v}"))
     };
-
-    for (op, val) in map {
-        let n = value_to_u64(&val).with_context(|| {
-            format!(
-                "Operator `{op}` on `block.{field_name}` expects a non-negative integer, got {val}",
-            )
-        })?;
-        match op.as_str() {
-            "_gte" => {
-                out.from_block = Some(out.from_block.map_or(n, |cur| cur.max(n)));
+    for cond in parse_conditions(Section::Block, "number", field, body)? {
+        match cond {
+            Cond::Cmp(op, v) => {
+                let n = to_block(&v)?;
+                match op {
+                    CmpOp::Gte => out.narrow_from(n),
+                    CmpOp::Gt => out.narrow_from(n.saturating_add(1)),
+                    CmpOp::Lte => out.narrow_to_excl(n.saturating_add(1)),
+                    CmpOp::Lt => out.narrow_to_excl(n),
+                }
             }
-            "_gt" => {
-                let c = n.saturating_add(1);
-                out.from_block = Some(out.from_block.map_or(c, |cur| cur.max(c)));
+            Cond::In(vals) => {
+                let nums = vals.iter().map(to_block).collect::<Result<Vec<_>>>()?;
+                match (nums.iter().min(), nums.iter().max()) {
+                    (Some(&min), Some(&max)) => {
+                        out.narrow_from(min);
+                        out.narrow_to_excl(max.saturating_add(1));
+                        // A single value is already an exact range; only a set
+                        // needs the leftover blocks dropped client-side.
+                        if nums.len() > 1 {
+                            out.client_filters.push(ClientFilter {
+                                field,
+                                conds: vec![Cond::In(vals)],
+                            });
+                        }
+                    }
+                    // Empty `_in` matches no block; the client filter drops all rows.
+                    _ => out.client_filters.push(ClientFilter {
+                        field,
+                        conds: vec![Cond::In(vals)],
+                    }),
+                }
             }
-            "_lte" => {
-                let c = n.saturating_add(1);
-                out.to_block_exclusive = Some(out.to_block_exclusive.map_or(c, |cur| cur.min(c)));
-            }
-            "_lt" => {
-                out.to_block_exclusive = Some(out.to_block_exclusive.map_or(n, |cur| cur.min(n)));
-            }
-            other => bail!(
-                "Unsupported operator `{other}` on `block.{field_name}`. Use `_gte`, `_gt`, `_lte`, `_lt`.",
-            ),
         }
     }
-
     Ok(())
 }
 
@@ -462,6 +480,78 @@ mod tests {
     fn gt_and_lt_off_by_one() {
         let f = pf("{ block: { number: { _gt: 100, _lt: 200 } } }");
         assert_eq!((f.from_block, f.to_block_exclusive), (Some(101), Some(200)));
+    }
+
+    #[test]
+    fn block_number_eq_pins_single_block() {
+        let f = pf("{ block: { number: { _eq: 100 } } }");
+        assert_eq!(
+            (f.from_block, f.to_block_exclusive, f.client_filters.len()),
+            (Some(100), Some(101), 0),
+        );
+    }
+
+    #[test]
+    fn block_number_scalar_shorthand_pins_single_block() {
+        let f = pf("{ block: { number: 100 } }");
+        assert_eq!(
+            (f.from_block, f.to_block_exclusive, f.client_filters.len()),
+            (Some(100), Some(101), 0),
+        );
+    }
+
+    #[test]
+    fn block_number_in_scans_range_and_filters_rest_client_side() {
+        let f = pf("{ block: { number: { _in: [100, 50, 200] } } }");
+        assert_eq!(
+            (
+                f.from_block,
+                f.to_block_exclusive,
+                f.client_filters.len(),
+                f.client_filters[0].field.camel_name(),
+            ),
+            (Some(50), Some(201), 1, "number".to_string()),
+        );
+    }
+
+    #[test]
+    fn block_number_array_shorthand_matches_in() {
+        let f = pf("{ block: { number: [100, 50, 200] } }");
+        assert_eq!(
+            (f.from_block, f.to_block_exclusive, f.client_filters.len()),
+            (Some(50), Some(201), 1),
+        );
+    }
+
+    #[test]
+    fn block_number_single_element_in_needs_no_client_filter() {
+        let f = pf("{ block: { number: { _in: [42] } } }");
+        assert_eq!(
+            (f.from_block, f.to_block_exclusive, f.client_filters.len()),
+            (Some(42), Some(43), 0),
+        );
+    }
+
+    #[test]
+    fn block_number_in_builds_full_block_scan_over_range() {
+        use hypersync_client::net_types::block::BlockField;
+        let mut fs = FieldSelection::default();
+        fs.block.insert(BlockField::Number);
+        let q = pf("{ block: { number: { _in: [10, 12] } } }")
+            .build_net_query(fs)
+            .unwrap();
+        assert_eq!(
+            (q.from_block, q.to_block, q.include_all_blocks),
+            (10, Some(13), true),
+        );
+    }
+
+    #[test]
+    fn block_number_unsupported_operator_errors() {
+        let err = WhereFilter::parse(Some("{ block: { number: { _like: 5 } } }"))
+            .unwrap_err()
+            .to_string();
+        insta::assert_snapshot!(err, @"Unsupported operator `_like` on `block.number`. Use a scalar, an array, `_eq`, `_in`, `_gt`, `_gte`, `_lt`, or `_lte`.");
     }
 
     #[test]

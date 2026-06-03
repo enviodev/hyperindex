@@ -132,6 +132,14 @@ fn render_where_hint(filter: &WhereFilter, next_block: u64) -> String {
         let lte = end_excl.saturating_sub(1);
         range.push_str(&format!(", _lte: {lte}"));
     }
+    // A `block.number` set scans [min, max] and drops the rest client-side, so
+    // carry the set forward to keep filtering the same blocks across pages.
+    if let Some(set) = block_number_set(filter) {
+        range.push_str(&format!(
+            ", _in: {}",
+            json_string(&Value::Array(set.to_vec()))
+        ));
+    }
     range.push_str(" }");
     block.push(range);
 
@@ -144,6 +152,9 @@ fn render_where_hint(filter: &WhereFilter, next_block: u64) -> String {
         }
     }
     for c in &filter.client_filters {
+        if is_block_number(c) {
+            continue;
+        }
         let entry = render_client_field(c);
         match c.field.section() {
             Section::Block => block.push(entry),
@@ -158,6 +169,20 @@ fn render_where_hint(filter: &WhereFilter, next_block: u64) -> String {
         .map(|(name, entries)| format!("{name}: {{ {} }}", entries.join(", ")))
         .collect();
     format!("{{ {} }}", parts.join(", "))
+}
+
+fn is_block_number(c: &ClientFilter) -> bool {
+    c.field.section() == Section::Block && c.field.camel_name() == "number"
+}
+
+fn block_number_set(filter: &WhereFilter) -> Option<&[Value]> {
+    filter
+        .client_filters
+        .iter()
+        .find_map(|c| match c.conds.as_slice() {
+            [Cond::In(vals)] if is_block_number(c) => Some(vals.as_slice()),
+            _ => None,
+        })
 }
 
 fn render_server_field(f: &FieldFilter) -> String {
@@ -233,6 +258,17 @@ mod tests {
         assert_eq!(
             hint,
             "{ block: { number: { _gte: 1500, _lte: 2000 } }, transaction: { value: { _gt: 1000 } }, log: { srcAddress: \"0xabc\", data: \"0xdead\" } }",
+        );
+    }
+
+    #[test]
+    fn hint_folds_block_number_set_into_range() {
+        let filter =
+            WhereFilter::parse(Some("{ block: { number: { _in: [100, 50, 200] } } }")).unwrap();
+        let hint = render_where_hint(&filter, 120);
+        assert_eq!(
+            hint,
+            "{ block: { number: { _gte: 120, _lte: 200, _in: [100,50,200] } } }",
         );
     }
 
