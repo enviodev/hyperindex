@@ -11,6 +11,11 @@ let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fall
 let maxPartitionConcurrency =
   envSafe->EnvSafe.get("ENVIO_MAX_PARTITION_CONCURRENCY", S.int, ~fallback=10)
 
+// Max uncommitted entity/effect changes plus unwritten batch items the
+// in-memory store holds before processing waits for the write cycle to catch up.
+let maxInMemoryChanges =
+  envSafe->EnvSafe.get("ENVIO_MAX_IN_MEMORY_CHANGES", S.int, ~fallback=100_000)->Belt.Int.toFloat
+
 // FIXME: This broke HS grafana dashboard. Should investigate it later. Maybe we should use :: as a default value?
 // We want to be able to set it to 0.0.0.0
 // to allow to passthrough the port from a Docker container

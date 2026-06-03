@@ -21,12 +21,15 @@ module EntityTables = {
 }
 
 type effectCacheInMemTable = {
+  // Cache keys whose handler output is persisted on the next write. Drained
+  // each write; eviction is driven by the per-entry checkpointId instead.
   mutable idsToStore: array<string>,
   mutable invalidationsCount: int,
-  mutable dict: dict<Internal.effectOutput>,
-  // The live dict swapped here while its write is in flight, kept readable so
-  // reads stay warm until the write completes (see snapshotEffects).
-  mutable pendingDict: dict<Internal.effectOutput>,
+  // Each entry is stamped with the checkpoint that referenced it (or
+  // loadedFromDbCheckpointId for db reads), so committed entries can be
+  // dropped once persisted/re-derivable, mirroring entity changes.
+  mutable dict: dict<Change.t<Internal.effectOutput>>,
+  mutable changesCount: float,
   effect: Internal.effect,
 }
 
@@ -100,9 +103,9 @@ let make = (
   }
 }
 
-// Max uncommitted entity changes plus unwritten batch items before processing
-// must wait for the cycle to free capacity.
-let keepLatestChangesLimit = 100_000.
+// Max uncommitted entity/effect changes plus unwritten batch items before
+// processing must wait for the cycle to free capacity.
+let keepLatestChangesLimit = Env.maxInMemoryChanges
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   let key = effect.name
@@ -112,7 +115,7 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
     let table = {
       idsToStore: [],
       dict: Dict.make(),
-      pendingDict: Dict.make(),
+      changesCount: 0.,
       invalidationsCount: 0,
       effect,
     }
@@ -121,12 +124,60 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   }
 }
 
-// Effect cache read that also consults the in-flight write's pending values.
+let mapChangeToEffectOutput = (change: Change.t<Internal.effectOutput>) =>
+  switch change {
+  | Set({entity: output}) => Some(output)
+  | Delete(_) => None
+  }
+
 let getEffectOutput = (inMemTable: effectCacheInMemTable, key) =>
   switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
-  | Some(_) as found => found
-  | None => inMemTable.pendingDict->Utils.Dict.dangerouslyGetNonOption(key)
+  | Some(change) => change->mapChangeToEffectOutput
+  | None => None
   }
+
+// Records a handler output. Persisted on the next write only when shouldCache;
+// otherwise kept in memory (re-run on a later miss) but never written to the db.
+let setEffectOutput = (
+  inMemTable: effectCacheInMemTable,
+  ~checkpointId,
+  ~cacheKey,
+  ~output,
+  ~shouldCache,
+) => {
+  switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
+  | Some(_) => ()
+  | None => inMemTable.changesCount = inMemTable.changesCount +. 1.
+  }
+  inMemTable.dict->Dict.set(cacheKey, Set({entityId: cacheKey, entity: output, checkpointId}))
+  if shouldCache {
+    inMemTable.idsToStore->Array.push(cacheKey)->ignore
+  }
+}
+
+// Seeds an entry from a db read. Stamped with loadedFromDbCheckpointId so it's
+// always droppable (re-readable from the db) and never re-persisted.
+let initEffectOutputFromDb = (inMemTable: effectCacheInMemTable, ~cacheKey, ~output) =>
+  if inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(cacheKey)->Option.isNone {
+    inMemTable.changesCount = inMemTable.changesCount +. 1.
+    inMemTable.dict->Dict.set(
+      cacheKey,
+      Set({entityId: cacheKey, entity: output, checkpointId: Internal.loadedFromDbCheckpointId}),
+    )
+  }
+
+// Frees committed entries (re-readable from the db, or re-runnable for
+// cache:false). Uncommitted entries stay warm. Mirrors entity dropCommittedChanges.
+let dropCommittedEffects = (inMemTable: effectCacheInMemTable, ~committedCheckpointId) => {
+  let keysToDelete = []
+  inMemTable.dict->Utils.Dict.forEachWithKey((change, key) =>
+    if !(change->Change.getCheckpointId > committedCheckpointId) {
+      keysToDelete->Array.push(key)
+    }
+  )
+  keysToDelete->Array.forEach(key => inMemTable.dict->Utils.Dict.deleteInPlace(key))
+  inMemTable.changesCount = inMemTable.changesCount -. keysToDelete->Array.length->Int.toFloat
+}
 
 let getInMemTable = (
   inMemoryStore: t,
@@ -141,6 +192,9 @@ let getChangesCount = (inMemoryStore: t) => {
   let total = ref(0.)
   inMemoryStore.allEntities->Array.forEach(entityConfig => {
     total := total.contents +. (inMemoryStore->getInMemTable(~entityConfig)).changesCount
+  })
+  inMemoryStore.effects->Utils.Dict.forEach(inMemTable => {
+    total := total.contents +. inMemTable.changesCount
   })
   inMemoryStore.processedBatches->Array.forEach(batch => {
     total := total.contents +. batch.totalBatchSize->Int.toFloat
@@ -207,8 +261,8 @@ let drainBatchRun = (inMemoryStore: t): Batch.t => {
   }
 }
 
-// Captures the effects to persist, parking each live dict in pendingDict so
-// reads stay warm during the write, then starts fresh live dicts.
+// Captures the cache:true outputs to persist. The dict is left intact — entries
+// stay warm and are reclaimed later by dropCommittedEffects once committed.
 let snapshotEffects = (inMemoryStore: t, ~cache): array<Persistence.updatedEffectCache> => {
   let acc = []
   inMemoryStore.effects->Utils.Dict.forEach(inMemTable => {
@@ -216,10 +270,12 @@ let snapshotEffects = (inMemoryStore: t, ~cache): array<Persistence.updatedEffec
     switch idsToStore {
     | [] => ()
     | ids =>
-      let items = ids->Array.map((id): Internal.effectCacheItem => {
-        id,
-        output: dict->Dict.getUnsafe(id),
-      })
+      let items = ids->Array.filterMap((id): option<Internal.effectCacheItem> =>
+        switch dict->Dict.getUnsafe(id)->mapChangeToEffectOutput {
+        | Some(output) => Some({id, output})
+        | None => None
+        }
+      )
       let effectName = effect.name
       let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
       | Some(c) => c
@@ -233,8 +289,6 @@ let snapshotEffects = (inMemoryStore: t, ~cache): array<Persistence.updatedEffec
       Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
       acc->Array.push(({effect, items, shouldInitialize}: Persistence.updatedEffectCache))->ignore
     }
-    inMemTable.pendingDict = dict
-    inMemTable.dict = Dict.make()
     inMemTable.idsToStore = []
     inMemTable.invalidationsCount = 0
   })
@@ -302,7 +356,6 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
     )
 
     inMemoryStore.committedCheckpointId = upToCheckpointId
-    inMemoryStore.effects->Utils.Dict.forEach(inMemTable => inMemTable.pendingDict = Dict.make())
   }
 }
 
@@ -388,6 +441,9 @@ let rec awaitCapacity = async (inMemoryStore: t) => {
       ->InMemoryTable.Entity.dropCommittedChanges(
         ~committedCheckpointId=inMemoryStore.committedCheckpointId,
       )
+    )
+    inMemoryStore.effects->Utils.Dict.forEach(inMemTable =>
+      inMemTable->dropCommittedEffects(~committedCheckpointId=inMemoryStore.committedCheckpointId)
     )
 
     // What's left is uncommitted. Only wait if a queued batch can free it;
