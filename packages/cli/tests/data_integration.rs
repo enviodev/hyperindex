@@ -137,7 +137,7 @@ fn block_only_selection_returns_block_data() {
         "block.number",
         "block.gasUsed",
         "--chain=1",
-        "--where={ block: { number: { _gte: 20000000, _lte: 20000000 } } }",
+        "--where={ block: { number: 20000000 } }",
     ]);
     assert!(out.ok, "envio data failed:\n{out}");
 
