@@ -155,13 +155,11 @@ pub struct DataArgs {
     #[arg(long)]
     pub chain: String,
 
-    ///Filter in indexer `where` form, as JSON5 — JSON-style braces with
-    ///relaxed syntax: unquoted keys, single quotes, trailing commas, and
-    ///`//` comments are all accepted. Any field can be filtered. Fields
-    ///Hypersync can filter (address, topics, from, to, sighash, ...) are
-    ///pushed to the server; everything else — and all comparisons
-    ///(`_gt`/`_gte`/`_lt`/`_lte`, numeric fields only) — is filtered
-    ///client-side, so related rows in other sections may remain. Example:
+    ///Filter rows, as JSON5 (relaxed JSON: unquoted keys, single quotes,
+    ///trailing commas, `//` comments). Group filters under `block`,
+    ///`transaction`, and `log`. Match any field with a value, an array, or
+    ///`_eq`/`_in`; compare numeric fields with `_gt`/`_gte`/`_lt`/`_lte`.
+    ///Example:
     ///
     ///  --where='{
     ///    block:       { number: { _gte: 1000, _lte: 2000 } },
