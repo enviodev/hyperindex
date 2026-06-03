@@ -44,11 +44,20 @@ fn escape_cell(s: &str) -> String {
     format!("\"{escaped}\"")
 }
 
-pub fn render_arrow_response(
+/// A section's rendered rows, kept separate from the final TOON string so pages
+/// can be accumulated before rendering a single table per section.
+pub struct SectionTable {
+    pub section: Section,
+    pub plural: &'static str,
+    pub col_names: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+}
+
+pub fn collect_sections(
     selection: &Selection,
     response: &ArrowResponse,
     masks: &Masks,
-) -> String {
+) -> Vec<SectionTable> {
     let mut section_order: Vec<Section> = Vec::new();
     for col in &selection.columns {
         if !section_order.contains(&col.section) {
@@ -56,14 +65,14 @@ pub fn render_arrow_response(
         }
     }
 
-    let mut out = String::new();
+    let mut tables = Vec::new();
     for section in &section_order {
         let cols: Vec<&Column> = selection
             .columns
             .iter()
             .filter(|c| c.section == *section)
             .collect();
-        let col_names: Vec<String> = cols.iter().map(|c| c.field.camel_name()).collect();
+        let col_names: Vec<String> = cols.iter().map(|c| c.display_name.clone()).collect();
         let (plural, batches, mask) = match section {
             Section::Block => ("blocks", &response.data.blocks, masks.block.as_deref()),
             Section::Transaction => (
@@ -77,9 +86,31 @@ pub fn render_arrow_response(
         let column_keys: Vec<String> = cols.iter().map(|c| c.field.column_name()).collect();
         let column_kinds: Vec<ValueKind> = cols.iter().map(|c| c.field.spec().value_kind).collect();
         let rows = extract_rows(batches, &column_keys, &column_kinds, mask);
-        out.push_str(&render_table(plural, &col_names, &rows));
+        tables.push(SectionTable {
+            section: *section,
+            plural,
+            col_names,
+            rows,
+        });
+    }
+    tables
+}
+
+pub fn render_sections(tables: &[SectionTable]) -> String {
+    let mut out = String::new();
+    for table in tables {
+        out.push_str(&render_table(table.plural, &table.col_names, &table.rows));
     }
     out
+}
+
+#[cfg(test)]
+pub fn render_arrow_response(
+    selection: &Selection,
+    response: &ArrowResponse,
+    masks: &Masks,
+) -> String {
+    render_sections(&collect_sections(selection, response, masks))
 }
 
 fn extract_rows(
@@ -161,6 +192,43 @@ mod tests {
     fn quotes_cells_with_commas() {
         let s = render_table("t", &["a"], &[vec!["x,y".into()]]);
         assert_eq!(s, "t[1]{a}:\n  \"x,y\"\n");
+    }
+
+    #[test]
+    fn header_uses_field_name_as_typed() {
+        use super::super::client_filter::Masks;
+        use super::super::field_selection::Selection;
+        use arrow::array::UInt64Array;
+        use arrow::datatypes::{Field, Schema};
+        use hypersync_client::{ArrowResponse, ArrowResponseData};
+        use std::sync::Arc;
+
+        let selection = Selection::parse(&["block.hash".into(), "block.NUMBER".into()]).unwrap();
+        let schema = Schema::new(vec![
+            Field::new("hash", DataType::Binary, false),
+            Field::new("number", DataType::UInt64, false),
+        ]);
+        let blocks = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(arrow::array::BinaryArray::from(vec![[0xaa].as_slice()])),
+                Arc::new(UInt64Array::from(vec![100u64])),
+            ],
+        )
+        .unwrap();
+        let response = ArrowResponse {
+            archive_height: Some(100),
+            next_block: 100,
+            total_execution_time: 0,
+            data: ArrowResponseData {
+                blocks: vec![blocks],
+                ..Default::default()
+            },
+            rollback_guard: None,
+        };
+
+        let out = render_arrow_response(&selection, &response, &Masks::default());
+        assert_eq!(out, "blocks[1]{hash,NUMBER}:\n  0xaa,100\n");
     }
 
     #[test]

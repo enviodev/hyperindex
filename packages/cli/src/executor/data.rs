@@ -18,12 +18,16 @@ enum PaginationState {
     MorePages,
 }
 
+/// Below this many rows a single page is too sparse to bother the user with a
+/// manual next-page command, so we fetch the following pages automatically.
+const AUTO_PAGINATE_MIN_ROWS: usize = 100;
+
 pub async fn run(args: DataArgs) -> Result<()> {
     let token = resolve_api_token().ok_or_else(missing_token_error)?;
 
     let chain = chain::resolve(&args.chain)?;
     let selection = Selection::parse(&args.fields)?;
-    let filter = WhereFilter::parse(args.where_filter.as_deref())?;
+    let mut filter = WhereFilter::parse(args.where_filter.as_deref())?;
     let client = build_client(&chain, &token)?;
 
     if selection.known_height
@@ -46,32 +50,47 @@ pub async fn run(args: DataArgs) -> Result<()> {
         bail!("No data fields requested. Pass at least one positional field.");
     }
 
-    let field_selection = selection.build_net_field_selection_with(&filter.client_filter_fields());
-    let query = filter.build_net_query(field_selection)?;
-    let response = client
-        .get_arrow(&query)
-        .await
-        .context("Failed querying blockchain data")?;
+    let extra_fields = filter.client_filter_fields();
+    let mut tables: Vec<toon::SectionTable> = Vec::new();
+    let mut total_rows = 0usize;
 
-    let masks = client_filter::compute_masks(&response, &filter.client_filters)?;
-    let mut out = toon::render_arrow_response(&selection, &response, &masks);
+    let (state, archive_height, next_block) = loop {
+        let field_selection = selection.build_net_field_selection_with(&extra_fields);
+        let query = filter.build_net_query(field_selection)?;
+        let response = client
+            .get_arrow(&query)
+            .await
+            .context("Failed querying blockchain data")?;
 
-    let archive_height = response.archive_height.unwrap_or(0);
+        let masks = client_filter::compute_masks(&response, &filter.client_filters)?;
+        for table in toon::collect_sections(&selection, &response, &masks) {
+            total_rows += table.rows.len();
+            merge_table(&mut tables, table);
+        }
 
+        let archive_height = response.archive_height.unwrap_or(0);
+        let next_block = response.next_block;
+
+        let state = if matches!(filter.to_block_exclusive, Some(end) if next_block >= end) {
+            PaginationState::RangeDone
+        } else if next_block >= archive_height {
+            PaginationState::ReachedHead
+        } else {
+            PaginationState::MorePages
+        };
+
+        if matches!(state, PaginationState::MorePages) && total_rows < AUTO_PAGINATE_MIN_ROWS {
+            filter.from_block = Some(next_block);
+            continue;
+        }
+        break (state, archive_height, next_block);
+    };
+
+    let mut out = toon::render_sections(&tables);
     if selection.known_height {
         out.push_str(&toon::render_height(archive_height));
     }
-
     print!("{out}");
-
-    let next_block = response.next_block;
-    let state = if matches!(filter.to_block_exclusive, Some(end) if next_block >= end) {
-        PaginationState::RangeDone
-    } else if next_block >= archive_height {
-        PaginationState::ReachedHead
-    } else {
-        PaginationState::MorePages
-    };
 
     match state {
         PaginationState::RangeDone => {}
@@ -94,6 +113,13 @@ pub async fn run(args: DataArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn merge_table(tables: &mut Vec<toon::SectionTable>, table: toon::SectionTable) {
+    match tables.iter_mut().find(|t| t.section == table.section) {
+        Some(existing) => existing.rows.extend(table.rows),
+        None => tables.push(table),
+    }
 }
 
 fn print_next_command(args: &DataArgs, chain: &Chain, filter: &WhereFilter, next_block: u64) {
@@ -127,21 +153,27 @@ fn render_where_hint(filter: &WhereFilter, next_block: u64) -> String {
     let mut transaction: Vec<String> = Vec::new();
     let mut log: Vec<String> = Vec::new();
 
-    let mut range = format!("number: {{ _gte: {next_block}");
-    if let Some(end_excl) = filter.to_block_exclusive {
-        let lte = end_excl.saturating_sub(1);
-        range.push_str(&format!(", _lte: {lte}"));
-    }
     // A `block.number` set scans [min, max] and drops the rest client-side, so
-    // carry the set forward to keep filtering the same blocks across pages.
+    // the next page only needs the values not yet covered by this response.
     if let Some(set) = block_number_set(filter) {
-        range.push_str(&format!(
-            ", _in: {}",
-            json_string(&Value::Array(set.to_vec()))
+        let remaining: Vec<Value> = set
+            .iter()
+            .filter(|v| value_as_u64(v).is_none_or(|n| n >= next_block))
+            .cloned()
+            .collect();
+        block.push(format!(
+            "number: {{ _in: {} }}",
+            json_string(&Value::Array(remaining))
         ));
+    } else {
+        let mut range = format!("number: {{ _gte: {next_block}");
+        if let Some(end_excl) = filter.to_block_exclusive {
+            let lte = end_excl.saturating_sub(1);
+            range.push_str(&format!(", _lte: {lte}"));
+        }
+        range.push_str(" }");
+        block.push(range);
     }
-    range.push_str(" }");
-    block.push(range);
 
     for f in &filter.server_filters {
         let entry = render_server_field(f);
@@ -220,6 +252,14 @@ fn json_string(v: &Value) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| "<unprintable>".into())
 }
 
+fn value_as_u64(v: &Value) -> Option<u64> {
+    match v {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => s.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+}
+
 fn resolve_api_token() -> Option<String> {
     let from_env = std::env::var("ENVIO_API_TOKEN").ok();
     let from_dotenv = || {
@@ -262,14 +302,11 @@ mod tests {
     }
 
     #[test]
-    fn hint_folds_block_number_set_into_range() {
+    fn hint_carries_only_unfetched_block_number_set() {
         let filter =
             WhereFilter::parse(Some("{ block: { number: { _in: [100, 50, 200] } } }")).unwrap();
         let hint = render_where_hint(&filter, 120);
-        assert_eq!(
-            hint,
-            "{ block: { number: { _gte: 120, _lte: 200, _in: [100,50,200] } } }",
-        );
+        assert_eq!(hint, "{ block: { number: { _in: [200] } } }");
     }
 
     #[test]
