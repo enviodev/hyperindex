@@ -1060,32 +1060,40 @@ describe("E2E tests", () => {
       syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexerMock.getBatchWritePromise()
 
-      // Reaching head now flips isRealtime before the first waitForNewBlock,
-      // because the batch write no longer blocks EventBatchProcessed. So the
-      // first waitForNewBlock already runs in realtime mode: Live races as
-      // Primary, Sync stays Secondary. The single sync height call from the
-      // old (isRealtime=false) phase is now split into one sync + one live.
-      t.expect(
-        syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync stays at 1 (Secondary in realtime, not racing)",
-      ).toEqual(1)
+      // With the standalone persistence cycle, EventBatchProcessed marks the
+      // chain caught up before the first waitForNewBlock fires, so the height
+      // race is already in realtime mode: Live=Primary races, Sync=Secondary.
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live participates from the first waitForNewBlock (isRealtime=true)",
+        ~message="Live source should participate in the first waitForNewBlock (realtime)",
+      ).toEqual(1)
+      t.expect(
+        syncSource.getHeightOrThrowCalls->Array.length,
+        ~message="Sync source should stay at 1 (Secondary, not racing)",
       ).toEqual(1)
 
-      // Advance via the Live (Primary) source now.
+      // Resolve the first waitForNewBlock via the Live (Primary) source
       liveSource.resolveGetHeightOrThrow(301)
       await Utils.delay(0)
       await Utils.delay(0)
 
-      // In realtime mode items are fetched from the Live source, not Sync.
+      // Resolve the items query for the new block
       t.expect(
         syncSource.getItemsOrThrowCalls->Array.length,
-        ~message="Sync should not fetch items in realtime mode",
+        ~message="We are in live mode, so we query items from the live source.",
       ).toEqual(0)
       liveSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
       await indexerMock.getBatchWritePromise()
+
+      // Second waitForNewBlock: Live=Primary races again, Sync=Secondary (stays).
+      t.expect(
+        syncSource.getHeightOrThrowCalls->Array.length,
+        ~message="Sync source should stay at 1 (Secondary, not racing)",
+      ).toEqual(1)
+      t.expect(
+        liveSource.getHeightOrThrowCalls->Array.length,
+        ~message="Live source should keep racing in realtime mode",
+      ).toEqual(2)
     },
   )
 

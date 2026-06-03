@@ -333,17 +333,11 @@ let runBatchHandlersOrThrow = async (
   }
 }
 
-let registerProcessEventBatchMetrics = (
-  ~logger,
-  ~loadDuration,
-  ~handlerDuration,
-  ~dbWriteDuration,
-) => {
+let registerProcessEventBatchMetrics = (~logger, ~loadDuration, ~handlerDuration) => {
   logger->Logging.childTrace({
     "msg": "Finished processing batch",
     "loader_time_elapsed": loadDuration,
     "handlers_time_elapsed": handlerDuration,
-    "write_time_elapsed": dbWriteDuration,
   })
 
   Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration)
@@ -359,7 +353,6 @@ type logPartitionInfo = {
 let processEventBatch = async (
   ~batch: Batch.t,
   ~inMemoryStore: InMemoryStore.t,
-  ~isInReorgThreshold,
   ~loadManager,
   ~ctx: Ctx.t,
   ~chainFetchers: ChainMap.t<ChainFetcher.t>,
@@ -381,6 +374,11 @@ let processEventBatch = async (
   })
 
   try {
+    // Block until the in-memory store has capacity, so processing can't outrun
+    // the background persistence cycle by more than keepLatestChangesLimit.
+    // Also surfaces any error from a previous background write.
+    await inMemoryStore->InMemoryStore.awaitCapacity
+
     let timeRef = Hrtime.makeTimer()
 
     if batch.items->Utils.Array.notEmpty {
@@ -401,34 +399,19 @@ let processEventBatch = async (
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    try {
-      await inMemoryStore->InMemoryStore.writeBatch(
-        ~persistence=ctx.persistence,
-        ~batch,
-        ~config=ctx.config,
-        ~isInReorgThreshold,
-      )
+    inMemoryStore->InMemoryStore.commitBatch(~batch)
 
-      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-      let loaderDuration = elapsedTimeAfterLoaders
-      let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
-      let dbWriteDuration = elapsedTimeAfterDbWrite -. elapsedTimeAfterProcessing
-      registerProcessEventBatchMetrics(
-        ~logger,
-        ~loadDuration=loaderDuration,
-        ~handlerDuration,
-        ~dbWriteDuration,
-      )
-      Ok()
-    } catch {
-    | Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.make(~msg=message, ~logger)->Error
-    | exn => exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
-    }
+    let loaderDuration = elapsedTimeAfterLoaders
+    let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
+    registerProcessEventBatchMetrics(~logger, ~loadDuration=loaderDuration, ~handlerDuration)
+    Ok()
   } catch {
+  | Persistence.StorageError({message, reason}) =>
+    reason->ErrorHandling.make(~msg=message, ~logger)->Error
   | ProcessingError({message, exn, item}) =>
     exn
     ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
     ->Error
+  | exn => exn->ErrorHandling.make(~msg="Failed processing batch", ~logger)->Error
   }
 }

@@ -7,9 +7,21 @@ let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   ->Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
   ->Option.getOrThrow
 
-module InMemoryStore = {
-  let flushPendingPersistence = InMemoryStore.flushPendingPersistence
+// Keep a handle to the real module before the local shadow below.
+module RealInMemoryStore = InMemoryStore
 
+// In-memory-only test stores still require a persistence/config; reuse one.
+let defaultPersistence = PgStorage.makePersistenceFromConfig(
+  ~config,
+  ~storage=PgStorage.makeStorageFromEnv(
+    ~config,
+    ~sql=PgStorage.makeClient(),
+    ~pgSchema=Env.Db.publicSchema,
+    ~isHasuraEnabled=false,
+  ),
+)
+
+module InMemoryStore = {
   let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
@@ -24,7 +36,8 @@ module InMemoryStore = {
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=config.allEntities)
+    let inMemoryStore =
+      RealInMemoryStore.make(~entities=config.allEntities, ~persistence=defaultPersistence, ~config)
     entities->Array.forEach(((entityConfig, items)) => {
       items->Array.forEach(entity => {
         inMemoryStore->setEntity(~entityConfig, entity)
@@ -203,6 +216,7 @@ module Storage = {
           ~allEntities as _,
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
+          ~chainMetaData as _,
         ) => JsError.throwWithMessage("Not implemented"),
         close: () => Promise.resolve(),
       },
@@ -333,7 +347,7 @@ module Indexer = {
       Ctx.registrations,
       config,
       persistence,
-      inMemoryStore: InMemoryStore.make(),
+      inMemoryStore: RealInMemoryStore.make(~entities=config.allEntities, ~persistence, ~config),
     }
 
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
@@ -380,17 +394,32 @@ module Indexer = {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
           let before = (gsManager->GlobalStateManager.getState).processedBatches
-          while before >= (gsManager->GlobalStateManager.getState).processedBatches {
-            await Utils.delay(1)
+          // Wait until a new batch is processed and written. A reorg batch can
+          // land before this call, so also stop once the indexer has settled.
+          let idleChecks = ref(0)
+          let rec wait = async () => {
+            await ctx.inMemoryStore->RealInMemoryStore.flush
+            let state = gsManager->GlobalStateManager.getState
+            let store = ctx.inMemoryStore
+            let isIdle =
+              !state.currentlyProcessingBatch &&
+              store.writeFiber->Option.isNone &&
+              store.committedCheckpointId == store.processedCheckpointId
+            if before < state.processedBatches {
+              ()
+            } else if isIdle && idleChecks.contents >= 5 {
+              ()
+            } else {
+              idleChecks := if isIdle {
+                idleChecks.contents + 1
+              } else {
+                0
+              }
+              await Utils.delay(1)
+              await wait()
+            }
           }
-          // The batch write is fired concurrently with processing. Await the
-          // in-flight write (without clearing it — the indexer owns flushing, and
-          // clearing here would let it fire the next write concurrently) so DB
-          // state assertions see the committed batch.
-          switch ctx.inMemoryStore.pendingPersistence {
-          | Some({promise}) => await promise
-          | None => ()
-          }
+          await wait()
           // Skip extra microtasks for indexer to fire follow-up actions
           // (e.g. the NextQuery dispatch that schedules the next
           // getItemsOrThrow call). Without this, callers that immediately
@@ -512,14 +541,13 @@ module Indexer = {
         }
       },
       restart: async () => {
+        // Persist everything before the restart, else uncommitted state is lost.
+        await ctx.inMemoryStore->RealInMemoryStore.flush
         let state = gsManager->GlobalStateManager.getState
         gsManager->GlobalStateManager.setState({
           ...gsManager->GlobalStateManager.getState,
           id: state.id + 1,
         })
-        // Flush the in-flight concurrent write before the new indexer starts on
-        // the same DB, otherwise the old and new writes race.
-        await ctx.inMemoryStore->InMemoryStore.flushPendingPersistence
         await make(
           ~chains,
           ~enableHasura,

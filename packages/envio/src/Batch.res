@@ -23,6 +23,8 @@ type t = {
   totalBatchSize: int,
   items: array<Internal.item>,
   progressedChainsById: dict<chainAfterBatch>,
+  // Drives whether history is saved, so writes never merge across a change in it.
+  isInReorgThreshold: bool,
   // Unnest-like checkpoint fields:
   checkpointIds: array<bigint>,
   checkpointChainIds: array<int>,
@@ -165,6 +167,7 @@ let prepareBatch = (
   ~checkpointIdBeforeBatch,
   ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
   ~batchSizeTarget,
+  ~isInReorgThreshold,
 ) => {
   let preparedFetchStates =
     chainsBeforeBatch
@@ -286,6 +289,7 @@ let prepareBatch = (
       ~batchSizePerChain=mutBatchSizePerChain,
       ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
     ),
+    isInReorgThreshold,
     checkpointIds,
     checkpointChainIds,
     checkpointBlockNumbers,
@@ -298,8 +302,9 @@ let make = (
   ~checkpointIdBeforeBatch,
   ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
   ~batchSizeTarget,
+  ~isInReorgThreshold,
 ) => {
-  prepareBatch(~checkpointIdBeforeBatch, ~chainsBeforeBatch, ~batchSizeTarget)
+  prepareBatch(~checkpointIdBeforeBatch, ~chainsBeforeBatch, ~batchSizeTarget, ~isInReorgThreshold)
 }
 
 let findFirstEventBlockNumber = (batch: t, ~chainId) => {

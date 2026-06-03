@@ -163,7 +163,7 @@ describe("ChainManager", () => {
         let rec testThatCreatedEventsAreOrderedCorrectly = (chainManager, lastEvent) => {
           let {items, totalBatchSize, progressedChainsById} = ChainManager.createBatch(
             chainManager,
-            ~committedCheckpointId=Internal.initialCheckpointId,
+            ~processedCheckpointId=Internal.initialCheckpointId,
             ~batchSizeTarget=10000,
             ~isRollback=false,
           )
