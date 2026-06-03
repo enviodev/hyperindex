@@ -46,18 +46,22 @@ pub struct ClientFilter {
     pub conds: Vec<Cond>,
 }
 
-/// `block.timestamp` comparisons collected at parse time. Each `(op, seconds)`
-/// is resolved to a block number by a pre-flight search and folded into the scan
-/// window before the main query runs. The same comparisons stay as client-side
-/// filters so blocks the resolved range can't exclude are dropped precisely.
+/// `block.timestamp` filters collected at parse time, resolved to block numbers
+/// by a pre-flight search and folded into the scan window before the main query
+/// runs. The same comparisons stay as client-side filters so blocks the resolved
+/// range can't exclude are dropped precisely.
 #[derive(Debug, Clone, Default)]
 pub struct TimestampBounds {
+    /// `_gt`/`_gte`/`_lt`/`_lte` comparisons; each narrows one edge of the window.
     pub conds: Vec<(CmpOp, u64)>,
+    /// `_eq`/`_in` targets; the window spans `[min, max]` of these and the client
+    /// filter drops blocks whose timestamp isn't in the set.
+    pub eq_targets: Vec<u64>,
 }
 
 impl TimestampBounds {
     pub fn is_empty(&self) -> bool {
-        self.conds.is_empty()
+        self.conds.is_empty() && self.eq_targets.is_empty()
     }
 }
 
@@ -447,29 +451,35 @@ const TIMESTAMP_MILLISECOND_HINT: u64 = 100_000_000_000;
 
 /// Like `block.number`, `block.timestamp` scopes the scan window — but the block
 /// range is resolved later by a pre-flight search (the conditions are stored on
-/// `out.timestamp`). The same comparisons stay as a client-side filter so the
-/// boundary blocks the resolved range can't pin down exactly are dropped here.
+/// `out.timestamp`). The same conditions stay as a client-side filter so blocks
+/// the resolved range can't pin down exactly are dropped here.
 fn apply_block_timestamp(out: &mut WhereFilter, field: TypedField, body: Value) -> Result<()> {
     let conds = parse_conditions(Section::Block, "timestamp", field, body)?;
     for cond in &conds {
-        let Cond::Cmp(op, v) = cond else {
-            bail!(
-                "`block.timestamp` only supports range comparisons (`_gt`, `_gte`, `_lt`, `_lte`), not set membership."
-            );
-        };
-        let secs = value_to_u64(v).with_context(|| {
-            format!("`block.timestamp` expects a non-negative unix-second integer, got {v}")
-        })?;
-        if secs >= TIMESTAMP_MILLISECOND_HINT {
-            eprintln!(
-                "Warning: block.timestamp `{secs}` looks like milliseconds. \
-                 EVM block timestamps are unix seconds — divide by 1000."
-            );
+        match cond {
+            Cond::Cmp(op, v) => out.timestamp.conds.push((*op, parse_timestamp_secs(v)?)),
+            Cond::In(vals) => {
+                for v in vals {
+                    out.timestamp.eq_targets.push(parse_timestamp_secs(v)?);
+                }
+            }
         }
-        out.timestamp.conds.push((*op, secs));
     }
     out.client_filters.push(ClientFilter { field, conds });
     Ok(())
+}
+
+fn parse_timestamp_secs(v: &Value) -> Result<u64> {
+    let secs = value_to_u64(v).with_context(|| {
+        format!("`block.timestamp` expects a non-negative unix-second integer, got {v}")
+    })?;
+    if secs >= TIMESTAMP_MILLISECOND_HINT {
+        eprintln!(
+            "Warning: block.timestamp `{secs}` looks like milliseconds. \
+             EVM block timestamps are unix seconds — divide by 1000."
+        );
+    }
+    Ok(secs)
 }
 
 fn value_to_u64(v: &Value) -> Result<u64> {
@@ -790,11 +800,25 @@ mod tests {
     }
 
     #[test]
-    fn block_timestamp_rejects_set_membership() {
-        let err = WhereFilter::parse(Some("{ block: { timestamp: [1000, 2000] } }"))
-            .unwrap_err()
-            .to_string();
-        insta::assert_snapshot!(err, @"`block.timestamp` only supports range comparisons (`_gt`, `_gte`, `_lt`, `_lte`), not set membership.");
+    fn block_timestamp_in_records_eq_targets_and_client_polish() {
+        let f = pf("{ block: { timestamp: { _in: [2000, 1000] } } }");
+        assert_eq!(
+            (
+                f.timestamp.eq_targets.clone(),
+                f.timestamp.conds.len(),
+                f.client_filters.len(),
+            ),
+            (vec![2000, 1000], 0, 1),
+        );
+    }
+
+    #[test]
+    fn block_timestamp_scalar_records_single_eq_target() {
+        let f = pf("{ block: { timestamp: 1700000000 } }");
+        assert_eq!(
+            (f.timestamp.eq_targets.clone(), f.timestamp.conds.len()),
+            (vec![1_700_000_000], 0),
+        );
     }
 
     #[test]
