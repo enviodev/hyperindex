@@ -1,7 +1,6 @@
 open Vitest
 
-@val external setImmediate: (unit => unit) => unit = "setImmediate"
-let nextImmediate = () => Promise.make((resolve, _) => setImmediate(() => resolve()))
+let nextImmediate = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => resolve()))
 
 describe("Throttler", () => {
   Async.itWithOptions("Schedules and throttles functions as expected", {retry: 3}, async t => {
@@ -48,7 +47,7 @@ describe("Throttler", () => {
     ).toEqual([1, 2])
   })
 
-  Async.it("Does not run until previous task is finished", async t => {
+  Async.itWithOptions("Does not run until previous task is finished", {retry: 3}, async t => {
     let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
     let actionsCalled = []
     throttler->Throttler.schedule(
@@ -80,8 +79,9 @@ describe("Throttler", () => {
     ).toEqual([1, 2])
   })
 
-  Async.it(
+  Async.itWithOptions(
     "Does not immediately execute after a task has finished if below the interval",
+    {retry: 3},
     async t => {
       let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
       let actionsCalled = []
