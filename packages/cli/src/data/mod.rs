@@ -1,3 +1,4 @@
+pub(crate) mod block_by_timestamp;
 pub(crate) mod chain;
 pub(crate) mod client_filter;
 pub(crate) mod field_selection;

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::cli_args::clap_definitions::DataArgs;
 use crate::data::{
+    block_by_timestamp,
     chain::{self, Chain},
     client_filter,
     field_selection::Selection,
@@ -23,7 +24,7 @@ pub async fn run(args: DataArgs) -> Result<()> {
 
     let chain = chain::resolve(&args.chain)?;
     let selection = Selection::parse(&args.fields)?;
-    let filter = WhereFilter::parse(args.where_filter.as_deref())?;
+    let mut filter = WhereFilter::parse(args.where_filter.as_deref())?;
     let client = build_client(&chain, &token)?;
 
     if selection.known_height
@@ -45,6 +46,9 @@ pub async fn run(args: DataArgs) -> Result<()> {
     if !selection.has_data_fields() && !selection.known_height {
         bail!("No data fields requested. Pass at least one positional field.");
     }
+
+    block_by_timestamp::apply(&mut filter, &client).await?;
+    filter.ensure_non_empty_range()?;
 
     let field_selection = selection.build_net_field_selection_with(&filter.client_filter_fields());
     let query = filter.build_net_query(field_selection)?;

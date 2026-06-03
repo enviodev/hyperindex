@@ -46,10 +46,26 @@ pub struct ClientFilter {
     pub conds: Vec<Cond>,
 }
 
+/// `block.timestamp` comparisons collected at parse time. Each `(op, seconds)`
+/// is resolved to a block number by a pre-flight search and folded into the scan
+/// window before the main query runs. The same comparisons stay as client-side
+/// filters so blocks the resolved range can't exclude are dropped precisely.
+#[derive(Debug, Clone, Default)]
+pub struct TimestampBounds {
+    pub conds: Vec<(CmpOp, u64)>,
+}
+
+impl TimestampBounds {
+    pub fn is_empty(&self) -> bool {
+        self.conds.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WhereFilter {
     pub from_block: Option<u64>,
     pub to_block_exclusive: Option<u64>,
+    pub timestamp: TimestampBounds,
     pub server_filters: Vec<FieldFilter>,
     pub client_filters: Vec<ClientFilter>,
 }
@@ -97,11 +113,7 @@ impl WhereFilter {
             }
         }
 
-        if let (Some(from), Some(to_excl)) = (out.from_block, out.to_block_exclusive) {
-            if to_excl <= from {
-                bail!("Block range is empty: from_block={from}, to_block(exclusive)={to_excl}.");
-            }
-        }
+        out.ensure_non_empty_range()?;
 
         Ok(out)
     }
@@ -110,12 +122,23 @@ impl WhereFilter {
         !self.server_filters.is_empty() || !self.client_filters.is_empty()
     }
 
-    fn narrow_from(&mut self, n: u64) {
+    pub(crate) fn narrow_from(&mut self, n: u64) {
         self.from_block = Some(self.from_block.map_or(n, |cur| cur.max(n)));
     }
 
-    fn narrow_to_excl(&mut self, n: u64) {
+    pub(crate) fn narrow_to_excl(&mut self, n: u64) {
         self.to_block_exclusive = Some(self.to_block_exclusive.map_or(n, |cur| cur.min(n)));
+    }
+
+    /// Errors when the resolved scan window is empty so callers fail fast instead
+    /// of issuing a query that can never match.
+    pub(crate) fn ensure_non_empty_range(&self) -> Result<()> {
+        if let (Some(from), Some(to_excl)) = (self.from_block, self.to_block_exclusive) {
+            if to_excl <= from {
+                bail!("Block range is empty: from_block={from}, to_block(exclusive)={to_excl}.");
+            }
+        }
+        Ok(())
     }
 
     /// Fields referenced by client-side filters. These must be fetched even when
@@ -284,6 +307,9 @@ fn apply_field(
     if matches!(typed_field, TypedField::Block(BlockField::Number)) {
         return apply_block_number(out, typed_field, body);
     }
+    if matches!(typed_field, TypedField::Block(BlockField::Timestamp)) {
+        return apply_block_timestamp(out, typed_field, body);
+    }
 
     let conds = parse_conditions(section, indexer_name, typed_field, body)?;
     let has_cmp = conds.iter().any(|c| matches!(c, Cond::Cmp(..)));
@@ -412,6 +438,37 @@ fn apply_block_number(out: &mut WhereFilter, field: TypedField, body: Value) -> 
             }
         }
     }
+    Ok(())
+}
+
+/// Unix-second timestamps in `2001..5138` land below this. A value at or above
+/// it was almost certainly passed in milliseconds.
+const TIMESTAMP_MILLISECOND_HINT: u64 = 100_000_000_000;
+
+/// Like `block.number`, `block.timestamp` scopes the scan window — but the block
+/// range is resolved later by a pre-flight search (the conditions are stored on
+/// `out.timestamp`). The same comparisons stay as a client-side filter so the
+/// boundary blocks the resolved range can't pin down exactly are dropped here.
+fn apply_block_timestamp(out: &mut WhereFilter, field: TypedField, body: Value) -> Result<()> {
+    let conds = parse_conditions(Section::Block, "timestamp", field, body)?;
+    for cond in &conds {
+        let Cond::Cmp(op, v) = cond else {
+            bail!(
+                "`block.timestamp` only supports range comparisons (`_gt`, `_gte`, `_lt`, `_lte`), not set membership."
+            );
+        };
+        let secs = value_to_u64(v).with_context(|| {
+            format!("`block.timestamp` expects a non-negative unix-second integer, got {v}")
+        })?;
+        if secs >= TIMESTAMP_MILLISECOND_HINT {
+            eprintln!(
+                "Warning: block.timestamp `{secs}` looks like milliseconds. \
+                 EVM block timestamps are unix seconds — divide by 1000."
+            );
+        }
+        out.timestamp.conds.push((*op, secs));
+    }
+    out.client_filters.push(ClientFilter { field, conds });
     Ok(())
 }
 
@@ -712,9 +769,38 @@ mod tests {
     }
 
     #[test]
+    fn block_timestamp_records_bounds_and_keeps_client_polish() {
+        let f = pf("{ block: { timestamp: { _gte: 1000, _lt: 2000 } } }");
+        assert_eq!(
+            (
+                f.timestamp.conds.clone(),
+                f.server_filters.len(),
+                f.client_filters.len(),
+                f.from_block,
+                f.to_block_exclusive,
+            ),
+            (
+                vec![(CmpOp::Gte, 1000), (CmpOp::Lt, 2000)],
+                0,
+                1,
+                None,
+                None,
+            ),
+        );
+    }
+
+    #[test]
+    fn block_timestamp_rejects_set_membership() {
+        let err = WhereFilter::parse(Some("{ block: { timestamp: [1000, 2000] } }"))
+            .unwrap_err()
+            .to_string();
+        insta::assert_snapshot!(err, @"`block.timestamp` only supports range comparisons (`_gt`, `_gte`, `_lt`, `_lte`), not set membership.");
+    }
+
+    #[test]
     fn other_block_field_is_client_side() {
-        // `block.timestamp` has no Hypersync builder → client-side.
-        let f = pf("{ block: { timestamp: { _gte: 1000 } } }");
+        // `block.gasUsed` has no Hypersync builder → client-side.
+        let f = pf("{ block: { gasUsed: { _gte: 1000 } } }");
         assert_eq!((f.server_filters.len(), f.client_filters.len()), (0, 1));
     }
 
