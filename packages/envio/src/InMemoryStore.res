@@ -53,10 +53,12 @@ type t = {
   mutable commitWaiters: array<unit => unit>,
   persistence: Persistence.t,
   config: Config.t,
-  // Latest chain metadata and what was last persisted; the cycle folds the diff
-  // into the batch transaction so it never races the write.
-  mutable currentChainMeta: option<dict<InternalTable.Chains.metaFields>>,
-  mutable committedChainMeta: option<dict<InternalTable.Chains.metaFields>>,
+  // Latest metadata staged per chain; used to skip unchanged restages.
+  mutable chainMeta: dict<InternalTable.Chains.metaFields>,
+  // Set on a real change. Folded into a batch write, else flushed on the throttle.
+  mutable chainMetaDirty: bool,
+  // Throttles metadata-only writes when no batches flow.
+  chainMetaThrottler: Throttler.t,
 }
 
 let make = (
@@ -66,22 +68,38 @@ let make = (
   ~config: Config.t,
   ~onError: exn => unit,
 ): t => {
-  allEntities: entities,
-  rawEvents: [],
-  entities: EntityTables.make(entities),
-  effects: Dict.make(),
-  rollback: None,
-  committedCheckpointId,
-  processedCheckpointId: committedCheckpointId,
-  processedBatches: [],
-  writeFiber: None,
-  hasFailedWrite: false,
-  commitWaiters: [],
-  persistence,
-  config,
-  onError,
-  currentChainMeta: None,
-  committedChainMeta: None,
+  let chainMetaThrottler = {
+    let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
+    Throttler.make(
+      ~intervalMillis,
+      ~logger=Logging.createChild(
+        ~params={
+          "context": "Throttler for chain metadata writes",
+          "intervalMillis": intervalMillis,
+        },
+      ),
+    )
+  }
+
+  {
+    allEntities: entities,
+    rawEvents: [],
+    entities: EntityTables.make(entities),
+    effects: Dict.make(),
+    rollback: None,
+    committedCheckpointId,
+    processedCheckpointId: committedCheckpointId,
+    processedBatches: [],
+    writeFiber: None,
+    hasFailedWrite: false,
+    onError,
+    commitWaiters: [],
+    persistence,
+    config,
+    chainMeta: Dict.make(),
+    chainMetaDirty: false,
+    chainMetaThrottler,
+  }
 }
 
 // Max uncommitted entity changes plus unwritten batch items before processing
@@ -131,32 +149,6 @@ let getChangesCount = (inMemoryStore: t) => {
   })
   total.contents
 }
-
-// Queues the latest chain metadata for the cycle to fold into the next write.
-let setChainMeta = (inMemoryStore: t, chainsData: dict<InternalTable.Chains.metaFields>) =>
-  inMemoryStore.currentChainMeta = Some(chainsData)
-
-// Per-chain metadata that changed since the last persisted write, else None.
-let staleChainMeta = (inMemoryStore: t): option<dict<InternalTable.Chains.metaFields>> =>
-  switch inMemoryStore.currentChainMeta {
-  | None => None
-  | Some(current) =>
-    let stale = Dict.make()
-    current->Utils.Dict.forEachWithKey((meta, chainId) => {
-      let changed = switch inMemoryStore.committedChainMeta {
-      | None => true
-      | Some(committed) =>
-        switch committed->Utils.Dict.dangerouslyGetNonOption(chainId) {
-        | None => true
-        | Some(prev) => JSON.stringifyAny(meta) != JSON.stringifyAny(prev)
-        }
-      }
-      if changed {
-        stale->Dict.set(chainId, meta)
-      }
-    })
-    stale->Dict.keysToArray->Utils.Array.notEmpty ? Some(stale) : None
-  }
 
 let wakeCommitWaiters = (inMemoryStore: t) => {
   let waiters = inMemoryStore.commitWaiters
@@ -257,54 +249,73 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
   | Ready({cache}) => cache
   }
 
-  let committedCheckpointId = inMemoryStore.committedCheckpointId
-  let batch = inMemoryStore->drainBatchRun
-  // The run's last checkpoint; entity changes above it stay queued for the next write.
-  let upToCheckpointId = switch batch.checkpointIds->Utils.Array.last {
-  | Some(checkpointId) => checkpointId
-  | None => committedCheckpointId
+  // Copy before the await: the batch write reads this later, in-transaction. A
+  // restage during the write re-dirties the flag and is rewritten next iteration.
+  let chainMetaData = if inMemoryStore.chainMetaDirty {
+    inMemoryStore.chainMetaDirty = false
+    Some(inMemoryStore.chainMeta->Utils.Dict.shallowCopy)
+  } else {
+    None
   }
 
-  // rawEvents and the effect cache aren't gated by isInReorgThreshold, so they're
-  // flushed in full rather than split at the run boundary.
-  let rawEvents = inMemoryStore.rawEvents
-  inMemoryStore.rawEvents = []
-  let rollback = inMemoryStore.rollback
-  inMemoryStore.rollback = None
-
-  let updatedEntities = persistence.allEntities->Array.filterMap(entityConfig => {
-    let table = inMemoryStore->getInMemTable(~entityConfig)
-    let changes =
-      table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
-    if changes->Utils.Array.isEmpty {
-      None
-    } else {
-      Some(({entityConfig, changes}: Persistence.updatedEntity))
+  switch inMemoryStore.processedBatches {
+  | [] =>
+    // Metadata only: a cheap upsert, still serialized by the single write loop.
+    switch chainMetaData {
+    | Some(chainsData) =>
+      await persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+    | None => ()
     }
-  })
-  let updatedEffectsCache = snapshotEffects(inMemoryStore, ~cache)
-  let chainMetaSnapshot = inMemoryStore.currentChainMeta
-  let chainMetaData = inMemoryStore->staleChainMeta
+  | _ =>
+    let committedCheckpointId = inMemoryStore.committedCheckpointId
+    let batch = inMemoryStore->drainBatchRun
+    // The run's last checkpoint; entity changes above it stay queued for the next write.
+    let upToCheckpointId = switch batch.checkpointIds->Utils.Array.last {
+    | Some(checkpointId) => checkpointId
+    | None => committedCheckpointId
+    }
 
-  await persistence.storage.writeBatch(
-    ~batch,
-    ~rawEvents,
-    ~rollback,
-    ~isInReorgThreshold=batch.isInReorgThreshold,
-    ~config,
-    ~allEntities=persistence.allEntities,
-    ~updatedEntities,
-    ~updatedEffectsCache,
-    ~chainMetaData,
-  )
+    // rawEvents and the effect cache aren't gated by isInReorgThreshold, so they're
+    // flushed in full rather than split at the run boundary.
+    let rawEvents = inMemoryStore.rawEvents
+    inMemoryStore.rawEvents = []
+    let rollback = inMemoryStore.rollback
+    inMemoryStore.rollback = None
 
-  inMemoryStore.committedCheckpointId = upToCheckpointId
-  inMemoryStore.committedChainMeta = chainMetaSnapshot
-  inMemoryStore.effects->Utils.Dict.forEach(inMemTable => inMemTable.pendingDict = Dict.make())
+    let updatedEntities = persistence.allEntities->Array.filterMap(entityConfig => {
+      let table = inMemoryStore->getInMemTable(~entityConfig)
+      let changes =
+        table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
+      if changes->Utils.Array.isEmpty {
+        None
+      } else {
+        Some(({entityConfig, changes}: Persistence.updatedEntity))
+      }
+    })
+    let updatedEffectsCache = snapshotEffects(inMemoryStore, ~cache)
+
+    await persistence.storage.writeBatch(
+      ~batch,
+      ~rawEvents,
+      ~rollback,
+      ~isInReorgThreshold=batch.isInReorgThreshold,
+      ~config,
+      ~allEntities=persistence.allEntities,
+      ~updatedEntities,
+      ~updatedEffectsCache,
+      ~chainMetaData,
+    )
+
+    inMemoryStore.committedCheckpointId = upToCheckpointId
+    inMemoryStore.effects->Utils.Dict.forEach(inMemTable => inMemTable.pendingDict = Dict.make())
+  }
 }
 
+let hasPendingWrite = (inMemoryStore: t) =>
+  inMemoryStore.processedBatches->Utils.Array.notEmpty || inMemoryStore.chainMetaDirty
+
 let runWriteLoop = async (inMemoryStore: t) => {
-  while inMemoryStore.processedBatches->Utils.Array.notEmpty && !inMemoryStore.hasFailedWrite {
+  while inMemoryStore->hasPendingWrite && !inMemoryStore.hasFailedWrite {
     try {
       await runOneWrite(
         inMemoryStore,
@@ -326,10 +337,38 @@ let kick = (inMemoryStore: t) =>
   if (
     inMemoryStore.writeFiber->Option.isNone &&
     !inMemoryStore.hasFailedWrite &&
-    inMemoryStore.processedBatches->Utils.Array.notEmpty
+    inMemoryStore->hasPendingWrite
   ) {
     inMemoryStore.writeFiber = Some(runWriteLoop(inMemoryStore))
   }
+
+let metaFieldsEqual = (a: InternalTable.Chains.metaFields, b: InternalTable.Chains.metaFields) =>
+  a.firstEventBlockNumber == b.firstEventBlockNumber &&
+  a.latestFetchedBlockNumber == b.latestFetchedBlockNumber &&
+  a.isHyperSync == b.isHyperSync &&
+  // Date is boxed; compare epoch ms.
+  a.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime) ==
+    b.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime)
+
+// Stages chain metadata, dirtying only on a real change so restages are no-ops.
+let setChainMeta = (inMemoryStore: t, chainsData: dict<InternalTable.Chains.metaFields>) => {
+  chainsData->Utils.Dict.forEachWithKey((meta, chainId) => {
+    let changed = switch inMemoryStore.chainMeta->Utils.Dict.dangerouslyGetNonOption(chainId) {
+    | Some(prev) => !metaFieldsEqual(meta, prev)
+    | None => true
+    }
+    if changed {
+      inMemoryStore.chainMeta->Dict.set(chainId, meta)
+      inMemoryStore.chainMetaDirty = true
+    }
+  })
+  if inMemoryStore.chainMetaDirty {
+    inMemoryStore.chainMetaThrottler->Throttler.schedule(() => {
+      inMemoryStore->kick
+      Promise.resolve()
+    })
+  }
+}
 
 // Queues a processed batch and kicks the cycle. Returns immediately; the write
 // happens off the processing path.

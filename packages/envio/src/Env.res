@@ -47,13 +47,6 @@ let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
 let hyperSyncClientTimeoutMillis =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS", S.int, ~fallback=120_000)
 
-/** 
-This is the number of retries that the binary client makes before rejecting the promise with an error 
-Default is 0 so that the indexer can handle retries internally
-*/
-let hyperSyncClientMaxRetries =
-  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_MAX_RETRIES", S.int, ~fallback=0)
-
 let hypersyncClientSerializationFormat =
   envSafe->EnvSafe.get(
     "ENVIO_HYPERSYNC_CLIENT_SERIALIZATION_FORMAT",
@@ -209,6 +202,8 @@ module Configurable = {
 }
 
 module ThrottleWrites = {
+  let chainMetadataIntervalMillis =
+    envSafe->EnvSafe.get("ENVIO_THROTTLE_CHAIN_METADATA_INTERVAL_MILLIS", S.int, ~devFallback=500)
   let pruneStaleDataIntervalMillis =
     envSafe->EnvSafe.get(
       "ENVIO_THROTTLE_PRUNE_STALE_DATA_INTERVAL_MILLIS",

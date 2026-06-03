@@ -66,6 +66,19 @@ impl HypersyncClient {
     }
 
     #[napi]
+    pub async fn get_height(&self) -> napi::Result<i64> {
+        let height = self.inner.get_height().await.map_err(|e| {
+            // The client embeds a `{:?}` debug dump (a full backtrace when
+            // RUST_BACKTRACE is set) in its error message; keep only the first
+            // line so it stays readable when the indexer surfaces it on retries.
+            let message = format!("{e}");
+            let summary = message.lines().next().unwrap_or(message.as_str());
+            napi::Error::from_reason(format!("Failed to get HyperSync height: {summary}"))
+        })?;
+        height.try_into().context("convert height").map_err(map_err)
+    }
+
+    #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
         let query = query.try_into().context("parse query").map_err(map_err)?;
         let res = self

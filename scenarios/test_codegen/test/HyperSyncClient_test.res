@@ -26,7 +26,6 @@ let makeClient = (~eventParams) =>
   HyperSyncClient.make(
     ~url="https://eth.hypersync.xyz",
     ~apiToken=testApiToken,
-    ~maxNumRetries=Env.hyperSyncClientMaxRetries,
     ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
     ~eventParams,
     ~enableChecksumAddresses=false,
@@ -103,6 +102,13 @@ describe("HyperSync client getEventItems (live)", () => {
       })
   })
 
+  Async.it("getHeight returns a height past the queried range", async t => {
+    let client = makeClient(~eventParams=[transferEventParam])
+    let height = await client.getHeight()
+
+    t.expect(height > toBlock).toEqual(true)
+  })
+
   Async.it("leaves params null when topic0 doesn't match any registered sig", async t => {
     let unrelatedEventParam: HyperSyncClient.Decoder.eventParamsInput = {
       sighash: "0x0000000000000000000000000000000000000000000000000000000000000001",
@@ -122,6 +128,35 @@ describe("HyperSync client getEventItems (live)", () => {
       })
       .toEqual({"hasItems": true, "everyParamsNull": true})
   })
+})
+
+describe("HyperSync client getHeight with corrupted token", () => {
+  // A corrupted token makes the server reply 401, so getHeight throws. The error
+  // must keep matching HyperSyncSource.isUnauthorizedError, otherwise
+  // getHeightOrThrow's block-forever guard silently stops working.
+  Async.it(
+    "is detected by HyperSyncSource.isUnauthorizedError",
+    async t => {
+      let client = HyperSyncClient.make(
+        ~url="https://eth.hypersync.xyz",
+        ~apiToken="this-is-a-corrupted-token",
+        ~httpReqTimeoutMillis=5000,
+        ~eventParams=[],
+        ~enableChecksumAddresses=false,
+      )
+
+      let detected = try {
+        let _ = await client.getHeight()
+        false
+      } catch {
+      | JsExn(e) => e->JsExn.message->Option.getOr("")->HyperSyncSource.isUnauthorizedError
+      | _ => false
+      }
+
+      t.expect(detected).toEqual(true)
+    },
+    ~timeout=60000,
+  )
 })
 
 describe("HyperSync GetLogs.extractMissingParams", () => {
