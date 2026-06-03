@@ -48,8 +48,12 @@ type t = {
   mutable processedBatches: array<Batch.t>,
   // The single in-flight write loop, None when idle. Strictly one at a time.
   mutable writeFiber: option<promise<unit>>,
-  // A failed background write is surfaced at the next batch boundary / flush.
+  // Stops the write loop after a failed background write. The error itself is
+  // surfaced once, immediately, through onError - never deferred to a later batch.
   mutable persistenceError: option<exn>,
+  // Invoked once when a background write throws. The caller decides what to do
+  // (the indexer exits with an error); the store only reports.
+  onError: exn => unit,
   // Resolved after every commit so capacity/flush waiters can re-evaluate.
   mutable commitWaiters: array<unit => unit>,
   // Static for the store's lifetime - only the persistence cycle reads them.
@@ -66,6 +70,7 @@ let make = (
   ~committedCheckpointId=Internal.initialCheckpointId,
   ~persistence: Persistence.t,
   ~config: Config.t,
+  ~onError: exn => unit,
 ): t => {
   allEntities: entities,
   rawEvents: [],
@@ -80,13 +85,15 @@ let make = (
   commitWaiters: [],
   persistence,
   config,
+  onError,
   currentChainMeta: None,
   committedChainMeta: None,
 }
 
-// The store may hold up to this many uncommitted changes before processing has
-// to wait for the persistence cycle to free capacity.
-let keepLatestChangesLimit = 50_000.
+// The store may hold up to this many uncommitted entity changes plus unwritten
+// batch items before processing has to wait for the persistence cycle to free
+// capacity.
+let keepLatestChangesLimit = 100_000.
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   let key = effect.name
@@ -125,6 +132,9 @@ let getChangesCount = (inMemoryStore: t) => {
   let total = ref(0.)
   inMemoryStore.allEntities->Array.forEach(entityConfig => {
     total := total.contents +. (inMemoryStore->getInMemTable(~entityConfig)).changesCount
+  })
+  inMemoryStore.processedBatches->Array.forEach(batch => {
+    total := total.contents +. batch.totalBatchSize->Int.toFloat
   })
   total.contents
 }
@@ -318,7 +328,9 @@ let runWriteLoop = async (inMemoryStore: t) => {
       )
       inMemoryStore->wakeCommitWaiters
     } catch {
-    | exn => inMemoryStore.persistenceError = Some(exn)
+    | exn =>
+      inMemoryStore.persistenceError = Some(exn)
+      inMemoryStore.onError(exn)
     }
   }
   inMemoryStore.writeFiber = None
@@ -348,11 +360,12 @@ let commitBatch = (inMemoryStore: t, ~batch: Batch.t) => {
 // Blocks the next batch until the store holds fewer than keepLatestChangesLimit
 // changes, freeing committed changes first and awaiting commits as a last resort.
 let rec awaitCapacity = async (inMemoryStore: t) => {
-  switch inMemoryStore.persistenceError {
-  | Some(exn) => throw(exn)
-  | None => ()
-  }
-  if inMemoryStore->getChangesCount >= keepLatestChangesLimit {
+  // A failed write was already surfaced through onError, and no write will ever
+  // free capacity again, so bail rather than wait on a commit that won't come.
+  if (
+    inMemoryStore.persistenceError->Option.isNone &&
+      inMemoryStore->getChangesCount >= keepLatestChangesLimit
+  ) {
     inMemoryStore.allEntities->Array.forEach(entityConfig =>
       inMemoryStore
       ->getInMemTable(~entityConfig)
@@ -375,18 +388,17 @@ let rec awaitCapacity = async (inMemoryStore: t) => {
   }
 }
 
-// Awaits until everything processed in memory is persisted to the db.
+// Awaits until everything processed in memory is persisted to the db. A failed
+// write is surfaced through onError, so we just stop draining rather than throw.
 let rec flush = async (inMemoryStore: t) => {
-  switch inMemoryStore.persistenceError {
-  | Some(exn) => throw(exn)
-  | None => ()
-  }
-  inMemoryStore->kick
-  switch inMemoryStore.writeFiber {
-  | Some(fiber) =>
-    await fiber
-    await inMemoryStore->flush
-  | None => ()
+  if inMemoryStore.persistenceError->Option.isNone {
+    inMemoryStore->kick
+    switch inMemoryStore.writeFiber {
+    | Some(fiber) =>
+      await fiber
+      await inMemoryStore->flush
+    | None => ()
+    }
   }
 }
 

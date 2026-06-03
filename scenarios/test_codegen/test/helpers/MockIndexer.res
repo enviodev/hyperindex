@@ -37,8 +37,13 @@ module InMemoryStore = {
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore =
-      RealInMemoryStore.make(~entities=config.allEntities, ~persistence=defaultPersistence, ~config)
+    let inMemoryStore = RealInMemoryStore.make(
+      ~entities=config.allEntities,
+      ~persistence=defaultPersistence,
+      ~config,
+      // In-memory-only stores never run the persistence cycle.
+      ~onError=ignore,
+    )
     entities->Array.forEach(((entityConfig, items)) => {
       items->Array.forEach(entity => {
         inMemoryStore->setEntity(~entityConfig, entity)
@@ -344,11 +349,24 @@ module Indexer = {
     )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
+    let gsManagerRef = ref(None)
+
     let ctx = {
       Ctx.registrations,
       config,
       persistence,
-      inMemoryStore: RealInMemoryStore.make(~entities=config.allEntities, ~persistence, ~config),
+      inMemoryStore: RealInMemoryStore.make(
+        ~entities=config.allEntities,
+        ~persistence,
+        ~config,
+        ~onError=exn => {
+          let errHandler = exn->ErrorHandling.make(~msg="Failed writing batch to the database")
+          switch gsManagerRef.contents {
+          | Some(gsManager) => gsManager->GlobalStateManager.dispatchAction(ErrorExit(errHandler))
+          | None => errHandler->ErrorHandling.log
+          }
+        },
+      ),
     }
 
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
@@ -358,8 +376,6 @@ module Indexer = {
       input: s => s.field("query", S.string),
       responses: [s => s.data(S.unknown)],
     })
-
-    let gsManagerRef = ref(None)
 
     await persistence->Persistence.init(
       ~chainConfigs=config.chainMap->ChainMap.values,

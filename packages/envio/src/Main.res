@@ -695,6 +695,15 @@ let start = async (
       ~committedCheckpointId=(persistence->Persistence.getInitializedState).checkpointId,
       ~persistence,
       ~config,
+      ~onError=exn => {
+        let errHandler = exn->ErrorHandling.make(~msg="Failed writing batch to the database")
+        switch globalGsManagerRef.contents {
+        | Some(gsManager) => gsManager->GlobalStateManager.dispatchAction(ErrorExit(errHandler))
+        | None =>
+          errHandler->ErrorHandling.log
+          NodeJs.process->NodeJs.exitWithCode(Failure)
+        }
+      },
     ),
   }
 
