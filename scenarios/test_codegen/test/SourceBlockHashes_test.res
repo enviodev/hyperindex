@@ -104,7 +104,6 @@ let makeHyperSyncSource = () =>
     allEventParams: [pairCreatedEventParams],
     eventRouter: makeEventRouter(),
     apiToken: Some(testApiToken),
-    clientMaxRetries: Env.hyperSyncClientMaxRetries,
     clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
     lowercaseAddresses: true,
     serializationFormat: Env.hypersyncClientSerializationFormat,

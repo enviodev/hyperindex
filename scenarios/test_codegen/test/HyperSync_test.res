@@ -11,7 +11,6 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
       ~client=HyperSyncClient.make(
         ~url="https://645749.hypersync.xyz",
         ~apiToken=testApiToken,
-        ~maxNumRetries=Env.hyperSyncClientMaxRetries,
         ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
         ~eventParams=[],
       ),

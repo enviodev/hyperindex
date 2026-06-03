@@ -128,13 +128,17 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
 let memoGetSelectionConfig = (~chain) =>
   Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
 
+// Surfaced by HyperSyncClient.getHeight (Rust) when HyperSync rejects the API
+// token. The corrupted-token test feeds the real server error through this
+// check so it can't silently drift away from what getHeightOrThrow guards on.
+let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
+
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   apiToken: option<string>,
-  clientMaxRetries: int,
   clientTimeoutMillis: int,
   lowercaseAddresses: bool,
   serializationFormat: HyperSyncClient.serializationFormat,
@@ -149,7 +153,6 @@ let make = (
     allEventParams,
     eventRouter,
     apiToken,
-    clientMaxRetries,
     clientTimeoutMillis,
     lowercaseAddresses,
     serializationFormat,
@@ -172,7 +175,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   let client = switch HyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,
-    ~maxNumRetries=clientMaxRetries,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~eventParams=allEventParams,
     ~enableChecksumAddresses=!lowercaseAddresses,
@@ -277,6 +279,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           }),
         ),
       )
+    | Source.RateLimited(_) as exn => throw(exn)
     | exn =>
       throw(
         Source.GetItemsError(
@@ -434,10 +437,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
 
-  let jsonApiClient = Rest.client(endpointUrl)
-
-  let malformedTokenMessage = `Your token is malformed. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens.`
-
   {
     name,
     sourceFor: Sync,
@@ -447,18 +446,18 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     getBlockHashes,
     getHeightOrThrow: async () => {
       let timerRef = Hrtime.makeTimer()
-      let result = switch await HyperSyncJsonApi.heightRoute->Rest.fetch(
-        apiToken,
-        ~client=jsonApiClient,
-      ) {
-      | Value(height) => height
-      | ErrorMessage(m) if m === malformedTokenMessage =>
-        Logging.error(`Your ENVIO_API_TOKEN is malformed. The indexer will not be able to fetch events. Update the token and restart the indexer using 'pnpm envio start'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
-        // Don't want to retry if the token is malformed
-        // So just block forever
-        let _ = await Promise.make((_, _) => ())
-        0
-      | ErrorMessage(m) => JsError.throwWithMessage(m)
+      let result = try {
+        await client.getHeight()
+      } catch {
+      | JsExn(e) =>
+        switch e->JsExn.message {
+        | Some(message) if message->isUnauthorizedError =>
+          Logging.error(`Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
+          // Retrying an unauthorized request can never succeed, so block forever
+          let _ = await Promise.make((_, _) => ())
+          0
+        | _ => throw(JsExn(e))
+        }
       }
       let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
       Prometheus.SourceRequestCount.increment(

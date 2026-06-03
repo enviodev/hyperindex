@@ -87,7 +87,6 @@ let makeSources = (
         allEventParams,
         eventRouter,
         apiToken: Env.envioApiToken,
-        clientMaxRetries: Env.hyperSyncClientMaxRetries,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         lowercaseAddresses,
         serializationFormat: Env.hypersyncClientSerializationFormat,
