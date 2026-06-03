@@ -156,7 +156,10 @@ fn render_where_hint(filter: &WhereFilter, next_block: u64) -> String {
         }
     }
     for c in &filter.client_filters {
-        if is_block_number(c) {
+        // `block.number` and `block.timestamp` both desugar into the resolved
+        // block range above, so don't re-emit them — that would re-run the
+        // timestamp lookup on every page.
+        if is_block_number(c) || is_block_timestamp(c) {
             continue;
         }
         let entry = render_client_field(c);
@@ -177,6 +180,10 @@ fn render_where_hint(filter: &WhereFilter, next_block: u64) -> String {
 
 fn is_block_number(c: &ClientFilter) -> bool {
     c.field.section() == Section::Block && c.field.camel_name() == "number"
+}
+
+fn is_block_timestamp(c: &ClientFilter) -> bool {
+    c.field.section() == Section::Block && c.field.camel_name() == "timestamp"
 }
 
 fn block_number_set(filter: &WhereFilter) -> Option<&[Value]> {
@@ -274,6 +281,18 @@ mod tests {
             hint,
             "{ block: { number: { _gte: 120, _lte: 200, _in: [100,50,200] } } }",
         );
+    }
+
+    #[test]
+    fn hint_carries_resolved_blocks_not_timestamp() {
+        let mut filter =
+            WhereFilter::parse(Some("{ block: { timestamp: { _gte: 1000, _lt: 2000 } } }"))
+                .unwrap();
+        // The pre-flight search narrows the scan window before the hint renders.
+        filter.narrow_from(500);
+        filter.narrow_to_excl(900);
+        let hint = render_where_hint(&filter, 750);
+        assert_eq!(hint, "{ block: { number: { _gte: 750, _lte: 899 } } }");
     }
 
     #[test]
