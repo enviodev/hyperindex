@@ -55,6 +55,7 @@ let initEffect = (params: contextParams) => {
       input,
       context: effectContext,
       cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+      checkpointId: params.checkpointId,
     }
     LoadLayer.loadEffect(
       ~loadManager=params.loadManager,
