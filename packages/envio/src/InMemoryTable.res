@@ -84,14 +84,19 @@ module Entity = {
 
   // Frees committed changes: drops latest entries at or below committedCheckpointId
   // (re-readable from the db) and clears the per-batch indices (rebuilt on the next
-  // getWhere). Uncommitted changes are kept.
-  let dropCommittedChanges = (self: t, ~committedCheckpointId) => {
+  // getWhere). Uncommitted changes are kept. With keepLoadedFromDb, entries seeded
+  // from a db read are spared so the cheaper-to-re-derive writes are dropped first.
+  let dropCommittedChanges = (self: t, ~committedCheckpointId, ~keepLoadedFromDb) => {
     let keysToDelete = []
-    self.latestEntityChangeById->Utils.Dict.forEachWithKey((change, key) =>
-      if !(change->Change.getCheckpointId > committedCheckpointId) {
+    self.latestEntityChangeById->Utils.Dict.forEachWithKey((change, key) => {
+      let checkpointId = change->Change.getCheckpointId
+      if (
+        !(checkpointId > committedCheckpointId) &&
+        !(keepLoadedFromDb && checkpointId == Internal.loadedFromDbCheckpointId)
+      ) {
         keysToDelete->Array.push(key)
       }
-    )
+    })
     keysToDelete->Array.forEach(key => self.latestEntityChangeById->Utils.Dict.deleteInPlace(key))
     self.changesCount = self.changesCount -. keysToDelete->Array.length->Int.toFloat
     self.indicesByEntityId = Dict.make()

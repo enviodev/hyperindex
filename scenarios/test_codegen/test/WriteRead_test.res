@@ -241,12 +241,34 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     add("committed", 5n)
     add("uncommitted", 6n)
 
-    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId=5n)
+    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId=5n, ~keepLoadedFromDb=false)
 
     t.expect((
       table.changesCount,
       table.latestEntityChangeById->Dict.keysToArray->Array.toSorted(String.compare),
     )).toEqual((1., ["uncommitted"]))
+  })
+
+  it("dropCommittedChanges with keepLoadedFromDb spares db-loaded entries", t => {
+    let makeEntity = (id): Internal.entity =>
+      {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
+
+    let table = InMemoryTable.Entity.make()
+    let add = (id, checkpointId) =>
+      table->InMemoryTable.Entity.set(
+        ~committedCheckpointId=Internal.initialCheckpointId,
+        Set({entityId: id, entity: makeEntity(id), checkpointId}),
+      )
+    add("loaded", Internal.loadedFromDbCheckpointId)
+    add("committed", 5n)
+    add("uncommitted", 6n)
+
+    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId=5n, ~keepLoadedFromDb=true)
+
+    t.expect((
+      table.changesCount,
+      table.latestEntityChangeById->Dict.keysToArray->Array.toSorted(String.compare),
+    )).toEqual((2., ["loaded", "uncommitted"]))
   })
 
   Async.it("Test getWhere queries with eq and gt operators", async t => {

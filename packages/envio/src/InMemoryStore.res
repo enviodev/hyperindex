@@ -161,14 +161,23 @@ let initEffectOutputFromDb = (inMemTable: effectCacheInMemTable, ~cacheKey, ~out
   }
 
 // Frees committed entries (re-readable from the db, or re-runnable for
-// cache:false). Uncommitted entries stay warm. Mirrors entity dropCommittedChanges.
-let dropCommittedEffects = (inMemTable: effectCacheInMemTable, ~committedCheckpointId) => {
+// cache:false). Uncommitted entries stay warm. With keepLoadedFromDb, entries
+// seeded from a db read are spared. Mirrors entity dropCommittedChanges.
+let dropCommittedEffects = (
+  inMemTable: effectCacheInMemTable,
+  ~committedCheckpointId,
+  ~keepLoadedFromDb,
+) => {
   let keysToDelete = []
-  inMemTable.dict->Utils.Dict.forEachWithKey((change, key) =>
-    if !(change->Change.getCheckpointId > committedCheckpointId) {
+  inMemTable.dict->Utils.Dict.forEachWithKey((change, key) => {
+    let checkpointId = change->Change.getCheckpointId
+    if (
+      !(checkpointId > committedCheckpointId) &&
+      !(keepLoadedFromDb && checkpointId == Internal.loadedFromDbCheckpointId)
+    ) {
       keysToDelete->Array.push(key)
     }
-  )
+  })
   keysToDelete->Array.forEach(key => inMemTable.dict->Utils.Dict.deleteInPlace(key))
   inMemTable.changesCount = inMemTable.changesCount -. keysToDelete->Array.length->Int.toFloat
 }
@@ -425,24 +434,34 @@ let commitBatch = (inMemoryStore: t, ~batch: Batch.t) => {
 
 // Blocks until the store holds fewer than keepLatestChangesLimit changes,
 // freeing committed changes first and awaiting commits as a last resort.
+let dropCommitted = (inMemoryStore: t, ~keepLoadedFromDb) => {
+  let committedCheckpointId = inMemoryStore.committedCheckpointId
+  inMemoryStore.allEntities->Array.forEach(entityConfig =>
+    inMemoryStore
+    ->getInMemTable(~entityConfig)
+    ->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
+  )
+  inMemoryStore.effects->Utils.Dict.forEach(inMemTable =>
+    inMemTable->dropCommittedEffects(~committedCheckpointId, ~keepLoadedFromDb)
+  )
+}
+
 let rec awaitCapacity = async (inMemoryStore: t) => {
   // After a failed write nothing will free capacity, so bail instead of waiting
   // on a commit that won't come (the error already went to onError).
   if !inMemoryStore.hasFailedWrite && inMemoryStore->getChangesCount >= keepLatestChangesLimit {
-    inMemoryStore.allEntities->Array.forEach(entityConfig =>
-      inMemoryStore
-      ->getInMemTable(~entityConfig)
-      ->InMemoryTable.Entity.dropCommittedChanges(
-        ~committedCheckpointId=inMemoryStore.committedCheckpointId,
-      )
-    )
-    inMemoryStore.effects->Utils.Dict.forEach(inMemTable =>
-      inMemTable->dropCommittedEffects(~committedCheckpointId=inMemoryStore.committedCheckpointId)
-    )
+    // Drop committed writes first, sparing db-loaded entries (explicitly
+    // requested, so likelier to be read again).
+    inMemoryStore->dropCommitted(~keepLoadedFromDb=true)
 
-    // What's left is uncommitted. Only wait if a queued batch can free it;
-    // otherwise (e.g. a large rollback diff with no batch) waiting would
-    // deadlock, so let processing proceed.
+    // Still over: drop the db-loaded entries too.
+    if inMemoryStore->getChangesCount >= keepLatestChangesLimit {
+      inMemoryStore->dropCommitted(~keepLoadedFromDb=false)
+    }
+
+    // Still over: what's left is uncommitted. Only wait if a queued batch can
+    // free it; otherwise (e.g. a large rollback diff with no batch) waiting
+    // would deadlock, so let processing proceed.
     if (
       inMemoryStore->getChangesCount >= keepLatestChangesLimit &&
         inMemoryStore.processedBatches->Utils.Array.notEmpty
