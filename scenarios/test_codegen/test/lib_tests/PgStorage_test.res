@@ -1050,3 +1050,46 @@ describe("PgStorage.makeRawEvent", () => {
     },
   )
 })
+
+describe("PgStorage.removeInvalidUtf8InPlace", () => {
+  Async.it(
+    "Strips NUL bytes from raw event rows, including deep inside jsonb params and field selections",
+    async t => {
+      let rawEvent: InternalTable.RawEvents.t = {
+        chainId: 1,
+        eventId: 42n,
+        eventName: "Name\x00Changed",
+        contractName: "Resolver",
+        blockNumber: 5,
+        logIndex: 3,
+        srcAddress: "0x00000000000000000000000000000000000000ab"->(
+          Utils.magic: string => Address.t
+        ),
+        blockHash: "0xhash",
+        blockTimestamp: 100,
+        blockFields: %raw(`{"extraData": "0x00\x00ff"}`),
+        transactionFields: %raw(`{"hash": "0xtx"}`),
+        params: %raw(`{"node": "0xnode", "name": "Muscle-window.eth\x00tail", "labels": ["a\x00b", "c"]}`),
+      }
+
+      [rawEvent]->PgStorage.removeInvalidUtf8InPlace
+
+      t.expect(rawEvent).toEqual({
+        chainId: 1,
+        eventId: 42n,
+        eventName: "NameChanged",
+        contractName: "Resolver",
+        blockNumber: 5,
+        logIndex: 3,
+        srcAddress: "0x00000000000000000000000000000000000000ab"->(
+          Utils.magic: string => Address.t
+        ),
+        blockHash: "0xhash",
+        blockTimestamp: 100,
+        blockFields: %raw(`{"extraData": "0x00ff"}`),
+        transactionFields: %raw(`{"hash": "0xtx"}`),
+        params: %raw(`{"node": "0xnode", "name": "Muscle-window.ethtail", "labels": ["ab", "c"]}`),
+      })
+    },
+  )
+})
