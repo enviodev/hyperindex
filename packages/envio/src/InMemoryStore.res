@@ -432,8 +432,8 @@ let commitBatch = (inMemoryStore: t, ~batch: Batch.t) => {
   inMemoryStore->kick
 }
 
-// Blocks until the store holds fewer than keepLatestChangesLimit changes,
-// freeing committed changes first and awaiting commits as a last resort.
+// Drops committed entity and effect entries across all tables. With
+// keepLoadedFromDb, entries seeded from a db read are spared.
 let dropCommitted = (inMemoryStore: t, ~keepLoadedFromDb) => {
   let committedCheckpointId = inMemoryStore.committedCheckpointId
   inMemoryStore.allEntities->Array.forEach(entityConfig =>
@@ -446,6 +446,8 @@ let dropCommitted = (inMemoryStore: t, ~keepLoadedFromDb) => {
   )
 }
 
+// Blocks until the store holds fewer than keepLatestChangesLimit changes,
+// freeing committed changes first and awaiting commits as a last resort.
 let rec awaitCapacity = async (inMemoryStore: t) => {
   // After a failed write nothing will free capacity, so bail instead of waiting
   // on a commit that won't come (the error already went to onError).
