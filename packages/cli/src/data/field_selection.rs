@@ -61,22 +61,31 @@ impl Selection {
         !self.columns.is_empty()
     }
 
-    pub fn build_net_field_selection(&self) -> NetFieldSelection {
+    /// Builds the Hypersync field selection, also requesting `extra` fields so
+    /// client-side filter fields are fetched even when not selected for output.
+    pub fn build_net_field_selection_with(&self, extra: &[TypedField]) -> NetFieldSelection {
         let mut fs = NetFieldSelection::default();
         for col in &self.columns {
-            match col.field {
-                TypedField::Block(f) => {
-                    fs.block.insert(f);
-                }
-                TypedField::Transaction(f) => {
-                    fs.transaction.insert(f);
-                }
-                TypedField::Log(f) => {
-                    fs.log.insert(f);
-                }
-            }
+            insert_field(&mut fs, col.field);
+        }
+        for field in extra {
+            insert_field(&mut fs, *field);
         }
         fs
+    }
+}
+
+fn insert_field(fs: &mut NetFieldSelection, field: TypedField) {
+    match field {
+        TypedField::Block(f) => {
+            fs.block.insert(f);
+        }
+        TypedField::Transaction(f) => {
+            fs.transaction.insert(f);
+        }
+        TypedField::Log(f) => {
+            fs.log.insert(f);
+        }
     }
 }
 

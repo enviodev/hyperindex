@@ -4,8 +4,9 @@ use arrow::array::{Array, AsArray, RecordBatch};
 use arrow::datatypes::DataType;
 use hypersync_client::ArrowResponse;
 
+use super::client_filter::Masks;
 use super::field_selection::{Column, Selection};
-use super::mapping::{ColumnFormat, Section};
+use super::mapping::{Section, ValueKind};
 
 pub fn render_table(name: &str, columns: &[impl AsRef<str>], rows: &[Vec<String>]) -> String {
     let mut out = String::new();
@@ -43,7 +44,11 @@ fn escape_cell(s: &str) -> String {
     format!("\"{escaped}\"")
 }
 
-pub fn render_arrow_response(selection: &Selection, response: &ArrowResponse) -> String {
+pub fn render_arrow_response(
+    selection: &Selection,
+    response: &ArrowResponse,
+    masks: &Masks,
+) -> String {
     let mut section_order: Vec<Section> = Vec::new();
     for col in &selection.columns {
         if !section_order.contains(&col.section) {
@@ -59,16 +64,19 @@ pub fn render_arrow_response(selection: &Selection, response: &ArrowResponse) ->
             .filter(|c| c.section == *section)
             .collect();
         let col_names: Vec<String> = cols.iter().map(|c| c.field.camel_name()).collect();
-        let (plural, batches) = match section {
-            Section::Block => ("blocks", &response.data.blocks),
-            Section::Transaction => ("transactions", &response.data.transactions),
-            Section::Log => ("logs", &response.data.logs),
+        let (plural, batches, mask) = match section {
+            Section::Block => ("blocks", &response.data.blocks, masks.block.as_deref()),
+            Section::Transaction => (
+                "transactions",
+                &response.data.transactions,
+                masks.transaction.as_deref(),
+            ),
+            Section::Log => ("logs", &response.data.logs, masks.log.as_deref()),
         };
 
         let column_keys: Vec<String> = cols.iter().map(|c| c.field.column_name()).collect();
-        let column_formats: Vec<ColumnFormat> =
-            cols.iter().map(|c| c.field.column_format()).collect();
-        let rows = extract_rows(batches, &column_keys, &column_formats);
+        let column_kinds: Vec<ValueKind> = cols.iter().map(|c| c.field.spec().value_kind).collect();
+        let rows = extract_rows(batches, &column_keys, &column_kinds, mask);
         out.push_str(&render_table(plural, &col_names, &rows));
     }
     out
@@ -77,30 +85,37 @@ pub fn render_arrow_response(selection: &Selection, response: &ArrowResponse) ->
 fn extract_rows(
     batches: &[RecordBatch],
     column_keys: &[String],
-    column_formats: &[ColumnFormat],
+    column_kinds: &[ValueKind],
+    mask: Option<&[bool]>,
 ) -> Vec<Vec<String>> {
     let mut rows = Vec::new();
+    let mut row_offset = 0;
     for batch in batches {
         let arrays: Vec<Option<&dyn Array>> = column_keys
             .iter()
             .map(|key| batch.column_by_name(key).map(|c| c.as_ref()))
             .collect();
         for row_idx in 0..batch.num_rows() {
+            let keep = mask.is_none_or(|m| m[row_offset + row_idx]);
+            if !keep {
+                continue;
+            }
             let row: Vec<String> = arrays
                 .iter()
-                .zip(column_formats.iter())
-                .map(|(arr, fmt)| match arr {
-                    Some(col) => cell_to_string(*col, row_idx, *fmt),
+                .zip(column_kinds.iter())
+                .map(|(arr, kind)| match arr {
+                    Some(col) => cell_to_string(*col, row_idx, *kind),
                     None => String::new(),
                 })
                 .collect();
             rows.push(row);
         }
+        row_offset += batch.num_rows();
     }
     rows
 }
 
-fn cell_to_string(col: &dyn Array, row: usize, fmt: ColumnFormat) -> String {
+fn cell_to_string(col: &dyn Array, row: usize, kind: ValueKind) -> String {
     if col.is_null(row) {
         return String::new();
     }
@@ -116,9 +131,9 @@ fn cell_to_string(col: &dyn Array, row: usize, fmt: ColumnFormat) -> String {
         DataType::Boolean => col.as_boolean().value(row).to_string(),
         DataType::Binary => {
             let bytes = col.as_binary::<i32>().value(row);
-            match fmt {
-                ColumnFormat::Decimal => binary_as_decimal(bytes),
-                ColumnFormat::Hex => format!("0x{}", faster_hex::hex_string(bytes)),
+            match kind {
+                ValueKind::Numeric => binary_as_decimal(bytes),
+                ValueKind::Hex | ValueKind::Bool => format!("0x{}", faster_hex::hex_string(bytes)),
             }
         }
         dt => unreachable!("unexpected arrow data type {dt:?} for envio data column"),
@@ -150,7 +165,7 @@ mod tests {
 
     #[test]
     fn empty_batches_render_zero_rows() {
-        let s = extract_rows(&[], &["number".to_string()], &[ColumnFormat::Decimal]);
+        let s = extract_rows(&[], &["number".to_string()], &[ValueKind::Numeric], None);
         assert!(s.is_empty());
     }
 }

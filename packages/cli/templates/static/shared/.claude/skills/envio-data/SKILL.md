@@ -19,11 +19,11 @@ envio data <field>... --chain=<id|name> [--where='<json5>']
   Examples: `block.number`, `log.srcAddress`, `transaction.hash`.
   Case-insensitive — `gasLimit`, `gas_limit`, `GASLIMIT` all work.
 - **--chain**: numeric id (`8453`) or name (`base`, `arbitrum-one`).
-- **--where**: JSON5 with the indexer `where` syntax. Supported filters:
-  - `block.number` with range ops (`_gte`, `_gt`, `_lte`, `_lt`).
-  - `log.srcAddress`, `log.topic0..3` — scalar, array, `_eq`, or `_in`.
-  - `transaction.from`, `transaction.to`, `transaction.sighash` — same ops as log filters.
-  Other fields can be selected for output but cannot be filtered on.
+- **--where**: JSON5, grouping fields under `block`, `transaction`, `log`.
+  Any field can be filtered:
+  - Match with a scalar, an array, `_eq`, or `_in` (e.g. `log: { srcAddress: "0x..." }`).
+  - Compare numeric fields with `_gt`, `_gte`, `_lt`, `_lte` (e.g. `transaction: { value: { _gt: 1000000000000000000 } }`).
+  - Comparison ops are numeric-only; hex/bool fields take only `_eq`/`_in`.
 
 ## Examples
 
@@ -35,6 +35,17 @@ envio data block.number log.transactionHash \
   --where='{
     block: { number: { _gte: 0 } },
     log: { srcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+  }'
+```
+
+Filter on any field, including numeric comparisons:
+
+```bash
+envio data transaction.hash transaction.value \
+  --chain=base \
+  --where='{
+    block: { number: { _gte: 1000000, _lt: 1000100 } },
+    transaction: { value: { _gt: 1000000000000000000 } },
   }'
 ```
 
