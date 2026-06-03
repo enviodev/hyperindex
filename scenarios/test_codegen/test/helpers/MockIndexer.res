@@ -41,8 +41,12 @@ module InMemoryStore = {
       ~entities=config.allEntities,
       ~persistence=defaultPersistence,
       ~config,
-      // In-memory-only stores never run the persistence cycle.
-      ~onError=ignore,
+      // In-memory-only stores never run the persistence cycle, so this can only
+      // fire if a test wires one up wrong - surface it loudly instead of hiding it.
+      ~onError=exn =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~msg="Unexpected persistence write from an in-memory-only test store",
+        ),
     )
     entities->Array.forEach(((entityConfig, items)) => {
       items->Array.forEach(entity => {
