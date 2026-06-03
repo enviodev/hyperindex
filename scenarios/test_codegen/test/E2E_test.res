@@ -1060,9 +1060,8 @@ describe("E2E tests", () => {
       syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexerMock.getBatchWritePromise()
 
-      // With the standalone persistence cycle, EventBatchProcessed marks the
-      // chain caught up before the first waitForNewBlock fires, so the height
-      // race is already in realtime mode: Live=Primary races, Sync=Secondary.
+      // EventBatchProcessed marks the chain caught up before the first
+      // waitForNewBlock, so the race is already realtime: Live=Primary, Sync=Secondary.
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
         ~message="Live source should participate in the first waitForNewBlock (realtime)",

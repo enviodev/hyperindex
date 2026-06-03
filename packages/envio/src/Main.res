@@ -686,8 +686,8 @@ let start = async (
   | Some(patchConfig) => patchConfig(config, registrations)
   | None => config
   }
-  // The single fatal-error handler: log and exit. Shared by the in-memory store
-  // (background write failures), the ErrorExit action, and the manager's catch.
+  // The single fatal-error handler, shared by the store, ErrorExit, and the
+  // manager's catch.
   let onError = (errHandler: ErrorHandling.t) => {
     errHandler->ErrorHandling.log
     NodeJs.process->NodeJs.exitWithCode(Failure)
