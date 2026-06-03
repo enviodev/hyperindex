@@ -1,5 +1,3 @@
-@val external setImmediate: (unit => unit) => unit = "setImmediate"
-
 type t = {
   mutable lastRunTimeMillis: float,
   mutable isRunning: bool,
@@ -29,9 +27,8 @@ let rec startInternal = (throttler: t) => {
       throttler.scheduled = None
       throttler.lastRunTimeMillis = Date.now()
 
-      // Run on the next setImmediate rather than synchronously inside schedule,
-      // so work queued before it (e.g. a batch task) runs first.
-      setImmediate(() => {
+      // Defer off the schedule call so work queued before it (e.g. a batch) runs first.
+      NodeJs.setImmediate(() => {
         (
           async () => {
             switch await fn() {

@@ -24,8 +24,7 @@ let emptyBatch = (~checkpointId): Batch.t => {
   checkpointEventsProcessed: [0],
 }
 
-// A store whose persistence records every chain-metadata write, split by which
-// path persisted it: the standalone idle upsert vs. the folded batch write.
+// Records chain-metadata writes, split by path: idle upsert vs. folded batch write.
 let makeStore = () => {
   let setChainMetaCalls = []
   let writeBatchChainMetaCalls = []
@@ -104,7 +103,7 @@ describe("InMemoryStore chain metadata", () => {
 
     store->InMemoryStore.setChainMeta(Dict.fromArray([("1", meta)]))
     await store->InMemoryStore.flush
-    // Identical value staged again - nothing stale, so no further write.
+    // Identical value restaged, so no further write.
     store->InMemoryStore.setChainMeta(Dict.fromArray([("1", metaFields(~buffer=10))]))
     await store->InMemoryStore.flush
 
@@ -118,8 +117,7 @@ describe("InMemoryStore chain metadata", () => {
 
     store->InMemoryStore.setChainMeta(Dict.fromArray([("1", chain1), ("2", chain2)]))
     await store->InMemoryStore.flush
-    // Only chain 2 advances, but the write carries the whole snapshot (a single
-    // unnest upsert, so writing unchanged chains too is free).
+    // Only chain 2 advances, but the write carries the whole snapshot (one upsert).
     let chain2Next = metaFields(~buffer=25)
     store->InMemoryStore.setChainMeta(
       Dict.fromArray([("1", metaFields(~buffer=10)), ("2", chain2Next)]),

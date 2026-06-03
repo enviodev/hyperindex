@@ -133,8 +133,7 @@ type storage = {
     ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
-    // Chain metadata fields that went stale since the last write, persisted in
-    // the same transaction so they never race the batch write.
+    // Persisted in the same transaction so it never races the batch write.
     ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
   ) => promise<unit>,
   // Release any long-lived resources (e.g. the postgres connection pool) so

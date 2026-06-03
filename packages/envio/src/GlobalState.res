@@ -148,7 +148,7 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~inMemoryStore: InMemoryStor
     )
   })
 
-  // Stage it; the persistence cycle folds the stale diff into the next batch write.
+  // The cycle folds it into the next batch write, or flushes it on the throttle.
   inMemoryStore->InMemoryStore.setChainMeta(chainsData)
 }
 
@@ -691,9 +691,8 @@ let actionReducer = (state: t, action: action) => {
           NoExit
         }
 
-    // Once we've decided to exit, stop the processing loop. Persistence now
-    // happens off the processing path, so the exit flush is async - continuing
-    // to dispatch ProcessEventBatch would process further batches while it runs.
+    // On exit, stop dispatching ProcessEventBatch: the flush is async and would
+    // otherwise keep processing further batches while it runs.
     let tasks = switch shouldExit {
     | ExitWithSuccess
     | ExitWithError(_) => [UpdateChainMetaDataAndCheckForExit(shouldExit)]
@@ -1149,8 +1148,7 @@ let injectedTaskReducer = (
           }
         })
 
-        // Let the background persistence cycle finish so committedCheckpointId
-        // reflects the db before we compute the rollback diff against it.
+        // Flush first so committedCheckpointId reflects the db before the diff.
         await state.ctx.inMemoryStore->InMemoryStore.flush
 
         let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(

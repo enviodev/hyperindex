@@ -10,8 +10,7 @@ let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
 // Keep a handle to the real module before the local shadow below.
 module RealInMemoryStore = InMemoryStore
 
-// In-memory-only test stores never run the persistence cycle, but the store
-// still requires a persistence/config; reuse one for all of them.
+// In-memory-only test stores still require a persistence/config; reuse one.
 let defaultPersistence = PgStorage.makePersistenceFromConfig(
   ~config,
   ~storage=PgStorage.makeStorageFromEnv(
@@ -395,10 +394,8 @@ module Indexer = {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
           let before = (gsManager->GlobalStateManager.getState).processedBatches
-          // Wait until a new batch has been processed and fully written to the db
-          // by the standalone persistence cycle. During a reorg the awaited batch
-          // can be processed before this call (e.g. while the test awaits the
-          // rollback), so also stop once the indexer has fully settled.
+          // Wait until a new batch is processed and written. A reorg batch can
+          // land before this call, so also stop once the indexer has settled.
           let idleChecks = ref(0)
           let rec wait = async () => {
             await ctx.inMemoryStore->RealInMemoryStore.flush
@@ -544,8 +541,7 @@ module Indexer = {
         }
       },
       restart: async () => {
-        // Ensure everything processed in memory is persisted before simulating
-        // a restart, otherwise the resumed indexer would lose uncommitted state.
+        // Persist everything before the restart, else uncommitted state is lost.
         await ctx.inMemoryStore->RealInMemoryStore.flush
         let state = gsManager->GlobalStateManager.getState
         gsManager->GlobalStateManager.setState({
