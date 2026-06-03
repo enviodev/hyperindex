@@ -1002,3 +1002,51 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
     },
   )
 })
+
+describe("PgStorage.makeRawEvent", () => {
+  Async.it(
+    "Derives a raw event row from a batch item, copying block hash before cleanup and stringifying bigint block fields",
+    async t => {
+      let srcAddress = "0x00000000000000000000000000000000000000ab"->(Utils.magic: string => Address.t)
+      let blockNumber = 5
+      let logIndex = 3
+
+      let event =
+        {
+          "block": %raw(`{"number": 5, "timestamp": 9999, "hash": "0xblockhash", "gasUsed": 99n, "miner": "0xminer"}`),
+          "transaction": %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+          "params": (),
+          "logIndex": logIndex,
+          "srcAddress": srcAddress,
+          "chainId": 137,
+          "contractName": "ERC20",
+          "eventName": "EventWithoutFields",
+        }->(Utils.magic: _ => Internal.event)
+
+      let eventItem =
+        Internal.Event({
+          eventConfig: (MockIndexer.evmEventConfig(~contractName="ERC20") :> Internal.eventConfig),
+          timestamp: 1234,
+          chain: ChainMap.Chain.makeUnsafe(~chainId=137),
+          blockNumber,
+          logIndex,
+          event,
+        })->Internal.castUnsafeEventItem
+
+      t.expect(eventItem->PgStorage.makeRawEvent(~config=MockIndexer.config)).toEqual({
+        chainId: 137,
+        eventId: EventUtils.packEventIndex(~logIndex, ~blockNumber),
+        eventName: "EventWithoutFields",
+        contractName: "ERC20",
+        blockNumber,
+        logIndex,
+        srcAddress,
+        blockHash: "0xblockhash",
+        blockTimestamp: 1234,
+        blockFields: %raw(`{"gasUsed": "99", "miner": "0xminer"}`),
+        transactionFields: %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+        params: %raw(`"null"`),
+      })
+    },
+  )
+})

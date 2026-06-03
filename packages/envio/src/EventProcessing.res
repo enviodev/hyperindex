@@ -25,77 +25,6 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
   chains
 }
 
-let convertFieldsToJson = (fields: option<dict<unknown>>) => {
-  switch fields {
-  | None => %raw(`{}`)
-  | Some(fields) =>
-    // Convert bigint fields to string. There are no fields with nested
-    // bigints, so iterating only the top level is safe.
-    fields
-    ->Utils.Dict.mapValues(value =>
-      typeof(value) === #bigint
-        ? value
-          ->(Utils.magic: unknown => bigint)
-          ->BigInt.toString
-          ->(Utils.magic: string => unknown)
-        : value
-    )
-    ->(Utils.magic: dict<unknown> => JSON.t)
-  }
-}
-
-let addItemToRawEvents = (
-  eventItem: Internal.eventItem,
-  ~inMemoryStore: InMemoryStore.t,
-  ~config: Config.t,
-) => {
-  let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = eventItem
-  let {block, transaction, params, logIndex, srcAddress} = event
-  let chainId = chain->ChainMap.Chain.toChainId
-  let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-  let blockFields =
-    block
-    ->(Utils.magic: Internal.eventBlock => option<dict<unknown>>)
-    ->convertFieldsToJson
-  let transactionFields =
-    transaction
-    ->(Utils.magic: Internal.eventTransaction => option<dict<unknown>>)
-    ->convertFieldsToJson
-
-  blockFields->config.ecosystem.cleanUpRawEventFieldsInPlace
-
-  // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
-  let params =
-    params
-    ->S.reverseConvertOrThrow(eventConfig.paramsRawEventSchema)
-    ->(Utils.magic: unknown => JSON.t)
-  let params = if params === %raw(`null`) {
-    // Should probably make the params field nullable
-    // But this is currently needed to make events
-    // with empty params work
-    %raw(`"null"`)
-  } else {
-    params
-  }
-
-  let rawEvent: InternalTable.RawEvents.t = {
-    chainId,
-    eventId,
-    eventName: eventConfig.name,
-    contractName: eventConfig.contractName,
-    blockNumber,
-    logIndex,
-    srcAddress,
-    blockHash: block->config.ecosystem.getId,
-    blockTimestamp,
-    blockFields,
-    transactionFields,
-    params,
-  }
-
-  inMemoryStore.rawEvents->Array.push(rawEvent)
-}
-
 exception ProcessingError({message: string, exn: exn, item: Internal.item})
 
 let runEventHandlerOrThrow = async (
@@ -192,26 +121,18 @@ let runHandlerOrThrow = async (
         }),
       )
     }
-  | Event({eventConfig}) => {
-      switch eventConfig.handler {
-      | Some(handler) =>
-        await item->runEventHandlerOrThrow(
-          ~handler,
-          ~checkpointId,
-          ~inMemoryStore,
-          ~loadManager,
-          ~persistence=ctx.persistence,
-          ~chains,
-          ~config=ctx.config,
-        )
-      | None => ()
-      }
-
-      if ctx.config.enableRawEvents {
-        item
-        ->Internal.castUnsafeEventItem
-        ->addItemToRawEvents(~inMemoryStore, ~config=ctx.config)
-      }
+  | Event({eventConfig}) => switch eventConfig.handler {
+    | Some(handler) =>
+      await item->runEventHandlerOrThrow(
+        ~handler,
+        ~checkpointId,
+        ~inMemoryStore,
+        ~loadManager,
+        ~persistence=ctx.persistence,
+        ~chains,
+        ~config=ctx.config,
+      )
+    | None => ()
     }
   }
 }

@@ -37,7 +37,6 @@ let makeStore = () => {
     },
     writeBatch: (
       ~batch as _,
-      ~rawEvents as _,
       ~rollback as _,
       ~isInReorgThreshold as _,
       ~config as _,
