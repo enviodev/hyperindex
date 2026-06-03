@@ -59,6 +59,8 @@ type t = {
   // stale diff into the batch transaction, so it never races the batch write.
   mutable currentChainMeta: option<dict<InternalTable.Chains.metaFields>>,
   mutable committedChainMeta: option<dict<InternalTable.Chains.metaFields>>,
+  // Set by flush: persist stale metadata through the cycle even with no batch.
+  mutable shouldFlushChainMeta: bool,
 }
 
 let make = (
@@ -82,6 +84,7 @@ let make = (
   config,
   currentChainMeta: None,
   committedChainMeta: None,
+  shouldFlushChainMeta: false,
 }
 
 // The store may hold up to this many uncommitted changes before processing has
@@ -305,22 +308,41 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
   inMemoryStore.effects->Utils.Dict.forEach(inMemTable => inMemTable.pendingDict = Dict.make())
 }
 
+// True when the cycle has something to persist: a queued batch, or (when flush
+// asked for it) chain metadata that changed since the last write.
+let hasPendingWrite = (inMemoryStore: t) =>
+  inMemoryStore.processedBatches->Utils.Array.notEmpty ||
+    (inMemoryStore.shouldFlushChainMeta && inMemoryStore->staleChainMeta->Option.isSome)
+
 let runWriteLoop = async (inMemoryStore: t) => {
-  while (
-    inMemoryStore.processedBatches->Utils.Array.notEmpty &&
-      inMemoryStore.persistenceError->Option.isNone
-  ) {
+  while inMemoryStore->hasPendingWrite && inMemoryStore.persistenceError->Option.isNone {
     try {
-      await runOneWrite(
-        inMemoryStore,
-        ~persistence=inMemoryStore.persistence,
-        ~config=inMemoryStore.config,
-      )
+      if inMemoryStore.processedBatches->Utils.Array.notEmpty {
+        await runOneWrite(
+          inMemoryStore,
+          ~persistence=inMemoryStore.persistence,
+          ~config=inMemoryStore.config,
+        )
+      } else {
+        // Flush asked to persist chain metadata but there's no batch to carry
+        // it. Write it here, inside the single-writer cycle, so it never races a
+        // batch write.
+        switch inMemoryStore->staleChainMeta {
+        | Some(chainsData) =>
+          let snapshot = inMemoryStore.currentChainMeta
+          await inMemoryStore.persistence.storage.setChainMeta(
+            chainsData,
+          )->Utils.Promise.ignoreValue
+          inMemoryStore.committedChainMeta = snapshot
+        | None => ()
+        }
+      }
       inMemoryStore->wakeCommitWaiters
     } catch {
     | exn => inMemoryStore.persistenceError = Some(exn)
     }
   }
+  inMemoryStore.shouldFlushChainMeta = false
   inMemoryStore.writeFiber = None
   inMemoryStore->wakeCommitWaiters
 }
@@ -329,7 +351,7 @@ let kick = (inMemoryStore: t) =>
   if (
     inMemoryStore.writeFiber->Option.isNone &&
     inMemoryStore.persistenceError->Option.isNone &&
-    inMemoryStore.processedBatches->Utils.Array.notEmpty
+    inMemoryStore->hasPendingWrite
   ) {
     inMemoryStore.writeFiber = Some(runWriteLoop(inMemoryStore))
   }
@@ -375,17 +397,27 @@ let rec awaitCapacity = async (inMemoryStore: t) => {
   }
 }
 
-// Awaits until everything processed in memory is persisted to the db.
-let rec flush = async (inMemoryStore: t) => {
+// Awaits until everything processed in memory - including any stale chain
+// metadata - is persisted to the db. The metadata write goes through the cycle
+// (via shouldFlushChainMeta), which runWriteLoop clears once idle.
+let flush = async (inMemoryStore: t) => {
   switch inMemoryStore.persistenceError {
   | Some(exn) => throw(exn)
   | None => ()
   }
-  inMemoryStore->kick
-  switch inMemoryStore.writeFiber {
-  | Some(fiber) =>
-    await fiber
-    await inMemoryStore->flush
+  inMemoryStore.shouldFlushChainMeta = true
+  let rec drain = async () => {
+    inMemoryStore->kick
+    switch inMemoryStore.writeFiber {
+    | Some(fiber) =>
+      await fiber
+      await drain()
+    | None => ()
+    }
+  }
+  await drain()
+  switch inMemoryStore.persistenceError {
+  | Some(exn) => throw(exn)
   | None => ()
   }
 }
