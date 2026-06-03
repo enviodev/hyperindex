@@ -55,6 +55,15 @@ impl Section {
             Section::Log => "log",
         }
     }
+
+    /// Stable index into `[block, transaction, log]` arrays used by the join plan.
+    pub fn index(self) -> usize {
+        match self {
+            Section::Block => 0,
+            Section::Transaction => 1,
+            Section::Log => 2,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

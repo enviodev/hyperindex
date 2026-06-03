@@ -46,14 +46,18 @@ pub async fn run(args: DataArgs) -> Result<()> {
         bail!("No data fields requested. Pass at least one positional field.");
     }
 
-    let field_selection = selection.build_net_field_selection_with(&filter.client_filter_fields());
+    let plan =
+        client_filter::JoinPlan::new(filter.filtered_sections(), selection.output_sections());
+    let mut extra = filter.client_filter_fields();
+    extra.extend(plan.extra_fields());
+    let field_selection = selection.build_net_field_selection_with(&extra);
     let query = filter.build_net_query(field_selection)?;
     let response = client
         .get_arrow(&query)
         .await
         .context("Failed querying blockchain data")?;
 
-    let masks = client_filter::compute_masks(&response, &filter.client_filters)?;
+    let masks = client_filter::compute_masks(&response, &filter.client_filters, &plan)?;
     let mut out = toon::render_arrow_response(&selection, &response, &masks);
 
     let archive_height = response.archive_height.unwrap_or(0);

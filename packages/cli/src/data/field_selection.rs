@@ -61,6 +61,15 @@ impl Selection {
         !self.columns.is_empty()
     }
 
+    /// Which sections appear in the output, indexed by `Section::index`.
+    pub fn output_sections(&self) -> [bool; 3] {
+        let mut sections = [false; 3];
+        for col in &self.columns {
+            sections[col.section.index()] = true;
+        }
+        sections
+    }
+
     /// Builds the Hypersync field selection, also requesting `extra` fields so
     /// client-side filter fields are fetched even when not selected for output.
     pub fn build_net_field_selection_with(&self, extra: &[TypedField]) -> NetFieldSelection {

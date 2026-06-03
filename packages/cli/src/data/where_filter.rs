@@ -110,6 +110,23 @@ impl WhereFilter {
         !self.server_filters.is_empty() || !self.client_filters.is_empty()
     }
 
+    /// Which sections carry a row-level filter (server or client), indexed by
+    /// `Section::index`. A pure `block.number` range desugars to the scan window
+    /// and leaves no filter, so it does not mark the block section; a
+    /// `block.number` set (`_in`) keeps a client filter and does.
+    pub fn filtered_sections(&self) -> [bool; 3] {
+        let mut sections = [false; 3];
+        for section in self
+            .server_filters
+            .iter()
+            .map(|f| f.field.section())
+            .chain(self.client_filters.iter().map(|f| f.field.section()))
+        {
+            sections[section.index()] = true;
+        }
+        sections
+    }
+
     fn narrow_from(&mut self, n: u64) {
         self.from_block = Some(self.from_block.map_or(n, |cur| cur.max(n)));
     }
