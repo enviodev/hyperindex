@@ -537,6 +537,9 @@ type effectArgs = {
   input: effectInput,
   context: effectContext,
   cacheKey: string,
+  // The processing checkpoint that referenced this effect; stamped on the
+  // in-memory cache entry so it's evicted once the checkpoint commits.
+  checkpointId: bigint,
 }
 type effectCacheItem = {id: string, output: effectOutput}
 type effectCacheStorageMeta = {

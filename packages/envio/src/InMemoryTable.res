@@ -9,13 +9,14 @@ module Entity = {
   type entityIndices = Utils.Set.t<TableIndices.Index.t>
   type t = {
     latestEntityChangeById: dict<Change.t<Internal.entity>>,
-    // Counts every recorded change (new latest ids and pushes to
-    // prevEntityChanges), kept in sync manually so InMemoryStore can gauge the
-    // store size without scanning every dict.
+    // Recorded changes (new latest ids + prevEntityChanges pushes), tracked
+    // manually so InMemoryStore can gauge size without scanning every dict.
     mutable changesCount: float,
-    prevEntityChanges: array<Change.t<Internal.entity>>,
-    indicesByEntityId: dict<entityIndices>,
-    fieldNameIndices: indexFieldNameToIndices,
+    // Swapped out when a write starts so processing keeps appending while the
+    // previous changes persist in the background.
+    mutable prevEntityChanges: array<Change.t<Internal.entity>>,
+    mutable indicesByEntityId: dict<entityIndices>,
+    mutable fieldNameIndices: indexFieldNameToIndices,
   }
 
   // Helper to extract entity ID from any entity
@@ -55,33 +56,51 @@ module Entity = {
     fieldNameIndices: Dict.make(),
   }
 
-  // Drops the per-batch index state and rollback history, but keeps the
-  // already committed entities so the next batch can read them without
-  // hitting the database.
-  let resetButKeepLatestChanges = (self: t): t => {
-    ...make(),
-    latestEntityChangeById: self.latestEntityChangeById,
-    // writeBatch already mutated this to subtract the dropped prevEntityChanges.
-    changesCount: self.changesCount,
-  }
-
-  // Like resetButKeepLatestChanges, but only keeps entities loaded from the db
-  // (changes carrying loadedFromDbCheckpointId), dropping everything written in
-  // a batch. The kept count is exposed through the table's changesCount.
-  let resetButKeepLoadedFromDbChanges = (self: t): t => {
-    let latestEntityChangeById = Dict.make()
-    let keptCount = ref(0.)
-    self.latestEntityChangeById->Utils.Dict.forEachWithKey((change, key) =>
-      if change->Change.getCheckpointId === Internal.loadedFromDbCheckpointId {
-        latestEntityChangeById->Dict.set(key, change)
-        keptCount := keptCount.contents +. 1.
+  // Changes to persist for checkpoints in (committedCheckpointId, upToCheckpointId].
+  // Those above upToCheckpointId stay in the table for a later write, while
+  // concurrent processing keeps accumulating.
+  let snapshotChanges = (self: t, ~committedCheckpointId, ~upToCheckpointId): array<
+    Change.t<Internal.entity>,
+  > => {
+    let changes = []
+    let keptPrev = []
+    self.prevEntityChanges->Array.forEach(change =>
+      if change->Change.getCheckpointId > upToCheckpointId {
+        keptPrev->Array.push(change)
+      } else {
+        changes->Array.push(change)
       }
     )
-    {
-      ...make(),
-      latestEntityChangeById,
-      changesCount: keptCount.contents,
-    }
+    self.prevEntityChanges = keptPrev
+    self.changesCount = self.changesCount -. changes->Array.length->Int.toFloat
+    self.latestEntityChangeById->Utils.Dict.forEach(change => {
+      let checkpointId = change->Change.getCheckpointId
+      if checkpointId > committedCheckpointId && !(checkpointId > upToCheckpointId) {
+        changes->Array.push(change)
+      }
+    })
+    changes
+  }
+
+  // Frees committed changes: drops latest entries at or below committedCheckpointId
+  // (re-readable from the db) and clears the per-batch indices (rebuilt on the next
+  // getWhere). Uncommitted changes are kept. With keepLoadedFromDb, entries seeded
+  // from a db read are spared so the cheaper-to-re-derive writes are dropped first.
+  let dropCommittedChanges = (self: t, ~committedCheckpointId, ~keepLoadedFromDb) => {
+    let keysToDelete = []
+    self.latestEntityChangeById->Utils.Dict.forEachWithKey((change, key) => {
+      let checkpointId = change->Change.getCheckpointId
+      if (
+        !(checkpointId > committedCheckpointId) &&
+        !(keepLoadedFromDb && checkpointId == Internal.loadedFromDbCheckpointId)
+      ) {
+        keysToDelete->Array.push(key)
+      }
+    })
+    keysToDelete->Array.forEach(key => self.latestEntityChangeById->Utils.Dict.deleteInPlace(key))
+    self.changesCount = self.changesCount -. keysToDelete->Array.length->Int.toFloat
+    self.indicesByEntityId = Dict.make()
+    self.fieldNameIndices = Dict.make()
   }
 
   let updateIndices = (self: t, ~entity: Internal.entity) => {

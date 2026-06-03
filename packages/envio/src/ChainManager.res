@@ -135,12 +135,13 @@ let nextItemIsNone = (chainManager: t): bool => {
 
 let createBatch = (
   chainManager: t,
-  ~committedCheckpointId,
+  ~processedCheckpointId,
   ~batchSizeTarget: int,
   ~isRollback: bool,
 ): Batch.t => {
   Batch.make(
-    ~checkpointIdBeforeBatch=committedCheckpointId->BigInt.add(
+    ~isInReorgThreshold=chainManager.isInReorgThreshold,
+    ~checkpointIdBeforeBatch=processedCheckpointId->BigInt.add(
       // Since for rollback we have a diff checkpoint id.
       // This is needed to currectly overwrite old state
       // in an append-only ClickHouse insert.
