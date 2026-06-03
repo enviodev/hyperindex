@@ -105,7 +105,7 @@ let make = (
 
 // Max uncommitted entity/effect changes plus unwritten batch items before
 // processing must wait for the cycle to free capacity.
-let keepLatestChangesLimit = Env.maxInMemoryChanges
+let keepLatestChangesLimit = Env.inMemoryObjectsTarget
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   let key = effect.name
@@ -124,16 +124,10 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   }
 }
 
-let mapChangeToEffectOutput = (change: Change.t<Internal.effectOutput>) =>
-  switch change {
-  | Set({entity: output}) => Some(output)
-  | Delete(_) => None
-  }
-
 let getEffectOutput = (inMemTable: effectCacheInMemTable, key) =>
   switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
-  | Some(change) => change->mapChangeToEffectOutput
-  | None => None
+  | Some(Set({entity: output})) => Some(output)
+  | Some(Delete(_)) | None => None
   }
 
 // Records a handler output. Persisted on the next write only when shouldCache;
@@ -271,9 +265,9 @@ let snapshotEffects = (inMemoryStore: t, ~cache): array<Persistence.updatedEffec
     | [] => ()
     | ids =>
       let items = ids->Array.filterMap((id): option<Internal.effectCacheItem> =>
-        switch dict->Dict.getUnsafe(id)->mapChangeToEffectOutput {
-        | Some(output) => Some({id, output})
-        | None => None
+        switch dict->Dict.getUnsafe(id) {
+        | Set({entity: output}) => Some({id, output})
+        | Delete(_) => None
         }
       )
       let effectName = effect.name
