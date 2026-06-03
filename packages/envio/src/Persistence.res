@@ -126,7 +126,6 @@ type storage = {
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,
-    ~rawEvents: array<InternalTable.RawEvents.t>,
     ~rollback: option<rollback>,
     ~isInReorgThreshold: bool,
     ~config: Config.t,

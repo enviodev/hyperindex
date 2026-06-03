@@ -32,7 +32,6 @@ type effectCacheInMemTable = {
 
 type t = {
   allEntities: array<Internal.entityConfig>,
-  mutable rawEvents: array<InternalTable.RawEvents.t>,
   mutable entities: dict<InMemoryTable.Entity.t>,
   mutable effects: dict<effectCacheInMemTable>,
   mutable rollback: option<Persistence.rollback>,
@@ -83,7 +82,6 @@ let make = (
 
   {
     allEntities: entities,
-    rawEvents: [],
     entities: EntityTables.make(entities),
     effects: Dict.make(),
     rollback: None,
@@ -171,6 +169,7 @@ let drainBatchRun = (inMemoryStore: t): Batch.t => {
   let rest = []
   let progressedChainsById = Dict.make()
   let totalBatchSize = ref(0)
+  let items = []
   let checkpointIds = []
   let checkpointChainIds = []
   let checkpointBlockNumbers = []
@@ -183,6 +182,7 @@ let drainBatchRun = (inMemoryStore: t): Batch.t => {
         progressedChainsById->Dict.set(key, chainAfterBatch)
       )
       totalBatchSize := totalBatchSize.contents + batch.totalBatchSize
+      items->Array.pushMany(batch.items)
       checkpointIds->Array.pushMany(batch.checkpointIds)
       checkpointChainIds->Array.pushMany(batch.checkpointChainIds)
       checkpointBlockNumbers->Array.pushMany(batch.checkpointBlockNumbers)
@@ -196,7 +196,7 @@ let drainBatchRun = (inMemoryStore: t): Batch.t => {
 
   {
     totalBatchSize: totalBatchSize.contents,
-    items: [],
+    items,
     progressedChainsById,
     isInReorgThreshold,
     checkpointIds,
@@ -275,10 +275,6 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
     | None => committedCheckpointId
     }
 
-    // rawEvents and the effect cache aren't gated by isInReorgThreshold, so they're
-    // flushed in full rather than split at the run boundary.
-    let rawEvents = inMemoryStore.rawEvents
-    inMemoryStore.rawEvents = []
     let rollback = inMemoryStore.rollback
     inMemoryStore.rollback = None
 
@@ -296,7 +292,6 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
 
     await persistence.storage.writeBatch(
       ~batch,
-      ~rawEvents,
       ~rollback,
       ~isInReorgThreshold=batch.isInReorgThreshold,
       ~config,
@@ -429,7 +424,6 @@ let prepareRollbackDiff = async (
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
 ) => {
-  inMemoryStore.rawEvents = []
   inMemoryStore.entities = EntityTables.make(inMemoryStore.allEntities)
   inMemoryStore.effects = Dict.make()
   inMemoryStore.rollback = Some({

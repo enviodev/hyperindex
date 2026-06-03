@@ -450,26 +450,63 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
   chunks
 }
 
-let removeInvalidUtf8InPlace = entities =>
-  entities->Array.forEach(item => {
-    let dict = item->(Utils.magic: 'a => dict<unknown>)
-    dict->Utils.Dict.forEachWithKey((value, key) => {
-      if value->typeof === #string {
-        let value = value->(Utils.magic: unknown => string)
+// Strips NUL bytes, recursing into nested objects/arrays so a NUL buried
+// inside a jsonb column (an event param object, a json entity field) is
+// removed too — Postgres rejects it in both text (0x00) and jsonb (22P05).
+let rec removeInvalidUtf8DeepInPlace = (value: unknown): unknown => {
+  if value->typeof === #string {
+    value
+    ->(Utils.magic: unknown => string)
+    ->Utils.String.replaceAll("\x00", "")
+    ->(Utils.magic: string => unknown)
+  } else if value->typeof === #object && value !== %raw(`null`) {
+    let dict = value->(Utils.magic: unknown => dict<unknown>)
+    dict->Utils.Dict.forEachWithKey((v, k) => dict->Dict.set(k, removeInvalidUtf8DeepInPlace(v)))
+    value
+  } else {
+    value
+  }
+}
 
-        dict->Dict.set(
-          key,
-          value
-          ->Utils.String.replaceAll("\x00", "")
-          ->(Utils.magic: string => unknown),
-        )
-      }
-    })
-  })
+let removeInvalidUtf8InPlace = items =>
+  items->Array.forEach(item =>
+    removeInvalidUtf8DeepInPlace(item->(Utils.magic: 'a => unknown))->ignore
+  )
 
 let pgErrorMessageSchema = S.object(s => s.field("message", S.string))
 
 exception PgEncodingError({table: Table.table})
+
+// Classifies a write failure, parking it in `specificError` so the
+// transaction can unwind and the outer handler can react. Both Postgres
+// encoding failures we recognize are NUL-related — `0x00` in a text column
+// and a NUL rejected by jsonb (22P05) — so they become a PgEncodingError
+// that triggers an escape-and-retry of the offending table, where deep NUL
+// stripping resolves them. We escape lazily on first failure to keep the
+// happy path free of per-item sanitization. The aborted-transaction cascade
+// is ignored so it never masks the original error.
+let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table, ~exn) => {
+  /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
+  let normalizedExn = switch exn {
+  | JsExn(_) => exn
+  | Persistence.StorageError({reason: exn}) => exn
+  | _ => exn
+  }->JsExn.anyToExnInternal
+
+  switch normalizedExn {
+  | JsExn(error) =>
+    switch error->S.parseOrThrow(pgErrorMessageSchema) {
+    | `current transaction is aborted, commands ignored until end of transaction block` => ()
+    | `invalid byte sequence for encoding "UTF8": 0x00`
+    | `unsupported Unicode escape sequence` =>
+      specificError.contents = Some(PgEncodingError({table: table}))
+    | _ => specificError.contents = Some(exn->Utils.prettifyExn)
+    | exception _ => ()
+    }
+  | S.Raised(_) => throw(normalizedExn) // But rethrow this one, since it's not a PG error
+  | _ => ()
+  }
+}
 
 // WeakMap for caching table batch set queries
 let setQueryCache = Utils.WeakMap.make()
@@ -712,10 +749,77 @@ let executeSet = (
   }
 }
 
+let convertFieldsToJson = (fields: option<dict<unknown>>) => {
+  switch fields {
+  | None => %raw(`{}`)
+  | Some(fields) =>
+    // Convert bigint fields to string. There are no fields with nested
+    // bigints, so iterating only the top level is safe.
+    fields
+    ->Utils.Dict.mapValues(value =>
+      typeof(value) === #bigint
+        ? value
+          ->(Utils.magic: unknown => bigint)
+          ->BigInt.toString
+          ->(Utils.magic: string => unknown)
+        : value
+    )
+    ->(Utils.magic: dict<unknown> => JSON.t)
+  }
+}
+
+let makeRawEvent = (
+  eventItem: Internal.eventItem,
+  ~config: Config.t,
+): InternalTable.RawEvents.t => {
+  let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = eventItem
+  let {block, transaction, params, logIndex, srcAddress} = event
+  let chainId = chain->ChainMap.Chain.toChainId
+  let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+  let blockFields =
+    block
+    ->(Utils.magic: Internal.eventBlock => option<dict<unknown>>)
+    ->convertFieldsToJson
+  let transactionFields =
+    transaction
+    ->(Utils.magic: Internal.eventTransaction => option<dict<unknown>>)
+    ->convertFieldsToJson
+
+  blockFields->config.ecosystem.cleanUpRawEventFieldsInPlace
+
+  // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
+  let params =
+    params
+    ->S.reverseConvertOrThrow(eventConfig.paramsRawEventSchema)
+    ->(Utils.magic: unknown => JSON.t)
+  let params = if params === %raw(`null`) {
+    // Should probably make the params field nullable
+    // But this is currently needed to make events
+    // with empty params work
+    %raw(`"null"`)
+  } else {
+    params
+  }
+
+  {
+    chainId,
+    eventId,
+    eventName: eventConfig.name,
+    contractName: eventConfig.contractName,
+    blockNumber,
+    logIndex,
+    srcAddress,
+    blockHash: block->config.ecosystem.getId,
+    blockTimestamp,
+    blockFields,
+    transactionFields,
+    params,
+  }
+}
+
 let rec writeBatch = async (
   sql,
   ~batch: Batch.t,
-  ~rawEvents,
   ~pgSchema,
   ~rollback: option<Persistence.rollback>,
   ~isInReorgThreshold,
@@ -733,18 +837,37 @@ let rec writeBatch = async (
 
     let specificError = ref(None)
 
-    let setRawEvents = executeSet(
-      _,
-      ~dbFunction=(sql, items) => {
-        sql->setOrThrow(
-          ~items,
-          ~table=InternalTable.RawEvents.table,
-          ~itemSchema=InternalTable.RawEvents.schema,
-          ~pgSchema,
-        )
-      },
-      ~items=rawEvents,
-    )
+    let rawEvents = if config.enableRawEvents {
+      let rows = batch.items->Belt.Array.keepMap(item =>
+        switch item {
+        | Internal.Event(_) => Some(item->Internal.castUnsafeEventItem->makeRawEvent(~config))
+        | Internal.Block(_) => None
+        }
+      )
+      switch escapeTables {
+      | Some(tables) if tables->Utils.Set.has(InternalTable.RawEvents.table) =>
+        rows->removeInvalidUtf8InPlace
+      | _ => ()
+      }
+      rows
+    } else {
+      []
+    }
+
+    let setRawEvents = async sql => {
+      try {
+        await sql->executeSet(~dbFunction=(sql, items) => {
+          sql->setOrThrow(
+            ~items,
+            ~table=InternalTable.RawEvents.table,
+            ~itemSchema=InternalTable.RawEvents.schema,
+            ~pgSchema,
+          )
+        }, ~items=rawEvents)
+      } catch {
+      | exn => classifyWriteError(~specificError, ~table=InternalTable.RawEvents.table, ~exn)
+      }
+    }
 
     let setEntities = updatedEntities->Belt.Array.map(({entityConfig, changes}) => {
       let entitiesToSet = []
@@ -884,42 +1007,11 @@ let rec writeBatch = async (
         // might throw PG error, earlier, than the handled error
         // from setOrThrow will be passed through.
         // This is needed for the utf8 encoding fix.
-        | exn => {
-            /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
-            let normalizedExn = switch exn {
-            | JsExn(_) => exn
-            | Persistence.StorageError({reason: exn}) => exn
-            | _ => exn
-            }->JsExn.anyToExnInternal
-
-            switch normalizedExn {
-            | JsExn(error) =>
-              // Workaround for https://github.com/enviodev/hyperindex/issues/446
-              // We do escaping only when we actually got an error writing for the first time.
-              // This is not perfect, but an optimization to avoid escaping for every single item.
-
-              switch error->S.parseOrThrow(pgErrorMessageSchema) {
-              | `current transaction is aborted, commands ignored until end of transaction block` => ()
-              | `invalid byte sequence for encoding "UTF8": 0x00` =>
-                // Since the transaction is aborted at this point,
-                // we can't simply retry the function with escaped items,
-                // so propagate the error, to restart the whole batch write.
-                // Also, pass the failing table, to escape only its items.
-                // TODO: Ideally all this should be done in the file,
-                // so it'll be easier to work on PG specific logic.
-                specificError.contents = Some(PgEncodingError({table: entityConfig.table}))
-              | _ => specificError.contents = Some(exn->Utils.prettifyExn)
-              | exception _ => ()
-              }
-            | S.Raised(_) => throw(normalizedExn) // But rethrow this one, since it's not a PG error
-            | _ => ()
-            }
-
-            // Improtant: Don't rethrow here, since it'll result in
-            // an unhandled rejected promise error.
-            // That's fine not to throw, since sql->Postgres.beginSql
-            // will fail anyways.
-          }
+        //
+        // Important: Don't rethrow here, since it'll result in an unhandled
+        // rejected promise error. That's fine not to throw, since
+        // sql->Postgres.beginSql will fail anyways.
+        | exn => classifyWriteError(~specificError, ~table=entityConfig.table, ~exn)
         }
       }
     })
@@ -1047,7 +1139,6 @@ let rec writeBatch = async (
     await writeBatch(
       sql,
       ~escapeTables,
-      ~rawEvents,
       ~batch,
       ~pgSchema,
       ~rollback,
@@ -1643,7 +1734,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
   let writeBatchMethod = async (
     ~batch,
-    ~rawEvents,
     ~rollback,
     ~isInReorgThreshold,
     ~config,
@@ -1689,7 +1779,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     await writeBatch(
       sql,
       ~batch,
-      ~rawEvents,
       ~pgSchema,
       ~rollback,
       ~isInReorgThreshold,

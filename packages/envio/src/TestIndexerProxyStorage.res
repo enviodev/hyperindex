@@ -131,7 +131,6 @@ let makeStorage = (proxy: t): Persistence.storage => {
   },
   writeBatch: async (
     ~batch,
-    ~rawEvents as _,
     ~rollback as _,
     ~isInReorgThreshold as _,
     ~config as _,
