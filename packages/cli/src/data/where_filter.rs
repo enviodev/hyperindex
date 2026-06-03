@@ -1,7 +1,9 @@
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
 
-use hypersync_client::net_types::{FieldSelection, LogFilter, Query, TransactionFilter};
+use hypersync_client::net_types::{
+    BlockFilter, FieldSelection, LogFilter, Query, TransactionFilter,
+};
 
 use super::mapping::{self, ColumnFormat, Section, TypedField};
 
@@ -50,6 +52,7 @@ pub struct WhereFilter {
     pub to_block_exclusive: Option<u64>,
     pub log_filters: Vec<FieldFilter>,
     pub transaction_filters: Vec<FieldFilter>,
+    pub block_filters: Vec<FieldFilter>,
     pub client_filters: Vec<ClientFilter>,
 }
 
@@ -108,6 +111,7 @@ impl WhereFilter {
     pub fn has_section_filters(&self) -> bool {
         !self.log_filters.is_empty()
             || !self.transaction_filters.is_empty()
+            || !self.block_filters.is_empty()
             || !self.client_filters.is_empty()
     }
 
@@ -140,6 +144,14 @@ impl WhereFilter {
             query = query.where_transactions(tf);
         }
 
+        if !self.block_filters.is_empty() {
+            let mut bf = BlockFilter::all();
+            for f in &self.block_filters {
+                bf = apply_block_filter(bf, f)?;
+            }
+            query = query.where_blocks(bf);
+        }
+
         Ok(query)
     }
 }
@@ -167,18 +179,44 @@ fn apply_tx_filter(filter: TransactionFilter, f: &FieldFilter) -> Result<Transac
     let TypedField::Transaction(tx_field) = f.field else {
         unreachable!("transaction_filters only holds Transaction fields")
     };
+    match tx_field {
+        TransactionField::Status => {
+            let [value] = f.values.as_slice() else {
+                bail!("`transaction.status` accepts a single value server-side.");
+            };
+            Ok(filter.and_status(value_to_u8(value)?))
+        }
+        TransactionField::Type => Ok(filter.and_type(values_to_u8(&f.values)?)),
+        _ => {
+            let owned = filter_values_as_strs(&f.values);
+            let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
+            let (filter, ctx) = match tx_field {
+                TransactionField::From => (filter.and_from(refs), "invalid from address"),
+                TransactionField::To => (filter.and_to(refs), "invalid to address"),
+                TransactionField::Sighash => (filter.and_sighash(refs), "invalid sighash"),
+                TransactionField::Hash => (filter.and_hash(refs), "invalid transaction hash"),
+                TransactionField::ContractAddress => (
+                    filter.and_contract_address(refs),
+                    "invalid contract address",
+                ),
+                _ => unreachable!("transaction_filters only holds server-filterable fields"),
+            };
+            filter.context(ctx)
+        }
+    }
+}
+
+fn apply_block_filter(filter: BlockFilter, f: &FieldFilter) -> Result<BlockFilter> {
+    use hypersync_client::net_types::block::BlockField;
+    let TypedField::Block(block_field) = f.field else {
+        unreachable!("block_filters only holds Block fields")
+    };
     let owned = filter_values_as_strs(&f.values);
     let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
-    let (filter, ctx) = match tx_field {
-        TransactionField::From => (filter.and_from(refs), "invalid from address"),
-        TransactionField::To => (filter.and_to(refs), "invalid to address"),
-        TransactionField::Sighash => (filter.and_sighash(refs), "invalid sighash"),
-        TransactionField::Hash => (filter.and_hash(refs), "invalid transaction hash"),
-        TransactionField::ContractAddress => (
-            filter.and_contract_address(refs),
-            "invalid contract address",
-        ),
-        _ => unreachable!("transaction_filters only holds server-filterable fields"),
+    let (filter, ctx) = match block_field {
+        BlockField::Hash => (filter.and_hash(refs), "invalid block hash"),
+        BlockField::Miner => (filter.and_miner(refs), "invalid miner address"),
+        _ => unreachable!("block_filters only holds server-filterable fields"),
     };
     filter.context(ctx)
 }
@@ -219,14 +257,28 @@ fn apply_field(
     body: Value,
 ) -> Result<()> {
     use hypersync_client::net_types::block::BlockField;
+    use hypersync_client::net_types::transaction::TransactionField;
     if matches!(typed_field, TypedField::Block(BlockField::Number)) {
         return apply_block_range(out, indexer_name, body);
     }
 
     let conds = parse_conditions(section, indexer_name, typed_field, body)?;
     let has_cmp = conds.iter().any(|c| matches!(c, Cond::Cmp(..)));
+    let membership: usize = conds
+        .iter()
+        .map(|c| match c {
+            Cond::In(v) => v.len(),
+            Cond::Cmp(..) => 0,
+        })
+        .sum();
+    // `transaction.status` maps to a single `u8` server-side, so a multi-value
+    // set must fall back to client-side filtering.
+    let status_multi = matches!(
+        typed_field,
+        TypedField::Transaction(TransactionField::Status)
+    ) && membership != 1;
 
-    if typed_field.server_filterable() && !has_cmp {
+    if typed_field.server_filterable() && !has_cmp && !status_multi {
         let values = conds
             .into_iter()
             .flat_map(|c| match c {
@@ -237,7 +289,7 @@ fn apply_field(
         let dest = match section {
             Section::Log => &mut out.log_filters,
             Section::Transaction => &mut out.transaction_filters,
-            Section::Block => unreachable!("no block field is server-filterable"),
+            Section::Block => &mut out.block_filters,
         };
         dest.push(FieldFilter {
             field: typed_field,
@@ -347,6 +399,31 @@ fn value_to_u64(v: &Value) -> Result<u64> {
     }
 }
 
+fn value_to_u8(v: &Value) -> Result<u8> {
+    match v {
+        Value::Number(n) => n
+            .as_u64()
+            .and_then(|x| u8::try_from(x).ok())
+            .ok_or_else(|| anyhow!("Expected an integer between 0 and 255, got {n}")),
+        Value::String(s) => {
+            let s = s.trim();
+            match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                Some(hex) => u8::from_str_radix(hex, 16),
+                None => s.parse::<u8>(),
+            }
+            .with_context(|| format!("Expected an integer between 0 and 255, got \"{s}\""))
+        }
+        _ => Err(anyhow!(
+            "Expected an integer between 0 and 255, got {}",
+            type_name(v)
+        )),
+    }
+}
+
+fn values_to_u8(values: &[Value]) -> Result<Vec<u8>> {
+    values.iter().map(value_to_u8).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,6 +516,53 @@ mod tests {
             (f.transaction_filters.len(), f.client_filters.len()),
             (0, 1),
         );
+    }
+
+    #[test]
+    fn status_and_type_are_server_side() {
+        let f = pf("{ transaction: { status: 1, type: [0, 2] } }");
+        let q = f.build_net_query(FieldSelection::default()).unwrap();
+        assert_eq!(
+            (
+                f.transaction_filters.len(),
+                f.client_filters.len(),
+                q.transactions.len(),
+            ),
+            (2, 0, 1),
+        );
+    }
+
+    #[test]
+    fn multi_value_status_falls_back_to_client() {
+        // `and_status` takes a single value, so a set must filter client-side.
+        let f = pf("{ transaction: { status: { _in: [0, 1] } } }");
+        assert_eq!(
+            (f.transaction_filters.len(), f.client_filters.len()),
+            (0, 1),
+        );
+    }
+
+    #[test]
+    fn block_hash_and_miner_are_server_side() {
+        let f = pf("{ block: { \
+             hash: '0x1111111111111111111111111111111111111111111111111111111111111111', \
+             miner: '0x2222222222222222222222222222222222222222' } }");
+        let q = f.build_net_query(FieldSelection::default()).unwrap();
+        assert_eq!(
+            (
+                f.block_filters.len(),
+                f.client_filters.len(),
+                q.blocks.len(),
+            ),
+            (2, 0, 1),
+        );
+    }
+
+    #[test]
+    fn other_block_field_is_client_side() {
+        // `block.timestamp` has no Hypersync builder → client-side.
+        let f = pf("{ block: { timestamp: { _gte: 1000 } } }");
+        assert_eq!((f.block_filters.len(), f.client_filters.len()), (0, 1));
     }
 
     #[test]

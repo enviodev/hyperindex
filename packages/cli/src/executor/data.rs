@@ -135,6 +135,9 @@ fn render_where_hint(filter: &WhereFilter, next_block: u64) -> String {
     range.push_str(" }");
     block.push(range);
 
+    for f in &filter.block_filters {
+        block.push(render_server_field(f));
+    }
     for f in &filter.log_filters {
         log.push(render_server_field(f));
     }
@@ -231,6 +234,19 @@ mod tests {
         assert_eq!(
             hint,
             "{ block: { number: { _gte: 1500, _lte: 2000 } }, transaction: { value: { _gt: 1000 } }, log: { srcAddress: \"0xabc\", data: \"0xdead\" } }",
+        );
+    }
+
+    #[test]
+    fn hint_includes_block_and_status_filters() {
+        let filter = WhereFilter::parse(Some(
+            "{ block: { miner: '0xbeef' }, transaction: { status: 1, type: [0, 2] } }",
+        ))
+        .unwrap();
+        let hint = render_where_hint(&filter, 100);
+        assert_eq!(
+            hint,
+            "{ block: { number: { _gte: 100 }, miner: \"0xbeef\" }, transaction: { status: 1, type: [0,2] } }",
         );
     }
 }

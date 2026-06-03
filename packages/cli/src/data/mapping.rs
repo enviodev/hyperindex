@@ -69,8 +69,10 @@ impl TypedField {
                     | TransactionField::To
                     | TransactionField::Sighash
                     | TransactionField::Hash
-                    | TransactionField::ContractAddress,
-            )
+                    | TransactionField::ContractAddress
+                    | TransactionField::Status
+                    | TransactionField::Type,
+            ) | TypedField::Block(BlockField::Hash | BlockField::Miner)
         )
     }
 
