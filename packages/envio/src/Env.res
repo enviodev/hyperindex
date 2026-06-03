@@ -209,6 +209,8 @@ module Configurable = {
 }
 
 module ThrottleWrites = {
+  let chainMetadataIntervalMillis =
+    envSafe->EnvSafe.get("ENVIO_THROTTLE_CHAIN_METADATA_INTERVAL_MILLIS", S.int, ~devFallback=500)
   let pruneStaleDataIntervalMillis =
     envSafe->EnvSafe.get(
       "ENVIO_THROTTLE_PRUNE_STALE_DATA_INTERVAL_MILLIS",

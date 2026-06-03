@@ -7,8 +7,10 @@ type t = {
   logger: Pino.t,
 }
 
-let make = (~intervalMillis: int, ~logger) => {
-  lastRunTimeMillis: 0.,
+let make = (~intervalMillis: int, ~logger, ~startThrottled=false) => {
+  // When throttled from the start, the first schedule waits a full interval
+  // instead of running immediately.
+  lastRunTimeMillis: startThrottled ? Date.now() : 0.,
   isRunning: false,
   isAwaitingInterval: false,
   scheduled: None,
