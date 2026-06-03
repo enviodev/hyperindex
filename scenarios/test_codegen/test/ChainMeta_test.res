@@ -65,6 +65,7 @@ let makeStore = () => {
     ~entities=MockIndexer.config.allEntities,
     ~persistence,
     ~config=MockIndexer.config,
+    ~onError=exn => exn->ErrorHandling.mkLogAndRaise(~msg="Unexpected persistence write failure"),
   )
   (store, setChainMetaCalls, writeBatchChainMetaCalls)
 }

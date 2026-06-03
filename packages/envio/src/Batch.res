@@ -23,7 +23,8 @@ type t = {
   totalBatchSize: int,
   items: array<Internal.item>,
   progressedChainsById: dict<chainAfterBatch>,
-  // Drives whether history is saved, so writes never merge across a change in it.
+  // Processed inside the reorg threshold. Drives whether history is saved, so
+  // writes never merge across a change in this value.
   isInReorgThreshold: bool,
   // Unnest-like checkpoint fields:
   checkpointIds: array<bigint>,

@@ -9,12 +9,11 @@ module Entity = {
   type entityIndices = Utils.Set.t<TableIndices.Index.t>
   type t = {
     latestEntityChangeById: dict<Change.t<Internal.entity>>,
-    // Counts every recorded change (new latest ids and pushes to
-    // prevEntityChanges), kept in sync manually so InMemoryStore can gauge the
-    // store size without scanning every dict.
+    // Recorded changes (new latest ids + prevEntityChanges pushes), tracked
+    // manually so InMemoryStore can gauge size without scanning every dict.
     mutable changesCount: float,
-    // Swapped out wholesale when a write starts so processing can keep appending
-    // while the previous changes are persisted in the background.
+    // Swapped out when a write starts so processing keeps appending while the
+    // previous changes persist in the background.
     mutable prevEntityChanges: array<Change.t<Internal.entity>>,
     mutable indicesByEntityId: dict<entityIndices>,
     mutable fieldNameIndices: indexFieldNameToIndices,
@@ -57,10 +56,9 @@ module Entity = {
     fieldNameIndices: Dict.make(),
   }
 
-  // Pull out the changes to persist for checkpoints in
-  // (committedCheckpointId, upToCheckpointId]. Changes above upToCheckpointId
-  // stay in the table for a later write (they belong to batches past a change in
-  // isInReorgThreshold). Concurrent processing keeps accumulating meanwhile.
+  // Changes to persist for checkpoints in (committedCheckpointId, upToCheckpointId].
+  // Those above upToCheckpointId stay in the table for a later write, while
+  // concurrent processing keeps accumulating.
   let snapshotChanges = (self: t, ~committedCheckpointId, ~upToCheckpointId): array<
     Change.t<Internal.entity>,
   > => {
@@ -84,10 +82,9 @@ module Entity = {
     changes
   }
 
-  // Free memory held by changes already committed to the db: drop every latest
-  // entry at or below committedCheckpointId (re-readable from the db) and clear
-  // the per-batch indices so they get rebuilt on the next getWhere. Uncommitted
-  // changes (checkpointId > committedCheckpointId) must be kept.
+  // Frees committed changes: drops latest entries at or below committedCheckpointId
+  // (re-readable from the db) and clears the per-batch indices (rebuilt on the next
+  // getWhere). Uncommitted changes are kept.
   let dropCommittedChanges = (self: t, ~committedCheckpointId) => {
     let keysToDelete = []
     self.latestEntityChangeById->Utils.Dict.forEachWithKey((change, key) =>

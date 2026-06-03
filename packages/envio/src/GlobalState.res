@@ -34,6 +34,8 @@ type t = {
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
   exitAfterFirstEventBlock: bool,
+  // The single fatal-error handler ErrorExit delegates to.
+  onError: ErrorHandling.t => unit,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
@@ -45,6 +47,7 @@ let make = (
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
+  ~onError: ErrorHandling.t => unit,
 ) => {
   {
     ctx,
@@ -57,6 +60,7 @@ let make = (
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
+    onError,
     id: 0,
   }
 }
@@ -148,7 +152,7 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~inMemoryStore: InMemoryStor
     )
   })
 
-  // The cycle folds it into the next batch write, or flushes it on the throttle.
+  // Staged; the cycle folds the stale diff into the next batch write.
   inMemoryStore->InMemoryStore.setChainMeta(chainsData)
 }
 
@@ -760,8 +764,7 @@ let actionReducer = (state: t, action: action) => {
       (state, [])
     }
   | ErrorExit(errHandler) =>
-    errHandler->ErrorHandling.log
-    NodeJs.process->NodeJs.exitWithCode(Failure)
+    state.onError(errHandler)
     (state, [])
   }
 }
@@ -1148,7 +1151,8 @@ let injectedTaskReducer = (
           }
         })
 
-        // Flush first so committedCheckpointId reflects the db before the diff.
+        // Finish pending writes so committedCheckpointId reflects the db before
+        // computing the rollback diff against it.
         await state.ctx.inMemoryStore->InMemoryStore.flush
 
         let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(

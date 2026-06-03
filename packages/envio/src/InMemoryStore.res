@@ -23,9 +23,9 @@ module EntityTables = {
 type effectCacheInMemTable = {
   mutable idsToStore: array<string>,
   mutable invalidationsCount: int,
-  // Live cache reads; swapped into pendingDict while a write is in flight.
   mutable dict: dict<Internal.effectOutput>,
-  // In-flight write's outputs, kept readable until it completes.
+  // The live dict swapped here while its write is in flight, kept readable so
+  // reads stay warm until the write completes (see snapshotEffects).
   mutable pendingDict: dict<Internal.effectOutput>,
   effect: Internal.effect,
 }
@@ -38,17 +38,19 @@ type t = {
   mutable rollback: option<Persistence.rollback>,
   // Last checkpoint persisted to the db.
   mutable committedCheckpointId: Internal.checkpointId,
-  // Processing frontier; runs ahead of committedCheckpointId during background writes.
+  // Processing frontier; runs ahead of committedCheckpointId while writes lag.
   mutable processedCheckpointId: Internal.checkpointId,
-  // Processed but not yet written; drained in runs split at isInReorgThreshold changes.
+  // Processed but unwritten. The cycle drains them, splitting each write at a
+  // change in isInReorgThreshold so it never mixes history-saving modes.
   mutable processedBatches: array<Batch.t>,
-  // The single in-flight write loop; None when idle.
+  // The single in-flight write loop, None when idle.
   mutable writeFiber: option<promise<unit>>,
-  // A failed background write, surfaced at the next boundary/flush.
-  mutable persistenceError: option<exn>,
-  // Woken after every commit for capacity/flush waiters.
+  // Set once a write throws, to stop the loop. The error itself goes to onError.
+  mutable hasFailedWrite: bool,
+  // Called once on a write failure; the caller decides what to do (exit).
+  onError: exn => unit,
+  // Resolved after every commit so capacity/flush waiters can re-evaluate.
   mutable commitWaiters: array<unit => unit>,
-  // Static for the store's lifetime.
   persistence: Persistence.t,
   config: Config.t,
   // Latest metadata staged per chain; used to skip unchanged restages.
@@ -64,6 +66,7 @@ let make = (
   ~committedCheckpointId=Internal.initialCheckpointId,
   ~persistence: Persistence.t,
   ~config: Config.t,
+  ~onError: exn => unit,
 ): t => {
   let chainMetaThrottler = {
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
@@ -88,7 +91,8 @@ let make = (
     processedCheckpointId: committedCheckpointId,
     processedBatches: [],
     writeFiber: None,
-    persistenceError: None,
+    hasFailedWrite: false,
+    onError,
     commitWaiters: [],
     persistence,
     config,
@@ -98,8 +102,9 @@ let make = (
   }
 }
 
-// Max uncommitted changes before processing waits for the cycle to free capacity.
-let keepLatestChangesLimit = 50_000.
+// Max uncommitted entity changes plus unwritten batch items before processing
+// must wait for the cycle to free capacity.
+let keepLatestChangesLimit = 100_000.
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   let key = effect.name
@@ -118,7 +123,7 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   }
 }
 
-// Effect cache read, also consulting the in-flight write's pending values.
+// Effect cache read that also consults the in-flight write's pending values.
 let getEffectOutput = (inMemTable: effectCacheInMemTable, key) =>
   switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(_) as found => found
@@ -139,6 +144,9 @@ let getChangesCount = (inMemoryStore: t) => {
   inMemoryStore.allEntities->Array.forEach(entityConfig => {
     total := total.contents +. (inMemoryStore->getInMemTable(~entityConfig)).changesCount
   })
+  inMemoryStore.processedBatches->Array.forEach(batch => {
+    total := total.contents +. batch.totalBatchSize->Int.toFloat
+  })
   total.contents
 }
 
@@ -153,8 +161,9 @@ let waitForCommit = (inMemoryStore: t): promise<unit> =>
     inMemoryStore.commitWaiters->Array.push(resolve)->ignore
   })
 
-// Drains the leading run of batches sharing isInReorgThreshold into one write, so
-// a write never mixes history-saving modes. Only called when non-empty.
+// Merges the leading run of batches sharing isInReorgThreshold into one batch;
+// the rest stay queued for the next write. Caller guarantees processedBatches
+// is non-empty.
 let drainBatchRun = (inMemoryStore: t): Batch.t => {
   let all = inMemoryStore.processedBatches
   let isInReorgThreshold = (all->Array.getUnsafe(0)).isInReorgThreshold
@@ -168,7 +177,7 @@ let drainBatchRun = (inMemoryStore: t): Batch.t => {
   let checkpointBlockHashes = []
   let checkpointEventsProcessed = []
   all->Array.forEach(batch => {
-    // Past the boundary, every later batch follows, preserving order.
+    // Once one batch lands in rest, all later ones follow it, preserving order.
     if rest->Utils.Array.isEmpty && batch.isInReorgThreshold == isInReorgThreshold {
       batch.progressedChainsById->Utils.Dict.forEachWithKey((chainAfterBatch, key) =>
         progressedChainsById->Dict.set(key, chainAfterBatch)
@@ -198,8 +207,8 @@ let drainBatchRun = (inMemoryStore: t): Batch.t => {
   }
 }
 
-// Snapshots effects to persist, moving the live dict into pendingDict so reads
-// stay warm during the write, then starts a fresh live dict.
+// Captures the effects to persist, parking each live dict in pendingDict so
+// reads stay warm during the write, then starts fresh live dicts.
 let snapshotEffects = (inMemoryStore: t, ~cache): array<Persistence.updatedEffectCache> => {
   let acc = []
   inMemoryStore.effects->Utils.Dict.forEach(inMemTable => {
@@ -260,13 +269,14 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
   | _ =>
     let committedCheckpointId = inMemoryStore.committedCheckpointId
     let batch = inMemoryStore->drainBatchRun
-    // Entity changes above this checkpoint belong to later batches, written next.
+    // The run's last checkpoint; entity changes above it stay queued for the next write.
     let upToCheckpointId = switch batch.checkpointIds->Utils.Array.last {
     | Some(checkpointId) => checkpointId
     | None => committedCheckpointId
     }
 
-    // Not gated by isInReorgThreshold, so flushed in full rather than split.
+    // rawEvents and the effect cache aren't gated by isInReorgThreshold, so they're
+    // flushed in full rather than split at the run boundary.
     let rawEvents = inMemoryStore.rawEvents
     inMemoryStore.rawEvents = []
     let rollback = inMemoryStore.rollback
@@ -305,7 +315,7 @@ let hasPendingWrite = (inMemoryStore: t) =>
   inMemoryStore.processedBatches->Utils.Array.notEmpty || inMemoryStore.chainMetaDirty
 
 let runWriteLoop = async (inMemoryStore: t) => {
-  while inMemoryStore->hasPendingWrite && inMemoryStore.persistenceError->Option.isNone {
+  while inMemoryStore->hasPendingWrite && !inMemoryStore.hasFailedWrite {
     try {
       await runOneWrite(
         inMemoryStore,
@@ -314,7 +324,9 @@ let runWriteLoop = async (inMemoryStore: t) => {
       )
       inMemoryStore->wakeCommitWaiters
     } catch {
-    | exn => inMemoryStore.persistenceError = Some(exn)
+    | exn =>
+      inMemoryStore.hasFailedWrite = true
+      inMemoryStore.onError(exn)
     }
   }
   inMemoryStore.writeFiber = None
@@ -324,7 +336,7 @@ let runWriteLoop = async (inMemoryStore: t) => {
 let kick = (inMemoryStore: t) =>
   if (
     inMemoryStore.writeFiber->Option.isNone &&
-    inMemoryStore.persistenceError->Option.isNone &&
+    !inMemoryStore.hasFailedWrite &&
     inMemoryStore->hasPendingWrite
   ) {
     inMemoryStore.writeFiber = Some(runWriteLoop(inMemoryStore))
@@ -358,7 +370,8 @@ let setChainMeta = (inMemoryStore: t, chainsData: dict<InternalTable.Chains.meta
   }
 }
 
-// Records a processed batch and kicks the cycle; the db write is off the processing path.
+// Queues a processed batch and kicks the cycle. Returns immediately; the write
+// happens off the processing path.
 let commitBatch = (inMemoryStore: t, ~batch: Batch.t) => {
   inMemoryStore.processedBatches->Array.push(batch)->ignore
   switch batch.checkpointIds->Utils.Array.last {
@@ -368,13 +381,12 @@ let commitBatch = (inMemoryStore: t, ~batch: Batch.t) => {
   inMemoryStore->kick
 }
 
-// Blocks until under keepLatestChangesLimit changes, dropping committed ones first.
+// Blocks until the store holds fewer than keepLatestChangesLimit changes,
+// freeing committed changes first and awaiting commits as a last resort.
 let rec awaitCapacity = async (inMemoryStore: t) => {
-  switch inMemoryStore.persistenceError {
-  | Some(exn) => throw(exn)
-  | None => ()
-  }
-  if inMemoryStore->getChangesCount >= keepLatestChangesLimit {
+  // After a failed write nothing will free capacity, so bail instead of waiting
+  // on a commit that won't come (the error already went to onError).
+  if !inMemoryStore.hasFailedWrite && inMemoryStore->getChangesCount >= keepLatestChangesLimit {
     inMemoryStore.allEntities->Array.forEach(entityConfig =>
       inMemoryStore
       ->getInMemTable(~entityConfig)
@@ -383,8 +395,9 @@ let rec awaitCapacity = async (inMemoryStore: t) => {
       )
     )
 
-    // Only wait if a queued batch can free capacity; else waiting would deadlock
-    // (e.g. a large rollback diff staged without a batch), so let processing proceed.
+    // What's left is uncommitted. Only wait if a queued batch can free it;
+    // otherwise (e.g. a large rollback diff with no batch) waiting would
+    // deadlock, so let processing proceed.
     if (
       inMemoryStore->getChangesCount >= keepLatestChangesLimit &&
         inMemoryStore.processedBatches->Utils.Array.notEmpty
@@ -396,18 +409,17 @@ let rec awaitCapacity = async (inMemoryStore: t) => {
   }
 }
 
-// Awaits until all processed batches are persisted.
+// Awaits until everything processed is persisted. On a failed write we stop
+// draining (onError already surfaced it) rather than throw.
 let rec flush = async (inMemoryStore: t) => {
-  switch inMemoryStore.persistenceError {
-  | Some(exn) => throw(exn)
-  | None => ()
-  }
-  inMemoryStore->kick
-  switch inMemoryStore.writeFiber {
-  | Some(fiber) =>
-    await fiber
-    await inMemoryStore->flush
-  | None => ()
+  if !inMemoryStore.hasFailedWrite {
+    inMemoryStore->kick
+    switch inMemoryStore.writeFiber {
+    | Some(fiber) =>
+      await fiber
+      await inMemoryStore->flush
+    | None => ()
+    }
   }
 }
 

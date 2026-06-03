@@ -374,9 +374,7 @@ let processEventBatch = async (
   })
 
   try {
-    // Block until the in-memory store has capacity, so processing can't outrun
-    // the background persistence cycle by more than keepLatestChangesLimit.
-    // Also surfaces any error from a previous background write.
+    // Backpressure: keep processing within keepLatestChangesLimit of the cycle.
     await inMemoryStore->InMemoryStore.awaitCapacity
 
     let timeRef = Hrtime.makeTimer()
