@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=../../packages/envio/evm.schema.json
 name: e2e_test
 description: E2E test indexer
+raw_events: true
 storage:
   postgres: true
   clickhouse: true
