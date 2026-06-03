@@ -135,14 +135,13 @@ fn render_where_hint(filter: &WhereFilter, next_block: u64) -> String {
     range.push_str(" }");
     block.push(range);
 
-    for f in &filter.block_filters {
-        block.push(render_server_field(f));
-    }
-    for f in &filter.log_filters {
-        log.push(render_server_field(f));
-    }
-    for f in &filter.transaction_filters {
-        transaction.push(render_server_field(f));
+    for f in &filter.server_filters {
+        let entry = render_server_field(f);
+        match f.field.section() {
+            Section::Block => block.push(entry),
+            Section::Transaction => transaction.push(entry),
+            Section::Log => log.push(entry),
+        }
     }
     for c in &filter.client_filters {
         let entry = render_client_field(c);

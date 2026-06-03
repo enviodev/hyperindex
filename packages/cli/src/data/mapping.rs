@@ -3,10 +3,41 @@ use hypersync_client::net_types::{
 };
 use strum::IntoEnumIterator;
 
+/// How a field's value is parsed, compared, and rendered. Numeric fields are
+/// the only ones that support `_gt`/`_gte`/`_lt`/`_lte` comparisons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ColumnFormat {
-    Decimal,
+pub enum ValueKind {
+    Numeric,
     Hex,
+    Bool,
+}
+
+/// The Hypersync builder a field maps to when pushed server-side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerFilter {
+    LogAddress,
+    LogTopic0,
+    LogTopic1,
+    LogTopic2,
+    LogTopic3,
+    TxFrom,
+    TxTo,
+    TxSighash,
+    TxHash,
+    TxContractAddress,
+    TxStatus,
+    TxType,
+    BlockHash,
+    BlockMiner,
+}
+
+/// Everything the `--where` pipeline needs to know about a field: how to match
+/// its name, how its values behave client-side, and whether it can be pushed
+/// server-side.
+pub struct FieldSpec {
+    pub aliases: &'static [&'static str],
+    pub value_kind: ValueKind,
+    pub server: Option<ServerFilter>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -54,29 +85,46 @@ impl TypedField {
         }
     }
 
-    /// Fields Hypersync can filter server-side via set-membership.
-    pub fn server_filterable(self) -> bool {
-        matches!(
-            self,
-            TypedField::Log(
-                LogField::Address
-                    | LogField::Topic0
-                    | LogField::Topic1
-                    | LogField::Topic2
-                    | LogField::Topic3,
-            ) | TypedField::Transaction(
-                TransactionField::From
-                    | TransactionField::To
-                    | TransactionField::Sighash
-                    | TransactionField::Hash
-                    | TransactionField::ContractAddress
-                    | TransactionField::Status
-                    | TransactionField::Type,
-            ) | TypedField::Block(BlockField::Hash | BlockField::Miner)
-        )
+    pub fn spec(self) -> FieldSpec {
+        FieldSpec {
+            aliases: self.aliases(),
+            value_kind: self.value_kind(),
+            server: self.server_filter(),
+        }
     }
 
-    pub fn column_format(self) -> ColumnFormat {
+    fn aliases(self) -> &'static [&'static str] {
+        match self {
+            TypedField::Log(LogField::Address) => &["srcAddress"],
+            _ => &[],
+        }
+    }
+
+    /// Which Hypersync builder this field maps to, or `None` if it can only be
+    /// filtered client-side. Single source of truth for server-side routing.
+    fn server_filter(self) -> Option<ServerFilter> {
+        use ServerFilter::*;
+        Some(match self {
+            TypedField::Log(LogField::Address) => LogAddress,
+            TypedField::Log(LogField::Topic0) => LogTopic0,
+            TypedField::Log(LogField::Topic1) => LogTopic1,
+            TypedField::Log(LogField::Topic2) => LogTopic2,
+            TypedField::Log(LogField::Topic3) => LogTopic3,
+            TypedField::Transaction(TransactionField::From) => TxFrom,
+            TypedField::Transaction(TransactionField::To) => TxTo,
+            TypedField::Transaction(TransactionField::Sighash) => TxSighash,
+            TypedField::Transaction(TransactionField::Hash) => TxHash,
+            TypedField::Transaction(TransactionField::ContractAddress) => TxContractAddress,
+            TypedField::Transaction(TransactionField::Status) => TxStatus,
+            TypedField::Transaction(TransactionField::Type) => TxType,
+            TypedField::Block(BlockField::Hash) => BlockHash,
+            TypedField::Block(BlockField::Miner) => BlockMiner,
+            _ => return None,
+        })
+    }
+
+    fn value_kind(self) -> ValueKind {
+        use ValueKind::{Bool, Hex, Numeric};
         match self {
             TypedField::Block(f) => match f {
                 BlockField::Number
@@ -91,7 +139,7 @@ impl TypedField {
                 | BlockField::BlobGasUsed
                 | BlockField::ExcessBlobGas
                 | BlockField::L1BlockNumber
-                | BlockField::SendCount => ColumnFormat::Decimal,
+                | BlockField::SendCount => Numeric,
                 BlockField::Hash
                 | BlockField::ParentHash
                 | BlockField::Sha3Uncles
@@ -106,7 +154,7 @@ impl TypedField {
                 | BlockField::ParentBeaconBlockRoot
                 | BlockField::WithdrawalsRoot
                 | BlockField::Withdrawals
-                | BlockField::SendRoot => ColumnFormat::Hex,
+                | BlockField::SendRoot => Hex,
             },
             TypedField::Transaction(f) => match f {
                 TransactionField::BlockNumber
@@ -141,7 +189,7 @@ impl TypedField {
                 | TransactionField::L1BaseFeeScalar
                 | TransactionField::L1BlobBaseFee
                 | TransactionField::L1BlobBaseFeeScalar
-                | TransactionField::L1BlockNumber => ColumnFormat::Decimal,
+                | TransactionField::L1BlockNumber => Numeric,
                 TransactionField::BlockHash
                 | TransactionField::Hash
                 | TransactionField::Input
@@ -154,21 +202,19 @@ impl TypedField {
                 | TransactionField::AuthorizationList
                 | TransactionField::BlobVersionedHashes
                 | TransactionField::Sighash
-                | TransactionField::SourceHash => ColumnFormat::Hex,
+                | TransactionField::SourceHash => Hex,
             },
             TypedField::Log(f) => match f {
-                LogField::BlockNumber | LogField::TransactionIndex | LogField::LogIndex => {
-                    ColumnFormat::Decimal
-                }
+                LogField::BlockNumber | LogField::TransactionIndex | LogField::LogIndex => Numeric,
+                LogField::Removed => Bool,
                 LogField::TransactionHash
                 | LogField::BlockHash
                 | LogField::Address
                 | LogField::Data
-                | LogField::Removed
                 | LogField::Topic0
                 | LogField::Topic1
                 | LogField::Topic2
-                | LogField::Topic3 => ColumnFormat::Hex,
+                | LogField::Topic3 => Hex,
             },
         }
     }
@@ -181,30 +227,20 @@ fn normalize(s: &str) -> String {
         .collect()
 }
 
-fn resolve_alias(section: Section, normalized: &str) -> Option<TypedField> {
-    match (section, normalized) {
-        (Section::Log, "srcaddress") => Some(TypedField::Log(LogField::Address)),
-        _ => None,
-    }
-}
-
 pub fn lookup(section: Section, user_input: &str) -> Option<TypedField> {
     let key = normalize(user_input);
-
-    if let Some(field) = resolve_alias(section, &key) {
-        return Some(field);
-    }
-
+    let matches = |field: TypedField| {
+        normalize(&field.column_name()) == key
+            || field.spec().aliases.iter().any(|a| normalize(a) == key)
+    };
     match section {
         Section::Block => BlockField::iter()
-            .find(|f| normalize(f.as_ref()) == key)
-            .map(TypedField::Block),
+            .map(TypedField::Block)
+            .find(|f| matches(*f)),
         Section::Transaction => TransactionField::iter()
-            .find(|f| normalize(f.as_ref()) == key)
-            .map(TypedField::Transaction),
-        Section::Log => LogField::iter()
-            .find(|f| normalize(f.as_ref()) == key)
-            .map(TypedField::Log),
+            .map(TypedField::Transaction)
+            .find(|f| matches(*f)),
+        Section::Log => LogField::iter().map(TypedField::Log).find(|f| matches(*f)),
     }
 }
 

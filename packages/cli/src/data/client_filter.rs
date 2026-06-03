@@ -5,7 +5,7 @@ use hypersync_client::ArrowResponse;
 use ruint::aliases::U256;
 use serde_json::Value;
 
-use super::mapping::{ColumnFormat, Section};
+use super::mapping::{Section, ValueKind};
 use super::where_filter::{ClientFilter, CmpOp, Cond};
 
 /// Per-section keep masks, aligned with the row order produced when iterating a
@@ -51,7 +51,7 @@ pub fn compute_masks(response: &ArrowResponse, filters: &[ClientFilter]) -> Resu
 
 struct CompiledFilter {
     column: String,
-    fmt: ColumnFormat,
+    kind: ValueKind,
     conds: Vec<CompiledCond>,
 }
 
@@ -62,7 +62,7 @@ enum CompiledCond {
 
 impl CompiledFilter {
     fn compile(f: &ClientFilter) -> Result<Self> {
-        let fmt = f.field.column_format();
+        let kind = f.field.spec().value_kind;
         let label = format!(
             "{}.{}",
             f.field.section().as_indexer_str(),
@@ -74,7 +74,7 @@ impl CompiledFilter {
             .map(|cond| match cond {
                 Cond::In(vals) => Ok(CompiledCond::In(
                     vals.iter()
-                        .map(|v| filter_cell(v, fmt, &label))
+                        .map(|v| filter_cell(v, kind, &label))
                         .collect::<Result<Vec<_>>>()?,
                 )),
                 Cond::Cmp(op, v) => Ok(CompiledCond::Cmp(*op, filter_u256(v, &label)?)),
@@ -82,7 +82,7 @@ impl CompiledFilter {
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             column: f.field.column_name(),
-            fmt,
+            kind,
             conds,
         })
     }
@@ -104,7 +104,7 @@ fn compute_section_mask(batches: &[RecordBatch], filters: &[CompiledFilter]) -> 
             .collect::<Result<Vec<_>>>()?;
         for row in 0..batch.num_rows() {
             let keep = filters.iter().zip(cols.iter()).all(|(f, col)| {
-                let cell = read_cell(*col, row, f.fmt);
+                let cell = read_cell(*col, row, f.kind);
                 cell_passes(&cell, &f.conds)
             });
             mask.push(keep);
@@ -121,7 +121,7 @@ enum Cell {
     Null,
 }
 
-fn read_cell(col: &dyn Array, row: usize, fmt: ColumnFormat) -> Cell {
+fn read_cell(col: &dyn Array, row: usize, kind: ValueKind) -> Cell {
     if col.is_null(row) {
         return Cell::Null;
     }
@@ -136,11 +136,9 @@ fn read_cell(col: &dyn Array, row: usize, fmt: ColumnFormat) -> Cell {
         DataType::Boolean => Cell::Bool(col.as_boolean().value(row)),
         DataType::Binary => {
             let bytes = col.as_binary::<i32>().value(row);
-            match fmt {
-                ColumnFormat::Decimal => {
-                    Cell::Num(U256::try_from_be_slice(bytes).unwrap_or_default())
-                }
-                ColumnFormat::Hex => Cell::Hex(faster_hex::hex_string(bytes)),
+            match kind {
+                ValueKind::Numeric => Cell::Num(U256::try_from_be_slice(bytes).unwrap_or_default()),
+                ValueKind::Hex | ValueKind::Bool => Cell::Hex(faster_hex::hex_string(bytes)),
             }
         }
         dt => unreachable!("unexpected arrow data type {dt:?} for envio data column"),
@@ -162,14 +160,20 @@ fn cell_passes(cell: &Cell, conds: &[CompiledCond]) -> bool {
     })
 }
 
-fn filter_cell(v: &Value, fmt: ColumnFormat, label: &str) -> Result<Cell> {
-    match fmt {
-        ColumnFormat::Decimal => Ok(Cell::Num(filter_u256(v, label)?)),
-        ColumnFormat::Hex => match v {
+fn filter_cell(v: &Value, kind: ValueKind, label: &str) -> Result<Cell> {
+    match kind {
+        ValueKind::Numeric => Ok(Cell::Num(filter_u256(v, label)?)),
+        ValueKind::Hex => match v {
             Value::String(s) => Ok(Cell::Hex(normalize_hex(s, label)?)),
-            Value::Bool(b) => Ok(Cell::Bool(*b)),
             other => bail!(
                 "Filter on `{label}` expects a hex string, got {}",
+                json_type(other),
+            ),
+        },
+        ValueKind::Bool => match v {
+            Value::Bool(b) => Ok(Cell::Bool(*b)),
+            other => bail!(
+                "Filter on `{label}` expects true or false, got {}",
                 json_type(other),
             ),
         },
@@ -312,7 +316,7 @@ mod tests {
         // `log.data` has no Hypersync builder, so it must route to client filters.
         let f = WhereFilter::parse(Some("{ log: { data: '0xabcd' } }")).unwrap();
         let routed = (
-            f.log_filters.len(),
+            f.server_filters.len(),
             f.client_filters.len(),
             f.client_filters[0].field.section(),
         );
@@ -322,16 +326,13 @@ mod tests {
     #[test]
     fn address_stays_server_side() {
         let f = WhereFilter::parse(Some("{ log: { srcAddress: '0xa0b8' } }")).unwrap();
-        assert_eq!((f.log_filters.len(), f.client_filters.len()), (1, 0));
+        assert_eq!((f.server_filters.len(), f.client_filters.len()), (1, 0));
     }
 
     #[test]
     fn comparison_on_numeric_field_is_client_side() {
         let f = WhereFilter::parse(Some("{ transaction: { value: { _gt: 1000 } } }")).unwrap();
-        assert_eq!(
-            (f.transaction_filters.len(), f.client_filters.len()),
-            (0, 1),
-        );
+        assert_eq!((f.server_filters.len(), f.client_filters.len()), (0, 1));
     }
 
     #[test]
@@ -339,7 +340,7 @@ mod tests {
         let err = WhereFilter::parse(Some("{ log: { srcAddress: { _gt: '0xa' } } }"))
             .unwrap_err()
             .to_string();
-        insta::assert_snapshot!(err, @"Comparison operators are not supported on hex field `log.srcAddress`. Use `_eq` or `_in`.");
+        insta::assert_snapshot!(err, @"Comparison operators are only supported on numeric fields; `log.srcAddress` is not numeric. Use `_eq` or `_in`.");
     }
 
     #[test]
