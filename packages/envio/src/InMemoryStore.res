@@ -48,9 +48,9 @@ type t = {
   mutable processedBatches: array<Batch.t>,
   // The single in-flight write loop, None when idle. Strictly one at a time.
   mutable writeFiber: option<promise<unit>>,
-  // Stops the write loop after a failed background write. The error itself is
-  // surfaced once, immediately, through onError - never deferred to a later batch.
-  mutable persistenceError: option<exn>,
+  // Set once a background write throws, to stop the write loop. The error itself
+  // is surfaced immediately through onError - never deferred to a later batch.
+  mutable hasFailedWrite: bool,
   // Invoked once when a background write throws. The caller decides what to do
   // (the indexer exits with an error); the store only reports.
   onError: exn => unit,
@@ -81,7 +81,7 @@ let make = (
   processedCheckpointId: committedCheckpointId,
   processedBatches: [],
   writeFiber: None,
-  persistenceError: None,
+  hasFailedWrite: false,
   commitWaiters: [],
   persistence,
   config,
@@ -316,10 +316,7 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
 }
 
 let runWriteLoop = async (inMemoryStore: t) => {
-  while (
-    inMemoryStore.processedBatches->Utils.Array.notEmpty &&
-      inMemoryStore.persistenceError->Option.isNone
-  ) {
+  while inMemoryStore.processedBatches->Utils.Array.notEmpty && !inMemoryStore.hasFailedWrite {
     try {
       await runOneWrite(
         inMemoryStore,
@@ -329,7 +326,7 @@ let runWriteLoop = async (inMemoryStore: t) => {
       inMemoryStore->wakeCommitWaiters
     } catch {
     | exn =>
-      inMemoryStore.persistenceError = Some(exn)
+      inMemoryStore.hasFailedWrite = true
       inMemoryStore.onError(exn)
     }
   }
@@ -340,7 +337,7 @@ let runWriteLoop = async (inMemoryStore: t) => {
 let kick = (inMemoryStore: t) =>
   if (
     inMemoryStore.writeFiber->Option.isNone &&
-    inMemoryStore.persistenceError->Option.isNone &&
+    !inMemoryStore.hasFailedWrite &&
     inMemoryStore.processedBatches->Utils.Array.notEmpty
   ) {
     inMemoryStore.writeFiber = Some(runWriteLoop(inMemoryStore))
@@ -362,10 +359,7 @@ let commitBatch = (inMemoryStore: t, ~batch: Batch.t) => {
 let rec awaitCapacity = async (inMemoryStore: t) => {
   // A failed write was already surfaced through onError, and no write will ever
   // free capacity again, so bail rather than wait on a commit that won't come.
-  if (
-    inMemoryStore.persistenceError->Option.isNone &&
-      inMemoryStore->getChangesCount >= keepLatestChangesLimit
-  ) {
+  if !inMemoryStore.hasFailedWrite && inMemoryStore->getChangesCount >= keepLatestChangesLimit {
     inMemoryStore.allEntities->Array.forEach(entityConfig =>
       inMemoryStore
       ->getInMemTable(~entityConfig)
@@ -391,7 +385,7 @@ let rec awaitCapacity = async (inMemoryStore: t) => {
 // Awaits until everything processed in memory is persisted to the db. A failed
 // write is surfaced through onError, so we just stop draining rather than throw.
 let rec flush = async (inMemoryStore: t) => {
-  if inMemoryStore.persistenceError->Option.isNone {
+  if !inMemoryStore.hasFailedWrite {
     inMemoryStore->kick
     switch inMemoryStore.writeFiber {
     | Some(fiber) =>
