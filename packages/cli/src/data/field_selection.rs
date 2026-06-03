@@ -14,6 +14,9 @@ pub struct Selection {
 pub struct Column {
     pub section: Section,
     pub field: TypedField,
+    /// The field name exactly as the user typed it, used verbatim in the TOON
+    /// header so the output mirrors the request (e.g. `block.NUMBER` → `NUMBER`).
+    pub display_name: String,
 }
 
 impl Selection {
@@ -51,7 +54,11 @@ impl Selection {
                 anyhow!("Unknown field `{raw}`. Valid `{section_raw}.*` fields: {valid}.")
             })?;
 
-            sel.columns.push(Column { section, field });
+            sel.columns.push(Column {
+                section,
+                field,
+                display_name: field_raw.to_string(),
+            });
         }
 
         Ok(sel)
