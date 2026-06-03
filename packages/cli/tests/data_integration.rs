@@ -124,6 +124,35 @@ logs[11]{srcAddress,logIndex}:
     assert_eq!(out.stderr_template(), "", "unexpected stderr:\n{out}");
 }
 
+/// Block-only selection with no log/transaction filter. HyperSync returns rows
+/// only for matching selections, so without `include_all_blocks` the response is
+/// empty — this guards the regression where `envio data block.<field>` returned
+/// nothing.
+#[test]
+fn block_only_selection_returns_block_data() {
+    if skip_without_token() {
+        return;
+    }
+    let out = envio_data(&[
+        "block.number",
+        "block.gasUsed",
+        "--chain=1",
+        "--where={ block: { number: { _gte: 20000000, _lte: 20000000 } } }",
+    ]);
+    assert!(out.ok, "envio data failed:\n{out}");
+
+    assert_eq!(
+        out.stdout,
+        "\
+blocks[1]{number,gasUsed}:
+  20000000,11089692
+",
+        "unexpected stdout:\n{out}",
+    );
+
+    assert_eq!(out.stderr_template(), "", "unexpected stderr:\n{out}");
+}
+
 /// Deterministic large range that hypersync cannot return in one batch.
 /// Verifies the executor prints the "next page" hint and echoes back the
 /// original chain input plus the unchanged upper bound.

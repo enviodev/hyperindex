@@ -121,6 +121,11 @@ impl WhereFilter {
         if let Some(to) = self.to_block_exclusive {
             query = query.to_block_excl(to);
         }
+
+        let wants_log_fields = !field_selection.log.is_empty();
+        let wants_tx_fields = !field_selection.transaction.is_empty();
+        let wants_block_fields = !field_selection.block.is_empty();
+
         query.field_selection = field_selection;
 
         let mut logs = LogFilter::all();
@@ -143,14 +148,25 @@ impl WhereFilter {
                 }
             }
         }
-        if has_log {
+
+        // HyperSync returns only rows that match a selection, so request one for
+        // every entity the user wants data for. Without a filter the `all()`
+        // selection matches every row of that kind.
+        if has_log || wants_log_fields {
             query = query.where_logs(logs);
         }
-        if has_tx {
+        if has_tx || wants_tx_fields {
             query = query.where_transactions(transactions);
         }
         if has_block {
             query = query.where_blocks(blocks);
+        }
+
+        // Block headers are otherwise returned only for blocks joined to a
+        // matching log/transaction/block filter. When block fields are wanted but
+        // no filter scopes the blocks, ask the server for every block in the range.
+        if wants_block_fields && !has_log && !has_tx && !has_block {
+            query = query.include_all_blocks();
         }
 
         Ok(query)
@@ -453,6 +469,67 @@ mod tests {
         let f = WhereFilter::parse(None).unwrap();
         let q = f.build_net_query(FieldSelection::default()).unwrap();
         assert_eq!((q.from_block, q.to_block), (0, None));
+    }
+
+    #[test]
+    fn block_only_selection_requests_all_blocks() {
+        use hypersync_client::net_types::block::BlockField;
+        let mut fs = FieldSelection::default();
+        fs.block.insert(BlockField::Hash);
+        let q = WhereFilter::parse(None)
+            .unwrap()
+            .build_net_query(fs)
+            .unwrap();
+        assert_eq!(
+            (
+                q.include_all_blocks,
+                q.blocks.len(),
+                q.logs.len(),
+                q.transactions.len(),
+            ),
+            (true, 0, 0, 0),
+        );
+    }
+
+    #[test]
+    fn log_only_selection_requests_all_logs() {
+        use hypersync_client::net_types::log::LogField;
+        let mut fs = FieldSelection::default();
+        fs.log.insert(LogField::Data);
+        let q = WhereFilter::parse(None)
+            .unwrap()
+            .build_net_query(fs)
+            .unwrap();
+        assert_eq!(
+            (q.include_all_blocks, q.logs.len(), q.transactions.len()),
+            (false, 1, 0),
+        );
+    }
+
+    #[test]
+    fn transaction_only_selection_requests_all_transactions() {
+        use hypersync_client::net_types::transaction::TransactionField;
+        let mut fs = FieldSelection::default();
+        fs.transaction.insert(TransactionField::Hash);
+        let q = WhereFilter::parse(None)
+            .unwrap()
+            .build_net_query(fs)
+            .unwrap();
+        assert_eq!(
+            (q.include_all_blocks, q.transactions.len(), q.logs.len()),
+            (false, 1, 0),
+        );
+    }
+
+    #[test]
+    fn block_fields_scoped_by_log_filter_skip_all_blocks() {
+        use hypersync_client::net_types::block::BlockField;
+        let mut fs = FieldSelection::default();
+        fs.block.insert(BlockField::Hash);
+        let q = pf("{ log: { srcAddress: '0xdAC17F958D2ee523a2206206994597C13D831ec7' } }")
+            .build_net_query(fs)
+            .unwrap();
+        assert_eq!((q.include_all_blocks, q.logs.len()), (false, 1));
     }
 
     #[test]
