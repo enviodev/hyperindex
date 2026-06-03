@@ -84,19 +84,33 @@ module Entity = {
     changes
   }
 
-  // Free memory held by changes already committed to the db: drop every latest
-  // entry at or below committedCheckpointId (re-readable from the db) and clear
-  // the per-batch indices so they get rebuilt on the next getWhere. Uncommitted
-  // changes (checkpointId > committedCheckpointId) must be kept.
-  let dropCommittedChanges = (self: t, ~committedCheckpointId) => {
-    let keysToDelete = []
-    self.latestEntityChangeById->Utils.Dict.forEachWithKey((change, key) =>
-      if !(change->Change.getCheckpointId > committedCheckpointId) {
-        keysToDelete->Array.push(key)
+  // Free memory held by changes already committed to the db (re-readable from
+  // it): drop latest entries and history at or below committedCheckpointId, and
+  // clear the per-batch indices so they get rebuilt on the next getWhere.
+  // Uncommitted changes (checkpointId > committedCheckpointId) must be kept.
+  // With keepLoadedFromDb, entries loaded from the db are retained so reads stay
+  // in memory - dropped only on a second, more aggressive pass.
+  let dropCommittedChanges = (self: t, ~committedCheckpointId, ~keepLoadedFromDb) => {
+    // Safe to delete the current key during a for..in iteration.
+    self.latestEntityChangeById->Utils.Dict.forEachWithKey((change, key) => {
+      let checkpointId = change->Change.getCheckpointId
+      let isCommitted = !(checkpointId > committedCheckpointId)
+      let isLoadedFromDb = checkpointId === Internal.loadedFromDbCheckpointId
+      if isCommitted && !(keepLoadedFromDb && isLoadedFromDb) {
+        self.latestEntityChangeById->Utils.Dict.deleteInPlace(key)
+        self.changesCount = self.changesCount -. 1.
+      }
+    })
+    // History changes are never loaded-from-db, so drop every committed one.
+    let keptPrev = []
+    self.prevEntityChanges->Array.forEach(change =>
+      if change->Change.getCheckpointId > committedCheckpointId {
+        keptPrev->Array.push(change)
+      } else {
+        self.changesCount = self.changesCount -. 1.
       }
     )
-    keysToDelete->Array.forEach(key => self.latestEntityChangeById->Utils.Dict.deleteInPlace(key))
-    self.changesCount = self.changesCount -. keysToDelete->Array.length->Int.toFloat
+    self.prevEntityChanges = keptPrev
     self.indicesByEntityId = Dict.make()
     self.fieldNameIndices = Dict.make()
   }

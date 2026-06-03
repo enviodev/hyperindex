@@ -227,26 +227,41 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     },
   )
 
-  it("dropCommittedChanges keeps only uncommitted changes (checkpointId > committed)", t => {
+  it("dropCommittedChanges drops committed changes, optionally keeping db-loaded ones", t => {
     let makeEntity = (id): Internal.entity =>
       {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
 
-    let table = InMemoryTable.Entity.make()
-    let add = (id, checkpointId) =>
-      table->InMemoryTable.Entity.set(
-        ~committedCheckpointId=Internal.initialCheckpointId,
-        Set({entityId: id, entity: makeEntity(id), checkpointId}),
-      )
-    add("loaded", Internal.loadedFromDbCheckpointId)
-    add("committed", 5n)
-    add("uncommitted", 6n)
+    let makeTable = () => {
+      let table = InMemoryTable.Entity.make()
+      let add = (id, checkpointId) =>
+        table->InMemoryTable.Entity.set(
+          ~committedCheckpointId=Internal.initialCheckpointId,
+          Set({entityId: id, entity: makeEntity(id), checkpointId}),
+        )
+      add("loaded", Internal.loadedFromDbCheckpointId)
+      add("committed", 5n)
+      add("uncommitted", 6n)
+      table
+    }
+    let keys = table => table.InMemoryTable.Entity.latestEntityChangeById->Dict.keysToArray->Array.toSorted(String.compare)
 
-    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId=5n)
+    // Keep db-loaded: only the committed (non-loaded) entry is dropped.
+    let kept = makeTable()
+    kept->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId=5n, ~keepLoadedFromDb=true)
 
-    t.expect((
-      table.changesCount,
-      table.latestEntityChangeById->Dict.keysToArray->Array.toSorted(String.compare),
-    )).toEqual((1., ["uncommitted"]))
+    // Drop everything committed, leaving only uncommitted.
+    let dropped = makeTable()
+    dropped->InMemoryTable.Entity.dropCommittedChanges(
+      ~committedCheckpointId=5n,
+      ~keepLoadedFromDb=false,
+    )
+
+    t.expect((kept.changesCount, kept->keys, dropped.changesCount, dropped->keys)).toEqual((
+      2.,
+      ["loaded", "uncommitted"],
+      1.,
+      ["uncommitted"],
+    ))
   })
 
   Async.it("Test getWhere queries with eq and gt operators", async t => {

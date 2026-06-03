@@ -136,6 +136,22 @@ let getChangesCount = (inMemoryStore: t) => {
 let setChainMeta = (inMemoryStore: t, chainsData: dict<InternalTable.Chains.metaFields>) =>
   inMemoryStore.currentChainMeta = Some(chainsData)
 
+let chainMetaEqual = (a: InternalTable.Chains.metaFields, b: InternalTable.Chains.metaFields) => {
+  // Compare by timestamp, since structural equality on Date objects is unreliable.
+  let timestampEqual = switch (
+    a.timestampCaughtUpToHeadOrEndblock->Null.toOption,
+    b.timestampCaughtUpToHeadOrEndblock->Null.toOption,
+  ) {
+  | (None, None) => true
+  | (Some(x), Some(y)) => x->Date.getTime == y->Date.getTime
+  | _ => false
+  }
+  a.isHyperSync == b.isHyperSync &&
+  a.latestFetchedBlockNumber == b.latestFetchedBlockNumber &&
+  a.firstEventBlockNumber == b.firstEventBlockNumber &&
+  timestampEqual
+}
+
 // Per-chain metadata that changed since the last persisted write, or None when
 // nothing is stale.
 let staleChainMeta = (inMemoryStore: t): option<dict<InternalTable.Chains.metaFields>> =>
@@ -149,7 +165,7 @@ let staleChainMeta = (inMemoryStore: t): option<dict<InternalTable.Chains.metaFi
       | Some(committed) =>
         switch committed->Utils.Dict.dangerouslyGetNonOption(chainId) {
         | None => true
-        | Some(prev) => JSON.stringifyAny(meta) != JSON.stringifyAny(prev)
+        | Some(prev) => !chainMetaEqual(meta, prev)
         }
       }
       if changed {
@@ -374,25 +390,35 @@ let rec awaitCapacity = async (inMemoryStore: t) => {
   | Some(exn) => throw(exn)
   | None => ()
   }
-  if inMemoryStore->getChangesCount >= keepLatestChangesLimit {
+  let dropCommitted = (~keepLoadedFromDb) =>
     inMemoryStore.allEntities->Array.forEach(entityConfig =>
       inMemoryStore
       ->getInMemTable(~entityConfig)
       ->InMemoryTable.Entity.dropCommittedChanges(
         ~committedCheckpointId=inMemoryStore.committedCheckpointId,
+        ~keepLoadedFromDb,
       )
     )
 
-    // What's left is uncommitted. Only wait if the cycle can actually free it by
-    // writing a queued batch - otherwise (e.g. a large rollback diff staged
-    // without a batch) waiting would deadlock, so let processing proceed instead.
-    if (
-      inMemoryStore->getChangesCount >= keepLatestChangesLimit &&
-        inMemoryStore.processedBatches->Utils.Array.notEmpty
-    ) {
-      inMemoryStore->kick
-      await inMemoryStore->waitForCommit
-      await inMemoryStore->awaitCapacity
+  if inMemoryStore->getChangesCount >= keepLatestChangesLimit {
+    // First free committed changes but keep the ones loaded from the db, so
+    // reads still hit memory.
+    dropCommitted(~keepLoadedFromDb=true)
+    if inMemoryStore->getChangesCount >= keepLatestChangesLimit {
+      // Still over: drop the loaded-from-db changes too.
+      dropCommitted(~keepLoadedFromDb=false)
+
+      // What's left is uncommitted. Only wait if the cycle can free it by writing
+      // a queued batch - otherwise (e.g. a large rollback diff staged without a
+      // batch) waiting would deadlock, so let processing proceed instead.
+      if (
+        inMemoryStore->getChangesCount >= keepLatestChangesLimit &&
+          inMemoryStore.processedBatches->Utils.Array.notEmpty
+      ) {
+        inMemoryStore->kick
+        await inMemoryStore->waitForCommit
+        await inMemoryStore->awaitCapacity
+      }
     }
   }
 }
