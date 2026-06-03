@@ -75,10 +75,6 @@ let make = (
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
     Throttler.make(
       ~intervalMillis,
-      // Throttled from the start so the first schedule waits an interval instead
-      // of firing now, giving a batch write a chance to carry the delta for free.
-      // The idle flush is a backstop for when batches stop flowing.
-      ~startThrottled=true,
       ~logger=Logging.createChild(
         ~params={
           "context": "Throttler for chain metadata writes",

@@ -15,7 +15,7 @@ Does NOT queue scheduled functions but rather overwrites them
 The logger will be used to log any errors that occur in the scheduled
 functions.
 */
-let make: (~intervalMillis: int, ~logger: Pino.t, ~startThrottled: bool=?) => t
+let make: (~intervalMillis: int, ~logger: Pino.t) => t
 
 /**
 Schedules a function to be run on a throttler, overwriting any

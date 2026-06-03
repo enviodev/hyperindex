@@ -1,5 +1,8 @@
 open Vitest
 
+@val external setImmediate: (unit => unit) => unit = "setImmediate"
+let nextImmediate = () => Promise.make((resolve, _) => setImmediate(() => resolve()))
+
 describe("Throttler", () => {
   Async.itWithOptions("Schedules and throttles functions as expected", {retry: 3}, async t => {
     let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
@@ -14,7 +17,11 @@ describe("Throttler", () => {
     )
     throttler->Throttler.schedule(async () => actionsCalled->Array.push(3)->ignore)
 
-    t.expect(actionsCalled, ~message="Should have immediately called scheduled fn").toEqual([1])
+    t.expect(actionsCalled, ~message="Should defer the scheduled fn off the schedule call").toEqual([])
+    await nextImmediate()
+    t.expect(actionsCalled, ~message="Should call the scheduled fn on the next immediate").toEqual([
+      1,
+    ])
 
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=9)
     t.expect(actionsCalled, ~message="Should still be called once after 9 ms").toEqual([1])

@@ -1,3 +1,5 @@
+@val external setImmediate: (unit => unit) => unit = "setImmediate"
+
 type t = {
   mutable lastRunTimeMillis: float,
   mutable isRunning: bool,
@@ -7,10 +9,8 @@ type t = {
   logger: Pino.t,
 }
 
-let make = (~intervalMillis: int, ~logger, ~startThrottled=false) => {
-  // When throttled from the start, the first schedule waits a full interval
-  // instead of running immediately.
-  lastRunTimeMillis: startThrottled ? Date.now() : 0.,
+let make = (~intervalMillis: int, ~logger) => {
+  lastRunTimeMillis: 0.,
   isRunning: false,
   isAwaitingInterval: false,
   scheduled: None,
@@ -18,7 +18,7 @@ let make = (~intervalMillis: int, ~logger, ~startThrottled=false) => {
   logger,
 }
 
-let rec startInternal = async (throttler: t) => {
+let rec startInternal = (throttler: t) => {
   switch throttler {
   | {scheduled: Some(fn), isRunning: false, isAwaitingInterval: false} =>
     let timeSinceLastRun = Date.now() -. throttler.lastRunTimeMillis
@@ -29,25 +29,33 @@ let rec startInternal = async (throttler: t) => {
       throttler.scheduled = None
       throttler.lastRunTimeMillis = Date.now()
 
-      switch await fn() {
-      | exception exn =>
-        throttler.logger->Pino.errorExn(
-          Pino.createPinoMessageWithError(
-            "Scheduled action failed in throttler",
-            exn->Utils.prettifyExn,
-          ),
-        )
-      | _ => ()
-      }
-      throttler.isRunning = false
+      // Run on the next setImmediate rather than synchronously inside schedule,
+      // so work queued before it (e.g. a batch task) runs first.
+      setImmediate(() => {
+        (
+          async () => {
+            switch await fn() {
+            | exception exn =>
+              throttler.logger->Pino.errorExn(
+                Pino.createPinoMessageWithError(
+                  "Scheduled action failed in throttler",
+                  exn->Utils.prettifyExn,
+                ),
+              )
+            | _ => ()
+            }
+            throttler.isRunning = false
 
-      await throttler->startInternal
+            throttler->startInternal
+          }
+        )()->ignore
+      })
     } else {
       //Store isAwaitingInterval in state so that timers don't continuously get created
       throttler.isAwaitingInterval = true
       let _ = setTimeout(() => {
         throttler.isAwaitingInterval = false
-        throttler->startInternal->ignore
+        throttler->startInternal
       }, Belt.Int.fromFloat(throttler.intervalMillis -. timeSinceLastRun))
     }
   | _ => ()
@@ -56,5 +64,5 @@ let rec startInternal = async (throttler: t) => {
 
 let schedule = (throttler: t, fn) => {
   throttler.scheduled = Some(fn)
-  throttler->startInternal->ignore
+  throttler->startInternal
 }
