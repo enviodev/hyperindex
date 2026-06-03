@@ -111,21 +111,24 @@ describe("InMemoryStore chain metadata", () => {
     t.expect(setChainMetaCalls).toEqual([Dict.fromArray([("1", meta)])])
   })
 
-  Async.it("Writes only the chains whose metadata changed", async t => {
+  Async.it("Writes the full snapshot whenever any chain changed", async t => {
     let (store, setChainMetaCalls, _) = makeStore()
     let chain1 = metaFields(~buffer=10)
     let chain2 = metaFields(~buffer=20)
 
     store->InMemoryStore.setChainMeta(Dict.fromArray([("1", chain1), ("2", chain2)]))
     await store->InMemoryStore.flush
-    // Only chain 2 advances; chain 1 is unchanged and must not be rewritten.
+    // Only chain 2 advances, but the write carries the whole snapshot (a single
+    // unnest upsert, so writing unchanged chains too is free).
     let chain2Next = metaFields(~buffer=25)
-    store->InMemoryStore.setChainMeta(Dict.fromArray([("1", metaFields(~buffer=10)), ("2", chain2Next)]))
+    store->InMemoryStore.setChainMeta(
+      Dict.fromArray([("1", metaFields(~buffer=10)), ("2", chain2Next)]),
+    )
     await store->InMemoryStore.flush
 
     t.expect(setChainMetaCalls).toEqual([
       Dict.fromArray([("1", chain1), ("2", chain2)]),
-      Dict.fromArray([("2", chain2Next)]),
+      Dict.fromArray([("1", chain1), ("2", chain2Next)]),
     ])
   })
 })

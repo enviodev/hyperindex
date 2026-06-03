@@ -55,12 +55,12 @@ type t = {
   // Static for the store's lifetime - only the persistence cycle reads them.
   persistence: Persistence.t,
   config: Config.t,
-  // Latest metadata staged per chain, the last value seen for each. Used to
-  // detect whether a freshly staged value actually changed.
+  // Latest metadata staged per chain. Kept to detect whether a freshly staged
+  // value actually changed (so an unchanged restage doesn't trigger a write).
   mutable chainMeta: dict<InternalTable.Chains.metaFields>,
-  // Per-chain metadata changed since the last persisted write; cleared on commit.
-  // A batch write folds this in for free; otherwise it flushes on the throttle.
-  mutable dirtyChainMeta: dict<InternalTable.Chains.metaFields>,
+  // Set when chainMeta changed since the last persisted write. A batch write
+  // folds the snapshot in for free; otherwise it flushes on the throttle.
+  mutable chainMetaDirty: bool,
   // Bounds how often a metadata-only write hits the db when no batches flow.
   chainMetaThrottler: Throttler.t,
 }
@@ -103,7 +103,7 @@ let make = (
     persistence,
     config,
     chainMeta: Dict.make(),
-    dirtyChainMeta: Dict.make(),
+    chainMetaDirty: false,
     chainMetaThrottler,
   }
 }
@@ -255,14 +255,14 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
   | Ready({cache}) => cache
   }
 
-  // Take the staged delta synchronously, before any await, and clear it so
-  // metadata staged during the write is picked up by the next iteration.
-  let chainMetaData = switch inMemoryStore.dirtyChainMeta->Utils.Dict.isEmpty {
-  | true => None
-  | false =>
-    let delta = inMemoryStore.dirtyChainMeta
-    inMemoryStore.dirtyChainMeta = Dict.make()
-    Some(delta)
+  // Snapshot a copy before any await: the batch write reads chainMetaData later,
+  // inside the transaction, so it must not observe values staged meanwhile. A
+  // restage during the write re-sets the flag and is rewritten next iteration.
+  let chainMetaData = if inMemoryStore.chainMetaDirty {
+    inMemoryStore.chainMetaDirty = false
+    Some(inMemoryStore.chainMeta->Utils.Dict.shallowCopy)
+  } else {
+    None
   }
 
   switch inMemoryStore.processedBatches {
@@ -321,8 +321,7 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
 }
 
 let hasPendingWrite = (inMemoryStore: t) =>
-  inMemoryStore.processedBatches->Utils.Array.notEmpty ||
-    !(inMemoryStore.dirtyChainMeta->Utils.Dict.isEmpty)
+  inMemoryStore.processedBatches->Utils.Array.notEmpty || inMemoryStore.chainMetaDirty
 
 let runWriteLoop = async (inMemoryStore: t) => {
   while inMemoryStore->hasPendingWrite && inMemoryStore.persistenceError->Option.isNone {
@@ -358,8 +357,8 @@ let metaFieldsEqual = (a: InternalTable.Chains.metaFields, b: InternalTable.Chai
   a.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime) ==
     b.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime)
 
-// Stages the latest chain metadata. Per-chain unchanged values are dropped here
-// so the cycle only ever writes a real delta. A batch write carries the delta
+// Stages the latest chain metadata, marking it dirty only when a value actually
+// changed so an unchanged restage is a no-op. A batch write carries the snapshot
 // for free; with no batch in flight it flushes on the throttle.
 let setChainMeta = (inMemoryStore: t, chainsData: dict<InternalTable.Chains.metaFields>) => {
   chainsData->Utils.Dict.forEachWithKey((meta, chainId) => {
@@ -369,10 +368,10 @@ let setChainMeta = (inMemoryStore: t, chainsData: dict<InternalTable.Chains.meta
     }
     if changed {
       inMemoryStore.chainMeta->Dict.set(chainId, meta)
-      inMemoryStore.dirtyChainMeta->Dict.set(chainId, meta)
+      inMemoryStore.chainMetaDirty = true
     }
   })
-  if !(inMemoryStore.dirtyChainMeta->Utils.Dict.isEmpty) {
+  if inMemoryStore.chainMetaDirty {
     inMemoryStore.chainMetaThrottler->Throttler.schedule(() => {
       inMemoryStore->kick
       Promise.resolve()
