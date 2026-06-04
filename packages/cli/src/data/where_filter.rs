@@ -54,7 +54,7 @@ pub struct ClientFilter {
 pub struct TimestampBounds {
     /// `_gt`/`_gte`/`_lt`/`_lte` comparisons; each narrows one edge of the window.
     pub conds: Vec<(CmpOp, u64)>,
-    /// `_eq`/`_in` targets. Each resolves to the first block at or after it; the
+    /// `_eq`/`_in` targets. Each resolves to the latest block at or before it; the
     /// window spans those blocks and a `block.number` filter drops the rest.
     pub eq_targets: Vec<u64>,
 }

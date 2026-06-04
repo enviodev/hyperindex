@@ -76,10 +76,11 @@ struct Resolved {
     eq_blocks: Vec<u64>,
 }
 
-/// Resolves a set of timestamp filters. Every operator reduces to `lower_bound` —
-/// "first block whose timestamp is >= target":
-/// - `_gte T`/`_gt T` push `from`; `_lte T`/`_lt T` push `to_excl`.
-/// - each `_eq`/`_in` target resolves to its nearest block; the window spans them.
+/// Resolves a set of timestamp filters into a block window:
+/// - range comparisons map via `lower_bound` ("first block whose timestamp >= T"):
+///   `_gte T`/`_gt T` push `from`; `_lte T`/`_lt T` push `to_excl` (half-open).
+/// - each `_eq`/`_in` target resolves to the block "at" it (latest block <= T);
+///   the window spans those blocks and a `block.number` filter drops the rest.
 async fn resolve_bounds<F, Fut>(
     search: &mut Search<F>,
     bounds: &TimestampBounds,
@@ -103,7 +104,7 @@ where
     }
 
     for &secs in &bounds.eq_targets {
-        out.eq_blocks.push(search.lower_bound(secs).await?);
+        out.eq_blocks.push(search.block_at(secs).await?);
     }
     out.eq_blocks.sort_unstable();
     out.eq_blocks.dedup();
@@ -254,6 +255,18 @@ where
         }
         Ok(hi)
     }
+
+    /// The block "at" `target` — the latest block whose timestamp is `<= target`,
+    /// matching the prevailing `closest=before` convention (Etherscan, QuickNode).
+    /// Clamps into `[0, top]`: a future `target` yields the tip, one before genesis
+    /// yields block 0.
+    async fn block_at(&mut self, target: u64) -> Result<u64> {
+        // First block with timestamp > target, minus one.
+        Ok(self
+            .lower_bound(target.saturating_add(1))
+            .await?
+            .saturating_sub(1))
+    }
 }
 
 fn interpolate(lo: u64, lo_ts: u64, hi: u64, hi_ts: u64, target: u64) -> u64 {
@@ -382,6 +395,19 @@ mod tests {
                 vec![],
             ),
         );
+    }
+
+    #[tokio::test]
+    async fn block_at_returns_the_block_before_a_between_timestamp() {
+        let timeline = timeline();
+        let probes = Cell::new(0);
+        let mut search = search(timeline, &probes);
+        // A timestamp strictly between block 1000 and 1001 resolves to 1000.
+        let between = timeline.ts(1000) + 1;
+        assert!(between < timeline.ts(1001));
+        assert_eq!(search.block_at(between).await.unwrap(), 1000);
+        // An exact block timestamp resolves to that same block.
+        assert_eq!(search.block_at(timeline.ts(1000)).await.unwrap(), 1000);
     }
 
     #[tokio::test]

@@ -24,8 +24,11 @@ envio data <field>... --chain=<id|name> [--where='<json5>']
   - Match with a scalar, an array, `_eq`, or `_in` (e.g. `log: { srcAddress: "0x..." }`).
   - Compare numeric fields with `_gt`, `_gte`, `_lt`, `_lte` (e.g. `transaction: { value: { _gt: 1000000000000000000 } }`).
   - Comparison ops are numeric-only; hex/bool fields take only `_eq`/`_in`.
-  - `block.timestamp` is unix **seconds**. It's resolved to a block range with a
-    quick pre-flight lookup, so use it instead of guessing block numbers for a date.
+  - `block.timestamp` is unix **seconds**, resolved to a block range with a quick
+    pre-flight lookup — use it instead of guessing block numbers for a date.
+    A scalar/`_eq`/`_in` resolves to the latest block at or before each timestamp
+    (like Etherscan's `closest=before`); ranges are half-open: `_gte` start is
+    inclusive, `_lt` end is exclusive.
 
 ## Examples
 
@@ -51,7 +54,8 @@ envio data transaction.hash transaction.value \
   }'
 ```
 
-Find the block at a unix timestamp (e.g. 2024-01-01 00:00:00 UTC = `1704067200`):
+Find the block at a unix timestamp — the latest block at or before it
+(e.g. 2024-01-01 00:00:00 UTC = `1704067200`):
 
 ```bash
 envio data block.number block.timestamp \
