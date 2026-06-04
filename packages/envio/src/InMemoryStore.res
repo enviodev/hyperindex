@@ -359,6 +359,12 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
     )
 
     inMemoryStore.committedCheckpointId = upToCheckpointId
+
+    switch rollback {
+    | Some({progressBlockNumberByChainId}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>
+      await RollbackCommit.fire(~progressBlockNumberByChainId)
+    | _ => ()
+    }
   }
 }
 
@@ -494,12 +500,14 @@ let prepareRollbackDiff = async (
   ~persistence: Persistence.t,
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
+  ~progressBlockNumberByChainId,
 ) => {
   inMemoryStore.entities = EntityTables.make(inMemoryStore.allEntities)
   inMemoryStore.effects = Dict.make()
   inMemoryStore.rollback = Some({
     targetCheckpointId: rollbackTargetCheckpointId,
     diffCheckpointId: rollbackDiffCheckpointId,
+    progressBlockNumberByChainId,
   })
 
   let deletedEntities = Dict.make()

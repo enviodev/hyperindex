@@ -424,6 +424,35 @@ describe("E2E rollback tests", () => {
     await testSingleChainRollback(~t, ~sourceMock, ~indexerMock)
   })
 
+  Async.it("Fires onRollbackCommit per affected chain after the rollback write", async t => {
+    let sourceMock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let rollbackCommitCalls = []
+    let unregister = RollbackCommit.register(async (args: RollbackCommit.args) => {
+      rollbackCommitCalls->Array.push(args)
+    })
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+    await testSingleChainRollback(~t, ~sourceMock, ~indexerMock)
+    unregister()
+
+    t.expect(
+      rollbackCommitCalls,
+      ~message="Should fire once for the reorged chain with the last valid block",
+    ).toEqual([{RollbackCommit.chainId: 1337, rollbackToBlock: 100}])
+  })
+
   Async.it(
     "Stores checkpoints inside of the reorg threshold for batches without items",
     async t => {

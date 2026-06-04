@@ -1201,6 +1201,18 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes = GlobalConfig> 
     readonly name: string;
     /** The indexer description from config.yaml. */
     readonly description: string | undefined;
+    /**
+     * Internal, unstable API that will be removed without notice. Registers a
+     * callback fired once per chain affected by a reorg rollback, after the
+     * rollback is durably written to the database. A throwing callback crashes
+     * the indexer through the same path as a failed write.
+     */
+    readonly "~internalAndWillBeRemovedSoon_onRollbackCommit": (
+      callback: (args: {
+        readonly chainId: number;
+        readonly rollbackToBlock: number;
+      }) => Promise<void>,
+    ) => void;
   } & SingleEcosystemChains<Config>
 >;
 

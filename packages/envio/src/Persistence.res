@@ -51,6 +51,9 @@ type updatedEffectCache = {
 type rollback = {
   targetCheckpointId: Internal.checkpointId,
   diffCheckpointId: Internal.checkpointId,
+  // Last valid block per chain affected by the rollback. Read by
+  // `RollbackCommit.fire` once the diff is durably written.
+  progressBlockNumberByChainId: dict<int>,
 }
 
 type updatedEntity = {
