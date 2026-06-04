@@ -377,7 +377,11 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 
 Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 
-**Usage:** `envio metrics`
+**Usage:** `envio metrics [OPTIONS]`
+
+###### **Options:**
+
+* `--runtime` — Fetch runtime metrics from the /metrics/runtime endpoint instead of /metrics
 
 
 

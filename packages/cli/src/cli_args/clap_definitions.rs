@@ -59,7 +59,7 @@ pub enum CommandType {
     Start(StartArgs),
 
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
-    Metrics,
+    Metrics(MetricsArgs),
 
     ///Manage Envio-provided Claude Code skills under `.claude/skills/`
     #[command(subcommand)]
@@ -142,6 +142,13 @@ pub struct StartArgs {
     ///Clear your database and restart indexing from scratch
     #[arg(short = 'r', long, action)]
     pub restart: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct MetricsArgs {
+    ///Fetch runtime metrics from the /metrics/runtime endpoint instead of /metrics
+    #[arg(long, action)]
+    pub runtime: bool,
 }
 
 #[derive(Debug, Subcommand)]

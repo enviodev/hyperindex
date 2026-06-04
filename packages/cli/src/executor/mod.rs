@@ -82,8 +82,8 @@ pub async fn execute(
             Ok(None)
         }
 
-        CommandType::Metrics => {
-            metrics::run().await?;
+        CommandType::Metrics(metrics_args) => {
+            metrics::run(metrics_args.runtime).await?;
             Ok(None)
         }
 
