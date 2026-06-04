@@ -54,8 +54,8 @@ pub struct ClientFilter {
 pub struct TimestampBounds {
     /// `_gt`/`_gte`/`_lt`/`_lte` comparisons; each narrows one edge of the window.
     pub conds: Vec<(CmpOp, u64)>,
-    /// `_eq`/`_in` targets; the window spans `[min, max]` of these and the client
-    /// filter drops blocks whose timestamp isn't in the set.
+    /// `_eq`/`_in` targets. Each resolves to the first block at or after it; the
+    /// window spans those blocks and a `block.number` filter drops the rest.
     pub eq_targets: Vec<u64>,
 }
 
@@ -451,21 +451,30 @@ const TIMESTAMP_MILLISECOND_HINT: u64 = 100_000_000_000;
 
 /// Like `block.number`, `block.timestamp` scopes the scan window — but the block
 /// range is resolved later by a pre-flight search (the conditions are stored on
-/// `out.timestamp`). The same conditions stay as a client-side filter so blocks
-/// the resolved range can't pin down exactly are dropped here.
+/// `out.timestamp`). Range comparisons stay as a client-side filter so the
+/// boundary blocks the resolved range can't pin down exactly are dropped here;
+/// `_eq`/`_in` instead resolve to nearest block numbers and are polished there.
 fn apply_block_timestamp(out: &mut WhereFilter, field: TypedField, body: Value) -> Result<()> {
-    let conds = parse_conditions(Section::Block, "timestamp", field, body)?;
-    for cond in &conds {
+    let mut cmp_conds = Vec::new();
+    for cond in parse_conditions(Section::Block, "timestamp", field, body)? {
         match cond {
-            Cond::Cmp(op, v) => out.timestamp.conds.push((*op, parse_timestamp_secs(v)?)),
+            Cond::Cmp(op, v) => {
+                out.timestamp.conds.push((op, parse_timestamp_secs(&v)?));
+                cmp_conds.push(Cond::Cmp(op, v));
+            }
             Cond::In(vals) => {
-                for v in vals {
+                for v in &vals {
                     out.timestamp.eq_targets.push(parse_timestamp_secs(v)?);
                 }
             }
         }
     }
-    out.client_filters.push(ClientFilter { field, conds });
+    if !cmp_conds.is_empty() {
+        out.client_filters.push(ClientFilter {
+            field,
+            conds: cmp_conds,
+        });
+    }
     Ok(())
 }
 
@@ -800,7 +809,9 @@ mod tests {
     }
 
     #[test]
-    fn block_timestamp_in_records_eq_targets_and_client_polish() {
+    fn block_timestamp_in_records_eq_targets_without_parse_time_filter() {
+        // The `block.number` polish for `_in` is added once the targets are
+        // resolved to blocks, so there's no client filter at parse time.
         let f = pf("{ block: { timestamp: { _in: [2000, 1000] } } }");
         assert_eq!(
             (
@@ -808,7 +819,7 @@ mod tests {
                 f.timestamp.conds.len(),
                 f.client_filters.len(),
             ),
-            (vec![2000, 1000], 0, 1),
+            (vec![2000, 1000], 0, 0),
         );
     }
 

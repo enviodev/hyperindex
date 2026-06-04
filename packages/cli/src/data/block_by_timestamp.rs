@@ -7,7 +7,10 @@ use hypersync_client::net_types::block::BlockField;
 use hypersync_client::net_types::{FieldSelection, Query};
 use hypersync_client::{ArrowResponse, Client};
 
-use super::where_filter::{CmpOp, TimestampBounds, WhereFilter};
+use serde_json::Value;
+
+use super::mapping::TypedField;
+use super::where_filter::{ClientFilter, CmpOp, Cond, TimestampBounds, WhereFilter};
 
 /// Blocks fetched per probe. Larger windows trade query size for fewer
 /// round-trips: when the interpolated guess lands within this many blocks of the
@@ -16,9 +19,10 @@ use super::where_filter::{CmpOp, TimestampBounds, WhereFilter};
 const PROBE_WINDOW: u64 = 1024;
 const MAX_PROBE_WINDOW: u64 = 1 << 20;
 
-/// Resolves every `block.timestamp` comparison into a block number and folds it
-/// into the filter's scan window. Comparisons stay on the filter as client-side
-/// polish, so this only ever tightens `from_block`/`to_block_exclusive`.
+/// Resolves the filter's `block.timestamp` conditions into block numbers and
+/// folds them into the scan window. Range comparisons keep their timestamp polish
+/// on the filter; `_eq`/`_in` targets each map to a single nearest block, and a
+/// `block.number` filter drops the blocks the spanning scan also returns.
 pub async fn apply(filter: &mut WhereFilter, client: &Client) -> Result<()> {
     if filter.timestamp.is_empty() {
         return Ok(());
@@ -38,32 +42,53 @@ pub async fn apply(filter: &mut WhereFilter, client: &Client) -> Result<()> {
         .context("Failed fetching chain height for timestamp lookup")?;
     let mut search = Search::new(height, fetch).await?;
 
-    let (from, to_excl) = resolve_bounds(&mut search, &filter.timestamp).await?;
-    if let Some(from) = from {
+    let resolved = resolve_bounds(&mut search, &filter.timestamp).await?;
+    if let Some(from) = resolved.from {
         filter.narrow_from(from);
     }
-    if let Some(to_excl) = to_excl {
+    if let Some(to_excl) = resolved.to_excl {
         filter.narrow_to_excl(to_excl);
+    }
+    // A single target is already an exact one-block range; a set needs the
+    // in-between blocks the [min, max] scan returns dropped client-side.
+    if resolved.eq_blocks.len() > 1 {
+        filter.client_filters.push(ClientFilter {
+            field: TypedField::Block(BlockField::Number),
+            conds: vec![Cond::In(
+                resolved
+                    .eq_blocks
+                    .iter()
+                    .copied()
+                    .map(Value::from)
+                    .collect(),
+            )],
+        });
     }
 
     Ok(())
 }
 
-/// Resolves a set of timestamp filters into a `(from_block, to_block_exclusive)`
-/// window. Every operator reduces to `lower_bound` — "first block whose timestamp
-/// is >= target":
+#[derive(Default)]
+struct Resolved {
+    from: Option<u64>,
+    to_excl: Option<u64>,
+    /// Blocks `_eq`/`_in` targets resolved to, sorted and deduplicated.
+    eq_blocks: Vec<u64>,
+}
+
+/// Resolves a set of timestamp filters. Every operator reduces to `lower_bound` —
+/// "first block whose timestamp is >= target":
 /// - `_gte T`/`_gt T` push `from`; `_lte T`/`_lt T` push `to_excl`.
-/// - an `_eq`/`_in` set spans `[lower_bound(min), lower_bound(max + 1))`.
+/// - each `_eq`/`_in` target resolves to its nearest block; the window spans them.
 async fn resolve_bounds<F, Fut>(
     search: &mut Search<F>,
     bounds: &TimestampBounds,
-) -> Result<(Option<u64>, Option<u64>)>
+) -> Result<Resolved>
 where
     F: FnMut(u64, u64) -> Fut,
     Fut: Future<Output = Result<Vec<(u64, u64)>>>,
 {
-    let mut from: Option<u64> = None;
-    let mut to_excl: Option<u64> = None;
+    let mut out = Resolved::default();
 
     for &(op, secs) in &bounds.conds {
         let target = match op {
@@ -72,26 +97,22 @@ where
         };
         let block = search.lower_bound(target).await?;
         match op {
-            CmpOp::Gte | CmpOp::Gt => narrow_max(&mut from, block),
-            CmpOp::Lte | CmpOp::Lt => narrow_min(&mut to_excl, block),
+            CmpOp::Gte | CmpOp::Gt => narrow_max(&mut out.from, block),
+            CmpOp::Lte | CmpOp::Lt => narrow_min(&mut out.to_excl, block),
         }
     }
 
-    let span = bounds
-        .eq_targets
-        .iter()
-        .min()
-        .copied()
-        .zip(bounds.eq_targets.iter().max().copied());
-    if let Some((min, max)) = span {
-        narrow_max(&mut from, search.lower_bound(min).await?);
-        narrow_min(
-            &mut to_excl,
-            search.lower_bound(max.saturating_add(1)).await?,
-        );
+    for &secs in &bounds.eq_targets {
+        out.eq_blocks.push(search.lower_bound(secs).await?);
+    }
+    out.eq_blocks.sort_unstable();
+    out.eq_blocks.dedup();
+    if let (Some(&min), Some(&max)) = (out.eq_blocks.first(), out.eq_blocks.last()) {
+        narrow_max(&mut out.from, min);
+        narrow_min(&mut out.to_excl, max.saturating_add(1));
     }
 
-    Ok((from, to_excl))
+    Ok(out)
 }
 
 fn narrow_max(slot: &mut Option<u64>, n: u64) {
@@ -352,32 +373,32 @@ mod tests {
             conds: vec![(CmpOp::Gte, lo), (CmpOp::Lt, hi)],
             eq_targets: vec![],
         };
+        let resolved = resolve_bounds(&mut search, &bounds).await.unwrap();
         assert_eq!(
-            resolve_bounds(&mut search, &bounds).await.unwrap(),
+            (resolved.from, resolved.to_excl, resolved.eq_blocks),
             (
                 Some(timeline.first_at_least(lo)),
                 Some(timeline.first_at_least(hi)),
+                vec![],
             ),
         );
     }
 
     #[tokio::test]
-    async fn resolve_eq_set_spans_min_to_max() {
+    async fn resolve_eq_set_maps_to_nearest_blocks_and_spans_them() {
         let timeline = timeline();
-        let (a, b) = (timeline.ts(2_000_000), timeline.ts(4_000_000));
+        let (a, b) = (timeline.ts(4_000_000), timeline.ts(2_000_000));
         let probes = Cell::new(0);
         let mut search = search(timeline, &probes);
-        // Order and a comparison that's wider than the set must not loosen it.
+        // Out of order, and a comparison wider than the set must not loosen it.
         let bounds = TimestampBounds {
             conds: vec![(CmpOp::Gte, timeline.ts(0))],
-            eq_targets: vec![b, a],
+            eq_targets: vec![a, b],
         };
+        let resolved = resolve_bounds(&mut search, &bounds).await.unwrap();
         assert_eq!(
-            resolve_bounds(&mut search, &bounds).await.unwrap(),
-            (
-                Some(timeline.first_at_least(a)),
-                Some(timeline.first_at_least(b + 1)),
-            ),
+            (resolved.from, resolved.to_excl, resolved.eq_blocks),
+            (Some(2_000_000), Some(4_000_001), vec![2_000_000, 4_000_000]),
         );
     }
 }
