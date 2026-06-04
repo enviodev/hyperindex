@@ -1162,6 +1162,8 @@ type indexer = {
     Envio.onBlockOptions<indexerChain>,
     Envio.fuelOnBlockArgs<handlerContext> => promise<unit>,
   ) => unit,
+  /** Register a callback fired after every committed batch write, once per progressed chain. */
+  onProgress: (Envio.onProgressArgs => promise<unit>) => unit,
 }
 
 /** Get chain configuration by chain ID with exhaustive pattern matching. */

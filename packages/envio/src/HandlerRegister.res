@@ -10,7 +10,10 @@ let empty = {
   eventOptions: None,
 }
 
-type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
+type registrations = {
+  onBlockByChainId: dict<array<Internal.onBlockConfig>>,
+  onProgress: array<Internal.onProgress>,
+}
 
 type activeRegistration = {
   ecosystem: Ecosystem.t,
@@ -106,6 +109,7 @@ let startRegistration = (~ecosystem) => {
     ecosystem,
     registrations: {
       onBlockByChainId: Dict.make(),
+      onProgress: [],
     },
     finished: false,
   }
@@ -181,6 +185,12 @@ let registerOnBlock = (
         }: Internal.onBlockConfig
       ),
     )
+  })
+}
+
+let registerOnProgress = (handler: Internal.onProgress) => {
+  withRegistration(registration => {
+    registration.registrations.onProgress->Belt.Array.push(handler)
   })
 }
 

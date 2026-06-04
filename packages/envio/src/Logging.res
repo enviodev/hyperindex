@@ -215,3 +215,21 @@ let getUserLogger = (item): Envio.logger => {
   errorWithExn: (message: string, exn) =>
     item->logForItem(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
 }
+
+@inline
+let logFor = (logger: t, level: Pino.logLevel, message: string, ~params=?) => {
+  (
+    logger
+    ->(Utils.magic: t => dict<(option<'a>, string) => unit>)
+    ->Dict.getUnsafe((level :> string))
+  )(params, message)
+}
+
+let toUserLogger = (logger: t): Envio.logger => {
+  info: (message: string, ~params=?) => logger->logFor(#uinfo, message, ~params?),
+  debug: (message: string, ~params=?) => logger->logFor(#udebug, message, ~params?),
+  warn: (message: string, ~params=?) => logger->logFor(#uwarn, message, ~params?),
+  error: (message: string, ~params=?) => logger->logFor(#uerror, message, ~params?),
+  errorWithExn: (message: string, exn) =>
+    logger->logFor(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
+}

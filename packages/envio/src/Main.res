@@ -312,6 +312,14 @@ let getGlobalIndexer = (): 'indexer => {
     )
   }
 
+  // onProgress: a global callback fired after each committed batch write, once
+  // per progressed chain. Not tied to a contract/event, so it delegates straight
+  // to the registry without parsing an identity config.
+  let onProgressFn = (handler: 'a) => {
+    HandlerRegister.throwIfFinishedRegistration(~methodName="onProgress")
+    HandlerRegister.registerOnProgress(handler->(Utils.magic: 'a => Internal.onProgress))
+  }
+
   // Two-stage parse: first the ecosystem-specific outer schema unwraps the
   // wrapper (`block.number` / `block.height` / `slot`) and surfaces the
   // inner chunk as raw `unknown`; then the shared `blockRangeSchema`
@@ -453,8 +461,9 @@ let getGlobalIndexer = (): 'indexer => {
             "onEvent",
             "contractRegister",
             "onBlock",
+            "onProgress",
           ]
-        | Svm => ["name", "description", "chainIds", "chains", "onSlot"]
+        | Svm => ["name", "description", "chainIds", "chains", "onSlot", "onProgress"]
         }
         keysMemo := Some(keys)
         keys
@@ -477,6 +486,7 @@ let getGlobalIndexer = (): 'indexer => {
     | "onEvent" => onEventFn->Utils.magic
     | "contractRegister" => contractRegisterFn->Utils.magic
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
+    | "onProgress" => onProgressFn->Utils.magic
     | _ =>
       JsError.throwWithMessage(
         `Field \`${prop}\` does not exist on \`indexer\`. Available fields: ${getKeys()->Array.join(
@@ -692,6 +702,9 @@ let start = async (
     errHandler->ErrorHandling.log
     NodeJs.process->NodeJs.exitWithCode(Failure)
   }
+
+  let onProgress = OnProgress.makeInvoker(~handlers=registrations.onProgress)
+
   let ctx = {
     Ctx.registrations,
     config,
@@ -702,6 +715,7 @@ let start = async (
       ~persistence,
       ~config,
       ~onError=exn => onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
+      ~onProgress?,
     ),
   }
 

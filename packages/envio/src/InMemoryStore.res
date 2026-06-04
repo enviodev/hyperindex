@@ -33,11 +33,24 @@ type effectCacheInMemTable = {
   effect: Internal.effect,
 }
 
+// Invoked after a batch write commits, once per progressed chain, to drive
+// `indexer.onProgress`. Built in `Main.res` where the registered callbacks and
+// logger live; `None` when no `onProgress` handler is registered.
+type onProgressInvoker = (
+  ~progressedChainsById: dict<Batch.chainAfterBatch>,
+  ~chains: Internal.chains,
+  ~rollback: option<Persistence.rollback>,
+) => promise<unit>
+
 type t = {
   allEntities: array<Internal.entityConfig>,
   mutable entities: dict<InMemoryTable.Entity.t>,
   mutable effects: dict<effectCacheInMemTable>,
   mutable rollback: option<Persistence.rollback>,
+  onProgress: option<onProgressInvoker>,
+  // Latest per-chain realtime state snapshot, captured at commit time so the
+  // write loop can build the `onProgress` context off the processing path.
+  mutable progressChains: Internal.chains,
   // Last checkpoint persisted to the db.
   mutable committedCheckpointId: Internal.checkpointId,
   // Processing frontier; runs ahead of committedCheckpointId while writes lag.
@@ -69,6 +82,7 @@ let make = (
   ~persistence: Persistence.t,
   ~config: Config.t,
   ~onError: exn => unit,
+  ~onProgress: option<onProgressInvoker>=?,
 ): t => {
   let chainMetaThrottler = {
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
@@ -88,6 +102,8 @@ let make = (
     entities: EntityTables.make(entities),
     effects: Dict.make(),
     rollback: None,
+    onProgress,
+    progressChains: Dict.make(),
     committedCheckpointId,
     processedCheckpointId: committedCheckpointId,
     processedBatches: [],
@@ -359,6 +375,16 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
     )
 
     inMemoryStore.committedCheckpointId = upToCheckpointId
+
+    switch inMemoryStore.onProgress {
+    | Some(onProgress) if !(batch.progressedChainsById->Utils.Dict.isEmpty) =>
+      await onProgress(
+        ~progressedChainsById=batch.progressedChainsById,
+        ~chains=inMemoryStore.progressChains,
+        ~rollback,
+      )
+    | _ => ()
+    }
   }
 }
 
@@ -423,7 +449,11 @@ let setChainMeta = (inMemoryStore: t, chainsData: dict<InternalTable.Chains.meta
 
 // Queues a processed batch and kicks the cycle. Returns immediately; the write
 // happens off the processing path.
-let commitBatch = (inMemoryStore: t, ~batch: Batch.t) => {
+let commitBatch = (inMemoryStore: t, ~batch: Batch.t, ~chains=?) => {
+  switch chains {
+  | Some(chains) => inMemoryStore.progressChains = chains
+  | None => ()
+  }
   inMemoryStore.processedBatches->Array.push(batch)->ignore
   switch batch.checkpointIds->Utils.Array.last {
   | Some(checkpointId) => inMemoryStore.processedCheckpointId = checkpointId
@@ -494,12 +524,14 @@ let prepareRollbackDiff = async (
   ~persistence: Persistence.t,
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
+  ~progressBlockNumberByChainId,
 ) => {
   inMemoryStore.entities = EntityTables.make(inMemoryStore.allEntities)
   inMemoryStore.effects = Dict.make()
   inMemoryStore.rollback = Some({
     targetCheckpointId: rollbackTargetCheckpointId,
     diffCheckpointId: rollbackDiffCheckpointId,
+    progressBlockNumberByChainId,
   })
 
   let deletedEntities = Dict.make()

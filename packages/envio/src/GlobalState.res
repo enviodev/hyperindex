@@ -1159,6 +1159,7 @@ let injectedTaskReducer = (
           ~persistence=state.ctx.persistence,
           ~rollbackTargetCheckpointId,
           ~rollbackDiffCheckpointId=state.ctx.inMemoryStore.committedCheckpointId->BigInt.add(1n),
+          ~progressBlockNumberByChainId=newProgressBlockNumberPerChain,
         )
 
         let chainManager = {

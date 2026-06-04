@@ -51,6 +51,9 @@ type updatedEffectCache = {
 type rollback = {
   targetCheckpointId: Internal.checkpointId,
   diffCheckpointId: Internal.checkpointId,
+  // Block each rolled-back chain was reverted to, keyed by chainId. Surfaced as
+  // `onProgress`'s `rollbackToBlock` once the rollback write commits.
+  progressBlockNumberByChainId: dict<int>,
 }
 
 type updatedEntity = {

@@ -1,4 +1,7 @@
-type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
+type registrations = {
+  onBlockByChainId: dict<array<Internal.onBlockConfig>>,
+  onProgress: array<Internal.onProgress>,
+}
 
 let startRegistration: (~ecosystem: Ecosystem.t) => unit
 let isPendingRegistration: unit => bool
@@ -36,3 +39,5 @@ let registerOnBlock: (
   ~endBlock: option<int>,
   ~handler: Internal.onBlockArgs => promise<unit>,
 ) => unit
+
+let registerOnProgress: Internal.onProgress => unit

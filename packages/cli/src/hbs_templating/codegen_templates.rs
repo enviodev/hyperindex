@@ -1385,6 +1385,8 @@ type indexer = {{
     Envio.onBlockOptions<indexerChain>,
     {on_block_handler_type},
   ) => unit,
+  /** Register a callback fired after every committed batch write, once per progressed chain. */
+  onProgress: (Envio.onProgressArgs => promise<unit>) => unit,
 }}"#
             ),
             Ecosystem::Svm => format!(
@@ -1403,6 +1405,8 @@ type indexer = {{
     Envio.onBlockOptions<indexerChain>,
     {on_block_handler_type},
   ) => unit,
+  /** Register a callback fired after every committed batch write, once per progressed chain. */
+  onProgress: (Envio.onProgressArgs => promise<unit>) => unit,
 }}"#
             ),
         };

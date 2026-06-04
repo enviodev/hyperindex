@@ -59,6 +59,17 @@ type logger = {
   errorWithExn: (string, exn) => unit,
 }
 
+type onProgressContext = {
+  log: logger,
+  chain: Internal.chainInfo,
+}
+
+type onProgressArgs = {
+  context: onProgressContext,
+  // Present only when the committed write rolled a chain back on reorg.
+  rollbackToBlock?: int,
+}
+
 @@warning("-30") // Duplicated type names (input)
 type rec effect<'input, 'output>
 @unboxed

@@ -1194,6 +1194,31 @@ type SingleEcosystemChains<Config extends IndexerConfigTypes = GlobalConfig> =
     ? SvmEcosystem<Config>
     : CodegenRequiredFallback;
 
+/** Context passed to `indexer.onProgress` callbacks. Exposes only the logger
+ * and chain — the same `chain` shape as handler contexts, without entity
+ * operations or effects. */
+export type OnProgressContext = {
+  /** Access the logger instance. */
+  readonly log: Logger;
+  /** Chain whose progress was just committed. */
+  readonly chain: {
+    readonly id: number;
+    readonly isRealtime: boolean;
+  };
+};
+
+/** Argument passed to an `indexer.onProgress` callback. Fired after each
+ * committed batch write, once per progressed chain. */
+export type OnProgressArgs = {
+  readonly context: OnProgressContext;
+  /** The block the chain was rolled back to. Present only when the committed
+   * write contained a reorg rollback for this chain. */
+  readonly rollbackToBlock?: number;
+};
+
+/** Callback registered via `indexer.onProgress`. */
+export type OnProgressCallback = (args: OnProgressArgs) => Promise<void>;
+
 /** Indexer type resolved from config. */
 export type IndexerFromConfig<Config extends IndexerConfigTypes = GlobalConfig> = Prettify<
   {
@@ -1201,6 +1226,11 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes = GlobalConfig> 
     readonly name: string;
     /** The indexer description from config.yaml. */
     readonly description: string | undefined;
+    /** Register a callback fired after every committed batch write, once per
+     * progressed chain. `rollbackToBlock` is set when the write contained a
+     * reorg rollback. With multiple chains in one write, the callback fires for
+     * each chain in parallel. */
+    readonly onProgress: (callback: OnProgressCallback) => void;
   } & SingleEcosystemChains<Config>
 >;
 

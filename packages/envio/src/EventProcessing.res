@@ -121,7 +121,8 @@ let runHandlerOrThrow = async (
         }),
       )
     }
-  | Event({eventConfig}) => switch eventConfig.handler {
+  | Event({eventConfig}) =>
+    switch eventConfig.handler {
     | Some(handler) =>
       await item->runEventHandlerOrThrow(
         ~handler,
@@ -318,7 +319,7 @@ let processEventBatch = async (
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    inMemoryStore->InMemoryStore.commitBatch(~batch)
+    inMemoryStore->InMemoryStore.commitBatch(~batch, ~chains)
 
     let loaderDuration = elapsedTimeAfterLoaders
     let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration

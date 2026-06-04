@@ -319,6 +319,17 @@ type handlerArgs = {
 }
 type handler = genericHandler<handlerArgs>
 
+// The concrete shape (`{log, chain}`) lives in `Envio.res` / codegen so it can
+// reference both `chainInfo` and the user logger. Kept abstract here to avoid a
+// dependency cycle with `Envio`; the runtime casts into it.
+type onProgressContext
+type onProgressArgs = {
+  context: onProgressContext,
+  // Present only when the committed write rolled a chain back on reorg.
+  rollbackToBlock?: int,
+}
+type onProgress = onProgressArgs => promise<unit>
+
 type genericHandlerWithLoader<'loader, 'handler, 'where> = {
   loader: 'loader,
   handler: 'handler,
