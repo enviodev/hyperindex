@@ -146,9 +146,14 @@ pub struct StartArgs {
 
 #[derive(Debug, Args)]
 pub struct MetricsArgs {
-    ///Fetch runtime metrics from the /metrics/runtime endpoint instead of /metrics
-    #[arg(long, action)]
-    pub runtime: bool,
+    #[command(subcommand)]
+    pub subcommand: Option<MetricsSubcommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MetricsSubcommand {
+    ///Fetch runtime metrics from the running indexer's /metrics/runtime endpoint
+    Runtime,
 }
 
 #[derive(Debug, Subcommand)]
