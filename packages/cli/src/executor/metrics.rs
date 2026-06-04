@@ -13,9 +13,14 @@ fn resolve_port() -> Result<u16> {
     }
 }
 
-pub async fn run() -> Result<()> {
+pub async fn run(runtime: bool) -> Result<()> {
     let port = resolve_port()?;
-    let url = format!("http://127.0.0.1:{port}/metrics");
+    let path = if runtime {
+        "/metrics/runtime"
+    } else {
+        "/metrics"
+    };
+    let url = format!("http://127.0.0.1:{port}{path}");
 
     let client = reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
