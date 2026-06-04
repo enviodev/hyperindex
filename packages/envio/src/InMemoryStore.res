@@ -359,6 +359,11 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
     )
 
     inMemoryStore.committedCheckpointId = upToCheckpointId
+
+    switch rollback {
+    | Some(_) => await RollbackCommit.fire()
+    | None => ()
+    }
   }
 }
 

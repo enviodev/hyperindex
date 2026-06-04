@@ -312,6 +312,13 @@ let getGlobalIndexer = (): 'indexer => {
     )
   }
 
+  let onRollbackCommitFn = (callback: 'a) => {
+    HandlerRegister.throwIfFinishedRegistration(
+      ~methodName="~internalAndWillBeRemovedSoon_onRollbackCommit",
+    )
+    let _ = RollbackCommit.register(callback->(Utils.magic: 'a => RollbackCommit.callback))
+  }
+
   // Two-stage parse: first the ecosystem-specific outer schema unwraps the
   // wrapper (`block.number` / `block.height` / `slot`) and surfaces the
   // inner chunk as raw `unknown`; then the shared `blockRangeSchema`
@@ -453,8 +460,16 @@ let getGlobalIndexer = (): 'indexer => {
             "onEvent",
             "contractRegister",
             "onBlock",
+            "~internalAndWillBeRemovedSoon_onRollbackCommit",
           ]
-        | Svm => ["name", "description", "chainIds", "chains", "onSlot"]
+        | Svm => [
+            "name",
+            "description",
+            "chainIds",
+            "chains",
+            "onSlot",
+            "~internalAndWillBeRemovedSoon_onRollbackCommit",
+          ]
         }
         keysMemo := Some(keys)
         keys
@@ -477,6 +492,7 @@ let getGlobalIndexer = (): 'indexer => {
     | "onEvent" => onEventFn->Utils.magic
     | "contractRegister" => contractRegisterFn->Utils.magic
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
+    | "~internalAndWillBeRemovedSoon_onRollbackCommit" => onRollbackCommitFn->Utils.magic
     | _ =>
       JsError.throwWithMessage(
         `Field \`${prop}\` does not exist on \`indexer\`. Available fields: ${getKeys()->Array.join(
