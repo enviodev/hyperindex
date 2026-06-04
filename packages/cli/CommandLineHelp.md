@@ -29,6 +29,7 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
 * [`envio start`↴](#envio-start)
 * [`envio metrics`↴](#envio-metrics)
+* [`envio metrics runtime`↴](#envio-metrics-runtime)
 * [`envio skills`↴](#envio-skills)
 * [`envio skills update`↴](#envio-skills-update)
 * [`envio tools`↴](#envio-tools)
@@ -377,7 +378,19 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 
 Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 
-**Usage:** `envio metrics`
+**Usage:** `envio metrics [COMMAND]`
+
+###### **Subcommands:**
+
+* `runtime` — Fetch runtime metrics from the running indexer's /metrics/runtime endpoint
+
+
+
+## `envio metrics runtime`
+
+Fetch runtime metrics from the running indexer's /metrics/runtime endpoint
+
+**Usage:** `envio metrics runtime`
 
 
 
