@@ -1155,12 +1155,11 @@ let injectedTaskReducer = (
         // computing the rollback diff against it.
         await state.ctx.inMemoryStore->InMemoryStore.flush
 
-        RollbackCommit.setPending(newProgressBlockNumberPerChain)
-
         let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(
           ~persistence=state.ctx.persistence,
           ~rollbackTargetCheckpointId,
           ~rollbackDiffCheckpointId=state.ctx.inMemoryStore.committedCheckpointId->BigInt.add(1n),
+          ~progressBlockNumberByChainId=newProgressBlockNumberPerChain,
         )
 
         let chainManager = {
