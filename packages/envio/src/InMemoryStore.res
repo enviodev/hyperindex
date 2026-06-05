@@ -124,10 +124,19 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   }
 }
 
-let getEffectOutput = (inMemTable: effectCacheInMemTable, key) =>
+let hasEffectOutput = (inMemTable: effectCacheInMemTable, key) =>
   switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
-  | Some(Set({entity: output})) => Some(output)
-  | Some(Delete(_)) | None => None
+  | Some(Set(_)) => true
+  | Some(Delete(_)) | None => false
+  }
+
+// Returns the raw output. The output is itself an option for effects with an
+// optional output, so it must never be wrapped in another option here: Some(None)
+// is encoded as the nested-option sentinel and would leak to the handler.
+let getEffectOutputUnsafe = (inMemTable: effectCacheInMemTable, key): Internal.effectOutput =>
+  switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
+  | Some(Set({entity: output})) => output
+  | Some(Delete(_)) | None => %raw(`undefined`)
   }
 
 // Records a handler output. Persisted on the next write only when shouldCache;

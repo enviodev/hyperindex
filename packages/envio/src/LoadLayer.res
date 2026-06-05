@@ -336,8 +336,8 @@ let loadEffect = (
     ~load,
     ~shouldGroup,
     ~hasher=args => args.cacheKey,
-    ~getUnsafeInMemory=hash => inMemTable->InMemoryStore.getEffectOutput(hash)->Option.getUnsafe,
-    ~hasInMemory=hash => inMemTable->InMemoryStore.getEffectOutput(hash)->Option.isSome,
+    ~getUnsafeInMemory=hash => inMemTable->InMemoryStore.getEffectOutputUnsafe(hash),
+    ~hasInMemory=hash => inMemTable->InMemoryStore.hasEffectOutput(hash),
     ~input=effectArgs,
   )
 }
