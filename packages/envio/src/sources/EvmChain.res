@@ -41,25 +41,18 @@ let getSyncConfig = (
 let collectEventParams = (contracts: array<Internal.evmContractConfig>): array<
   HyperSyncClient.Decoder.eventParamsInput,
 > => {
-  let seen = Dict.make()
   let result = []
   contracts->Array.forEach(contract => {
     contract.events->Array.forEach(event => {
-      let key = event.sighash ++ "_" ++ event.topicCount->Int.toString
-      switch seen->Dict.get(key) {
-      | Some(_) => ()
-      | None => {
-          seen->Dict.set(key, true)
-          result
-          ->Array.push({
-            HyperSyncClient.Decoder.sighash: event.sighash,
-            topicCount: event.topicCount,
-            eventName: event.name,
-            params: event.paramsMetadata,
-          })
-          ->ignore
-        }
-      }
+      result
+      ->Array.push({
+        HyperSyncClient.Decoder.sighash: event.sighash,
+        topicCount: event.topicCount,
+        eventName: event.name,
+        contractName: contract.name,
+        params: event.paramsMetadata,
+      })
+      ->ignore
     })
   })
   result

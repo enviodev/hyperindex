@@ -1115,7 +1115,7 @@ let make = (
     ->Array.zip(parsedEvents)
     ->Array.filterMap(((
       log: Rpc.GetLogs.log,
-      maybeDecodedEvent: Nullable.t<Internal.eventParams>,
+      maybeDecodedEvent: Nullable.t<dict<Internal.eventParams>>,
     )) => {
       let topic0 = log.topics[0]->Option.getOr("0x0")
       let routedAddress = if lowercaseAddresses {
@@ -1132,8 +1132,10 @@ let make = (
       ) {
       | None => None
       | Some(eventConfig) =>
-        switch maybeDecodedEvent {
-        | Value(decoded) =>
+        switch maybeDecodedEvent
+        ->Nullable.toOption
+        ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
+        | Some(decoded) =>
           Some(
             (
               async () => {
@@ -1176,7 +1178,7 @@ let make = (
               }
             )(),
           )
-        | Null | Undefined => None
+        | None => None
         }
       }
     })

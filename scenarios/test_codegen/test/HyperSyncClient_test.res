@@ -19,6 +19,7 @@ let transferEventParam: HyperSyncClient.Decoder.eventParamsInput = {
   sighash: transferSighash,
   topicCount: 3,
   eventName: "Transfer",
+  contractName: "ERC20",
   params: transferParams,
 }
 
@@ -76,8 +77,11 @@ describe("HyperSync client getEventItems (live)", () => {
       }),
       "everyParamsDecoded": res.items->Array.every(item =>
         switch item.params->Nullable.toOption {
-        | Some(p) =>
-          let obj = p->(Utils.magic: Internal.eventParams => {..})
+        | Some(paramsByContractName) =>
+          let obj =
+            paramsByContractName
+            ->Dict.getUnsafe("ERC20")
+            ->(Utils.magic: Internal.eventParams => {..})
           obj["from"]->typeof == #string &&
           obj["to"]->typeof == #string &&
           obj["value"]->typeof == #bigint
@@ -114,6 +118,7 @@ describe("HyperSync client getEventItems (live)", () => {
       sighash: "0x0000000000000000000000000000000000000000000000000000000000000001",
       topicCount: 1,
       eventName: "Unrelated",
+      contractName: "Unrelated",
       params: [],
     }
     let client = makeClient(~eventParams=[unrelatedEventParam])

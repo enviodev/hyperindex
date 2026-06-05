@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use alloy_dyn_abi::DecodedEvent;
 use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
@@ -11,13 +12,58 @@ use crate::hypersync_source::{
     types::{sol_value_to_param, Event, EventParamsInput, Log, ParamMeta, ParamValue},
 };
 
-type MetaKey = ([u8; 32], u8);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct MetaKey {
+    sighash: [u8; 32],
+    topic_count: u8,
+}
+
+impl MetaKey {
+    fn parse(sighash: &str, topic_count: i32) -> Result<Self> {
+        let bytes = LogArgument::decode_hex(sighash).context("decode sighash hex")?;
+        let topic_count: u8 = u8::try_from(topic_count).context("topic_count out of u8 range")?;
+        anyhow::ensure!(
+            (1..=4).contains(&topic_count),
+            "topic_count must be 1..=4, got {topic_count}",
+        );
+        Ok(Self {
+            sighash: **bytes,
+            topic_count,
+        })
+    }
+
+    fn from_topics(topics: &[Option<LogArgument>]) -> Result<Self> {
+        let topic0 = topics
+            .first()
+            .context("get topic0")?
+            .as_ref()
+            .context("topic0 is null")?;
+        let topic_count: u8 = topics
+            .iter()
+            .rposition(|t| t.is_some())
+            .map_or(0, |i| i + 1)
+            .try_into()
+            .context("topic_count overflow")?;
+        Ok(Self {
+            sighash: ***topic0,
+            topic_count,
+        })
+    }
+}
+
+/// One contract's naming for an event. Several contracts collapse to the same
+/// `MetaKey` when they emit the same-signature event; the positional decode is
+/// shared, the param names are not.
+struct EventVariant {
+    contract_name: String,
+    params: Vec<ParamMeta>,
+}
 
 #[derive(Clone)]
 pub(crate) struct DecoderCore {
     inner: Arc<hypersync_client::Decoder>,
     checksummed_addresses: bool,
-    param_meta: Arc<HashMap<MetaKey, Vec<ParamMeta>>>,
+    variants: Arc<HashMap<MetaKey, Vec<EventVariant>>>,
 }
 
 impl DecoderCore {
@@ -25,25 +71,37 @@ impl DecoderCore {
         event_params: Vec<EventParamsInput>,
         checksum_addresses: bool,
     ) -> Result<Self> {
-        let signatures: Vec<String> = event_params
-            .iter()
-            .map(|ep| reconstruct_signature(&ep.event_name, &ep.params))
-            .collect();
-
-        let inner = hypersync_client::Decoder::from_signatures(&signatures)
-            .context("create inner decoder")?;
-
-        let mut param_meta: HashMap<MetaKey, Vec<ParamMeta>> = HashMap::new();
+        let mut variants: HashMap<MetaKey, Vec<EventVariant>> = HashMap::new();
+        // The inner decoder is itself keyed by (topic0, topic count) — the same
+        // MetaKey — so it can hold only one decode per key. Contracts that share
+        // a key reuse that single positional decode and only layer on their own
+        // names, so we feed the inner decoder one signature per key. Two events
+        // sharing a MetaKey but indexing different params (same type list, same
+        // indexed count, different positions) can't be told apart at this layer
+        // regardless — `from_signatures` would collapse them too — so the first
+        // variant's layout wins; `apply_names` then keys names off each variant.
+        let mut signatures: HashMap<MetaKey, String> = HashMap::new();
         for ep in event_params {
-            let key = parse_meta_key(&ep.sighash, ep.topic_count)
+            let key = MetaKey::parse(&ep.sighash, ep.topic_count)
                 .with_context(|| format!("parse meta key for {}", ep.event_name))?;
-            param_meta.insert(key, ep.params);
+            signatures
+                .entry(key)
+                .or_insert_with(|| reconstruct_signature(&ep.event_name, &ep.params));
+            variants.entry(key).or_default().push(EventVariant {
+                contract_name: ep.contract_name,
+                params: ep.params,
+            });
         }
+
+        let inner = hypersync_client::Decoder::from_signatures(
+            &signatures.into_values().collect::<Vec<_>>(),
+        )
+        .context("create inner decoder")?;
 
         Ok(Self {
             inner: Arc::new(inner),
             checksummed_addresses: checksum_addresses,
-            param_meta: Arc::new(param_meta),
+            variants: Arc::new(variants),
         })
     }
 
@@ -88,24 +146,36 @@ impl DecoderCore {
             None => return Ok(None),
         };
 
-        let topic_count: u8 = topics
-            .iter()
-            .rposition(|t| t.is_some())
-            .map_or(0, |i| i + 1)
-            .try_into()
-            .context("topic_count overflow")?;
-        let key: MetaKey = (***topic0, topic_count);
-
-        let params = match self.param_meta.get(&key) {
-            Some(p) => p,
+        let variants = match self.variants.get(&MetaKey::from_topics(topics)?) {
+            Some(v) => v,
             None => return Ok(None),
         };
 
-        let mut fields = Vec::with_capacity(params.len());
-        let mut indexed_idx = 0;
-        let mut body_idx = 0;
+        // Same log, one decode, named once per contract. JS routes by address
+        // and then picks `params[contractName]`, so two contracts that share a
+        // signature but name their params differently each get their own names.
+        let by_contract = variants
+            .iter()
+            .map(|variant| {
+                let fields = apply_names(&decoded, &variant.params, self.checksummed_addresses)?;
+                Ok((variant.contract_name.clone(), ParamValue::Obj(fields)))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        for param in params {
+        Ok(Some(ParamValue::Obj(by_contract)))
+    }
+}
+
+fn apply_names(
+    decoded: &DecodedEvent,
+    params: &[ParamMeta],
+    checksummed_addresses: bool,
+) -> Result<Vec<(String, ParamValue)>> {
+    let mut indexed_idx = 0;
+    let mut body_idx = 0;
+    params
+        .iter()
+        .map(|param| {
             let sol_value = if param.indexed {
                 let v = decoded
                     .indexed
@@ -123,27 +193,14 @@ impl DecoderCore {
                 body_idx += 1;
                 v
             };
-
             let value = sol_value_to_param(
                 sol_value,
                 param.components.as_deref(),
-                self.checksummed_addresses,
+                checksummed_addresses,
             );
-            fields.push((param.name.clone(), value));
-        }
-
-        Ok(Some(ParamValue::Obj(fields)))
-    }
-}
-
-fn parse_meta_key(sighash: &str, topic_count: i32) -> Result<MetaKey> {
-    let bytes = LogArgument::decode_hex(sighash).context("decode sighash hex")?;
-    let count: u8 = u8::try_from(topic_count).context("topic_count out of u8 range")?;
-    anyhow::ensure!(
-        (1..=4).contains(&count),
-        "topic_count must be 1..=4, got {count}",
-    );
-    Ok((**bytes, count))
+            Ok((param.name.clone(), value))
+        })
+        .collect()
 }
 
 fn reconstruct_signature(event_name: &str, params: &[ParamMeta]) -> String {
@@ -202,19 +259,19 @@ mod tests {
 
     #[test]
     fn parse_meta_key_rejects_zero_topics() {
-        let err = parse_meta_key(VALID_SIGHASH, 0).unwrap_err();
+        let err = MetaKey::parse(VALID_SIGHASH, 0).unwrap_err();
         assert!(format!("{err}").contains("topic_count must be 1..=4"));
     }
 
     #[test]
     fn parse_meta_key_rejects_five_topics() {
-        let err = parse_meta_key(VALID_SIGHASH, 5).unwrap_err();
+        let err = MetaKey::parse(VALID_SIGHASH, 5).unwrap_err();
         assert!(format!("{err}").contains("topic_count must be 1..=4"));
     }
 
     #[test]
     fn parse_meta_key_accepts_boundary_values() {
-        assert!(parse_meta_key(VALID_SIGHASH, 1).is_ok());
-        assert!(parse_meta_key(VALID_SIGHASH, 4).is_ok());
+        assert!(MetaKey::parse(VALID_SIGHASH, 1).is_ok());
+        assert!(MetaKey::parse(VALID_SIGHASH, 4).is_ok());
     }
 }

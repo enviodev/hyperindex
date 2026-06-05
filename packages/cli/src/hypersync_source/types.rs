@@ -472,6 +472,7 @@ pub struct EventParamsInput {
     pub sighash: String,
     pub topic_count: i32,
     pub event_name: String,
+    pub contract_name: String,
     pub params: Vec<ParamMeta>,
 }
 
