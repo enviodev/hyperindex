@@ -351,26 +351,23 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ~blockNumber=item.block.number->Belt.Option.getUnsafe,
         )
 
-      switch (maybeEventConfig, item.params) {
-      | (Some(eventConfig), Value(paramsByContractName)) =>
-        parsedQueueItems
-        ->Array.push(
-          makeEventBatchQueueItem(
-            item,
-            ~params=paramsByContractName->Dict.getUnsafe(eventConfig.contractName),
+      switch maybeEventConfig {
+      | None => () //ignore events that aren't registered
+      | Some(eventConfig) =>
+        switch item.params
+        ->Nullable.toOption
+        ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
+        | Some(params) =>
+          parsedQueueItems->Array.push(makeEventBatchQueueItem(item, ~params, ~eventConfig))->ignore
+        | None =>
+          handleDecodeFailure(
             ~eventConfig,
-          ),
-        )
-        ->ignore
-      | (Some(eventConfig), Null | Undefined) =>
-        handleDecodeFailure(
-          ~eventConfig,
-          ~logIndex=item.logIndex,
-          ~blockNumber=item.block.number->Belt.Option.getUnsafe,
-          ~chainId,
-          ~exn=UndefinedValue,
-        )
-      | (None, _) => () //ignore events that aren't registered
+            ~logIndex=item.logIndex,
+            ~blockNumber=item.block.number->Belt.Option.getUnsafe,
+            ~chainId,
+            ~exn=UndefinedValue,
+          )
+        }
       }
     })
 

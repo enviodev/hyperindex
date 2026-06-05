@@ -72,9 +72,14 @@ impl DecoderCore {
         checksum_addresses: bool,
     ) -> Result<Self> {
         let mut variants: HashMap<MetaKey, Vec<EventVariant>> = HashMap::new();
-        // The inner decoder matches purely on types + indexed layout, so one
-        // signature per `MetaKey` is enough — extra contracts sharing it only
-        // add naming variants, never a new decode.
+        // The inner decoder is itself keyed by (topic0, topic count) — the same
+        // MetaKey — so it can hold only one decode per key. Contracts that share
+        // a key reuse that single positional decode and only layer on their own
+        // names, so we feed the inner decoder one signature per key. Two events
+        // sharing a MetaKey but indexing different params (same type list, same
+        // indexed count, different positions) can't be told apart at this layer
+        // regardless — `from_signatures` would collapse them too — so the first
+        // variant's layout wins; `apply_names` then keys names off each variant.
         let mut signatures: HashMap<MetaKey, String> = HashMap::new();
         for ep in event_params {
             let key = MetaKey::parse(&ep.sighash, ep.topic_count)

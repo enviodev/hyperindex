@@ -1132,9 +1132,10 @@ let make = (
       ) {
       | None => None
       | Some(eventConfig) =>
-        switch maybeDecodedEvent {
-        | Value(paramsByContractName) =>
-          let decoded = paramsByContractName->Dict.getUnsafe(eventConfig.contractName)
+        switch maybeDecodedEvent
+        ->Nullable.toOption
+        ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
+        | Some(decoded) =>
           Some(
             (
               async () => {
@@ -1177,7 +1178,7 @@ let make = (
               }
             )(),
           )
-        | Null | Undefined => None
+        | None => None
         }
       }
     })
