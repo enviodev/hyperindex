@@ -69,6 +69,7 @@ let pairCreatedEventParams: HyperSyncClient.Decoder.eventParamsInput = {
   sighash: pairCreatedTopic0,
   topicCount: 3,
   eventName: "PairCreated",
+  contractName: "UniswapV2Factory",
   params: pairCreatedAbi,
 }
 

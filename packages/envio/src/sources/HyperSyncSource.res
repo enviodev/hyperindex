@@ -352,9 +352,15 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         )
 
       switch (maybeEventConfig, item.params) {
-      | (Some(eventConfig), Value(decoded)) =>
+      | (Some(eventConfig), Value(paramsByContractName)) =>
         parsedQueueItems
-        ->Array.push(makeEventBatchQueueItem(item, ~params=decoded, ~eventConfig))
+        ->Array.push(
+          makeEventBatchQueueItem(
+            item,
+            ~params=paramsByContractName->Dict.getUnsafe(eventConfig.contractName),
+            ~eventConfig,
+          ),
+        )
         ->ignore
       | (Some(eventConfig), Null | Undefined) =>
         handleDecodeFailure(

@@ -65,19 +65,24 @@ let transferLog = makeEvent(
 )
 
 describe("Same-signature event across contracts with different param names", () => {
-  Async.it("decodes TokenB's Transfer under TokenB's own param names", async t => {
+  Async.it("decodes the shared Transfer under each contract's own param names", async t => {
     // Full production path: collect the decoder inputs for both contracts,
-    // build the native decoder, decode a Transfer log emitted by TokenB.
+    // build the native decoder, decode the shared Transfer log. The decoder
+    // returns params keyed by contract name so each contract's router can pick
+    // its own names instead of the first-registered contract's.
     let allEventParams = EvmChain.collectEventParams([tokenA, tokenB])
     let decoder = HyperSyncClient.Decoder.fromParams(allEventParams)
 
     let decoded = await decoder.decodeLogs([transferLog])
-    let params = decoded[0]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
+    let paramsByContractName = decoded[0]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
 
-    // TokenB's handler reads `src`/`dst`/`wad`. `collectEventParams` dedupes by
-    // (sighash, topicCount) first-contract-wins, so only TokenA's metadata
-    // reaches the native decoder and TokenB's params decode as `from/to/value`,
-    // leaving the handler's reads undefined.
-    t.expect(params).toEqual({"src": fromAddr, "dst": toAddr, "wad": value}->Utils.magic)
+    t
+    .expect(paramsByContractName)
+    .toEqual(
+      {
+        "TokenA": {"from": fromAddr, "to": toAddr, "value": value},
+        "TokenB": {"src": fromAddr, "dst": toAddr, "wad": value},
+      }->Utils.magic,
+    )
   })
 })

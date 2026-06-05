@@ -28,9 +28,15 @@ let decodeSingle = async (
     `event ${eventName}(${params->Array.map(p => p.indexed ? `${p.abiType} indexed` : p.abiType)->Array.joinUnsafe(", ")})`,
   )
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
-  let decoder = HyperSyncClient.Decoder.fromParams([{sighash, topicCount, eventName, params}])
+  let decoder = HyperSyncClient.Decoder.fromParams([
+    {sighash, topicCount, eventName, contractName: "TestContract", params},
+  ])
   let decoded = await decoder.decodeLogs([event])
-  decoded[0]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
+  decoded[0]
+  ->Option.getUnsafe
+  ->Nullable.toOption
+  ->Option.getUnsafe
+  ->Dict.getUnsafe("TestContract")
 }
 
 let allIndexedLog = makeEvent(
@@ -58,6 +64,7 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
         sighash,
         topicCount: 4,
         eventName: "Transfer",
+        contractName: "TestContract",
         params: [
           {name: "from", abiType: "address", indexed: true},
           {name: "to", abiType: "address", indexed: true},
@@ -68,6 +75,7 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
         sighash,
         topicCount: 1,
         eventName: "Transfer",
+        contractName: "TestContract",
         params: [
           {name: "from", abiType: "address", indexed: false},
           {name: "to", abiType: "address", indexed: false},
@@ -78,8 +86,10 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
 
     let decoded = await decoder.decodeLogs([allIndexedLog, noneIndexedLog])
 
-    let paramsAll = decoded[0]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
-    let paramsNone = decoded[1]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
+    let pick = i =>
+      decoded[i]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe->Dict.getUnsafe("TestContract")
+    let paramsAll = pick(0)
+    let paramsNone = pick(1)
 
     let expected = {"from": fromAddr, "to": toAddr, "value": value}->Utils.magic
     t.expect(paramsAll).toEqual(expected)
@@ -116,13 +126,19 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
         sighash: toEventSelector("event Empty()"),
         topicCount: 1,
         eventName: "Empty",
+        contractName: "TestContract",
         params: [],
       },
     ])
     let decoded = await decoder.decodeLogs([
       makeEvent(~topics=[toEventSelector("event Empty()")], ~data="0x"),
     ])
-    let result = decoded[0]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
+    let result =
+      decoded[0]
+      ->Option.getUnsafe
+      ->Nullable.toOption
+      ->Option.getUnsafe
+      ->Dict.getUnsafe("TestContract")
     t.expect(result).toEqual(%raw(`{}`))
   })
 
