@@ -152,7 +152,19 @@ let buildSchemaHandles = (eventConfigs: array<Internal.svmInstructionEventConfig
   descriptorsByProgram
   ->Dict.toArray
   ->Belt.Array.forEach(((programIdString, descriptor)) => {
-    let json = descriptor->(Utils.magic: _ => JSON.t)->JSON.stringify
+    let json =
+      descriptor
+      ->(Utils.magic: {
+        "programId": string,
+        "definedTypes": JSON.t,
+        "instructions": array<{
+          "name": string,
+          "discriminator": string,
+          "accounts": array<string>,
+          "args": JSON.t,
+        }>,
+      } => JSON.t)
+      ->JSON.stringify
     let handle = Core.getAddon().registerProgramSchema(~descriptorJson=json)
     handles->Dict.set(programIdString, handle)
   })
@@ -506,10 +518,10 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     })
 
     let parsingTimeElapsed = parsingRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-    let heighestSlot = resp.nextSlot - 1
+    let highestSlot = resp.nextSlot - 1
     let latestBlockTime =
       blockTimeBySlot
-      ->Utils.Dict.dangerouslyGetNonOption(heighestSlot->Int.toString)
+      ->Utils.Dict.dangerouslyGetNonOption(highestSlot->Int.toString)
       ->Option.getOr(0)
 
     let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
@@ -517,7 +529,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     {
       latestFetchedBlockTimestamp: latestBlockTime,
       parsedQueueItems,
-      latestFetchedBlockNumber: heighestSlot,
+      latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
       // No-op reorg detection for SVM: finalized commitment + extremely rare
