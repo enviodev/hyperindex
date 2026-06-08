@@ -1,7 +1,5 @@
 open Source
 
-exception EventRoutingFailed
-
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
@@ -504,7 +502,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
         ->Array.push(
           Internal.Event({
             eventConfig: (eventConfig :> Internal.eventConfig),
-            timestamp: 0,
+            timestamp: blockTime->Option.getOr(0),
             chain,
             blockNumber: instr.slot,
             logIndex: synthLogIndex(instr),
