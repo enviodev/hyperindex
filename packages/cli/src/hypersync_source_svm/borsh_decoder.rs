@@ -14,7 +14,7 @@
 //! lifetime puzzle.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -63,6 +63,15 @@ fn registry() -> &'static Mutex<Vec<Arc<UpstreamSchema>>> {
     REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+/// Lock the registry, recovering the guard if a prior holder panicked. The
+/// critical sections only push/read `Arc`s, so a poisoned lock can't leave the
+/// registry torn — recover rather than crash the indexer worker.
+fn lock_registry() -> MutexGuard<'static, Vec<Arc<UpstreamSchema>>> {
+    registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Register a program's Borsh schema. Returns a stable index the runtime
 /// hands back to `decode_instruction`. Indices are append-only; the registry
 /// is not cleared between indexer restarts within the same node process.
@@ -77,9 +86,7 @@ pub fn register_program_schema(descriptor_json: String) -> napi::Result<u32> {
         .context("build program schema")
         .map_err(super::map_err)?;
 
-    let mut guard = registry()
-        .lock()
-        .expect("schema registry mutex poisoned (decoder panicked while holding it)");
+    let mut guard = lock_registry();
     let idx = guard.len() as u32;
     guard.push(Arc::new(schema));
     Ok(idx)
@@ -88,11 +95,7 @@ pub fn register_program_schema(descriptor_json: String) -> napi::Result<u32> {
 /// Look up a registered schema by its handle. `None` when the handle was never
 /// registered (defensive — the runtime always registers before querying).
 pub(crate) fn schema_for_handle(schema_handle: u32) -> Option<Arc<UpstreamSchema>> {
-    registry()
-        .lock()
-        .expect("schema registry mutex poisoned (decoder panicked while holding it)")
-        .get(schema_handle as usize)
-        .map(Arc::clone)
+    lock_registry().get(schema_handle as usize).map(Arc::clone)
 }
 
 /// Decode a raw instruction against a resolved schema. Called inline by the
