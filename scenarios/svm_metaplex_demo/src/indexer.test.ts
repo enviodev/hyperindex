@@ -1,8 +1,8 @@
 // Live E2E test against `solana.hypersync.xyz`. Drives the SVM stack
 // end-to-end: HyperSyncSolanaSource → EventRouter → `indexer.onInstruction`
-// dispatch → entity writes. The slot window is pinned in
-// `config.test.yaml` (selected via `ENVIO_CONFIG`); the live demo's
-// `config.yaml` keeps no `end_block` for continuous tailing.
+// dispatch → entity writes. `config.yaml` interpolates `ENVIO_METAPLEX_END_BLOCK`
+// into `end_block` to pin a finite window here; the live demo leaves it unset
+// for continuous tailing.
 //
 // If this test starts failing for "no instructions returned", first verify
 // the window is still served by HyperSync:
@@ -11,13 +11,14 @@
 //     -d '{"from_slot":417950000,"to_slot":417950500,"instructions":[{"program_id":["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]}]}' \
 //   | wc -c
 // A non-trivial byte count means the window is still indexed.
-process.env.ENVIO_CONFIG = "config.test.yaml";
+const START_SLOT = 417_950_000;
+const END_SLOT = 417_950_500;
+
+// Must be set before importing `envio`: config is loaded and interpolated on use.
+process.env.ENVIO_METAPLEX_END_BLOCK = String(END_SLOT);
 
 import { describe, it, expect } from "vitest";
 import { createTestIndexer } from "envio";
-
-const START_SLOT = 417_950_000;
-const END_SLOT = 417_950_500;
 
 describe("SVM Metaplex indexer (live)", () => {
   it(
