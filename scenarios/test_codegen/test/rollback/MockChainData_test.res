@@ -35,8 +35,8 @@ describe("Check that MockChainData works as expected", () => {
     let hasUniqueBlockHashes =
       mockChainData.blocks
       ->Array.map(block => block.blockHash)
-      ->Belt.HashSet.String.fromArray
-      ->Belt.HashSet.String.size == mockChainData.blocks->Array.length
+      ->Set.fromArray
+      ->Set.size == mockChainData.blocks->Array.length
 
     t.expect(hasUniqueBlockHashes, ~message="block hashes should be unique for each block").toBe(
       true,

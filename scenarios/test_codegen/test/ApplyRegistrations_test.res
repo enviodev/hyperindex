@@ -17,13 +17,13 @@ describe("HandlerLoader.applyRegistrations", () => {
     // `indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, …)`
     // is registered in EventHandlers.ts at module top level.
     let eventConfig = getEvmEventConfig(~contractName="SimpleNft", ~eventName="Transfer")
-    t.expect(eventConfig.handler->Belt.Option.isSome).toBe(true)
+    t.expect(eventConfig.handler->Option.isSome).toBe(true)
   })
 
   it("propagates contractRegister from indexer.contractRegister", t => {
     // `indexer.contractRegister({ contract: "NftFactory", event: "SimpleNftCreated" }, …)`.
     let eventConfig = getEvmEventConfig(~contractName="NftFactory", ~eventName="SimpleNftCreated")
-    t.expect(eventConfig.contractRegister->Belt.Option.isSome).toBe(true)
+    t.expect(eventConfig.contractRegister->Option.isSome).toBe(true)
   })
 
   it("marks wildcard: true registrations as isWildcard", t => {

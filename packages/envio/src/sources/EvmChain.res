@@ -67,7 +67,7 @@ let makeSources = (
 ) => {
   let eventRouter =
     contracts
-    ->Belt.Array.flatMap(contract => contract.events)
+    ->Array.flatMap(contract => contract.events)
     ->EventRouter.fromEvmEventModsOrThrow(~chain)
 
   let allEventParams = collectEventParams(contracts)

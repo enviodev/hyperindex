@@ -15,7 +15,7 @@ module FieldValue = {
     | Int(v) => v->Int.toString
     | BigDecimal(v) => v->BigDecimal.toString
     | Bool(v) => v ? "true" : "false"
-    | Array(v) => `[${v->Belt.Array.joinWith(",", toString)}]`
+    | Array(v) => `[${v->Array.map(toString)->Array.join(",")}]`
     }
 
   //This needs to be a castable type from any type that we

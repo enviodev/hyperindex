@@ -46,7 +46,7 @@ let makeRPCSource = (~chain, ~rpc: string): Source.t => {
   let urlHost = switch Utils.Url.getHostFromUrl(rpc) {
   | None =>
     JsError.throwWithMessage(
-      `The RPC url for chain ${chainId->Belt.Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
+      `The RPC url for chain ${chainId->Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }

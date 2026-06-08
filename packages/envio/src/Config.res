@@ -91,7 +91,7 @@ module EnvioAddresses = {
   let index = -1
 
   let makeId = (~chainId, ~address) => {
-    chainId->Belt.Int.toString ++ "-" ++ address->Address.toString
+    chainId->Int.toString ++ "-" ++ address->Address.toString
   }
 
   type t = {
@@ -849,7 +849,7 @@ let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<int
     | None =>
       chain.contracts
       ->Array.find(c => c.name == contractName)
-      ->Belt.Option.flatMap(contract => contract.events->Array.find(e => e.name == eventName))
+      ->Option.flatMap(contract => contract.events->Array.find(e => e.name == eventName))
     }
   })
 }
@@ -973,7 +973,7 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
         let maxLen = Math.Int.max(sArr->Array.length, cArr->Array.length)
         for i in 0 to maxLen - 1 {
           let p = `${prefix}[${Int.toString(i)}]`
-          switch (sArr->Belt.Array.get(i), cArr->Belt.Array.get(i)) {
+          switch (sArr->Array.get(i), cArr->Array.get(i)) {
           | (None, _) | (_, None) => acc->Array.push(p)->ignore
           | (Some(sv), Some(cv)) => go(sv, cv, p)
           }
@@ -1019,7 +1019,7 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
     switch firstHit {
     | Some(hits) => runTier(hits)
     | None =>
-      let knownSet = Utils.Set.fromArray(tiers->Belt.Array.concatMany)
+      let knownSet = Utils.Set.fromArray(tiers->Array.flat)
       let extras =
         Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
         ->Utils.Set.toArray

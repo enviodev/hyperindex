@@ -53,7 +53,7 @@ let make = (
 ) => {
   let dataByBlockNumber = Dict.make()
 
-  chainReorgCheckpoints->Belt.Array.forEach(block => {
+  chainReorgCheckpoints->Array.forEach(block => {
     dataByBlockNumber->Utils.Dict.setByInt(
       block.blockNumber,
       {
@@ -161,13 +161,13 @@ let getLatestValidScannedBlock = (
 
   let getPrevScannedBlockNumber = idx =>
     ascBlockNumberKeys
-    ->Belt.Array.get(idx - 1)
+    ->Array.get(idx - 1)
     ->Option.map(key => {
       (verifiedDataByBlockNumber->Dict.getUnsafe(key)).blockNumber
     })
 
   let rec loop = idx => {
-    switch ascBlockNumberKeys->Belt.Array.get(idx) {
+    switch ascBlockNumberKeys->Array.get(idx) {
     | Some(blockNumberKey) =>
       switch reorgDetection.dataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(blockNumberKey) {
       | Some(scannedBlock)
@@ -196,7 +196,7 @@ let rollbackToValidBlockNumber = (
   let newDataByBlockNumber = Dict.make()
 
   let rec loop = idx => {
-    switch ascBlockNumberKeys->Belt.Array.get(idx) {
+    switch ascBlockNumberKeys->Array.get(idx) {
     | Some(blockNumberKey) => {
         let scannedBlock = dataByBlockNumber->Dict.getUnsafe(blockNumberKey)
         let shouldKeep = scannedBlock.blockNumber <= blockNumber

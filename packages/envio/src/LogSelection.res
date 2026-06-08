@@ -12,7 +12,7 @@ let makeTopicSelection = (~topic0, ~topic1=[], ~topic2=[], ~topic3=[]) =>
   }
 
 let hasFilters = ({topic1, topic2, topic3}: Internal.topicSelection) => {
-  [topic1, topic2, topic3]->Array.find(topic => !Utils.Array.isEmpty(topic))->Belt.Option.isSome
+  [topic1, topic2, topic3]->Array.find(topic => !Utils.Array.isEmpty(topic))->Option.isSome
 }
 
 /**
@@ -24,11 +24,11 @@ let compressTopicSelections = (topicSelections: array<Internal.topicSelection>) 
 
   let selectionsWithFilters = []
 
-  topicSelections->Belt.Array.forEach(selection => {
+  topicSelections->Array.forEach(selection => {
     if selection->hasFilters {
       selectionsWithFilters->Array.push(selection)->ignore
     } else {
-      selection.topic0->Belt.Array.forEach(topic0 => {
+      selection.topic0->Array.forEach(topic0 => {
         topic0sOfSelectionsWithoutFilters->Array.push(topic0)->ignore
       })
     }
@@ -43,7 +43,7 @@ let compressTopicSelections = (topicSelections: array<Internal.topicSelection>) 
       topic2: [],
       topic3: [],
     }
-    Belt.Array.concat([selectionWithoutFilters], selectionsWithFilters)
+    Array.concat([selectionWithoutFilters], selectionsWithFilters)
   }
 }
 

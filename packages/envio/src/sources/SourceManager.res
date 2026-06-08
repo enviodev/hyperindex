@@ -338,7 +338,7 @@ let getSourceNewHeight = async (
       // that go quiet together don't all start polling at the same instant.
       let half = stallTimeout / 2
       let pollingFallback = Utils.delay(
-        half + (Math.random() *. half->Belt.Int.toFloat)->Belt.Float.toInt,
+        half + (Math.random() *. half->Int.toFloat)->Float.toInt,
       )->Promise.then(async () => {
         logger->Logging.childTrace({
           "msg": "onHeight subscription stale, switching to polling fallback",

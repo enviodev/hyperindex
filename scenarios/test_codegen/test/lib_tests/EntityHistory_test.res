@@ -11,15 +11,15 @@
 //     | Object(obj) =>
 //       obj
 //       ->Js.Dict.keys
-//       ->Belt.Array.forEach(key => {
+//       ->Array.forEach(key => {
 //         let value = obj->Utils.Dict.dangerouslyGetNonOption(key)
 //         if value === %raw(`undefined`) {
 //           obj->Utils.Dict.deleteInPlace(key)
 //         } else {
-//           strip(value->Belt.Option.getExn)
+//           strip(value->Option.getOrThrow)
 //         }
 //       })
-//     | Array(arr) => arr->Belt.Array.forEach(value => strip(value))
+//     | Array(arr) => arr->Array.forEach(value => strip(value))
 //     | _ => ()
 //     }
 //   }
@@ -606,7 +606,7 @@
 //       }
 //       Assert.equal(historyItems->Js.Array2.length, 4, ~message="Should have 4 history items")
 //       Assert.ok(
-//         historyItems->Belt.Array.some(item => item.current.chain_id == 0),
+//         historyItems->Array.some(item => item.current.chain_id == 0),
 //         ~message="Should contain 2 copied items",
 //       )
 //     } catch {
@@ -668,7 +668,7 @@
 //       Assert.equal(historyItems->Js.Array2.length, 2, ~message="Should have the 2 copied items")
 
 //       let allItemsAreZeroChainId =
-//         historyItems->Belt.Array.every(item => item.current.chain_id == 0)
+//         historyItems->Array.every(item => item.current.chain_id == 0)
 
 //       Assert.ok(
 //         allItemsAreZeroChainId,
@@ -776,7 +776,7 @@
 //       }
 //       Assert.equal(historyItems->Js.Array2.length, 6, ~message="Should have 6 history items")
 //       Assert.ok(
-//         !(historyItems->Belt.Array.some(item => item.current.chain_id == 0)),
+//         !(historyItems->Array.some(item => item.current.chain_id == 0)),
 //         ~message="No defaulted/copied values should exist in history",
 //       )
 //     } catch {
@@ -863,7 +863,7 @@
 //     let parsedHistoryItems =
 //       currentHistoryItems->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
 
-//     let expectedHistoryItems = Mocks.historyRows->Belt.Array.slice(~offset=0, ~len=4)
+//     let expectedHistoryItems = Mocks.historyRows->Array.slice(~start=0, ~end=4)
 
 //     Assert.deepEqual(
 //       parsedHistoryItems->stripUndefinedFieldsInPlace,
@@ -884,7 +884,7 @@
 //     let parsedHistoryItems =
 //       currentHistoryItems->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
 
-//     let expectedHistoryItems = Mocks.historyRows->Belt.Array.slice(~offset=0, ~len=5)
+//     let expectedHistoryItems = Mocks.historyRows->Array.slice(~start=0, ~end=5)
 
 //     Assert.deepEqual(
 //       parsedHistoryItems->stripUndefinedFieldsInPlace,
@@ -999,7 +999,7 @@
 //     let rows: array<testEntityHistory> = []
 //     for i in 0 to 1000 {
 //       let mockEntity: TestEntity.t = {
-//         id: i->mod(10)->Belt.Int.toString,
+//         id: i->mod(10)->Int.toString,
 //         fieldA: i,
 //         fieldB: None,
 //       }

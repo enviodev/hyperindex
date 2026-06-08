@@ -54,7 +54,7 @@ let deleteKey: (dict<'value>, string) => unit = (_obj, _k) => %raw(`delete _obj[
 let timeoutAfter = timeoutMillis =>
   Utils.delay(timeoutMillis)->Promise.then(() =>
     Promise.reject(
-      LoaderTimeout(`Query took longer than ${Belt.Int.toString(timeoutMillis / 1000)} seconds`),
+      LoaderTimeout(`Query took longer than ${Int.toString(timeoutMillis / 1000)} seconds`),
     )
   )
 
@@ -67,7 +67,7 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
     // Resolve the external promise
     am.resolvers
     ->Utils.Map.get(k)
-    ->Belt.Option.forEach(r => {
+    ->Option.forEach(r => {
       let _ = am.resolvers->Utils.Map.delete(k)
       r(val)
     })

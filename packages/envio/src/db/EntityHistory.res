@@ -53,7 +53,7 @@ let historyTablePrefix = "envio_history_"
 let historyTableName = (~entityName, ~entityIndex) => {
   let fullName = historyTablePrefix ++ entityName
   if fullName->String.length > maxPgTableNameLength {
-    let entityIndexStr = entityIndex->Belt.Int.toString
+    let entityIndexStr = entityIndex->Int.toString
     fullName->Js.String.slice(~from=0, ~to_=maxPgTableNameLength - entityIndexStr->String.length) ++
       entityIndexStr
   } else {

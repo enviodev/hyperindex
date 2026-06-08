@@ -100,7 +100,7 @@ module GetLogs = {
       }
     }
 
-    topics->Belt.Array.map(toTopicFilter)
+    topics->Array.map(toTopicFilter)
   }
 
   let mapTopicQuery = ({topic0, topic1, topic2, topic3}: Internal.topicSelection): topicQuery =>

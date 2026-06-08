@@ -140,9 +140,9 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~inMemoryStore: InMemoryStor
 
   cm.chainFetchers
   ->ChainMap.values
-  ->Belt.Array.forEach(cf => {
+  ->Array.forEach(cf => {
     chainsData->Dict.set(
-      cf.chainConfig.id->Belt.Int.toString,
+      cf.chainConfig.id->Int.toString,
       {
         firstEventBlockNumber: cf.fetchState.firstEventBlock->Null.fromOption,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
@@ -347,7 +347,7 @@ let validatePartitionQueryResponse = (
   Prometheus.FetchingBlockRange.increment(
     ~chainId=chain->ChainMap.Chain.toChainId,
     ~totalTimeElapsed=stats.totalTimeElapsed,
-    ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0.),
+    ~parsingTimeElapsed=stats.parsingTimeElapsed->Option.getOr(0.),
     ~numEvents=parsedQueueItems->Array.length,
     ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
   )
@@ -686,7 +686,7 @@ let actionReducer = (state: t, action: action) => {
           state.exitAfterFirstEventBlock &&
           state.chainManager.chainFetchers
           ->ChainMap.values
-          ->Array.every(cf => cf.isProgressAtHead && cf.fetchState.endBlock->Belt.Option.isNone)
+          ->Array.every(cf => cf.isProgressAtHead && cf.fetchState.endBlock->Option.isNone)
         ) {
           ExitWithError(
             "No events found between startBlock and chain head. Cannot auto-detect endBlock.",
