@@ -26,8 +26,6 @@ module WriteThrottlers = {
 type t = {
   ctx: Ctx.t,
   chainManager: ChainManager.t,
-  processedBatches: int,
-  currentlyProcessingBatch: bool,
   rollbackState: rollbackState,
   indexerStartTime: Date.t,
   writeThrottlers: WriteThrottlers.t,
@@ -51,8 +49,6 @@ let make = (
 ) => {
   {
     ctx,
-    currentlyProcessingBatch: false,
-    processedBatches: 0,
     chainManager,
     indexerStartTime: Date.make(),
     rollbackState: NoRollback,
@@ -109,7 +105,6 @@ type action =
     })
   | FinishWaitingForNewBlock({chain: chain, knownHeight: int})
   | EventBatchProcessed({batch: Batch.t})
-  | StartProcessingBatch
   | StartFindingReorgDepth
   | FindReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
   | EnterReorgThreshold
@@ -657,14 +652,16 @@ let actionReducer = (state: t, action: action) => {
         ? [PruneStaleEntityHistory]
         : []
 
+    let inMemoryStore = state.ctx.inMemoryStore
+    inMemoryStore.isProcessing = false
+    inMemoryStore.processedBatchesCount = inMemoryStore.processedBatchesCount + 1
+
     let state = {
       ...state,
       // Can safely reset rollback state, since overwrite is not possible.
       // If rollback is pending, the EventBatchProcessed will be handled by the invalid action reducer instead.
       rollbackState: NoRollback,
       chainManager: state.chainManager->updateProgressedChains(~batch, ~ctx=state.ctx),
-      currentlyProcessingBatch: false,
-      processedBatches: state.processedBatches + 1,
     }
 
     let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
@@ -707,7 +704,6 @@ let actionReducer = (state: t, action: action) => {
     }
     (state, tasks)
 
-  | StartProcessingBatch => ({...state, currentlyProcessingBatch: true}, [])
   | StartFindingReorgDepth => ({...state, rollbackState: FindingReorgDepth}, [])
   | FindReorgDepth({chain, rollbackTargetBlockNumber}) => (
       {
@@ -773,12 +769,13 @@ let invalidatedActionReducer = (state: t, action: action) =>
   switch action {
   | EventBatchProcessed({batch}) if state->isPreparingRollback =>
     Logging.info("Finished processing batch before rollback, actioning rollback")
+    let inMemoryStore = state.ctx.inMemoryStore
+    inMemoryStore.isProcessing = false
+    inMemoryStore.processedBatchesCount = inMemoryStore.processedBatchesCount + 1
     (
       {
         ...state,
         chainManager: state.chainManager->updateProgressedChains(~batch, ~ctx=state.ctx),
-        currentlyProcessingBatch: false,
-        processedBatches: state.processedBatches + 1,
       },
       [Rollback],
     )
@@ -919,7 +916,7 @@ let injectedTaskReducer = (
         ->Promise.all
       }
     | ProcessEventBatch =>
-      if !state.currentlyProcessingBatch && !isPreparingRollback(state) {
+      if !state.ctx.inMemoryStore.isProcessing && !isPreparingRollback(state) {
         let isRollbackBatch = switch state.rollbackState {
         | RollbackReady(_) => true
         | _ => false
@@ -966,10 +963,10 @@ let injectedTaskReducer = (
             }
           }
         } else {
-          dispatchAction(StartProcessingBatch)
+          let inMemoryStore = state.ctx.inMemoryStore
+          inMemoryStore.isProcessing = true
           dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
-          let inMemoryStore = state.ctx.inMemoryStore
           inMemoryStore->InMemoryStore.setBatchDcs(~batch)
 
           switch await EventProcessing.processEventBatch(
@@ -1019,7 +1016,7 @@ let injectedTaskReducer = (
       // while we are still finding the reorg depth
       // Do nothing here, just wait for reorg depth to be found
       | {rollbackState: FindingReorgDepth} => ()
-      | {rollbackState: FoundReorgDepth(_), currentlyProcessingBatch: true} =>
+      | {rollbackState: FoundReorgDepth(_)} if state.ctx.inMemoryStore.isProcessing =>
         Logging.info("Waiting for batch to finish processing before executing rollback")
       | {rollbackState: FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber})} =>
         let startTime = Hrtime.makeTimer()

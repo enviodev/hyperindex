@@ -409,20 +409,19 @@ module Indexer = {
     {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
-          let before = (gsManager->GlobalStateManager.getState).processedBatches
+          let before = ctx.inMemoryStore.processedBatchesCount
           // Wait until a new batch is processed and written. A reorg batch can
           // land before this call (e.g. while the test awaits the rollback), so
           // also stop once the indexer has fully settled.
           let idleChecks = ref(0)
           let rec wait = async () => {
             await ctx.inMemoryStore->RealInMemoryStore.flush
-            let state = gsManager->GlobalStateManager.getState
             let store = ctx.inMemoryStore
             let isIdle =
-              !state.currentlyProcessingBatch &&
+              !store.isProcessing &&
               store.writeFiber->Option.isNone &&
               store.committedCheckpointId == store.processedCheckpointId
-            if before < state.processedBatches {
+            if before < store.processedBatchesCount {
               ()
             } else if isIdle && idleChecks.contents >= 5 {
               ()
