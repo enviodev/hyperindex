@@ -560,7 +560,7 @@ let numAddresses = fetchState => fetchState.indexingAddresses->Utils.Dict.size
 // latestOnBlockBlockNumber pointer. targetBufferSize bounds how many items
 // are generated at once to prevent OOM.
 let appendOnBlockItems = (
-  mutItems: array<Internal.item>,
+  ~mutItems: array<Internal.item>,
   ~onBlockConfigs: array<Internal.onBlockConfig>,
   ~indexerStartBlock,
   ~fromBlock,
@@ -654,7 +654,8 @@ let updateInternal = (
       }
       mutItemsRef := Some(mutItems)
 
-      mutItems->appendOnBlockItems(
+      appendOnBlockItems(
+        ~mutItems,
         ~onBlockConfigs,
         ~indexerStartBlock=fetchState.startBlock,
         ~fromBlock=fetchState.latestOnBlockBlockNumber,
@@ -1692,7 +1693,8 @@ let make = (
     | None => knownHeight
     | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock.blockNumber
     }
-    buffer->appendOnBlockItems(
+    appendOnBlockItems(
+      ~mutItems=buffer,
       ~onBlockConfigs,
       ~indexerStartBlock=startBlock,
       ~fromBlock=progressBlockNumber,
