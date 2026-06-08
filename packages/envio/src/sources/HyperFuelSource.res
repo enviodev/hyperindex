@@ -163,7 +163,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
           wildcardLogDataRbs->Array.push(rb)->ignore
         } else {
           switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-          | Some(arr) => arr->Belt.Array.push(rb)
+          | Some(arr) => arr->Array.push(rb)
           | None => nonWildcardLogDataRbsByContract->Dict.set(contractName, [rb])
           }
         }
@@ -420,8 +420,8 @@ let make = ({chain, endpointUrl}: options): t => {
       blockHash: block.id,
     })
 
-    let latestFetchedBlockTimestamp = switch pageUnsafe.items->Belt.Array.get(
-      pageUnsafe.items->Belt.Array.length - 1,
+    let latestFetchedBlockTimestamp = switch pageUnsafe.items->Array.get(
+      pageUnsafe.items->Array.length - 1,
     ) {
     | Some({block}) if block.height == heighestBlockQueried => block.time
     | _ => 0

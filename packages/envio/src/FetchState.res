@@ -336,7 +336,7 @@ module OptimizedPartitions = {
     let _ = newPartitions->Array.sort(ascSortFn)
 
     let partitionsCount = newPartitions->Array.length
-    let idsInAscOrder = Belt.Array.makeUninitializedUnsafe(partitionsCount)
+    let idsInAscOrder = Utils.Array.jsArrayCreate(partitionsCount)
     let entities = Dict.make()
     for idx in 0 to partitionsCount - 1 {
       let p = newPartitions->Array.getUnsafe(idx)
@@ -639,7 +639,7 @@ let updateInternal = (
       let maxBlockNumber = switch switch mutItemsRef.contents {
       | Some(mutItems) => mutItems
       | None => fetchState.buffer
-      }->Belt.Array.get(fetchState.targetBufferSize - 1) {
+      }->Array.get(fetchState.targetBufferSize - 1) {
       | Some(item) => item->Internal.getItemBlockNumber
       | None =>
         switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
@@ -1508,7 +1508,7 @@ let getNextQuery = (
 }
 
 let hasReadyItem = ({buffer} as fetchState: t) => {
-  switch buffer->Belt.Array.get(0) {
+  switch buffer->Array.get(0) {
   | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
   | None => false
   }
@@ -1519,7 +1519,7 @@ let getReadyItemsCount = (fetchState: t, ~targetSize: int, ~fromItem) => {
   let acc = ref(0)
   let isFinished = ref(false)
   while !isFinished.contents {
-    switch fetchState.buffer->Belt.Array.get(fromItem + acc.contents) {
+    switch fetchState.buffer->Array.get(fromItem + acc.contents) {
     | Some(item) =>
       let itemBlockNumber = item->Internal.getItemBlockNumber
       if itemBlockNumber <= readyBlockNumber.contents {
@@ -1951,7 +1951,7 @@ let isReadyToEnterReorgThreshold = ({endBlock, blockLag, buffer, knownHeight} as
 
 let sortForUnorderedBatch = {
   let hasFullBatch = ({buffer} as fetchState: t, ~batchSizeTarget) => {
-    switch buffer->Belt.Array.get(batchSizeTarget - 1) {
+    switch buffer->Array.get(batchSizeTarget - 1) {
     | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
     | None => false
     }
@@ -1966,7 +1966,7 @@ let sortForUnorderedBatch = {
       if totalRange <= 0 {
         0.
       } else {
-        let progress = switch fetchState.buffer->Belt.Array.get(0) {
+        let progress = switch fetchState.buffer->Array.get(0) {
         | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
         | None => fetchState->bufferBlockNumber - firstEventBlock
         }
@@ -2001,7 +2001,7 @@ let sortForUnorderedBatch = {
 
 let getProgressBlockNumberAt = ({buffer} as fetchState: t, ~index) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
-  switch buffer->Belt.Array.get(index) {
+  switch buffer->Array.get(index) {
   | Some(item) if bufferBlockNumber >= item->Internal.getItemBlockNumber =>
     item->Internal.getItemBlockNumber - 1
   | _ => bufferBlockNumber

@@ -25,7 +25,7 @@ Async.it("onSlot-only indexer keeps progressing after a resume", async t => {
   let slots =
     (await indexer.\"SlotPing".getAll())
     ->Array.map(ping => ping.slot)
-    ->Belt.SortArray.Int.stableSort
+    ->Array.toSorted(Int.compare)
 
   t.expect(slots).toEqual([0, 5, 10, 15])
 })

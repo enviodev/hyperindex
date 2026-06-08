@@ -82,7 +82,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
   let rec scheduleReconnect = () => {
     if !isUnsubscribed.contents && errorCount.contents < retryCount {
       let duration =
-        baseDuration * Math.pow(2.0, ~exp=errorCount.contents->Belt.Int.toFloat)->Belt.Float.toInt
+        baseDuration * Math.pow(2.0, ~exp=errorCount.contents->Int.toFloat)->Float.toInt
       let _ = setTimeout(() => {
         if !isUnsubscribed.contents {
           startConnection()

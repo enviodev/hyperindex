@@ -81,7 +81,7 @@ Async.it(
 
     let entities = await indexer.\"SimulateTestEvent".getAll()
     let entities =
-      entities->Belt.SortArray.stableSortBy((a, b) => compare(a.blockNumber, b.blockNumber))
+      entities->Array.toSorted((a, b) => Int.compare(a.blockNumber, b.blockNumber))
     t.expect(entities).toEqual([
       {id: "1_0", blockNumber: 1, logIndex: 0, timestamp: 0},
       {id: "101_0", blockNumber: 101, logIndex: 0, timestamp: 0},

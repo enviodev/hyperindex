@@ -100,7 +100,7 @@ Indexer.indexer.onEvent({event: Indexer.Gravatar(UpdatedGravatar)}, async ({even
   )
 
   let updatesCount =
-    maybeGravatar->Belt.Option.mapWithDefault(BigInt.fromInt(1), gravatar =>
+    maybeGravatar->Option.mapOr(BigInt.fromInt(1), gravatar =>
       gravatar.Indexer.Entities.Gravatar.updatesCount->BigInt.add(BigInt.fromInt(1))
     )
 
@@ -133,7 +133,7 @@ Indexer.indexer.onEvent(
       | Some(a) =>
         let optB = await context.\"B".get(a.b_id)
 
-        switch optB->Belt.Option.flatMap(b => b.c_id) {
+        switch optB->Option.flatMap(b => b.c_id) {
         | Some(c_id) =>
           switch await context.\"C".get(c_id) {
           | Some(cWithText) =>
@@ -171,5 +171,5 @@ Indexer.indexer.onEvent({event: Indexer.Gravatar(EmptyEvent)}, async ({context})
 
   // Log chain state for verification
   let status = context.chain.isRealtime ? "ready (realtime)" : "syncing (historical)"
-  context.log.debug(`Chain ${context.chain.id->Belt.Int.toString} status: ${status}`)
+  context.log.debug(`Chain ${context.chain.id->Int.toString} status: ${status}`)
 })

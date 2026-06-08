@@ -392,7 +392,7 @@ describe("LoadLayer", () => {
       storageMock.loadByFieldOrThrowCalls->Array.length,
       ~message="Should have added Lt operator call",
     ).toEqual(3)
-    t.expect(storageMock.loadByFieldOrThrowCalls->Belt.Array.get(2)).toEqual(
+    t.expect(storageMock.loadByFieldOrThrowCalls->Array.get(2)).toEqual(
       Some({
         "fieldName": "updatesCountOnUserForTesting",
         "fieldValue": 5->Utils.magic,

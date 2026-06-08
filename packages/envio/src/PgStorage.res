@@ -26,7 +26,7 @@ let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
   let indexName = tableName ++ "_" ++ indexFields->Array.joinUnsafe("_")
 
   // Case for indexer before envio@2.28
-  let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Array.joinUnsafe(", ")
+  let index = indexFields->Array.map(idx => `"${idx}"`)->Array.joinUnsafe(", ")
   `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
 }
 
@@ -55,7 +55,7 @@ let makeCreateCompositeIndexQuery = (
     ->Array.joinUnsafe("_")
   let index =
     indexFields
-    ->Belt.Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)
+    ->Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)
     ->Array.joinUnsafe(", ")
   `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
 }
@@ -116,7 +116,7 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
     let cache = {
       let id = "id"
 
-      let dataFields = entityConfig.table.fields->Belt.Array.keepMap(field =>
+      let dataFields = entityConfig.table.fields->Array.filterMap(field =>
         switch field {
         | Field(field) =>
           switch field.fieldName {
@@ -157,7 +157,7 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
       //ignore composite indices
       let table = Table.mkTable(
         historyTableName,
-        ~fields=dataFields->Belt.Array.concat([checkpointIdField, actionField]),
+        ~fields=dataFields->Array.concat([checkpointIdField, actionField]),
       )
 
       let setChangeSchema = EntityHistory.makeSetUpdateSchema(entityConfig.schema)
@@ -698,7 +698,7 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
   )
 
   // Get all field names for the INSERT statement
-  let allHistoryFieldNames = entityConfig.table.fields->Belt.Array.keepMap(fieldOrDerived =>
+  let allHistoryFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
     | Field(field) => field->Table.getDbFieldName->Some
     | DerivedFrom(_) => None
@@ -708,10 +708,10 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
   allHistoryFieldNames->Array.push(EntityHistory.changeFieldName)->ignore
 
   let allHistoryFieldNamesStr =
-    allHistoryFieldNames->Belt.Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
+    allHistoryFieldNames->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
 
   // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
-  let selectParts = allHistoryFieldNames->Belt.Array.map(fieldName => {
+  let selectParts = allHistoryFieldNames->Array.map(fieldName => {
     switch fieldName {
     | field if field == Table.idFieldName => `u.${Table.idFieldName}`
     | field if field == EntityHistory.checkpointIdFieldName =>
@@ -838,7 +838,7 @@ let rec writeBatch = async (
     let specificError = ref(None)
 
     let rawEvents = if config.enableRawEvents {
-      let rows = batch.items->Belt.Array.keepMap(item =>
+      let rows = batch.items->Array.filterMap(item =>
         switch item {
         | Internal.Event(_) => Some(item->Internal.castUnsafeEventItem->makeRawEvent(~config))
         | Internal.Block(_) => None
@@ -869,7 +869,7 @@ let rec writeBatch = async (
       }
     }
 
-    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, changes}) => {
+    let setEntities = updatedEntities->Array.map(({entityConfig, changes}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
@@ -888,10 +888,10 @@ let rec writeBatch = async (
       // history-table batches.
       let latestChangeById = Dict.make()
       let orderedIds = []
-      changes->Belt.Array.forEach(change => {
+      changes->Array.forEach(change => {
         let entityId = change->Change.getEntityId
         if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityId)->Option.isNone {
-          orderedIds->Belt.Array.push(entityId)
+          orderedIds->Array.push(entityId)
         }
         latestChangeById->Dict.set(entityId, change)
         if shouldSaveHistory {
@@ -900,19 +900,19 @@ let rec writeBatch = async (
           } else {
             switch change {
             | Delete({entityId, checkpointId}) =>
-              batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
-              batchDeleteCheckpointIds->Belt.Array.push(checkpointId)->ignore
-            | Set(_) => batchSetUpdates->Belt.Array.push(change)->ignore
+              batchDeleteEntityIds->Array.push(entityId)->ignore
+              batchDeleteCheckpointIds->Array.push(checkpointId)->ignore
+            | Set(_) => batchSetUpdates->Array.push(change)->ignore
             }
           }
         }
       })
 
       let backfillHistoryIds = Utils.Set.make()
-      orderedIds->Belt.Array.forEach(entityId => {
+      orderedIds->Array.forEach(entityId => {
         switch latestChangeById->Dict.getUnsafe(entityId) {
-        | Set({entity}) => entitiesToSet->Belt.Array.push(entity)
-        | Delete({entityId}) => idsToDelete->Belt.Array.push(entityId)
+        | Set({entity}) => entitiesToSet->Array.push(entity)
+        | Delete({entityId}) => idsToDelete->Array.push(entityId)
         }
 
         // An id needs a history backfill iff none of its changes is the diff.
@@ -943,7 +943,7 @@ let rec writeBatch = async (
             }
 
             if batchDeleteCheckpointIds->Utils.Array.notEmpty {
-              promises->Belt.Array.push(
+              promises->Array.push(
                 sql
                 ->Postgres.preparedUnsafe(
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
@@ -986,7 +986,7 @@ let rec writeBatch = async (
             if shouldRemoveInvalidUtf8 {
               entitiesToSet->removeInvalidUtf8InPlace
             }
-            promises->Belt.Array.push(
+            promises->Array.push(
               sql->setOrThrow(
                 ~items=entitiesToSet,
                 ~table=entityConfig.table,
@@ -996,7 +996,7 @@ let rec writeBatch = async (
             )
           }
           if idsToDelete->Utils.Array.notEmpty {
-            promises->Belt.Array.push(
+            promises->Array.push(
               sql->deleteByIdsOrThrow(~pgSchema, ~ids=idsToDelete, ~table=entityConfig.table),
             )
           }
@@ -1066,7 +1066,7 @@ let rec writeBatch = async (
                 }),
               ),
             setRawEvents,
-          ]->Belt.Array.concat(setEntities)
+          ]->Array.concat(setEntities)
 
           switch chainMetaData {
           | Some(chainsData) =>
@@ -1079,7 +1079,7 @@ let rec writeBatch = async (
           }
 
           if shouldSaveHistory {
-            setOperations->Belt.Array.push(sql =>
+            setOperations->Array.push(sql =>
               sql->InternalTable.Checkpoints.insert(
                 ~pgSchema,
                 ~checkpointIds=batch.checkpointIds,
@@ -1092,7 +1092,7 @@ let rec writeBatch = async (
           }
 
           await setOperations
-          ->Belt.Array.map(dbFunc => sql->dbFunc)
+          ->Array.map(dbFunc => sql->dbFunc)
           ->Promise.all
           ->Utils.Promise.ignoreValue
 
@@ -1108,7 +1108,7 @@ let rec writeBatch = async (
         // Since effect cache currently doesn't support rollback,
         // we can run it outside of the transaction for simplicity.
         updatedEffectsCache
-        ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
+        ->Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
           setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
         })
         ->Promise.all,
@@ -1157,7 +1157,7 @@ let rec writeBatch = async (
 // Returns the most recent entity state for IDs that need to be restored during rollback.
 // For each ID modified after the rollback target, retrieves its latest state at or before the target.
 let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
-  let dataFieldNames = entityConfig.table.fields->Belt.Array.keepMap(fieldOrDerived =>
+  let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
     | Field(field) => field->Table.getDbFieldName->Some
     | DerivedFrom(_) => None
@@ -1165,7 +1165,7 @@ let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig
   )
 
   let dataFieldsCommaSeparated =
-    dataFieldNames->Belt.Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
+    dataFieldNames->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
 
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
@@ -1576,7 +1576,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
             Logging.info(
               `Dumping cache: ${cacheTableInfo
                 ->Array.map(({tableName, count}) =>
-                  tableName ++ " (" ++ count->Belt.Int.toString ++ " rows)"
+                  tableName ++ " (" ++ count->Int.toString ++ " rows)"
                 )
                 ->Array.joinUnsafe(", ")}`,
             )
@@ -1620,7 +1620,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         sql,
         ~pgSchema,
       )->Promise.thenResolve(rawInitialStates => {
-        rawInitialStates->Belt.Array.map((rawInitialState): Persistence.initialChainState => {
+        rawInitialStates->Array.map((rawInitialState): Persistence.initialChainState => {
           id: rawInitialState.id,
           startBlock: rawInitialState.startBlock,
           endBlock: rawInitialState.endBlock->Null.toOption,
@@ -1651,10 +1651,10 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       InternalTable.EnvioInfo.read(sql, ~pgSchema),
     ))
 
-    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
+    let checkpointId = (checkpointIdResult->Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
 
     // Convert string checkpoint IDs from DB to bigint
-    let reorgCheckpoints = Belt.Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
+    let reorgCheckpoints = Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
       checkpointId: raw["id"]->BigInt.fromStringOrThrow,
       chainId: raw["chain_id"],
       blockNumber: raw["block_number"],
@@ -1883,7 +1883,7 @@ let makeStorageFromEnv = (
               ~pgSchema,
               ~userEntities=config->Config.getPgUserEntities,
               ~responseLimit=Env.Hasura.responseLimit,
-              ~schema=Schema.make(config.allEntities->Belt.Array.map(e => e.table)),
+              ~schema=Schema.make(config.allEntities->Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
               Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve

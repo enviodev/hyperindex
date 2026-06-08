@@ -276,7 +276,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
     switch schema->S.classify {
     | Object({items}) =>
       let dict = Dict.make()
-      items->Belt.Array.forEach(({location, inlinedLocation, schema}) => {
+      items->Array.forEach(({location, inlinedLocation, schema}) => {
         let rec coerceSchema = schema =>
           switch schema->S.classify {
           | BigInt => Utils.BigInt.schema->S.toUnknown

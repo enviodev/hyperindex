@@ -11,16 +11,16 @@ module Labels = {
   let getLabelNames = (schema: S.t<'a>) =>
     switch schema->S.classify {
     | Object({items}) =>
-      let nonStringFields = items->Belt.Array.reduce([], (nonStringFields, item) => {
+      let nonStringFields = items->Array.reduce([], (nonStringFields, item) => {
         if item.schema->schemaIsString {
           nonStringFields
         } else {
-          nonStringFields->Belt.Array.concat([item.location])
+          nonStringFields->Array.concat([item.location])
         }
       })
 
       switch nonStringFields {
-      | [] => items->Belt.Array.map(item => item.location)->Ok
+      | [] => items->Array.map(item => item.location)->Ok
       | nonStringItems =>
         let nonStringItems = nonStringItems->Array.joinUnsafe(", ")
         Error(

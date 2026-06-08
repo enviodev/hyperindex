@@ -15,7 +15,7 @@ let maxPartitionConcurrency =
 // unwritten batch items) the store holds before processing waits for the write
 // cycle to catch up.
 let inMemoryObjectsTarget =
-  envSafe->EnvSafe.get("ENVIO_IN_MEMORY_OBJECTS_TARGET", S.int, ~fallback=100_000)->Belt.Int.toFloat
+  envSafe->EnvSafe.get("ENVIO_IN_MEMORY_OBJECTS_TARGET", S.int, ~fallback=100_000)->Int.toFloat
 
 // FIXME: This broke HS grafana dashboard. Should investigate it later. Maybe we should use :: as a default value?
 // We want to be able to set it to 0.0.0.0
@@ -86,7 +86,7 @@ Logging.setLogger(
     ~logStrategy,
     ~logFilePath,
     ~defaultFileLogLevel,
-    ~userLogLevel=userLogLevel->Belt.Option.getWithDefault(#info),
+    ~userLogLevel=userLogLevel->Option.getOr(#info),
   ),
 )
 

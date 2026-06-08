@@ -18,7 +18,7 @@ let getItem = (item: oldQueueItem) =>
 let getEarliestEvent = (fetchState: FetchState.t) => {
   let readyItemsCount = fetchState->FetchState.getReadyItemsCount(~targetSize=1, ~fromItem=0)
   if readyItemsCount > 0 {
-    Item(fetchState.buffer->Belt.Array.getUnsafe(0))
+    Item(fetchState.buffer->Array.getUnsafe(0))
   } else {
     NoItem({
       latestFetchedBlock: fetchState->FetchState.bufferBlock,
@@ -3088,7 +3088,7 @@ describe("FetchState.sortForUnorderedBatch", () => {
     let prepared = FetchState.sortForUnorderedBatch([fsHigh, fsLow, fsMid], ~batchSizeTarget=3)
 
     t.expect(
-      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
+      prepared->Array.map(fs => fs.buffer->Array.getUnsafe(0)->Internal.getItemBlockNumber),
     ).toEqual([1, 5, 8])
   })
 
@@ -3104,7 +3104,7 @@ describe("FetchState.sortForUnorderedBatch", () => {
     )
 
     t.expect(
-      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
+      prepared->Array.map(fs => fs.buffer->Array.getUnsafe(0)->Internal.getItemBlockNumber),
     ).toEqual([7, 1])
   })
 
@@ -3121,7 +3121,7 @@ describe("FetchState.sortForUnorderedBatch", () => {
 
     // Full batch should take priority regardless of earlier timestamp of half batch
     t.expect(
-      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
+      prepared->Array.map(fs => fs.buffer->Array.getUnsafe(0)->Internal.getItemBlockNumber),
     ).toEqual([2, 1])
   })
 })

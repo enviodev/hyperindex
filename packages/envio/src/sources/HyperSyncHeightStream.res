@@ -36,7 +36,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     // Clear any pending stale/reconnect timeout to avoid double reconnect
     timeoutIdRef.contents->clearTimeout
     let delay =
-      baseDuration * Math.pow(2.0, ~exp=errorCount.contents->Belt.Int.toFloat)->Belt.Float.toInt
+      baseDuration * Math.pow(2.0, ~exp=errorCount.contents->Int.toFloat)->Float.toInt
     timeoutIdRef := setTimeout(() => refreshEventSource(), Pervasives.min(delay, 60_000))
   }
   and refreshEventSource = () => {
@@ -100,7 +100,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     })
 
     es->EventSource.addEventListener("height", event => {
-      switch event.data->Belt.Int.fromString {
+      switch event.data->Int.fromString {
       | Some(height) =>
         // Track the SSE height event
         Prometheus.SourceRequestCount.increment(

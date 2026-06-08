@@ -3,7 +3,7 @@ open Vitest
 @send external padStart: (string, ~padCount: int, ~padChar: string) => string = "padStart"
 
 let mockDate = (~year=2024, ~month=1, ~day=1) => {
-  let padInt = i => i->Belt.Int.toString->padStart(~padCount=2, ~padChar="0")
+  let padInt = i => i->Int.toString->padStart(~padCount=2, ~padChar="0")
   Date.fromString(`${year->padInt}-${month->padInt}-${day->padInt}T00:00:00Z`)
 }
 

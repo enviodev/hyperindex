@@ -551,7 +551,7 @@ module Indexer = {
         switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {
         | Some(m) =>
           (await m.get())["values"]->Array.map(v => {
-            value: v.value->Belt.Int.toString,
+            value: v.value->Int.toString,
             labels: v.labels,
           })
         | None => []
@@ -1005,7 +1005,7 @@ let evmEventConfig = (
     isWildcard,
     filterByAddresses,
     dependsOnAddresses: filterByAddresses ||
-    dependsOnAddresses->Belt.Option.getWithDefault(!isWildcard),
+    dependsOnAddresses->Option.getOr(!isWildcard),
     startBlock,
     handler: None,
     contractRegister: None,

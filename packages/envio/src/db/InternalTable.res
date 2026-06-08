@@ -122,16 +122,16 @@ module Chains = {
       None
     } else {
       // Create column names list
-      let columnNames = fields->Belt.Array.map(field => `"${(field :> string)}"`)
+      let columnNames = fields->Array.map(field => `"${(field :> string)}"`)
 
       // Create VALUES rows for each chain config
-      let valuesRows = chainConfigs->Belt.Array.map(chainConfig => {
+      let valuesRows = chainConfigs->Array.map(chainConfig => {
         let initialValues = initialFromConfig(chainConfig)
-        let values = fields->Belt.Array.map((field: field) => {
+        let values = fields->Array.map((field: field) => {
           let value = initialValues->(Utils.magic: t => dict<unknown>)->Dict.get((field :> string))
           switch typeof(value) {
           | #object => "NULL"
-          | #number => value->(Utils.magic: option<unknown> => int)->Belt.Int.toString
+          | #number => value->(Utils.magic: option<unknown> => int)->Int.toString
           | #bigint => value->(Utils.magic: option<unknown> => bigint)->BigInt.toString
           | #boolean => value->(Utils.magic: option<unknown> => bool) ? "true" : "false"
           | _ => JsError.throwWithMessage("Invalid envio_chains value type")
@@ -153,10 +153,10 @@ VALUES ${valuesRows->Array.joinUnsafe(",\n       ")};`,
 
   let makeMetaFieldsUpdateQuery = (~pgSchema) => {
     // Generate SET clauses with parameter placeholders
-    let setClauses = Belt.Array.mapWithIndex(metaFields, (index, field) => {
+    let setClauses = Array.mapWithIndex(metaFields, (field, index) => {
       let fieldName = (field :> string)
       let paramIndex = index + 2 // +2 because $1 is for id in WHERE clause
-      `"${fieldName}" = $${Belt.Int.toString(paramIndex)}`
+      `"${fieldName}" = $${Int.toString(paramIndex)}`
     })
 
     `UPDATE "${pgSchema}"."${table.tableName}"
@@ -252,10 +252,10 @@ FROM "${pgSchema}"."${EnvioAddresses.table.tableName}";`
   let progressFields: array<progressFields> = [#progress_block, #events_processed, #source_block]
 
   let makeProgressFieldsUpdateQuery = (~pgSchema) => {
-    let setClauses = Belt.Array.mapWithIndex(progressFields, (index, field) => {
+    let setClauses = Array.mapWithIndex(progressFields, (field, index) => {
       let fieldName = (field :> string)
       let paramIndex = index + 2 // +2 because $1 is for id in WHERE clause
-      `"${fieldName}" = $${Belt.Int.toString(paramIndex)}`
+      `"${fieldName}" = $${Int.toString(paramIndex)}`
     })
 
     `UPDATE "${pgSchema}"."${table.tableName}"
@@ -358,7 +358,7 @@ module EnvioInfo = {
       | _ => throw(exn)
       }
     }
-    rows->Belt.Array.get(0)->Belt.Option.map(row => row["config"]->JSON.parseOrThrow)
+    rows->Array.get(0)->Option.map(row => row["config"]->JSON.parseOrThrow)
   }
 
   // Upsert keyed on the fixed id so the table stays a singleton even if
@@ -534,7 +534,7 @@ LIMIT 1;`
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>)
     rawResult->Promise.thenResolve(rows => {
-      rows->Belt.Array.get(0)->Belt.Option.map(row => row["id"]->BigInt.fromStringOrThrow)
+      rows->Array.get(0)->Option.map(row => row["id"]->BigInt.fromStringOrThrow)
     })
   }
 
