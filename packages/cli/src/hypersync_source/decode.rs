@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use alloy_dyn_abi::DecodedEvent;
+use alloy_dyn_abi::{DecodedEvent, DynSolEvent, DynSolType, Specifier};
+use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
@@ -61,7 +62,7 @@ struct EventVariant {
 
 #[derive(Clone)]
 pub(crate) struct DecoderCore {
-    inner: Arc<hypersync_client::Decoder>,
+    decoders: Arc<HashMap<MetaKey, DynSolEvent>>,
     checksummed_addresses: bool,
     variants: Arc<HashMap<MetaKey, Vec<EventVariant>>>,
 }
@@ -72,34 +73,30 @@ impl DecoderCore {
         checksum_addresses: bool,
     ) -> Result<Self> {
         let mut variants: HashMap<MetaKey, Vec<EventVariant>> = HashMap::new();
-        // The inner decoder is itself keyed by (topic0, topic count) — the same
-        // MetaKey — so it can hold only one decode per key. Contracts that share
-        // a key reuse that single positional decode and only layer on their own
-        // names, so we feed the inner decoder one signature per key. Two events
-        // sharing a MetaKey but indexing different params (same type list, same
-        // indexed count, different positions) can't be told apart at this layer
-        // regardless — `from_signatures` would collapse them too — so the first
-        // variant's layout wins; `apply_names` then keys names off each variant.
-        let mut signatures: HashMap<MetaKey, String> = HashMap::new();
+        // The positional decoder is keyed by (topic0, topic count) — the same
+        // MetaKey — so it holds one decode per key. Contracts that share a key
+        // reuse that single positional decode and only layer on their own names.
+        // Two events sharing a MetaKey but indexing different params (same type
+        // list, same indexed count, different positions) can't be told apart at
+        // this layer regardless, so the first variant's layout wins; `apply_names`
+        // then keys names off each variant.
+        let mut decoders: HashMap<MetaKey, DynSolEvent> = HashMap::new();
         for ep in event_params {
             let key = MetaKey::parse(&ep.sighash, ep.topic_count)
                 .with_context(|| format!("parse meta key for {}", ep.event_name))?;
-            signatures
-                .entry(key)
-                .or_insert_with(|| reconstruct_signature(&ep.event_name, &ep.params));
+            if !decoders.contains_key(&key) {
+                let decoder = build_event_decoder(&key, &ep.event_name, &ep.params)
+                    .with_context(|| format!("build decoder for {}", ep.event_name))?;
+                decoders.insert(key, decoder);
+            }
             variants.entry(key).or_default().push(EventVariant {
                 contract_name: ep.contract_name,
                 params: ep.params,
             });
         }
 
-        let inner = hypersync_client::Decoder::from_signatures(
-            &signatures.into_values().collect::<Vec<_>>(),
-        )
-        .context("create inner decoder")?;
-
         Ok(Self {
-            inner: Arc::new(inner),
+            decoders: Arc::new(decoders),
             checksummed_addresses: checksum_addresses,
             variants: Arc::new(variants),
         })
@@ -131,25 +128,27 @@ impl DecoderCore {
         topics: &[Option<LogArgument>],
         data: &Data,
     ) -> Result<Option<ParamValue>> {
-        let topic0 = topics
-            .first()
-            .context("get topic0")?
-            .as_ref()
-            .context("topic0 is null")?;
+        let key = MetaKey::from_topics(topics)?;
 
-        let decoded = match self
-            .inner
-            .decode(topic0.as_slice(), topics, data)
-            .context("decode log")?
-        {
+        let decoder = match self.decoders.get(&key) {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+
+        let variants = match self.variants.get(&key) {
             Some(v) => v,
             None => return Ok(None),
         };
 
-        let variants = match self.variants.get(&MetaKey::from_topics(topics)?) {
-            Some(v) => v,
-            None => return Ok(None),
-        };
+        let decoded = decoder
+            .decode_log_parts(
+                topics
+                    .iter()
+                    .take_while(|t| t.is_some())
+                    .map(|t| t.as_ref().unwrap().into()),
+                data,
+            )
+            .context("decode log")?;
 
         // Same log, one decode, named once per contract. JS routes by address
         // and then picks `params[contractName]`, so two contracts that share a
@@ -201,6 +200,30 @@ fn apply_names(
             Ok((param.name.clone(), value))
         })
         .collect()
+}
+
+/// Build the positional decoder for one MetaKey. Rebuilding the signature from
+/// the event's display `name:` recovers the ABI types, but its keccak selector
+/// is wrong whenever the event was renamed (display name != on-chain name) — so
+/// the decoder's topic0 is pinned to the on-chain sighash the MetaKey carries.
+/// Without this, a renamed event's log topic0 never matches and the log decodes
+/// as null (issue #1285).
+fn build_event_decoder(
+    key: &MetaKey,
+    event_name: &str,
+    params: &[ParamMeta],
+) -> Result<DynSolEvent> {
+    let signature = reconstruct_signature(event_name, params);
+    let resolved = alloy_json_abi::Event::parse(&signature)
+        .context("parse event signature")?
+        .resolve()
+        .context("resolve event signature")?;
+    DynSolEvent::new(
+        Some(B256::from(key.sighash)),
+        resolved.indexed().to_vec(),
+        DynSolType::Tuple(resolved.body().to_vec()),
+    )
+    .context("construct event decoder")
 }
 
 fn reconstruct_signature(event_name: &str, params: &[ParamMeta]) -> String {
@@ -273,5 +296,77 @@ mod tests {
     fn parse_meta_key_accepts_boundary_values() {
         assert!(MetaKey::parse(VALID_SIGHASH, 1).is_ok());
         assert!(MetaKey::parse(VALID_SIGHASH, 4).is_ok());
+    }
+
+    // Regression for issue #1285: an event surfaced to handlers under a name
+    // that differs from its on-chain name must still decode. The decoder keys
+    // on the on-chain sighash, not the keccak of the display name.
+    #[test]
+    fn renamed_event_decodes_under_real_sighash() {
+        use alloy_dyn_abi::DynSolValue;
+        use alloy_primitives::{hex, Address, U256};
+
+        let real_sighash = alloy_json_abi::Event::parse("Approval(address owner, uint256 value)")
+            .unwrap()
+            .selector()
+            .to_string();
+
+        let core = DecoderCore::from_params(
+            vec![EventParamsInput {
+                sighash: real_sighash.clone(),
+                topic_count: 1,
+                event_name: "ApprovalRenamed".to_string(),
+                contract_name: "TestContract".to_string(),
+                params: vec![
+                    ParamMeta {
+                        name: "owner".to_string(),
+                        abi_type: "address".to_string(),
+                        indexed: false,
+                        components: None,
+                    },
+                    ParamMeta {
+                        name: "value".to_string(),
+                        abi_type: "uint256".to_string(),
+                        indexed: false,
+                        components: None,
+                    },
+                ],
+            }],
+            false,
+        )
+        .unwrap();
+
+        let data = DynSolValue::Tuple(vec![
+            DynSolValue::Address(Address::from([0xaa; 20])),
+            DynSolValue::Uint(U256::from(42u64), 256),
+        ])
+        .abi_encode();
+        let log = Log {
+            topics: vec![Some(real_sighash)],
+            data: Some(format!("0x{}", hex::encode(data))),
+            ..Default::default()
+        };
+
+        let decoded = core
+            .decode_napi(&log)
+            .unwrap()
+            .expect("renamed event must decode under its real sighash");
+
+        match decoded {
+            ParamValue::Obj(contracts) => match contracts.as_slice() {
+                [(contract, ParamValue::Obj(fields))] if contract == "TestContract" => {
+                    match fields.as_slice() {
+                        [(owner, ParamValue::Str(owner_hex)), (value, ParamValue::BigInt(_))]
+                            if owner == "owner" && value == "value" =>
+                        {
+                            assert_eq!(owner_hex, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                        }
+                        _ => panic!("unexpected decoded fields"),
+                    }
+                }
+                _ => panic!("unexpected decoded contracts"),
+            },
+            _ => panic!("expected an object of params"),
+        }
     }
 }
