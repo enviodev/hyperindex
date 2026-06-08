@@ -19,7 +19,7 @@ type options = {
 let buildInstructionSelections = (eventConfigs: array<Internal.svmInstructionEventConfig>): array<
   HyperSyncSolanaClient.QueryTypes.instructionSelection,
 > => {
-  eventConfigs->Belt.Array.flatMap(cfg => {
+  eventConfigs->Array.flatMap(cfg => {
     let programIdString = cfg.programId->SvmTypes.Pubkey.toString
     if programIdString === "" {
       []
@@ -37,13 +37,13 @@ let buildInstructionSelections = (eventConfigs: array<Internal.svmInstructionEve
       | [] => [[]]
       | gs => gs
       }
-      groups->Belt.Array.map(group => {
+      groups->Array.map(group => {
         let pick = position =>
           group
-          ->Belt.Array.keepMap(
+          ->Array.filterMap(
             f => f.position == position ? Some(f.values->SvmTypes.Pubkey.toStrings) : None,
           )
-          ->Belt.Array.get(0)
+          ->Array.get(0)
 
         (
           {
@@ -77,7 +77,7 @@ let buildInstructionSelections = (eventConfigs: array<Internal.svmInstructionEve
 // land at `tx * 65536`; inner ones append depth-weighted offsets.
 let synthLogIndex = (instr: HyperSyncSolanaClient.ResponseTypes.instruction) => {
   let tx = instr.transactionIndex
-  let addrSum = instr.instructionAddress->Belt.Array.reduce(0, (acc, n) => acc * 1024 + n + 1)
+  let addrSum = instr.instructionAddress->Array.reduce(0, (acc, n) => acc * 1024 + n + 1)
   tx * 65536 + addrSum
 }
 
@@ -103,7 +103,7 @@ let buildSchemaHandles = (eventConfigs: array<Internal.svmInstructionEventConfig
     }>,
   }> = Dict.make()
 
-  eventConfigs->Belt.Array.forEach(ec => {
+  eventConfigs->Array.forEach(ec => {
     let programIdString = ec.programId->SvmTypes.Pubkey.toString
     if programIdString === "" {
       // Stage 4 placeholder pattern: skip empty program ids.
@@ -149,7 +149,7 @@ let buildSchemaHandles = (eventConfigs: array<Internal.svmInstructionEventConfig
   let handles = Dict.make()
   descriptorsByProgram
   ->Dict.toArray
-  ->Belt.Array.forEach(((programIdString, descriptor)) => {
+  ->Array.forEach(((programIdString, descriptor)) => {
     let json =
       descriptor
       ->(Utils.magic: {
@@ -247,7 +247,7 @@ let probeRouter = (
     router->EventRouter.get(~tag, ~contractAddress, ~blockNumber=instr.slot, ~indexingAddresses)
   }
 
-  let result = byteLengthsDesc->Belt.Array.reduce(None, (acc, len) =>
+  let result = byteLengthsDesc->Array.reduce(None, (acc, len) =>
     switch acc {
     | Some(_) => acc
     | None =>
@@ -285,7 +285,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
   // programId.toString -> sorted-desc byte lengths
   let orderingByProgram = Dict.make()
-  programOrderings->Belt.Array.forEach(o =>
+  programOrderings->Array.forEach(o =>
     orderingByProgram->Dict.set(o.programId->SvmTypes.Pubkey.toString, o.byteLengthsDesc)
   )
 
@@ -303,7 +303,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
   | arr => Some(arr)
   }
 
-  let needsTokenBalances = eventConfigs->Belt.Array.some(cfg => cfg.includeTokenBalances)
+  let needsTokenBalances = eventConfigs->Array.some(cfg => cfg.includeTokenBalances)
 
   let getItemsOrThrow = async (
     ~fromBlock,
@@ -375,7 +375,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     // Per-slot unix timestamp lookup from the response's `blocks` table. Slots
     // without a block row (rare; usually skipped slots) fall back to `None`.
     let blockTimeBySlot = Dict.make()
-    resp.data.blocks->Belt.Array.forEach(b => {
+    resp.data.blocks->Array.forEach(b => {
       switch b.blockTime {
       | Some(t) => blockTimeBySlot->Dict.set(b.slot->Int.toString, t)
       | None => ()
@@ -384,7 +384,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
     // Per (slot, transaction_index) lookup for parent transactions.
     let txByKey = Dict.make()
-    resp.data.transactions->Belt.Array.forEach(tx => {
+    resp.data.transactions->Array.forEach(tx => {
       let key = tx.slot->Int.toString ++ ":" ++ tx.transactionIndex->Int.toString
       txByKey->Dict.set(key, tx)
     })
@@ -393,7 +393,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     // scoped to a single instruction. `instructionAddress: None` logs are
     // attached to no instruction (rare; usually only system messages).
     let logsByKey = Dict.make()
-    resp.data.logs->Belt.Array.forEach(log => {
+    resp.data.logs->Array.forEach(log => {
       switch (log.transactionIndex, log.instructionAddress) {
       | (Some(txIdx), Some(addr)) =>
         let key =
@@ -412,7 +412,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
     let tokenBalancesByTx = Dict.make()
     if needsTokenBalances {
-      resp.data.tokenBalances->Belt.Array.forEach(tb => {
+      resp.data.tokenBalances->Array.forEach(tb => {
         switch tb.transactionIndex {
         | Some(txIdx) =>
           let key = tb.slot->Int.toString ++ ":" ++ txIdx->Int.toString
@@ -426,7 +426,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     }
 
     let parsedQueueItems = []
-    resp.data.instructions->Belt.Array.forEach(instr => {
+    resp.data.instructions->Array.forEach(instr => {
       let programId = instr.programId->SvmTypes.Pubkey.fromStringUnsafe
       let byteLengths =
         orderingByProgram
@@ -522,7 +522,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     // Best-effort (slot, blockhash) pairs from the blocks the server returned
     // for this range. Gaps (skipped slots, or slots without matched data) are
     // fine — reorg detection only compares hashes for slots it has observed.
-    let blockHashes = resp.data.blocks->Belt.Array.map((b): ReorgDetection.blockData => {
+    let blockHashes = resp.data.blocks->Array.map((b): ReorgDetection.blockData => {
       blockNumber: b.slot,
       blockHash: b.blockhash,
     })
@@ -557,7 +557,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       }
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getBlockHashes")
       let resp = await client.get(~query)
-      resp.data.blocks->Belt.Array.forEach(b =>
+      resp.data.blocks->Array.forEach(b =>
         blockDatas
         ->Array.push({
           ReorgDetection.blockNumber: b.slot,
@@ -579,14 +579,14 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
   }
 
   let getBlockHashes = async (~blockNumbers, ~logger as _) =>
-    switch blockNumbers->Belt.Array.get(0) {
+    switch blockNumbers->Array.get(0) {
     | None => Ok([])
     | Some(firstSlot) =>
       try {
         let minSlot = ref(firstSlot)
         let maxSlot = ref(firstSlot)
         let requested = Utils.Set.make()
-        blockNumbers->Belt.Array.forEach(slot => {
+        blockNumbers->Array.forEach(slot => {
           if slot < minSlot.contents {
             minSlot := slot
           }

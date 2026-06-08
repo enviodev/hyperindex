@@ -121,8 +121,8 @@ let fromEvmEventModsOrThrow = (events: array<Internal.evmEventConfig>, ~chain): 
  program (lowest priority). */
 let getSvmEventId = (~programId: SvmTypes.Pubkey.t, ~discriminator: option<string>) =>
   switch discriminator {
-  | None => (programId->SvmTypes.Pubkey.toString) ++ "_none"
-  | Some(d) => (programId->SvmTypes.Pubkey.toString) ++ "_" ++ d
+  | None => programId->SvmTypes.Pubkey.toString ++ "_none"
+  | Some(d) => programId->SvmTypes.Pubkey.toString ++ "_" ++ d
   }
 
 /** Discriminator byte-lengths declared by a program, sorted descending. The
@@ -135,12 +135,12 @@ type svmProgramOrdering = {
   byteLengthsDesc: array<int>,
 }
 
-let fromSvmEventConfigsOrThrow = (
-  events: array<Internal.svmInstructionEventConfig>,
-  ~chain,
-): (t<Internal.svmInstructionEventConfig>, array<svmProgramOrdering>) => {
+let fromSvmEventConfigsOrThrow = (events: array<Internal.svmInstructionEventConfig>, ~chain): (
+  t<Internal.svmInstructionEventConfig>,
+  array<svmProgramOrdering>,
+) => {
   let router = empty()
-  events->Belt.Array.forEach(config => {
+  events->Array.forEach(config => {
     // The router tag must include the programId so two programs declaring the
     // same discriminator coexist. The source-side lookup uses the same shape
     // via `getSvmEventId(~programId, ~discriminator)`.
@@ -157,7 +157,7 @@ let fromSvmEventConfigsOrThrow = (
 
   // Per-program list of declared discriminator byte lengths, sorted desc.
   let byProgram: dict<Utils.Set.t<int>> = Dict.make()
-  events->Belt.Array.forEach(config => {
+  events->Array.forEach(config => {
     let key = config.programId->SvmTypes.Pubkey.toString
     let set = switch byProgram->Utils.Dict.dangerouslyGetNonOption(key) {
     | Some(s) => s
