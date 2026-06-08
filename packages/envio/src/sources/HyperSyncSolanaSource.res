@@ -326,12 +326,12 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     let instructionSelections = buildInstructionSelections(eventConfigs)
     let fields: HyperSyncSolanaClient.QueryTypes.fieldSelection = if needsTokenBalances {
       {
-        block: [Slot, BlockTime],
+        block: [Slot, Blockhash, BlockTime],
         tokenBalance: [Slot, TransactionIndex, Account, Mint, Owner, PreAmount, PostAmount],
       }
     } else {
       {
-        block: [Slot, BlockTime],
+        block: [Slot, Blockhash, BlockTime],
       }
     }
     let query: HyperSyncSolanaClient.query = {
@@ -522,6 +522,14 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       ->Utils.Dict.dangerouslyGetNonOption(highestSlot->Int.toString)
       ->Option.getOr(0)
 
+    // Best-effort (slot, blockhash) pairs from the blocks the server returned
+    // for this range. Gaps (skipped slots, or slots without matched data) are
+    // fine — reorg detection only compares hashes for slots it has observed.
+    let blockHashes = resp.data.blocks->Belt.Array.map((b): ReorgDetection.blockData => {
+      blockNumber: b.slot,
+      blockHash: b.blockhash,
+    })
+
     let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     {
@@ -530,12 +538,76 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
-      // No-op reorg detection for SVM: finalized commitment + extremely rare
-      // reorgs at finality, so no block hashes are tracked.
-      blockHashes: [],
+      blockHashes,
       fromBlockQueried: fromBlock,
     }
   }
+
+  // Fetch (slot, blockhash, blockTime) for blocks in an inclusive slot range,
+  // paginating on the server's `nextSlot` cursor. `toSlot` is exclusive on the
+  // wire, so we request `maxSlot + 1`; the caller filters to the exact slots.
+  let queryBlockDataRange = async (~fromSlot, ~toSlot) => {
+    let blockDatas = []
+    let fromRef = ref(fromSlot)
+    let keepGoing = ref(true)
+    while keepGoing.contents {
+      let query: HyperSyncSolanaClient.query = {
+        fromSlot: fromRef.contents,
+        toSlot: toSlot + 1,
+        includeAllBlocks: true,
+        fields: {block: [Slot, Blockhash, BlockTime]},
+        maxNumBlocks: 1000,
+      }
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getBlockHashes")
+      let resp = await client.get(~query)
+      resp.data.blocks->Belt.Array.forEach(b =>
+        blockDatas
+        ->Array.push({
+          ReorgDetection.blockNumber: b.slot,
+          blockHash: b.blockhash,
+          blockTimestamp: b.blockTime->Option.getOr(0),
+        })
+        ->ignore
+      )
+
+      // `nextSlot` is the (exclusive) resume cursor. Stop once it passes the
+      // range, or fails to advance — the latter guards against an infinite loop.
+      if resp.nextSlot > toSlot || resp.nextSlot <= fromRef.contents {
+        keepGoing := false
+      } else {
+        fromRef := resp.nextSlot
+      }
+    }
+    blockDatas
+  }
+
+  let getBlockHashes = async (~blockNumbers, ~logger as _) =>
+    switch blockNumbers->Belt.Array.get(0) {
+    | None => Ok([])
+    | Some(firstSlot) =>
+      try {
+        let minSlot = ref(firstSlot)
+        let maxSlot = ref(firstSlot)
+        let requested = Utils.Set.make()
+        blockNumbers->Belt.Array.forEach(slot => {
+          if slot < minSlot.contents {
+            minSlot := slot
+          }
+          if slot > maxSlot.contents {
+            maxSlot := slot
+          }
+          requested->Utils.Set.add(slot)->ignore
+        })
+        let blockDatas = await queryBlockDataRange(
+          ~fromSlot=minSlot.contents,
+          ~toSlot=maxSlot.contents,
+        )
+        // Keep one entry per requested slot; drop duplicates and unrelated slots.
+        Ok(blockDatas->Array.filter(data => requested->Utils.Set.delete(data.blockNumber)))
+      } catch {
+      | exn => Error(exn)
+      }
+    }
 
   {
     name,
@@ -543,13 +615,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     chain,
     pollingInterval: 1000,
     poweredByHyperSync: true,
-    getBlockHashes: (~blockNumbers as _, ~logger as _) =>
-      // No-op reorg guard means callers never need block hashes for SVM. If a
-      // caller does ask, surface the limitation rather than fabricate empty
-      // data — C3 will replace this with a real lookup.
-      JsError.throwWithMessage(
-        "HyperSyncSolanaSource does not support getBlockHashes yet (reorg detection at finalized commitment is no-op in C2)",
-      ),
+    getBlockHashes,
     getHeightOrThrow: async () => {
       let timer = Hrtime.makeTimer()
       let h = await client.getHeight()
