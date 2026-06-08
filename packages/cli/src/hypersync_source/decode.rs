@@ -97,6 +97,21 @@ impl DecoderCore {
                     })
                 }
             };
+            // The shared decoder is built from the first variant's layout. A
+            // later variant colliding on this MetaKey but splitting indexed/body
+            // differently would be silently mis-typed, so reject it. Config
+            // parsing should already prevent this; this is the decoder-side
+            // backstop. Differing param *names* are fine — `apply_names` applies
+            // each variant's own.
+            if let Some(first) = event.variants.first() {
+                anyhow::ensure!(
+                    same_decode_layout(&first.params, &ep.params),
+                    "ABI layout mismatch for {}: another event with the same topic0 and topic \
+                     count but a different indexed/type layout is already registered; they can't \
+                     share a positional decoder",
+                    ep.event_name,
+                );
+            }
             event.variants.push(EventVariant {
                 contract_name: ep.contract_name,
                 params: ep.params,
@@ -228,6 +243,25 @@ fn build_event_decoder(key: &MetaKey, params: &[ParamMeta]) -> Result<DynSolEven
     .context("construct event decoder")
 }
 
+/// Whether two param lists decode under the same positional layout. Names are
+/// irrelevant to decoding (each variant applies its own), but the indexed/body
+/// split and the ABI types must match or the shared decoder would mis-type a
+/// later variant. Events colliding on a MetaKey already share topic0 — hence the
+/// ordered type list — so in practice only the indexed flags can diverge; the
+/// types and nested components are compared defensively all the same.
+fn same_decode_layout(a: &[ParamMeta], b: &[ParamMeta]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(x, y)| {
+            x.indexed == y.indexed
+                && x.abi_type == y.abi_type
+                && match (&x.components, &y.components) {
+                    (None, None) => true,
+                    (Some(xc), Some(yc)) => same_decode_layout(xc, yc),
+                    _ => false,
+                }
+        })
+}
+
 #[napi]
 #[derive(Clone)]
 pub struct Decoder {
@@ -355,5 +389,79 @@ mod tests {
             },
             _ => panic!("expected an object of params"),
         }
+    }
+
+    fn pm(name: &str, abi_type: &str, indexed: bool) -> ParamMeta {
+        ParamMeta {
+            name: name.to_string(),
+            abi_type: abi_type.to_string(),
+            indexed,
+            components: None,
+        }
+    }
+
+    #[test]
+    fn rejects_metakey_collision_with_different_indexed_layout() {
+        let sighash = alloy_json_abi::Event::parse("Foo(uint256 a, uint256 b)")
+            .unwrap()
+            .selector()
+            .to_string();
+        let variant = |params| EventParamsInput {
+            sighash: sighash.clone(),
+            topic_count: 2,
+            event_name: "Foo".to_string(),
+            contract_name: "C".to_string(),
+            params,
+        };
+
+        let err = DecoderCore::from_params(
+            vec![
+                variant(vec![pm("a", "uint256", true), pm("b", "uint256", false)]),
+                variant(vec![pm("a", "uint256", false), pm("b", "uint256", true)]),
+            ],
+            false,
+        )
+        .err()
+        .expect("expected an ABI layout mismatch error");
+        assert!(format!("{err}").contains("ABI layout mismatch"));
+    }
+
+    #[test]
+    fn accepts_metakey_collision_with_same_layout_different_names() {
+        let sighash =
+            alloy_json_abi::Event::parse("Transfer(address from, address to, uint256 value)")
+                .unwrap()
+                .selector()
+                .to_string();
+        let variant = |contract: &str, params| EventParamsInput {
+            sighash: sighash.clone(),
+            topic_count: 3,
+            event_name: "Transfer".to_string(),
+            contract_name: contract.to_string(),
+            params,
+        };
+
+        DecoderCore::from_params(
+            vec![
+                variant(
+                    "TokenA",
+                    vec![
+                        pm("from", "address", true),
+                        pm("to", "address", true),
+                        pm("value", "uint256", false),
+                    ],
+                ),
+                variant(
+                    "TokenB",
+                    vec![
+                        pm("src", "address", true),
+                        pm("dst", "address", true),
+                        pm("wad", "uint256", false),
+                    ],
+                ),
+            ],
+            false,
+        )
+        .expect("same-layout variants with different names must register");
     }
 }
