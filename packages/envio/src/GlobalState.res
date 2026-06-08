@@ -105,7 +105,6 @@ type action =
     })
   | FinishWaitingForNewBlock({chain: chain, knownHeight: int})
   | EventBatchProcessed({batch: Batch.t})
-  | StartProcessingBatch
   | StartFindingReorgDepth
   | FindReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
   | EnterReorgThreshold
@@ -705,9 +704,6 @@ let actionReducer = (state: t, action: action) => {
     }
     (state, tasks)
 
-  | StartProcessingBatch =>
-    state.ctx.inMemoryStore.isProcessing = true
-    (state, [])
   | StartFindingReorgDepth => ({...state, rollbackState: FindingReorgDepth}, [])
   | FindReorgDepth({chain, rollbackTargetBlockNumber}) => (
       {
@@ -967,10 +963,10 @@ let injectedTaskReducer = (
             }
           }
         } else {
-          dispatchAction(StartProcessingBatch)
+          let inMemoryStore = state.ctx.inMemoryStore
+          inMemoryStore.isProcessing = true
           dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
-          let inMemoryStore = state.ctx.inMemoryStore
           inMemoryStore->InMemoryStore.setBatchDcs(~batch)
 
           switch await EventProcessing.processEventBatch(
