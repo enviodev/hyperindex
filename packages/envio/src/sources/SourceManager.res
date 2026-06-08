@@ -32,9 +32,91 @@ type t = {
   mutable fetchingPartitionsCount: int,
   recoveryTimeout: float,
   mutable hasRealtime: bool,
+  mutable committedRateLimitTimeMs: float,
+  mutable rateLimitWaiters: int,
+  // Wall-clock timestamp (Date.now()) when the current rate-limit window
+  // started, or None if not currently waiting. Wall-clock so consumers
+  // (TUI) can compute elapsed time with their own Date.now() reads.
+  mutable activeRateLimitStartMs: option<float>,
+  // Wall-clock timestamp by which the server expects the longest current
+  // wait to clear. Tracks the latest reset across concurrent waiters so
+  // the displayed countdown reflects when the indexer will actually retry.
+  mutable activeRateLimitResetAtMs: option<float>,
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
+
+let getRateLimitTimeMs = sourceManager =>
+  sourceManager.committedRateLimitTimeMs +.
+  switch sourceManager.activeRateLimitStartMs {
+  | Some(startMs) => Date.now() -. startMs
+  | None => 0.0
+  }
+
+let isRateLimited = sourceManager => sourceManager.activeRateLimitStartMs->Option.isSome
+
+let getRateLimitResetInMs = sourceManager =>
+  switch sourceManager.activeRateLimitResetAtMs {
+  | Some(resetAt) =>
+    let remaining = resetAt -. Date.now()
+    remaining > 0.0 ? Some(remaining) : None
+  | None => None
+  }
+
+let startRateLimitTimeout = (sourceManager, ~resetMs) => {
+  let now = Date.now()
+  if sourceManager.rateLimitWaiters === 0 {
+    sourceManager.activeRateLimitStartMs = Some(now)
+  }
+  let resetAt = now +. resetMs->Int.toFloat
+  sourceManager.activeRateLimitResetAtMs = switch sourceManager.activeRateLimitResetAtMs {
+  | Some(existing) => Some(Pervasives.max(existing, resetAt))
+  | None => Some(resetAt)
+  }
+  sourceManager.rateLimitWaiters = sourceManager.rateLimitWaiters + 1
+}
+
+let stopRateLimitTimeout = sourceManager => {
+  sourceManager.rateLimitWaiters = sourceManager.rateLimitWaiters - 1
+  if sourceManager.rateLimitWaiters === 0 {
+    switch sourceManager.activeRateLimitStartMs {
+    | Some(startMs) =>
+      sourceManager.committedRateLimitTimeMs =
+        sourceManager.committedRateLimitTimeMs +. Date.now() -. startMs
+      sourceManager.activeRateLimitStartMs = None
+    | None => ()
+    }
+    sourceManager.activeRateLimitResetAtMs = None
+  }
+}
+
+// Shared between executeQuery and getBlockHashes: wait out the server's
+// suggested reset window. Cap at 5 minutes to protect against
+// pathologically large server values. Escalates the log from trace to
+// warn after the second consecutive retry so the indexer doesn't go
+// silent under chronic throttling.
+let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) => {
+  let waitMs = Pervasives.min(resetMs, 300_000)
+  let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
+  logger->log({
+    "msg": `HyperSync source is rate-limited — not critical, the indexer will retry in ${(waitMs / 1000)
+        ->Int.toString}s. For higher limits upgrade your plan at https://envio.dev/app/api-tokens.`,
+    "retry": retry,
+    "waitMs": waitMs,
+  })
+  sourceManager->startRateLimitTimeout(~resetMs=waitMs)
+  await Utils.delay(waitMs)
+  sourceManager->stopRateLimitTimeout
+}
+
+let onReorg = (sourceManager: t, ~rollbackTargetBlock) => {
+  sourceManager.sourcesState->Array.forEach(({source}) => {
+    switch source.onReorg {
+    | Some(cb) => cb(~rollbackTargetBlock)
+    | None => ()
+    }
+  })
+}
 
 type sourceRole = Primary | Secondary
 
@@ -120,6 +202,10 @@ let make = (
     statusStart: Hrtime.makeTimer(),
     status: Idle,
     hasRealtime,
+    committedRateLimitTimeMs: 0.0,
+    rateLimitWaiters: 0,
+    activeRateLimitStartMs: None,
+    activeRateLimitResetAtMs: None,
   }
 }
 
@@ -242,14 +328,18 @@ let getSourceNewHeight = async (
   let retry = ref(0)
 
   while newHeight.contents <= knownHeight && status.contents !== Done {
-    // If subscription exists, wait for next height event
     switch sourceState.unsubscribe {
     | Some(_) =>
       let subscriptionPromise = Promise.make((resolve, _reject) => {
         sourceState.pendingHeightResolvers->Array.push(resolve)
       })
-      // If subscription goes quiet for half the stall timeout, fall back to REST polling
-      let pollingFallback = Utils.delay(stallTimeout / 2)->Promise.then(async () => {
+      // If the subscription goes quiet for half the stall timeout, fall back to REST
+      // polling. Jitter the trigger across [stallTimeout/2, stallTimeout) so indexers
+      // that go quiet together don't all start polling at the same instant.
+      let half = stallTimeout / 2
+      let pollingFallback = Utils.delay(
+        half + (Math.random() *. half->Belt.Int.toFloat)->Belt.Float.toInt,
+      )->Promise.then(async () => {
         logger->Logging.childTrace({
           "msg": "onHeight subscription stale, switching to polling fallback",
           "source": source.name,
@@ -288,11 +378,15 @@ let getSourceNewHeight = async (
           switch source.createHeightSubscription {
           | Some(createSubscription) if isRealtime =>
             let unsubscribe = createSubscription(~onHeight=newHeight => {
-              sourceState.knownHeight = newHeight
-              // Resolve all pending height resolvers
-              let resolvers = sourceState.pendingHeightResolvers
-              sourceState.pendingHeightResolvers = []
-              resolvers->Array.forEach(resolve => resolve(newHeight))
+              // Ignore non-increasing heights. The height stream re-emits the current
+              // head on every (re)connect; waking the wait loop on a height we already
+              // know spins it and leaks fallback pollers (#1270).
+              if newHeight > sourceState.knownHeight {
+                sourceState.knownHeight = newHeight
+                let resolvers = sourceState.pendingHeightResolvers
+                sourceState.pendingHeightResolvers = []
+                resolvers->Array.forEach(resolve => resolve(newHeight))
+              }
             })
             sourceState.unsubscribe = Some(unsubscribe)
           | _ =>
@@ -599,6 +693,10 @@ let executeQuery = async (
       sourceState.lastFailedAt = None
       responseRef := Some(response)
     } catch {
+    | Source.RateLimited({resetMs}) =>
+      await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
+      retryRef := retryRef.contents + 1
+
     | Source.GetItemsError(error) =>
       switch error {
       | UnsupportedSelection(_)
@@ -694,6 +792,77 @@ let executeQuery = async (
 
     // TODO: Handle more error cases and hang/retry instead of throwing
     | exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to fetch block Range")
+    }
+  }
+
+  responseRef.contents->Option.getUnsafe
+}
+
+let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isRealtime: bool) => {
+  let responseRef = ref(None)
+  let retryRef = ref(0)
+
+  while responseRef.contents->Option.isNone {
+    let sourceState = switch sourceManager->getNextSource(~isRealtime) {
+    | Some(s) => s
+    | None =>
+      let logger = Logging.createChild(
+        ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
+      )
+      %raw(`null`)->ErrorHandling.mkLogAndRaise(
+        ~logger,
+        ~msg="No data-sources available for fetching block hashes.",
+      )
+    }
+    sourceManager.activeSource = sourceState.source
+    let source = sourceState.source
+    let retry = retryRef.contents
+
+    let logger = Logging.createChild(
+      ~params={
+        "chainId": source.chain->ChainMap.Chain.toChainId,
+        "logType": "Block Hash Query",
+        "source": source.name,
+        "retry": retry,
+      },
+    )
+
+    try {
+      let res = await source.getBlockHashes(~blockNumbers, ~logger)
+      switch res {
+      | Ok(data) =>
+        sourceState.lastFailedAt = None
+        responseRef := Some(data)
+      | Error(exn) => throw(exn)
+      }
+    } catch {
+    | Source.RateLimited({resetMs}) =>
+      await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
+      retryRef := retryRef.contents + 1
+
+    | exn =>
+      let backoffMillis = switch retry {
+      | 0 => 500
+      | _ => 1000 * retry
+      }
+      let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
+      logger->log({
+        "msg": "Failed to fetch block hashes. Retrying.",
+        "retry": retry,
+        "backOffMilliseconds": backoffMillis,
+        "err": exn->Utils.prettifyExn,
+      })
+
+      let shouldSwitch = switch retry {
+      | 0 | 1 => false
+      | _ => retry->mod(2) === 0
+      }
+
+      if shouldSwitch {
+        sourceState.lastFailedAt = Some(Date.now())
+      }
+      await Utils.delay(Pervasives.min(backoffMillis, 60_000))
+      retryRef := retryRef.contents + 1
     }
   }
 

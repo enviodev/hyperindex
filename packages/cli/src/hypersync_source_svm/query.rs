@@ -283,10 +283,7 @@ impl TryFrom<SolanaQuery> for net::SolanaQuery {
                 .filter(|v| *v >= 0)
                 .map(|v| v as usize),
             max_num_logs: q.max_num_logs.filter(|v| *v >= 0).map(|v| v as usize),
-            max_num_balances: q
-                .max_num_balances
-                .filter(|v| *v >= 0)
-                .map(|v| v as usize),
+            max_num_balances: q.max_num_balances.filter(|v| *v >= 0).map(|v| v as usize),
             max_num_token_balances: q
                 .max_num_token_balances
                 .filter(|v| *v >= 0)

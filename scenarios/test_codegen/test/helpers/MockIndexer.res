@@ -7,22 +7,45 @@ let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   ->Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
   ->Option.getOrThrow
 
+// Handle to the real module before the local shadow below.
+module RealInMemoryStore = InMemoryStore
+
+// The store requires a persistence/config even when the cycle never runs; reuse one.
+let defaultPersistence = PgStorage.makePersistenceFromConfig(
+  ~config,
+  ~storage=PgStorage.makeStorageFromEnv(
+    ~config,
+    ~sql=PgStorage.makeClient(),
+    ~pgSchema=Env.Db.publicSchema,
+    ~isHasuraEnabled=false,
+  ),
+)
+
 module InMemoryStore = {
   let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
+      ~committedCheckpointId=inMemoryStore.committedCheckpointId,
       Set({
         entityId: (entity: Internal.entity).id,
         checkpointId: 0n,
         entity,
       }),
-      ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold=false),
     )
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=config.allEntities)
+    let inMemoryStore = RealInMemoryStore.make(
+      ~entities=config.allEntities,
+      ~persistence=defaultPersistence,
+      ~config,
+      // The cycle never runs here, so a write only means a test is wired wrong.
+      ~onError=exn =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~msg="Unexpected persistence write from an in-memory-only test store",
+        ),
+    )
     entities->Array.forEach(((entityConfig, items)) => {
       items->Array.forEach(entity => {
         inMemoryStore->setEntity(~entityConfig, entity)
@@ -194,13 +217,13 @@ module Storage = {
           JsError.throwWithMessage("Not implemented"),
         writeBatch: (
           ~batch as _,
-          ~rawEvents as _,
-          ~rollbackTargetCheckpointId as _,
+          ~rollback as _,
           ~isInReorgThreshold as _,
           ~config as _,
           ~allEntities as _,
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
+          ~chainMetaData as _,
         ) => JsError.throwWithMessage("Not implemented"),
         close: () => Promise.resolve(),
       },
@@ -327,10 +350,22 @@ module Indexer = {
     )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
+    let onError = (errHandler: ErrorHandling.t) => {
+      errHandler->ErrorHandling.log
+      NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
+    }
+
     let ctx = {
       Ctx.registrations,
       config,
       persistence,
+      inMemoryStore: RealInMemoryStore.make(
+        ~entities=config.allEntities,
+        ~persistence,
+        ~config,
+        ~onError=exn =>
+          onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
+      ),
     }
 
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
@@ -340,8 +375,6 @@ module Indexer = {
       input: s => s.field("query", S.string),
       responses: [s => s.data(S.unknown)],
     })
-
-    let gsManagerRef = ref(None)
 
     await persistence->Persistence.init(
       ~chainConfigs=config.chainMap->ChainMap.values,
@@ -362,9 +395,9 @@ module Indexer = {
       ~chainManager,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
+      ~onError,
     )
     let gsManager = globalState->GlobalStateManager.make
-    gsManagerRef := Some(gsManager)
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
     /*
         NOTE:
@@ -377,9 +410,33 @@ module Indexer = {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
           let before = (gsManager->GlobalStateManager.getState).processedBatches
-          while before >= (gsManager->GlobalStateManager.getState).processedBatches {
-            await Utils.delay(1)
+          // Wait until a new batch is processed and written. A reorg batch can
+          // land before this call (e.g. while the test awaits the rollback), so
+          // also stop once the indexer has fully settled.
+          let idleChecks = ref(0)
+          let rec wait = async () => {
+            await ctx.inMemoryStore->RealInMemoryStore.flush
+            let state = gsManager->GlobalStateManager.getState
+            let store = ctx.inMemoryStore
+            let isIdle =
+              !state.currentlyProcessingBatch &&
+              store.writeFiber->Option.isNone &&
+              store.committedCheckpointId == store.processedCheckpointId
+            if before < state.processedBatches {
+              ()
+            } else if isIdle && idleChecks.contents >= 5 {
+              ()
+            } else {
+              idleChecks := if isIdle {
+                idleChecks.contents + 1
+              } else {
+                0
+              }
+              await Utils.delay(1)
+              await wait()
+            }
           }
+          await wait()
           // Skip extra microtasks for indexer to fire follow-up actions
           // (e.g. the NextQuery dispatch that schedules the next
           // getItemsOrThrow call). Without this, callers that immediately
@@ -424,7 +481,10 @@ module Indexer = {
           ),
         )
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(
+          // Rows aren't ordered by the query, and insert order isn't meaningful
+          // since checkpointId is the source of truth. Sort for stable assertions.
+          items
+          ->S.parseOrThrow(
             S.array(
               S.union([
                 PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
@@ -441,6 +501,16 @@ module Indexer = {
               ]),
             ),
           )
+          ->Array.toSorted((a, b) => {
+            switch String.compare(a->Change.getEntityId, b->Change.getEntityId) {
+            | 0. =>
+              Float.compare(
+                a->Change.getCheckpointId->BigInt.toFloat,
+                b->Change.getCheckpointId->BigInt.toFloat,
+              )
+            | order => order
+            }
+          })
         })
         ->(
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
@@ -487,13 +557,15 @@ module Indexer = {
         | None => []
         }
       },
-      restart: () => {
+      restart: async () => {
+        // Persist before restarting, else the resumed indexer loses uncommitted state.
+        await ctx.inMemoryStore->RealInMemoryStore.flush
         let state = gsManager->GlobalStateManager.getState
         gsManager->GlobalStateManager.setState({
           ...gsManager->GlobalStateManager.getState,
           id: state.id + 1,
         })
-        make(
+        await make(
           ~chains,
           ~enableHasura,
           ~enableRawEvents,
@@ -731,29 +803,41 @@ module Source = {
                   let latestFetchedBlockNumber =
                     latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
-                  resolve({
-                    Source.knownHeight,
-                    reorgGuard: {
-                      rangeLastBlock: {
+                  let latestFetchedBlockHash = switch latestFetchedBlockHash {
+                  | Some(latestFetchedBlockHash) => latestFetchedBlockHash
+                  | None => `0x${latestFetchedBlockNumber->Int.toString}`
+                  }
+                  let blockHashes = [
+                    (
+                      {
                         blockNumber: latestFetchedBlockNumber,
-                        blockHash: switch latestFetchedBlockHash {
-                        | Some(latestFetchedBlockHash) => latestFetchedBlockHash
-                        | None => `0x${latestFetchedBlockNumber->Int.toString}`
-                        },
-                      },
-                      prevRangeLastBlock: switch prevRangeLastBlock {
-                      | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
-                      | None =>
-                        if fromBlock > 0 {
-                          Some({
+                        blockHash: latestFetchedBlockHash,
+                      }: ReorgDetection.blockData
+                    ),
+                  ]
+                  let prevEntry = switch prevRangeLastBlock {
+                  | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
+                  | None =>
+                    if fromBlock > 0 {
+                      Some(
+                        (
+                          {
                             blockNumber: fromBlock - 1,
                             blockHash: `0x${(fromBlock - 1)->Int.toString}`,
-                          })
-                        } else {
-                          None
-                        }
-                      },
-                    },
+                          }: ReorgDetection.blockData
+                        ),
+                      )
+                    } else {
+                      None
+                    }
+                  }
+                  switch prevEntry {
+                  | Some(prev) => blockHashes->Array.unshift(prev)->ignore
+                  | None => ()
+                  }
+                  resolve({
+                    Source.knownHeight,
+                    blockHashes,
                     parsedQueueItems: items->Array.map(
                       item => {
                         Internal.Event({

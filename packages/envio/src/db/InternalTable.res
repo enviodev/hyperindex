@@ -186,26 +186,67 @@ WHERE "${(#id: field :> string)}" = $1;`
 "${(#ready_at: field :> string)}" as "timestampCaughtUpToHeadOrEndblock",
 "${(#events_processed: field :> string)}"::float8 as "numEventsProcessed",
 "${(#progress_block: field :> string)}" as "progressBlockNumber",
-"${(#source_block: field :> string)}" as "sourceBlockNumber",
-(
-  -- envio_addresses.id is a composite "{chainId}-{address}" string produced by
-  -- Config.EnvioAddresses.makeId; extract the address by taking everything
-  -- after the first '-'. Keep in sync with makeId / getAddress.
-  SELECT COALESCE(json_agg(json_build_object(
-    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
-    'contractName', "contract_name",
-    'registrationBlock', "registration_block"
-  )), '[]'::json)
-  FROM "${pgSchema}"."${EnvioAddresses.table.tableName}"
-  WHERE "chain_id" = chains."${(#id: field :> string)}"
-) as "indexingAddresses"
-FROM "${pgSchema}"."${table.tableName}" as chains;`
+"${(#source_block: field :> string)}" as "sourceBlockNumber"
+FROM "${pgSchema}"."${table.tableName}";`
   }
 
-  let getInitialState = (sql, ~pgSchema) => {
-    sql
-    ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
-    ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>)
+  type rawIndexingAddress = {
+    chainId: int,
+    address: Address.t,
+    contractName: string,
+    registrationBlock: int,
+  }
+
+  // Addresses are read as plain rows rather than aggregated per chain with
+  // json_agg: a single chain's aggregate can exceed V8's max string length
+  // (postgres.js decodes the column with Buffer.toString and throws
+  // ERR_STRING_TOO_LONG). Grouping happens in JS instead — see getInitialState.
+  let makeGetIndexingAddressesQuery = (~pgSchema) => {
+    // envio_addresses.id is a composite "{chainId}-{address}" string produced by
+    // Config.EnvioAddresses.makeId; extract the address by taking everything
+    // after the first '-'. Keep in sync with makeId / getAddress.
+    `SELECT "chain_id" as "chainId",
+SUBSTRING("id" FROM POSITION('-' IN "id") + 1) as "address",
+"contract_name" as "contractName",
+"registration_block" as "registrationBlock"
+FROM "${pgSchema}"."${EnvioAddresses.table.tableName}";`
+  }
+
+  let getInitialState = async (sql, ~pgSchema) => {
+    let (rawInitialStates, rawIndexingAddresses) = await Promise.all2((
+      sql
+      ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>),
+      sql
+      ->Postgres.unsafe(makeGetIndexingAddressesQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<rawIndexingAddress>>),
+    ))
+
+    let indexingAddressesByChainId = Dict.make()
+    rawIndexingAddresses->Array.forEach(row => {
+      let key = row.chainId->Int.toString
+      let addresses = switch indexingAddressesByChainId->Dict.get(key) {
+      | Some(addresses) => addresses
+      | None =>
+        let addresses: array<Internal.indexingAddress> = []
+        indexingAddressesByChainId->Dict.set(key, addresses)
+        addresses
+      }
+      addresses
+      ->Array.push({
+        address: row.address,
+        contractName: row.contractName,
+        registrationBlock: row.registrationBlock,
+      })
+      ->ignore
+    })
+
+    rawInitialStates->Array.map(rawInitialState => {
+      ...rawInitialState,
+      indexingAddresses: indexingAddressesByChainId
+      ->Dict.get(rawInitialState.id->Int.toString)
+      ->Option.getOr([]),
+    })
   }
 
   let progressFields: array<progressFields> = [#progress_block, #events_processed, #source_block]

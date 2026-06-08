@@ -33,6 +33,9 @@ type chain = {
   /** Localized unit noun for this chain's progress. `"Slots"` on SVM,
    `"Blocks"` everywhere else. Drives the per-chain progress label. */
   blockUnit: string,
+  rateLimitTimeMs: float,
+  isRateLimited: bool,
+  rateLimitResetInMs: option<float>,
 }
 
 let minOfOption: (int, option<int>) => int = (a: int, b: option<int>) => {

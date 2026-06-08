@@ -1,5 +1,4 @@
 type t = {
-  committedCheckpointId: bigint,
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   isInReorgThreshold: bool,
   // True once every chain has caught up to head/endBlock. Monotonic during a run.
@@ -106,7 +105,6 @@ let makeFromDbState = (
   }
 
   {
-    committedCheckpointId: initialState.checkpointId,
     chainFetchers,
     isInReorgThreshold,
     isRealtime,
@@ -135,9 +133,15 @@ let nextItemIsNone = (chainManager: t): bool => {
   )
 }
 
-let createBatch = (chainManager: t, ~batchSizeTarget: int, ~isRollback: bool): Batch.t => {
+let createBatch = (
+  chainManager: t,
+  ~processedCheckpointId,
+  ~batchSizeTarget: int,
+  ~isRollback: bool,
+): Batch.t => {
   Batch.make(
-    ~checkpointIdBeforeBatch=chainManager.committedCheckpointId->BigInt.add(
+    ~isInReorgThreshold=chainManager.isInReorgThreshold,
+    ~checkpointIdBeforeBatch=processedCheckpointId->BigInt.add(
       // Since for rollback we have a diff checkpoint id.
       // This is needed to currectly overwrite old state
       // in an append-only ClickHouse insert.

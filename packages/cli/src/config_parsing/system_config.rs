@@ -1004,8 +1004,8 @@ impl SystemConfig {
 
                     let mut chain_contracts = Vec::new();
                     for program in network.programs.as_deref().unwrap_or(&[]) {
-                        let svm_abi = resolve_program_schema(program, project_paths)
-                            .with_context(|| {
+                        let svm_abi =
+                            resolve_program_schema(program, project_paths).with_context(|| {
                                 format!(
                                     "Resolving Borsh schema for program '{}' ({})",
                                     program.name, program.program_id
@@ -1623,9 +1623,7 @@ pub fn field_type_to_arg_type(ty: &SvmFieldType) -> human_config::svm::ArgType {
         SvmFieldType::Option(inner) => {
             T::Composite(C::Option(Box::new(field_type_to_arg_type(inner))))
         }
-        SvmFieldType::Vec(inner) => {
-            T::Composite(C::Vec(Box::new(field_type_to_arg_type(inner))))
-        }
+        SvmFieldType::Vec(inner) => T::Composite(C::Vec(Box::new(field_type_to_arg_type(inner)))),
         SvmFieldType::Array { ty, len } => {
             T::Composite(C::Array(Box::new(field_type_to_arg_type(ty)), *len))
         }

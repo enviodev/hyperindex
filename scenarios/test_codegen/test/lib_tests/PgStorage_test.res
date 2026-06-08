@@ -807,22 +807,27 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
 "ready_at" as "timestampCaughtUpToHeadOrEndblock",
 "events_processed"::float8 as "numEventsProcessed",
 "progress_block" as "progressBlockNumber",
-"source_block" as "sourceBlockNumber",
-(
-  -- envio_addresses.id is a composite "{chainId}-{address}" string produced by
-  -- Config.EnvioAddresses.makeId; extract the address by taking everything
-  -- after the first '-'. Keep in sync with makeId / getAddress.
-  SELECT COALESCE(json_agg(json_build_object(
-    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
-    'contractName', "contract_name",
-    'registrationBlock', "registration_block"
-  )), '[]'::json)
-  FROM "test_schema"."envio_addresses"
-  WHERE "chain_id" = chains."id"
-) as "indexingAddresses"
-FROM "test_schema"."envio_chains" as chains;`
+"source_block" as "sourceBlockNumber"
+FROM "test_schema"."envio_chains";`
 
         t.expect(query, ~message="Initial state SQL should match exactly").toBe(expectedQuery)
+      },
+    )
+  })
+
+  describe("InternalTable.Chains.makeGetIndexingAddressesQuery", () => {
+    Async.it(
+      "Should create correct SQL for indexing addresses query",
+      async t => {
+        let query = InternalTable.Chains.makeGetIndexingAddressesQuery(~pgSchema="test_schema")
+
+        let expectedQuery = `SELECT "chain_id" as "chainId",
+SUBSTRING("id" FROM POSITION('-' IN "id") + 1) as "address",
+"contract_name" as "contractName",
+"registration_block" as "registrationBlock"
+FROM "test_schema"."envio_addresses";`
+
+        t.expect(query, ~message="Indexing addresses SQL should match exactly").toBe(expectedQuery)
       },
     )
   })
@@ -994,6 +999,97 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
         result,
         ~message="Should read ClickHouse env vars lazily so envio dev's late injection works",
       ).toEqual(Ok())
+    },
+  )
+})
+
+describe("PgStorage.makeRawEvent", () => {
+  Async.it(
+    "Derives a raw event row from a batch item, copying block hash before cleanup and stringifying bigint block fields",
+    async t => {
+      let srcAddress = "0x00000000000000000000000000000000000000ab"->(Utils.magic: string => Address.t)
+      let blockNumber = 5
+      let logIndex = 3
+
+      let event =
+        {
+          "block": %raw(`{"number": 5, "timestamp": 9999, "hash": "0xblockhash", "gasUsed": 99n, "miner": "0xminer"}`),
+          "transaction": %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+          "params": (),
+          "logIndex": logIndex,
+          "srcAddress": srcAddress,
+          "chainId": 137,
+          "contractName": "ERC20",
+          "eventName": "EventWithoutFields",
+        }->(Utils.magic: _ => Internal.event)
+
+      let eventItem =
+        Internal.Event({
+          eventConfig: (MockIndexer.evmEventConfig(~contractName="ERC20") :> Internal.eventConfig),
+          timestamp: 1234,
+          chain: ChainMap.Chain.makeUnsafe(~chainId=137),
+          blockNumber,
+          logIndex,
+          event,
+        })->Internal.castUnsafeEventItem
+
+      t.expect(eventItem->PgStorage.makeRawEvent(~config=MockIndexer.config)).toEqual({
+        chainId: 137,
+        eventId: EventUtils.packEventIndex(~logIndex, ~blockNumber),
+        eventName: "EventWithoutFields",
+        contractName: "ERC20",
+        blockNumber,
+        logIndex,
+        srcAddress,
+        blockHash: "0xblockhash",
+        blockTimestamp: 1234,
+        blockFields: %raw(`{"gasUsed": "99", "miner": "0xminer"}`),
+        transactionFields: %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+        params: %raw(`"null"`),
+      })
+    },
+  )
+})
+
+describe("PgStorage.removeInvalidUtf8InPlace", () => {
+  Async.it(
+    "Strips NUL bytes from raw event rows, including deep inside jsonb params and field selections",
+    async t => {
+      let rawEvent: InternalTable.RawEvents.t = {
+        chainId: 1,
+        eventId: 42n,
+        eventName: "Name\x00Changed",
+        contractName: "Resolver",
+        blockNumber: 5,
+        logIndex: 3,
+        srcAddress: "0x00000000000000000000000000000000000000ab"->(
+          Utils.magic: string => Address.t
+        ),
+        blockHash: "0xhash",
+        blockTimestamp: 100,
+        blockFields: %raw(`{"extraData": "0x00\x00ff"}`),
+        transactionFields: %raw(`{"hash": "0xtx"}`),
+        params: %raw(`{"node": "0xnode", "name": "Muscle-window.eth\x00tail", "labels": ["a\x00b", "c"]}`),
+      }
+
+      [rawEvent]->PgStorage.removeInvalidUtf8InPlace
+
+      t.expect(rawEvent).toEqual({
+        chainId: 1,
+        eventId: 42n,
+        eventName: "NameChanged",
+        contractName: "Resolver",
+        blockNumber: 5,
+        logIndex: 3,
+        srcAddress: "0x00000000000000000000000000000000000000ab"->(
+          Utils.magic: string => Address.t
+        ),
+        blockHash: "0xhash",
+        blockTimestamp: 100,
+        blockFields: %raw(`{"extraData": "0x00ff"}`),
+        transactionFields: %raw(`{"hash": "0xtx"}`),
+        params: %raw(`{"node": "0xnode", "name": "Muscle-window.ethtail", "labels": ["ab", "c"]}`),
+      })
     },
   )
 })

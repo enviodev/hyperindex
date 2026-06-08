@@ -7,7 +7,6 @@ type options = {
   endpointUrl: string,
   apiToken: option<string>,
   eventConfigs: array<Internal.svmInstructionEventConfig>,
-  clientMaxRetries: int,
   clientTimeoutMillis: int,
 }
 
@@ -19,9 +18,9 @@ type options = {
 // Empty programId means the config carries no real program (placeholder), in
 // which case we skip — better to over-fetch nothing than ship a degenerate
 // query.
-let buildInstructionSelections = (
-  eventConfigs: array<Internal.svmInstructionEventConfig>,
-): array<HyperSyncSolanaClient.QueryTypes.instructionSelection> => {
+let buildInstructionSelections = (eventConfigs: array<Internal.svmInstructionEventConfig>): array<
+  HyperSyncSolanaClient.QueryTypes.instructionSelection,
+> => {
   eventConfigs->Belt.Array.flatMap(cfg => {
     let programIdString = cfg.programId->SvmTypes.Pubkey.toString
     if programIdString === "" {
@@ -42,9 +41,12 @@ let buildInstructionSelections = (
       }
       groups->Belt.Array.map(group => {
         let pick = position =>
-          group->Belt.Array.keepMap(f =>
-            f.position == position ? Some(f.values->SvmTypes.Pubkey.toStrings) : None
-          )->Belt.Array.get(0)
+          group
+          ->Belt.Array.keepMap(
+            f => f.position == position ? Some(f.values->SvmTypes.Pubkey.toStrings) : None,
+          )
+          ->Belt.Array.get(0)
+
         (
           {
             programId: [programIdString],
@@ -88,9 +90,7 @@ let serializeInstructionAddress = (addr: array<int>) =>
 // One `addon.registerProgramSchema` call per program at startup; the returned
 // handle goes into `schemaHandlesByProgram` and gets reused for every
 // matching instruction we decode.
-let buildSchemaHandles = (
-  eventConfigs: array<Internal.svmInstructionEventConfig>,
-): dict<int> => {
+let buildSchemaHandles = (eventConfigs: array<Internal.svmInstructionEventConfig>): dict<int> => {
   // Group by programId base58 string. Skip events that carry no schema
   // (accounts == [] && args is JSON.Null && definedTypes is JSON.Null —
   // the resolved-empty case from system_config.rs).
@@ -214,13 +214,13 @@ let toSvmTransaction = (
 ): Envio.svmTransaction => {
   signatures: tx.signatures,
   accountKeys: tx.accountKeys->SvmTypes.Pubkey.fromStringsUnsafe,
-  feePayer: ?tx.feePayer->Option.map(SvmTypes.Pubkey.fromStringUnsafe),
+  feePayer: ?(tx.feePayer->Option.map(SvmTypes.Pubkey.fromStringUnsafe)),
   success: ?tx.success,
   err: ?tx.err,
   // u64 lamports / compute units arrive as `int` over napi. Convert to
   // `bigint` so the public type stays defensible even for pathological values.
-  fee: ?tx.fee->Option.map(BigInt.fromInt),
-  computeUnitsConsumed: ?tx.computeUnitsConsumed->Option.map(BigInt.fromInt),
+  fee: ?(tx.fee->Option.map(BigInt.fromInt)),
+  computeUnitsConsumed: ?(tx.computeUnitsConsumed->Option.map(BigInt.fromInt)),
   recentBlockhash: ?tx.recentBlockhash,
   version: ?tx.version,
 }
@@ -228,9 +228,9 @@ let toSvmTransaction = (
 let toSvmTokenBalance = (
   tb: HyperSyncSolanaClient.ResponseTypes.tokenBalance,
 ): Envio.svmTokenBalance => {
-  account: ?tb.account->Option.map(SvmTypes.Pubkey.fromStringUnsafe),
-  mint: ?tb.mint->Option.map(SvmTypes.Pubkey.fromStringUnsafe),
-  owner: ?tb.owner->Option.map(SvmTypes.Pubkey.fromStringUnsafe),
+  account: ?(tb.account->Option.map(SvmTypes.Pubkey.fromStringUnsafe)),
+  mint: ?(tb.mint->Option.map(SvmTypes.Pubkey.fromStringUnsafe)),
+  owner: ?(tb.owner->Option.map(SvmTypes.Pubkey.fromStringUnsafe)),
   preAmount: ?tb.preAmount,
   postAmount: ?tb.postAmount,
 }
@@ -248,12 +248,7 @@ let probeRouter = (
 ) => {
   let probe = (dN: option<string>) => {
     let tag = EventRouter.getSvmEventId(~programId, ~discriminator=dN)
-    router->EventRouter.get(
-      ~tag,
-      ~contractAddress,
-      ~blockNumber=instr.slot,
-      ~indexingAddresses,
-    )
+    router->EventRouter.get(~tag, ~contractAddress, ~blockNumber=instr.slot, ~indexingAddresses)
   }
 
   let result = byteLengthsDesc->Belt.Array.reduce(None, (acc, len) =>
@@ -280,27 +275,22 @@ let probeRouter = (
   }
 }
 
-let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clientTimeoutMillis}: options): t => {
+let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: options): t => {
   let name = "HyperSyncSolana"
   let chainId = chain->ChainMap.Chain.toChainId
 
   let client = HyperSyncSolanaClient.make(
     ~url=endpointUrl,
-    ~apiToken=?apiToken,
+    ~apiToken?,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~maxNumRetries=clientMaxRetries,
   )
 
-  let (eventRouter, programOrderings) =
-    EventRouter.fromSvmEventConfigsOrThrow(eventConfigs, ~chain)
+  let (eventRouter, programOrderings) = EventRouter.fromSvmEventConfigsOrThrow(eventConfigs, ~chain)
 
   // programId.toString -> sorted-desc byte lengths
   let orderingByProgram = Dict.make()
   programOrderings->Belt.Array.forEach(o =>
-    orderingByProgram->Dict.set(
-      o.programId->SvmTypes.Pubkey.toString,
-      o.byteLengthsDesc,
-    )
+    orderingByProgram->Dict.set(o.programId->SvmTypes.Pubkey.toString, o.byteLengthsDesc)
   )
 
   // programId.toString -> Rust-side schema registry handle. Built once at
@@ -351,11 +341,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
       maxNumTokenBalances: 16000,
     }
 
-    Prometheus.SourceRequestCount.increment(
-      ~sourceName=name,
-      ~chainId,
-      ~method="getInstructions",
-    )
+    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")
 
     let resp = try await client.get(~query) catch {
     | exn =>
@@ -392,8 +378,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
     // Per (slot, transaction_index) lookup for parent transactions.
     let txByKey = Dict.make()
     resp.data.transactions->Belt.Array.forEach(tx => {
-      let key =
-        tx.slot->Int.toString ++ ":" ++ tx.transactionIndex->Int.toString
+      let key = tx.slot->Int.toString ++ ":" ++ tx.transactionIndex->Int.toString
       txByKey->Dict.set(key, tx)
     })
 
@@ -454,8 +439,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
       switch maybeConfig {
       | None => ()
       | Some(eventConfig) =>
-        let txKey =
-          instr.slot->Int.toString ++ ":" ++ instr.transactionIndex->Int.toString
+        let txKey = instr.slot->Int.toString ++ ":" ++ instr.transactionIndex->Int.toString
         let maybeTx =
           txByKey->Utils.Dict.dangerouslyGetNonOption(txKey)->Option.map(toSvmTransaction)
         let maybeTx = if eventConfig.includeTokenBalances {
@@ -478,17 +462,17 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
         let maybeLogs =
           logsByKey
           ->Utils.Dict.dangerouslyGetNonOption(logKey)
-          ->Option.map(
-            logs =>
-              logs->Array.map((log): Envio.svmLog => {
+          ->Option.map(logs =>
+            logs->Array.map(
+              (log): Envio.svmLog => {
                 kind: log.kind->Option.getOr(""),
                 message: log.message->Option.getOr(""),
-              }),
+              },
+            )
           )
 
         let slotKey = instr.slot->Int.toString
-        let blockTime =
-          blockTimeBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
+        let blockTime = blockTimeBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
         let payload: Envio.svmInstructionEvent = {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,
@@ -512,9 +496,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
             chain,
             blockNumber: instr.slot,
             logIndex: synthLogIndex(instr),
-            event: payload->(
-              Utils.magic: Envio.svmInstructionEvent => Internal.event
-            ),
+            event: payload->(Utils.magic: Envio.svmInstructionEvent => Internal.event),
           }),
         )
         ->ignore
@@ -530,20 +512,6 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
       ->Utils.Dict.dangerouslyGetNonOption(heighestSlot->Int.toString)
       ->Option.getOr(0)
 
-    // C2 ships a no-op reorg guard for SVM: finalized commitment + extremely
-    // rare reorgs at finality. C3 wires the extra `queryBlockHash(slot)`
-    // route per the Q3 answer.
-    let reorgGuard: ReorgDetection.reorgGuard = {
-      rangeLastBlock: (
-        {
-          blockNumber: heighestSlot,
-          blockTimestamp: latestBlockTime,
-          blockHash: "",
-        }: ReorgDetection.blockDataWithTimestamp
-      )->ReorgDetection.generalizeBlockDataWithTimestamp,
-      prevRangeLastBlock: None,
-    }
-
     let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     {
@@ -552,7 +520,9 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientMaxRetries, clien
       latestFetchedBlockNumber: heighestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
-      reorgGuard,
+      // No-op reorg detection for SVM: finalized commitment + extremely rare
+      // reorgs at finality, so no block hashes are tracked.
+      blockHashes: [],
       fromBlockQueried: fromBlock,
     }
   }

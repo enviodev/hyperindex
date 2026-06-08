@@ -310,7 +310,12 @@ describe("E2E tests", () => {
           logIndex: 0,
           handler: async ({context}) => {
             t.expect(await context.effect(testEffect, "test")).toEqual("test-output")
-            t.expect(await context.effect(testEffectWithCache, "test")).toEqual("test-output")
+            t.expect(
+              await Promise.all2((
+                context.effect(testEffectWithCache, "test"),
+                context.effect(testEffectWithCache, "test-2"),
+              )),
+            ).toEqual(("test-output", "test-2-output"))
           },
         },
       ],
@@ -327,7 +332,7 @@ describe("E2E tests", () => {
         labels: Dict.fromArray([("effect", "testEffect")]),
       },
       {
-        value: "1",
+        value: "2",
         labels: Dict.fromArray([("effect", "testEffectWithCache")]),
       },
     ])
@@ -336,7 +341,7 @@ describe("E2E tests", () => {
       ~message="should increment effect cache count",
     ).toEqual([
       {
-        value: "1",
+        value: "2",
         labels: Dict.fromArray([("effect", "testEffectWithCache")]),
       },
     ])
@@ -346,8 +351,11 @@ describe("E2E tests", () => {
     ).toEqual([])
     t.expect(
       await indexerMock.queryEffectCache("testEffectWithCache"),
-      ~message="should have the cache entry in db",
-    ).toEqual([{"id": `"test"`, "output": %raw(`"test-output"`)}])
+      ~message="should have the cache entries in db",
+    ).toEqual([
+      {"id": `"test"`, "output": %raw(`"test-output"`)},
+      {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
+    ])
 
     let indexerMock = await indexerMock.restart()
     await Utils.delay(0)
@@ -361,10 +369,33 @@ describe("E2E tests", () => {
       ~message="should resume effect cache count on restart",
     ).toEqual([
       {
-        value: "1",
+        value: "2",
         labels: Dict.fromArray([("effect", "testEffectWithCache")]),
       },
     ])
+
+    // A changed effect output schema is a code change, so it only takes effect
+    // after a restart. The restart clears the warm in-memory cache, so the db
+    // entries are reloaded and re-validated against the new schema. "test-output"
+    // fails the new schema and is recomputed; "test-2-output" passes and is kept.
+    let testEffectWithCacheV2 = Envio.createEffect(
+      {
+        name: "testEffectWithCache",
+        input: S.string,
+        output: S.string->S.refine(
+          s =>
+            v =>
+              if !(v->String.includes("2")) {
+                s.fail(`Expected to include '2', got ${v}`)
+              },
+        ),
+        rateLimit: Disable,
+        cache: true,
+      },
+      async ({input}) => {
+        input ++ "-output-v2"
+      },
+    )
 
     sourceMock.resolveGetHeightOrThrow(300)
     await Utils.delay(0)
@@ -377,10 +408,10 @@ describe("E2E tests", () => {
           handler: async ({context}) => {
             t.expect(
               await Promise.all2((
-                context.effect(testEffectWithCache, "test"),
-                context.effect(testEffectWithCache, "test-2"),
+                context.effect(testEffectWithCacheV2, "test"),
+                context.effect(testEffectWithCacheV2, "test-2"),
               )),
-            ).toEqual(("test-output", "test-2-output"))
+            ).toEqual(("test-output-v2", "test-2-output"))
           },
         },
       ],
@@ -407,7 +438,7 @@ describe("E2E tests", () => {
       ],
       [
         {
-          value: "1",
+          value: "2",
           labels: Dict.fromArray([
             ("operation", "testEffectWithCache.effect"),
             ("storage", "postgres"),
@@ -429,7 +460,7 @@ describe("E2E tests", () => {
         indexerMock.metric("envio_effect_call_total"),
         indexerMock.metric("envio_effect_cache"),
       )),
-      ~message="Should increment effect calls count and cache count",
+      ~message="Should recompute the invalidated entry and keep the cache count",
     ).toEqual((
       [
         {
@@ -445,59 +476,12 @@ describe("E2E tests", () => {
       ],
     ))
 
-    let testEffectWithCacheV2 = Envio.createEffect(
-      {
-        name: "testEffectWithCache",
-        input: S.string,
-        output: S.string->S.refine(
-          s =>
-            v =>
-              if !(v->String.includes("2")) {
-                s.fail(`Expected to include '2', got ${v}`)
-              },
-        ),
-        rateLimit: Disable,
-        cache: true,
-      },
-      async ({input}) => {
-        input ++ "-output-v2"
-      },
-    )
-
-    sourceMock.resolveGetItemsOrThrow(
-      [
-        {
-          blockNumber: 102,
-          logIndex: 0,
-          handler: async ({context}) => {
-            t.expect(
-              await Promise.all2((
-                context.effect(testEffectWithCacheV2, "test"),
-                context.effect(testEffectWithCacheV2, "test-2"),
-              )),
-            ).toEqual(("test-output-v2", "test-2-output"))
-          },
-        },
-      ],
-      ~latestFetchedBlockNumber=102,
-    )
-    await indexerMock.getBatchWritePromise()
-
     t.expect(
       await indexerMock.queryEffectCache("testEffectWithCache"),
       ~message="Should invalidate loaded cache and store new one",
     ).toEqual([
       {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
       {"id": `"test"`, "output": %raw(`"test-output-v2"`)},
-    ])
-    t.expect(
-      await indexerMock.metric("envio_effect_cache"),
-      ~message="Shouldn't increment on invalidation",
-    ).toEqual([
-      {
-        value: "2",
-        labels: Dict.fromArray([("effect", "testEffectWithCache")]),
-      },
     ])
   })
 
@@ -1060,41 +1044,39 @@ describe("E2E tests", () => {
       syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexerMock.getBatchWritePromise()
 
-      // First waitForNewBlock runs with isRealtime=false (NextQuery fires before
-      // EventBatchProcessed sets timestampCaughtUpToHeadOrEndblock).
-      // Only Sync participates in height racing initially.
-      t.expect(
-        syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should be called for first waitForNewBlock",
-      ).toEqual(2)
+      // EventBatchProcessed marks the chain caught up before the first
+      // waitForNewBlock, so the race is already realtime: Live=Primary, Sync=Secondary.
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should NOT participate yet (isRealtime still false)",
-      ).toEqual(0)
+        ~message="Live source should participate in the first waitForNewBlock (realtime)",
+      ).toEqual(1)
+      t.expect(
+        syncSource.getHeightOrThrowCalls->Array.length,
+        ~message="Sync source should stay at 1 (Secondary, not racing)",
+      ).toEqual(1)
 
-      // Resolve the first waitForNewBlock to advance to the next cycle
-      syncSource.resolveGetHeightOrThrow(301)
+      // Resolve the first waitForNewBlock via the Live (Primary) source
+      liveSource.resolveGetHeightOrThrow(301)
       await Utils.delay(0)
       await Utils.delay(0)
 
       // Resolve the items query for the new block
       t.expect(
         syncSource.getItemsOrThrowCalls->Array.length,
-        ~message="Even though the sync source resolves the rate, we are now in the live mode, so we attempt to query items from the live source now.",
+        ~message="We are in live mode, so we query items from the live source.",
       ).toEqual(0)
       liveSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
       await indexerMock.getBatchWritePromise()
 
-      // Now isRealtime=true (EventBatchProcessed has set timestampCaughtUpToHeadOrEndblock).
-      // Second waitForNewBlock: Live=Primary races, Sync=Secondary (not in main group).
+      // Second waitForNewBlock: Live=Primary races again, Sync=Secondary (stays).
       t.expect(
         syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should stay at 2 (now Secondary, not racing)",
-      ).toEqual(2)
+        ~message="Sync source should stay at 1 (Secondary, not racing)",
+      ).toEqual(1)
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should now participate in height racing after isRealtime=true",
-      ).toEqual(1)
+        ~message="Live source should keep racing in realtime mode",
+      ).toEqual(2)
     },
   )
 

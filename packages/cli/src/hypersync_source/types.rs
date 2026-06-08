@@ -7,7 +7,7 @@ use hypersync_client::{
     format::{self, FixedSizeData, Hex},
     net_types, simple_types,
 };
-use napi::bindgen_prelude::{BigInt, ToNapiValue};
+use napi::bindgen_prelude::{BigInt, FromNapiValue, ToNapiValue};
 use napi_derive::napi;
 
 /// Data relating to a single event (log)
@@ -226,13 +226,15 @@ fn encode_prefix_hex(bytes: &[u8]) -> String {
 }
 
 fn map_address_string(v: &Option<FixedSizeData<20>>, should_checksum: bool) -> Option<String> {
-    v.as_ref().map(|v| {
-        if should_checksum {
-            alloy_primitives::Address(alloy_primitives::FixedBytes(***v)).to_checksum(None)
-        } else {
-            v.encode_hex()
-        }
-    })
+    v.as_ref().map(|v| encode_address(v, should_checksum))
+}
+
+pub(crate) fn encode_address(addr: &FixedSizeData<20>, should_checksum: bool) -> String {
+    if should_checksum {
+        alloy_primitives::Address(alloy_primitives::FixedBytes(***addr)).to_checksum(None)
+    } else {
+        addr.encode_hex()
+    }
 }
 
 fn map_hex_string<T: Hex>(v: &Option<T>) -> Option<String> {
@@ -470,6 +472,7 @@ pub struct EventParamsInput {
     pub sighash: String,
     pub topic_count: i32,
     pub event_name: String,
+    pub contract_name: String,
     pub params: Vec<ParamMeta>,
 }
 
@@ -479,6 +482,17 @@ pub enum ParamValue {
     Str(String),
     Arr(Vec<ParamValue>),
     Obj(Vec<(String, ParamValue)>),
+}
+
+impl FromNapiValue for ParamValue {
+    unsafe fn from_napi_value(
+        _env: napi::sys::napi_env,
+        _val: napi::sys::napi_value,
+    ) -> napi::Result<Self> {
+        Err(napi::Error::from_reason(
+            "ParamValue is decode-only; it cannot be constructed from JS",
+        ))
+    }
 }
 
 impl ToNapiValue for ParamValue {

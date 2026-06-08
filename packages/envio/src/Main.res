@@ -302,11 +302,7 @@ let getGlobalIndexer = (): 'indexer => {
   let parseSvmIdentityConfig = (identityConfig: 'a) => {
     let raw =
       identityConfig->(
-        Utils.magic: 'a => {
-          "program": unknown,
-          "instruction": unknown,
-          "where": option<JSON.t>,
-        }
+        Utils.magic: 'a => {"program": unknown, "instruction": unknown, "where": option<JSON.t>}
       )
     let (programName, instructionName) = if typeof(raw["program"]) === #string {
       (
@@ -314,8 +310,7 @@ let getGlobalIndexer = (): 'indexer => {
         raw["instruction"]->(Utils.magic: unknown => string),
       )
     } else {
-      let inst =
-        raw["instruction"]->(Utils.magic: unknown => {"contract": string, "_0": string})
+      let inst = raw["instruction"]->(Utils.magic: unknown => {"contract": string, "_0": string})
       (inst["contract"], inst["_0"])
     }
     let where = raw["where"]
@@ -361,6 +356,13 @@ let getGlobalIndexer = (): 'indexer => {
       ),
       ~eventOptions,
     )
+  }
+
+  let onRollbackCommitFn = (callback: 'a) => {
+    HandlerRegister.throwIfFinishedRegistration(
+      ~methodName="~internalAndWillBeRemovedSoon_onRollbackCommit",
+    )
+    let _ = RollbackCommit.register(callback->(Utils.magic: 'a => RollbackCommit.callback))
   }
 
   // Two-stage parse: first the ecosystem-specific outer schema unwraps the
@@ -504,8 +506,17 @@ let getGlobalIndexer = (): 'indexer => {
             "onEvent",
             "contractRegister",
             "onBlock",
+            "~internalAndWillBeRemovedSoon_onRollbackCommit",
           ]
-        | Svm => ["name", "description", "chainIds", "chains", "onInstruction", "onSlot"]
+        | Svm => [
+            "name",
+            "description",
+            "chainIds",
+            "chains",
+            "onInstruction",
+            "onSlot",
+            "~internalAndWillBeRemovedSoon_onRollbackCommit",
+          ]
         }
         keysMemo := Some(keys)
         keys
@@ -529,6 +540,7 @@ let getGlobalIndexer = (): 'indexer => {
     | "onInstruction" => onInstructionFn->Utils.magic
     | "contractRegister" => contractRegisterFn->Utils.magic
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
+    | "~internalAndWillBeRemovedSoon_onRollbackCommit" => onRollbackCommitFn->Utils.magic
     | _ =>
       JsError.throwWithMessage(
         `Field \`${prop}\` does not exist on \`indexer\`. Available fields: ${getKeys()->Array.join(
@@ -738,10 +750,23 @@ let start = async (
   | Some(patchConfig) => patchConfig(config, registrations)
   | None => config
   }
+  // The single fatal-error handler, shared by the store, ErrorExit, and the
+  // manager's catch.
+  let onError = (errHandler: ErrorHandling.t) => {
+    errHandler->ErrorHandling.log
+    NodeJs.process->NodeJs.exitWithCode(Failure)
+  }
   let ctx = {
     Ctx.registrations,
     config,
     persistence,
+    inMemoryStore: InMemoryStore.make(
+      ~entities=persistence.allEntities,
+      ~committedCheckpointId=(persistence->Persistence.getInitializedState).checkpointId,
+      ~persistence,
+      ~config,
+      ~onError=exn => onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
+    ),
   }
 
   let envioVersion = Utils.EnvioPackage.value.version
@@ -811,8 +836,12 @@ let start = async (
     ~isDevelopmentMode,
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,
+    ~onError,
   )
-  let gsManager = globalState->GlobalStateManager.make
+  let gsManager =
+    globalState->GlobalStateManager.make(~onError=exn =>
+      onError(exn->ErrorHandling.make(~msg="Indexer has failed with an unexpected error"))
+    )
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)
   }

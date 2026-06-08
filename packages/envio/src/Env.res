@@ -11,6 +11,12 @@ let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fall
 let maxPartitionConcurrency =
   envSafe->EnvSafe.get("ENVIO_MAX_PARTITION_CONCURRENCY", S.int, ~fallback=10)
 
+// Target number of in-memory objects (uncommitted entity/effect changes plus
+// unwritten batch items) the store holds before processing waits for the write
+// cycle to catch up.
+let inMemoryObjectsTarget =
+  envSafe->EnvSafe.get("ENVIO_IN_MEMORY_OBJECTS_TARGET", S.int, ~fallback=100_000)->Belt.Int.toFloat
+
 // FIXME: This broke HS grafana dashboard. Should investigate it later. Maybe we should use :: as a default value?
 // We want to be able to set it to 0.0.0.0
 // to allow to passthrough the port from a Docker container
@@ -46,13 +52,6 @@ let envioAppUrl = envSafe->EnvSafe.get("ENVIO_APP", S.string, ~fallback=prodEnvi
 let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
 let hyperSyncClientTimeoutMillis =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS", S.int, ~fallback=120_000)
-
-/** 
-This is the number of retries that the binary client makes before rejecting the promise with an error 
-Default is 0 so that the indexer can handle retries internally
-*/
-let hyperSyncClientMaxRetries =
-  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_MAX_RETRIES", S.int, ~fallback=0)
 
 let hypersyncClientSerializationFormat =
   envSafe->EnvSafe.get(

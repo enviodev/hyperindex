@@ -581,6 +581,9 @@ type effectArgs = {
   input: effectInput,
   context: effectContext,
   cacheKey: string,
+  // The processing checkpoint that referenced this effect; stamped on the
+  // in-memory cache entry so it's evicted once the checkpoint commits.
+  checkpointId: bigint,
 }
 type effectCacheItem = {id: string, output: effectOutput}
 type effectCacheStorageMeta = {
@@ -627,6 +630,12 @@ type noOnEventWhere
 
 type checkpointId = bigint
 
+// Assigned to changes loaded from the db, which never become history.
+let loadedFromDbCheckpointId: checkpointId = 0n
+
+// Committed checkpoint before any batch is written.
+let initialCheckpointId: checkpointId = 0n
+
 type reorgCheckpoint = {
   @as("id")
   checkpointId: bigint,
@@ -637,21 +646,3 @@ type reorgCheckpoint = {
   @as("block_hash")
   blockHash: string,
 }
-
-type inMemoryStoreEntityUpdate<'entity> = {
-  latestChange: Change.t<'entity>,
-  history: array<Change.t<'entity>>,
-  // In the event of a rollback, some entity updates may have been
-  // been affected by a rollback diff. If there was no rollback diff
-  // this will always be false.
-  // If there was a rollback diff, this will be false in the case of a
-  // new entity update (where entity affected is not present in the diff) b
-  // but true if the update is related to an entity that is
-  // currently present in the diff
-  containsRollbackDiffChange: bool,
-}
-
-@unboxed
-type inMemoryStoreEntityStatus<'entity> =
-  | Updated(inMemoryStoreEntityUpdate<'entity>)
-  | Loaded // This means there is no change from the db.

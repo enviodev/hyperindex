@@ -71,61 +71,34 @@ describe("Validate reorg detection functions", () => {
     ).toEqual([50, 300, 500])
   })
 
+  let makeBlocks = (entries): array<ReorgDetection.blockData> =>
+    entries->Array.map(((blockNumber, blockHash)) => {
+      ReorgDetection.blockNumber,
+      blockHash,
+    })
+
   it("The registerReorgGuard should correctly add scanned data", t => {
     let knownHeight = 500
 
     let reorgDetection =
       mock([], ~maxReorgDepth=500)
       ->ReorgDetection.registerReorgGuard(
-        ~reorgGuard={
-          rangeLastBlock: {
-            blockNumber: 1,
-            blockHash: "0x123",
-          },
-          prevRangeLastBlock: None,
-        },
+        ~blockHashes=makeBlocks([(1, "0x123")]),
         ~knownHeight,
       )
       ->pipeNoReorg
       ->ReorgDetection.registerReorgGuard(
-        ~reorgGuard={
-          rangeLastBlock: {
-            blockNumber: 50,
-            blockHash: "0x456",
-          },
-          prevRangeLastBlock: Some({
-            blockNumber: 1,
-            blockHash: "0x123",
-          }),
-        },
+        ~blockHashes=makeBlocks([(1, "0x123"), (50, "0x456")]),
         ~knownHeight,
       )
       ->pipeNoReorg
       ->ReorgDetection.registerReorgGuard(
-        ~reorgGuard={
-          rangeLastBlock: {
-            blockNumber: 300,
-            blockHash: "0x789",
-          },
-          prevRangeLastBlock: Some({
-            blockNumber: 50,
-            blockHash: "0x456",
-          }),
-        },
+        ~blockHashes=makeBlocks([(50, "0x456"), (300, "0x789")]),
         ~knownHeight,
       )
       ->pipeNoReorg
       ->ReorgDetection.registerReorgGuard(
-        ~reorgGuard={
-          rangeLastBlock: {
-            blockNumber: 500,
-            blockHash: "0x5432",
-          },
-          prevRangeLastBlock: Some({
-            blockNumber: 300,
-            blockHash: "0x789",
-          }),
-        },
+        ~blockHashes=makeBlocks([(300, "0x789"), (500, "0x5432")]),
         ~knownHeight,
       )
       ->pipeNoReorg
@@ -136,47 +109,45 @@ describe("Validate reorg detection functions", () => {
   })
 
   it(
-    "The prevRangeLastBlock in reorg guard should add a scanned block data to reorg detection",
+    "Block hashes registered from a single response are all added to reorg detection",
     t => {
       let knownHeight = 500
       let reorgDetection =
         mock([], ~maxReorgDepth=200)
         ->ReorgDetection.registerReorgGuard(
-          ~reorgGuard={
-            rangeLastBlock: {
-              blockNumber: 50,
-              blockHash: "0x456",
-            },
-            prevRangeLastBlock: Some({
-              blockNumber: 1,
-              blockHash: "0x123",
-            }),
-          },
+          ~blockHashes=makeBlocks([(350, "0x350"), (400, "0x400"), (450, "0x450")]),
           ~knownHeight,
         )
         ->pipeNoReorg
 
       t.expect(
         reorgDetection,
-        ~message="Should add two records. One for rangeLastBlock and one for prevRangeLastBlock",
-      ).toEqual(mock([(1, "0x123"), (50, "0x456")], ~maxReorgDepth=200))
+        ~message="Should add every entry in blockHashes that is within threshold",
+      ).toEqual(mock([(350, "0x350"), (400, "0x400"), (450, "0x450")], ~maxReorgDepth=200))
     },
   )
+
+  it("Entries outside the reorg threshold are skipped entirely", t => {
+    let knownHeight = 500
+    let reorgDetection =
+      mock([], ~maxReorgDepth=200)
+      ->ReorgDetection.registerReorgGuard(
+        ~blockHashes=makeBlocks([(100, "0x100"), (400, "0x400")]),
+        ~knownHeight,
+      )
+      ->pipeNoReorg
+
+    t.expect(
+      reorgDetection,
+      ~message="100 is below threshold (300) and gets ignored; 400 is kept",
+    ).toEqual(mock([(400, "0x400")], ~maxReorgDepth=200))
+  })
 
   it("Should prune records outside of the reorg threshold on registering new data", t => {
     let reorgDetection =
       mock([(1, "0x1"), (2, "0x2"), (3, "0x3")], ~maxReorgDepth=2)
       ->ReorgDetection.registerReorgGuard(
-        ~reorgGuard={
-          rangeLastBlock: {
-            blockNumber: 4,
-            blockHash: "0x4",
-          },
-          prevRangeLastBlock: Some({
-            blockNumber: 3,
-            blockHash: "0x3",
-          }),
-        },
+        ~blockHashes=makeBlocks([(3, "0x3"), (4, "0x4")]),
         ~knownHeight=4,
       )
       ->pipeNoReorg
@@ -191,60 +162,50 @@ describe("Validate reorg detection functions", () => {
     let reorgDetection =
       mock(scannedHashesFixture, ~maxReorgDepth=200)
       ->ReorgDetection.registerReorgGuard(
-        ~reorgGuard={
-          rangeLastBlock: {
-            blockNumber: 50,
-            blockHash: "0x50-invalid",
-          },
-          prevRangeLastBlock: Some({
-            blockNumber: 20,
-            blockHash: "0x20-invalid",
-          }),
-        },
+        ~blockHashes=makeBlocks([(20, "0x20-invalid"), (50, "0x50-invalid")]),
         ~knownHeight=500,
       )
       ->pipeNoReorg
 
     t.expect(
       reorgDetection,
-      ~message="Prunes original blocks at 1 and 50. It writes invalid data for block 20 and 50, but they are outside of the reorg thershold, so we don't care",
+      ~message="Prunes original blocks at 1 and 50. Entries below threshold are ignored entirely.",
     ).toEqual(
       mock(
-        [(20, "0x20-invalid"), (50, "0x50-invalid"), (300, "0x789"), (500, "0x5432")],
+        [(300, "0x789"), (500, "0x5432")],
         ~maxReorgDepth=200,
       ),
     )
   })
 
-  it("Should detect reorg when rangeLastBlock hash doesn't match the scanned block", t => {
-    let reorgGuard = {
-      ReorgDetection.rangeLastBlock: {
-        blockNumber: 10,
-        blockHash: "0x10",
-      },
-      prevRangeLastBlock: None,
+  it("Should detect reorg when a single received hash doesn't match the scanned block", t => {
+    let receivedBlock: ReorgDetection.blockData = {
+      blockNumber: 10,
+      blockHash: "0x10",
     }
-    let scannedBlock = {
-      ReorgDetection.blockNumber: 10,
+    let scannedBlock: ReorgDetection.blockData = {
+      blockNumber: 10,
       blockHash: "0x10-invalid",
     }
 
+    let blockHashes = makeBlocks([(10, "0x10")])
+
     t.expect(
       mock([(10, "0x10-invalid")], ~shouldRollbackOnReorg=true)->ReorgDetection.registerReorgGuard(
-        ~reorgGuard,
+        ~blockHashes,
         ~knownHeight=10,
       ),
     ).toEqual((
       mock([(10, "0x10-invalid")]),
       ReorgDetected({
         scannedBlock,
-        receivedBlock: reorgGuard.rangeLastBlock,
+        receivedBlock,
       }),
     ))
 
     t.expect(
       mock([(10, "0x10-invalid")], ~shouldRollbackOnReorg=false)->ReorgDetection.registerReorgGuard(
-        ~reorgGuard,
+        ~blockHashes,
         ~knownHeight=10,
       ),
       ~message=`Correctly detects reorg when shouldRollbackOnReorg is false.
@@ -253,27 +214,18 @@ describe("Validate reorg detection functions", () => {
       mock([], ~shouldRollbackOnReorg=false),
       ReorgDetected({
         scannedBlock,
-        receivedBlock: reorgGuard.rangeLastBlock,
+        receivedBlock,
       }),
     ))
   })
 
-  it("Should detect reorg when prevRangeLastBlock hash doesn't match the scanned block", t => {
-    let reorgGuard = {
-      ReorgDetection.rangeLastBlock: {
-        blockNumber: 11,
-        blockHash: "0x11",
-      },
-      prevRangeLastBlock: Some({
-        blockNumber: 10,
-        blockHash: "0x10",
-      }),
-    }
+  it("Should detect reorg when a parent-block hash in the response doesn't match scanned data", t => {
+    let blockHashes = makeBlocks([(10, "0x10"), (11, "0x11")])
 
     let hashes = mock([(10, "0x10-invalid")], ~maxReorgDepth=2)
 
     let reorgDetectionResult =
-      hashes->ReorgDetection.registerReorgGuard(~reorgGuard, ~knownHeight=11)
+      hashes->ReorgDetection.registerReorgGuard(~blockHashes, ~knownHeight=11)
 
     t.expect(reorgDetectionResult).toEqual((
       mock([(10, "0x10-invalid")], ~maxReorgDepth=2),
@@ -289,6 +241,47 @@ describe("Validate reorg detection functions", () => {
       }),
     ))
   })
+
+  it(
+    "Should detect reorg when blockHashes contains the same block number with different hashes",
+    t => {
+      let blockHashes = makeBlocks([(10, "0x10"), (10, "0x10-different")])
+
+      t.expect(
+        mock([], ~maxReorgDepth=2)->ReorgDetection.registerReorgGuard(
+          ~blockHashes,
+          ~knownHeight=10,
+        ),
+        ~message="The first entry writes 0x10 into the working copy; the second entry collides on block 10 with a different hash, so we treat it as a reorg.",
+      ).toEqual((
+        mock([], ~maxReorgDepth=2),
+        ReorgDetected({
+          scannedBlock: {
+            blockNumber: 10,
+            blockHash: "0x10",
+          },
+          receivedBlock: {
+            blockNumber: 10,
+            blockHash: "0x10-different",
+          },
+        }),
+      ))
+    },
+  )
+
+  it(
+    "Duplicate block numbers with the same hash inside blockHashes are accepted",
+    t => {
+      let blockHashes = makeBlocks([(10, "0x10"), (10, "0x10")])
+
+      let reorgDetection =
+        mock([], ~maxReorgDepth=2)
+        ->ReorgDetection.registerReorgGuard(~blockHashes, ~knownHeight=10)
+        ->pipeNoReorg
+
+      t.expect(reorgDetection).toEqual(mock([(10, "0x10")], ~maxReorgDepth=2))
+    },
+  )
 
   it("rollbackToValidBlockNumber works as expected", t => {
     let reorgDetection = mock(scannedHashesFixture, ~maxReorgDepth=200)

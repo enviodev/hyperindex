@@ -94,7 +94,7 @@ module EventsPerSecond = {
     }
   }
 
-  let use = (~totalEventsProcessed: float) => {
+  let use = (~totalEventsProcessed: float, ~tick: int) => {
     let (samples, setSamples) = React.useState((): array<sample> => [])
 
     React.useEffect1(() => {
@@ -105,7 +105,7 @@ module EventsPerSecond = {
         kept->Array.concat([{time: now, events: totalEventsProcessed}])
       })
       None
-    }, [totalEventsProcessed])
+    }, [tick])
 
     computeEps(samples)
   }
@@ -134,12 +134,15 @@ module App = {
   @react.component
   let make = (~getState) => {
     let stdoutColumns = Hooks.useStdoutColumns()
-    let (state: GlobalState.t, setState) = React.useState(() => getState())
+    // GlobalState is mutated in place — passing the same ref to useState
+    // would bail out via Object.is and skip the re-render. Tick a counter
+    // instead and read state freshly from getState() on every render.
+    let (tick, setTick) = React.useState(() => 0)
+    let state: GlobalState.t = getState()
 
-    // useEffect to refresh state every 500ms
     React.useEffect(() => {
       let intervalId = setInterval(() => {
-        setState(_ => getState())
+        setTick(t => t + 1)
       }, 500)
 
       Some(
@@ -216,6 +219,9 @@ module App = {
             | Svm => "Slots"
             | Evm | Fuel => "Blocks"
             },
+            rateLimitTimeMs: cf.sourceManager->SourceManager.getRateLimitTimeMs,
+            isRateLimited: cf.sourceManager->SourceManager.isRateLimited,
+            rateLimitResetInMs: cf.sourceManager->SourceManager.getRateLimitResetInMs,
           }: TuiData.chain
         )
       })
@@ -231,7 +237,7 @@ module App = {
         acc
       }
     })
-    let eventsPerSecond = EventsPerSecond.use(~totalEventsProcessed)
+    let eventsPerSecond = EventsPerSecond.use(~totalEventsProcessed, ~tick)
 
     <Box flexDirection={Column}>
       <BigText
@@ -264,6 +270,38 @@ module App = {
         eventsPerSecond={SyncETA.isIndexerFullySynced(chains) ? None : eventsPerSecond}
       />
       <SyncETA chains indexerStartTime=state.indexerStartTime />
+      {
+        let maxRateLimitTimeMs =
+          chains->Array.reduce(0., (acc, chain) => Pervasives.max(acc, chain.rateLimitTimeMs))
+        let maxResetInMs =
+          chains->Array.reduce(0.0, (acc, chain) =>
+            Pervasives.max(acc, chain.rateLimitResetInMs->Option.getOr(0.0))
+          )
+        maxRateLimitTimeMs > 1000.
+          ? {
+              let rateLimitSecs = Math.round(maxRateLimitTimeMs /. 1000.)
+              let activeSuffix = if maxResetInMs > 0.0 {
+                let resetSecs = Pervasives.max(1.0, Math.ceil(maxResetInMs /. 1000.))
+                ` (⏳ ${resetSecs->TuiData.formatFloatLocaleString}s until reset)`
+              } else {
+                ""
+              }
+              <Box flexDirection={Column}>
+                <Newline />
+                <Text color={Danger}>
+                  {`Backfill ${rateLimitSecs->TuiData.formatFloatLocaleString}s slower due to your plan's rate limit${activeSuffix}`->React.string}
+                </Text>
+                <Text color={Danger}>
+                  <Text color={Danger}> {"Upgrade at "->React.string} </Text>
+                  <Text color={Danger} underline=true>
+                    {"https://envio.dev/app/api-tokens"->React.string}
+                  </Text>
+                  <Text color={Danger}> {" for higher rate limits."->React.string} </Text>
+                </Text>
+              </Box>
+            }
+          : React.null
+      }
       <Newline />
       <Box flexDirection={Row}>
         <Text> {"GraphQL: "->React.string} </Text>

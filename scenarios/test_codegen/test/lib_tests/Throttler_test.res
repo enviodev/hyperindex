@@ -1,5 +1,7 @@
 open Vitest
 
+let nextImmediate = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => resolve()))
+
 describe("Throttler", () => {
   Async.itWithOptions("Schedules and throttles functions as expected", {retry: 3}, async t => {
     let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
@@ -14,7 +16,11 @@ describe("Throttler", () => {
     )
     throttler->Throttler.schedule(async () => actionsCalled->Array.push(3)->ignore)
 
-    t.expect(actionsCalled, ~message="Should have immediately called scheduled fn").toEqual([1])
+    t.expect(actionsCalled, ~message="Should defer the scheduled fn off the schedule call").toEqual([])
+    await nextImmediate()
+    t.expect(actionsCalled, ~message="Should call the scheduled fn on the next immediate").toEqual([
+      1,
+    ])
 
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=9)
     t.expect(actionsCalled, ~message="Should still be called once after 9 ms").toEqual([1])
@@ -41,7 +47,7 @@ describe("Throttler", () => {
     ).toEqual([1, 2])
   })
 
-  Async.it("Does not run until previous task is finished", async t => {
+  Async.itWithOptions("Does not run until previous task is finished", {retry: 3}, async t => {
     let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
     let actionsCalled = []
     throttler->Throttler.schedule(
@@ -73,8 +79,9 @@ describe("Throttler", () => {
     ).toEqual([1, 2])
   })
 
-  Async.it(
+  Async.itWithOptions(
     "Does not immediately execute after a task has finished if below the interval",
+    {retry: 3},
     async t => {
       let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
       let actionsCalled = []

@@ -7,15 +7,9 @@ type serializableChange =
   | @as("SET") Set({entityId: string, entity: JSON.t, checkpointId: bigint})
   | @as("DELETE") Delete({entityId: string, checkpointId: bigint})
 
-type serializableEntityUpdate = {
-  latestChange: serializableChange,
-  history: array<serializableChange>,
-  containsRollbackDiffChange: bool,
-}
-
 type serializableUpdatedEntity = {
   entityName: string,
-  updates: array<serializableEntityUpdate>,
+  changes: array<serializableChange>,
 }
 
 // Worker -> Main thread payloads
@@ -137,17 +131,17 @@ let makeStorage = (proxy: t): Persistence.storage => {
   },
   writeBatch: async (
     ~batch,
-    ~rawEvents as _,
-    ~rollbackTargetCheckpointId as _,
+    ~rollback as _,
     ~isInReorgThreshold as _,
     ~config as _,
     ~allEntities as _,
     ~updatedEffectsCache as _,
     ~updatedEntities,
+    ~chainMetaData as _,
   ) => {
     // Encode entities to JSON for serialization across worker boundary
     let serializableEntities = updatedEntities->Array.map((
-      {entityConfig, updates}: Persistence.updatedEntity,
+      {entityConfig, changes}: Persistence.updatedEntity,
     ) => {
       let encodeChange = (change: Change.t<Internal.entity>): serializableChange => {
         switch change {
@@ -162,11 +156,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
       }
       {
         entityName: entityConfig.name,
-        updates: updates->Array.map(update => {
-          latestChange: encodeChange(update.latestChange),
-          history: update.history->Array.map(encodeChange),
-          containsRollbackDiffChange: update.containsRollbackDiffChange,
-        }),
+        changes: changes->Array.map(encodeChange),
       }
     })
     let _ = await proxy->sendRequest(

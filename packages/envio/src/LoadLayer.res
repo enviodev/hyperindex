@@ -36,7 +36,7 @@ let loadById = (
     }
     idsToLoad->Array.forEach(entityId => {
       inMemTable->InMemoryTable.Entity.initValue(
-        ~allowOverWriteEntity=false,
+        ~committedCheckpointId=inMemoryStore.committedCheckpointId,
         ~key=entityId,
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
       )
@@ -56,7 +56,7 @@ let loadById = (
     ~shouldGroup,
     ~hasher=LoadManager.noopHasher,
     ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafe,
-    ~hasInMemory=hash => inMemTable.table->InMemoryTable.hasByHash(hash),
+    ~hasInMemory=hash => inMemTable.latestEntityChangeById->Dict.has(hash),
     ~input=entityId,
   )
 }
@@ -89,10 +89,12 @@ let callEffect = (
 
   effect.handler(arg)
   ->Promise.thenResolve(output => {
-    inMemTable.dict->Dict.set(arg.cacheKey, output)
-    if arg.context.cache {
-      inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
-    }
+    inMemTable->InMemoryStore.setEffectOutput(
+      ~checkpointId=arg.checkpointId,
+      ~cacheKey=arg.cacheKey,
+      ~output,
+      ~shouldCache=arg.context.cache,
+    )
   })
   ->Utils.Promise.catchResolve(exn => {
     onError(~inputKey=arg.cacheKey, ~exn)
@@ -253,7 +255,7 @@ let loadEffect = (
 
     if (
       switch persistence.storageStatus {
-      | Ready({cache}) => cache->Utils.Dict.has(effectName)
+      | Ready({cache}) => cache->Dict.has(effectName)
       | _ => false
       }
     ) {
@@ -283,7 +285,7 @@ let loadEffect = (
         try {
           let output = dbEntity.output->S.parseOrThrow(outputSchema)
           idsFromCache->Utils.Set.add(dbEntity.id)->ignore
-          inMemTable.dict->Dict.set(dbEntity.id, output)
+          inMemTable->InMemoryStore.initEffectOutputFromDb(~cacheKey=dbEntity.id, ~output)
         } catch {
         | S.Raised(error) =>
           inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
@@ -334,8 +336,8 @@ let loadEffect = (
     ~load,
     ~shouldGroup,
     ~hasher=args => args.cacheKey,
-    ~getUnsafeInMemory=hash => inMemTable.dict->Dict.getUnsafe(hash),
-    ~hasInMemory=hash => inMemTable.dict->Utils.Dict.has(hash),
+    ~getUnsafeInMemory=hash => inMemTable->InMemoryStore.getEffectOutputUnsafe(hash),
+    ~hasInMemory=hash => inMemTable->InMemoryStore.hasEffectOutput(hash),
     ~input=effectArgs,
   )
 }
@@ -397,7 +399,7 @@ let loadByField = (
 
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(
-            ~allowOverWriteEntity=false,
+            ~committedCheckpointId=inMemoryStore.committedCheckpointId,
             ~key=entity.id,
             ~entity=Some(entity),
           )

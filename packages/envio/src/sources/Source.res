@@ -12,7 +12,11 @@ Thes response returned from a block range fetch
 */
 type blockRangeFetchResponse = {
   knownHeight: int,
-  reorgGuard: ReorgDetection.reorgGuard,
+  // Best-effort (blockNumber, blockHash) pairs observed while fetching this range.
+  // Used by reorg detection; gaps are OK, no extra requests are made to fill them.
+  // Duplicates with the same block number are allowed — registerReorgGuard treats
+  // a within-array hash mismatch on the same block number as a reorg.
+  blockHashes: array<ReorgDetection.blockData>,
   parsedQueueItems: array<Internal.item>,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
@@ -24,6 +28,8 @@ type getItemsRetry =
   | WithSuggestedToBlock({toBlock: int})
   | WithBackoff({message: string, backoffMillis: int})
   | ImpossibleForTheQuery({message: string})
+
+exception RateLimited({resetMs: int})
 
 type getItemsError =
   | UnsupportedSelection({message: string})
@@ -58,4 +64,7 @@ type t = {
     ~logger: Pino.t,
   ) => promise<blockRangeFetchResponse>,
   createHeightSubscription?: (~onHeight: int => unit) => unit => unit,
+  // Invoked by SourceManager once a rollback target is known so the source can
+  // drop any state that may now point at an orphaned chain (e.g. RPC block cache).
+  onReorg?: (~rollbackTargetBlock: int) => unit,
 }

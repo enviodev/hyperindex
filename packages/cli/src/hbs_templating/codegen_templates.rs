@@ -2202,11 +2202,7 @@ type testIndexer = {{
                                         &svm_abi.defined_types,
                                         &mut Vec::new(),
                                     );
-                                    format!(
-                                        "readonly {}: {}",
-                                        ts_safe_property_name(&f.name),
-                                        ts
-                                    )
+                                    format!("readonly {}: {}", ts_safe_property_name(&f.name), ts)
                                 })
                                 .collect::<Vec<_>>()
                                 .join("; ");
@@ -2219,10 +2215,7 @@ type testIndexer = {{
                                 .accounts
                                 .iter()
                                 .map(|name| {
-                                    format!(
-                                        "readonly {}: string",
-                                        ts_safe_property_name(name)
-                                    )
+                                    format!("readonly {}: string", ts_safe_property_name(name))
                                 })
                                 .collect::<Vec<_>>()
                                 .join("; ");
@@ -2473,27 +2466,19 @@ fn field_type_to_ts_type(
     use hypersync_client_solana::decode::FieldType as F;
     match ty {
         F::Bool => "boolean".to_string(),
-        F::U8 | F::U16 | F::U32 | F::I8 | F::I16 | F::I32 | F::F32 | F::F64 => {
-            "number".to_string()
-        }
+        F::U8 | F::U16 | F::U32 | F::I8 | F::I16 | F::I32 | F::F32 | F::F64 => "number".to_string(),
         F::U64 | F::U128 | F::I64 | F::I128 => "string".to_string(),
         F::String | F::Bytes | F::Pubkey => "string".to_string(),
         F::Option(inner) => format!(
             "({}) | null",
             field_type_to_ts_type(inner, defined_types, seen)
         ),
-        F::Vec(inner) => format!(
-            "({})[]",
-            field_type_to_ts_type(inner, defined_types, seen)
-        ),
+        F::Vec(inner) => format!("({})[]", field_type_to_ts_type(inner, defined_types, seen)),
         F::Array { ty: inner, len } => {
             if matches!(**inner, F::U8) && *len == 32 {
                 "string".to_string()
             } else {
-                format!(
-                    "({})[]",
-                    field_type_to_ts_type(inner, defined_types, seen)
-                )
+                format!("({})[]", field_type_to_ts_type(inner, defined_types, seen))
             }
         }
         F::Struct(fields) => {
@@ -2534,10 +2519,7 @@ fn field_type_to_ts_type(
                             format!("{{ {body} }}")
                         }
                     };
-                    format!(
-                        "{{ readonly {}: {body} }}",
-                        ts_safe_property_name(&v.name)
-                    )
+                    format!("{{ readonly {}: {body} }}", ts_safe_property_name(&v.name))
                 })
                 .collect::<Vec<_>>()
                 .join(" | ")
@@ -2564,7 +2546,10 @@ fn field_type_to_ts_type(
 /// Quote a TypeScript property name when it isn't a bare identifier.
 fn ts_safe_property_name(name: &str) -> String {
     let is_bare_ident = !name.is_empty()
-        && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     if is_bare_ident {
         name.to_string()

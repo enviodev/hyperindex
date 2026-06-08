@@ -8,6 +8,7 @@ type exitCode = | @as(0) Success | @as(1) Failure
 // which exposes named exports (exit, cwd) but not EventEmitter prototype methods (on, off, emit).
 @val external globalProcess: t = "process"
 @send external onUnhandledRejection: (t, @as("unhandledRejection") _, exn => unit) => unit = "on"
+@val external setImmediate: (unit => unit) => unit = "setImmediate"
 
 module Util = {
   @unboxed

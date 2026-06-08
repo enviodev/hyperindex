@@ -114,8 +114,6 @@ module Dict = {
   @get_index
   external dangerouslyGetByIntNonOption: (dict<'a>, int) => option<'a> = ""
 
-  let has: (dict<'a>, string) => bool = %raw(`(dict, key) => key in dict`)
-
   let push = (dict, key, value) => {
     switch dict->dangerouslyGetNonOption(key) {
     | Some(arr) => arr->Array.push(value)

@@ -178,6 +178,99 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     })
   })
 
+  Async.it(
+    "Keeps committed entities across batches without rewriting their history",
+    async t => {
+      let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
+        ~saveFullHistory=true,
+      )
+      await Utils.delay(0)
+
+      sourceMock.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      sourceMock.resolveGetItemsOrThrow([
+        {
+          blockNumber: 50,
+          logIndex: 1,
+          handler: async ({context}) => {
+            context.\"SimpleEntity".set({id: "untouched", value: "batch1"})
+            context.\"SimpleEntity".set({id: "updated", value: "batch1"})
+          },
+        },
+      ])
+      await indexerMock.getBatchWritePromise()
+
+      sourceMock.resolveGetItemsOrThrow([
+        {
+          blockNumber: 51,
+          logIndex: 1,
+          handler: async ({context}) => {
+            // "untouched" is carried over from the previous batch and read from
+            // the in-memory store without hitting the db.
+            let untouched = await context.\"SimpleEntity".get("untouched")
+            t.expect(untouched).toEqual(Some({id: "untouched", value: "batch1"}))
+            context.\"SimpleEntity".set({id: "updated", value: "batch2"})
+          },
+        },
+      ])
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(await indexerMock.queryHistory(SimpleEntity)).toEqual([
+        Set({checkpointId: 1n, entityId: "untouched", entity: {id: "untouched", value: "batch1"}}),
+        Set({checkpointId: 1n, entityId: "updated", entity: {id: "updated", value: "batch1"}}),
+        Set({checkpointId: 3n, entityId: "updated", entity: {id: "updated", value: "batch2"}}),
+      ])
+    },
+  )
+
+  it("dropCommittedChanges keeps only uncommitted changes (checkpointId > committed)", t => {
+    let makeEntity = (id): Internal.entity =>
+      {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
+
+    let table = InMemoryTable.Entity.make()
+    let add = (id, checkpointId) =>
+      table->InMemoryTable.Entity.set(
+        ~committedCheckpointId=Internal.initialCheckpointId,
+        Set({entityId: id, entity: makeEntity(id), checkpointId}),
+      )
+    add("loaded", Internal.loadedFromDbCheckpointId)
+    add("committed", 5n)
+    add("uncommitted", 6n)
+
+    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId=5n, ~keepLoadedFromDb=false)
+
+    t.expect((
+      table.changesCount,
+      table.latestEntityChangeById->Dict.keysToArray->Array.toSorted(String.compare),
+    )).toEqual((1., ["uncommitted"]))
+  })
+
+  it("dropCommittedChanges with keepLoadedFromDb spares db-loaded entries", t => {
+    let makeEntity = (id): Internal.entity =>
+      {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
+
+    let table = InMemoryTable.Entity.make()
+    let add = (id, checkpointId) =>
+      table->InMemoryTable.Entity.set(
+        ~committedCheckpointId=Internal.initialCheckpointId,
+        Set({entityId: id, entity: makeEntity(id), checkpointId}),
+      )
+    add("loaded", Internal.loadedFromDbCheckpointId)
+    add("committed", 5n)
+    add("uncommitted", 6n)
+
+    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId=5n, ~keepLoadedFromDb=true)
+
+    t.expect((
+      table.changesCount,
+      table.latestEntityChangeById->Dict.keysToArray->Array.toSorted(String.compare),
+    )).toEqual((2., ["loaded", "uncommitted"]))
+  })
+
   Async.it("Test getWhere queries with eq and gt operators", async t => {
     let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(

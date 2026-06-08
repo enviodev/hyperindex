@@ -3,7 +3,7 @@ open Vitest
 describe("LoadLayer", () => {
   Async.it("Trys to load non existing entity from db", async t => {
     let storageMock = MockIndexer.Storage.make([#loadByIdsOrThrow])
-    let inMemoryStore = InMemoryStore.make(~entities=(Config.loadWithoutRegistrations()).allEntities)
+    let inMemoryStore = MockIndexer.InMemoryStore.make()
     let loadManager = LoadManager.make()
 
     let getUser = entityId =>
@@ -31,7 +31,7 @@ describe("LoadLayer", () => {
   Async.it("Does two round trips to db when requesting non existing entity one by one", async t => {
     let storageMock = MockIndexer.Storage.make([#loadByIdsOrThrow])
     let loadManager = LoadManager.make()
-    let inMemoryStore = InMemoryStore.make(~entities=(Config.loadWithoutRegistrations()).allEntities)
+    let inMemoryStore = MockIndexer.InMemoryStore.make()
 
     let getUser = entityId =>
       LoadLayer.loadById(
@@ -66,7 +66,7 @@ describe("LoadLayer", () => {
     async t => {
       let storageMock = MockIndexer.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
-      let inMemoryStore = InMemoryStore.make(~entities=(Config.loadWithoutRegistrations()).allEntities)
+      let inMemoryStore = MockIndexer.InMemoryStore.make()
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
@@ -561,6 +561,62 @@ describe("LoadLayer", () => {
       t.expect(users).toEqual([user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
       t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([])
       t.expect(storageMock.loadByFieldOrThrowCalls).toEqual(loadEntitiesByFieldSingleDbCall)
+    },
+  )
+})
+
+describe("LoadLayer effect cache", () => {
+  // Reproduces an envio v3.1.0-rc.x regression: an effect with an *optional*
+  // output that resolves to None leaks the ReScript nested-option sentinel
+  // `{ BS_PRIVATE_NESTED_SOME_NONE: 0 }` instead of JS `undefined`. The
+  // in-memory cache stores `option<output>` (here `option<option<bigint>>`)
+  // and the cache hit path returns it without unwrapping the outer option,
+  // so `Some(None)` reaches the handler. envio 3.0.2 returned `undefined`.
+  Async.it(
+    "Returns None (not the Some(None) sentinel) on a cache hit for an optional output that resolved to None",
+    async t => {
+      let storageMock = MockIndexer.Storage.make([#loadByIdsOrThrow])
+      let loadManager = LoadManager.make()
+      let inMemoryStore = MockIndexer.InMemoryStore.make()
+
+      let callCount = ref(0)
+      let effect =
+        Envio.createEffect(
+          {
+            name: "optionalOutputEffect",
+            input: S.string,
+            output: S.null(S.bigint),
+            rateLimit: Disable,
+            cache: false,
+          },
+          async _ => {
+            callCount := callCount.contents + 1
+            None
+          },
+        )->(Utils.magic: Envio.effect<string, option<bigint>> => Internal.effect)
+
+      let callEffect = () =>
+        LoadLayer.loadEffect(
+          ~loadManager,
+          ~persistence=storageMock->MockIndexer.Storage.toPersistence,
+          ~effect,
+          ~effectArgs={
+            input: "test"->(Utils.magic: string => Internal.effectInput),
+            context: {"cache": false}->(Utils.magic: {..} => Internal.effectContext),
+            cacheKey: "test",
+            checkpointId: 0n,
+          },
+          ~inMemoryStore,
+          ~shouldGroup=true,
+          ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+        )->(Utils.magic: promise<Internal.effectOutput> => promise<option<bigint>>)
+
+      // Cache miss: runs the handler and seeds the in-memory cache.
+      let first = await callEffect()
+      // Cache hit: served from the in-memory effect cache.
+      let second = await callEffect()
+
+      t.expect((callCount.contents, first, second)).toEqual((1, None, None))
     },
   )
 })

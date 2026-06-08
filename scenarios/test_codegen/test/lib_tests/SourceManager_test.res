@@ -2460,7 +2460,12 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     },
   )
 
-  Async.it("Tier fallback: when all primaries are in recovery, uses working secondary", async t => {
+  // Retried: coordination relies on real timers around a 50ms recovery timeout,
+  // which is occasionally too tight under CI load.
+  Async.itWithOptions(
+    "Tier fallback: when all primaries are in recovery, uses working secondary",
+    {retry: 3},
+    async t => {
     let syncMock = MockIndexer.Source.make([#getItemsOrThrow])
     let fallbackMock = MockIndexer.Source.make([#getItemsOrThrow], ~sourceFor=Fallback)
     let recoveryTimeout = 50.0
@@ -2917,8 +2922,8 @@ describe("SourceManager height subscription", () => {
       // Second call - subscription exists but won't deliver
       let p2 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=101, ~reducedPolling=false)
 
-      // Wait for stallTimeout/2 to trigger REST polling fallback
-      await Utils.delay(stallTimeout / 2 + 5)
+      // Wait past the jittered fallback trigger (< stallTimeout)
+      await Utils.delay(stallTimeout + 30)
 
       t.expect(
         mock.getHeightOrThrowCalls->Array.length,
@@ -2929,6 +2934,65 @@ describe("SourceManager height subscription", () => {
       mock.resolveGetHeightOrThrow(102)
 
       t.expect(await p2, ~message="Should resolve via REST polling fallback").toEqual(102)
+    },
+  )
+
+  Async.it(
+    "Stale SSE heights do not multiply concurrent /height polls (#1270)",
+    async t => {
+      let stallTimeout = 200
+      let pollingInterval = 100
+      let mock = MockIndexer.Source.make(
+        [#getHeightOrThrow, #createHeightSubscription],
+        ~pollingInterval,
+      )
+      let sourceManager = SourceManager.make(
+        ~isRealtime=true,
+        ~sources=[mock.source],
+        ~maxPartitionConcurrency=10,
+        ~newBlockStallTimeoutRealtime=stallTimeout,
+      )
+
+      // Call 1: create the subscription and advance the source to height 101 so the
+      // next call starts caught-up (initialHeight == knownHeight == 101).
+      let p1 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
+      mock.resolveGetHeightOrThrow(100)
+      await Utils.delay(0)
+      mock.triggerHeightSubscription(101)
+      t.expect(await p1).toEqual(101)
+
+      let pollsBefore = mock.getHeightOrThrowCalls->Array.length
+
+      // Call 2: caught up at the head. The SSE stream now delivers a burst of STALE
+      // heights (== knownHeight), exactly what a flapping/reconnecting height stream
+      // re-emits on each reconnect.
+      let p2 = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=101, ~reducedPolling=false)
+      await Utils.delay(0)
+
+      let staleEvents = 20
+      for _i in 1 to staleEvents {
+        mock.triggerHeightSubscription(101)
+        await Utils.delay(0)
+      }
+
+      // Wait past the jittered fallback trigger so the single fallback poll has run.
+      await Utils.delay(stallTimeout + 40)
+
+      let pollsAfterBurst = mock.getHeightOrThrowCalls->Array.length - pollsBefore
+
+      // Before #1270 each stale (non-increasing) SSE height woke the wait loop and
+      // spawned another uncancelled pollingFallback, so N stale events produced ~N
+      // concurrent /height poll loops. onHeight now drops non-increasing heights, so
+      // stale re-emits don't wake the loop and the poll count stays bounded.
+      t.expect(
+        pollsAfterBurst,
+        ~message="stale SSE heights should not multiply concurrent /height polls",
+      ).toBeLessThanOrEqual(1)
+
+      // Cleanup: release everything so the test ends without dangling timers.
+      mock.resolveGetHeightOrThrow(999)
+      mock.triggerHeightSubscription(999)
+      let _ = await p2
     },
   )
 

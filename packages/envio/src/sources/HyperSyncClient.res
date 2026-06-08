@@ -311,18 +311,9 @@ module ResponseTypes = {
     firstBlockNumber: int,
     firstParentHash: string,
   }
-
-  type eventResponse = {
-    archiveHeight: option<int>,
-    nextBlock: int,
-    totalExecutionTime: int,
-    data: array<event>,
-    rollbackGuard: option<rollbackGuard>,
-  }
 }
 
 type query = QueryTypes.query
-type eventResponse = ResponseTypes.eventResponse
 
 type queryResponseData = {
   blocks: array<ResponseTypes.block>,
@@ -338,16 +329,66 @@ type queryResponse = {
   rollbackGuard: option<ResponseTypes.rollbackGuard>,
 }
 
+module Decoder = {
+  type eventParamsInput = {
+    sighash: string,
+    topicCount: int,
+    eventName: string,
+    contractName: string,
+    params: array<Internal.paramMeta>,
+  }
+
+  // Decoded params keyed by contract name. Contracts that emit the same-signature
+  // event share one decode but get their own param names, so the caller picks the
+  // entry for the contract its router resolved the log to.
+  type tWithParams = {
+    decodeLogs: array<ResponseTypes.event> => promise<
+      array<Nullable.t<dict<Internal.eventParams>>>,
+    >,
+  }
+
+  @send
+  external classFromParams: (
+    Core.decoderCtor,
+    array<eventParamsInput>,
+    ~checksumAddresses: bool=?,
+  ) => tWithParams = "fromParams"
+
+  let fromParams = (eventParams, ~checksumAddresses=?) =>
+    Core.getAddon().decoder->classFromParams(eventParams, ~checksumAddresses?)
+}
+
+module EventItems = {
+  type item = {
+    logIndex: int,
+    srcAddress: Address.t,
+    topic0: EvmTypes.Hex.t,
+    topicCount: int,
+    block: ResponseTypes.block,
+    transaction: ResponseTypes.transaction,
+    params: Nullable.t<dict<Internal.eventParams>>,
+  }
+
+  type response = {
+    archiveHeight: option<int>,
+    nextBlock: int,
+    items: array<item>,
+    rollbackGuard: option<ResponseTypes.rollbackGuard>,
+  }
+}
+
 type t = {
   get: (~query: query) => promise<queryResponse>,
-  getEvents: (~query: query) => promise<eventResponse>,
+  getEventItems: (~query: query) => promise<EventItems.response>,
+  getHeight: unit => promise<int>,
 }
 
 @send
-external classNewWithAgent: (Core.hypersyncClientCtor, cfg, string) => t = "newWithAgent"
+external classNew: (Core.hypersyncClientCtor, cfg, string, array<Decoder.eventParamsInput>) => t =
+  "new"
 
-let makeWithAgent = (cfg, ~userAgent) =>
-  Core.getAddon().hypersyncClient->classNewWithAgent(cfg, userAgent)
+let makeWithAgent = (cfg, ~userAgent, ~eventParams) =>
+  Core.getAddon().hypersyncClient->classNew(cfg, userAgent, eventParams)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
@@ -373,7 +414,7 @@ let make = (
   ~url,
   ~apiToken,
   ~httpReqTimeoutMillis,
-  ~maxNumRetries,
+  ~eventParams,
   ~enableChecksumAddresses=true,
   ~serializationFormat=?,
   ~enableQueryCaching=?,
@@ -389,7 +430,8 @@ let make = (
       enableChecksumAddresses,
       apiToken,
       httpReqTimeoutMillis,
-      maxNumRetries,
+      // Retries are handled internally by the indexer, not the binary client
+      maxNumRetries: 0,
       ?serializationFormat,
       ?enableQueryCaching,
       ?retryBaseMs,
@@ -398,28 +440,6 @@ let make = (
       logLevel: logLevelToString(logLevel),
     },
     ~userAgent=`hyperindex/${envioVersion}`,
+    ~eventParams,
   )
-}
-
-module Decoder = {
-  type eventParamsInput = {
-    sighash: string,
-    topicCount: int,
-    eventName: string,
-    params: array<Internal.paramMeta>,
-  }
-
-  type tWithParams = {
-    decodeLogs: array<ResponseTypes.event> => promise<array<Nullable.t<Internal.eventParams>>>,
-  }
-
-  @send
-  external classFromParams: (
-    Core.decoderCtor,
-    array<eventParamsInput>,
-    ~checksumAddresses: bool=?,
-  ) => tWithParams = "fromParams"
-
-  let fromParams = (eventParams, ~checksumAddresses=?) =>
-    Core.getAddon().decoder->classFromParams(eventParams, ~checksumAddresses?)
 }

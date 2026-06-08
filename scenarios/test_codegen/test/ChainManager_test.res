@@ -129,7 +129,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
   (
     {
       ChainManager.chainFetchers,
-      committedCheckpointId: 0n,
       isInReorgThreshold: false,
       isRealtime: false,
     },
@@ -164,6 +163,7 @@ describe("ChainManager", () => {
         let rec testThatCreatedEventsAreOrderedCorrectly = (chainManager, lastEvent) => {
           let {items, totalBatchSize, progressedChainsById} = ChainManager.createBatch(
             chainManager,
+            ~processedCheckpointId=Internal.initialCheckpointId,
             ~batchSizeTarget=10000,
             ~isRollback=false,
           )
