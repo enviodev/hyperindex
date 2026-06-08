@@ -45,6 +45,10 @@ type t = {
   // Processed but unwritten. The cycle drains them, splitting each write at a
   // change in isInReorgThreshold so it never mixes history-saving modes.
   mutable processedBatches: array<Batch.t>,
+  // True while a batch is being processed; guards ProcessEventBatch re-entry.
+  mutable isProcessing: bool,
+  // Count of processed batches; version-independent progress counter.
+  mutable processedBatchesCount: int,
   // The single in-flight write loop, None when idle.
   mutable writeFiber: option<promise<unit>>,
   // Set once a write throws, to stop the loop. The error itself goes to onError.
@@ -91,6 +95,8 @@ let make = (
     committedCheckpointId,
     processedCheckpointId: committedCheckpointId,
     processedBatches: [],
+    isProcessing: false,
+    processedBatchesCount: 0,
     writeFiber: None,
     hasFailedWrite: false,
     onError,
