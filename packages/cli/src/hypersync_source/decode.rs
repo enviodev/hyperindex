@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use alloy_dyn_abi::{DecodedEvent, DynSolEvent, DynSolType, Specifier};
+use alloy_dyn_abi::{DecodedEvent, DynSolEvent, DynSolType};
 use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
@@ -85,7 +85,7 @@ impl DecoderCore {
             let key = MetaKey::parse(&ep.sighash, ep.topic_count)
                 .with_context(|| format!("parse meta key for {}", ep.event_name))?;
             if !decoders.contains_key(&key) {
-                let decoder = build_event_decoder(&key, &ep.event_name, &ep.params)
+                let decoder = build_event_decoder(&key, &ep.params)
                     .with_context(|| format!("build decoder for {}", ep.event_name))?;
                 decoders.insert(key, decoder);
             }
@@ -202,43 +202,29 @@ fn apply_names(
         .collect()
 }
 
-/// Build the positional decoder for one MetaKey. Rebuilding the signature from
-/// the event's display `name:` recovers the ABI types, but its keccak selector
-/// is wrong whenever the event was renamed (display name != on-chain name) — so
-/// the decoder's topic0 is pinned to the on-chain sighash the MetaKey carries.
-/// Without this, a renamed event's log topic0 never matches and the log decodes
-/// as null (issue #1285).
-fn build_event_decoder(
-    key: &MetaKey,
-    event_name: &str,
-    params: &[ParamMeta],
-) -> Result<DynSolEvent> {
-    let signature = reconstruct_signature(event_name, params);
-    let resolved = alloy_json_abi::Event::parse(&signature)
-        .context("parse event signature")?
-        .resolve()
-        .context("resolve event signature")?;
+/// Build the positional decoder for one MetaKey. The decoder's topic0 is pinned
+/// to the on-chain sighash the MetaKey carries rather than derived from a
+/// signature string, so an event surfaced to handlers under a different `name:`
+/// (display name != on-chain name) still matches its real log (issue #1285).
+/// The event name plays no part in decoding — only the param types do.
+fn build_event_decoder(key: &MetaKey, params: &[ParamMeta]) -> Result<DynSolEvent> {
+    let mut indexed = Vec::new();
+    let mut body = Vec::new();
+    for param in params {
+        let ty = DynSolType::parse(&param.abi_type)
+            .with_context(|| format!("parse abi type {}", param.abi_type))?;
+        if param.indexed {
+            indexed.push(ty);
+        } else {
+            body.push(ty);
+        }
+    }
     DynSolEvent::new(
         Some(B256::from(key.sighash)),
-        resolved.indexed().to_vec(),
-        DynSolType::Tuple(resolved.body().to_vec()),
+        indexed,
+        DynSolType::Tuple(body),
     )
     .context("construct event decoder")
-}
-
-fn reconstruct_signature(event_name: &str, params: &[ParamMeta]) -> String {
-    let params_str = params
-        .iter()
-        .map(|p| {
-            if p.indexed {
-                format!("{} indexed {}", p.abi_type, p.name)
-            } else {
-                format!("{} {}", p.abi_type, p.name)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{}({})", event_name, params_str)
 }
 
 #[napi]
