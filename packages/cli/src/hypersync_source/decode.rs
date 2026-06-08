@@ -60,11 +60,20 @@ struct EventVariant {
     params: Vec<ParamMeta>,
 }
 
+/// One positional decoder plus the per-contract namings layered over it. Two
+/// events sharing a `MetaKey` but indexing different params (same type list,
+/// same indexed count, different positions) can't be told apart by (topic0,
+/// topic count), so the first variant's layout backs the shared `decoder` and
+/// `apply_names` keys names off each variant.
+struct RegisteredEvent {
+    decoder: DynSolEvent,
+    variants: Vec<EventVariant>,
+}
+
 #[derive(Clone)]
 pub(crate) struct DecoderCore {
-    decoders: Arc<HashMap<MetaKey, DynSolEvent>>,
+    events: Arc<HashMap<MetaKey, RegisteredEvent>>,
     checksummed_addresses: bool,
-    variants: Arc<HashMap<MetaKey, Vec<EventVariant>>>,
 }
 
 impl DecoderCore {
@@ -72,33 +81,34 @@ impl DecoderCore {
         event_params: Vec<EventParamsInput>,
         checksum_addresses: bool,
     ) -> Result<Self> {
-        let mut variants: HashMap<MetaKey, Vec<EventVariant>> = HashMap::new();
-        // The positional decoder is keyed by (topic0, topic count) — the same
-        // MetaKey — so it holds one decode per key. Contracts that share a key
-        // reuse that single positional decode and only layer on their own names.
-        // Two events sharing a MetaKey but indexing different params (same type
-        // list, same indexed count, different positions) can't be told apart at
-        // this layer regardless, so the first variant's layout wins; `apply_names`
-        // then keys names off each variant.
-        let mut decoders: HashMap<MetaKey, DynSolEvent> = HashMap::new();
+        let mut events: HashMap<MetaKey, RegisteredEvent> = HashMap::new();
         for ep in event_params {
             let key = MetaKey::parse(&ep.sighash, ep.topic_count)
                 .with_context(|| format!("parse meta key for {}", ep.event_name))?;
-            if !decoders.contains_key(&key) {
+            if !events.contains_key(&key) {
                 let decoder = build_event_decoder(&key, &ep.params)
                     .with_context(|| format!("build decoder for {}", ep.event_name))?;
-                decoders.insert(key, decoder);
+                events.insert(
+                    key,
+                    RegisteredEvent {
+                        decoder,
+                        variants: Vec::new(),
+                    },
+                );
             }
-            variants.entry(key).or_default().push(EventVariant {
-                contract_name: ep.contract_name,
-                params: ep.params,
-            });
+            events
+                .get_mut(&key)
+                .expect("inserted above")
+                .variants
+                .push(EventVariant {
+                    contract_name: ep.contract_name,
+                    params: ep.params,
+                });
         }
 
         Ok(Self {
-            decoders: Arc::new(decoders),
+            events: Arc::new(events),
             checksummed_addresses: checksum_addresses,
-            variants: Arc::new(variants),
         })
     }
 
@@ -128,19 +138,13 @@ impl DecoderCore {
         topics: &[Option<LogArgument>],
         data: &Data,
     ) -> Result<Option<ParamValue>> {
-        let key = MetaKey::from_topics(topics)?;
-
-        let decoder = match self.decoders.get(&key) {
-            Some(d) => d,
+        let event = match self.events.get(&MetaKey::from_topics(topics)?) {
+            Some(e) => e,
             None => return Ok(None),
         };
 
-        let variants = match self.variants.get(&key) {
-            Some(v) => v,
-            None => return Ok(None),
-        };
-
-        let decoded = decoder
+        let decoded = event
+            .decoder
             .decode_log_parts(
                 topics
                     .iter()
@@ -150,47 +154,47 @@ impl DecoderCore {
             )
             .context("decode log")?;
 
-        // Same log, one decode, named once per contract. JS routes by address
-        // and then picks `params[contractName]`, so two contracts that share a
+        // One positional decode, named once per contract. JS routes by address
+        // and picks `params[contractName]`, so two contracts that share a
         // signature but name their params differently each get their own names.
-        let by_contract = variants
-            .iter()
-            .map(|variant| {
-                let fields = apply_names(&decoded, &variant.params, self.checksummed_addresses)?;
-                Ok((variant.contract_name.clone(), ParamValue::Obj(fields)))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        // The common single-contract case consumes the decode without cloning.
+        let by_contract = match event.variants.as_slice() {
+            [variant] => vec![(
+                variant.contract_name.clone(),
+                ParamValue::Obj(apply_names(
+                    decoded,
+                    &variant.params,
+                    self.checksummed_addresses,
+                )?),
+            )],
+            variants => variants
+                .iter()
+                .map(|variant| {
+                    let fields =
+                        apply_names(decoded.clone(), &variant.params, self.checksummed_addresses)?;
+                    Ok((variant.contract_name.clone(), ParamValue::Obj(fields)))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        };
 
         Ok(Some(ParamValue::Obj(by_contract)))
     }
 }
 
 fn apply_names(
-    decoded: &DecodedEvent,
+    decoded: DecodedEvent,
     params: &[ParamMeta],
     checksummed_addresses: bool,
 ) -> Result<Vec<(String, ParamValue)>> {
-    let mut indexed_idx = 0;
-    let mut body_idx = 0;
+    let mut indexed = decoded.indexed.into_iter();
+    let mut body = decoded.body.into_iter();
     params
         .iter()
         .map(|param| {
             let sol_value = if param.indexed {
-                let v = decoded
-                    .indexed
-                    .get(indexed_idx)
-                    .context("indexed param out of bounds")?
-                    .clone();
-                indexed_idx += 1;
-                v
+                indexed.next().context("indexed param out of bounds")?
             } else {
-                let v = decoded
-                    .body
-                    .get(body_idx)
-                    .context("body param out of bounds")?
-                    .clone();
-                body_idx += 1;
-                v
+                body.next().context("body param out of bounds")?
             };
             let value = sol_value_to_param(
                 sol_value,
