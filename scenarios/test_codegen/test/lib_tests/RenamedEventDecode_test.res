@@ -50,6 +50,12 @@ describe("Renamed event decoding over HyperSync (issue #1285)", () => {
 
     t
     .expect(paramsByContractName)
-    .toEqual(Some({"TestContract": {"owner": owner, "value": value}}->Utils.magic))
+    .toEqual(
+      Some(
+        {"TestContract": {"owner": owner, "value": value}}->(
+          Utils.magic: {..} => dict<Internal.eventParams>
+        ),
+      ),
+    )
   })
 })

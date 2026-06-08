@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -85,25 +86,21 @@ impl DecoderCore {
         for ep in event_params {
             let key = MetaKey::parse(&ep.sighash, ep.topic_count)
                 .with_context(|| format!("parse meta key for {}", ep.event_name))?;
-            if !events.contains_key(&key) {
-                let decoder = build_event_decoder(&key, &ep.params)
-                    .with_context(|| format!("build decoder for {}", ep.event_name))?;
-                events.insert(
-                    key,
-                    RegisteredEvent {
+            let event = match events.entry(key) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(e) => {
+                    let decoder = build_event_decoder(&key, &ep.params)
+                        .with_context(|| format!("build decoder for {}", ep.event_name))?;
+                    e.insert(RegisteredEvent {
                         decoder,
                         variants: Vec::new(),
-                    },
-                );
-            }
-            events
-                .get_mut(&key)
-                .expect("inserted above")
-                .variants
-                .push(EventVariant {
-                    contract_name: ep.contract_name,
-                    params: ep.params,
-                });
+                    })
+                }
+            };
+            event.variants.push(EventVariant {
+                contract_name: ep.contract_name,
+                params: ep.params,
+            });
         }
 
         Ok(Self {
