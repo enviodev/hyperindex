@@ -255,7 +255,7 @@ describe("Test PgStorage SQL generation functions", () => {
           ~message="Should return exactly 2 queries for main DDL and functions",
         ).toBe(2)
 
-        let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
+        let mainQuery = queries->Array.get(0)->Option.getOrThrow
 
         let expectedMainQuery = `DROP SCHEMA IF EXISTS "test_schema" CASCADE;
 CREATE SCHEMA "test_schema";
@@ -333,7 +333,7 @@ VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
           ~message="Should return single query when no entities have functions. And a function needed for cache.",
         ).toBe(2)
 
-        let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
+        let mainQuery = queries->Array.get(0)->Option.getOrThrow
 
         let expectedMainQuery = `DROP SCHEMA IF EXISTS "test_schema" CASCADE;
 CREATE SCHEMA "test_schema";
@@ -378,7 +378,7 @@ FROM "test_schema"."envio_chains";`
         ).toBe(expectedMainQuery)
 
         t.expect(
-          queries->Belt.Array.get(1)->Belt.Option.getExn,
+          queries->Array.get(1)->Option.getOrThrow,
           ~message="A function for cache should be created",
         ).toBe(`CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
 RETURNS integer AS $$
@@ -411,8 +411,8 @@ $$ LANGUAGE plpgsql;`)
           ~message="Should return 2 queries for entity with history function",
         ).toBe(2)
 
-        let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
-        let functionsQuery = queries->Belt.Array.get(1)->Belt.Option.getExn
+        let mainQuery = queries->Array.get(0)->Option.getOrThrow
+        let functionsQuery = queries->Array.get(1)->Option.getOrThrow
 
         let expectedMainQuery = `DROP SCHEMA IF EXISTS "public" CASCADE;
 CREATE SCHEMA "public";

@@ -432,7 +432,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     } catch {
     | JsExn(e) =>
       t.expect(
-        e->JsExn.message->Belt.Option.getExn,
+        e->JsExn.message->Option.getOrThrow,
       ).toBe(`Invalid transaction field "gas" found in the RPC response. Error: The string is not valid hex`)
     }
   })
@@ -620,7 +620,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     } catch {
     | JsExn(e) =>
       t.expect(
-        e->JsExn.message->Belt.Option.getExn,
+        e->JsExn.message->Option.getOrThrow,
       ).toBe(`Invalid block field "gasUsed" found in the RPC response. Error: The string is not valid hex`)
     }
   })
@@ -657,7 +657,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
         switch await Rpc.getRawBlock(~client, ~blockNumber) {
         | Some(json) => json
         | None =>
-          JsError.throwWithMessage(`Block not found for number: ${blockNumber->Belt.Int.toString}`)
+          JsError.throwWithMessage(`Block not found for number: ${blockNumber->Int.toString}`)
         },
       ~lowercaseAddresses=false,
     )

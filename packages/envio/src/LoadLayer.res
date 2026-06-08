@@ -161,8 +161,8 @@ let rec executeWithRateLimit = (
 
     // Split into immediate and queued
     let immediateCount = Math.Int.min(state.availableCalls, effectArgs->Array.length)
-    let immediateArgs = effectArgs->Belt.Array.slice(~offset=0, ~len=immediateCount)
-    let queuedArgs = effectArgs->Belt.Array.sliceToEnd(immediateCount)
+    let immediateArgs = effectArgs->Array.slice(~start=0, ~end=immediateCount)
+    let queuedArgs = effectArgs->Array.slice(~start=immediateCount)
 
     // Update available calls
     state.availableCalls = state.availableCalls - immediateCount

@@ -160,13 +160,13 @@ module MultiStreamLogger = {
       stream: {write: v => formatter(v)->Console.log},
       level: userLogLevel,
     }
-    let maybeFileStream = logFile->Belt.Option.mapWithDefault([], dest => [
+    let maybeFileStream = logFile->Option.mapOr([], dest => [
       {
         level: defaultFileLogLevel,
         stream: destination({dest, sync: false, mkdir: true}),
       },
     ])
-    [stream]->Belt.Array.concat(maybeFileStream)
+    [stream]->Array.concat(maybeFileStream)
   }
 
   let make = (

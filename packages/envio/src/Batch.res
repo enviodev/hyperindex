@@ -207,7 +207,7 @@ let prepareBatch = (
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
     if chainBatchSize > 0 {
       for idx in 0 to chainBatchSize - 1 {
-        let item = fetchState.buffer->Belt.Array.getUnsafe(idx)
+        let item = fetchState.buffer->Array.getUnsafe(idx)
         let blockNumber = item->Internal.getItemBlockNumber
 
         // Every new block we should create a new checkpoint
@@ -243,7 +243,7 @@ let prepareBatch = (
         } else {
           let lastIndex = checkpointEventsProcessed->Array.length - 1
           checkpointEventsProcessed
-          ->Belt.Array.setUnsafe(
+          ->Array.setUnsafe(
             lastIndex,
             checkpointEventsProcessed->Array.getUnsafe(lastIndex) + 1,
           )

@@ -201,9 +201,9 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
 
     Internal.Event({
       eventConfig: (eventConfig :> Internal.eventConfig),
-      timestamp: block.timestamp->Belt.Option.getUnsafe,
+      timestamp: block.timestamp->Option.getUnsafe,
       chain,
-      blockNumber: block.number->Belt.Option.getUnsafe,
+      blockNumber: block.number->Option.getUnsafe,
       logIndex,
       event: {
         contractName: eventConfig.contractName,
@@ -338,7 +338,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }
     }
 
-    pageUnsafe.items->Belt.Array.forEach(item => {
+    pageUnsafe.items->Array.forEach(item => {
       let chainId = chain->ChainMap.Chain.toChainId
       let maybeEventConfig =
         eventRouter->EventRouter.get(
@@ -348,7 +348,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ),
           ~indexingAddresses,
           ~contractAddress=item.srcAddress,
-          ~blockNumber=item.block.number->Belt.Option.getUnsafe,
+          ~blockNumber=item.block.number->Option.getUnsafe,
         )
 
       switch maybeEventConfig {
@@ -363,7 +363,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           handleDecodeFailure(
             ~eventConfig,
             ~logIndex=item.logIndex,
-            ~blockNumber=item.block.number->Belt.Option.getUnsafe,
+            ~blockNumber=item.block.number->Option.getUnsafe,
             ~chainId,
             ~exn=UndefinedValue,
           )
@@ -378,7 +378,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     // and the parent of the range's first block. Duplicates are allowed; reorg
     // detection notices same-block-number-different-hash collisions itself.
     let blockHashes = []
-    pageUnsafe.items->Belt.Array.forEach(({block}) => {
+    pageUnsafe.items->Array.forEach(({block}) => {
       switch (block.number, block.hash) {
       | (Some(blockNumber), Some(blockHash)) =>
         blockHashes->Array.push({ReorgDetection.blockNumber, blockHash})->ignore
@@ -405,9 +405,9 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     let latestFetchedBlockTimestamp = switch pageUnsafe.rollbackGuard {
     | Some({timestamp}) => timestamp
     | None =>
-      switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
-      | Some({block}) if block.number->Belt.Option.getUnsafe == heighestBlockQueried =>
-        block.timestamp->Belt.Option.getUnsafe
+      switch pageUnsafe.items->Array.get(pageUnsafe.items->Array.length - 1) {
+      | Some({block}) if block.number->Option.getUnsafe == heighestBlockQueried =>
+        block.timestamp->Option.getUnsafe
       | _ => 0
       }
     }

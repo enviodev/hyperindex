@@ -66,13 +66,13 @@ describe("Async linked entity loaders", () => {
 
     // Expected string copied from C
     let updatedA = await aOps.get(EventHandlers.aIdWithGrandChildC)
-    let stringInAFromC = updatedA->Belt.Option.flatMap(a => a.optionalStringToTestLinkedEntities)
+    let stringInAFromC = updatedA->Option.flatMap(a => a.optionalStringToTestLinkedEntities)
     t.expect(stringInAFromC).toEqual(Some(messageFromC))
 
     // Expected string to be null still since no c grandchild.
     let updatedANoGrandchild = await aOps.get(EventHandlers.aIdWithNoGrandChildC)
     let optionalStringToTestLinkedEntitiesNoGrandchild =
-      updatedANoGrandchild->Belt.Option.flatMap(a => a.optionalStringToTestLinkedEntities)
+      updatedANoGrandchild->Option.flatMap(a => a.optionalStringToTestLinkedEntities)
 
     t.expect(optionalStringToTestLinkedEntitiesNoGrandchild).toEqual(None)
   })

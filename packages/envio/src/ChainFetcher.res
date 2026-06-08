@@ -153,14 +153,14 @@ let make = (
     onBlockConfigs->Array.forEach(onBlockConfig => {
       if onBlockConfig.startBlock->Option.getOr(startBlock) < startBlock {
         JsError.throwWithMessage(
-          `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Belt.Int.toString}). This is not supported yet.`,
+          `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Int.toString}). This is not supported yet.`,
         )
       }
       switch endBlock {
       | Some(chainEndBlock) =>
         if onBlockConfig.endBlock->Option.getOr(chainEndBlock) > chainEndBlock {
           JsError.throwWithMessage(
-            `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Belt.Int.toString}). This is not supported yet.`,
+            `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Int.toString}). This is not supported yet.`,
           )
         }
       | None => ()

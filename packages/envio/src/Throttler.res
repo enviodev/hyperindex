@@ -12,7 +12,7 @@ let make = (~intervalMillis: int, ~logger) => {
   isRunning: false,
   isAwaitingInterval: false,
   scheduled: None,
-  intervalMillis: intervalMillis->Belt.Int.toFloat,
+  intervalMillis: intervalMillis->Int.toFloat,
   logger,
 }
 
@@ -53,7 +53,7 @@ let rec startInternal = (throttler: t) => {
       let _ = setTimeout(() => {
         throttler.isAwaitingInterval = false
         throttler->startInternal
-      }, Belt.Int.fromFloat(throttler.intervalMillis -. timeSinceLastRun))
+      }, Int.fromFloat(throttler.intervalMillis -. timeSinceLastRun))
     }
   | _ => ()
   }

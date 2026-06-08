@@ -139,7 +139,7 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
     let detail = switch err {
     | FailedGettingItems({exn}) =>
       switch exn {
-      | JsExn(e) => e->JsExn.message->Belt.Option.getWithDefault("(no message)")
+      | JsExn(e) => e->JsExn.message->Option.getOr("(no message)")
       | _ => "(non-js exn)"
       }
     | _ => "(other err shape)"

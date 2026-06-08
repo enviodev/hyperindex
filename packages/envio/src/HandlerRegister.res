@@ -89,7 +89,7 @@ let preRegistered = registry.preRegistered
 
 let withRegistration = (fn: activeRegistration => unit) => {
   switch activeRegistration.contents {
-  | None => preRegistered->Belt.Array.push(fn)
+  | None => preRegistered->Array.push(fn)
   | Some(r) =>
     if r.finished {
       JsError.throwWithMessage(
@@ -162,11 +162,11 @@ let registerOnBlock = (
 ) => {
   withRegistration(registration => {
     let onBlockByChainId = registration.registrations.onBlockByChainId
-    let key = chainId->Belt.Int.toString
+    let key = chainId->Int.toString
     let index =
       onBlockByChainId
       ->Utils.Dict.dangerouslyGetNonOption(key)
-      ->Belt.Option.mapWithDefault(0, configs => configs->Belt.Array.length)
+      ->Option.mapOr(0, configs => configs->Array.length)
     onBlockByChainId->Utils.Dict.push(
       key,
       (
@@ -190,16 +190,16 @@ let getContractRegister = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).contractRegister
 
 let getOnEventWhere = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).eventOptions->Belt.Option.flatMap(value => value.where)
+  get(~contractName, ~eventName).eventOptions->Option.flatMap(value => value.where)
 
 let isWildcard = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).eventOptions
-  ->Belt.Option.flatMap(value => value.wildcard)
-  ->Belt.Option.getWithDefault(false)
+  ->Option.flatMap(value => value.wildcard)
+  ->Option.getOr(false)
 
 let hasRegistration = (~contractName, ~eventName) => {
   let r = get(~contractName, ~eventName)
-  r.handler->Belt.Option.isSome || r.contractRegister->Belt.Option.isSome
+  r.handler->Option.isSome || r.contractRegister->Option.isSome
 }
 
 type eventNamespace = {contractName: string, eventName: string}
@@ -284,7 +284,7 @@ let setHandler = (
       )
     | Some(prevHandler) =>
       let incomingEventOptions =
-        eventOptions->Belt.Option.map(v =>
+        eventOptions->Option.map(v =>
           v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
@@ -341,7 +341,7 @@ let setContractRegister = (
       )
     | Some(prevContractRegister) =>
       let incomingEventOptions =
-        eventOptions->Belt.Option.map(v =>
+        eventOptions->Option.map(v =>
           v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {

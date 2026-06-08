@@ -92,7 +92,7 @@ let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t) => {
     } catch {
     | exn =>
       if attempt < maxRetries {
-        let backoffMs = Math.pow(2.0, ~exp=attempt->Belt.Int.toFloat)->Belt.Float.toInt * 1000
+        let backoffMs = Math.pow(2.0, ~exp=attempt->Int.toFloat)->Float.toInt * 1000
         await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMs)
         await retry(~attempt=attempt + 1)
       } else {
@@ -335,7 +335,7 @@ let trackDatabase = async (
       columnDescriptions,
     }
   })
-  let tableConfigs = [exposedInternalTableConfigs, userTableConfigs]->Belt.Array.concatMany
+  let tableConfigs = [exposedInternalTableConfigs, userTableConfigs]->Array.flat
   let tableNames = tableConfigs->Array.map(c => c.tableName)
 
   Logging.info("Tracking tables in Hasura")

@@ -260,7 +260,7 @@ module Make = () => {
       let addresses = query.addressesByContractName->Dict.get(c.name)->Option.getOr([])
       {
         addresses,
-        eventKeys: c.events->Belt.Array.map(eventConfig => {
+        eventKeys: c.events->Array.map(eventConfig => {
           eventConfig->getEventKey
         }),
       }
