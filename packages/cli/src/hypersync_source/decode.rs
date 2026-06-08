@@ -1,7 +1,9 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use alloy_dyn_abi::DecodedEvent;
+use alloy_dyn_abi::{DecodedEvent, DynSolEvent, DynSolType};
+use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
@@ -59,11 +61,20 @@ struct EventVariant {
     params: Vec<ParamMeta>,
 }
 
+/// One positional decoder plus the per-contract namings layered over it. Two
+/// events sharing a `MetaKey` but indexing different params (same type list,
+/// same indexed count, different positions) can't be told apart by (topic0,
+/// topic count), so the first variant's layout backs the shared `decoder` and
+/// `apply_names` keys names off each variant.
+struct RegisteredEvent {
+    decoder: DynSolEvent,
+    variants: Vec<EventVariant>,
+}
+
 #[derive(Clone)]
 pub(crate) struct DecoderCore {
-    inner: Arc<hypersync_client::Decoder>,
+    events: Arc<HashMap<MetaKey, RegisteredEvent>>,
     checksummed_addresses: bool,
-    variants: Arc<HashMap<MetaKey, Vec<EventVariant>>>,
 }
 
 impl DecoderCore {
@@ -71,37 +82,45 @@ impl DecoderCore {
         event_params: Vec<EventParamsInput>,
         checksum_addresses: bool,
     ) -> Result<Self> {
-        let mut variants: HashMap<MetaKey, Vec<EventVariant>> = HashMap::new();
-        // The inner decoder is itself keyed by (topic0, topic count) — the same
-        // MetaKey — so it can hold only one decode per key. Contracts that share
-        // a key reuse that single positional decode and only layer on their own
-        // names, so we feed the inner decoder one signature per key. Two events
-        // sharing a MetaKey but indexing different params (same type list, same
-        // indexed count, different positions) can't be told apart at this layer
-        // regardless — `from_signatures` would collapse them too — so the first
-        // variant's layout wins; `apply_names` then keys names off each variant.
-        let mut signatures: HashMap<MetaKey, String> = HashMap::new();
+        let mut events: HashMap<MetaKey, RegisteredEvent> = HashMap::new();
         for ep in event_params {
             let key = MetaKey::parse(&ep.sighash, ep.topic_count)
                 .with_context(|| format!("parse meta key for {}", ep.event_name))?;
-            signatures
-                .entry(key)
-                .or_insert_with(|| reconstruct_signature(&ep.event_name, &ep.params));
-            variants.entry(key).or_default().push(EventVariant {
+            let event = match events.entry(key) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(e) => {
+                    let decoder = build_event_decoder(&key, &ep.params)
+                        .with_context(|| format!("build decoder for {}", ep.event_name))?;
+                    e.insert(RegisteredEvent {
+                        decoder,
+                        variants: Vec::new(),
+                    })
+                }
+            };
+            // The shared decoder is built from the first variant's layout. A
+            // later variant colliding on this MetaKey but splitting indexed/body
+            // differently would be silently mis-typed, so reject it. Config
+            // parsing should already prevent this; this is the decoder-side
+            // backstop. Differing param *names* are fine — `apply_names` applies
+            // each variant's own.
+            if let Some(first) = event.variants.first() {
+                anyhow::ensure!(
+                    same_decode_layout(&first.params, &ep.params),
+                    "ABI layout mismatch for {}: another event with the same topic0 and topic \
+                     count but a different indexed/type layout is already registered; they can't \
+                     share a positional decoder",
+                    ep.event_name,
+                );
+            }
+            event.variants.push(EventVariant {
                 contract_name: ep.contract_name,
                 params: ep.params,
             });
         }
 
-        let inner = hypersync_client::Decoder::from_signatures(
-            &signatures.into_values().collect::<Vec<_>>(),
-        )
-        .context("create inner decoder")?;
-
         Ok(Self {
-            inner: Arc::new(inner),
+            events: Arc::new(events),
             checksummed_addresses: checksum_addresses,
-            variants: Arc::new(variants),
         })
     }
 
@@ -131,67 +150,63 @@ impl DecoderCore {
         topics: &[Option<LogArgument>],
         data: &Data,
     ) -> Result<Option<ParamValue>> {
-        let topic0 = topics
-            .first()
-            .context("get topic0")?
-            .as_ref()
-            .context("topic0 is null")?;
-
-        let decoded = match self
-            .inner
-            .decode(topic0.as_slice(), topics, data)
-            .context("decode log")?
-        {
-            Some(v) => v,
+        let event = match self.events.get(&MetaKey::from_topics(topics)?) {
+            Some(e) => e,
             None => return Ok(None),
         };
 
-        let variants = match self.variants.get(&MetaKey::from_topics(topics)?) {
-            Some(v) => v,
-            None => return Ok(None),
-        };
+        let decoded = event
+            .decoder
+            .decode_log_parts(
+                topics
+                    .iter()
+                    .take_while(|t| t.is_some())
+                    .map(|t| t.as_ref().unwrap().into()),
+                data,
+            )
+            .context("decode log")?;
 
-        // Same log, one decode, named once per contract. JS routes by address
-        // and then picks `params[contractName]`, so two contracts that share a
+        // One positional decode, named once per contract. JS routes by address
+        // and picks `params[contractName]`, so two contracts that share a
         // signature but name their params differently each get their own names.
-        let by_contract = variants
-            .iter()
-            .map(|variant| {
-                let fields = apply_names(&decoded, &variant.params, self.checksummed_addresses)?;
-                Ok((variant.contract_name.clone(), ParamValue::Obj(fields)))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        // The common single-contract case consumes the decode without cloning.
+        let by_contract = match event.variants.as_slice() {
+            [variant] => vec![(
+                variant.contract_name.clone(),
+                ParamValue::Obj(apply_names(
+                    decoded,
+                    &variant.params,
+                    self.checksummed_addresses,
+                )?),
+            )],
+            variants => variants
+                .iter()
+                .map(|variant| {
+                    let fields =
+                        apply_names(decoded.clone(), &variant.params, self.checksummed_addresses)?;
+                    Ok((variant.contract_name.clone(), ParamValue::Obj(fields)))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        };
 
         Ok(Some(ParamValue::Obj(by_contract)))
     }
 }
 
 fn apply_names(
-    decoded: &DecodedEvent,
+    decoded: DecodedEvent,
     params: &[ParamMeta],
     checksummed_addresses: bool,
 ) -> Result<Vec<(String, ParamValue)>> {
-    let mut indexed_idx = 0;
-    let mut body_idx = 0;
+    let mut indexed = decoded.indexed.into_iter();
+    let mut body = decoded.body.into_iter();
     params
         .iter()
         .map(|param| {
             let sol_value = if param.indexed {
-                let v = decoded
-                    .indexed
-                    .get(indexed_idx)
-                    .context("indexed param out of bounds")?
-                    .clone();
-                indexed_idx += 1;
-                v
+                indexed.next().context("indexed param out of bounds")?
             } else {
-                let v = decoded
-                    .body
-                    .get(body_idx)
-                    .context("body param out of bounds")?
-                    .clone();
-                body_idx += 1;
-                v
+                body.next().context("body param out of bounds")?
             };
             let value = sol_value_to_param(
                 sol_value,
@@ -203,19 +218,48 @@ fn apply_names(
         .collect()
 }
 
-fn reconstruct_signature(event_name: &str, params: &[ParamMeta]) -> String {
-    let params_str = params
-        .iter()
-        .map(|p| {
-            if p.indexed {
-                format!("{} indexed {}", p.abi_type, p.name)
-            } else {
-                format!("{} {}", p.abi_type, p.name)
-            }
+/// Build the positional decoder for one MetaKey. The decoder's topic0 is pinned
+/// to the on-chain sighash the MetaKey carries rather than derived from a
+/// signature string, so an event surfaced to handlers under a different `name:`
+/// (display name != on-chain name) still matches its real log (issue #1285).
+/// The event name plays no part in decoding — only the param types do.
+fn build_event_decoder(key: &MetaKey, params: &[ParamMeta]) -> Result<DynSolEvent> {
+    let mut indexed = Vec::new();
+    let mut body = Vec::new();
+    for param in params {
+        let ty = DynSolType::parse(&param.abi_type)
+            .with_context(|| format!("parse abi type {}", param.abi_type))?;
+        if param.indexed {
+            indexed.push(ty);
+        } else {
+            body.push(ty);
+        }
+    }
+    DynSolEvent::new(
+        Some(B256::from(key.sighash)),
+        indexed,
+        DynSolType::Tuple(body),
+    )
+    .context("construct event decoder")
+}
+
+/// Whether two param lists decode under the same positional layout. Names are
+/// irrelevant to decoding (each variant applies its own), but the indexed/body
+/// split and the ABI types must match or the shared decoder would mis-type a
+/// later variant. Events colliding on a MetaKey already share topic0 — hence the
+/// ordered type list — so in practice only the indexed flags can diverge; the
+/// types and nested components are compared defensively all the same.
+fn same_decode_layout(a: &[ParamMeta], b: &[ParamMeta]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(x, y)| {
+            x.indexed == y.indexed
+                && x.abi_type == y.abi_type
+                && match (&x.components, &y.components) {
+                    (None, None) => true,
+                    (Some(xc), Some(yc)) => same_decode_layout(xc, yc),
+                    _ => false,
+                }
         })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{}({})", event_name, params_str)
 }
 
 #[napi]
@@ -273,5 +317,151 @@ mod tests {
     fn parse_meta_key_accepts_boundary_values() {
         assert!(MetaKey::parse(VALID_SIGHASH, 1).is_ok());
         assert!(MetaKey::parse(VALID_SIGHASH, 4).is_ok());
+    }
+
+    // Regression for issue #1285: an event surfaced to handlers under a name
+    // that differs from its on-chain name must still decode. The decoder keys
+    // on the on-chain sighash, not the keccak of the display name.
+    #[test]
+    fn renamed_event_decodes_under_real_sighash() {
+        use alloy_dyn_abi::DynSolValue;
+        use alloy_primitives::{hex, Address, U256};
+
+        let real_sighash = alloy_json_abi::Event::parse("Approval(address owner, uint256 value)")
+            .unwrap()
+            .selector()
+            .to_string();
+
+        let core = DecoderCore::from_params(
+            vec![EventParamsInput {
+                sighash: real_sighash.clone(),
+                topic_count: 1,
+                event_name: "ApprovalRenamed".to_string(),
+                contract_name: "TestContract".to_string(),
+                params: vec![
+                    ParamMeta {
+                        name: "owner".to_string(),
+                        abi_type: "address".to_string(),
+                        indexed: false,
+                        components: None,
+                    },
+                    ParamMeta {
+                        name: "value".to_string(),
+                        abi_type: "uint256".to_string(),
+                        indexed: false,
+                        components: None,
+                    },
+                ],
+            }],
+            false,
+        )
+        .unwrap();
+
+        let data = DynSolValue::Tuple(vec![
+            DynSolValue::Address(Address::from([0xaa; 20])),
+            DynSolValue::Uint(U256::from(42u64), 256),
+        ])
+        .abi_encode();
+        let log = Log {
+            topics: vec![Some(real_sighash)],
+            data: Some(format!("0x{}", hex::encode(data))),
+            ..Default::default()
+        };
+
+        let decoded = core
+            .decode_napi(&log)
+            .unwrap()
+            .expect("renamed event must decode under its real sighash");
+
+        match decoded {
+            ParamValue::Obj(contracts) => match contracts.as_slice() {
+                [(contract, ParamValue::Obj(fields))] if contract == "TestContract" => {
+                    match fields.as_slice() {
+                        [(owner, ParamValue::Str(owner_hex)), (value, ParamValue::BigInt(_))]
+                            if owner == "owner" && value == "value" =>
+                        {
+                            assert_eq!(owner_hex, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                        }
+                        _ => panic!("unexpected decoded fields"),
+                    }
+                }
+                _ => panic!("unexpected decoded contracts"),
+            },
+            _ => panic!("expected an object of params"),
+        }
+    }
+
+    fn pm(name: &str, abi_type: &str, indexed: bool) -> ParamMeta {
+        ParamMeta {
+            name: name.to_string(),
+            abi_type: abi_type.to_string(),
+            indexed,
+            components: None,
+        }
+    }
+
+    #[test]
+    fn rejects_metakey_collision_with_different_indexed_layout() {
+        let sighash = alloy_json_abi::Event::parse("Foo(uint256 a, uint256 b)")
+            .unwrap()
+            .selector()
+            .to_string();
+        let variant = |params| EventParamsInput {
+            sighash: sighash.clone(),
+            topic_count: 2,
+            event_name: "Foo".to_string(),
+            contract_name: "C".to_string(),
+            params,
+        };
+
+        let err = DecoderCore::from_params(
+            vec![
+                variant(vec![pm("a", "uint256", true), pm("b", "uint256", false)]),
+                variant(vec![pm("a", "uint256", false), pm("b", "uint256", true)]),
+            ],
+            false,
+        )
+        .err()
+        .expect("expected an ABI layout mismatch error");
+        assert!(format!("{err}").contains("ABI layout mismatch"));
+    }
+
+    #[test]
+    fn accepts_metakey_collision_with_same_layout_different_names() {
+        let sighash =
+            alloy_json_abi::Event::parse("Transfer(address from, address to, uint256 value)")
+                .unwrap()
+                .selector()
+                .to_string();
+        let variant = |contract: &str, params| EventParamsInput {
+            sighash: sighash.clone(),
+            topic_count: 3,
+            event_name: "Transfer".to_string(),
+            contract_name: contract.to_string(),
+            params,
+        };
+
+        DecoderCore::from_params(
+            vec![
+                variant(
+                    "TokenA",
+                    vec![
+                        pm("from", "address", true),
+                        pm("to", "address", true),
+                        pm("value", "uint256", false),
+                    ],
+                ),
+                variant(
+                    "TokenB",
+                    vec![
+                        pm("src", "address", true),
+                        pm("dst", "address", true),
+                        pm("wad", "uint256", false),
+                    ],
+                ),
+            ],
+            false,
+        )
+        .expect("same-layout variants with different names must register");
     }
 }
