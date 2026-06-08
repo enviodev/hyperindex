@@ -231,9 +231,9 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     let makeEntity = (id): Internal.entity =>
       {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
 
-    let table = InMemoryTable.Entity.make()
+    let table = EntitiesState.make()
     let add = (id, checkpointId) =>
-      table->InMemoryTable.Entity.set(
+      table->EntitiesState.set(
         ~committedCheckpointId=Internal.initialCheckpointId,
         Set({entityId: id, entity: makeEntity(id), checkpointId}),
       )
@@ -241,7 +241,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     add("committed", 5n)
     add("uncommitted", 6n)
 
-    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId=5n, ~keepLoadedFromDb=false)
+    table->EntitiesState.dropCommittedChanges(~committedCheckpointId=5n, ~keepLoadedFromDb=false)
 
     t.expect((
       table.changesCount,
@@ -253,9 +253,9 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     let makeEntity = (id): Internal.entity =>
       {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
 
-    let table = InMemoryTable.Entity.make()
+    let table = EntitiesState.make()
     let add = (id, checkpointId) =>
-      table->InMemoryTable.Entity.set(
+      table->EntitiesState.set(
         ~committedCheckpointId=Internal.initialCheckpointId,
         Set({entityId: id, entity: makeEntity(id), checkpointId}),
       )
@@ -263,7 +263,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     add("committed", 5n)
     add("uncommitted", 6n)
 
-    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId=5n, ~keepLoadedFromDb=true)
+    table->EntitiesState.dropCommittedChanges(~committedCheckpointId=5n, ~keepLoadedFromDb=true)
 
     t.expect((
       table.changesCount,

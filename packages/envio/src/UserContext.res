@@ -222,7 +222,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
       : (entity: Internal.entity) => {
           params.inMemoryStore
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
-          ->InMemoryTable.Entity.set(
+          ->EntitiesState.set(
             ~committedCheckpointId=params.inMemoryStore.committedCheckpointId,
             Set({
               entityId: entity.id,
@@ -328,7 +328,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         entityId => {
           params.inMemoryStore
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
-          ->InMemoryTable.Entity.set(
+          ->EntitiesState.set(
             ~committedCheckpointId=params.inMemoryStore.committedCheckpointId,
             Delete({
               entityId,
