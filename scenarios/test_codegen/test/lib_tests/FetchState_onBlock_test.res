@@ -32,7 +32,7 @@ let makeOnBlockConfig = (
   handler: Utils.magic("mock handler"),
 }
 
-let makeInitialWithOnBlock = (~startBlock=0, ~knownHeight=0, ~progressBlockNumber=?, ~onBlockConfigs) => {
+let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
   FetchState.make(
     ~eventConfigs=[baseEventConfig],
     ~addresses=[
@@ -48,8 +48,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~knownHeight=0, ~progressBlockNumbe
     ~targetBufferSize=5000,
     ~chainId,
     ~onBlockConfigs?,
-    ~knownHeight,
-    ~progressBlockNumber?,
+    ~knownHeight=0,
   )
 }
 
@@ -306,56 +305,5 @@ describe("FetchState onBlock functionality", () => {
       blockNumberLogIndexTuples,
       ~message="Should have correct block number and log index tuples",
     ).toEqual(expectedTuples)
-  })
-
-  it("should populate buffer on resume when knownHeight > progressBlockNumber (onBlock-only)", t => {
-    // Simulates SVM onSlot-only indexer: no event configs, no addresses, only onBlock handlers.
-    // On resume, knownHeight is restored from DB but the buffer starts empty.
-    let onBlockConfig = makeOnBlockConfig(~interval=1, ~startBlock=Some(100))
-    let fetchState = FetchState.make(
-      ~eventConfigs=[],
-      ~addresses=[],
-      ~startBlock=100,
-      ~endBlock=None,
-      ~maxAddrInPartition=3,
-      ~targetBufferSize=5000,
-      ~chainId,
-      ~onBlockConfigs=[onBlockConfig],
-      ~knownHeight=110,
-      ~progressBlockNumber=104,
-    )
-
-    t.expect(fetchState->FetchState.bufferSize).toBeGreaterThan(0)
-
-    let blockNumbers =
-      fetchState.buffer->Array.map(item => item->Internal.getItemBlockNumber)
-
-    t.expect(blockNumbers).toEqual([105, 106, 107, 108, 109, 110])
-  })
-
-  it("should not get stuck on resume for onBlock-only indexer", t => {
-    // Without the fix, getNextQuery returned NothingToQuery because:
-    // 1. headBlockNumber > 0 (not WaitingForNewBlock early return)
-    // 2. isOnBlockBehindTheHead=true -> shouldWaitForNewBlock=false
-    // 3. No partitions -> no queries
-    // Result: NothingToQuery -> fetcher does nothing -> stuck
-    let onBlockConfig = makeOnBlockConfig(~interval=1, ~startBlock=Some(100))
-    let fetchState = FetchState.make(
-      ~eventConfigs=[],
-      ~addresses=[],
-      ~startBlock=100,
-      ~endBlock=None,
-      ~maxAddrInPartition=3,
-      ~targetBufferSize=5000,
-      ~chainId,
-      ~onBlockConfigs=[onBlockConfig],
-      ~knownHeight=110,
-      ~progressBlockNumber=104,
-    )
-
-    // With the fix, the buffer is populated and onBlock pointer is caught up.
-    // getNextQuery should return WaitingForNewBlock, not NothingToQuery.
-    let nextQuery = fetchState->FetchState.getNextQuery(~concurrencyLimit=10)
-    t.expect(nextQuery).toEqual(FetchState.WaitingForNewBlock)
   })
 })
