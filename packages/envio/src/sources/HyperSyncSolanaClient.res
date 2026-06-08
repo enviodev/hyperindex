@@ -122,6 +122,13 @@ module QueryTypes = {
     includeInstruction?: bool,
   }
 
+  /// Reference to a program's registered Borsh schema, passed with the query
+  /// so the Rust client decodes matching instructions inline (in `get`).
+  type programSchemaRef = {
+    programId: string,
+    schemaHandle: int,
+  }
+
   type query = {
     fromSlot: int,
     toSlot?: int,
@@ -136,6 +143,7 @@ module QueryTypes = {
     maxNumInstructions?: int,
     maxNumLogs?: int,
     maxNumTokenBalances?: int,
+    programSchemas?: array<programSchemaRef>,
   }
 }
 
@@ -165,6 +173,8 @@ module ResponseTypes = {
     loadedAddressesReadonly: array<string>,
   }
 
+  /// Borsh-decoded view attached by the Rust client. `argsJson`/`accountsJson`
+  /// are stringified to side-step napi-rs's lack of native JSON passthrough.
   /** Solana instruction record.
 
    `data` is the raw instruction byte buffer, hex-encoded with a `0x` prefix.
@@ -172,6 +182,13 @@ module ResponseTypes = {
    (only `Some` when the instruction is at least that long), exposed for
    handler-dispatch convenience.
    `accounts` is the full positional account list in base58. */
+  type decodedInstruction = {
+    name: string,
+    argsJson: string,
+    accountsJson: string,
+    extraAccounts: array<string>,
+  }
+
   type instruction = {
     slot: int,
     transactionIndex: int,
@@ -185,6 +202,7 @@ module ResponseTypes = {
     d8?: string,
     isInner: bool,
     isCommitted: bool,
+    decoded?: decodedInstruction,
   }
 
   type log = {

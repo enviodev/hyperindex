@@ -2,10 +2,11 @@
 //!
 //! `register_program_schema` deserialises a JSON descriptor produced by
 //! `public_config.rs` into an upstream `ProgramSchema` and stashes it in a
-//! process-global table keyed by a stable `u32` index. `decode_instruction`
-//! takes that index plus a raw instruction's `data` (hex) and `accounts`
-//! (base58 strings) and returns the `DecodedInstruction` shape the ReScript
-//! runtime serialises onto `event.instruction.decoded`.
+//! process-global table keyed by a stable `u32` index. The Solana client's
+//! `get` then passes those indices back on the query; `decode_with_schema`
+//! resolves each one via `schema_for_handle` and decodes the matching
+//! instructions inline, so the `DecodedInstruction` shape rides back on the
+//! query response instead of crossing the napi boundary one call at a time.
 //!
 //! Lifecycle: schemas are registered once per program at indexer startup
 //! and never freed. The process-global `Vec<Arc<ProgramSchema>>` is fine
@@ -84,60 +85,44 @@ pub fn register_program_schema(descriptor_json: String) -> napi::Result<u32> {
     Ok(idx)
 }
 
-/// Decode an instruction's `data` against a previously-registered schema.
+/// Look up a registered schema by its handle. `None` when the handle was never
+/// registered (defensive — the runtime always registers before querying).
+pub(crate) fn schema_for_handle(schema_handle: u32) -> Option<Arc<UpstreamSchema>> {
+    registry()
+        .lock()
+        .expect("schema registry mutex poisoned (decoder panicked while holding it)")
+        .get(schema_handle as usize)
+        .map(Arc::clone)
+}
+
+/// Decode a raw instruction against a resolved schema. Called inline by the
+/// Solana client's `get`, so decoded instructions ride back on the query
+/// response instead of crossing the napi boundary one instruction at a time.
 ///
-/// `data_hex` is the raw `0x`-prefixed instruction bytes. `accounts` is the
-/// base58 pubkey list in declared order. Returns `None` when the schema's
-/// dispatch can't match a known discriminator; the caller should treat
-/// `decoded` as `{}` in that case.
-#[napi_derive::napi]
-#[allow(dead_code)]
-pub fn decode_instruction(
-    schema_handle: u32,
-    data_hex: String,
+/// POC policy: any decode failure (unknown discriminator, account-count
+/// mismatch, trailing bytes, unresolved type) yields `None` so the indexer
+/// keeps running. Real on-chain calls drift from schemas in small ways
+/// (Metaplex `rent` slot was optional in some versions, etc.); a single bad
+/// row should not kill the worker.
+pub(crate) fn decode_with_schema(
+    schema: &UpstreamSchema,
     accounts: Vec<String>,
-) -> napi::Result<Option<DecodedInstructionJson>> {
-    let schema = {
-        let guard = registry()
-            .lock()
-            .expect("schema registry mutex poisoned (decoder panicked while holding it)");
-        match guard.get(schema_handle as usize) {
-            Some(arc) => Arc::clone(arc),
-            None => {
-                return Err(napi::Error::from_reason(format!(
-                    "decode_instruction: unknown schema handle {schema_handle}",
-                )))
-            }
-        }
-    };
-
-    let data = hex_to_bytes(&data_hex)
-        .with_context(|| format!("decoding instruction data '{data_hex}'"))
-        .map_err(super::map_err)?;
-
+    data: Vec<u8>,
+) -> Option<DecodedInstructionJson> {
     let ix = UpstreamInstruction {
         program_id: schema.program_id.clone(),
         accounts,
         data,
         ..Default::default()
     };
-
-    // POC policy: any decode failure (unknown discriminator, account-count
-    // mismatch, trailing bytes, unresolved type) surfaces as `None` so the
-    // indexer keeps running. Real on-chain calls drift from schemas in
-    // small ways (Metaplex `rent` slot was optional in some versions, etc.);
-    // a single bad row should not kill the worker. Trace at debug so a
-    // misconfigured schema is still discoverable.
-    match upstream_decode(&schema, &ix) {
-        Ok(decoded) => Ok(Some(decoded.into())),
-        Err(_) => Ok(None),
-    }
+    upstream_decode(schema, &ix).ok().map(Into::into)
 }
 
 /// JS-facing shape of `DecodedInstruction`. Args + named accounts are passed
 /// as JSON strings to side-step napi-rs's lack of native `serde_json::Value`
 /// support; the runtime `JSON.parse`s them once into the per-handler shape.
 #[napi_derive::napi(object)]
+#[derive(Clone)]
 pub struct DecodedInstructionJson {
     pub name: String,
     /// `JSON.stringify`-able args object. Always a JSON object literal even

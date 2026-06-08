@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -71,6 +72,11 @@ impl HypersyncSolanaClient {
     /// `StreamConfig::default()` and can DoS the server on multi-day windows).
     #[napi]
     pub async fn get(&self, query: SolanaQuery) -> napi::Result<QueryResponse> {
+        // Schemas to decode against ride along on the query so Borsh decoding
+        // happens here, in Rust, rather than per-instruction over the napi
+        // boundary — mirroring how the EVM client returns pre-decoded params.
+        let schema_refs = query.program_schemas.clone().unwrap_or_default();
+
         let q: hypersync_solana_net_types::query::SolanaQuery = query
             .try_into()
             .context("parse solana query")
@@ -81,9 +87,39 @@ impl HypersyncSolanaClient {
             .await
             .context("solana get")
             .map_err(map_err)?;
-        QueryResponse::try_from(resp)
+
+        // Resolve program_id -> schema once, then decode each matching
+        // instruction inline. Skipped entirely when no schemas were supplied.
+        let schema_map: HashMap<String, _> = schema_refs
+            .into_iter()
+            .filter_map(|r| {
+                borsh_decoder::schema_for_handle(r.schema_handle).map(|s| (r.program_id, s))
+            })
+            .collect();
+        let decoded: Vec<Option<borsh_decoder::DecodedInstructionJson>> = if schema_map.is_empty() {
+            Vec::new()
+        } else {
+            resp.instructions
+                .iter()
+                .map(|ix| {
+                    schema_map.get(&ix.program_id).and_then(|schema| {
+                        borsh_decoder::decode_with_schema(
+                            schema.as_ref(),
+                            ix.accounts.clone(),
+                            ix.data.clone(),
+                        )
+                    })
+                })
+                .collect()
+        };
+
+        let mut out = QueryResponse::try_from(resp)
             .context("convert solana response")
-            .map_err(map_err)
+            .map_err(map_err)?;
+        for (instr, d) in out.data.instructions.iter_mut().zip(decoded) {
+            instr.decoded = d;
+        }
+        Ok(out)
     }
 }
 

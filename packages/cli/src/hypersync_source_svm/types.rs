@@ -3,6 +3,8 @@ use hypersync_client_solana::simple_types as simple;
 use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 
+use super::borsh_decoder::DecodedInstructionJson;
+
 #[napi(object)]
 #[derive(Default, Clone)]
 pub struct Block {
@@ -62,6 +64,9 @@ pub struct Instruction {
     pub a5: Option<String>,
     pub is_inner: bool,
     pub is_committed: bool,
+    /// Borsh-decoded view, populated by `get` when a matching program schema
+    /// was supplied in the query. `None` when no schema applies or decode failed.
+    pub decoded: Option<DecodedInstructionJson>,
 }
 
 #[napi(object)]
@@ -220,6 +225,7 @@ impl TryFrom<simple::Instruction> for Instruction {
             a5: i.a5,
             is_inner: i.is_inner,
             is_committed: i.is_committed,
+            decoded: None,
         })
     }
 }

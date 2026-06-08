@@ -169,43 +169,29 @@ let buildSchemaHandles = (eventConfigs: array<Internal.svmInstructionEventConfig
   handles
 }
 
-let decodeIfPossible = (
-  instr: HyperSyncSolanaClient.ResponseTypes.instruction,
-  schemaHandlesByProgram: dict<int>,
-): option<Envio.svmDecodedInstruction> => {
-  switch schemaHandlesByProgram->Dict.get(instr.programId) {
-  | None => None
-  | Some(handle) =>
-    let decoded = Core.getAddon().decodeInstruction(
-      ~schemaHandle=handle,
-      ~dataHex=instr.data,
-      ~accounts=instr.accounts,
-    )
-    switch decoded->Null.toOption {
-    | None => None
-    | Some(d) =>
-      let args = try JSON.parseOrThrow(d.argsJson) catch {
-      | _ => JSON.Object(Dict.make())
-      }
-      let accounts = try {
-        let parsed = JSON.parseOrThrow(d.accountsJson)
-        parsed->(Utils.magic: JSON.t => dict<string>)
-      } catch {
-      | _ => Dict.make()
-      }
-      Some({
-        name: d.name,
-        args,
-        accounts,
-        extraAccounts: d.extraAccounts,
-      })
-    }
+// Parse the Rust-decoded instruction (args/accounts arrive as JSON strings to
+// side-step napi-rs's lack of native JSON passthrough) into the public shape.
+let parseDecoded = (
+  d: HyperSyncSolanaClient.ResponseTypes.decodedInstruction,
+): Envio.svmDecodedInstruction => {
+  let args = try JSON.parseOrThrow(d.argsJson) catch {
+  | _ => JSON.Object(Dict.make())
+  }
+  let accounts = try {
+    JSON.parseOrThrow(d.accountsJson)->(Utils.magic: JSON.t => dict<string>)
+  } catch {
+  | _ => Dict.make()
+  }
+  {
+    name: d.name,
+    args,
+    accounts,
+    extraAccounts: d.extraAccounts,
   }
 }
 
 let toSvmInstruction = (
   instr: HyperSyncSolanaClient.ResponseTypes.instruction,
-  ~schemaHandlesByProgram: dict<int>,
 ): Envio.svmInstruction => {
   programId: instr.programId->SvmTypes.Pubkey.fromStringUnsafe,
   data: instr.data,
@@ -216,7 +202,7 @@ let toSvmInstruction = (
   d2: ?instr.d2,
   d4: ?instr.d4,
   d8: ?instr.d8,
-  decoded: ?decodeIfPossible(instr, schemaHandlesByProgram),
+  decoded: ?(instr.decoded->Option.map(parseDecoded)),
 }
 
 let toSvmTransaction = (
@@ -303,9 +289,19 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     orderingByProgram->Dict.set(o.programId->SvmTypes.Pubkey.toString, o.byteLengthsDesc)
   )
 
-  // programId.toString -> Rust-side schema registry handle. Built once at
-  // startup; reused on every decoded instruction.
+  // programId.toString -> Rust-side schema registry handle, registered once at
+  // startup. Passed to the client (below) so `get` decodes matching
+  // instructions in Rust rather than per-instruction over the napi boundary.
   let schemaHandlesByProgram = buildSchemaHandles(eventConfigs)
+  let maybeProgramSchemas = switch schemaHandlesByProgram
+  ->Dict.toArray
+  ->Array.map(((programId, schemaHandle)): HyperSyncSolanaClient.QueryTypes.programSchemaRef => {
+    programId,
+    schemaHandle,
+  }) {
+  | [] => None
+  | arr => Some(arr)
+  }
 
   let needsTokenBalances = eventConfigs->Belt.Array.some(cfg => cfg.includeTokenBalances)
 
@@ -349,6 +345,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       maxNumTransactions: 2000,
       maxNumInstructions: 8000,
       maxNumTokenBalances: 16000,
+      programSchemas: ?maybeProgramSchemas,
     }
 
     Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")
@@ -486,7 +483,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
         let payload: Envio.svmInstructionEvent = {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,
-          instruction: toSvmInstruction(instr, ~schemaHandlesByProgram),
+          instruction: toSvmInstruction(instr),
           transaction: eventConfig.includeTransaction ? maybeTx : None,
           logs: eventConfig.includeLogs ? maybeLogs : None,
           slot: instr.slot,
