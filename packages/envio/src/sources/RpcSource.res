@@ -241,9 +241,7 @@ let getNextPage = (
   let queryTimoutPromise =
     Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
       Promise.reject(
-        QueryTimout(
-          `Query took longer than ${Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
-        ),
+        QueryTimout(`Query took longer than ${Int.toString(sc.queryTimeoutMillis / 1000)} seconds`),
       )
     )
 
@@ -287,7 +285,7 @@ let getNextPage = (
     | None =>
       let executedBlockInterval = toBlock - fromBlock + 1
       let nextBlockIntervalTry =
-        (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Int.fromFloat
+        (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt
       mutSuggestedBlockIntervals->Dict.set(partitionId, nextBlockIntervalTry)
       throw(
         Source.GetItemsError(
