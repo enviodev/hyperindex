@@ -5,6 +5,7 @@
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
 type hypersyncClientCtor
+type hyperfuelClientCtor
 type decoderCtor
 
 type addon = {
@@ -12,6 +13,8 @@ type addon = {
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
   @as("HypersyncClient")
   hypersyncClient: hypersyncClientCtor,
+  @as("HyperfuelClient")
+  hyperfuelClient: hyperfuelClientCtor,
   @as("Decoder")
   decoder: decoderCtor,
 }

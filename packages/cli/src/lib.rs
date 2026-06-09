@@ -9,6 +9,7 @@ mod evm;
 pub mod executor;
 mod fuel;
 mod hbs_templating;
+mod hyperfuel_source;
 mod hypersync_source;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
