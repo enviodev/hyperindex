@@ -673,6 +673,29 @@ mod tests {
     }
 
     #[test]
+    fn block_number_range_is_scan_window_only() {
+        // A contiguous range desugars to from/to and is enforced by the scan
+        // window, so it leaves the block section unfiltered — no cross-section
+        // join, no extra column fetched.
+        let f = pf("{ block: { number: { _gte: 1000, _lte: 2000 } } }");
+        assert_eq!(f.filtered_sections(), [false, false, false]);
+    }
+
+    #[test]
+    fn block_number_set_marks_block_filtered() {
+        // A discrete set over-scans the bounding range, so it keeps a row-level
+        // predicate that participates in cross-section joins.
+        let f = pf("{ block: { number: { _in: [100, 200] } } }");
+        assert_eq!(f.filtered_sections(), [true, false, false]);
+    }
+
+    #[test]
+    fn cross_section_where_marks_both_sections() {
+        let f = pf("{ transaction: { from: '0xa0b8' }, log: { srcAddress: '0xdead' } }");
+        assert_eq!(f.filtered_sections(), [false, true, true]);
+    }
+
+    #[test]
     fn transaction_filters() {
         let f = pf("{ transaction: { from: '0xa0b8', sighash: '0xdead' } }");
         assert_eq!(f.server_filters.len(), 2);

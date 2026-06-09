@@ -277,6 +277,23 @@ mod tests {
     }
 
     #[test]
+    fn hint_round_trips_cross_section_filters() {
+        let filter = WhereFilter::parse(Some(
+            "{ transaction: { from: '0xRouter' }, log: { srcAddress: '0xToken' } }",
+        ))
+        .unwrap();
+        let hint = render_where_hint(&filter, 500);
+        assert_eq!(
+            hint,
+            "{ block: { number: { _gte: 500 } }, transaction: { from: \"0xRouter\" }, log: { srcAddress: \"0xToken\" } }",
+        );
+        // Re-parsing the next-page hint keeps both sections filtered, so the
+        // cross-section join re-activates on the following page.
+        let reparsed = WhereFilter::parse(Some(&hint)).unwrap();
+        assert_eq!(reparsed.filtered_sections(), [false, true, true]);
+    }
+
+    #[test]
     fn hint_includes_block_and_status_filters() {
         let filter = WhereFilter::parse(Some(
             "{ block: { miner: '0xbeef' }, transaction: { status: 1, type: [0, 2] } }",

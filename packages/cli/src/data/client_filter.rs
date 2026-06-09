@@ -736,9 +736,61 @@ mod tests {
         );
     }
 
+    // Selecting a child for output (without filtering it) must never drop a
+    // parent: a transaction matching its own filter survives even with no logs.
+    #[test]
+    fn selecting_logs_keeps_logless_transactions() {
+        let transactions = u64_batch(&[("block_number", &[1, 1]), ("transaction_index", &[0, 1])]);
+        let logs = u64_batch(&[("block_number", &[1]), ("transaction_index", &[0])]);
+        let response = response_of(vec![], vec![transactions], vec![logs]);
+
+        // transaction filtered; transaction + log selected, log NOT filtered.
+        let plan = JoinPlan::new([false, true, false], [false, true, true]);
+        let masks = compute_masks(&response, &[], &plan).unwrap();
+
+        assert_eq!(
+            (masks.block, masks.transaction, masks.log),
+            (Some(vec![]), Some(vec![true, true]), Some(vec![true])),
+        );
+    }
+
+    // A filtered child drops parents left empty: a transaction filter removes
+    // blocks that retain no surviving transaction.
+    #[test]
+    fn filtered_transactions_drop_empty_blocks() {
+        let client = client_filters("{ transaction: { value: { _gt: 100 } } }");
+        let blocks = u64_batch(&[("number", &[10, 11])]);
+        let transactions = u64_batch(&[
+            ("block_number", &[10, 11]),
+            ("transaction_index", &[0, 0]),
+            ("value", &[200, 50]),
+        ]);
+        let response = response_of(vec![blocks], vec![transactions], vec![]);
+
+        // transaction filtered; block + transaction selected.
+        let plan = JoinPlan::new([false, true, false], [true, true, false]);
+        let masks = compute_masks(&response, &client, &plan).unwrap();
+
+        assert_eq!(
+            (masks.block, masks.transaction, masks.log),
+            (
+                Some(vec![true, false]),
+                Some(vec![true, false]),
+                Some(vec![])
+            ),
+        );
+    }
+
     #[test]
     fn single_relevant_section_skips_join() {
         let plan = JoinPlan::new([false, false, true], [false, false, true]);
+        assert_eq!((plan.active, plan.extra_fields().len()), (false, 0));
+    }
+
+    #[test]
+    fn join_inactive_without_a_filter() {
+        // Selecting several sections without filtering any never joins.
+        let plan = JoinPlan::new([false, false, false], [true, true, true]);
         assert_eq!((plan.active, plan.extra_fields().len()), (false, 0));
     }
 
