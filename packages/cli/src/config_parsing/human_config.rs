@@ -614,9 +614,9 @@ pub mod evm {
                                   primary data-source. HyperSync offers significant performance \
                                   improvements, up to a 1000x faster than traditional RPC.")]
         pub rpc: Option<RpcSelection>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(skip_serializing_if = "Option::is_none", alias = "hypersync_config")]
         #[schemars(description = "Optional HyperSync Config for additional fine-tuning")]
-        pub hypersync_config: Option<HypersyncConfig>,
+        pub hypersync: Option<HypersyncConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "The number of blocks from the head that the indexer should account for \
@@ -1352,7 +1352,7 @@ chains:
             Chain {
                 id: 1,
                 skip: None,
-                hypersync_config: None,
+                hypersync: None,
                 rpc: None,
                 start_block: 2_000,
                 max_reorg_depth: None,

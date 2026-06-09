@@ -1141,7 +1141,7 @@ fn parse_url(url: &str) -> Option<String> {
 /// Returns the default `For` value for an RPC on a chain:
 /// `Fallback` if HyperSync is available, `Sync` otherwise.
 fn default_rpc_for(chain: &EvmChain) -> For {
-    let has_hypersync = chain.hypersync_config.is_some()
+    let has_hypersync = chain.hypersync.is_some()
         || hypersync_endpoints::get_default_hypersync_endpoint(chain.id).is_ok();
     if has_hypersync {
         For::Fallback
@@ -1153,7 +1153,7 @@ fn default_rpc_for(chain: &EvmChain) -> For {
 impl DataSource {
     fn from_evm_network_config(network: EvmChain) -> Result<Self> {
         let default_for = default_rpc_for(&network);
-        let hypersync_endpoint_url = match &network.hypersync_config {
+        let hypersync_endpoint_url = match &network.hypersync {
             Some(config) => Some(config.url.to_string()),
             None => hypersync_endpoints::get_default_hypersync_endpoint(network.id).ok(),
         };
@@ -1213,9 +1213,9 @@ impl DataSource {
 
         let main = match rpc_for_sync {
             Some(rpc) => {
-                if network.hypersync_config.is_some() {
+                if network.hypersync.is_some() {
                     Err(anyhow!(
-                        "Cannot define both hypersync_config and rpc as a data-source for \
+                        "Cannot define both hypersync and rpc as a data-source for \
                          historical sync at the same time, please choose only one option or set \
                          RPC to be a fallback. Read more in our docs {}",
                         links::DOC_CONFIGURATION_FILE
@@ -1228,7 +1228,7 @@ impl DataSource {
                 let url = hypersync_endpoint_url.ok_or(anyhow!(
                     "Failed to automatically find HyperSync endpoint for the chain {chain_id}. \
                      If the chain is supported by HyperSync, provide the endpoint manually:\n\n\
-                     chains:\n  - id: {chain_id}\n    hypersync_config:\n      \
+                     chains:\n  - id: {chain_id}\n    hypersync:\n      \
                      url: https://{chain_id}.hypersync.xyz\n\n\
                      Or use an RPC endpoint for historical sync:\n\n\
                      chains:\n  - id: {chain_id}\n    rpc:\n      \
@@ -2518,11 +2518,11 @@ mod test {
 
         // Both hypersync and rpc config should be present
         assert!(cfg.chains[0].rpc.is_some());
-        assert!(cfg.chains[0].hypersync_config.is_some());
+        assert!(cfg.chains[0].hypersync.is_some());
 
         let error = DataSource::from_evm_network_config(cfg.chains[0].clone()).unwrap_err();
 
-        assert_eq!(error.to_string(), "Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file");
+        assert_eq!(error.to_string(), "Cannot define both hypersync and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file");
     }
 
     #[test]
@@ -2532,7 +2532,7 @@ mod test {
         let network = EvmChain {
             id: 1,
             skip: None,
-            hypersync_config: Some(HypersyncConfig {
+            hypersync: Some(HypersyncConfig {
                 url: "https://somechain.hypersync.xyz//".to_string(),
             }),
             rpc: None,

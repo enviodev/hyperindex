@@ -300,7 +300,7 @@ pub async fn generate_config_from_subgraph_id(
         let mut chain = Chain {
             id: chain_helpers::Network::from(*graph_network).get_network_id(),
             skip: None,
-            hypersync_config: None,
+            hypersync: None,
             rpc: None,
             start_block: 0,
             end_block: None,

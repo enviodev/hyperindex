@@ -374,7 +374,7 @@
             }
           ]
         },
-        "hypersync_config": {
+        "hypersync": {
           "description": "Optional HyperSync Config for additional fine-tuning",
           "anyOf": [
             {

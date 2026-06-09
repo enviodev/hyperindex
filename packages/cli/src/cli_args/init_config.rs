@@ -129,7 +129,7 @@ pub mod evm {
                             Chain {
                                 id: selected_chain.network.get_network_id(),
                                 skip: None,
-                                hypersync_config: None,
+                                hypersync: None,
                                 rpc,
                                 start_block: selected_chain.network.get_start_block(),
                                 end_block,
