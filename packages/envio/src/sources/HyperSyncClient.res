@@ -322,11 +322,17 @@ module Decoder = {
     sighash: string,
     topicCount: int,
     eventName: string,
+    contractName: string,
     params: array<Internal.paramMeta>,
   }
 
+  // Decoded params keyed by contract name. Contracts that emit the same-signature
+  // event share one decode but get their own param names, so the caller picks the
+  // entry for the contract its router resolved the log to.
   type tWithParams = {
-    decodeLogs: array<ResponseTypes.event> => promise<array<Nullable.t<Internal.eventParams>>>,
+    decodeLogs: array<ResponseTypes.event> => promise<
+      array<Nullable.t<dict<Internal.eventParams>>>,
+    >,
   }
 
   @send
@@ -348,7 +354,7 @@ module EventItems = {
     topicCount: int,
     block: ResponseTypes.block,
     transaction: ResponseTypes.transaction,
-    params: Nullable.t<Internal.eventParams>,
+    params: Nullable.t<dict<Internal.eventParams>>,
   }
 
   type response = {

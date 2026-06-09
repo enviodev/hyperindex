@@ -27,8 +27,8 @@ describe("Chains State", () => {
         chains->Dict.set("1", {Internal.id: 1, isRealtime: false})
         chains->Dict.set("2", {Internal.id: 2, isRealtime: true})
 
-        t.expect(chains->Dict.get("1")->Belt.Option.map(c => c.isRealtime)).toBe(Some(false))
-        t.expect(chains->Dict.get("2")->Belt.Option.map(c => c.isRealtime)).toBe(Some(true))
+        t.expect(chains->Dict.get("1")->Option.map(c => c.isRealtime)).toBe(Some(false))
+        t.expect(chains->Dict.get("2")->Option.map(c => c.isRealtime)).toBe(Some(true))
       },
     )
   })
@@ -39,7 +39,7 @@ describe("Chains State", () => {
       async t => {
         // This test verifies that the chain field is accessible
         // The actual integration test is in EventHandlers.res with the EmptyEvent handler
-        let inMemoryStore = InMemoryStore.make(~entities=(Config.loadWithoutRegistrations()).allEntities)
+        let inMemoryStore = MockIndexer.InMemoryStore.make()
         let loadManager = LoadManager.make()
 
         let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem

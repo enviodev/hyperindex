@@ -12,11 +12,11 @@ let make = (~intervalMillis: int, ~logger) => {
   isRunning: false,
   isAwaitingInterval: false,
   scheduled: None,
-  intervalMillis: intervalMillis->Belt.Int.toFloat,
+  intervalMillis: intervalMillis->Int.toFloat,
   logger,
 }
 
-let rec startInternal = async (throttler: t) => {
+let rec startInternal = (throttler: t) => {
   switch throttler {
   | {scheduled: Some(fn), isRunning: false, isAwaitingInterval: false} =>
     let timeSinceLastRun = Date.now() -. throttler.lastRunTimeMillis
@@ -27,26 +27,33 @@ let rec startInternal = async (throttler: t) => {
       throttler.scheduled = None
       throttler.lastRunTimeMillis = Date.now()
 
-      switch await fn() {
-      | exception exn =>
-        throttler.logger->Pino.errorExn(
-          Pino.createPinoMessageWithError(
-            "Scheduled action failed in throttler",
-            exn->Utils.prettifyExn,
-          ),
-        )
-      | _ => ()
-      }
-      throttler.isRunning = false
+      // Defer off the schedule call so work queued before it (e.g. a batch) runs first.
+      NodeJs.setImmediate(() => {
+        (
+          async () => {
+            switch await fn() {
+            | exception exn =>
+              throttler.logger->Pino.errorExn(
+                Pino.createPinoMessageWithError(
+                  "Scheduled action failed in throttler",
+                  exn->Utils.prettifyExn,
+                ),
+              )
+            | _ => ()
+            }
+            throttler.isRunning = false
 
-      await throttler->startInternal
+            throttler->startInternal
+          }
+        )()->ignore
+      })
     } else {
       //Store isAwaitingInterval in state so that timers don't continuously get created
       throttler.isAwaitingInterval = true
       let _ = setTimeout(() => {
         throttler.isAwaitingInterval = false
-        throttler->startInternal->ignore
-      }, Belt.Int.fromFloat(throttler.intervalMillis -. timeSinceLastRun))
+        throttler->startInternal
+      }, Int.fromFloat(throttler.intervalMillis -. timeSinceLastRun))
     }
   | _ => ()
   }
@@ -54,5 +61,5 @@ let rec startInternal = async (throttler: t) => {
 
 let schedule = (throttler: t, fn) => {
   throttler.scheduled = Some(fn)
-  throttler->startInternal->ignore
+  throttler->startInternal
 }

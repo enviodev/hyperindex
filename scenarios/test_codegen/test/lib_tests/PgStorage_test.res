@@ -255,7 +255,7 @@ describe("Test PgStorage SQL generation functions", () => {
           ~message="Should return exactly 2 queries for main DDL and functions",
         ).toBe(2)
 
-        let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
+        let mainQuery = queries->Array.get(0)->Option.getOrThrow
 
         let expectedMainQuery = `DROP SCHEMA IF EXISTS "test_schema" CASCADE;
 CREATE SCHEMA "test_schema";
@@ -333,7 +333,7 @@ VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
           ~message="Should return single query when no entities have functions. And a function needed for cache.",
         ).toBe(2)
 
-        let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
+        let mainQuery = queries->Array.get(0)->Option.getOrThrow
 
         let expectedMainQuery = `DROP SCHEMA IF EXISTS "test_schema" CASCADE;
 CREATE SCHEMA "test_schema";
@@ -378,7 +378,7 @@ FROM "test_schema"."envio_chains";`
         ).toBe(expectedMainQuery)
 
         t.expect(
-          queries->Belt.Array.get(1)->Belt.Option.getExn,
+          queries->Array.get(1)->Option.getOrThrow,
           ~message="A function for cache should be created",
         ).toBe(`CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
 RETURNS integer AS $$
@@ -411,8 +411,8 @@ $$ LANGUAGE plpgsql;`)
           ~message="Should return 2 queries for entity with history function",
         ).toBe(2)
 
-        let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
-        let functionsQuery = queries->Belt.Array.get(1)->Belt.Option.getExn
+        let mainQuery = queries->Array.get(0)->Option.getOrThrow
+        let functionsQuery = queries->Array.get(1)->Option.getOrThrow
 
         let expectedMainQuery = `DROP SCHEMA IF EXISTS "public" CASCADE;
 CREATE SCHEMA "public";
@@ -999,6 +999,97 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
         result,
         ~message="Should read ClickHouse env vars lazily so envio dev's late injection works",
       ).toEqual(Ok())
+    },
+  )
+})
+
+describe("PgStorage.makeRawEvent", () => {
+  Async.it(
+    "Derives a raw event row from a batch item, copying block hash before cleanup and stringifying bigint block fields",
+    async t => {
+      let srcAddress = "0x00000000000000000000000000000000000000ab"->(Utils.magic: string => Address.t)
+      let blockNumber = 5
+      let logIndex = 3
+
+      let event =
+        {
+          "block": %raw(`{"number": 5, "timestamp": 9999, "hash": "0xblockhash", "gasUsed": 99n, "miner": "0xminer"}`),
+          "transaction": %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+          "params": (),
+          "logIndex": logIndex,
+          "srcAddress": srcAddress,
+          "chainId": 137,
+          "contractName": "ERC20",
+          "eventName": "EventWithoutFields",
+        }->(Utils.magic: _ => Internal.event)
+
+      let eventItem =
+        Internal.Event({
+          eventConfig: (MockIndexer.evmEventConfig(~contractName="ERC20") :> Internal.eventConfig),
+          timestamp: 1234,
+          chain: ChainMap.Chain.makeUnsafe(~chainId=137),
+          blockNumber,
+          logIndex,
+          event,
+        })->Internal.castUnsafeEventItem
+
+      t.expect(eventItem->PgStorage.makeRawEvent(~config=MockIndexer.config)).toEqual({
+        chainId: 137,
+        eventId: EventUtils.packEventIndex(~logIndex, ~blockNumber),
+        eventName: "EventWithoutFields",
+        contractName: "ERC20",
+        blockNumber,
+        logIndex,
+        srcAddress,
+        blockHash: "0xblockhash",
+        blockTimestamp: 1234,
+        blockFields: %raw(`{"gasUsed": "99", "miner": "0xminer"}`),
+        transactionFields: %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+        params: %raw(`"null"`),
+      })
+    },
+  )
+})
+
+describe("PgStorage.removeInvalidUtf8InPlace", () => {
+  Async.it(
+    "Strips NUL bytes from raw event rows, including deep inside jsonb params and field selections",
+    async t => {
+      let rawEvent: InternalTable.RawEvents.t = {
+        chainId: 1,
+        eventId: 42n,
+        eventName: "Name\x00Changed",
+        contractName: "Resolver",
+        blockNumber: 5,
+        logIndex: 3,
+        srcAddress: "0x00000000000000000000000000000000000000ab"->(
+          Utils.magic: string => Address.t
+        ),
+        blockHash: "0xhash",
+        blockTimestamp: 100,
+        blockFields: %raw(`{"extraData": "0x00\x00ff"}`),
+        transactionFields: %raw(`{"hash": "0xtx"}`),
+        params: %raw(`{"node": "0xnode", "name": "Muscle-window.eth\x00tail", "labels": ["a\x00b", "c"]}`),
+      }
+
+      [rawEvent]->PgStorage.removeInvalidUtf8InPlace
+
+      t.expect(rawEvent).toEqual({
+        chainId: 1,
+        eventId: 42n,
+        eventName: "NameChanged",
+        contractName: "Resolver",
+        blockNumber: 5,
+        logIndex: 3,
+        srcAddress: "0x00000000000000000000000000000000000000ab"->(
+          Utils.magic: string => Address.t
+        ),
+        blockHash: "0xhash",
+        blockTimestamp: 100,
+        blockFields: %raw(`{"extraData": "0x00ff"}`),
+        transactionFields: %raw(`{"hash": "0xtx"}`),
+        params: %raw(`{"node": "0xnode", "name": "Muscle-window.ethtail", "labels": ["ab", "c"]}`),
+      })
     },
   )
 })

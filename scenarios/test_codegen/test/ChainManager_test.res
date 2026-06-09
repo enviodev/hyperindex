@@ -9,11 +9,11 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let getCurrentTimestamp = () => {
       let timestampMillis = Date.now()
       // Convert milliseconds to seconds
-      Belt.Int.fromFloat(timestampMillis /. 1000.0)
+      Int.fromFloat(timestampMillis /. 1000.0)
     }
     /// Generates a random number between two ints inclusive
     let getRandomInt = (min, max) => {
-      Belt.Int.fromFloat(Math.random() *. Int.toFloat(max - min + 1) +. Int.toFloat(min))
+      Int.fromFloat(Math.random() *. Int.toFloat(max - min + 1) +. Int.toFloat(min))
     }
 
     let eventConfigs = [
@@ -163,7 +163,7 @@ describe("ChainManager", () => {
         let rec testThatCreatedEventsAreOrderedCorrectly = (chainManager, lastEvent) => {
           let {items, totalBatchSize, progressedChainsById} = ChainManager.createBatch(
             chainManager,
-            ~committedCheckpointId=Internal.initialCheckpointId,
+            ~processedCheckpointId=Internal.initialCheckpointId,
             ~batchSizeTarget=10000,
             ~isRollback=false,
           )
@@ -228,7 +228,7 @@ describe("ChainManager", () => {
         let amountStillOnQueues =
           finalChainManager.chainFetchers
           ->ChainMap.values
-          ->Belt.Array.reduce(
+          ->Array.reduce(
             0,
             (accum, val) => {
               accum + val.fetchState->FetchState.bufferSize

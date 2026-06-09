@@ -1,5 +1,5 @@
 use crate::{
-    clap_definitions::{ConfigSubcommand, JsonSchema, Script, SkillsSubcommand},
+    clap_definitions::{ConfigSubcommand, JsonSchema, MetricsSubcommand, Script, SkillsSubcommand},
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
@@ -83,8 +83,9 @@ pub async fn execute(
             Ok(None)
         }
 
-        CommandType::Metrics => {
-            metrics::run().await?;
+        CommandType::Metrics(metrics_args) => {
+            let runtime = matches!(metrics_args.subcommand, Some(MetricsSubcommand::Runtime));
+            metrics::run(runtime).await?;
             Ok(None)
         }
 

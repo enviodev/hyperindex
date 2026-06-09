@@ -250,9 +250,6 @@ pub enum Network {
     Megaeth = 4326,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
-    MegaethTestnet = 6342,
-
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
     MegaethTestnet2 = 6343,
 
     #[subenum(HypersyncChain)]
@@ -593,7 +590,6 @@ impl Network {
             | Network::Hyperliquid
             | Network::PharosDevnet
             | Network::Superseed
-            | Network::MegaethTestnet
             | Network::MegaethTestnet2
             | Network::Curtis
             | Network::Worldchain

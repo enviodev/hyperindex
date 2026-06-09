@@ -336,7 +336,7 @@ module OptimizedPartitions = {
     let _ = newPartitions->Array.sort(ascSortFn)
 
     let partitionsCount = newPartitions->Array.length
-    let idsInAscOrder = Belt.Array.makeUninitializedUnsafe(partitionsCount)
+    let idsInAscOrder = Utils.Array.jsArrayCreate(partitionsCount)
     let entities = Dict.make()
     for idx in 0 to partitionsCount - 1 {
       let p = newPartitions->Array.getUnsafe(idx)
@@ -555,6 +555,63 @@ let blockItemLogIndex = 16777216
 
 let numAddresses = fetchState => fetchState.indexingAddresses->Utils.Dict.size
 
+// Appends Block items produced by the onBlock handlers for every block in
+// (fromBlock, maxBlockNumber] into mutItems and returns the new
+// latestOnBlockBlockNumber pointer. targetBufferSize bounds how many items
+// are generated at once to prevent OOM.
+let appendOnBlockItems = (
+  ~mutItems: array<Internal.item>,
+  ~onBlockConfigs: array<Internal.onBlockConfig>,
+  ~indexerStartBlock,
+  ~fromBlock,
+  ~maxBlockNumber,
+  ~targetBufferSize,
+) => {
+  let newItemsCounter = ref(0)
+  let latestOnBlockBlockNumber = ref(fromBlock)
+
+  // Simply iterate over every block
+  // could have a better algorithm to iterate over blocks in a more efficient way
+  // but raw loops are fast enough
+  while (
+    latestOnBlockBlockNumber.contents < maxBlockNumber &&
+      // Additional safeguard to prevent OOM
+      newItemsCounter.contents <= targetBufferSize
+  ) {
+    let blockNumber = latestOnBlockBlockNumber.contents + 1
+    latestOnBlockBlockNumber := blockNumber
+
+    for configIdx in 0 to onBlockConfigs->Array.length - 1 {
+      let onBlockConfig = onBlockConfigs->Array.getUnsafe(configIdx)
+
+      let handlerStartBlock = switch onBlockConfig.startBlock {
+      | Some(startBlock) => startBlock
+      | None => indexerStartBlock
+      }
+
+      if (
+        blockNumber >= handlerStartBlock &&
+        switch onBlockConfig.endBlock {
+        | Some(endBlock) => blockNumber <= endBlock
+        | None => true
+        } &&
+        (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockConfig.interval) === 0
+      ) {
+        mutItems->Array.push(
+          Block({
+            onBlockConfig,
+            blockNumber,
+            logIndex: blockItemLogIndex + onBlockConfig.index,
+          }),
+        )
+        newItemsCounter := newItemsCounter.contents + 1
+      }
+    }
+  }
+
+  latestOnBlockBlockNumber.contents
+}
+
 /*
 Update fetchState, merge registers and recompute derived values.
 Runs partition optimization when partitions change.
@@ -582,7 +639,7 @@ let updateInternal = (
       let maxBlockNumber = switch switch mutItemsRef.contents {
       | Some(mutItems) => mutItems
       | None => fetchState.buffer
-      }->Belt.Array.get(fetchState.targetBufferSize - 1) {
+      }->Array.get(fetchState.targetBufferSize - 1) {
       | Some(item) => item->Internal.getItemBlockNumber
       | None =>
         switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
@@ -597,49 +654,14 @@ let updateInternal = (
       }
       mutItemsRef := Some(mutItems)
 
-      let newItemsCounter = ref(0)
-      let latestOnBlockBlockNumber = ref(fetchState.latestOnBlockBlockNumber)
-
-      // Simply iterate over every block
-      // could have a better algorithm to iterate over blocks in a more efficient way
-      // but raw loops are fast enough
-      while (
-        latestOnBlockBlockNumber.contents < maxBlockNumber &&
-          // Additional safeguard to prevent OOM
-          newItemsCounter.contents <= fetchState.targetBufferSize
-      ) {
-        let blockNumber = latestOnBlockBlockNumber.contents + 1
-        latestOnBlockBlockNumber := blockNumber
-
-        for configIdx in 0 to onBlockConfigs->Array.length - 1 {
-          let onBlockConfig = onBlockConfigs->Array.getUnsafe(configIdx)
-
-          let handlerStartBlock = switch onBlockConfig.startBlock {
-          | Some(startBlock) => startBlock
-          | None => fetchState.startBlock
-          }
-
-          if (
-            blockNumber >= handlerStartBlock &&
-            switch onBlockConfig.endBlock {
-            | Some(endBlock) => blockNumber <= endBlock
-            | None => true
-            } &&
-            (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockConfig.interval) === 0
-          ) {
-            mutItems->Array.push(
-              Block({
-                onBlockConfig,
-                blockNumber,
-                logIndex: blockItemLogIndex + onBlockConfig.index,
-              }),
-            )
-            newItemsCounter := newItemsCounter.contents + 1
-          }
-        }
-      }
-
-      latestOnBlockBlockNumber.contents
+      appendOnBlockItems(
+        ~mutItems,
+        ~onBlockConfigs,
+        ~indexerStartBlock=fetchState.startBlock,
+        ~fromBlock=fetchState.latestOnBlockBlockNumber,
+        ~maxBlockNumber,
+        ~targetBufferSize=fetchState.targetBufferSize,
+      )
     }
   }
 
@@ -1486,7 +1508,7 @@ let getNextQuery = (
 }
 
 let hasReadyItem = ({buffer} as fetchState: t) => {
-  switch buffer->Belt.Array.get(0) {
+  switch buffer->Array.get(0) {
   | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
   | None => false
   }
@@ -1497,7 +1519,7 @@ let getReadyItemsCount = (fetchState: t, ~targetSize: int, ~fromItem) => {
   let acc = ref(0)
   let isFinished = ref(false)
   while !isFinished.contents {
-    switch fetchState.buffer->Belt.Array.get(fromItem + acc.contents) {
+    switch fetchState.buffer->Array.get(fromItem + acc.contents) {
     | Some(item) =>
       let itemBlockNumber = item->Internal.getItemBlockNumber
       if itemBlockNumber <= readyBlockNumber.contents {
@@ -1661,35 +1683,59 @@ let make = (
     )
   }
 
-  let numAddresses = indexingAddresses->Utils.Dict.size
-  Prometheus.IndexingAddresses.set(~addressesCount=numAddresses, ~chainId)
-  Prometheus.IndexingPartitions.set(
-    ~partitionsCount=optimizedPartitions->OptimizedPartitions.count,
-    ~chainId,
-  )
-  Prometheus.IndexingBufferSize.set(~bufferSize=0, ~chainId)
-  Prometheus.IndexingBufferBlockNumber.set(~blockNumber=latestFetchedBlock.blockNumber, ~chainId)
-  switch endBlock {
-  | Some(endBlock) => Prometheus.IndexingEndBlock.set(~endBlock, ~chainId)
-  | None => ()
+  // On resume knownHeight is restored from the DB but the buffer starts empty.
+  // For onBlock-only indexers (e.g. SVM onSlot) there are no partitions to drive
+  // fetching, so without seeding the buffer here getNextQuery would return
+  // NothingToQuery and the indexer would get stuck.
+  let buffer = []
+  let latestOnBlockBlockNumber = if knownHeight > 0 && onBlockConfigs->Utils.Array.notEmpty {
+    let maxBlockNumber = switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
+    | None => knownHeight
+    | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock.blockNumber
+    }
+    appendOnBlockItems(
+      ~mutItems=buffer,
+      ~onBlockConfigs,
+      ~indexerStartBlock=startBlock,
+      ~fromBlock=progressBlockNumber,
+      ~maxBlockNumber,
+      ~targetBufferSize,
+    )
+  } else {
+    progressBlockNumber
   }
 
-  {
+  let fetchState = {
     optimizedPartitions,
     contractConfigs,
     chainId,
     startBlock,
     endBlock,
-    latestOnBlockBlockNumber: progressBlockNumber,
+    latestOnBlockBlockNumber,
     normalSelection,
     indexingAddresses,
     blockLag,
     onBlockConfigs,
     targetBufferSize,
     knownHeight,
-    buffer: [],
+    buffer,
     firstEventBlock,
   }
+
+  let numAddresses = indexingAddresses->Utils.Dict.size
+  Prometheus.IndexingAddresses.set(~addressesCount=numAddresses, ~chainId)
+  Prometheus.IndexingPartitions.set(
+    ~partitionsCount=optimizedPartitions->OptimizedPartitions.count,
+    ~chainId,
+  )
+  Prometheus.IndexingBufferSize.set(~bufferSize=buffer->Array.length, ~chainId)
+  Prometheus.IndexingBufferBlockNumber.set(~blockNumber=fetchState->bufferBlockNumber, ~chainId)
+  switch endBlock {
+  | Some(endBlock) => Prometheus.IndexingEndBlock.set(~endBlock, ~chainId)
+  | None => ()
+  }
+
+  fetchState
 }
 
 let bufferSize = ({buffer}: t) => buffer->Array.length
@@ -1905,7 +1951,7 @@ let isReadyToEnterReorgThreshold = ({endBlock, blockLag, buffer, knownHeight} as
 
 let sortForUnorderedBatch = {
   let hasFullBatch = ({buffer} as fetchState: t, ~batchSizeTarget) => {
-    switch buffer->Belt.Array.get(batchSizeTarget - 1) {
+    switch buffer->Array.get(batchSizeTarget - 1) {
     | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
     | None => false
     }
@@ -1920,7 +1966,7 @@ let sortForUnorderedBatch = {
       if totalRange <= 0 {
         0.
       } else {
-        let progress = switch fetchState.buffer->Belt.Array.get(0) {
+        let progress = switch fetchState.buffer->Array.get(0) {
         | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
         | None => fetchState->bufferBlockNumber - firstEventBlock
         }
@@ -1955,7 +2001,7 @@ let sortForUnorderedBatch = {
 
 let getProgressBlockNumberAt = ({buffer} as fetchState: t, ~index) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
-  switch buffer->Belt.Array.get(index) {
+  switch buffer->Array.get(index) {
   | Some(item) if bufferBlockNumber >= item->Internal.getItemBlockNumber =>
     item->Internal.getItemBlockNumber - 1
   | _ => bufferBlockNumber

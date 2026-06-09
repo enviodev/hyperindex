@@ -15,13 +15,13 @@ let make = (
   ~chainReorgCheckpoints: array<Internal.reorgCheckpoint>,
 ) => {
   if maxReorgDepth > 0 && shouldRollbackOnReorg {
-    let checkpointIds = Belt.Array.makeUninitializedUnsafe(chainReorgCheckpoints->Array.length)
-    let checkpointBlockNumbers = Belt.Array.makeUninitializedUnsafe(
+    let checkpointIds = Utils.Array.jsArrayCreate(chainReorgCheckpoints->Array.length)
+    let checkpointBlockNumbers = Utils.Array.jsArrayCreate(
       chainReorgCheckpoints->Array.length,
     )
     chainReorgCheckpoints->Array.forEachWithIndex((checkpoint, idx) => {
-      checkpointIds->Belt.Array.setUnsafe(idx, checkpoint.checkpointId)
-      checkpointBlockNumbers->Belt.Array.setUnsafe(idx, checkpoint.blockNumber)
+      checkpointIds->Array.setUnsafe(idx, checkpoint.checkpointId)
+      checkpointBlockNumbers->Array.setUnsafe(idx, checkpoint.blockNumber)
     })
     Some({
       checkpointIds,
@@ -39,7 +39,7 @@ let getSafeCheckpointId = (safeCheckpointTracking: t, ~sourceBlockNumber: int) =
   switch safeCheckpointTracking.checkpointIds {
   | [] => 0n
   | _
-    if safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(0) >
+    if safeCheckpointTracking.checkpointBlockNumbers->Array.getUnsafe(0) >
       safeBlockNumber => 0n
   | [checkpointId] => checkpointId
   | _ => {
@@ -49,11 +49,11 @@ let getSafeCheckpointId = (safeCheckpointTracking: t, ~sourceBlockNumber: int) =
 
       while idx.contents < trackingCheckpointsCount && result.contents === None {
         if (
-          safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx.contents) >
+          safeCheckpointTracking.checkpointBlockNumbers->Array.getUnsafe(idx.contents) >
             safeBlockNumber
         ) {
           result :=
-            Some(safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(idx.contents - 1))
+            Some(safeCheckpointTracking.checkpointIds->Array.getUnsafe(idx.contents - 1))
         }
         idx := idx.contents + 1
       }
@@ -61,7 +61,7 @@ let getSafeCheckpointId = (safeCheckpointTracking: t, ~sourceBlockNumber: int) =
       switch result.contents {
       | Some(checkpointId) => checkpointId
       | None =>
-        safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(trackingCheckpointsCount - 1)
+        safeCheckpointTracking.checkpointIds->Array.getUnsafe(trackingCheckpointsCount - 1)
       }
     }
   }
@@ -82,21 +82,21 @@ let updateOnNewBatch = (
 
   // Copy + Clean up old checkpoints
   for idx in 0 to safeCheckpointTracking.checkpointIds->Array.length - 1 {
-    let checkpointId = safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(idx)
+    let checkpointId = safeCheckpointTracking.checkpointIds->Array.getUnsafe(idx)
     if checkpointId >= safeCheckpointId {
       mutCheckpointIds->Array.push(checkpointId)->ignore
       mutCheckpointBlockNumbers
-      ->Array.push(safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx))
+      ->Array.push(safeCheckpointTracking.checkpointBlockNumbers->Array.getUnsafe(idx))
       ->ignore
     }
   }
 
   // Append new checkpoints
   for idx in 0 to batchCheckpointIds->Array.length - 1 {
-    if batchCheckpointChainIds->Belt.Array.getUnsafe(idx) === chainId {
-      mutCheckpointIds->Array.push(batchCheckpointIds->Belt.Array.getUnsafe(idx))->ignore
+    if batchCheckpointChainIds->Array.getUnsafe(idx) === chainId {
+      mutCheckpointIds->Array.push(batchCheckpointIds->Array.getUnsafe(idx))->ignore
       mutCheckpointBlockNumbers
-      ->Array.push(batchCheckpointBlockNumbers->Belt.Array.getUnsafe(idx))
+      ->Array.push(batchCheckpointBlockNumbers->Array.getUnsafe(idx))
       ->ignore
     }
   }
@@ -113,13 +113,13 @@ let rollback = (safeCheckpointTracking: t, ~targetBlockNumber: int) => {
   let mutCheckpointBlockNumbers = []
 
   for idx in 0 to safeCheckpointTracking.checkpointIds->Array.length - 1 {
-    let blockNumber = safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx)
+    let blockNumber = safeCheckpointTracking.checkpointBlockNumbers->Array.getUnsafe(idx)
     if blockNumber <= targetBlockNumber {
       mutCheckpointIds
-      ->Array.push(safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(idx))
+      ->Array.push(safeCheckpointTracking.checkpointIds->Array.getUnsafe(idx))
       ->ignore
       mutCheckpointBlockNumbers
-      ->Array.push(safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx))
+      ->Array.push(safeCheckpointTracking.checkpointBlockNumbers->Array.getUnsafe(idx))
       ->ignore
     }
   }

@@ -59,7 +59,7 @@ pub enum CommandType {
     Start(StartArgs),
 
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
-    Metrics,
+    Metrics(MetricsArgs),
 
     ///Query raw blockchain data — blocks, logs, transactions on EVM chains
     ///using the same `where` syntax as indexer filters.
@@ -176,6 +176,18 @@ pub struct StartArgs {
     ///Clear your database and restart indexing from scratch
     #[arg(short = 'r', long, action)]
     pub restart: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct MetricsArgs {
+    #[command(subcommand)]
+    pub subcommand: Option<MetricsSubcommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MetricsSubcommand {
+    ///Fetch runtime metrics from the running indexer's /metrics/runtime endpoint
+    Runtime,
 }
 
 #[derive(Debug, Subcommand)]

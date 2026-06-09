@@ -9,7 +9,7 @@ let getEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) => {
   }
   config
   ->Config.getEventConfig(~contractName, ~eventName, ~chainId?)
-  ->Belt.Option.getExn
+  ->Option.getOrThrow
 }
 
 let getEvmEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) =>

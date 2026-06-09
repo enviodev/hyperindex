@@ -131,13 +131,13 @@ let makeStorage = (proxy: t): Persistence.storage => {
   },
   writeBatch: async (
     ~batch,
-    ~rawEvents as _,
     ~rollback as _,
     ~isInReorgThreshold as _,
     ~config as _,
     ~allEntities as _,
     ~updatedEffectsCache as _,
     ~updatedEntities,
+    ~chainMetaData as _,
   ) => {
     // Encode entities to JSON for serialization across worker boundary
     let serializableEntities = updatedEntities->Array.map((

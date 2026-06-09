@@ -449,6 +449,52 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     expect(Number(pgOnlyRows[0]?.[0])).toBe(transferCount);
   });
 
+  it("Postgres raw_events holds one row per indexed event with decoded data", async () => {
+    // config.yaml sets `raw_events: true`, so every processed event is
+    // mirrored into the internal raw_events table. There's one Transfer
+    // event per Transfer entity, so the counts must match.
+    const transferRows = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
+    const transferCount = Number(transferRows[0]?.[0]);
+    expect(transferCount).toBeGreaterThan(0);
+
+    const rawCountRows = await runPgSql(`SELECT count(*)::text FROM raw_events`);
+    expect(Number(rawCountRows[0]?.[0])).toBe(transferCount);
+
+    // Spot-check the first known event (chain 1, block 10861674, log index
+    // 23) against the deterministic decoded values from the smoke-test
+    // snapshot. Addresses are lower-cased to avoid checksum-casing churn.
+    const row = await runPgSql(`
+      SELECT
+        chain_id,
+        event_name,
+        contract_name,
+        block_number,
+        log_index,
+        lower(src_address),
+        transaction_fields->>'hash',
+        lower(params->>'from'),
+        lower(params->>'to'),
+        params->>'value'
+      FROM raw_events
+      WHERE block_number = 10861674 AND log_index = 23
+    `);
+
+    expect(row).toEqual([
+      [
+        "1",
+        "Transfer",
+        "ERC20",
+        "10861674",
+        "23",
+        "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+        "0x4b37d2f343608457ca3322accdab2811c707acf3eb07a40dd8d9567093ea5b82",
+        "0x0000000000000000000000000000000000000000",
+        "0x41653c7d61609d856f29355e404f310ec4142cfb",
+        "1000000000000000000000000000",
+      ],
+    ]);
+  });
+
   it("ClickHouse has tables for clickhouse-enabled entities only", async () => {
     const tables = await queryClickHouse<
       ClickHouseResult<{ name: string }>

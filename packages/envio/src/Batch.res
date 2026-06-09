@@ -23,6 +23,9 @@ type t = {
   totalBatchSize: int,
   items: array<Internal.item>,
   progressedChainsById: dict<chainAfterBatch>,
+  // Processed inside the reorg threshold. Drives whether history is saved, so
+  // writes never merge across a change in this value.
+  isInReorgThreshold: bool,
   // Unnest-like checkpoint fields:
   checkpointIds: array<bigint>,
   checkpointChainIds: array<int>,
@@ -165,6 +168,7 @@ let prepareBatch = (
   ~checkpointIdBeforeBatch,
   ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
   ~batchSizeTarget,
+  ~isInReorgThreshold,
 ) => {
   let preparedFetchStates =
     chainsBeforeBatch
@@ -203,7 +207,7 @@ let prepareBatch = (
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
     if chainBatchSize > 0 {
       for idx in 0 to chainBatchSize - 1 {
-        let item = fetchState.buffer->Belt.Array.getUnsafe(idx)
+        let item = fetchState.buffer->Array.getUnsafe(idx)
         let blockNumber = item->Internal.getItemBlockNumber
 
         // Every new block we should create a new checkpoint
@@ -239,7 +243,7 @@ let prepareBatch = (
         } else {
           let lastIndex = checkpointEventsProcessed->Array.length - 1
           checkpointEventsProcessed
-          ->Belt.Array.setUnsafe(
+          ->Array.setUnsafe(
             lastIndex,
             checkpointEventsProcessed->Array.getUnsafe(lastIndex) + 1,
           )
@@ -286,6 +290,7 @@ let prepareBatch = (
       ~batchSizePerChain=mutBatchSizePerChain,
       ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
     ),
+    isInReorgThreshold,
     checkpointIds,
     checkpointChainIds,
     checkpointBlockNumbers,
@@ -298,8 +303,9 @@ let make = (
   ~checkpointIdBeforeBatch,
   ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
   ~batchSizeTarget,
+  ~isInReorgThreshold,
 ) => {
-  prepareBatch(~checkpointIdBeforeBatch, ~chainsBeforeBatch, ~batchSizeTarget)
+  prepareBatch(~checkpointIdBeforeBatch, ~chainsBeforeBatch, ~batchSizeTarget, ~isInReorgThreshold)
 }
 
 let findFirstEventBlockNumber = (batch: t, ~chainId) => {

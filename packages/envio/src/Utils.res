@@ -267,18 +267,18 @@ module Array = {
 
       let rec loop = (i, j, k) => {
         if i < Array.length(xs) && j < Array.length(ys) {
-          if f(xs->Belt.Array.getUnsafe(i), ys->Belt.Array.getUnsafe(j)) {
-            result->Belt.Array.setUnsafe(k, xs->Belt.Array.getUnsafe(i))
+          if f(xs->Array.getUnsafe(i), ys->Array.getUnsafe(j)) {
+            result->Array.setUnsafe(k, xs->Array.getUnsafe(i))
             loop(i + 1, j, k + 1)
           } else {
-            result->Belt.Array.setUnsafe(k, ys->Belt.Array.getUnsafe(j))
+            result->Array.setUnsafe(k, ys->Array.getUnsafe(j))
             loop(i, j + 1, k + 1)
           }
         } else if i < Array.length(xs) {
-          result->Belt.Array.setUnsafe(k, xs->Belt.Array.getUnsafe(i))
+          result->Array.setUnsafe(k, xs->Array.getUnsafe(i))
           loop(i + 1, j, k + 1)
         } else if j < Array.length(ys) {
-          result->Belt.Array.setUnsafe(k, ys->Belt.Array.getUnsafe(j))
+          result->Array.setUnsafe(k, ys->Array.getUnsafe(j))
           loop(i, j + 1, k + 1)
         }
       }
@@ -296,7 +296,7 @@ module Array = {
   Creates a shallow copy of the array and sets the value at the given index
   */
   let setIndexImmutable = (arr: array<'a>, index: int, value: 'a): array<'a> => {
-    let shallowCopy = arr->Belt.Array.copy
+    let shallowCopy = arr->Array.copy
     shallowCopy->Array.setUnsafe(index, value)
     shallowCopy
   }
@@ -308,7 +308,7 @@ module Array = {
       } else {
         switch results->Array.getUnsafe(index) {
         | Ok(value) => {
-            output->Belt.Array.setUnsafe(index, value)
+            output->Array.setUnsafe(index, value)
             loop(index + 1, output)
           }
         | Error(_) as err => err->(magic: result<'a, 'b> => result<array<'a>, 'b>)
@@ -316,14 +316,14 @@ module Array = {
       }
     }
 
-    loop(0, Belt.Array.makeUninitializedUnsafe(results->Array.length))
+    loop(0, jsArrayCreate(results->Array.length))
   }
 
   /**
 Helper to check if a value exists in an array
 */
   let includes = (arr: array<'a>, val: 'a) =>
-    arr->Array.find(item => item == val)->Belt.Option.isSome
+    arr->Array.find(item => item == val)->Stdlib.Option.isSome
 
   let isEmpty = (arr: array<_>) =>
     switch arr {
@@ -339,7 +339,7 @@ Helper to check if a value exists in an array
 
   let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     for i in 0 to arr->Array.length - 1 {
-      let item = arr->Belt.Array.getUnsafe(i)
+      let item = arr->Array.getUnsafe(i)
       await item->fn
     }
   }
@@ -357,10 +357,10 @@ Helper to check if a value exists in an array
     }
   }
 
-  let last = (arr: array<'a>): option<'a> => arr->Belt.Array.get(arr->Array.length - 1)
-  let first = (arr: array<'a>): option<'a> => arr->Belt.Array.get(0)
+  let last = (arr: array<'a>): option<'a> => arr->Array.get(arr->Array.length - 1)
+  let first = (arr: array<'a>): option<'a> => arr->Array.get(0)
 
-  let lastUnsafe = (arr: array<'a>): 'a => arr->Belt.Array.getUnsafe(arr->Array.length - 1)
+  let lastUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(arr->Array.length - 1)
   let firstUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(0)
 
   let findReverseWithIndex = (arr: array<'a>, fn: 'a => bool): option<('a, int)> => {
@@ -368,7 +368,7 @@ Helper to check if a value exists in an array
       if index < 0 {
         None
       } else {
-        let item = arr->Belt.Array.getUnsafe(index)
+        let item = arr->Array.getUnsafe(index)
         if fn(item) {
           Some((item, index))
         } else {
@@ -455,7 +455,7 @@ module Url = {
     let regex = /https?:\/\/([^\/?]+).*/
     switch RegExp.exec(regex, url) {
     | Some(result) =>
-      switch RegExp.Result.matches(result)->Belt.Array.get(0) {
+      switch RegExp.Result.matches(result)->Array.get(0) {
       | Some(Some(host)) => Some(host)
       | Some(None) | None => None
       }

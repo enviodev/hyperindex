@@ -14,7 +14,7 @@ let getKnownRawBlock = async (~client, ~blockNumber) =>
   switch await Rpc.getRawBlock(~client, ~blockNumber) {
   | Some(json) => json
   | None =>
-    JsError.throwWithMessage(`RPC returned null for blockNumber ${blockNumber->Belt.Int.toString}`)
+    JsError.throwWithMessage(`RPC returned null for blockNumber ${blockNumber->Int.toString}`)
   }
 
 // Extract infrastructure fields (number, timestamp, hash) from raw block JSON
@@ -56,7 +56,7 @@ let getKnownRawBlockWithBackoff = async (
     | exception err =>
       Logging.warn({
         "err": err->Utils.prettifyExn,
-        "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Belt.Int.toString}ms and try again.`,
+        "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Int.toString}ms and try again.`,
         "source": sourceName,
         "chainId": chain->ChainMap.Chain.toChainId,
         "type": "EXPONENTIAL_BACKOFF",
@@ -241,9 +241,7 @@ let getNextPage = (
   let queryTimoutPromise =
     Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
       Promise.reject(
-        QueryTimout(
-          `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
-        ),
+        QueryTimout(`Query took longer than ${Int.toString(sc.queryTimeoutMillis / 1000)} seconds`),
       )
     )
 
@@ -287,7 +285,7 @@ let getNextPage = (
     | None =>
       let executedBlockInterval = toBlock - fromBlock + 1
       let nextBlockIntervalTry =
-        (executedBlockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
+        (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt
       mutSuggestedBlockIntervals->Dict.set(partitionId, nextBlockIntervalTry)
       throw(
         Source.GetItemsError(
@@ -320,7 +318,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
 
   selection.eventConfigs
   ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
-  ->Belt.Array.forEach(({getEventFiltersOrThrow}) => {
+  ->Array.forEach(({getEventFiltersOrThrow}) => {
     switch getEventFiltersOrThrow(chain) {
     | Static(s) => staticTopicSelections->Array.pushMany(s)->ignore
     | Dynamic(fn) => dynamicEventFilters->Array.push(fn)->ignore
@@ -863,7 +861,7 @@ let make = (
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     JsError.throwWithMessage(
-      `The RPC url for chain ${chainId->Belt.Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
+      `The RPC url for chain ${chainId->Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }
@@ -889,7 +887,7 @@ let make = (
         Logging.error({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-              ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+              ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
           "chainId": chain->ChainMap.Chain.toChainId,
           "metadata": {
@@ -917,7 +915,7 @@ let make = (
         Logging.error({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-              ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+              ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
           "chainId": chain->ChainMap.Chain.toChainId,
           "metadata": {
@@ -944,7 +942,7 @@ let make = (
         Logging.error({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-              ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+              ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
           "chainId": chain->ChainMap.Chain.toChainId,
           "metadata": {
@@ -1032,7 +1030,7 @@ let make = (
     | None =>
       mutSuggestedBlockIntervals
       ->Utils.Dict.dangerouslyGetNonOption(partitionId)
-      ->Belt.Option.getWithDefault(syncConfig.initialBlockInterval)
+      ->Option.getOr(syncConfig.initialBlockInterval)
     }
 
     // Always have a toBlock for an RPC worker
@@ -1093,7 +1091,7 @@ let make = (
     }
 
     // Convert RPC logs to HyperSync events
-    let hyperSyncEvents = logs->Belt.Array.map(convertLogToHyperSyncEvent)
+    let hyperSyncEvents = logs->Array.map(convertLogToHyperSyncEvent)
 
     // Decode using HyperSyncClient decoder
     let parsedEvents = try await getHscDecoder().decodeLogs(hyperSyncEvents) catch {
@@ -1115,7 +1113,7 @@ let make = (
     ->Array.zip(parsedEvents)
     ->Array.filterMap(((
       log: Rpc.GetLogs.log,
-      maybeDecodedEvent: Nullable.t<Internal.eventParams>,
+      maybeDecodedEvent: Nullable.t<dict<Internal.eventParams>>,
     )) => {
       let topic0 = log.topics[0]->Option.getOr("0x0")
       let routedAddress = if lowercaseAddresses {
@@ -1132,8 +1130,10 @@ let make = (
       ) {
       | None => None
       | Some(eventConfig) =>
-        switch maybeDecodedEvent {
-        | Value(decoded) =>
+        switch maybeDecodedEvent
+        ->Nullable.toOption
+        ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
+        | Some(decoded) =>
           Some(
             (
               async () => {
@@ -1176,7 +1176,7 @@ let make = (
               }
             )(),
           )
-        | Null | Undefined => None
+        | None => None
         }
       }
     })
@@ -1202,7 +1202,7 @@ let make = (
     | Some(b) => pushBlockInfo(b)
     | None => ()
     }
-    logs->Belt.Array.forEach(log =>
+    logs->Array.forEach(log =>
       blockHashes
       ->Array.push({ReorgDetection.blockNumber: log.blockNumber, blockHash: log.blockHash})
       ->ignore
@@ -1252,7 +1252,7 @@ let make = (
   }
 
   let createHeightSubscription =
-    ws->Belt.Option.map(wsUrl =>
+    ws->Option.map(wsUrl =>
       (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
     )
 

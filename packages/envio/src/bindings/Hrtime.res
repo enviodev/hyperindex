@@ -42,7 +42,7 @@ let toSecondsFloat = (elapsed: timeElapsed): float => {
   elapsed->toSeconds->(Utils.magic: seconds => float)
 }
 
-let toInt = float => float->Belt.Int.fromFloat
+let toInt = float => float->Int.fromFloat
 let intFromMillis = toInt
 let intFromNanos = toInt
 let intFromSeconds = toInt

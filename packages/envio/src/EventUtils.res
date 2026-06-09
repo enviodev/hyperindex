@@ -45,8 +45,8 @@ let packEventIndex = (~blockNumber, ~logIndex) => {
 //   let logIndexMask = 65535->BigInt.fromInt
 //   let logIndex = packedEventIndex->BigInt.bitwiseAnd(logIndexMask)
 //   {
-//     blockNumber: blockNumber->BigInt.toString->Belt.Int.fromString->Belt.Option.getUnsafe,
-//     logIndex: logIndex->BigInt.toString->Belt.Int.fromString->Belt.Option.getUnsafe,
+//     blockNumber: blockNumber->BigInt.toString->Int.fromString->Option.getUnsafe,
+//     logIndex: logIndex->BigInt.toString->Int.fromString->Option.getUnsafe,
 //   }
 // }
 

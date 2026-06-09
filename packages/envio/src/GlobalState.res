@@ -7,22 +7,8 @@ type rollbackState =
   | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
 module WriteThrottlers = {
-  type t = {
-    chainMetaData: Throttler.t,
-    pruneStaleEntityHistory: Throttler.t,
-  }
+  type t = {pruneStaleEntityHistory: Throttler.t}
   let make = (): t => {
-    let chainMetaData = {
-      let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
-      let logger = Logging.createChild(
-        ~params={
-          "context": "Throttler for chain metadata writes",
-          "intervalMillis": intervalMillis,
-        },
-      )
-      Throttler.make(~intervalMillis, ~logger)
-    }
-
     let pruneStaleEntityHistory = {
       let intervalMillis = Env.ThrottleWrites.pruneStaleDataIntervalMillis
       let logger = Logging.createChild(
@@ -33,21 +19,21 @@ module WriteThrottlers = {
       )
       Throttler.make(~intervalMillis, ~logger)
     }
-    {chainMetaData, pruneStaleEntityHistory}
+    {pruneStaleEntityHistory: pruneStaleEntityHistory}
   }
 }
 
 type t = {
   ctx: Ctx.t,
   chainManager: ChainManager.t,
-  processedBatches: int,
-  currentlyProcessingBatch: bool,
   rollbackState: rollbackState,
   indexerStartTime: Date.t,
   writeThrottlers: WriteThrottlers.t,
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
   exitAfterFirstEventBlock: bool,
+  // The single fatal-error handler ErrorExit delegates to.
+  onError: ErrorHandling.t => unit,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
@@ -59,11 +45,10 @@ let make = (
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
+  ~onError: ErrorHandling.t => unit,
 ) => {
   {
     ctx,
-    currentlyProcessingBatch: false,
-    processedBatches: 0,
     chainManager,
     indexerStartTime: Date.make(),
     rollbackState: NoRollback,
@@ -71,6 +56,7 @@ let make = (
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
+    onError,
     id: 0,
   }
 }
@@ -119,7 +105,6 @@ type action =
     })
   | FinishWaitingForNewBlock({chain: chain, knownHeight: int})
   | EventBatchProcessed({batch: Batch.t})
-  | StartProcessingBatch
   | StartFindingReorgDepth
   | FindReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
   | EnterReorgThreshold
@@ -145,18 +130,14 @@ type task =
   | Rollback
   | PruneStaleEntityHistory
 
-let updateChainMetadataTable = (
-  cm: ChainManager.t,
-  ~persistence: Persistence.t,
-  ~throttler: Throttler.t,
-) => {
+let updateChainMetadataTable = (cm: ChainManager.t, ~inMemoryStore: InMemoryStore.t) => {
   let chainsData: dict<InternalTable.Chains.metaFields> = Dict.make()
 
   cm.chainFetchers
   ->ChainMap.values
-  ->Belt.Array.forEach(cf => {
+  ->Array.forEach(cf => {
     chainsData->Dict.set(
-      cf.chainConfig.id->Belt.Int.toString,
+      cf.chainConfig.id->Int.toString,
       {
         firstEventBlockNumber: cf.fetchState.firstEventBlock->Null.fromOption,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
@@ -166,10 +147,8 @@ let updateChainMetadataTable = (
     )
   })
 
-  //Don't await this set, it can happen in its own time
-  throttler->Throttler.schedule(() =>
-    persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
-  )
+  // Staged; the cycle folds the stale diff into the next batch write.
+  inMemoryStore->InMemoryStore.setChainMeta(chainsData)
 }
 
 /**
@@ -363,7 +342,7 @@ let validatePartitionQueryResponse = (
   Prometheus.FetchingBlockRange.increment(
     ~chainId=chain->ChainMap.Chain.toChainId,
     ~totalTimeElapsed=stats.totalTimeElapsed,
-    ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0.),
+    ~parsingTimeElapsed=stats.parsingTimeElapsed->Option.getOr(0.),
     ~numEvents=parsedQueueItems->Array.length,
     ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
   )
@@ -673,14 +652,16 @@ let actionReducer = (state: t, action: action) => {
         ? [PruneStaleEntityHistory]
         : []
 
+    let inMemoryStore = state.ctx.inMemoryStore
+    inMemoryStore.isProcessing = false
+    inMemoryStore.processedBatchesCount = inMemoryStore.processedBatchesCount + 1
+
     let state = {
       ...state,
       // Can safely reset rollback state, since overwrite is not possible.
       // If rollback is pending, the EventBatchProcessed will be handled by the invalid action reducer instead.
       rollbackState: NoRollback,
       chainManager: state.chainManager->updateProgressedChains(~batch, ~ctx=state.ctx),
-      currentlyProcessingBatch: false,
-      processedBatches: state.processedBatches + 1,
     }
 
     let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
@@ -702,7 +683,7 @@ let actionReducer = (state: t, action: action) => {
           state.exitAfterFirstEventBlock &&
           state.chainManager.chainFetchers
           ->ChainMap.values
-          ->Array.every(cf => cf.isProgressAtHead && cf.fetchState.endBlock->Belt.Option.isNone)
+          ->Array.every(cf => cf.isProgressAtHead && cf.fetchState.endBlock->Option.isNone)
         ) {
           ExitWithError(
             "No events found between startBlock and chain head. Cannot auto-detect endBlock.",
@@ -711,14 +692,18 @@ let actionReducer = (state: t, action: action) => {
           NoExit
         }
 
-    (
-      state,
+    // On exit, stop dispatching ProcessEventBatch: the flush is async and would
+    // otherwise keep processing further batches while it runs.
+    let tasks = switch shouldExit {
+    | ExitWithSuccess
+    | ExitWithError(_) => [UpdateChainMetaDataAndCheckForExit(shouldExit)]
+    | NoExit =>
       [UpdateChainMetaDataAndCheckForExit(shouldExit), ProcessEventBatch]->Array.concat(
         maybePruneEntityHistory,
-      ),
-    )
+      )
+    }
+    (state, tasks)
 
-  | StartProcessingBatch => ({...state, currentlyProcessingBatch: true}, [])
   | StartFindingReorgDepth => ({...state, rollbackState: FindingReorgDepth}, [])
   | FindReorgDepth({chain, rollbackTargetBlockNumber}) => (
       {
@@ -775,8 +760,7 @@ let actionReducer = (state: t, action: action) => {
       (state, [])
     }
   | ErrorExit(errHandler) =>
-    errHandler->ErrorHandling.log
-    NodeJs.process->NodeJs.exitWithCode(Failure)
+    state.onError(errHandler)
     (state, [])
   }
 }
@@ -785,12 +769,13 @@ let invalidatedActionReducer = (state: t, action: action) =>
   switch action {
   | EventBatchProcessed({batch}) if state->isPreparingRollback =>
     Logging.info("Finished processing batch before rollback, actioning rollback")
+    let inMemoryStore = state.ctx.inMemoryStore
+    inMemoryStore.isProcessing = false
+    inMemoryStore.processedBatchesCount = inMemoryStore.processedBatchesCount + 1
     (
       {
         ...state,
         chainManager: state.chainManager->updateProgressedChains(~batch, ~ctx=state.ctx),
-        currentlyProcessingBatch: false,
-        processedBatches: state.processedBatches + 1,
       },
       [Rollback],
     )
@@ -902,23 +887,15 @@ let injectedTaskReducer = (
       state.writeThrottlers.pruneStaleEntityHistory->Throttler.schedule(runPrune)
 
     | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
-      let {chainManager, writeThrottlers} = state
+      let {chainManager} = state
       switch shouldExit {
       | ExitWithSuccess =>
-        updateChainMetadataTable(
-          chainManager,
-          ~throttler=writeThrottlers.chainMetaData,
-          ~persistence=state.ctx.persistence,
-        )
+        updateChainMetadataTable(chainManager, ~inMemoryStore=state.ctx.inMemoryStore)
+        await state.ctx.inMemoryStore->InMemoryStore.flush
         dispatchAction(SuccessExit)
       | ExitWithError(msg) =>
         dispatchAction(ErrorExit(ErrorHandling.make(JsError.throwWithMessage(msg))))
-      | NoExit =>
-        updateChainMetadataTable(
-          chainManager,
-          ~throttler=writeThrottlers.chainMetaData,
-          ~persistence=state.ctx.persistence,
-        )->ignore
+      | NoExit => updateChainMetadataTable(chainManager, ~inMemoryStore=state.ctx.inMemoryStore)
       }
     | NextQuery(chainCheck) =>
       let fetchForChain = checkAndFetchForChain(
@@ -939,7 +916,7 @@ let injectedTaskReducer = (
         ->Promise.all
       }
     | ProcessEventBatch =>
-      if !state.currentlyProcessingBatch && !isPreparingRollback(state) {
+      if !state.ctx.inMemoryStore.isProcessing && !isPreparingRollback(state) {
         let isRollbackBatch = switch state.rollbackState {
         | RollbackReady(_) => true
         | _ => false
@@ -947,14 +924,12 @@ let injectedTaskReducer = (
 
         let batch =
           state.chainManager->ChainManager.createBatch(
-            ~committedCheckpointId=state.ctx.inMemoryStore.committedCheckpointId,
+            ~processedCheckpointId=state.ctx.inMemoryStore.processedCheckpointId,
             ~batchSizeTarget=state.ctx.config.batchSize,
             ~isRollback=isRollbackBatch,
           )
 
         let progressedChainsById = batch.progressedChainsById
-
-        let isInReorgThreshold = state.chainManager.isInReorgThreshold
 
         let isBelowReorgThreshold =
           !state.chainManager.isInReorgThreshold && state.ctx.config.shouldRollbackOnReorg
@@ -982,25 +957,21 @@ let injectedTaskReducer = (
           if EventProcessing.allChainsEventsProcessedToEndblock(state.chainManager.chainFetchers) {
             Logging.info("All chains are caught up to end blocks.")
             if !state.keepProcessAlive {
-              updateChainMetadataTable(
-                state.chainManager,
-                ~persistence=state.ctx.persistence,
-                ~throttler=state.writeThrottlers.chainMetaData,
-              )
+              updateChainMetadataTable(state.chainManager, ~inMemoryStore=state.ctx.inMemoryStore)
+              await state.ctx.inMemoryStore->InMemoryStore.flush
               dispatchAction(SuccessExit)
             }
           }
         } else {
-          dispatchAction(StartProcessingBatch)
+          let inMemoryStore = state.ctx.inMemoryStore
+          inMemoryStore.isProcessing = true
           dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
-          let inMemoryStore = state.ctx.inMemoryStore
           inMemoryStore->InMemoryStore.setBatchDcs(~batch)
 
           switch await EventProcessing.processEventBatch(
             ~batch,
             ~inMemoryStore,
-            ~isInReorgThreshold,
             ~loadManager=state.loadManager,
             ~ctx=state.ctx,
             ~chainFetchers=state.chainManager.chainFetchers,
@@ -1045,7 +1016,7 @@ let injectedTaskReducer = (
       // while we are still finding the reorg depth
       // Do nothing here, just wait for reorg depth to be found
       | {rollbackState: FindingReorgDepth} => ()
-      | {rollbackState: FoundReorgDepth(_), currentlyProcessingBatch: true} =>
+      | {rollbackState: FoundReorgDepth(_)} if state.ctx.inMemoryStore.isProcessing =>
         Logging.info("Waiting for batch to finish processing before executing rollback")
       | {rollbackState: FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber})} =>
         let startTime = Hrtime.makeTimer()
@@ -1177,10 +1148,15 @@ let injectedTaskReducer = (
           }
         })
 
+        // Finish pending writes so committedCheckpointId reflects the db before
+        // computing the rollback diff against it.
+        await state.ctx.inMemoryStore->InMemoryStore.flush
+
         let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(
           ~persistence=state.ctx.persistence,
           ~rollbackTargetCheckpointId,
           ~rollbackDiffCheckpointId=state.ctx.inMemoryStore.committedCheckpointId->BigInt.add(1n),
+          ~progressBlockNumberByChainId=newProgressBlockNumberPerChain,
         )
 
         let chainManager = {

@@ -89,10 +89,12 @@ let callEffect = (
 
   effect.handler(arg)
   ->Promise.thenResolve(output => {
-    inMemTable.dict->Dict.set(arg.cacheKey, output)
-    if arg.context.cache {
-      inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
-    }
+    inMemTable->InMemoryStore.setEffectOutput(
+      ~checkpointId=arg.checkpointId,
+      ~cacheKey=arg.cacheKey,
+      ~output,
+      ~shouldCache=arg.context.cache,
+    )
   })
   ->Utils.Promise.catchResolve(exn => {
     onError(~inputKey=arg.cacheKey, ~exn)
@@ -159,8 +161,8 @@ let rec executeWithRateLimit = (
 
     // Split into immediate and queued
     let immediateCount = Math.Int.min(state.availableCalls, effectArgs->Array.length)
-    let immediateArgs = effectArgs->Belt.Array.slice(~offset=0, ~len=immediateCount)
-    let queuedArgs = effectArgs->Belt.Array.sliceToEnd(immediateCount)
+    let immediateArgs = effectArgs->Array.slice(~start=0, ~end=immediateCount)
+    let queuedArgs = effectArgs->Array.slice(~start=immediateCount)
 
     // Update available calls
     state.availableCalls = state.availableCalls - immediateCount
@@ -283,7 +285,7 @@ let loadEffect = (
         try {
           let output = dbEntity.output->S.parseOrThrow(outputSchema)
           idsFromCache->Utils.Set.add(dbEntity.id)->ignore
-          inMemTable.dict->Dict.set(dbEntity.id, output)
+          inMemTable->InMemoryStore.initEffectOutputFromDb(~cacheKey=dbEntity.id, ~output)
         } catch {
         | S.Raised(error) =>
           inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
@@ -334,8 +336,8 @@ let loadEffect = (
     ~load,
     ~shouldGroup,
     ~hasher=args => args.cacheKey,
-    ~getUnsafeInMemory=hash => inMemTable.dict->Dict.getUnsafe(hash),
-    ~hasInMemory=hash => inMemTable.dict->Dict.has(hash),
+    ~getUnsafeInMemory=hash => inMemTable->InMemoryStore.getEffectOutputUnsafe(hash),
+    ~hasInMemory=hash => inMemTable->InMemoryStore.hasEffectOutput(hash),
     ~input=effectArgs,
   )
 }

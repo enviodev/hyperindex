@@ -26,7 +26,7 @@ let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
   let indexName = tableName ++ "_" ++ indexFields->Array.joinUnsafe("_")
 
   // Case for indexer before envio@2.28
-  let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Array.joinUnsafe(", ")
+  let index = indexFields->Array.map(idx => `"${idx}"`)->Array.joinUnsafe(", ")
   `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
 }
 
@@ -55,7 +55,7 @@ let makeCreateCompositeIndexQuery = (
     ->Array.joinUnsafe("_")
   let index =
     indexFields
-    ->Belt.Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)
+    ->Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)
     ->Array.joinUnsafe(", ")
   `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
 }
@@ -116,7 +116,7 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
     let cache = {
       let id = "id"
 
-      let dataFields = entityConfig.table.fields->Belt.Array.keepMap(field =>
+      let dataFields = entityConfig.table.fields->Array.filterMap(field =>
         switch field {
         | Field(field) =>
           switch field.fieldName {
@@ -157,7 +157,7 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
       //ignore composite indices
       let table = Table.mkTable(
         historyTableName,
-        ~fields=dataFields->Belt.Array.concat([checkpointIdField, actionField]),
+        ~fields=dataFields->Array.concat([checkpointIdField, actionField]),
       )
 
       let setChangeSchema = EntityHistory.makeSetUpdateSchema(entityConfig.schema)
@@ -450,26 +450,63 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
   chunks
 }
 
-let removeInvalidUtf8InPlace = entities =>
-  entities->Array.forEach(item => {
-    let dict = item->(Utils.magic: 'a => dict<unknown>)
-    dict->Utils.Dict.forEachWithKey((value, key) => {
-      if value->typeof === #string {
-        let value = value->(Utils.magic: unknown => string)
+// Strips NUL bytes, recursing into nested objects/arrays so a NUL buried
+// inside a jsonb column (an event param object, a json entity field) is
+// removed too — Postgres rejects it in both text (0x00) and jsonb (22P05).
+let rec removeInvalidUtf8DeepInPlace = (value: unknown): unknown => {
+  if value->typeof === #string {
+    value
+    ->(Utils.magic: unknown => string)
+    ->Utils.String.replaceAll("\x00", "")
+    ->(Utils.magic: string => unknown)
+  } else if value->typeof === #object && value !== %raw(`null`) {
+    let dict = value->(Utils.magic: unknown => dict<unknown>)
+    dict->Utils.Dict.forEachWithKey((v, k) => dict->Dict.set(k, removeInvalidUtf8DeepInPlace(v)))
+    value
+  } else {
+    value
+  }
+}
 
-        dict->Dict.set(
-          key,
-          value
-          ->Utils.String.replaceAll("\x00", "")
-          ->(Utils.magic: string => unknown),
-        )
-      }
-    })
-  })
+let removeInvalidUtf8InPlace = items =>
+  items->Array.forEach(item =>
+    removeInvalidUtf8DeepInPlace(item->(Utils.magic: 'a => unknown))->ignore
+  )
 
 let pgErrorMessageSchema = S.object(s => s.field("message", S.string))
 
 exception PgEncodingError({table: Table.table})
+
+// Classifies a write failure, parking it in `specificError` so the
+// transaction can unwind and the outer handler can react. Both Postgres
+// encoding failures we recognize are NUL-related — `0x00` in a text column
+// and a NUL rejected by jsonb (22P05) — so they become a PgEncodingError
+// that triggers an escape-and-retry of the offending table, where deep NUL
+// stripping resolves them. We escape lazily on first failure to keep the
+// happy path free of per-item sanitization. The aborted-transaction cascade
+// is ignored so it never masks the original error.
+let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table, ~exn) => {
+  /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
+  let normalizedExn = switch exn {
+  | JsExn(_) => exn
+  | Persistence.StorageError({reason: exn}) => exn
+  | _ => exn
+  }->JsExn.anyToExnInternal
+
+  switch normalizedExn {
+  | JsExn(error) =>
+    switch error->S.parseOrThrow(pgErrorMessageSchema) {
+    | `current transaction is aborted, commands ignored until end of transaction block` => ()
+    | `invalid byte sequence for encoding "UTF8": 0x00`
+    | `unsupported Unicode escape sequence` =>
+      specificError.contents = Some(PgEncodingError({table: table}))
+    | _ => specificError.contents = Some(exn->Utils.prettifyExn)
+    | exception _ => ()
+    }
+  | S.Raised(_) => throw(normalizedExn) // But rethrow this one, since it's not a PG error
+  | _ => ()
+  }
+}
 
 // WeakMap for caching table batch set queries
 let setQueryCache = Utils.WeakMap.make()
@@ -661,7 +698,7 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
   )
 
   // Get all field names for the INSERT statement
-  let allHistoryFieldNames = entityConfig.table.fields->Belt.Array.keepMap(fieldOrDerived =>
+  let allHistoryFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
     | Field(field) => field->Table.getDbFieldName->Some
     | DerivedFrom(_) => None
@@ -671,10 +708,10 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
   allHistoryFieldNames->Array.push(EntityHistory.changeFieldName)->ignore
 
   let allHistoryFieldNamesStr =
-    allHistoryFieldNames->Belt.Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
+    allHistoryFieldNames->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
 
   // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
-  let selectParts = allHistoryFieldNames->Belt.Array.map(fieldName => {
+  let selectParts = allHistoryFieldNames->Array.map(fieldName => {
     switch fieldName {
     | field if field == Table.idFieldName => `u.${Table.idFieldName}`
     | field if field == EntityHistory.checkpointIdFieldName =>
@@ -712,10 +749,77 @@ let executeSet = (
   }
 }
 
+let convertFieldsToJson = (fields: option<dict<unknown>>) => {
+  switch fields {
+  | None => %raw(`{}`)
+  | Some(fields) =>
+    // Convert bigint fields to string. There are no fields with nested
+    // bigints, so iterating only the top level is safe.
+    fields
+    ->Utils.Dict.mapValues(value =>
+      typeof(value) === #bigint
+        ? value
+          ->(Utils.magic: unknown => bigint)
+          ->BigInt.toString
+          ->(Utils.magic: string => unknown)
+        : value
+    )
+    ->(Utils.magic: dict<unknown> => JSON.t)
+  }
+}
+
+let makeRawEvent = (
+  eventItem: Internal.eventItem,
+  ~config: Config.t,
+): InternalTable.RawEvents.t => {
+  let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = eventItem
+  let {block, transaction, params, logIndex, srcAddress} = event
+  let chainId = chain->ChainMap.Chain.toChainId
+  let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+  let blockFields =
+    block
+    ->(Utils.magic: Internal.eventBlock => option<dict<unknown>>)
+    ->convertFieldsToJson
+  let transactionFields =
+    transaction
+    ->(Utils.magic: Internal.eventTransaction => option<dict<unknown>>)
+    ->convertFieldsToJson
+
+  blockFields->config.ecosystem.cleanUpRawEventFieldsInPlace
+
+  // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
+  let params =
+    params
+    ->S.reverseConvertOrThrow(eventConfig.paramsRawEventSchema)
+    ->(Utils.magic: unknown => JSON.t)
+  let params = if params === %raw(`null`) {
+    // Should probably make the params field nullable
+    // But this is currently needed to make events
+    // with empty params work
+    %raw(`"null"`)
+  } else {
+    params
+  }
+
+  {
+    chainId,
+    eventId,
+    eventName: eventConfig.name,
+    contractName: eventConfig.contractName,
+    blockNumber,
+    logIndex,
+    srcAddress,
+    blockHash: block->config.ecosystem.getId,
+    blockTimestamp,
+    blockFields,
+    transactionFields,
+    params,
+  }
+}
+
 let rec writeBatch = async (
   sql,
   ~batch: Batch.t,
-  ~rawEvents,
   ~pgSchema,
   ~rollback: option<Persistence.rollback>,
   ~isInReorgThreshold,
@@ -725,6 +829,7 @@ let rec writeBatch = async (
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
   ~sinkPromise: option<promise<option<exn>>>,
+  ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
   ~escapeTables=?,
 ) => {
   try {
@@ -732,20 +837,39 @@ let rec writeBatch = async (
 
     let specificError = ref(None)
 
-    let setRawEvents = executeSet(
-      _,
-      ~dbFunction=(sql, items) => {
-        sql->setOrThrow(
-          ~items,
-          ~table=InternalTable.RawEvents.table,
-          ~itemSchema=InternalTable.RawEvents.schema,
-          ~pgSchema,
-        )
-      },
-      ~items=rawEvents,
-    )
+    let rawEvents = if config.enableRawEvents {
+      let rows = batch.items->Array.filterMap(item =>
+        switch item {
+        | Internal.Event(_) => Some(item->Internal.castUnsafeEventItem->makeRawEvent(~config))
+        | Internal.Block(_) => None
+        }
+      )
+      switch escapeTables {
+      | Some(tables) if tables->Utils.Set.has(InternalTable.RawEvents.table) =>
+        rows->removeInvalidUtf8InPlace
+      | _ => ()
+      }
+      rows
+    } else {
+      []
+    }
 
-    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, changes}) => {
+    let setRawEvents = async sql => {
+      try {
+        await sql->executeSet(~dbFunction=(sql, items) => {
+          sql->setOrThrow(
+            ~items,
+            ~table=InternalTable.RawEvents.table,
+            ~itemSchema=InternalTable.RawEvents.schema,
+            ~pgSchema,
+          )
+        }, ~items=rawEvents)
+      } catch {
+      | exn => classifyWriteError(~specificError, ~table=InternalTable.RawEvents.table, ~exn)
+      }
+    }
+
+    let setEntities = updatedEntities->Array.map(({entityConfig, changes}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
@@ -764,10 +888,10 @@ let rec writeBatch = async (
       // history-table batches.
       let latestChangeById = Dict.make()
       let orderedIds = []
-      changes->Belt.Array.forEach(change => {
+      changes->Array.forEach(change => {
         let entityId = change->Change.getEntityId
         if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityId)->Option.isNone {
-          orderedIds->Belt.Array.push(entityId)
+          orderedIds->Array.push(entityId)
         }
         latestChangeById->Dict.set(entityId, change)
         if shouldSaveHistory {
@@ -776,19 +900,19 @@ let rec writeBatch = async (
           } else {
             switch change {
             | Delete({entityId, checkpointId}) =>
-              batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
-              batchDeleteCheckpointIds->Belt.Array.push(checkpointId)->ignore
-            | Set(_) => batchSetUpdates->Belt.Array.push(change)->ignore
+              batchDeleteEntityIds->Array.push(entityId)->ignore
+              batchDeleteCheckpointIds->Array.push(checkpointId)->ignore
+            | Set(_) => batchSetUpdates->Array.push(change)->ignore
             }
           }
         }
       })
 
       let backfillHistoryIds = Utils.Set.make()
-      orderedIds->Belt.Array.forEach(entityId => {
+      orderedIds->Array.forEach(entityId => {
         switch latestChangeById->Dict.getUnsafe(entityId) {
-        | Set({entity}) => entitiesToSet->Belt.Array.push(entity)
-        | Delete({entityId}) => idsToDelete->Belt.Array.push(entityId)
+        | Set({entity}) => entitiesToSet->Array.push(entity)
+        | Delete({entityId}) => idsToDelete->Array.push(entityId)
         }
 
         // An id needs a history backfill iff none of its changes is the diff.
@@ -819,7 +943,7 @@ let rec writeBatch = async (
             }
 
             if batchDeleteCheckpointIds->Utils.Array.notEmpty {
-              promises->Belt.Array.push(
+              promises->Array.push(
                 sql
                 ->Postgres.preparedUnsafe(
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
@@ -862,7 +986,7 @@ let rec writeBatch = async (
             if shouldRemoveInvalidUtf8 {
               entitiesToSet->removeInvalidUtf8InPlace
             }
-            promises->Belt.Array.push(
+            promises->Array.push(
               sql->setOrThrow(
                 ~items=entitiesToSet,
                 ~table=entityConfig.table,
@@ -872,7 +996,7 @@ let rec writeBatch = async (
             )
           }
           if idsToDelete->Utils.Array.notEmpty {
-            promises->Belt.Array.push(
+            promises->Array.push(
               sql->deleteByIdsOrThrow(~pgSchema, ~ids=idsToDelete, ~table=entityConfig.table),
             )
           }
@@ -883,42 +1007,11 @@ let rec writeBatch = async (
         // might throw PG error, earlier, than the handled error
         // from setOrThrow will be passed through.
         // This is needed for the utf8 encoding fix.
-        | exn => {
-            /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
-            let normalizedExn = switch exn {
-            | JsExn(_) => exn
-            | Persistence.StorageError({reason: exn}) => exn
-            | _ => exn
-            }->JsExn.anyToExnInternal
-
-            switch normalizedExn {
-            | JsExn(error) =>
-              // Workaround for https://github.com/enviodev/hyperindex/issues/446
-              // We do escaping only when we actually got an error writing for the first time.
-              // This is not perfect, but an optimization to avoid escaping for every single item.
-
-              switch error->S.parseOrThrow(pgErrorMessageSchema) {
-              | `current transaction is aborted, commands ignored until end of transaction block` => ()
-              | `invalid byte sequence for encoding "UTF8": 0x00` =>
-                // Since the transaction is aborted at this point,
-                // we can't simply retry the function with escaped items,
-                // so propagate the error, to restart the whole batch write.
-                // Also, pass the failing table, to escape only its items.
-                // TODO: Ideally all this should be done in the file,
-                // so it'll be easier to work on PG specific logic.
-                specificError.contents = Some(PgEncodingError({table: entityConfig.table}))
-              | _ => specificError.contents = Some(exn->Utils.prettifyExn)
-              | exception _ => ()
-              }
-            | S.Raised(_) => throw(normalizedExn) // But rethrow this one, since it's not a PG error
-            | _ => ()
-            }
-
-            // Improtant: Don't rethrow here, since it'll result in
-            // an unhandled rejected promise error.
-            // That's fine not to throw, since sql->Postgres.beginSql
-            // will fail anyways.
-          }
+        //
+        // Important: Don't rethrow here, since it'll result in an unhandled
+        // rejected promise error. That's fine not to throw, since
+        // sql->Postgres.beginSql will fail anyways.
+        | exn => classifyWriteError(~specificError, ~table=entityConfig.table, ~exn)
         }
       }
     })
@@ -973,10 +1066,20 @@ let rec writeBatch = async (
                 }),
               ),
             setRawEvents,
-          ]->Belt.Array.concat(setEntities)
+          ]->Array.concat(setEntities)
+
+          switch chainMetaData {
+          | Some(chainsData) =>
+            setOperations
+            ->Array.push(sql =>
+              sql->InternalTable.Chains.setMeta(~pgSchema, ~chainsData)->Utils.Promise.ignoreValue
+            )
+            ->ignore
+          | None => ()
+          }
 
           if shouldSaveHistory {
-            setOperations->Belt.Array.push(sql =>
+            setOperations->Array.push(sql =>
               sql->InternalTable.Checkpoints.insert(
                 ~pgSchema,
                 ~checkpointIds=batch.checkpointIds,
@@ -989,7 +1092,7 @@ let rec writeBatch = async (
           }
 
           await setOperations
-          ->Belt.Array.map(dbFunc => sql->dbFunc)
+          ->Array.map(dbFunc => sql->dbFunc)
           ->Promise.all
           ->Utils.Promise.ignoreValue
 
@@ -1005,7 +1108,7 @@ let rec writeBatch = async (
         // Since effect cache currently doesn't support rollback,
         // we can run it outside of the transaction for simplicity.
         updatedEffectsCache
-        ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
+        ->Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
           setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
         })
         ->Promise.all,
@@ -1036,7 +1139,6 @@ let rec writeBatch = async (
     await writeBatch(
       sql,
       ~escapeTables,
-      ~rawEvents,
       ~batch,
       ~pgSchema,
       ~rollback,
@@ -1047,6 +1149,7 @@ let rec writeBatch = async (
       ~allEntities,
       ~updatedEntities,
       ~sinkPromise,
+      ~chainMetaData,
     )
   }
 }
@@ -1054,7 +1157,7 @@ let rec writeBatch = async (
 // Returns the most recent entity state for IDs that need to be restored during rollback.
 // For each ID modified after the rollback target, retrieves its latest state at or before the target.
 let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
-  let dataFieldNames = entityConfig.table.fields->Belt.Array.keepMap(fieldOrDerived =>
+  let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
     | Field(field) => field->Table.getDbFieldName->Some
     | DerivedFrom(_) => None
@@ -1062,7 +1165,7 @@ let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig
   )
 
   let dataFieldsCommaSeparated =
-    dataFieldNames->Belt.Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
+    dataFieldNames->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
 
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
@@ -1473,7 +1576,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
             Logging.info(
               `Dumping cache: ${cacheTableInfo
                 ->Array.map(({tableName, count}) =>
-                  tableName ++ " (" ++ count->Belt.Int.toString ++ " rows)"
+                  tableName ++ " (" ++ count->Int.toString ++ " rows)"
                 )
                 ->Array.joinUnsafe(", ")}`,
             )
@@ -1517,7 +1620,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         sql,
         ~pgSchema,
       )->Promise.thenResolve(rawInitialStates => {
-        rawInitialStates->Belt.Array.map((rawInitialState): Persistence.initialChainState => {
+        rawInitialStates->Array.map((rawInitialState): Persistence.initialChainState => {
           id: rawInitialState.id,
           startBlock: rawInitialState.startBlock,
           endBlock: rawInitialState.endBlock->Null.toOption,
@@ -1548,10 +1651,10 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       InternalTable.EnvioInfo.read(sql, ~pgSchema),
     ))
 
-    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
+    let checkpointId = (checkpointIdResult->Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
 
     // Convert string checkpoint IDs from DB to bigint
-    let reorgCheckpoints = Belt.Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
+    let reorgCheckpoints = Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
       checkpointId: raw["id"]->BigInt.fromStringOrThrow,
       chainId: raw["chain_id"],
       blockNumber: raw["block_number"],
@@ -1631,13 +1734,13 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
   let writeBatchMethod = async (
     ~batch,
-    ~rawEvents,
     ~rollback,
     ~isInReorgThreshold,
     ~config,
     ~allEntities,
     ~updatedEffectsCache,
     ~updatedEntities,
+    ~chainMetaData,
   ) => {
     let pgUpdates = []
     let chUpdates = []
@@ -1676,7 +1779,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     await writeBatch(
       sql,
       ~batch,
-      ~rawEvents,
       ~pgSchema,
       ~rollback,
       ~isInReorgThreshold,
@@ -1686,6 +1788,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~updatedEffectsCache,
       ~updatedEntities=pgUpdates,
       ~sinkPromise,
+      ~chainMetaData,
     )
     Prometheus.StorageWrite.increment(
       ~storage="postgres",
@@ -1780,7 +1883,7 @@ let makeStorageFromEnv = (
               ~pgSchema,
               ~userEntities=config->Config.getPgUserEntities,
               ~responseLimit=Env.Hasura.responseLimit,
-              ~schema=Schema.make(config.allEntities->Belt.Array.map(e => e.table)),
+              ~schema=Schema.make(config.allEntities->Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
               Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve

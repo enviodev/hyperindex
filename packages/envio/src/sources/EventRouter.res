@@ -97,14 +97,14 @@ let get = (router: t<'a>, ~tag, ~contractAddress, ~blockNumber, ~indexingAddress
 }
 
 let getEvmEventId = (~sighash, ~topicCount) => {
-  sighash ++ "_" ++ topicCount->Belt.Int.toString
+  sighash ++ "_" ++ topicCount->Int.toString
 }
 
 let fromEvmEventModsOrThrow = (events: array<Internal.evmEventConfig>, ~chain): t<
   Internal.evmEventConfig,
 > => {
   let router = empty()
-  events->Belt.Array.forEach(config => {
+  events->Array.forEach(config => {
     router->addOrThrow(
       config.id,
       config,

@@ -55,6 +55,7 @@ let initEffect = (params: contextParams) => {
       input,
       context: effectContext,
       cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+      checkpointId: params.checkpointId,
     }
     LoadLayer.loadEffect(
       ~loadManager=params.loadManager,
@@ -148,7 +149,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
       )
     )
     ->Promise.all
-    ->Promise.thenResolve(results => results->Belt.Array.concatMany)
+    ->Promise.thenResolve(results => results->Array.flat)
   } else if operatorKey === "_gte" || operatorKey === "_lte" {
     // _gte and _lte are composed from Eq + Gt/Lt
     let rangeOperator: TableIndices.Operator.t = operatorKey === "_gte" ? Gt : Lt
@@ -170,7 +171,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
 
     [loadWithOperator(Eq), loadWithOperator(rangeOperator)]
     ->Promise.all
-    ->Promise.thenResolve(results => results->Belt.Array.concatMany)
+    ->Promise.thenResolve(results => results->Array.flat)
   } else {
     let operator: TableIndices.Operator.t = switch operatorKey {
     | "_eq" => Eq
@@ -284,7 +285,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               | Some(entity) => entity
               | None =>
                 JsError.throwWithMessage(
-                  message->Belt.Option.getWithDefault(
+                  message->Option.getOr(
                     `Entity '${params.entityConfig.name}' with ID '${entityId}' is expected to exist.`,
                   ),
                 )
