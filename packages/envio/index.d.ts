@@ -1054,7 +1054,7 @@ export type SvmInstruction<
   /** Present when the instruction's `include_logs` is `true`; only logs
    * scoped to this exact instruction (matching `instruction_address`). */
   readonly logs?: readonly SvmLog[];
-  /** Slot number (alias for `block.height`). */
+  /** Slot this instruction was matched in. */
   readonly slot: number;
   readonly block: SvmInstructionBlock;
 };

@@ -108,7 +108,7 @@ type svmInstruction = {
   /** Program log entries scoped to this instruction. Absent when the
    per-instruction `include_logs` flag is `false`. */
   logs?: array<svmLog>,
-  /** Slot number (alias for `block.height`). */
+  /** Slot this instruction was matched in. */
   slot: int,
   block: svmInstructionBlock,
 }
