@@ -226,17 +226,9 @@ Conventions for the target shape:
   plain value, not a `promise`. Don't make a verb async just to fit a uniform
   signature.
 
-When decomposing `GlobalState.res`, separate the two kinds of move:
-
-1. **Relocate pure logic** (e.g. `updateProgressedChains`, the fetch-state
-   transitions) to the module that owns its data (`ChainManager`, `FetchState`,
-   `ChainFetcher`). No injection needed — this just shrinks the reducer.
-2. **Extract effectful logic** (store writes, commit, rollback, prune) behind
-   injected verb ports as above, replacing direct `state.ctx.inMemoryStore`
-   access.
-
-Each step should leave `pnpm rescript` and `pnpm vitest run` green so it can ship
-on its own.
+A goal of this migration is to make the indexer's main logic readable on its own
+— the fetch/process/rollback flow expressed in domain verbs — without a hard
+dependency on the storage implementation behind it.
 
 ## Update CLI Generated Docs
 
