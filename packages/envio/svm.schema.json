@@ -172,7 +172,7 @@
           "minimum": 0
         },
         "experimental": {
-          "description": "Experimental HyperSync-backed instruction indexing. This config shape may change in future releases. When set, `rpc` is ignored.",
+          "description": "Experimental HyperSync-backed instruction indexing. This config shape Veil change in future releases.",
           "anyOf": [
             {
               "$ref": "#/$defs/Experimental"

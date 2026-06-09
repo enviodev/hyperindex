@@ -887,7 +887,7 @@ pub mod svm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Experimental HyperSync-backed instruction indexing. This config shape \
-                           may change in future releases. When set, `rpc` is ignored."
+                           Veil change in future releases."
         )]
         pub experimental: Option<Experimental>,
     }
