@@ -192,7 +192,14 @@ let parseDecoded = (
 
 let toSvmInstruction = (
   instr: HyperSyncSolanaClient.ResponseTypes.instruction,
+  ~programName,
+  ~instructionName,
+  ~transaction,
+  ~logs,
+  ~block,
 ): Envio.svmInstruction => {
+  programName,
+  instructionName,
   programId: instr.programId->SvmTypes.Pubkey.fromStringUnsafe,
   data: instr.data,
   accounts: instr.accounts->SvmTypes.Pubkey.fromStringsUnsafe,
@@ -203,6 +210,10 @@ let toSvmInstruction = (
   d4: ?instr.d4,
   d8: ?instr.d8,
   decoded: ?(instr.decoded->Option.map(parseDecoded)),
+  ?transaction,
+  ?logs,
+  slot: instr.slot,
+  block,
 }
 
 let toSvmTransaction = (
@@ -480,20 +491,17 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
         let slotKey = instr.slot->Int.toString
         let blockTime = blockTimeBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
-        let payload: Envio.svmInstructionEvent = {
-          contractName: eventConfig.contractName,
-          eventName: eventConfig.name,
-          instruction: toSvmInstruction(instr),
-          transaction: eventConfig.includeTransaction ? maybeTx : None,
-          logs: eventConfig.includeLogs ? maybeLogs : None,
-          slot: instr.slot,
-          blockTime,
-          block: {
-            height: instr.slot,
+        let payload = toSvmInstruction(
+          instr,
+          ~programName=eventConfig.contractName,
+          ~instructionName=eventConfig.name,
+          ~transaction=eventConfig.includeTransaction ? maybeTx : None,
+          ~logs=eventConfig.includeLogs ? maybeLogs : None,
+          ~block={
             time: blockTime->Option.getOr(0),
             hash: "",
           },
-        }
+        )
 
         parsedQueueItems
         ->Array.push(
@@ -503,7 +511,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
             chain,
             blockNumber: instr.slot,
             logIndex: synthLogIndex(instr),
-            event: payload->(Utils.magic: Envio.svmInstructionEvent => Internal.event),
+            event: payload->(Utils.magic: Envio.svmInstruction => Internal.event),
           }),
         )
         ->ignore

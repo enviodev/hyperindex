@@ -979,23 +979,12 @@ export type SvmDecodedInstruction = {
   readonly extraAccounts: readonly string[];
 };
 
-/** A single Solana instruction matched by the indexer.
- *
- * `data` and discriminator prefixes are `0x`-prefixed hex strings; accounts
- * are base58 strings. When a Borsh schema is configured (bundled, Anchor
- * IDL, or hand-written YAML), `decoded` carries the named-accounts +
- * decoded-args view. */
-export type SvmInstruction = {
-  readonly programId: string;
-  readonly data: string;
-  readonly accounts: readonly string[];
-  readonly instructionAddress: readonly number[];
-  readonly isInner: boolean;
-  readonly d1?: string;
-  readonly d2?: string;
-  readonly d4?: string;
-  readonly d8?: string;
-  readonly decoded?: SvmDecodedInstruction;
+/** Block context for a matched instruction. The slot lives on
+ * `SvmInstruction.slot`; `block` carries the remaining block metadata. */
+export type SvmInstructionBlock = {
+  readonly time: number;
+  /** Always empty for now — reserved for the future reorg-guard route. */
+  readonly hash: string;
 };
 
 export type SvmTokenBalance = {
@@ -1030,33 +1019,52 @@ export type SvmLog = {
   readonly message: string;
 };
 
-/** A single Solana instruction event delivered to a handler. Parameterised
+/** A single Solana instruction delivered to an `onInstruction` handler.
+ *
+ * Carries the matched instruction's own fields (`programId`, `data`,
+ * `accounts`, discriminator prefixes, `decoded`) plus the program/instruction
+ * names, parent transaction, scoped logs, and block context. Parameterised
  * over `Decoded` so the per-(program, instruction) overload of
- * `onInstruction` can narrow `event.instruction.decoded` to the
- * codegen-generated `{ args, accounts }` shape. */
-export type SvmInstructionEvent<
+ * `onInstruction` can narrow `instruction.decoded` to the codegen-generated
+ * `{ args, accounts }` shape.
+ *
+ * `data` and discriminator prefixes are `0x`-prefixed hex strings; accounts
+ * are base58 strings. */
+export type SvmInstruction<
   Decoded extends SvmDecodedInstruction = SvmDecodedInstruction,
 > = {
-  readonly contractName: string;
-  readonly eventName: string;
-  readonly instruction: Omit<SvmInstruction, "decoded"> & {
-    readonly decoded?: Decoded;
-  };
+  /** Program name as declared under `programs[].name` in `config.yaml`. */
+  readonly programName: string;
+  /** Instruction name as declared under `instructions[].name` in
+   * `config.yaml`. */
+  readonly instructionName: string;
+  readonly programId: string;
+  readonly data: string;
+  readonly accounts: readonly string[];
+  readonly instructionAddress: readonly number[];
+  readonly isInner: boolean;
+  readonly d1?: string;
+  readonly d2?: string;
+  readonly d4?: string;
+  readonly d8?: string;
+  /** Borsh-decoded view. Present when a schema is configured and matched. */
+  readonly decoded?: Decoded;
   /** Present when the instruction's `include_transaction` is `true`. */
   readonly transaction?: SvmTransaction;
   /** Present when the instruction's `include_logs` is `true`; only logs
    * scoped to this exact instruction (matching `instruction_address`). */
   readonly logs?: readonly SvmLog[];
+  /** Slot number (alias for `block.height`). */
   readonly slot: number;
-  readonly blockTime?: number;
+  readonly block: SvmInstructionBlock;
 };
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */
 export type SvmOnInstructionHandlerArgs<
   Config extends IndexerConfigTypes = GlobalConfig,
-  Event extends SvmInstructionEvent = SvmInstructionEvent,
+  Instr extends SvmInstruction = SvmInstruction,
 > = {
-  readonly event: Event;
+  readonly instruction: Instr;
   readonly context: SvmOnSlotContext<Config>;
 };
 
@@ -1298,8 +1306,8 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                 /**
                  * Register an instruction handler. Dispatch matches on
                  * `(programId, discriminator)` from the YAML config.
-                 * `event.instruction.decoded.args` and
-                 * `event.instruction.decoded.accounts` are typed from the
+                 * `instruction.decoded.args` and
+                 * `instruction.decoded.accounts` are typed from the
                  * program's Borsh schema (Anchor IDL, bundled, or
                  * hand-written `accounts`/`args` in YAML). `decoded` stays
                  * optional at runtime because schema-matching can fail on
@@ -1313,7 +1321,7 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                   handler: (
                     args: SvmOnInstructionHandlerArgs<
                       Config,
-                      SvmInstructionEvent<SvmDecodedFromProgramTable<Programs[P][I]>>
+                      SvmInstruction<SvmDecodedFromProgramTable<Programs[P][I]>>
                     >,
                   ) => Promise<void>,
                 ) => void;

@@ -5,7 +5,7 @@ import {
   type FlowTx,
   type LiquidationEvent,
   type IndexerStats,
-  type SvmInstructionEvent,
+  type SvmInstruction,
   type SvmDecodedInstruction,
 } from "envio";
 import type {
@@ -49,22 +49,22 @@ type MapArgs = (decoded: SvmDecodedInstruction) => NodeArgs;
 // + idls/NAMES.md), so widen the signature once here.
 const onIx = indexer.onInstruction as unknown as (
   options: { program: string; instruction: string },
-  handler: (a: { event: SvmInstructionEvent; context: FlowContext }) => Promise<void>,
+  handler: (a: { instruction: SvmInstruction; context: FlowContext }) => Promise<void>,
 ) => void;
 
 const addrPath = (a: readonly number[]): string => a.join(".");
 const parentOf = (a: readonly number[]): string | undefined =>
   a.length <= 1 ? undefined : a.slice(0, -1).join(".");
 
-function writeTokenDeltas(event: SvmInstructionEvent, context: FlowContext, txSig: string): void {
-  for (const b of event.transaction?.tokenBalances ?? []) {
+function writeTokenDeltas(instruction: SvmInstruction, context: FlowContext, txSig: string): void {
+  for (const b of instruction.transaction?.tokenBalances ?? []) {
     if (!b.account) continue;
     const pre = BigInt(b.preAmount ?? "0");
     const post = BigInt(b.postAmount ?? "0");
     context.TokenDelta.set({
       id: `${txSig}:${b.account}`,
       txSig,
-      slot: event.slot,
+      slot: instruction.slot,
       account: b.account,
       mint: b.mint ?? "",
       owner: b.owner,
@@ -75,92 +75,92 @@ function writeTokenDeltas(event: SvmInstructionEvent, context: FlowContext, txSi
   }
 }
 
-function writeFlowTx(event: SvmInstructionEvent, context: FlowContext, txSig: string): void {
+function writeFlowTx(instruction: SvmInstruction, context: FlowContext, txSig: string): void {
   context.FlowTx.set({
     id: txSig,
-    slot: event.slot,
-    feePayer: event.transaction?.feePayer,
-    success: event.transaction?.success,
-    fee: event.transaction?.fee,
-    computeUnits: event.transaction?.computeUnitsConsumed,
+    slot: instruction.slot,
+    feePayer: instruction.transaction?.feePayer,
+    success: instruction.transaction?.success,
+    fee: instruction.transaction?.fee,
+    computeUnits: instruction.transaction?.computeUnitsConsumed,
   });
 }
 
-async function bumpStats(event: SvmInstructionEvent, context: FlowContext): Promise<void> {
+async function bumpStats(instruction: SvmInstruction, context: FlowContext): Promise<void> {
   const prev = await context.IndexerStats.get(STATS_ID);
   context.IndexerStats.set({
     id: STATS_ID,
-    lastSlot: Math.max(prev?.lastSlot ?? 0, event.slot),
+    lastSlot: Math.max(prev?.lastSlot ?? 0, instruction.slot),
     totalInstructions: (prev?.totalInstructions ?? 0n) + 1n,
   });
 }
 
 function writeNode(
-  event: SvmInstructionEvent,
+  instruction: SvmInstruction,
   context: FlowContext,
   program: string,
-  instruction: string,
+  instructionName: string,
   extra: NodeArgs,
 ): void {
-  const txSig = event.transaction?.signatures[0];
+  const txSig = instruction.transaction?.signatures[0];
   if (!txSig) return;
-  const addr = event.instruction.instructionAddress;
+  const addr = instruction.instructionAddress;
   const path = addrPath(addr);
-  const decoded = event.instruction.decoded;
+  const decoded = instruction.decoded;
   context.InstructionNode.set({
     id: `${txSig}:${path}`,
     txSig,
-    slot: event.slot,
+    slot: instruction.slot,
     addrPath: path,
     depth: Math.max(0, addr.length - 1),
     parentPath: parentOf(addr),
     program,
-    programId: event.instruction.programId,
+    programId: instruction.programId,
     // A handler only fires for its instruction's discriminator, so the
     // registered name is correct even when borsh decode fails (e.g. a Jupiter
     // routePlan variant newer than the bundled IDL).
-    ixName: decoded?.name ?? instruction,
-    isInner: event.instruction.isInner,
-    feePayer: event.transaction?.feePayer,
-    success: event.transaction?.success,
-    fee: event.transaction?.fee,
-    computeUnits: event.transaction?.computeUnitsConsumed,
+    ixName: decoded?.name ?? instructionName,
+    isInner: instruction.isInner,
+    feePayer: instruction.transaction?.feePayer,
+    success: instruction.transaction?.success,
+    fee: instruction.transaction?.fee,
+    computeUnits: instruction.transaction?.computeUnitsConsumed,
     argU64A: extra.argU64A,
     argU64B: extra.argU64B,
     argMintA: extra.argMintA,
     argMintB: extra.argMintB,
     argMarketIndex: extra.argMarketIndex,
   });
-  writeFlowTx(event, context, txSig);
-  writeTokenDeltas(event, context, txSig);
+  writeFlowTx(instruction, context, txSig);
+  writeTokenDeltas(instruction, context, txSig);
 }
 
-function register(program: string, instruction: string, mapArgs?: MapArgs): void {
-  onIx({ program, instruction }, async ({ event, context }) => {
-    const decoded = event.instruction.decoded;
+function register(program: string, instructionName: string, mapArgs?: MapArgs): void {
+  onIx({ program, instruction: instructionName }, async ({ instruction, context }) => {
+    const decoded = instruction.decoded;
     const extra = decoded && mapArgs ? mapArgs(decoded) : {};
-    writeNode(event, context, program, instruction, extra);
-    await bumpStats(event, context);
+    writeNode(instruction, context, program, instructionName, extra);
+    await bumpStats(instruction, context);
   });
 }
 
-function registerLiquidation(program: string, instruction: string, mapArgs: MapArgs): void {
-  onIx({ program, instruction }, async ({ event, context }) => {
-    const decoded = event.instruction.decoded;
+function registerLiquidation(program: string, instructionName: string, mapArgs: MapArgs): void {
+  onIx({ program, instruction: instructionName }, async ({ instruction, context }) => {
+    const decoded = instruction.decoded;
     const extra = decoded ? mapArgs(decoded) : {};
-    writeNode(event, context, program, instruction, extra);
-    const txSig = event.transaction?.signatures[0];
+    writeNode(instruction, context, program, instructionName, extra);
+    const txSig = instruction.transaction?.signatures[0];
     if (txSig) {
       context.LiquidationEvent.set({
-        id: `${txSig}:${addrPath(event.instruction.instructionAddress)}`,
+        id: `${txSig}:${addrPath(instruction.instructionAddress)}`,
         txSig,
-        slot: event.slot,
-        ixName: decoded?.name ?? instruction,
+        slot: instruction.slot,
+        ixName: decoded?.name ?? instructionName,
         marketIndex: extra.argMarketIndex,
         liabilityAmount: extra.argU64A,
       });
     }
-    await bumpStats(event, context);
+    await bumpStats(instruction, context);
   });
 }
 

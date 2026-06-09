@@ -630,7 +630,7 @@ let name = "{event_name}"
 let contractName = contractName
 type params = Envio.svmInstruction
 type paramsConstructor = unit
-type event = Envio.svmInstructionEvent
+type event = Envio.svmInstruction
 type onEventWhere = Internal.noOnEventWhere"#
         );
         EventTemplate {

@@ -26,8 +26,8 @@ async function bumpStats(
 
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "CreateMetadataAccountV3" },
-  async ({ event, context }) => {
-    const decoded = event.instruction.decoded;
+  async ({ instruction, context }) => {
+    const decoded = instruction.decoded;
     if (!decoded) {
       // Bundled Metaplex schema should always match disc 0x21 — surface
       // mismatches loudly so the upstream decoder regression is obvious.
@@ -39,19 +39,19 @@ indexer.onInstruction(
     if (metadataPda === undefined) return;
     const mint = accounts.mint ?? "";
     const updateAuthority = accounts.update_authority;
-    const txSig = event.transaction?.signatures[0];
+    const txSig = instruction.transaction?.signatures[0];
 
     console.log(
-      `[Create] slot=${event.slot} name='${args.data.name}' symbol='${args.data.symbol}' mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
+      `[Create] slot=${instruction.slot} name='${args.data.name}' symbol='${args.data.symbol}' mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
     );
 
     context.TokenMetadataAccount.set({
       id: metadataPda,
       mint,
       updateAuthority,
-      lastUpdatedSlot: event.slot,
+      lastUpdatedSlot: instruction.slot,
       updateCount: 0,
-      createdAtSlot: event.slot,
+      createdAtSlot: instruction.slot,
       lastTxSignature: txSig,
     });
     await bumpStats(context, "create");
@@ -60,8 +60,8 @@ indexer.onInstruction(
 
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2" },
-  async ({ event, context }) => {
-    const decoded = event.instruction.decoded;
+  async ({ instruction, context }) => {
+    const decoded = instruction.decoded;
     if (!decoded) {
       console.warn("UpdateMetadataAccountV2: no decoded payload");
       return;
@@ -70,10 +70,10 @@ indexer.onInstruction(
     const metadataPda = accounts.metadata;
     if (metadataPda === undefined) return;
     const updateAuthority = args.update_authority ?? accounts.update_authority;
-    const txSig = event.transaction?.signatures[0];
+    const txSig = instruction.transaction?.signatures[0];
 
     console.log(
-      `[Update] slot=${event.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
+      `[Update] slot=${instruction.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
     );
 
     const existing = await context.TokenMetadataAccount.get(metadataPda);
@@ -81,7 +81,7 @@ indexer.onInstruction(
       context.TokenMetadataAccount.set({
         ...existing,
         updateAuthority,
-        lastUpdatedSlot: event.slot,
+        lastUpdatedSlot: instruction.slot,
         updateCount: existing.updateCount + 1,
         lastTxSignature: txSig,
       });
@@ -92,9 +92,9 @@ indexer.onInstruction(
         id: metadataPda,
         mint: "",
         updateAuthority,
-        lastUpdatedSlot: event.slot,
+        lastUpdatedSlot: instruction.slot,
         updateCount: 1,
-        createdAtSlot: event.slot,
+        createdAtSlot: instruction.slot,
         lastTxSignature: txSig,
       });
     }

@@ -35,8 +35,8 @@ async function bumpStats(
 
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "CreateMetadataAccountV3" },
-  async ({ event, context }) => {
-    const { accounts } = event.instruction;
+  async ({ instruction, context }) => {
+    const { accounts } = instruction;
     // Token Metadata's CreateMetadataAccountV3 instruction layout (Metaplex):
     //   0 = metadata account (PDA)
     //   1 = mint
@@ -47,19 +47,19 @@ indexer.onInstruction(
     if (metadataPda === undefined) return;
     const mint = accounts[1] ?? "";
     const updateAuthority = accounts[4];
-    const txSig = event.transaction?.signatures[0];
+    const txSig = instruction.transaction?.signatures[0];
 
     context.log.info(
-      `Create: slot=${event.slot} mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
+      `Create: slot=${instruction.slot} mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
     );
 
     context.TokenMetadataAccount.set({
       id: metadataPda,
       mint,
       updateAuthority,
-      lastUpdatedSlot: event.slot,
+      lastUpdatedSlot: instruction.slot,
       updateCount: 0,
-      createdAtSlot: event.slot,
+      createdAtSlot: instruction.slot,
       lastTxSignature: txSig,
     });
     await bumpStats(context, "create");
@@ -68,15 +68,15 @@ indexer.onInstruction(
 
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2" },
-  async ({ event, context }) => {
-    const { accounts } = event.instruction;
+  async ({ instruction, context }) => {
+    const { accounts } = instruction;
     const metadataPda = accounts[0];
     if (metadataPda === undefined) return;
     const updateAuthority = accounts[1];
-    const txSig = event.transaction?.signatures[0];
+    const txSig = instruction.transaction?.signatures[0];
 
     context.log.info(
-      `Update: slot=${event.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
+      `Update: slot=${instruction.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
     );
 
     const existing = await context.TokenMetadataAccount.get(metadataPda);
@@ -84,7 +84,7 @@ indexer.onInstruction(
       context.TokenMetadataAccount.set({
         ...existing,
         updateAuthority,
-        lastUpdatedSlot: event.slot,
+        lastUpdatedSlot: instruction.slot,
         updateCount: existing.updateCount + 1,
         lastTxSignature: txSig,
       });
@@ -93,9 +93,9 @@ indexer.onInstruction(
         id: metadataPda,
         mint: "",
         updateAuthority,
-        lastUpdatedSlot: event.slot,
+        lastUpdatedSlot: instruction.slot,
         updateCount: 1,
-        createdAtSlot: event.slot,
+        createdAtSlot: instruction.slot,
         lastTxSignature: txSig,
       });
     }

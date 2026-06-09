@@ -330,14 +330,21 @@ let getGlobalIndexer = (): 'indexer => {
   let onInstructionFn = (identityConfig: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onInstruction")
     let (programName, instructionName, eventOptions) = parseSvmIdentityConfig(identityConfig)
+    // The generic dispatch hands every handler `{event, context}`. SVM handlers
+    // receive the instruction under `instruction`, so remap the field here; the
+    // payload object itself is the `svmInstruction` built in HyperSyncSolanaSource.
+    let userHandler =
+      handler->(
+        Utils.magic: 'b => Envio.svmOnInstructionArgs<Internal.handlerContext> => promise<unit>
+      )
     HandlerRegister.setHandler(
       ~contractName=programName,
       ~eventName=instructionName,
-      handler->(
-        Utils.magic: 'b => Internal.genericHandler<
-          Internal.genericHandlerArgs<Internal.event, Internal.handlerContext>,
-        >
-      ),
+      (args: Internal.genericHandlerArgs<Internal.event, Internal.handlerContext>) =>
+        userHandler({
+          instruction: args.event->(Utils.magic: Internal.event => Envio.svmInstruction),
+          context: args.context,
+        }),
       ~eventOptions,
     )
   }

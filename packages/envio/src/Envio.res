@@ -39,25 +39,6 @@ type svmDecodedInstruction = {
   extraAccounts: array<string>,
 }
 
-type svmInstruction = {
-  programId: SvmTypes.Pubkey.t,
-  /** Raw instruction bytes as `0x`-prefixed hex. */
-  data: string,
-  accounts: array<SvmTypes.Pubkey.t>,
-  /** Path through the call tree: `[outerIndex]` for top-level instructions,
-   appended child indices for inner CPI calls. */
-  instructionAddress: array<int>,
-  isInner: bool,
-  /** Discriminator prefixes pre-extracted by HyperSync. Each is `Some` only
-   when the underlying instruction is at least that long. */
-  d1?: string,
-  d2?: string,
-  d4?: string,
-  d8?: string,
-  /** Borsh-decoded view. See [[svmDecodedInstruction]]. */
-  decoded?: svmDecodedInstruction,
-}
-
 type svmTokenBalance = {
   account?: SvmTypes.Pubkey.t,
   mint?: SvmTypes.Pubkey.t,
@@ -84,12 +65,10 @@ type svmLog = {
   message: string,
 }
 
-/** Inner block record on `svmInstructionEvent`. Field names follow EVM/Fuel
- (`height`, `time`, `hash`) so the shared `Ecosystem.t` getters in
- `Svm.res` work uniformly across ecosystems — `height` carries the slot. */
-type svmInstructionEventBlock = {
-  /** Slot number. Named `height` so the shared ecosystem getter reads it. */
-  height: int,
+/** Block context for a matched instruction. `time`/`hash` follow the
+ EVM/Fuel field names so the shared `Ecosystem.t` getters in `Svm.res` read
+ them uniformly. The slot lives on `svmInstruction.slot`. */
+type svmInstructionBlock = {
   /** Unix block time (seconds). `0` when HyperSync didn't return a block
    for this instruction's slot. */
   time: int,
@@ -98,28 +77,45 @@ type svmInstructionEventBlock = {
   hash: string,
 }
 
-/** The per-instruction payload handlers receive on `.event`. Mirrors the
- EVM `type event` shape inside generated per-event modules. */
-type svmInstructionEvent = {
-  contractName: string,
-  eventName: string,
-  instruction: svmInstruction,
-  /** Parent transaction. `None` when the per-instruction
+/** The per-instruction payload handlers receive as their `instruction`
+ argument. Carries the matched instruction's own fields plus the
+ program/instruction names, parent transaction, scoped logs, and block. */
+type svmInstruction = {
+  /** Program name as declared under `programs[].name` in `config.yaml`. */
+  programName: string,
+  /** Instruction name as declared under `instructions[].name` in
+   `config.yaml`. */
+  instructionName: string,
+  programId: SvmTypes.Pubkey.t,
+  /** Raw instruction bytes as `0x`-prefixed hex. */
+  data: string,
+  accounts: array<SvmTypes.Pubkey.t>,
+  /** Path through the call tree: `[outerIndex]` for top-level instructions,
+   appended child indices for inner CPI calls. */
+  instructionAddress: array<int>,
+  isInner: bool,
+  /** Discriminator prefixes pre-extracted by HyperSync. Each is `Some` only
+   when the underlying instruction is at least that long. */
+  d1?: string,
+  d2?: string,
+  d4?: string,
+  d8?: string,
+  /** Borsh-decoded view. See [[svmDecodedInstruction]]. */
+  decoded?: svmDecodedInstruction,
+  /** Parent transaction. Absent when the per-instruction
    `include_transaction` flag is `false`. */
-  transaction: option<svmTransaction>,
-  /** Program log entries scoped to this instruction. `None` when the
+  transaction?: svmTransaction,
+  /** Program log entries scoped to this instruction. Absent when the
    per-instruction `include_logs` flag is `false`. */
-  logs: option<array<svmLog>>,
-  /** Convenience alias for `block.height`. */
+  logs?: array<svmLog>,
+  /** Slot number (alias for `block.height`). */
   slot: int,
-  /** Convenience alias for `block.time`. */
-  blockTime: option<int>,
-  block: svmInstructionEventBlock,
+  block: svmInstructionBlock,
 }
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */
 type svmOnInstructionArgs<'context> = {
-  event: svmInstructionEvent,
+  instruction: svmInstruction,
   context: 'context,
 }
 
