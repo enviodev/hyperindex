@@ -397,7 +397,12 @@ module Indexer = {
       ~shouldUseTui=false,
       ~onError,
     )
-    let gsManager = globalState->GlobalStateManager.make
+    let gsManager =
+      globalState->GlobalStateManager.make(
+        ~reducers=GlobalState.makeReducers(
+          ~markBatchProcessed=MarkBatchProcessedAdapter.make(~inMemoryStore=ctx.inMemoryStore),
+        ),
+      )
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
     /*
         NOTE:

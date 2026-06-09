@@ -151,169 +151,6 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~inMemoryStore: InMemoryStor
   inMemoryStore->InMemoryStore.setChainMeta(chainsData)
 }
 
-/**
-Takes in a chain manager and sets all chains timestamp caught up to head
-when valid state lines up and returns an updated chain manager
-*/
-let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => {
-  let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
-
-  let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
-  //Update the timestampCaughtUpToHeadOrEndblock values
-  let allChainsReady = ref(true)
-  let chainFetchers = chainManager.chainFetchers->ChainMap.map(prev => {
-    let cf = prev
-    let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
-
-    let maybeChainAfterBatch =
-      batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
-        chain->ChainMap.Chain.toChainId,
-      )
-
-    let cf = switch maybeChainAfterBatch {
-    | Some(chainAfterBatch) => {
-        if cf.committedProgressBlockNumber !== chainAfterBatch.progressBlockNumber {
-          Prometheus.ProgressBlockNumber.set(
-            ~blockNumber=chainAfterBatch.progressBlockNumber,
-            ~chainId=chain->ChainMap.Chain.toChainId,
-          )
-        }
-        if cf.numEventsProcessed !== chainAfterBatch.totalEventsProcessed {
-          Prometheus.ProgressEventsCount.set(
-            ~processedCount=chainAfterBatch.totalEventsProcessed,
-            ~chainId=chain->ChainMap.Chain.toChainId,
-          )
-        }
-
-        // Calculate and set latency metrics
-        switch batch->Batch.findLastEventItem(~chainId=chain->ChainMap.Chain.toChainId) {
-        | Some(eventItem) => {
-            let blockTimestamp = eventItem.timestamp
-            let currentTimeMs = Date.now()->Float.toInt
-            let blockTimestampMs = blockTimestamp * 1000
-            let latencyMs = currentTimeMs - blockTimestampMs
-
-            Prometheus.ProgressLatency.set(~latencyMs, ~chainId=chain->ChainMap.Chain.toChainId)
-          }
-        | None => ()
-        }
-
-        {
-          ...cf,
-          // Since we process per chain always in order,
-          // we need to calculate it once, by using the first item in a batch
-          fetchState: switch cf.fetchState.firstEventBlock {
-          | Some(_) => cf.fetchState
-          | None =>
-            switch batch->Batch.findFirstEventBlockNumber(
-              ~chainId=chain->ChainMap.Chain.toChainId,
-            ) {
-            | Some(_) as firstEventBlock => {...cf.fetchState, firstEventBlock}
-            | None => cf.fetchState
-            }
-          },
-          committedProgressBlockNumber: chainAfterBatch.progressBlockNumber,
-          numEventsProcessed: chainAfterBatch.totalEventsProcessed,
-          isProgressAtHead: cf.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated,
-          safeCheckpointTracking: switch cf.safeCheckpointTracking {
-          | Some(safeCheckpointTracking) =>
-            Some(
-              safeCheckpointTracking->SafeCheckpointTracking.updateOnNewBatch(
-                ~sourceBlockNumber=cf.fetchState.knownHeight,
-                ~chainId=chain->ChainMap.Chain.toChainId,
-                ~batchCheckpointIds=batch.checkpointIds,
-                ~batchCheckpointBlockNumbers=batch.checkpointBlockNumbers,
-                ~batchCheckpointChainIds=batch.checkpointChainIds,
-              ),
-            )
-          | None => None
-          },
-        }
-      }
-    | None => cf
-    }
-
-    /* strategy for TUI synced status:
-     * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
-     *
-     * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
-     *
-     * New conditions for valid synced:
-     *
-     * CASE 1 (chains are being synchronised at the head)
-     *
-     * All chain fetchers are fetching at the head AND
-     * No events that can be processed on the queue (even if events still exist on the individual queues)
-     * CASE 2 (chain finishes earlier than any other chain)
-     *
-     * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
-     *
-     * The given chain fetcher is fetching at the head or latest processed block >= endblock
-     * The given chain has processed all events on the queue
-     * see https://github.com/Float-Capital/indexer/pull/1388 */
-    let cf = if cf->ChainFetcher.hasProcessedToEndblock {
-      // in the case this is already set, don't reset and instead propagate the existing value
-      let timestampCaughtUpToHeadOrEndblock =
-        cf->ChainFetcher.isReady ? cf.timestampCaughtUpToHeadOrEndblock : Date.make()->Some
-      {
-        ...cf,
-        timestampCaughtUpToHeadOrEndblock,
-      }
-    } else if !(cf->ChainFetcher.isReady) && cf.isProgressAtHead {
-      //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
-      //its not already set
-      //CASE1
-      //All chains are caught up to head chainManager queue returns None
-      //Meaning we are busy synchronizing chains at the head
-      if nextQueueItemIsNone && allChainsAtHead {
-        {
-          ...cf,
-          timestampCaughtUpToHeadOrEndblock: Date.make()->Some,
-        }
-      } else {
-        //CASE2 -> Only calculate if case1 fails
-        //All events have been processed on the chain fetchers queue
-        //Other chains may be busy syncing
-        let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess
-
-        if hasNoMoreEventsToProcess {
-          {
-            ...cf,
-            timestampCaughtUpToHeadOrEndblock: Date.make()->Some,
-          }
-        } else {
-          //Default to just returning cf
-          cf
-        }
-      }
-    } else {
-      //Default to just returning cf
-      cf
-    }
-
-    // Set envio_progress_ready per-chain when it first becomes ready
-    if cf->ChainFetcher.isReady {
-      if !(prev->ChainFetcher.isReady) {
-        Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
-      }
-    } else {
-      allChainsReady := false
-    }
-
-    cf
-  })
-
-  if allChainsReady.contents {
-    Prometheus.ProgressReady.setAllReady()
-  }
-
-  {
-    ...chainManager,
-    chainFetchers,
-    isRealtime: chainManager.isRealtime || allChainsReady.contents,
-  }
-}
-
 let validatePartitionQueryResponse = (
   state,
   {chain, response} as partitionQueryResponse: partitionQueryResponse,
@@ -582,211 +419,212 @@ let onEnterReorgThreshold = (~state: t) => {
   }
 }
 
-let actionReducer = (state: t, action: action) => {
-  switch action {
-  | FinishWaitingForNewBlock({chain, knownHeight}) => {
-      let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.update(
-        chain,
-        chainFetcher => {
-          let updatedFetchState =
-            chainFetcher.fetchState->FetchState.updateKnownHeight(~knownHeight)
-          if updatedFetchState !== chainFetcher.fetchState {
-            {
-              ...chainFetcher,
-              fetchState: updatedFetchState,
+let injectedActionReducer = (~markBatchProcessed: Ports.MarkBatchProcessed.t) =>
+  (state: t, action: action) => {
+    switch action {
+    | FinishWaitingForNewBlock({chain, knownHeight}) => {
+        let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.update(
+          chain,
+          chainFetcher => {
+            let updatedFetchState =
+              chainFetcher.fetchState->FetchState.updateKnownHeight(~knownHeight)
+            if updatedFetchState !== chainFetcher.fetchState {
+              {
+                ...chainFetcher,
+                fetchState: updatedFetchState,
+              }
+            } else {
+              chainFetcher
             }
-          } else {
-            chainFetcher
-          }
-        },
-      )
+          },
+        )
 
-      let isBelowReorgThreshold =
-        !state.chainManager.isInReorgThreshold && state.ctx.config.shouldRollbackOnReorg
-      let shouldEnterReorgThreshold =
-        isBelowReorgThreshold &&
-        updatedChainFetchers
-        ->ChainMap.values
-        ->Array.every(chainFetcher => {
-          chainFetcher.fetchState->FetchState.isReadyToEnterReorgThreshold
-        })
+        let isBelowReorgThreshold =
+          !state.chainManager.isInReorgThreshold && state.ctx.config.shouldRollbackOnReorg
+        let shouldEnterReorgThreshold =
+          isBelowReorgThreshold &&
+          updatedChainFetchers
+          ->ChainMap.values
+          ->Array.every(chainFetcher => {
+            chainFetcher.fetchState->FetchState.isReadyToEnterReorgThreshold
+          })
+
+        let state = {
+          ...state,
+          chainManager: {
+            ...state.chainManager,
+            chainFetchers: updatedChainFetchers,
+          },
+        }
+
+        // Attempt ProcessEventBatch in case if we have block handlers to run
+        if shouldEnterReorgThreshold {
+          (onEnterReorgThreshold(~state), [NextQuery(CheckAllChains), ProcessEventBatch])
+        } else {
+          (state, [NextQuery(Chain(chain)), ProcessEventBatch])
+        }
+      }
+    | ValidatePartitionQueryResponse(partitionQueryResponse) =>
+      state->validatePartitionQueryResponse(partitionQueryResponse)
+    | SubmitPartitionQueryResponse({
+        newItems,
+        newItemsWithDcs,
+        knownHeight,
+        latestFetchedBlock,
+        query,
+        chain,
+      }) =>
+      state->submitPartitionQueryResponse(
+        ~newItems,
+        ~newItemsWithDcs,
+        ~knownHeight,
+        ~latestFetchedBlock,
+        ~query,
+        ~chain,
+      )
+    | EventBatchProcessed({batch}) =>
+      let maybePruneEntityHistory =
+        state.ctx.config->Config.shouldPruneHistory(
+          ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
+        )
+          ? [PruneStaleEntityHistory]
+          : []
+
+      markBatchProcessed()
 
       let state = {
         ...state,
-        chainManager: {
-          ...state.chainManager,
-          chainFetchers: updatedChainFetchers,
-        },
+        // Can safely reset rollback state, since overwrite is not possible.
+        // If rollback is pending, the EventBatchProcessed will be handled by the invalid action reducer instead.
+        rollbackState: NoRollback,
+        chainManager: state.chainManager->ChainManager.updateProgressedChains(~batch),
       }
 
-      // Attempt ProcessEventBatch in case if we have block handlers to run
-      if shouldEnterReorgThreshold {
-        (onEnterReorgThreshold(~state), [NextQuery(CheckAllChains), ProcessEventBatch])
-      } else {
-        (state, [NextQuery(Chain(chain)), ProcessEventBatch])
-      }
-    }
-  | ValidatePartitionQueryResponse(partitionQueryResponse) =>
-    state->validatePartitionQueryResponse(partitionQueryResponse)
-  | SubmitPartitionQueryResponse({
-      newItems,
-      newItemsWithDcs,
-      knownHeight,
-      latestFetchedBlock,
-      query,
-      chain,
-    }) =>
-    state->submitPartitionQueryResponse(
-      ~newItems,
-      ~newItemsWithDcs,
-      ~knownHeight,
-      ~latestFetchedBlock,
-      ~query,
-      ~chain,
-    )
-  | EventBatchProcessed({batch}) =>
-    let maybePruneEntityHistory =
-      state.ctx.config->Config.shouldPruneHistory(
-        ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
+      let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
+        state.chainManager.chainFetchers,
       )
-        ? [PruneStaleEntityHistory]
-        : []
+        ? {
+            Logging.info("All chains are caught up to end blocks.")
 
-    let inMemoryStore = state.ctx.inMemoryStore
-    inMemoryStore.isProcessing = false
-    inMemoryStore.processedBatchesCount = inMemoryStore.processedBatchesCount + 1
-
-    let state = {
-      ...state,
-      // Can safely reset rollback state, since overwrite is not possible.
-      // If rollback is pending, the EventBatchProcessed will be handled by the invalid action reducer instead.
-      rollbackState: NoRollback,
-      chainManager: state.chainManager->updateProgressedChains(~batch),
-    }
-
-    let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
-      state.chainManager.chainFetchers,
-    )
-      ? {
-          Logging.info("All chains are caught up to end blocks.")
-
-          // Keep the indexer process running when in development mode (for Dev Console)
-          // or when TUI is enabled (for display)
-          if state.keepProcessAlive {
-            NoExit
-          } else {
-            ExitWithSuccess
+            // Keep the indexer process running when in development mode (for Dev Console)
+            // or when TUI is enabled (for display)
+            if state.keepProcessAlive {
+              NoExit
+            } else {
+              ExitWithSuccess
+            }
           }
-        }
-      : if (
-          // In auto-exit mode, error if all chains reached head with no events found
-          state.exitAfterFirstEventBlock &&
-          state.chainManager.chainFetchers
-          ->ChainMap.values
-          ->Array.every(cf => cf.isProgressAtHead && cf.fetchState.endBlock->Option.isNone)
-        ) {
-          ExitWithError(
-            "No events found between startBlock and chain head. Cannot auto-detect endBlock.",
-          )
-        } else {
-          NoExit
-        }
+        : if (
+            // In auto-exit mode, error if all chains reached head with no events found
+            state.exitAfterFirstEventBlock &&
+            state.chainManager.chainFetchers
+            ->ChainMap.values
+            ->Array.every(cf => cf.isProgressAtHead && cf.fetchState.endBlock->Option.isNone)
+          ) {
+            ExitWithError(
+              "No events found between startBlock and chain head. Cannot auto-detect endBlock.",
+            )
+          } else {
+            NoExit
+          }
 
-    // On exit, stop dispatching ProcessEventBatch: the flush is async and would
-    // otherwise keep processing further batches while it runs.
-    let tasks = switch shouldExit {
-    | ExitWithSuccess
-    | ExitWithError(_) => [UpdateChainMetaDataAndCheckForExit(shouldExit)]
-    | NoExit =>
-      [UpdateChainMetaDataAndCheckForExit(shouldExit), ProcessEventBatch]->Array.concat(
-        maybePruneEntityHistory,
+      // On exit, stop dispatching ProcessEventBatch: the flush is async and would
+      // otherwise keep processing further batches while it runs.
+      let tasks = switch shouldExit {
+      | ExitWithSuccess
+      | ExitWithError(_) => [UpdateChainMetaDataAndCheckForExit(shouldExit)]
+      | NoExit =>
+        [UpdateChainMetaDataAndCheckForExit(shouldExit), ProcessEventBatch]->Array.concat(
+          maybePruneEntityHistory,
+        )
+      }
+      (state, tasks)
+
+    | StartFindingReorgDepth => ({...state, rollbackState: FindingReorgDepth}, [])
+    | FindReorgDepth({chain, rollbackTargetBlockNumber}) => (
+        {
+          ...state,
+          rollbackState: FoundReorgDepth({
+            chain,
+            rollbackTargetBlockNumber,
+          }),
+        },
+        [Rollback],
       )
-    }
-    (state, tasks)
+    | EnterReorgThreshold => (onEnterReorgThreshold(~state), [NextQuery(CheckAllChains)])
+    | UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}) =>
+      let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
+        let fs = switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+          chain->ChainMap.Chain.toChainId,
+        ) {
+        | Some(chainAfterBatch) => chainAfterBatch.fetchState
+        | None => cf.fetchState
+        }
+        {
+          ...cf,
+          fetchState: shouldEnterReorgThreshold
+            ? fs->FetchState.updateInternal(~blockLag=cf.chainConfig.blockLag)
+            : fs,
+        }
+      })
 
-  | StartFindingReorgDepth => ({...state, rollbackState: FindingReorgDepth}, [])
-  | FindReorgDepth({chain, rollbackTargetBlockNumber}) => (
-      {
-        ...state,
-        rollbackState: FoundReorgDepth({
-          chain,
-          rollbackTargetBlockNumber,
-        }),
-      },
-      [Rollback],
-    )
-  | EnterReorgThreshold => (onEnterReorgThreshold(~state), [NextQuery(CheckAllChains)])
-  | UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}) =>
-    let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
-      let fs = switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
-        chain->ChainMap.Chain.toChainId,
-      ) {
-      | Some(chainAfterBatch) => chainAfterBatch.fetchState
-      | None => cf.fetchState
+      let chainManager = {
+        ...state.chainManager,
+        chainFetchers,
       }
-      {
-        ...cf,
-        fetchState: shouldEnterReorgThreshold
-          ? fs->FetchState.updateInternal(~blockLag=cf.chainConfig.blockLag)
-          : fs,
+
+      (
+        {
+          ...state,
+          chainManager,
+        },
+        [NextQuery(CheckAllChains)],
+      )
+    | SetRollbackState({rollbackedChainManager, eventsProcessedDiffByChain}) => (
+        {
+          ...state,
+          rollbackState: RollbackReady({
+            eventsProcessedDiffByChain: eventsProcessedDiffByChain,
+          }),
+          chainManager: rollbackedChainManager,
+        },
+        [NextQuery(CheckAllChains), ProcessEventBatch],
+      )
+    | SuccessExit => {
+        Logging.info("Exiting with success")
+        NodeJs.process->NodeJs.exitWithCode(Success)
+        (state, [])
       }
-    })
-
-    let chainManager = {
-      ...state.chainManager,
-      chainFetchers,
-    }
-
-    (
-      {
-        ...state,
-        chainManager,
-      },
-      [NextQuery(CheckAllChains)],
-    )
-  | SetRollbackState({rollbackedChainManager, eventsProcessedDiffByChain}) => (
-      {
-        ...state,
-        rollbackState: RollbackReady({
-          eventsProcessedDiffByChain: eventsProcessedDiffByChain,
-        }),
-        chainManager: rollbackedChainManager,
-      },
-      [NextQuery(CheckAllChains), ProcessEventBatch],
-    )
-  | SuccessExit => {
-      Logging.info("Exiting with success")
-      NodeJs.process->NodeJs.exitWithCode(Success)
+    | ErrorExit(errHandler) =>
+      state.onError(errHandler)
       (state, [])
     }
-  | ErrorExit(errHandler) =>
-    state.onError(errHandler)
-    (state, [])
   }
-}
 
-let invalidatedActionReducer = (state: t, action: action) =>
-  switch action {
-  | EventBatchProcessed({batch}) if state->isPreparingRollback =>
-    Logging.info("Finished processing batch before rollback, actioning rollback")
-    let inMemoryStore = state.ctx.inMemoryStore
-    inMemoryStore.isProcessing = false
-    inMemoryStore.processedBatchesCount = inMemoryStore.processedBatchesCount + 1
-    (
-      {
-        ...state,
-        chainManager: state.chainManager->updateProgressedChains(~batch),
-      },
-      [Rollback],
-    )
-  | ErrorExit(_) => actionReducer(state, action)
-  | _ =>
-    Logging.trace({
-      "msg": "Invalidated action discarded",
-      "action": action->S.convertOrThrow(Utils.Schema.variantTag),
-    })
-    (state, [])
-  }
+let injectedInvalidatedActionReducer = (
+  ~markBatchProcessed: Ports.MarkBatchProcessed.t,
+  ~actionReducer: (t, action) => (t, array<task>),
+) =>
+  (state: t, action: action) =>
+    switch action {
+    | EventBatchProcessed({batch}) if state->isPreparingRollback =>
+      Logging.info("Finished processing batch before rollback, actioning rollback")
+      markBatchProcessed()
+      (
+        {
+          ...state,
+          chainManager: state.chainManager->ChainManager.updateProgressedChains(~batch),
+        },
+        [Rollback],
+      )
+    | ErrorExit(_) => actionReducer(state, action)
+    | _ =>
+      Logging.trace({
+        "msg": "Invalidated action discarded",
+        "action": action->S.convertOrThrow(Utils.Schema.variantTag),
+      })
+      (state, [])
+    }
 
 let checkAndFetchForChain = (
   //Used for dependency injection for tests
@@ -1189,9 +1027,23 @@ let injectedTaskReducer = (
     }
   }
 
-let taskReducer = injectedTaskReducer(
+type reducers = {
+  actionReducer: (t, action) => (t, array<task>),
+  invalidatedActionReducer: (t, action) => (t, array<task>),
+  taskReducer: (t, task, ~dispatchAction: action => unit) => promise<unit>,
+}
+
+let makeReducers = (
   ~waitForNewBlock=SourceManager.waitForNewBlock,
   ~executeQuery=SourceManager.executeQuery,
   ~getLastKnownValidBlock=(chainFetcher, ~reorgBlockNumber, ~isRealtime) =>
     chainFetcher->ChainFetcher.getLastKnownValidBlock(~reorgBlockNumber, ~isRealtime),
-)
+  ~markBatchProcessed: Ports.MarkBatchProcessed.t,
+) => {
+  let actionReducer = injectedActionReducer(~markBatchProcessed)
+  {
+    actionReducer,
+    invalidatedActionReducer: injectedInvalidatedActionReducer(~markBatchProcessed, ~actionReducer),
+    taskReducer: injectedTaskReducer(~waitForNewBlock, ~executeQuery, ~getLastKnownValidBlock),
+  }
+}

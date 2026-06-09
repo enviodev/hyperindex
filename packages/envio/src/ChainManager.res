@@ -193,3 +193,166 @@ let getSafeCheckpointId = (chainManager: t) => {
   | _ => None // No safe checkpoint found
   }
 }
+
+/**
+Takes in a chain manager and sets all chains timestamp caught up to head
+when valid state lines up and returns an updated chain manager
+*/
+let updateProgressedChains = (chainManager: t, ~batch: Batch.t) => {
+  let nextQueueItemIsNone = chainManager->nextItemIsNone
+
+  let allChainsAtHead = chainManager->isProgressAtHead
+  //Update the timestampCaughtUpToHeadOrEndblock values
+  let allChainsReady = ref(true)
+  let chainFetchers = chainManager.chainFetchers->ChainMap.map(prev => {
+    let cf = prev
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
+
+    let maybeChainAfterBatch =
+      batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+        chain->ChainMap.Chain.toChainId,
+      )
+
+    let cf = switch maybeChainAfterBatch {
+    | Some(chainAfterBatch) => {
+        if cf.committedProgressBlockNumber !== chainAfterBatch.progressBlockNumber {
+          Prometheus.ProgressBlockNumber.set(
+            ~blockNumber=chainAfterBatch.progressBlockNumber,
+            ~chainId=chain->ChainMap.Chain.toChainId,
+          )
+        }
+        if cf.numEventsProcessed !== chainAfterBatch.totalEventsProcessed {
+          Prometheus.ProgressEventsCount.set(
+            ~processedCount=chainAfterBatch.totalEventsProcessed,
+            ~chainId=chain->ChainMap.Chain.toChainId,
+          )
+        }
+
+        // Calculate and set latency metrics
+        switch batch->Batch.findLastEventItem(~chainId=chain->ChainMap.Chain.toChainId) {
+        | Some(eventItem) => {
+            let blockTimestamp = eventItem.timestamp
+            let currentTimeMs = Date.now()->Float.toInt
+            let blockTimestampMs = blockTimestamp * 1000
+            let latencyMs = currentTimeMs - blockTimestampMs
+
+            Prometheus.ProgressLatency.set(~latencyMs, ~chainId=chain->ChainMap.Chain.toChainId)
+          }
+        | None => ()
+        }
+
+        {
+          ...cf,
+          // Since we process per chain always in order,
+          // we need to calculate it once, by using the first item in a batch
+          fetchState: switch cf.fetchState.firstEventBlock {
+          | Some(_) => cf.fetchState
+          | None =>
+            switch batch->Batch.findFirstEventBlockNumber(
+              ~chainId=chain->ChainMap.Chain.toChainId,
+            ) {
+            | Some(_) as firstEventBlock => {...cf.fetchState, firstEventBlock}
+            | None => cf.fetchState
+            }
+          },
+          committedProgressBlockNumber: chainAfterBatch.progressBlockNumber,
+          numEventsProcessed: chainAfterBatch.totalEventsProcessed,
+          isProgressAtHead: cf.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated,
+          safeCheckpointTracking: switch cf.safeCheckpointTracking {
+          | Some(safeCheckpointTracking) =>
+            Some(
+              safeCheckpointTracking->SafeCheckpointTracking.updateOnNewBatch(
+                ~sourceBlockNumber=cf.fetchState.knownHeight,
+                ~chainId=chain->ChainMap.Chain.toChainId,
+                ~batchCheckpointIds=batch.checkpointIds,
+                ~batchCheckpointBlockNumbers=batch.checkpointBlockNumbers,
+                ~batchCheckpointChainIds=batch.checkpointChainIds,
+              ),
+            )
+          | None => None
+          },
+        }
+      }
+    | None => cf
+    }
+
+    /* strategy for TUI synced status:
+     * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
+     *
+     * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
+     *
+     * New conditions for valid synced:
+     *
+     * CASE 1 (chains are being synchronised at the head)
+     *
+     * All chain fetchers are fetching at the head AND
+     * No events that can be processed on the queue (even if events still exist on the individual queues)
+     * CASE 2 (chain finishes earlier than any other chain)
+     *
+     * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
+     *
+     * The given chain fetcher is fetching at the head or latest processed block >= endblock
+     * The given chain has processed all events on the queue
+     * see https://github.com/Float-Capital/indexer/pull/1388 */
+    let cf = if cf->ChainFetcher.hasProcessedToEndblock {
+      // in the case this is already set, don't reset and instead propagate the existing value
+      let timestampCaughtUpToHeadOrEndblock =
+        cf->ChainFetcher.isReady ? cf.timestampCaughtUpToHeadOrEndblock : Date.make()->Some
+      {
+        ...cf,
+        timestampCaughtUpToHeadOrEndblock,
+      }
+    } else if !(cf->ChainFetcher.isReady) && cf.isProgressAtHead {
+      //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
+      //its not already set
+      //CASE1
+      //All chains are caught up to head chainManager queue returns None
+      //Meaning we are busy synchronizing chains at the head
+      if nextQueueItemIsNone && allChainsAtHead {
+        {
+          ...cf,
+          timestampCaughtUpToHeadOrEndblock: Date.make()->Some,
+        }
+      } else {
+        //CASE2 -> Only calculate if case1 fails
+        //All events have been processed on the chain fetchers queue
+        //Other chains may be busy syncing
+        let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess
+
+        if hasNoMoreEventsToProcess {
+          {
+            ...cf,
+            timestampCaughtUpToHeadOrEndblock: Date.make()->Some,
+          }
+        } else {
+          //Default to just returning cf
+          cf
+        }
+      }
+    } else {
+      //Default to just returning cf
+      cf
+    }
+
+    // Set envio_progress_ready per-chain when it first becomes ready
+    if cf->ChainFetcher.isReady {
+      if !(prev->ChainFetcher.isReady) {
+        Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
+      }
+    } else {
+      allChainsReady := false
+    }
+
+    cf
+  })
+
+  if allChainsReady.contents {
+    Prometheus.ProgressReady.setAllReady()
+  }
+
+  {
+    ...chainManager,
+    chainFetchers,
+    isRealtime: chainManager.isRealtime || allChainsReady.contents,
+  }
+}
