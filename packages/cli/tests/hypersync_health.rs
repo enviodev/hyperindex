@@ -8,7 +8,10 @@ use envio::scripts::print_missing_networks::Diff;
 use strum::IntoEnumIterator;
 
 async fn fetch_hypersync_health(hypersync_endpoint: &str) -> anyhow::Result<bool> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
     let url = format!("{hypersync_endpoint}/height");
     let response = client.get(&url).send().await?;
     Ok(response.status().is_success())
