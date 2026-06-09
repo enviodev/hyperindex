@@ -892,6 +892,7 @@ module Source = {
                           timestamp: item.blockNumber,
                           chain,
                           blockNumber: item.blockNumber,
+                          blockHash: "",
                           logIndex: item.logIndex,
                           event: {
                             contractName: "MockContract",

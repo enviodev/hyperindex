@@ -173,6 +173,7 @@ module Make = () => {
         chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
         timestamp: blockTimestamp,
         blockNumber,
+        blockHash,
         logIndex,
       })
       {item: log, srcAddress, transactionHash}

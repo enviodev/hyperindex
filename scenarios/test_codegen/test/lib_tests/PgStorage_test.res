@@ -1029,6 +1029,7 @@ describe("PgStorage.makeRawEvent", () => {
           timestamp: 1234,
           chain: ChainMap.Chain.makeUnsafe(~chainId=137),
           blockNumber,
+          blockHash: "0xblockhash",
           logIndex,
           event,
         })->Internal.castUnsafeEventItem

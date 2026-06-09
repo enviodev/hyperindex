@@ -395,6 +395,7 @@ let make = ({chain, endpointUrl}: options): t => {
         timestamp: block.time,
         chain,
         blockNumber: block.height,
+        blockHash: block.id,
         logIndex: receiptIndex,
         event: {
           contractName: eventConfig.contractName,

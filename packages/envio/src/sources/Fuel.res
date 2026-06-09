@@ -1,7 +1,3 @@
-@get external getNumber: Internal.eventBlock => int = "height"
-@get external getTimestamp: Internal.eventBlock => int = "time"
-@get external getId: Internal.eventBlock => string = "id"
-
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.id
     delete fields.height
@@ -13,11 +9,6 @@ let ecosystem: Ecosystem.t = {
   blockFields: ["id", "height", "time"],
   transactionFields: ["id"],
   blockNumberName: "height",
-  blockTimestampName: "time",
-  blockHashName: "id",
-  getNumber,
-  getTimestamp,
-  getId,
   cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onBlock",
   // Fuel filter shape: `{block: {height: {_gte?, _lte?, _every?}}}`.

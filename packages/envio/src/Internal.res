@@ -476,6 +476,7 @@ type eventItem = private {
   blockNumber: int,
   logIndex: int,
   event: event,
+  blockHash: string,
 }
 
 // Opaque type to support both EVM and other ecosystems
@@ -509,6 +510,7 @@ type item =
       blockNumber: int,
       logIndex: int,
       event: event,
+      blockHash: string,
     })
   | @as(1) Block({onBlockConfig: onBlockConfig, blockNumber: int, logIndex: int})
 

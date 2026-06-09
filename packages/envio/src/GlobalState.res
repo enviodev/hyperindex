@@ -155,7 +155,7 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~inMemoryStore: InMemoryStor
 Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
-let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ctx: Ctx.t) => {
+let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => {
   let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
 
   let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
@@ -188,7 +188,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
         // Calculate and set latency metrics
         switch batch->Batch.findLastEventItem(~chainId=chain->ChainMap.Chain.toChainId) {
         | Some(eventItem) => {
-            let blockTimestamp = eventItem.event.block->ctx.config.ecosystem.getTimestamp
+            let blockTimestamp = eventItem.timestamp
             let currentTimeMs = Date.now()->Float.toInt
             let blockTimestampMs = blockTimestamp * 1000
             let latencyMs = currentTimeMs - blockTimestampMs
@@ -661,7 +661,7 @@ let actionReducer = (state: t, action: action) => {
       // Can safely reset rollback state, since overwrite is not possible.
       // If rollback is pending, the EventBatchProcessed will be handled by the invalid action reducer instead.
       rollbackState: NoRollback,
-      chainManager: state.chainManager->updateProgressedChains(~batch, ~ctx=state.ctx),
+      chainManager: state.chainManager->updateProgressedChains(~batch),
     }
 
     let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
@@ -775,7 +775,7 @@ let invalidatedActionReducer = (state: t, action: action) =>
     (
       {
         ...state,
-        chainManager: state.chainManager->updateProgressedChains(~batch, ~ctx=state.ctx),
+        chainManager: state.chainManager->updateProgressedChains(~batch),
       },
       [Rollback],
     )

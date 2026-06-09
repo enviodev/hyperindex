@@ -286,6 +286,7 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
           timestamp,
           chain,
           blockNumber,
+          blockHash: "",
           logIndex,
           event: {
             contractName: eventConfig.contractName,

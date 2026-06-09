@@ -1160,6 +1160,7 @@ let make = (
                   eventConfig: (eventConfig :> Internal.eventConfig),
                   timestamp: block->Evm.getTimestamp,
                   blockNumber: block->Evm.getNumber,
+                  blockHash: block->Evm.getId,
                   chain,
                   logIndex: log.logIndex,
                   event: {

@@ -75,11 +75,6 @@ let ecosystem: Ecosystem.t = {
     "authorizationList",
   ],
   blockNumberName: "number",
-  blockTimestampName: "timestamp",
-  blockHashName: "hash",
-  getNumber,
-  getTimestamp,
-  getId,
   cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onBlock",
   // EVM filter shape: `{block: {number: {_gte?, _lte?, _every?}}}`.
