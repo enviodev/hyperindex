@@ -7,6 +7,7 @@ By submitting a Pull Request or making any contribution to this project, you aut
 - [Installation](#installation)
 - [Project Structure Overview](#project-structure-overview)
 - [Indexer Runtime Architecture](#indexer-runtime-architecture)
+- [Architecture Goal: Ports & Adapters (WIP)](#architecture-goal-ports--adapters-wip)
 - [Update CLI Generated Docs](#update-cli-generated-docs)
 - [Create templates](#create-templates)
 - [Configure the files according to your project](#configure-the-files-according-to-your-project)
@@ -179,6 +180,55 @@ Need to expose a `startBlock` setting for every contract address in `config.yaml
 10. Inside `FetchState.res` in `make` function create the initial block-partitions from the `startBlock` of each contract.
 11. Compile changes in `packages/envio` by running `pnpm rescript` or `pnpm rescript -w` if you want to see changes live.
 12. Test changes in `scenarios/test_codegen` by running `pnpm codegen` and `pnpm test`.
+
+## Architecture Goal: Ports & Adapters (WIP)
+
+> This is a direction we are actively moving toward, not the current state of
+> the whole codebase. New work should lean this way; existing code is migrated
+> incrementally. Expect both styles to coexist for a while.
+
+We already apply ports & adapters at the external boundaries — `Persistence.storage`
+and `Sink.t` are records of functions with swappable Postgres / ClickHouse
+implementations. The goal is to extend the same inversion to the **internal**
+indexer implementation, starting with `GlobalState.res` and its reducers, so the
+domain logic stops reaching into infrastructure (notably the mutable
+`InMemoryStore`) directly.
+
+Conventions for the target shape:
+
+- **Ports are domain verbs, not infrastructure objects.** A port is a single
+  function expressed in domain language (`CommitBatch`, `WriteChainMetadata`,
+  `Rollback`), with no knowledge of how storage is implemented. We do not model
+  a generic `Store` object with `get` / `set` / `flush`.
+- **Port types live in `Ports.res`.** Each port is a module exposing its own
+  `input`, `output`, and `t = input => output` types. These are concrete domain
+  types (alias `Internal` / `Batch` / `Persistence` types where they already
+  exist). `Ports.res` depends only on leaf domain modules so it never forms a
+  cycle.
+- **Adapters live under `adapters/`** and hold the storage knowledge. An adapter
+  is a `make` factory that takes the ports/infra it depends on as labeled
+  arguments and returns a `Ports.X.t`:
+
+  ```rescript
+  // adapters/CommitBatchAdapter.res
+  let make = (~inMemoryStore: InMemoryStore.t): Ports.CommitBatch.t =>
+    input => /* storage orchestration here */
+  ```
+
+- **Dependencies are injected through `make` constructors wired once at a
+  reusable root** — never reached via a global or a `Ctx.ports` bundle, and never
+  via a shared ports record. The wiring lives in one factory so `Main`, the test
+  indexer, and reducer unit tests can all build the graph with real or fake
+  adapters. `GlobalState.injectedTaskReducer` is the existing precedent: it
+  already takes its source-side verbs (`waitForNewBlock`, `executeQuery`) as
+  labeled args.
+- **Sync stays sync.** If an adapter has no asynchronous work, its port returns a
+  plain value, not a `promise`. Don't make a verb async just to fit a uniform
+  signature.
+
+A goal of this migration is to make the indexer's main logic readable on its own
+— the fetch/process/rollback flow expressed in domain verbs — without a hard
+dependency on the storage implementation behind it.
 
 ## Update CLI Generated Docs
 
