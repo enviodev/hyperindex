@@ -38,7 +38,7 @@ mod test {
 /// Run with: cargo test --features integration_tests
 #[cfg(test)]
 #[cfg(feature = "integration_tests")]
-mod integration_tests {
+mod hypersync_health {
     use super::{network_to_hypersync_url, HypersyncChain};
     use crate::scripts::print_missing_networks::Diff;
     use strum::IntoEnumIterator;

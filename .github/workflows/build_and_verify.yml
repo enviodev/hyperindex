@@ -156,7 +156,7 @@ jobs:
       - uses: ./.github/actions/cargo-cache
 
       - name: Hypersync Health Test
-        run: cargo test --features integration_tests config_parsing::hypersync_endpoints::integration_tests
+        run: cargo test --features integration_tests config_parsing::hypersync_endpoints::hypersync_health
 
   # Template tests - verify envio templates can be initialized and built
   template-tests:
