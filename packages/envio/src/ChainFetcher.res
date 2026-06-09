@@ -230,26 +230,32 @@ let make = (
     )
   | Config.FuelSourceConfig({hypersync}) => [HyperFuelSource.make({chain, endpointUrl: hypersync})]
   | Config.SvmSourceConfig({hypersync, rpc}) =>
-    switch hypersync {
-    | None => [Svm.makeRPCSource(~chain, ~rpc)]
-    | Some(hypersyncUrl) =>
-      // HyperSync drives instruction sync; RPC remains the height oracle
-      // (Svm.makeRPCSource's `getFinalizedSlot` route) and the fallback.
+    switch (hypersync, rpc) {
+    | (None, None) =>
+      JsError.throwWithMessage(
+        `Chain ${chain->ChainMap.Chain.toChainId->Int.toString} has no SVM data source`,
+      )
+    | (None, Some(rpc)) => [Svm.makeRPCSource(~chain, ~rpc)]
+    | (Some(hypersyncUrl), maybeRpc) =>
+      // HyperSync drives instruction sync; when an RPC is also configured it
+      // remains the height oracle (Svm.makeRPCSource's `getFinalizedSlot`
+      // route) and the fallback.
       let svmEventConfigs =
         chainConfig.contracts
         ->Array.flatMap(contract => contract.events)
         ->(Utils.magic: array<Internal.eventConfig> => array<Internal.svmInstructionEventConfig>)
       let apiToken = Env.envioApiToken
-      [
-        HyperSyncSolanaSource.make({
-          chain,
-          endpointUrl: hypersyncUrl,
-          apiToken,
-          eventConfigs: svmEventConfigs,
-          clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
-        }),
-        Svm.makeRPCSource(~chain, ~rpc, ~sourceFor=Fallback),
-      ]
+      let hyperSyncSource = HyperSyncSolanaSource.make({
+        chain,
+        endpointUrl: hypersyncUrl,
+        apiToken,
+        eventConfigs: svmEventConfigs,
+        clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
+      })
+      switch maybeRpc {
+      | Some(rpc) => [hyperSyncSource, Svm.makeRPCSource(~chain, ~rpc, ~sourceFor=Fallback)]
+      | None => [hyperSyncSource]
+      }
     }
   // For tests: use ready-to-use sources directly
   | Config.CustomSources(sources) => sources

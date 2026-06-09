@@ -141,18 +141,10 @@
           ]
         },
         "rpc": {
-          "description": "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data.",
-          "type": "string"
-        },
-        "hypersync_config": {
-          "description": "Optional HyperSync Config for fetching historical instructions.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/HypersyncConfig"
-            },
-            {
-              "type": "null"
-            }
+          "description": "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data. Required unless `experimental` is set, in which case it is ignored in favour of the experimental HyperSync source.",
+          "type": [
+            "string",
+            "null"
           ]
         },
         "start_block": {
@@ -179,12 +171,33 @@
           "format": "uint32",
           "minimum": 0
         },
-        "programs_experimental": {
-          "description": "Solana programs to index on this chain. Experimental: this config shape may change in future releases.",
-          "type": [
-            "array",
-            "null"
-          ],
+        "experimental": {
+          "description": "Experimental HyperSync-backed instruction indexing. This config shape may change in future releases. When set, `rpc` is ignored.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Experimental"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start_block"
+      ]
+    },
+    "Experimental": {
+      "type": "object",
+      "properties": {
+        "hypersync_config": {
+          "description": "HyperSync Config for fetching historical instructions on this chain.",
+          "$ref": "#/$defs/HypersyncConfig"
+        },
+        "programs": {
+          "description": "Solana programs to index on this chain.",
+          "type": "array",
           "items": {
             "$ref": "#/$defs/Program"
           }
@@ -192,8 +205,8 @@
       },
       "additionalProperties": false,
       "required": [
-        "rpc",
-        "start_block"
+        "hypersync_config",
+        "programs"
       ]
     },
     "HypersyncConfig": {

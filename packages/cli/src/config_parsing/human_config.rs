@@ -864,15 +864,13 @@ pub mod svm {
                            Code generation is unaffected. \
                            For testing, prefer using a test framework instead.")]
         pub skip: Option<bool>,
-        #[schemars(
-            description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data."
-        )]
-        pub rpc: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional HyperSync Config for fetching historical instructions."
+            description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain \
+                           data. Required unless `experimental` is set, in which case it is \
+                           ignored in favour of the experimental HyperSync source."
         )]
-        pub hypersync_config: Option<HypersyncConfig>,
+        pub rpc: Option<String>,
         #[schemars(
             description = "The slot number at which the indexer should start ingesting data"
         )]
@@ -887,10 +885,22 @@ pub mod svm {
         )]
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(rename = "programs_experimental")]
-        #[schemars(description = "Solana programs to index on this chain. \
-                           Experimental: this config shape may change in future releases.")]
-        pub programs: Option<Vec<Program>>,
+        #[schemars(
+            description = "Experimental HyperSync-backed instruction indexing. This config shape \
+                           may change in future releases. When set, `rpc` is ignored."
+        )]
+        pub experimental: Option<Experimental>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Experimental {
+        #[schemars(
+            description = "HyperSync Config for fetching historical instructions on this chain."
+        )]
+        pub hypersync_config: HypersyncConfig,
+        #[schemars(description = "Solana programs to index on this chain.")]
+        pub programs: Vec<Program>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -1648,23 +1658,23 @@ chains:
 name: metaplex-token-metadata
 ecosystem: svm
 chains:
-  - rpc: https://api.mainnet-beta.solana.com
-    hypersync_config:
-      url: https://solana.hypersync.xyz
-    start_block: 200000000
-    programs_experimental:
-      - name: TokenMetadata
-        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-        instructions:
-          - name: CreateMetadataAccountV3
-            discriminator: "0x21"
-          - name: UpdateMetadataAccountV2
-            discriminator: "0x0f"
-            account_filters:
-              - position: 0
-                values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-            field_selection:
-              transaction_fields: true
+  - start_block: 200000000
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: TokenMetadata
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: CreateMetadataAccountV3
+              discriminator: "0x21"
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
+              account_filters:
+                - position: 0
+                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+              field_selection:
+                transaction_fields: true
 "#;
 
         #[test]
@@ -1672,11 +1682,12 @@ chains:
             let cfg: HumanConfig = serde_yaml::from_str(METAPLEX_YAML).unwrap();
             assert_eq!(cfg.chains.len(), 1);
             let chain = &cfg.chains[0];
+            let experimental = chain.experimental.as_ref().unwrap();
             assert_eq!(
-                chain.hypersync_config.as_ref().map(|h| h.url.as_str()),
-                Some("https://solana.hypersync.xyz")
+                experimental.hypersync_config.url.as_str(),
+                "https://solana.hypersync.xyz"
             );
-            let programs = chain.programs.as_ref().unwrap();
+            let programs = &experimental.programs;
             assert_eq!(programs.len(), 1);
             let program = &programs[0];
             assert_eq!(
@@ -1725,13 +1736,15 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - rpc: r
-    start_block: 1
-    programs_experimental:
-      - name: P
-        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-        bogus_extra: true
-        instructions: []
+  - start_block: 1
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          bogus_extra: true
+          instructions: []
 "#;
             assert!(serde_yaml::from_str::<HumanConfig>(bad).is_err());
         }

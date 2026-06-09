@@ -227,7 +227,19 @@ pub fn validate_deserialized_svm_config_yaml(
     let mut all_program_names: Vec<String> = Vec::new();
 
     for chain in &svm_config.chains {
-        for program in chain.programs.as_ref().unwrap_or(&vec![]) {
+        if chain.experimental.is_none() && chain.rpc.is_none() {
+            return Err(anyhow!(
+                "A chain must define a data source: either an `rpc` endpoint or an \
+                 `experimental` HyperSync config. Both are missing."
+            ));
+        }
+
+        let programs = chain
+            .experimental
+            .as_ref()
+            .map(|e| e.programs.as_slice())
+            .unwrap_or(&[]);
+        for program in programs {
             if !is_valid_solana_pubkey(&program.program_id) {
                 return Err(anyhow!(
                     "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
@@ -639,14 +651,16 @@ mod tests {
 name: x
 ecosystem: svm
 chains:
-  - rpc: r
-    start_block: 0
-    programs_experimental:
-      - name: TokenMetadata
-        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-        instructions:
-          - name: UpdateMetadataAccountV2
-            discriminator: "0x0f"
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: TokenMetadata
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();
@@ -659,14 +673,16 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - rpc: r
-    start_block: 0
-    programs_experimental:
-      - name: P
-        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-        instructions:
-          - { name: Foo, discriminator: "0x0f" }
-          - { name: Foo, discriminator: "0x21" }
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - { name: Foo, discriminator: "0x0f" }
+            - { name: Foo, discriminator: "0x21" }
 "#,
             );
             let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
@@ -680,18 +696,22 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - rpc: r
-    start_block: 0
-    programs_experimental:
-      - name: shared
-        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-        instructions: []
-  - rpc: r2
-    start_block: 0
-    programs_experimental:
-      - name: SHARED
-        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-        instructions: []
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: shared
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions: []
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: SHARED
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions: []
 "#,
             );
             let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
@@ -705,16 +725,18 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - rpc: r
-    start_block: 0
-    programs_experimental:
-      - name: P
-        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-        instructions:
-          - name: I
-            account_filters:
-              - position: 6
-                values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: I
+              account_filters:
+                - position: 6
+                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
 "#,
             );
             let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
@@ -728,18 +750,20 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - rpc: r
-    start_block: 0
-    programs_experimental:
-      - name: P
-        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-        instructions:
-          - name: I
-            account_filters:
-              - position: 1
-                values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-              - position: 1
-                values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: I
+              account_filters:
+                - position: 1
+                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+                - position: 1
+                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
 "#,
             );
             let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
@@ -753,15 +777,17 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - rpc: r
-    start_block: 0
-    programs_experimental:
-      - name: P
-        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-        instructions:
-          - name: I
-            account_filters:
-              any_of: []
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: I
+              account_filters:
+                any_of: []
 "#,
             );
             let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
@@ -776,16 +802,18 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - rpc: r
-    start_block: 0
-    programs_experimental:
-      - name: P
-        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-        instructions:
-          - name: I
-            account_filters:
-              any_of:
-                - []
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: I
+              account_filters:
+                any_of:
+                  - []
 "#,
             );
             let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
@@ -800,19 +828,21 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - rpc: r
-    start_block: 0
-    programs_experimental:
-      - name: P
-        program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-        instructions:
-          - name: I
-            account_filters:
-              any_of:
-                - - position: 2
-                    values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-                - - position: 2
-                    values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: I
+              account_filters:
+                any_of:
+                  - - position: 2
+                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+                  - - position: 2
+                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
 "#,
             );
             assert!(validate_deserialized_svm_config_yaml(&cfg).is_ok());
@@ -825,16 +855,46 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - rpc: r
-    start_block: 0
-    programs_experimental:
-      - name: P
-        program_id: not_a_pubkey
-        instructions: []
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: not_a_pubkey
+          instructions: []
 "#,
             );
             let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
             assert!(err.to_string().contains("invalid program_id"), "{err}");
+        }
+
+        #[test]
+        fn validation_accepts_rpc_only_chain() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: https://api.mainnet-beta.solana.com
+    start_block: 0
+"#,
+            );
+            validate_deserialized_svm_config_yaml(&cfg).unwrap();
+        }
+
+        #[test]
+        fn validation_rejects_chain_without_data_source() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("data source"), "{err}");
         }
     }
 }

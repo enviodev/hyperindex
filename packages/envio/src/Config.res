@@ -28,7 +28,7 @@ type evmRpcConfig = {
 type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
-  | SvmSourceConfig({hypersync: option<string>, rpc: string})
+  | SvmSourceConfig({hypersync: option<string>, rpc: option<string>})
   // For tests: pass custom sources directly
   | CustomSources(array<Source.t>)
 
@@ -876,14 +876,14 @@ let fromPublic = (publicConfigJson: JSON.t) => {
           JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
         }
       | Ecosystem.Svm =>
-        switch publicChainConfig["rpc"] {
-        | Some(rpc) =>
-          SvmSourceConfig({
-            hypersync: publicChainConfig["hypersync"],
-            rpc,
-          })
-        | None => JsError.throwWithMessage(`Chain ${chainName} is missing rpc endpoint in config`)
+        let hypersync = publicChainConfig["hypersync"]
+        let rpc = publicChainConfig["rpc"]
+        if hypersync->Option.isNone && rpc->Option.isNone {
+          JsError.throwWithMessage(
+            `Chain ${chainName} is missing a data source: provide either an rpc endpoint or an experimental hypersync config`,
+          )
         }
+        SvmSourceConfig({hypersync, rpc})
       }
 
       {

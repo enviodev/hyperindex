@@ -997,13 +997,18 @@ impl SystemConfig {
                     let sync_source = DataSource::Svm {
                         rpc: network.rpc.clone(),
                         hypersync_endpoint_url: network
-                            .hypersync_config
+                            .experimental
                             .as_ref()
-                            .map(|h| h.url.clone()),
+                            .map(|e| e.hypersync_config.url.clone()),
                     };
 
+                    let programs = network
+                        .experimental
+                        .as_ref()
+                        .map(|e| e.programs.as_slice())
+                        .unwrap_or(&[]);
                     let mut chain_contracts = Vec::new();
-                    for program in network.programs.as_deref().unwrap_or(&[]) {
+                    for program in programs {
                         let svm_abi =
                             resolve_program_schema(program, project_paths).with_context(|| {
                                 format!(
@@ -1224,7 +1229,7 @@ pub enum DataSource {
         hypersync_endpoint_url: ServerUrl,
     },
     Svm {
-        rpc: ServerUrl,
+        rpc: Option<ServerUrl>,
         hypersync_endpoint_url: Option<ServerUrl>,
     },
 }
