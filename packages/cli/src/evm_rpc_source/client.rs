@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
+use serde_json::value::RawValue;
 
 /// JSON-RPC level errors are kept separate from transport/parse failures:
 /// provider error messages carry block-range hints the caller inspects.
@@ -11,26 +12,26 @@ pub enum RpcError {
     Other(anyhow::Error),
 }
 
-impl std::fmt::Display for RpcError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RpcError::JsonRpc { code, message } => {
-                write!(f, "JSON-RPC error {code}: {message}")
-            }
-            RpcError::Other(e) => write!(f, "{e:#}"),
-        }
-    }
-}
-
 #[derive(Deserialize)]
 struct JsonRpcErrorObject {
     code: i64,
     message: String,
 }
 
+// `result` must distinguish present-but-null (a successful "not found"
+// response for methods like eth_getBlockByNumber) from a missing field.
+// A plain `Option` maps JSON null to `None`, so route present values
+// through `deserialize_with` which captures null as `Some(raw "null")`.
+fn raw_value_as_some<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Box<RawValue>>, D::Error> {
+    Box::<RawValue>::deserialize(deserializer).map(Some)
+}
+
 #[derive(Deserialize)]
 struct JsonRpcResponse {
-    result: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "raw_value_as_some")]
+    result: Option<Box<RawValue>>,
     error: Option<JsonRpcErrorObject>,
 }
 
@@ -40,8 +41,14 @@ pub struct JsonRpcClient {
 }
 
 impl JsonRpcClient {
-    pub fn new(url: String) -> Result<Self> {
+    /// Matches hypersync_client::ClientConfig::default_http_req_timeout_millis.
+    pub const fn default_http_req_timeout_millis() -> u64 {
+        30_000
+    }
+
+    pub fn new(url: String, http_req_timeout_millis: u64) -> Result<Self> {
         let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(http_req_timeout_millis))
             .build()
             .context("build http client")?;
         Ok(Self { http, url })
@@ -94,7 +101,7 @@ impl JsonRpcClient {
             });
         }
         match parsed.result {
-            Some(result) => serde_json::from_value(result)
+            Some(result) => serde_json::from_str(result.get())
                 .with_context(|| format!("parse {method} result"))
                 .map_err(RpcError::Other),
             None => Err(RpcError::Other(anyhow::anyhow!(
@@ -119,7 +126,7 @@ pub fn parse_hex_u64(s: &str) -> Result<u64> {
 
 // HTTP and JSON-RPC envelope behavior (success, error bodies, non-200
 // statuses) is covered end-to-end through the napi layer in
-// scenarios/test_codegen/test/lib_tests/RpcClient_test.res.
+// scenarios/test_codegen/test/lib_tests/EvmRpcClient_test.res.
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,9 +6,9 @@ mod client;
 use client::{JsonRpcClient, RpcError};
 
 #[napi(object)]
-#[derive(Default, Clone)]
 pub struct EvmRpcClientConfig {
     pub url: String,
+    pub http_req_timeout_millis: Option<i64>,
 }
 
 #[napi]
@@ -20,7 +20,13 @@ pub struct EvmRpcClient {
 impl EvmRpcClient {
     #[napi(factory)]
     pub fn new(cfg: EvmRpcClientConfig) -> napi::Result<EvmRpcClient> {
-        let inner = JsonRpcClient::new(cfg.url).map_err(map_err)?;
+        let http_req_timeout_millis = cfg
+            .http_req_timeout_millis
+            .filter(|v| *v > 0)
+            .map_or(JsonRpcClient::default_http_req_timeout_millis(), |v| {
+                v as u64
+            });
+        let inner = JsonRpcClient::new(cfg.url, http_req_timeout_millis).map_err(map_err)?;
         Ok(EvmRpcClient { inner })
     }
 
@@ -31,8 +37,22 @@ impl EvmRpcClient {
     }
 }
 
+/// Encodes JSON-RPC errors as a JSON payload in the napi error's message.
+/// The ReScript side parses it back into a structured exception, keeping
+/// the provider's code and message intact across the boundary.
 fn rpc_error_to_napi(e: RpcError) -> napi::Error {
-    napi::Error::from_reason(format!("{e}"))
+    match e {
+        RpcError::JsonRpc { code, message } => {
+            let payload = serde_json::json!({
+                "kind": "JsonRpcError",
+                "code": code,
+                "message": message,
+            })
+            .to_string();
+            napi::Error::from_reason(payload)
+        }
+        RpcError::Other(e) => map_err(e),
+    }
 }
 
 fn map_err(e: anyhow::Error) -> napi::Error {

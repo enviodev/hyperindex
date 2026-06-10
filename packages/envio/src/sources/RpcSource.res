@@ -878,7 +878,7 @@ let make = (
   let mutSuggestedBlockIntervals = Dict.make()
 
   let client = Rpc.makeClient(url)
-  let rpcClient = RpcClient.make(~url)
+  let rpcClient = EvmRpcClient.make(~url)
 
   let makeTransactionLoader = () =>
     LazyLoader.make(

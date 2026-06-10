@@ -53,7 +53,15 @@ module MockJsonRpcServer = {
     })
 }
 
-let getHeightErrorMessage = async (client: RpcClient.t) =>
+let getHeightJsonRpcError = async (client: EvmRpcClient.t): option<Rpc.rpcError> =>
+  try {
+    let _ = await client.getHeight()
+    None
+  } catch {
+  | Rpc.JsonRpcError(e) => Some(e)
+  }
+
+let getHeightErrorMessage = async (client: EvmRpcClient.t) =>
   try {
     let _ = await client.getHeight()
     None
@@ -61,13 +69,13 @@ let getHeightErrorMessage = async (client: RpcClient.t) =>
   | JsExn(e) => e->JsExn.message
   }
 
-describe("RpcClient - getHeight via napi", () => {
+describe("EvmRpcClient - getHeight via napi", () => {
   Async.it("Parses hex result and sends a JSON-RPC request", async t => {
     let mock = await MockJsonRpcServer.make(
       ~status=200,
       ~body=`{"jsonrpc":"2.0","id":1,"result":"0x1b4"}`,
     )
-    let client = RpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url)
 
     let height = await client.getHeight()
     mock.close()
@@ -78,17 +86,17 @@ describe("RpcClient - getHeight via napi", () => {
     ))
   })
 
-  Async.it("Transfers JSON-RPC error code and message through napi", async t => {
+  Async.it("Transfers JSON-RPC error as structured Rpc.JsonRpcError", async t => {
     let mock = await MockJsonRpcServer.make(
       ~status=200,
       ~body=`{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"limited to a 1000 blocks range"}}`,
     )
-    let client = RpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url)
 
-    let message = await getHeightErrorMessage(client)
+    let error = await getHeightJsonRpcError(client)
     mock.close()
 
-    t.expect(message).toEqual(Some("JSON-RPC error -32005: limited to a 1000 blocks range"))
+    t.expect(error).toEqual(Some({code: -32005, message: "limited to a 1000 blocks range"}))
   })
 
   Async.it("Parses JSON-RPC error body even with a non-200 status", async t => {
@@ -96,17 +104,17 @@ describe("RpcClient - getHeight via napi", () => {
       ~status=429,
       ~body=`{"jsonrpc":"2.0","id":1,"error":{"code":-32029,"message":"rate limited"}}`,
     )
-    let client = RpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url)
 
-    let message = await getHeightErrorMessage(client)
+    let error = await getHeightJsonRpcError(client)
     mock.close()
 
-    t.expect(message).toEqual(Some("JSON-RPC error -32029: rate limited"))
+    t.expect(error).toEqual(Some({code: -32029, message: "rate limited"}))
   })
 
   Async.it("Reports HTTP status and body snippet for a non-JSON response", async t => {
     let mock = await MockJsonRpcServer.make(~status=502, ~body="upstream exploded")
-    let client = RpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url)
 
     let message = await getHeightErrorMessage(client)
     mock.close()
@@ -118,7 +126,7 @@ describe("RpcClient - getHeight via napi", () => {
 
   Async.it("Fails when the response has neither result nor error", async t => {
     let mock = await MockJsonRpcServer.make(~status=200, ~body=`{"jsonrpc":"2.0","id":1}`)
-    let client = RpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url)
 
     let message = await getHeightErrorMessage(client)
     mock.close()
@@ -126,5 +134,18 @@ describe("RpcClient - getHeight via napi", () => {
     t.expect(message).toEqual(
       Some("JSON-RPC response for eth_blockNumber (HTTP 200 OK) has neither result nor error"),
     )
+  })
+
+  Async.it("Fails when getHeight result is null", async t => {
+    let mock = await MockJsonRpcServer.make(
+      ~status=200,
+      ~body=`{"jsonrpc":"2.0","id":1,"result":null}`,
+    )
+    let client = EvmRpcClient.make(~url=mock.url)
+
+    let message = await getHeightErrorMessage(client)
+    mock.close()
+
+    t.expect(message->Option.getOr("no error")).toMatch(/parse eth_blockNumber result/)
   })
 })
