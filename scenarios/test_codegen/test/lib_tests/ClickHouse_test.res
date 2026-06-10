@@ -128,6 +128,8 @@ ORDER BY (id)`
   \`enumField\` Enum8('ADMIN', 'USER'),
   \`optEnumField\` Nullable(Enum8('ADMIN', 'USER')),
   \`envio_checkpoint_id\` UInt64,
+  \`envio_chain_id\` Int32,
+  \`envio_block_number\` Int32,
   \`envio_change\` Enum8('SET', 'DELETE')
 )
 ENGINE = MergeTree()

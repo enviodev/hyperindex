@@ -238,12 +238,34 @@ type setUpdatesCache = {
   convertOrThrow: array<Change.t<Internal.entity>> => array<JSON.t>,
 }
 
+let chainIdFieldName = "envio_chain_id"
+let blockNumberFieldName = "envio_block_number"
+
+let findCheckpointIndex = (checkpointIds: array<bigint>, checkpointId: bigint) => {
+  let lo = ref(0)
+  let hi = ref(checkpointIds->Array.length - 1)
+  let found = ref(-1)
+  while found.contents === -1 && lo.contents <= hi.contents {
+    let mid = (lo.contents + hi.contents) / 2
+    let midValue = checkpointIds->Array.getUnsafe(mid)
+    if midValue === checkpointId {
+      found := mid
+    } else if midValue < checkpointId {
+      lo := mid + 1
+    } else {
+      hi := mid - 1
+    }
+  }
+  found.contents
+}
+
 let setUpdatesOrThrow = async (
   client,
   ~cache: Utils.WeakMap.t<Internal.entityConfig, setUpdatesCache>,
   ~changes: array<Change.t<Internal.entity>>,
   ~entityConfig: Internal.entityConfig,
   ~database: string,
+  ~batch: Batch.t,
 ) => {
   if changes->Array.length === 0 {
     ()
@@ -292,6 +314,25 @@ let setUpdatesOrThrow = async (
       // intermediate change must be persisted, not only the current value.
       let values = changes->convertOrThrow
 
+      for idx in 0 to values->Array.length - 1 {
+        let change = changes->Array.getUnsafe(idx)
+        let row = values->Array.getUnsafe(idx)->(Utils.magic: JSON.t => dict<JSON.t>)
+        let checkpointIndex =
+          batch.checkpointIds->findCheckpointIndex(change->Change.getCheckpointId)
+        // Rollback-diff changes reference a reserved checkpoint id that has no
+        // checkpoint row, so there's no chain or block to attribute them to.
+        let (chainId, blockNumber) = if checkpointIndex === -1 {
+          (0, 0)
+        } else {
+          (
+            batch.checkpointChainIds->Array.getUnsafe(checkpointIndex),
+            batch.checkpointBlockNumbers->Array.getUnsafe(checkpointIndex),
+          )
+        }
+        row->Dict.set(chainIdFieldName, chainId->JSON.Encode.int)
+        row->Dict.set(blockNumberFieldName, blockNumber->JSON.Encode.int)
+      }
+
       await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
     } catch {
     | exn =>
@@ -335,6 +376,16 @@ let makeCreateHistoryTableQuery = (
   ${fieldDefinitions->Array.joinUnsafe(",\n  ")},
   \`${EntityHistory.checkpointIdFieldName}\` ${getClickHouseFieldType(
       ~fieldType=UInt64,
+      ~isNullable=false,
+      ~isArray=false,
+    )},
+  \`${chainIdFieldName}\` ${getClickHouseFieldType(
+      ~fieldType=Int32,
+      ~isNullable=false,
+      ~isArray=false,
+    )},
+  \`${blockNumberFieldName}\` ${getClickHouseFieldType(
+      ~fieldType=Int32,
       ~isNullable=false,
       ~isArray=false,
     )},
