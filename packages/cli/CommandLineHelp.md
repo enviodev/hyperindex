@@ -58,7 +58,7 @@ This document contains the help content for the `envio` command-line program.
 ###### **Options:**
 
 * `-d`, `--directory <DIRECTORY>` — The directory of the project. Defaults to current dir ("./")
-* `--config <CONFIG>` — The file in the project containing the configuration. It can also be set via the `ENVIO_CONFIG` environment variable
+* `--config <CONFIG>` — The config file path, resolved relative to --directory. It can also be set via the `ENVIO_CONFIG` environment variable
 
   Default value: `config.yaml`
 
