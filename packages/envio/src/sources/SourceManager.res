@@ -528,11 +528,11 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
     sourceManager.newBlockStallTimeout
   }
 
-  let (winnerSourceState, newBlockHeight) = await Promise.race(
+  let (source, newBlockHeight) = await Promise.race(
     mainSources
     ->Array.map(async sourceState => {
       (
-        sourceState,
+        sourceState.source,
         await sourceManager->getSourceNewHeight(
           ~sourceState,
           ~knownHeight,
@@ -583,7 +583,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
         Promise.race(
           fallbackSources->Array.map(async sourceState => {
             (
-              sourceState,
+              sourceState.source,
               await sourceManager->getSourceNewHeight(
                 ~sourceState,
                 ~knownHeight,
@@ -600,24 +600,13 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
     ]),
   )
 
-  // A source still in recovery (or disabled while we waited) may win the
-  // height race, but it must not become activeSource — the next block-range
-  // query would immediately switch away from it, spamming switch logs.
-  let isWinnerWorking =
-    !winnerSourceState.disabled &&
-    switch winnerSourceState.lastFailedAt {
-    | Some(failedAt) => Date.now() -. failedAt >= sourceManager.recoveryTimeout
-    | None => true
-    }
-  if isWinnerWorking {
-    sourceManager.activeSource = winnerSourceState.source
-  }
+  sourceManager.activeSource = source
 
   // Show a higher level log if we displayed a warning/error after newBlockStallTimeout
   let log = status.contents === Stalled ? Logging.childInfo : Logging.childTrace
   logger->log({
     "msg": `New blocks successfully found.`,
-    "source": winnerSourceState.source.name,
+    "source": source.name,
     "newBlockHeight": newBlockHeight,
   })
 
