@@ -440,9 +440,9 @@ module Indexer = {
         sql
         ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(ec.rowsSchema)
+          items->S.parseOrThrow(ec.table->Table.rowsSchema)
         })
-        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+        ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
       queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
@@ -495,9 +495,9 @@ module Indexer = {
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
         )
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(entityConfig.rowsSchema)
+          items->S.parseOrThrow(entityConfig.table->Table.rowsSchema)
         })
-        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+        ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
       queryCheckpoints: () => {
         sql

@@ -523,7 +523,6 @@ type genericEntityConfig<'entity> = {
   name: string,
   index: int,
   schema: S.t<'entity>,
-  rowsSchema: S.t<array<'entity>>,
   table: Table.table,
   storage: entityStorage,
 }
