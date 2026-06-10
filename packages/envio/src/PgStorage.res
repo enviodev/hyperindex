@@ -285,10 +285,6 @@ let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
 }
 
-let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1);`
-}
-
 let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE ${condition};`
 }
@@ -1499,20 +1495,23 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     let (promise, condition) = switch filter {
     // Primary-key lookups skip serialization (ids are already strings)
     // and a single-id load uses a LIMIT 1 query, safe since id is unique.
-    | In({fieldName: "id", fieldValue: [_] as ids}) => (
+    | In({fieldName, fieldValue: [_] as ids}) if fieldName === Table.idFieldName => (
         sql->Postgres.preparedUnsafe(
           makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
           ids->Obj.magic,
         ),
         `id = $1`,
       )
-    | In({fieldName: "id", fieldValue: ids}) => (
-        sql->Postgres.preparedUnsafe(
-          makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
-          [ids]->Obj.magic,
-        ),
-        `id = ANY($1)`,
-      )
+    | In({fieldName, fieldValue: ids}) if fieldName === Table.idFieldName => {
+        let condition = `"${fieldName}" = ANY($1)`
+        (
+          sql->Postgres.preparedUnsafe(
+            makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
+            [ids]->Obj.magic,
+          ),
+          condition,
+        )
+      }
     | _ => {
         let params = []
         let condition = makeFilterCondition(~filter, ~table, ~params)

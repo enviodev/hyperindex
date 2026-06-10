@@ -501,20 +501,6 @@ $$ LANGUAGE plpgsql;`)
     )
   })
 
-  describe("makeLoadByIdsQuery", () => {
-    Async.it(
-      "Should create correct SQL for loading multiple records by IDs",
-      async t => {
-        let query = PgStorage.makeLoadByIdsQuery(~pgSchema="test_schema", ~tableName="users")
-
-        t.expect(
-          query,
-          ~message="Should generate correct multiple IDs query SQL",
-        ).toBe(`SELECT * FROM "test_schema"."users" WHERE id = ANY($1);`)
-      },
-    )
-  })
-
   describe("makeFilterCondition", () => {
     let table = Table.mkTable(
       "users",

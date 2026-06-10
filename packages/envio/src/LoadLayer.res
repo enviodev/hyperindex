@@ -21,7 +21,7 @@ let loadById = (
         await storage.loadOrThrow(
           ~table=entityConfig.table,
           ~filter=Persistence.In({
-            fieldName: "id",
+            fieldName: Table.idFieldName,
             fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
           }),
         )
@@ -272,7 +272,7 @@ let loadEffect = (
           await storage.loadOrThrow(
             ~table,
             ~filter=Persistence.In({
-              fieldName: "id",
+              fieldName: Table.idFieldName,
               fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
             }),
           )
