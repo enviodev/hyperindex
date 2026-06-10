@@ -1431,12 +1431,11 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   }
 
   let loadOrThrow = async (
+    type value,
     ~fieldName: string,
-    ~fieldSchema,
-    ~fieldValues,
+    ~fieldValues: array<value>,
     ~operator: Persistence.operator,
     ~table: Table.table,
-    ~rowsSchema,
   ) => {
     switch await (
       switch (fieldValues, fieldName, operator) {
@@ -1448,8 +1447,20 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
           fieldValues->Obj.magic,
         )
       | _ => {
+          let fieldSchema = switch table->Table.getFieldSchemaByDbName(fieldName) {
+          | Some(fieldSchema) => fieldSchema
+          | None =>
+            throw(
+              Persistence.StorageError({
+                message: `Failed loading "${table.tableName}" from storage. The table doesn't have the field "${fieldName}".`,
+                reason: Table.NonExistingTableField(fieldName),
+              }),
+            )
+          }
           let params = try [
-            fieldValues->S.reverseConvertToJsonOrThrow(S.array(fieldSchema)),
+            fieldValues
+            ->(Utils.magic: array<value> => array<unknown>)
+            ->S.reverseConvertToJsonOrThrow(S.array(fieldSchema)),
           ]->Obj.magic catch {
           | exn =>
             throw(
@@ -1479,7 +1490,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         }),
       )
     | rows =>
-      try rows->S.parseOrThrow(rowsSchema) catch {
+      try rows->S.parseOrThrow(table->Table.rowsSchema) catch {
       | exn =>
         throw(
           Persistence.StorageError({

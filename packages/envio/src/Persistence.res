@@ -80,15 +80,14 @@ type storage = {
   resumeInitialState: unit => promise<initialState>,
   // Returns rows where the field compares to any of the provided values.
   // Callers must pass a single value for non-"=" operators.
+  // Values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
-  loadOrThrow: 'item 'value. (
+  loadOrThrow: 'value. (
     ~fieldName: string,
-    ~fieldSchema: S.t<'value>,
     ~fieldValues: array<'value>,
     ~operator: operator,
     ~table: Table.table,
-    ~rowsSchema: S.t<array<'item>>,
-  ) => promise<array<'item>>,
+  ) => promise<array<unknown>>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,

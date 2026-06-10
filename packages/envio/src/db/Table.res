@@ -240,6 +240,31 @@ let getFieldByDbName = (table, dbFieldName) =>
     } === dbFieldName
   )
 
+let getFieldSchemaByDbName = (table, dbFieldName) =>
+  switch table->getFieldByDbName(dbFieldName) {
+  | Some(Field({fieldSchema})) => Some(fieldSchema)
+  | Some(DerivedFrom(_)) | None => None
+  }
+
+// Runtime entity objects are keyed by db field names (the camelCase record
+// field names are type-level only), so rows can be parsed with the same
+// per-field schemas the entity schema is assembled from.
+let rowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
+  S.array(
+    S.schema(s => {
+      let dict = Dict.make()
+      table.fields->Array.forEach(
+        field =>
+          switch field {
+          | Field(field) => dict->Dict.set(field->getDbFieldName, s.matches(field.fieldSchema))
+          | DerivedFrom(_) => ()
+          },
+      )
+      dict
+    })->(Utils.magic: S.t<dict<unknown>> => S.t<unknown>),
+  )
+)
+
 exception NonExistingTableField(string)
 
 /*

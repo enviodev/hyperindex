@@ -111,7 +111,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
 
   let operatorKey = operatorKeys->Array.getUnsafe(0)
 
-  let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
+  switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
   | None =>
     JsError.throwWithMessage(
       `Invalid field "${dbFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
@@ -124,7 +124,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     JsError.throwWithMessage(
       `The field "${dbFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${dbFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
     )
-  | Some(Field({fieldSchema})) => fieldSchema
+  | Some(Field(_)) => ()
   }
 
   if operatorKey === "_in" {
@@ -141,7 +141,6 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
         ~operator=Eq,
         ~entityConfig,
         ~fieldName=dbFieldName,
-        ~fieldValueSchema=fieldSchema,
         ~inMemoryStore=params.inMemoryStore,
         ~shouldGroup=params.isPreload,
         ~item=params.item,
@@ -162,7 +161,6 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
         ~operator,
         ~entityConfig,
         ~fieldName=dbFieldName,
-        ~fieldValueSchema=fieldSchema,
         ~inMemoryStore=params.inMemoryStore,
         ~shouldGroup=params.isPreload,
         ~item=params.item,
@@ -191,7 +189,6 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
       ~operator,
       ~entityConfig,
       ~fieldName=dbFieldName,
-      ~fieldValueSchema=fieldSchema,
       ~inMemoryStore=params.inMemoryStore,
       ~shouldGroup=params.isPreload,
       ~item=params.item,

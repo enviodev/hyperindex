@@ -163,14 +163,7 @@ module Storage = {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
           Promise.resolve()
         }),
-        loadOrThrow: (
-          ~fieldName,
-          ~fieldSchema as _,
-          ~fieldValues,
-          ~operator,
-          ~table: Table.table,
-          ~rowsSchema as _,
-        ) => {
+        loadOrThrow: (~fieldName, ~fieldValues, ~operator, ~table: Table.table) => {
           implementBody(#loadOrThrow, () => {
             loadOrThrowCalls
             ->Array.push({

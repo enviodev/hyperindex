@@ -107,24 +107,30 @@ let makeStorage = (proxy: t): Persistence.storage => {
   },
   resumeInitialState: async () => proxy.initialState,
   loadOrThrow: async (
+    type value,
     ~fieldName,
-    ~fieldSchema,
-    ~fieldValues,
+    ~fieldValues: array<value>,
     ~operator,
     ~table: Table.table,
-    ~rowsSchema,
   ) => {
+    let fieldSchema = switch table->Table.getFieldSchemaByDbName(fieldName) {
+    | Some(fieldSchema) => fieldSchema
+    | None =>
+      JsError.throwWithMessage(
+        `TestIndexer: The table "${table.tableName}" doesn't have the field "${fieldName}"`,
+      )
+    }
     let response = await proxy->sendRequest(
       ~payload=Load({
         tableName: table.tableName,
         fieldName,
-        fieldValues: fieldValues->Array.map(fieldValue =>
-          fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)
-        ),
+        fieldValues: fieldValues
+        ->(Utils.magic: array<value> => array<unknown>)
+        ->Array.map(fieldValue => fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)),
         operator,
       }),
     )
-    response->S.parseOrThrow(rowsSchema)
+    response->S.parseOrThrow(table->Table.rowsSchema)
   },
   writeBatch: async (
     ~batch,
