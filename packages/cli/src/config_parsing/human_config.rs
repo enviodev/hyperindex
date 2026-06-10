@@ -87,7 +87,8 @@ pub struct BaseConfig {
                        (it is not supported as a single storage yet), and at least one backend \
                        must be enabled. Each backend accepts a boolean or an options object with \
                        `default` controlling whether entities without an @storage directive are \
-                       stored in it."
+                       stored in it. A single enabled backend is implicitly the default; with \
+                       multiple backends none is, unless opted in via `default: true`."
     )]
     pub storage: Option<StorageConfig>,
 }
@@ -157,7 +158,8 @@ impl JsonSchema for StorageConfig {
                                 "default": {
                                     "description": "Whether entities without an @storage \
                                                     directive are stored in this backend \
-                                                    (default: true for postgres).",
+                                                    (default: true when Postgres is the only \
+                                                    enabled backend, false otherwise).",
                                     "type": ["boolean", "null"]
                                 }
                             },
@@ -178,7 +180,7 @@ impl JsonSchema for StorageConfig {
                                 "default": {
                                     "description": "Whether entities without an @storage \
                                                     directive are stored in this backend \
-                                                    (default: false for clickhouse).",
+                                                    (default: false).",
                                     "type": ["boolean", "null"]
                                 }
                             },

@@ -13,8 +13,7 @@ expression: json
   "rawEvents": true,
   "storage": {
     "postgres": true,
-    "clickhouse": true,
-    "clickhouseDefault": true
+    "clickhouse": true
   },
   "evm": {
     "chains": {
@@ -190,6 +189,9 @@ expression: json
     },
     {
       "name": "UnannotatedEntity",
+      "storage": {
+        "clickhouse": true
+      },
       "properties": [
         {
           "name": "id",

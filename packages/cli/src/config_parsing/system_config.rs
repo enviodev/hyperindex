@@ -443,7 +443,8 @@ pub struct Storage {
     pub postgres: bool,
     pub clickhouse: bool,
     // Whether entities without an @storage directive are stored in the
-    // backend. Resolved here so downstream consumers never re-derive it.
+    // backend. A single enabled backend is implicitly the default; with
+    // multiple backends none is, unless opted in via `default: true`.
     pub postgres_default: bool,
     pub clickhouse_default: bool,
 }
@@ -472,8 +473,10 @@ impl Storage {
                  default)."
             ));
         }
-        let postgres_default =
-            postgres && postgres_config.and_then(|c| c.default()).unwrap_or(true);
+        let postgres_default = postgres
+            && postgres_config
+                .and_then(|c| c.default())
+                .unwrap_or(!clickhouse);
         let clickhouse_default =
             clickhouse && clickhouse_config.and_then(|c| c.default()).unwrap_or(false);
         Ok(Self {
@@ -2631,7 +2634,8 @@ mod test {
             }
         );
 
-        // Both enabled -> ok, clickhouse is not an entity default
+        // Both enabled -> ok; with multiple backends none is an implicit
+        // entity default
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
                 postgres: enabled(true),
@@ -2641,13 +2645,13 @@ mod test {
             super::Storage {
                 postgres: true,
                 clickhouse: true,
-                postgres_default: true,
+                postgres_default: false,
                 clickhouse_default: false,
             }
         );
 
-        // Object form implies enabled; `default: true` makes clickhouse an
-        // entity default alongside postgres
+        // Object form implies enabled; `default: true` opts clickhouse in
+        // as an entity default
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
                 postgres: enabled(true),
@@ -2657,23 +2661,39 @@ mod test {
             super::Storage {
                 postgres: true,
                 clickhouse: true,
-                postgres_default: true,
+                postgres_default: false,
                 clickhouse_default: true,
             }
         );
 
-        // Postgres can opt out of being the entity default
+        // Both backends can be entity defaults when opted in explicitly
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
-                postgres: options(Some(false)),
+                postgres: options(Some(true)),
                 clickhouse: options(Some(true)),
             }))
             .unwrap(),
             super::Storage {
                 postgres: true,
                 clickhouse: true,
-                postgres_default: false,
+                postgres_default: true,
                 clickhouse_default: true,
+            }
+        );
+
+        // Postgres as a single storage can opt out of being the entity
+        // default (entities then must carry @storage)
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: options(Some(false)),
+                clickhouse: None,
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: true,
+                clickhouse: false,
+                postgres_default: false,
+                clickhouse_default: false,
             }
         );
 
