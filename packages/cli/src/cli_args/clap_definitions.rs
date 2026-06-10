@@ -27,11 +27,11 @@ impl CommandLineArgs {
 
 #[derive(Args, Debug, Clone)]
 pub struct ProjectPaths {
-    ///The directory of the project. Defaults to current dir ("./")
+    ///The directory of the project. Defaults to current dir ("./"). The --config path is resolved relative to it.
     #[arg(global = true, short, long)]
     pub directory: Option<String>,
 
-    ///The config file path, resolved relative to --directory (the working directory by default). It can also be set via the `ENVIO_CONFIG` environment variable.
+    ///The config file path, resolved relative to the working directory. It can also be set via the `ENVIO_CONFIG` environment variable.
     #[arg(global = true, long, env = "ENVIO_CONFIG", default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
 }
