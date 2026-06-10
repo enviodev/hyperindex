@@ -82,13 +82,11 @@ pub struct BaseConfig {
     pub full_batch_size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Configuration for the storage backends the indexer writes to. Defaults to \
-                       `postgres: true` when omitted. ClickHouse requires Postgres to be enabled \
-                       (it is not supported as a single storage yet), and at least one backend \
-                       must be enabled. Each backend accepts a boolean or an options object with \
-                       `default` controlling whether entities without an @storage directive are \
-                       stored in it. A single enabled backend is implicitly the default; with \
-                       multiple backends none is, unless opted in via `default: true`."
+        description = "Storage backends the indexer writes data to. Defaults to Postgres when \
+                       omitted. Set `clickhouse: true` to additionally sync the indexed data to \
+                       ClickHouse. Mark a backend with `default: true` to store entities that \
+                       don't have an @storage directive in the schema, e.g. `clickhouse: \
+                       {default: true}`."
     )]
     pub storage: Option<StorageConfig>,
 }
