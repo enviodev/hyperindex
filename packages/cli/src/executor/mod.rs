@@ -174,6 +174,9 @@ pub async fn execute(
 /// `ENVIO_CONFIG` is always present in the returned `env`; callers may
 /// append extra env pairs (e.g. ClickHouse credentials from Docker for
 /// `envio dev`).
+///
+/// `ENVIO_CONFIG` is root-relative: consumers resolve it against
+/// `cwd` / `--directory`, so a cwd-joined value would double the prefix.
 pub fn build_start_command(
     config: &SystemConfig,
     reset: bool,
@@ -182,7 +185,7 @@ pub fn build_start_command(
 ) -> Result<Command> {
     let config_path = config
         .parsed_project_paths
-        .config
+        .config_relative_to_root()
         .to_string_lossy()
         .into_owned();
 
