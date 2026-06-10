@@ -198,11 +198,7 @@ let getSafeCheckpointId = (chainManager: t) => {
 Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
-let updateProgressedChains = (
-  chainManager: t,
-  ~batch: Batch.t,
-  ~getTimestamp: Internal.eventBlock => int,
-) => {
+let updateProgressedChains = (chainManager: t, ~batch: Batch.t) => {
   let nextQueueItemIsNone = chainManager->nextItemIsNone
 
   let allChainsAtHead = chainManager->isProgressAtHead
@@ -235,7 +231,7 @@ let updateProgressedChains = (
         // Calculate and set latency metrics
         switch batch->Batch.findLastEventItem(~chainId=chain->ChainMap.Chain.toChainId) {
         | Some(eventItem) => {
-            let blockTimestamp = eventItem.event.block->getTimestamp
+            let blockTimestamp = eventItem.timestamp
             let currentTimeMs = Date.now()->Float.toInt
             let blockTimestampMs = blockTimestamp * 1000
             let latencyMs = currentTimeMs - blockTimestampMs

@@ -1,7 +1,3 @@
-@get external getNumber: Internal.eventBlock => int = "height"
-@get external getTimestamp: Internal.eventBlock => int = "time"
-@get external getId: Internal.eventBlock => string = "hash"
-
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
     delete fields.height
@@ -15,9 +11,6 @@ let ecosystem: Ecosystem.t = {
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "hash",
-  getNumber,
-  getTimestamp,
-  getId,
   cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onSlot",
   // SVM filter shape: `{slot: {_gte?, _lte?, _every?}}`.
