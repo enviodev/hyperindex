@@ -81,7 +81,7 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
     ->Table.getFields
     ->Array.map(field => {
       let {fieldType, isNullable, isArray, defaultValue} = field
-      let fieldName = field->Table.getDbFieldName
+      let fieldName = field->Table.getPgDbFieldName
 
       {
         `"${fieldName}" ${Table.getPgFieldType(
@@ -700,7 +700,7 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
   // Get all field names for the INSERT statement
   let allHistoryFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
-    | Field(field) => field->Table.getDbFieldName->Some
+    | Field(field) => field->Table.getPgDbFieldName->Some
     | DerivedFrom(_) => None
     }
   )
@@ -1159,7 +1159,7 @@ let rec writeBatch = async (
 let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
   let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
-    | Field(field) => field->Table.getDbFieldName->Some
+    | Field(field) => field->Table.getPgDbFieldName->Some
     | DerivedFrom(_) => None
     }
   )

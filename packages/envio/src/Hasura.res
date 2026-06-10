@@ -305,7 +305,7 @@ let trackDatabase = async (
       switch fieldOrDerived {
       | Table.Field(field) => {
           let apiFieldName = field->Table.getApiFieldName
-          let dbFieldName = field->Table.getDbFieldName
+          let dbFieldName = field->Table.getPgDbFieldName
           // Expose renamed columns in GraphQL under the original field name
           let customName = apiFieldName === dbFieldName ? None : Some(apiFieldName)
           switch (customName, field.description) {
@@ -381,7 +381,7 @@ let trackDatabase = async (
         ~relationshipType="object",
         ~isDerivedFrom=false,
         ~objectName=field.fieldName,
-        ~relationalKey=field->Table.getDbFieldName,
+        ~relationalKey=field->Table.getPgDbFieldName,
         ~mappedEntity=linkedEntityName,
         ~comment=?field.description,
       )

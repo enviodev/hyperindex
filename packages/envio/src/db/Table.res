@@ -46,9 +46,8 @@ type field = {
   description: option<string>,
   // Override the column name per storage backend (eg when `column_name_format:
   // snake_case` is configured), while the API keeps using fieldName. The
-  // backends can be configured with different formats, so each gets its own
-  // override: dbName is the Postgres column, clickhouseDbName the ClickHouse one.
-  dbName: option<string>,
+  // backends can be configured with different formats, so each gets its own override.
+  postgresDbName: option<string>,
   clickhouseDbName: option<string>,
 }
 
@@ -72,7 +71,7 @@ let mkField = (
   ~isIndex=false,
   ~linkedEntity=?,
   ~description=?,
-  ~dbName=?,
+  ~postgresDbName=?,
   ~clickhouseDbName=?,
 ) =>
   {
@@ -86,7 +85,7 @@ let mkField = (
     linkedEntity,
     defaultValue: default,
     description,
-    dbName,
+    postgresDbName,
     clickhouseDbName,
   }->Field
 
@@ -114,8 +113,8 @@ let getApiFieldName = field =>
 
 // The actual column name in the storage. Matches the API field name unless
 // the storage is configured with a different column naming.
-let getDbFieldName = field =>
-  switch field.dbName {
+let getPgDbFieldName = field =>
+  switch field.postgresDbName {
   | Some(dbName) => dbName
   | None => field->getApiFieldName
   }
@@ -128,7 +127,7 @@ let getClickHouseDbFieldName = field =>
 
 let getFieldName = fieldOrDerived =>
   switch fieldOrDerived {
-  | Field(field) => field->getDbFieldName
+  | Field(field) => field->getPgDbFieldName
   | DerivedFrom({fieldName}) => fieldName
   }
 
@@ -207,7 +206,7 @@ let mkTable = (tableName, ~compositeIndices=[], ~fields, ~description=?) => {
 let getPrimaryKeyFieldNames = table =>
   table.fields->Array.filterMap(field =>
     switch field {
-    | Field({isPrimaryKey: true} as field) => Some(field->getDbFieldName)
+    | Field({isPrimaryKey: true} as field) => Some(field->getPgDbFieldName)
     | _ => None
     }
   )
@@ -221,7 +220,7 @@ let getFields = table =>
   )
 
 let getFieldNames = table => {
-  table->getFields->Array.map(getDbFieldName)
+  table->getFields->Array.map(getPgDbFieldName)
 }
 
 let getNonDefaultFields = table =>
@@ -251,7 +250,7 @@ let getDerivedFromFields = table =>
   )
 
 let getNonDefaultFieldNames = table => {
-  table->getNonDefaultFields->Array.map(getDbFieldName)
+  table->getNonDefaultFields->Array.map(getPgDbFieldName)
 }
 
 let getFieldByName = (table, fieldName) =>
@@ -390,7 +389,7 @@ And maps the fields defined to their actual db name (some have _id suffix)
 let getSingleIndices = (table): array<string> => {
   let indexFields = table.fields->Array.filterMap(field =>
     switch field {
-    | Field(field) if field.isIndex => Some(field->getDbFieldName)
+    | Field(field) if field.isIndex => Some(field->getPgDbFieldName)
     | _ => None
     }
   )

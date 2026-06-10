@@ -252,7 +252,7 @@ let derivedFieldSchema = S.schema(s =>
 let propertySchema = S.schema(s =>
   {
     "name": s.matches(S.string),
-    "dbName": s.matches(S.option(S.string)),
+    "postgresDbName": s.matches(S.option(S.string)),
     "clickhouseDbName": s.matches(S.option(S.string)),
     "type": s.matches(S.string),
     "isNullable": s.matches(S.option(S.bool)),
@@ -375,7 +375,7 @@ let parseEntitiesFromJson = (
         ~isIndex,
         ~linkedEntity=?prop["linkedEntity"],
         ~description=?prop["description"],
-        ~dbName=?prop["dbName"],
+        ~postgresDbName=?prop["postgresDbName"],
         ~clickhouseDbName=?prop["clickhouseDbName"],
       )
     })
@@ -433,7 +433,7 @@ let parseEntitiesFromJson = (
 
     // Rows loaded from the storage are keyed by db column names, which only
     // differ from the entity field names when column renaming is configured
-    let rowSchema = if entityJson["properties"]->Array.some(prop => prop["dbName"]->Option.isSome) {
+    let rowSchema = if entityJson["properties"]->Array.some(prop => prop["postgresDbName"]->Option.isSome) {
       S.object(s => {
         let dict = Dict.make()
         entityJson["properties"]->Array.forEach(
@@ -442,7 +442,7 @@ let parseEntitiesFromJson = (
             let apiFieldName = prop->getApiFieldName
             dict->Dict.set(
               apiFieldName,
-              s.field(prop["dbName"]->Option.getOr(apiFieldName), fieldSchema),
+              s.field(prop["postgresDbName"]->Option.getOr(apiFieldName), fieldSchema),
             )
           },
         )

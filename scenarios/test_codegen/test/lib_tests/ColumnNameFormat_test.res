@@ -24,8 +24,8 @@ let publicConfigJson: JSON.t = %raw(`{
     "name": "Snapshot",
     "properties": [
       { "name": "id", "type": "string" },
-      { "name": "transactionIndex", "type": "int", "dbName": "transaction_index", "isIndex": true },
-      { "name": "tokenOwner", "type": "entity", "dbName": "token_owner_id", "linkedEntity": "User", "entity": "User" }
+      { "name": "transactionIndex", "type": "int", "postgresDbName": "transaction_index", "isIndex": true },
+      { "name": "tokenOwner", "type": "entity", "postgresDbName": "token_owner_id", "linkedEntity": "User", "entity": "User" }
     ]
   }, {
     "name": "Token",

@@ -99,11 +99,10 @@ struct PropertyJson {
     name: String,
     // Per-backend database column names; each is emitted only when it
     // differs from the default naming the runtime derives from `name`
-    // (`name` plus an `_id` suffix for entity references). `db_name` is the
-    // Postgres column, `clickhouse_db_name` the ClickHouse one — they can
-    // diverge when the backends configure different `column_name_format`s.
+    // (`name` plus an `_id` suffix for entity references). They can diverge
+    // when the backends configure different `column_name_format`s.
     #[serde(skip_serializing_if = "Option::is_none")]
-    db_name: Option<String>,
+    postgres_db_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     clickhouse_db_name: Option<String>,
     #[serde(rename = "type")]
@@ -582,7 +581,7 @@ impl SystemConfig {
                             };
                         PropertyJson {
                             name: f.field_name.clone(),
-                            db_name: db_name_for(cfg.storage.postgres),
+                            postgres_db_name: db_name_for(cfg.storage.postgres),
                             clickhouse_db_name: db_name_for(cfg.storage.clickhouse),
                             field_type,
                             is_nullable: f.is_nullable,
