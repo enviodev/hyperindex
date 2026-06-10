@@ -1122,7 +1122,7 @@ impl SystemConfig {
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     contracts,
-                    rollback_on_reorg: false,
+                    rollback_on_reorg: true,
                     save_full_history: false,
                     schema,
                     field_selection: FieldSelection::fuel(),
