@@ -7,21 +7,21 @@ use client::{JsonRpcClient, RpcError};
 
 #[napi(object)]
 #[derive(Default, Clone)]
-pub struct RpcClientConfig {
+pub struct EvmRpcClientConfig {
     pub url: String,
 }
 
 #[napi]
-pub struct RpcClient {
+pub struct EvmRpcClient {
     inner: JsonRpcClient,
 }
 
 #[napi]
-impl RpcClient {
+impl EvmRpcClient {
     #[napi(factory)]
-    pub fn new(cfg: RpcClientConfig) -> napi::Result<RpcClient> {
+    pub fn new(cfg: EvmRpcClientConfig) -> napi::Result<EvmRpcClient> {
         let inner = JsonRpcClient::new(cfg.url).map_err(map_err)?;
-        Ok(RpcClient { inner })
+        Ok(EvmRpcClient { inner })
     }
 
     #[napi]

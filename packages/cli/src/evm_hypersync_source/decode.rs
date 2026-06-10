@@ -264,17 +264,17 @@ fn same_decode_layout(a: &[ParamMeta], b: &[ParamMeta]) -> bool {
 
 #[napi]
 #[derive(Clone)]
-pub struct Decoder {
+pub struct EvmDecoder {
     core: DecoderCore,
 }
 
 #[napi]
-impl Decoder {
+impl EvmDecoder {
     #[napi(factory)]
     pub fn from_params(
         event_params: Vec<EventParamsInput>,
         checksum_addresses: Option<bool>,
-    ) -> napi::Result<Decoder> {
+    ) -> napi::Result<EvmDecoder> {
         let core = DecoderCore::from_params(event_params, checksum_addresses.unwrap_or(false))
             .map_err(map_err)?;
         Ok(Self { core })

@@ -41,15 +41,6 @@ describe_skip("Rpc Test", () => {
     )
   })
 
-  Async.it("Gets block height from rpc", async t => {
-    let height = await Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
-
-    t.expect(
-      height > 21244092,
-      ~message=`Block height should be greater than 21244092. Received ${height->Int.toString}`,
-    ).toBeTruthy()
-  })
-
   Async.it("GetLogs rpc call wildcard call", async t => {
     let logs = await Rpc.GetLogs.route->Rest.fetch(
       {

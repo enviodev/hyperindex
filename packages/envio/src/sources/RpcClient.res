@@ -3,6 +3,6 @@ type cfg = {url: string}
 type t = {getHeight: unit => promise<int>}
 
 @send
-external classNew: (Core.rpcClientCtor, cfg) => t = "new"
+external classNew: (Core.evmRpcClientCtor, cfg) => t = "new"
 
-let make = (~url) => Core.getAddon().rpcClient->classNew({url: url})
+let make = (~url) => Core.getAddon().evmRpcClient->classNew({url: url})
