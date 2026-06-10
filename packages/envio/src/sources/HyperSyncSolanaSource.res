@@ -173,7 +173,7 @@ let buildSchemaHandles = (eventConfigs: array<Internal.svmInstructionEventConfig
 // side-step napi-rs's lack of native JSON passthrough) into the public shape.
 let parseDecoded = (
   d: HyperSyncSolanaClient.ResponseTypes.decodedInstruction,
-): Envio.svmDecodedInstruction => {
+): Envio.svmInstructionParams => {
   let args = try JSON.parseOrThrow(d.argsJson) catch {
   | _ => JSON.Object(Dict.make())
   }
@@ -209,7 +209,7 @@ let toSvmInstruction = (
   d2: ?instr.d2,
   d4: ?instr.d4,
   d8: ?instr.d8,
-  decoded: ?(instr.decoded->Option.map(parseDecoded)),
+  params: ?(instr.decoded->Option.map(parseDecoded)),
   ?transaction,
   ?logs,
   slot: instr.slot,
@@ -498,6 +498,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
           ~transaction=eventConfig.includeTransaction ? maybeTx : None,
           ~logs=eventConfig.includeLogs ? maybeLogs : None,
           ~block={
+            slot: instr.slot,
             time: blockTime->Option.getOr(0),
             hash: "",
           },

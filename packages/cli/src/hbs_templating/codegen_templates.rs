@@ -628,7 +628,7 @@ impl EventTemplate {
             r#"
 let name = "{event_name}"
 let contractName = contractName
-type params = Envio.svmDecodedInstruction
+type params = Envio.svmInstructionParams
 type paramsConstructor = unit
 type event = Envio.svmInstruction
 type onEventWhere = Internal.noOnEventWhere"#

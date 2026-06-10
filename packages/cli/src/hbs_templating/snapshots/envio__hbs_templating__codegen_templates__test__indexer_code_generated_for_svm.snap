@@ -126,7 +126,7 @@ let contractName = "TokenMetadata"
 
     let name = "CreateMetadataAccountV3"
     let contractName = contractName
-    type params = Envio.svmDecodedInstruction
+    type params = Envio.svmInstructionParams
     type paramsConstructor = unit
     type event = Envio.svmInstruction
     type onEventWhere = Internal.noOnEventWhere
@@ -136,7 +136,7 @@ let contractName = "TokenMetadata"
 
     let name = "UpdateMetadataAccountV2"
     let contractName = contractName
-    type params = Envio.svmDecodedInstruction
+    type params = Envio.svmInstructionParams
     type paramsConstructor = unit
     type event = Envio.svmInstruction
     type onEventWhere = Internal.noOnEventWhere

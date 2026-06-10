@@ -24,7 +24,7 @@ type svmOnSlotArgs<'context> = {
  attached to the program (bundled schema, Anchor IDL, or hand-written YAML
  `accounts`/`args`). Absent (`None`) when no schema applied or the
  discriminator didn't match any registered instruction. */
-type svmDecodedInstruction = {
+type svmInstructionParams = {
   /** Schema-declared instruction name (matches the codegen module suffix). */
   name: string,
   /** Borsh-decoded args. `JSON.Object({})` for no-arg instructions
@@ -69,6 +69,9 @@ type svmLog = {
  EVM/Fuel field names so the shared `Ecosystem.t` getters in `Svm.res` read
  them uniformly. The slot lives on `svmInstruction.slot`. */
 type svmInstructionBlock = {
+  /** Slot this instruction's block was matched in. Mirrors
+   `svmInstruction.slot`. */
+  slot: int,
   /** Unix block time (seconds). `0` when HyperSync didn't return a block
    for this instruction's slot. */
   time: int,
@@ -100,8 +103,8 @@ type svmInstruction = {
   d2?: string,
   d4?: string,
   d8?: string,
-  /** Borsh-decoded view. See [[svmDecodedInstruction]]. */
-  decoded?: svmDecodedInstruction,
+  /** Borsh-decoded params view. See [[svmInstructionParams]]. */
+  params?: svmInstructionParams,
   /** Parent transaction. Absent when the per-instruction
    `include_transaction` flag is `false`. */
   transaction?: svmTransaction,

@@ -5,7 +5,7 @@ expression: template.module_code
 
 let name = "CreateMetadataAccountV3"
 let contractName = contractName
-type params = Envio.svmDecodedInstruction
+type params = Envio.svmInstructionParams
 type paramsConstructor = unit
 type event = Envio.svmInstruction
 type onEventWhere = Internal.noOnEventWhere

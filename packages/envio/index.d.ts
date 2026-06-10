@@ -961,11 +961,11 @@ export type SvmOnSlotOptions<Config extends IndexerConfigTypes = GlobalConfig> =
 
 // ============== SVM onInstruction types ==============
 
-/** Borsh-decoded view of an instruction. Present whenever a `ProgramSchema`
- * was attached to the program (bundled, Anchor IDL, or hand-written
- * `accounts`/`args` in YAML). Absent when no schema applies or the
- * discriminator didn't match any registered instruction. */
-export type SvmDecodedInstruction = {
+/** Borsh-decoded params view of an instruction. Present whenever a
+ * `ProgramSchema` was attached to the program (bundled, Anchor IDL, or
+ * hand-written `accounts`/`args` in YAML). Absent when no schema applies or
+ * the discriminator didn't match any registered instruction. */
+export type SvmInstructionParams = {
   /** Schema-declared instruction name. */
   readonly name: string;
   /** Borsh-decoded args object. POC types this as `unknown`; narrow with a
@@ -982,6 +982,9 @@ export type SvmDecodedInstruction = {
 /** Block context for a matched instruction. The slot lives on
  * `SvmInstruction.slot`; `block` carries the remaining block metadata. */
 export type SvmInstructionBlock = {
+  /** Slot this instruction's block was matched in. Mirrors
+   * `SvmInstruction.slot`. */
+  readonly slot: number;
   readonly time: number;
   /** Always empty for now — reserved for the future reorg-guard route. */
   readonly hash: string;
@@ -1022,16 +1025,16 @@ export type SvmLog = {
 /** A single Solana instruction delivered to an `onInstruction` handler.
  *
  * Carries the matched instruction's own fields (`programId`, `data`,
- * `accounts`, discriminator prefixes, `decoded`) plus the program/instruction
+ * `accounts`, discriminator prefixes, `params`) plus the program/instruction
  * names, parent transaction, scoped logs, and block context. Parameterised
- * over `Decoded` so the per-(program, instruction) overload of
- * `onInstruction` can narrow `instruction.decoded` to the codegen-generated
+ * over `Params` so the per-(program, instruction) overload of
+ * `onInstruction` can narrow `instruction.params` to the codegen-generated
  * `{ args, accounts }` shape.
  *
  * `data` and discriminator prefixes are `0x`-prefixed hex strings; accounts
  * are base58 strings. */
 export type SvmInstruction<
-  Decoded extends SvmDecodedInstruction = SvmDecodedInstruction,
+  Params extends SvmInstructionParams = SvmInstructionParams,
 > = {
   /** Program name as declared under `programs[].name` in `config.yaml`. */
   readonly programName: string;
@@ -1047,8 +1050,8 @@ export type SvmInstruction<
   readonly d2?: string;
   readonly d4?: string;
   readonly d8?: string;
-  /** Borsh-decoded view. Present when a schema is configured and matched. */
-  readonly decoded?: Decoded;
+  /** Borsh-decoded params. Present when a schema is configured and matched. */
+  readonly params?: Params;
   /** Present when the instruction's `include_transaction` is `true`. */
   readonly transaction?: SvmTransaction;
   /** Present when the instruction's `include_logs` is `true`; only logs
@@ -1070,8 +1073,8 @@ export type SvmOnInstructionHandlerArgs<
 
 /** Shape extracted from `Global.config.svm.programs[P][I]`. The codegen
  * emits `{ args: ...; accounts: ... }` per (program, instruction); this
- * helper turns that into a `SvmDecodedInstruction`-compatible record. */
-type SvmDecodedFromProgramTable<TInstr> = TInstr extends {
+ * helper turns that into a `SvmInstructionParams`-compatible record. */
+type SvmParamsFromProgramTable<TInstr> = TInstr extends {
   args: infer A;
   accounts: infer Acc extends Readonly<Record<string, string>>;
 }
@@ -1081,7 +1084,7 @@ type SvmDecodedFromProgramTable<TInstr> = TInstr extends {
       readonly accounts: Acc;
       readonly extraAccounts: readonly string[];
     }
-  : SvmDecodedInstruction;
+  : SvmInstructionParams;
 
 /** Options for an SVM `indexer.onInstruction` registration. */
 export type SvmOnInstructionOptions<P extends string = string, I extends string = string> = {
@@ -1306,10 +1309,10 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                 /**
                  * Register an instruction handler. Dispatch matches on
                  * `(programId, discriminator)` from the YAML config.
-                 * `instruction.decoded.args` and
-                 * `instruction.decoded.accounts` are typed from the
+                 * `instruction.params.args` and
+                 * `instruction.params.accounts` are typed from the
                  * program's Borsh schema (Anchor IDL, bundled, or
-                 * hand-written `accounts`/`args` in YAML). `decoded` stays
+                 * hand-written `accounts`/`args` in YAML). `params` stays
                  * optional at runtime because schema-matching can fail on
                  * IDL drift or unknown discriminators.
                  */
@@ -1321,14 +1324,14 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                   handler: (
                     args: SvmOnInstructionHandlerArgs<
                       Config,
-                      SvmInstruction<SvmDecodedFromProgramTable<Programs[P][I]>>
+                      SvmInstruction<SvmParamsFromProgramTable<Programs[P][I]>>
                     >,
                   ) => Promise<void>,
                 ) => void;
               }
             : {
                 /** Untyped fallback for indexers with no `programs` in
-                 * config. `decoded` stays the generic shape. */
+                 * config. `params` stays the generic shape. */
                 readonly onInstruction: (
                   options: SvmOnInstructionOptions,
                   handler: SvmOnInstructionHandler<Config>,
