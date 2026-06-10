@@ -30,7 +30,7 @@ module ChainLine = {
 
       let endLabel = ` (End ${blockUnit})`
       let blocksText =
-        `${blockUnit}: ${progressBlockStr} / ${toBlockStr}` ++
+        `${blockUnit}s: ${progressBlockStr} / ${toBlockStr}` ++
         (endBlock->Option.isSome ? endLabel : "") ++ `  `
       let eventsText = `Events: ${eventsStr}`
 
@@ -216,8 +216,8 @@ module App = {
               cf.sourceManager->SourceManager.getActiveSource
             ).poweredByHyperSync,
             blockUnit: switch state.ctx.config.ecosystem.name {
-            | Svm => "Slots"
-            | Evm | Fuel => "Blocks"
+            | Svm => "Slot"
+            | Evm | Fuel => "Block"
             },
             rateLimitTimeMs: cf.sourceManager->SourceManager.getRateLimitTimeMs,
             isRateLimited: cf.sourceManager->SourceManager.isRateLimited,
