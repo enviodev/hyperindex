@@ -3,7 +3,7 @@ use core::fmt;
 use serde::Serialize;
 use std::fmt::Display;
 
-use super::human_config::ColumnNaming;
+use super::human_config::ColumnNameFormat;
 use crate::utils::text::Capitalize;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -78,10 +78,10 @@ pub struct Field {
 }
 
 impl Field {
-    pub fn db_column_name(&self, column_naming: ColumnNaming) -> String {
-        let base = match column_naming {
-            ColumnNaming::Graphql => self.field_name.clone(),
-            ColumnNaming::SnakeCase => self.field_name.to_case(Case::Snake),
+    pub fn db_column_name(&self, column_name_format: ColumnNameFormat) -> String {
+        let base = match column_name_format {
+            ColumnNameFormat::Graphql => self.field_name.clone(),
+            ColumnNameFormat::SnakeCase => self.field_name.to_case(Case::Snake),
         };
         if self.linked_entity.is_some() {
             format!("{base}_id")

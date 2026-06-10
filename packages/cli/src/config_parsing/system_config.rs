@@ -442,12 +442,12 @@ pub struct SystemConfig {
 pub struct Storage {
     pub postgres: bool,
     pub clickhouse: bool,
-    pub column_naming: human_config::ColumnNaming,
+    pub column_name_format: human_config::ColumnNameFormat,
 }
 
 impl Storage {
     pub fn resolve(config: Option<&human_config::StorageConfig>) -> Result<Self> {
-        let (postgres, clickhouse, column_naming) = match config {
+        let (postgres, clickhouse, column_name_format) = match config {
             // Default: only Postgres enabled
             None => (true, false, None),
             Some(s) => {
@@ -459,20 +459,20 @@ impl Storage {
                 // Column names are shared between the backends (ClickHouse
                 // mirrors the Postgres tables), so a single resolved value is
                 // used and conflicting per-backend settings are rejected.
-                let column_naming = match (
-                    s.postgres.as_ref().and_then(|b| b.column_naming()),
-                    s.clickhouse.as_ref().and_then(|b| b.column_naming()),
+                let column_name_format = match (
+                    s.postgres.as_ref().and_then(|b| b.column_name_format()),
+                    s.clickhouse.as_ref().and_then(|b| b.column_name_format()),
                 ) {
                     (Some(pg), Some(ch)) if pg != ch => {
                         return Err(anyhow!(
-                            "Different `column_naming` values per storage backend are not \
+                            "Different `column_name_format` values per storage backend are not \
                              supported. Please use the same value for all backends in the \
                              `storage` config."
                         ))
                     }
                     (pg, ch) => pg.or(ch),
                 };
-                (postgres, clickhouse, column_naming)
+                (postgres, clickhouse, column_name_format)
             }
         };
         if clickhouse && !postgres {
@@ -491,7 +491,7 @@ impl Storage {
         Ok(Self {
             postgres,
             clickhouse,
-            column_naming: column_naming.unwrap_or(human_config::ColumnNaming::Graphql),
+            column_name_format: column_name_format.unwrap_or(human_config::ColumnNameFormat::Graphql),
         })
     }
 
@@ -579,7 +579,7 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
 /// (`tokenId` and an entity reference `token` both become `token_id`). Catch
 /// this at codegen time instead of failing on table creation.
 pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
-    if storage.column_naming != human_config::ColumnNaming::SnakeCase {
+    if storage.column_name_format != human_config::ColumnNameFormat::SnakeCase {
         return Ok(());
     }
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
@@ -591,7 +591,7 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
         for gql_field in entity.get_fields() {
             if let Some(pg_field) = gql_field.get_postgres_field(schema, entity)? {
                 field_names_by_column
-                    .entry(pg_field.db_column_name(human_config::ColumnNaming::SnakeCase))
+                    .entry(pg_field.db_column_name(human_config::ColumnNameFormat::SnakeCase))
                     .or_default()
                     .push(pg_field.field_name.clone());
             }
@@ -617,7 +617,7 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     Err(anyhow!(
         "Schema validation failed:\n\
          \n\
-         `column_naming: snake_case` maps multiple entity fields to the same database column:\n\
+         `column_name_format: snake_case` maps multiple entity fields to the same database column:\n\
          {listed}\n\
          \n\
          Fixes:\n  \
@@ -2665,13 +2665,13 @@ mod test {
     #[test]
     fn test_storage_resolve() {
         use super::human_config::{
-            ColumnNaming, StorageBackend, StorageBackendConfig, StorageConfig,
+            ColumnNameFormat, StorageBackend, StorageBackendConfig, StorageConfig,
         };
 
         let enabled = |b| Some(StorageBackend::Enabled(b));
-        let configured = |column_naming| {
+        let configured = |column_name_format| {
             Some(StorageBackend::Config(StorageBackendConfig {
-                column_naming,
+                column_name_format,
             }))
         };
 
@@ -2681,7 +2681,7 @@ mod test {
             super::Storage {
                 postgres: true,
                 clickhouse: false,
-                column_naming: ColumnNaming::Graphql
+                column_name_format: ColumnNameFormat::Graphql
             }
         );
 
@@ -2695,7 +2695,7 @@ mod test {
             super::Storage {
                 postgres: true,
                 clickhouse: false,
-                column_naming: ColumnNaming::Graphql
+                column_name_format: ColumnNameFormat::Graphql
             }
         );
 
@@ -2709,21 +2709,21 @@ mod test {
             super::Storage {
                 postgres: true,
                 clickhouse: true,
-                column_naming: ColumnNaming::Graphql
+                column_name_format: ColumnNameFormat::Graphql
             }
         );
 
         // An options object enables the backend and resolves its options
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
-                postgres: configured(Some(ColumnNaming::SnakeCase)),
+                postgres: configured(Some(ColumnNameFormat::SnakeCase)),
                 clickhouse: None,
             }))
             .unwrap(),
             super::Storage {
                 postgres: true,
                 clickhouse: false,
-                column_naming: ColumnNaming::SnakeCase
+                column_name_format: ColumnNameFormat::SnakeCase
             }
         );
 
@@ -2737,33 +2737,33 @@ mod test {
             super::Storage {
                 postgres: true,
                 clickhouse: false,
-                column_naming: ColumnNaming::Graphql
+                column_name_format: ColumnNameFormat::Graphql
             }
         );
 
-        // column_naming set on clickhouse applies to the shared resolution
+        // column_name_format set on clickhouse applies to the shared resolution
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
                 postgres: enabled(true),
-                clickhouse: configured(Some(ColumnNaming::SnakeCase)),
+                clickhouse: configured(Some(ColumnNameFormat::SnakeCase)),
             }))
             .unwrap(),
             super::Storage {
                 postgres: true,
                 clickhouse: true,
-                column_naming: ColumnNaming::SnakeCase
+                column_name_format: ColumnNameFormat::SnakeCase
             }
         );
 
-        // Conflicting column_naming between backends -> user-friendly error
+        // Conflicting column_name_format between backends -> user-friendly error
         let err = super::Storage::resolve(Some(&StorageConfig {
-            postgres: configured(Some(ColumnNaming::Graphql)),
-            clickhouse: configured(Some(ColumnNaming::SnakeCase)),
+            postgres: configured(Some(ColumnNameFormat::Graphql)),
+            clickhouse: configured(Some(ColumnNameFormat::SnakeCase)),
         }))
         .unwrap_err();
         assert!(
             err.to_string()
-                .contains("Different `column_naming` values per storage backend are not supported"),
+                .contains("Different `column_name_format` values per storage backend are not supported"),
             "Unexpected error: {err}"
         );
 
@@ -2822,13 +2822,13 @@ mod test {
     mod entity_storage_validation {
         use super::super::{validate_entity_storage, Storage};
         use crate::config_parsing::entity_parsing::{Entity, Schema};
-        use crate::config_parsing::human_config::ColumnNaming;
+        use crate::config_parsing::human_config::ColumnNameFormat;
 
         fn storage(postgres: bool, clickhouse: bool) -> Storage {
             Storage {
                 postgres,
                 clickhouse,
-                column_naming: ColumnNaming::Graphql,
+                column_name_format: ColumnNameFormat::Graphql,
             }
         }
 
@@ -2943,13 +2943,13 @@ mod test {
 
     mod db_column_name_validation {
         use super::super::{validate_db_column_names, Storage};
-        use crate::config_parsing::{entity_parsing::Schema, human_config::ColumnNaming};
+        use crate::config_parsing::{entity_parsing::Schema, human_config::ColumnNameFormat};
 
-        fn storage(column_naming: ColumnNaming) -> Storage {
+        fn storage(column_name_format: ColumnNameFormat) -> Storage {
             Storage {
                 postgres: true,
                 clickhouse: false,
-                column_naming,
+                column_name_format,
             }
         }
 
@@ -2964,7 +2964,7 @@ type Token {
 }"#,
             )
             .unwrap();
-            assert!(validate_db_column_names(&storage(ColumnNaming::SnakeCase), &schema).is_ok());
+            assert!(validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).is_ok());
         }
 
         #[test]
@@ -2979,12 +2979,12 @@ type Token {
             )
             .unwrap();
             let err =
-                validate_db_column_names(&storage(ColumnNaming::SnakeCase), &schema).unwrap_err();
+                validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).unwrap_err();
             assert_eq!(
                 err.to_string(),
                 "Schema validation failed:\n\
                  \n\
-                 `column_naming: snake_case` maps multiple entity fields to the same database column:\n  \
+                 `column_name_format: snake_case` maps multiple entity fields to the same database column:\n  \
                  - `Token`: fields `tokenId`, `token_id` all map to the \"token_id\" column.\n\
                  \n\
                  Fixes:\n  \
@@ -3010,7 +3010,7 @@ type Transfer {
             )
             .unwrap();
             let err =
-                validate_db_column_names(&storage(ColumnNaming::SnakeCase), &schema).unwrap_err();
+                validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).unwrap_err();
             assert!(
                 err.to_string().contains(
                     "- `Transfer`: fields `token`, `tokenId` all map to the \"token_id\" column."
@@ -3036,7 +3036,7 @@ type Transfer {
 }"#,
             )
             .unwrap();
-            assert!(validate_db_column_names(&storage(ColumnNaming::Graphql), &schema).is_ok());
+            assert!(validate_db_column_names(&storage(ColumnNameFormat::Graphql), &schema).is_ok());
         }
     }
 }

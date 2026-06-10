@@ -9,7 +9,7 @@ save_full_history: true
 raw_events: true
 storage:
   postgres:
-    column_naming: snake_case
+    column_name_format: snake_case
   clickhouse: true
 field_selection:
   transaction_fields:

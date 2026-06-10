@@ -1,7 +1,7 @@
 use super::{
     entity_parsing::IndexFieldDirection,
     field_types,
-    human_config::{evm::For, ColumnNaming},
+    human_config::{evm::For, ColumnNameFormat},
     system_config::{self, Abi, Ecosystem, EventKind, FuelEventKind, SystemConfig},
 };
 use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
@@ -54,7 +54,7 @@ struct StorageConfig {
     #[serde(skip_serializing_if = "is_false")]
     clickhouse: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    column_naming: Option<&'static str>,
+    column_name_format: Option<&'static str>,
 }
 
 impl From<&system_config::Storage> for StorageConfig {
@@ -62,9 +62,9 @@ impl From<&system_config::Storage> for StorageConfig {
         Self {
             postgres: s.postgres,
             clickhouse: s.clickhouse,
-            column_naming: match s.column_naming {
-                ColumnNaming::Graphql => None,
-                ColumnNaming::SnakeCase => Some("snake_case"),
+            column_name_format: match s.column_name_format {
+                ColumnNameFormat::Graphql => None,
+                ColumnNameFormat::SnakeCase => Some("snake_case"),
             },
         }
     }
@@ -566,11 +566,11 @@ impl SystemConfig {
                                     ("entity".into(), None, Some(name.clone()), None, None)
                                 }
                             };
-                        let db_name = match cfg.storage.column_naming {
-                            ColumnNaming::Graphql => None,
-                            ColumnNaming::SnakeCase => {
-                                let db_name = f.db_column_name(ColumnNaming::SnakeCase);
-                                if db_name == f.db_column_name(ColumnNaming::Graphql) {
+                        let db_name = match cfg.storage.column_name_format {
+                            ColumnNameFormat::Graphql => None,
+                            ColumnNameFormat::SnakeCase => {
+                                let db_name = f.db_column_name(ColumnNameFormat::SnakeCase);
+                                if db_name == f.db_column_name(ColumnNameFormat::Graphql) {
                                     None
                                 } else {
                                     Some(db_name)

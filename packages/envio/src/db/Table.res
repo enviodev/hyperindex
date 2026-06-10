@@ -44,7 +44,7 @@ type field = {
   linkedEntity: option<string>,
   defaultValue: option<string>,
   description: option<string>,
-  // Overrides the column name in the storage (eg when `column_naming:
+  // Overrides the column name in the storage (eg when `column_name_format:
   // snake_case` is configured), while the API keeps using fieldName.
   dbName: option<string>,
 }

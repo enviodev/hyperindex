@@ -100,7 +100,7 @@
             {
               "type": "object",
               "properties": {
-                "column_naming": {
+                "column_name_format": {
                   "description": "How entity fields are reflected in the storage column names. `graphql` keeps the schema.graphql field names as is, `snake_case` converts them to snake_case in the database while keeping the GraphQL casing in the exposed APIs. (default: graphql)",
                   "type": [
                     "string",
@@ -129,7 +129,7 @@
             {
               "type": "object",
               "properties": {
-                "column_naming": {
+                "column_name_format": {
                   "description": "How entity fields are reflected in the storage column names. `graphql` keeps the schema.graphql field names as is, `snake_case` converts them to snake_case in the database while keeping the GraphQL casing in the exposed APIs. (default: graphql)",
                   "type": [
                     "string",

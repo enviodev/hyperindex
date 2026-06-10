@@ -1,11 +1,11 @@
 open Vitest
 
-// Mirrors the public config the CLI emits for `column_naming: snake_case`:
+// Mirrors the public config the CLI emits for `column_name_format: snake_case`:
 // the resolved db column names arrive as per-property `dbName` values.
 let publicConfigJson: JSON.t = %raw(`{
   "version": "0.0.1-dev",
   "name": "test",
-  "storage": { "postgres": true, "columnNaming": "snake_case" },
+  "storage": { "postgres": true, "columnNameFormat": "snake_case" },
   "evm": {
     "chains": {
       "ethereumMainnet": {

@@ -14,7 +14,7 @@ expression: json
   "storage": {
     "postgres": true,
     "clickhouse": true,
-    "columnNaming": "snake_case"
+    "columnNameFormat": "snake_case"
   },
   "evm": {
     "chains": {

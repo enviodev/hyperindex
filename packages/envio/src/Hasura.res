@@ -112,7 +112,7 @@ let clearHasuraMetadata = async (~endpoint, ~auth) => {
 
 type columnConfig = {
   // The GraphQL field name exposed by Hasura, when it differs from the
-  // column name in the database (eg with `column_naming: snake_case`).
+  // column name in the database (eg with `column_name_format: snake_case`).
   customName: option<string>,
   comment: option<string>,
 }
