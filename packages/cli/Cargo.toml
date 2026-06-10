@@ -62,7 +62,11 @@ napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
 
 [features]
-integration_tests = []
+hypersync_health = []
+# Transitional alias: the base-branch CI still invokes `--features
+# integration_tests` (pull_request_target runs main's workflow). Remove once
+# main's workflow uses `hypersync_health`.
+integration_tests = ["hypersync_health"]
 
 [build-dependencies]
 napi-build = "=2.3.1"

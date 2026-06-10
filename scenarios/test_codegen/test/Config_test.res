@@ -377,6 +377,42 @@ describe("Config.fromPublic", () => {
     })
   })
 
+  it("resolves entity storage from the entity config, falling back to the global storage", t => {
+    let publicConfigJson: JSON.t = %raw(`{
+      "version": "0.0.1-dev",
+      "name": "test",
+      "storage": { "postgres": true, "clickhouse": true },
+      "evm": {
+        "chains": {
+          "ethereumMainnet": {
+            "id": 1,
+            "startBlock": 0,
+            "rpcs": [{ "url": "https://eth.com", "for": "sync" }]
+          }
+        },
+        "addressFormat": "checksum"
+      },
+      "enums": {},
+      "entities": [
+        {
+          "name": "User",
+          "properties": [{ "name": "id", "type": "string" }]
+        },
+        {
+          "name": "Snapshot",
+          "storage": { "clickhouse": true },
+          "properties": [{ "name": "id", "type": "string" }]
+        }
+      ]
+    }`)
+
+    let config = Config.fromPublic(publicConfigJson)
+    t.expect(config.userEntities->Array.map(e => (e.name, e.storage))).toEqual([
+      ("User", {Internal.postgres: true, clickhouse: true}),
+      ("Snapshot", {Internal.postgres: false, clickhouse: true}),
+    ])
+  })
+
   it("works with already-capitalized contract name", t => {
     let publicConfigJson: JSON.t = %raw(`{
       "version": "0.0.1-dev",

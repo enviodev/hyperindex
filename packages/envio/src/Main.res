@@ -791,8 +791,12 @@ let start = async (
     ~onError,
   )
   let gsManager =
-    globalState->GlobalStateManager.make(~onError=exn =>
-      onError(exn->ErrorHandling.make(~msg="Indexer has failed with an unexpected error"))
+    globalState->GlobalStateManager.make(
+      ~reducers=GlobalState.makeReducers(
+        ~markBatchProcessed=MarkBatchProcessedAdapter.make(~inMemoryStore=ctx.inMemoryStore),
+      ),
+      ~onError=exn =>
+        onError(exn->ErrorHandling.make(~msg="Indexer has failed with an unexpected error")),
     )
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)

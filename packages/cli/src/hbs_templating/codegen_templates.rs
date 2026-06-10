@@ -2767,6 +2767,36 @@ mod test {
         insta::assert_snapshot!(json);
     }
 
+    // When the backends marked `default` coincide with the enabled ones,
+    // the entity storage field must stay omitted (the runtime falls back to
+    // the global storage) — an added key would trip the persisted-config
+    // diff for projects predating per-backend `default`.
+    #[test]
+    fn internal_config_json_omits_entity_storage_matching_enabled_backends() {
+        let json = get_internal_config_json_helper("config-multi-storage-defaults.yaml");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let entity_storages: Vec<(&str, Option<serde_json::Value>)> = parsed["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["name"].as_str().unwrap(), e.get("storage").cloned()))
+            .collect();
+        assert_eq!(
+            entity_storages,
+            vec![
+                (
+                    "EmptyEntity",
+                    Some(serde_json::json!({"postgres": true, "clickhouse": true}))
+                ),
+                (
+                    "RelatedEntity",
+                    Some(serde_json::json!({"postgres": true, "clickhouse": true}))
+                ),
+                ("UnannotatedEntity", None),
+            ]
+        );
+    }
+
     #[test]
     fn envio_types_dts_generated_for_evm() {
         let project_template = get_project_template_helper("config1.yaml");
