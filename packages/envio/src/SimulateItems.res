@@ -330,25 +330,7 @@ let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
           let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
           let source = SimulateSource.make(~items, ~endBlock, ~chain)
           {...chainConfig, startBlock, endBlock, sourceConfig: Config.CustomSources([source])}
-        | None =>
-          // No simulate items: still honor `startBlock` / `endBlock` overrides
-          // so non-EVM/Fuel ecosystems (notably SVM `indexer.onInstruction`,
-          // which doesn't support simulate items) can bound the run window
-          // via `testIndexer.process({chains: { id: {startBlock, endBlock} }})`.
-          let startBlockOpt: option<int> =
-            raw["startBlock"]
-            ->(Utils.magic: 'a => Nullable.t<int>)
-            ->Nullable.toOption
-          let endBlockOpt: option<int> =
-            raw["endBlock"]->(Utils.magic: 'a => Nullable.t<int>)->Nullable.toOption
-          let withStart = switch startBlockOpt {
-          | Some(sb) => {...chainConfig, startBlock: sb}
-          | None => chainConfig
-          }
-          switch endBlockOpt {
-          | Some(eb) => {...withStart, endBlock: eb}
-          | None => withStart
-          }
+        | None => chainConfig
         }
       | None => chainConfig
       }
