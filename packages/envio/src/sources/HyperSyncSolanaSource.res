@@ -303,6 +303,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     orderingByProgram->Dict.set(o.programId->SvmTypes.Pubkey.toString, o.byteLengthsDesc)
   )
 
+  let needsTransactions = eventConfigs->Array.some(cfg => cfg.includeTransaction)
+  let needsLogs = eventConfigs->Array.some(cfg => cfg.includeLogs)
   let needsTokenBalances = eventConfigs->Array.some(cfg => cfg.includeTokenBalances)
 
   let getItemsOrThrow = async (
@@ -320,15 +322,35 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     let pageFetchRef = Hrtime.makeTimer()
 
     let instructionSelections = buildInstructionSelections(eventConfigs)
-    let fields: HyperSyncSolanaClient.QueryTypes.fieldSelection = if needsTokenBalances {
-      {
-        block: [Slot, Blockhash, BlockTime],
-        tokenBalance: [Slot, TransactionIndex, Account, Mint, Owner, PreAmount, PostAmount],
-      }
-    } else {
-      {
-        block: [Slot, Blockhash, BlockTime],
-      }
+    // The server returns rows for the transaction/log/token-balance tables
+    // only when the table's field list is non-empty (instructions and blocks
+    // are exempt), so each opted-into table needs its columns spelled out here
+    // or the per-selection include flags silently return nothing.
+    let fields: HyperSyncSolanaClient.QueryTypes.fieldSelection = {
+      block: [Slot, Blockhash, BlockTime],
+      transaction: ?(
+        needsTransactions
+          ? Some([
+              Slot,
+              TransactionIndex,
+              Signatures,
+              FeePayer,
+              Success,
+              Err,
+              Fee,
+              ComputeUnitsConsumed,
+              AccountKeys,
+              RecentBlockhash,
+              Version,
+            ])
+          : None
+      ),
+      log: ?(needsLogs ? Some([Slot, TransactionIndex, InstructionAddress, Kind, Message]) : None),
+      tokenBalance: ?(
+        needsTokenBalances
+          ? Some([Slot, TransactionIndex, Account, Mint, Owner, PreAmount, PostAmount])
+          : None
+      ),
     }
     let query: HyperSyncSolanaClient.query = {
       fromSlot: fromBlock,

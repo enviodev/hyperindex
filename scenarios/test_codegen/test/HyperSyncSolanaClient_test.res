@@ -17,21 +17,44 @@ describe_skip("HyperSyncSolanaClient live", () => {
       toSlot: height,
       instructions: [{programId: [tokenMetadataProgram], includeTransaction: true}],
       maxNumInstructions: 200,
+      fields: {
+        block: [Slot, Blockhash, BlockTime],
+        transaction: [Slot, TransactionIndex, Signatures],
+      },
     }
     let resp = await client.get(~query)
     let first = resp.data.instructions->Array.getUnsafe(0)
+
+    let blockTimeBySlot = Dict.make()
+    resp.data.blocks->Array.forEach(b =>
+      switch b.blockTime {
+      | Some(time) => blockTimeBySlot->Dict.set(b.slot->Int.toString, time)
+      | None => ()
+      }
+    )
 
     let summary = {
       "heightLooksRecent": height > 300_000_000,
       "hasInstructions": resp.data.instructions->Array.length > 0,
       "firstProgramId": first.programId,
       "firstDataIsHex": first.data->String.startsWith("0x"),
+      // Every matched instruction's slot must come with a sane blockTime —
+      // `HyperSyncSolanaSource` relies on this join for `instruction.block.time`.
+      "allInstructionSlotsHaveBlockTime": resp.data.instructions->Array.every(instr =>
+        switch blockTimeBySlot->Dict.get(instr.slot->Int.toString) {
+        | Some(time) => time > 1_600_000_000
+        | None => false
+        }
+      ),
+      "hasTransactions": resp.data.transactions->Array.length > 0,
     }
     t.expect(summary).toEqual({
       "heightLooksRecent": true,
       "hasInstructions": true,
       "firstProgramId": tokenMetadataProgram,
       "firstDataIsHex": true,
+      "allInstructionSlotsHaveBlockTime": true,
+      "hasTransactions": true,
     })
   })
 })
