@@ -175,10 +175,8 @@ pub async fn execute(
 /// append extra env pairs (e.g. ClickHouse credentials from Docker for
 /// `envio dev`).
 ///
-/// `ENVIO_CONFIG` is exported relative to the project root: the runtime
-/// chdirs into `cwd` before reading it, and a CLI re-invocation joins it
-/// onto `--directory` again — a cwd-joined value would resolve to
-/// `<root>/<root>/config.yaml` in both cases.
+/// `ENVIO_CONFIG` is root-relative: consumers resolve it against
+/// `cwd` / `--directory`, so a cwd-joined value would double the prefix.
 pub fn build_start_command(
     config: &SystemConfig,
     reset: bool,

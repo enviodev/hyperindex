@@ -58,9 +58,7 @@ impl ParsedProjectPaths {
         Self::new(project_root, DEFAULT_CONFIG_PATH)
     }
 
-    /// The config path expressed relative to the project root — the form
-    /// consumers need once the project root acts as cwd (the runtime chdirs
-    /// into it, and clap joins `ENVIO_CONFIG` onto `--directory` again).
+    /// The form consumers need when the project root acts as cwd.
     pub fn config_relative_to_root(&self) -> PathBuf {
         let normalized_root = path_utils::normalize_path(self.project_root.clone());
         pathdiff::diff_paths(&self.config, &normalized_root)
