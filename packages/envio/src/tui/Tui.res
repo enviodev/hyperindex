@@ -28,7 +28,7 @@ module ChainLine = {
       let toBlockStr = toBlock->TuiData.formatLocaleString
       let eventsStr = eventsProcessed->TuiData.formatFloatLocaleString
 
-      let endLabel = blockUnit === "Slots" ? " (End Slot)" : " (End Block)"
+      let endLabel = ` (End ${blockUnit})`
       let blocksText =
         `${blockUnit}: ${progressBlockStr} / ${toBlockStr}` ++
         (endBlock->Option.isSome ? endLabel : "") ++ `  `
