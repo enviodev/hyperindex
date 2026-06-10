@@ -172,7 +172,7 @@ let getItemLogger = {
               "chainId": chain->ChainMap.Chain.toChainId,
               "block": blockNumber,
               "logIndex": logIndex,
-              "address": event.srcAddress,
+              "address": (event->Internal.toGenericEvent).srcAddress,
             }->createChildParams
           | Block({blockNumber, onBlockConfig}) =>
             {

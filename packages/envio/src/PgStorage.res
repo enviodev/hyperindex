@@ -829,8 +829,8 @@ let makeRawEvent = (
   eventItem: Internal.eventItem,
   ~config: Config.t,
 ): InternalTable.RawEvents.t => {
-  let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = eventItem
-  let {block, transaction, params, logIndex, srcAddress} = event
+  let {event, eventConfig, chain, blockNumber, blockHash, timestamp: blockTimestamp} = eventItem
+  let {block, transaction, params, logIndex, srcAddress} = event->Internal.toGenericEvent
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =
@@ -866,7 +866,7 @@ let makeRawEvent = (
     blockNumber,
     logIndex,
     srcAddress,
-    blockHash: block->config.ecosystem.getId,
+    blockHash,
     blockTimestamp,
     blockFields,
     transactionFields,

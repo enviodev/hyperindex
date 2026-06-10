@@ -13,6 +13,7 @@ node_modules
 scenarios/**/generated
 scenarios/**/*.bs.js
 scenarios/**/*.res.js
+scenarios/**/*.res.mjs
 scenarios/**/lib/*
 scenarios/**/node_modules/*
 

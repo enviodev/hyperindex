@@ -30,6 +30,9 @@ type chain = {
   progress: progress,
   latestFetchedBlockNumber: int,
   knownHeight: int,
+  /** Localized unit noun for this chain's progress. `"Slots"` on SVM,
+   `"Blocks"` everywhere else. Drives the per-chain progress label. */
+  blockUnit: string,
   rateLimitTimeMs: float,
   isRateLimited: bool,
   rateLimitResetInMs: option<float>,

@@ -1065,7 +1065,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
 
 describe("PgStorage.makeRawEvent", () => {
   Async.it(
-    "Derives a raw event row from a batch item, copying block hash before cleanup and stringifying bigint block fields",
+    "Derives a raw event row from a batch item, taking block hash from the item and stringifying bigint block fields",
     async t => {
       let srcAddress = "0x00000000000000000000000000000000000000ab"->(Utils.magic: string => Address.t)
       let blockNumber = 5
@@ -1089,6 +1089,7 @@ describe("PgStorage.makeRawEvent", () => {
           timestamp: 1234,
           chain: ChainMap.Chain.makeUnsafe(~chainId=137),
           blockNumber,
+          blockHash: "0xblockhash",
           logIndex,
           event,
         })->Internal.castUnsafeEventItem

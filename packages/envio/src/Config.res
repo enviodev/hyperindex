@@ -28,7 +28,7 @@ type evmRpcConfig = {
 type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
-  | SvmSourceConfig({rpc: string})
+  | SvmSourceConfig({hypersync: option<string>, rpc: option<string>})
   // For tests: pass custom sources directly
   | CustomSources(array<Source.t>)
 
@@ -191,6 +191,39 @@ let publicConfigChainSchema = S.schema(s =>
   }
 )
 
+let svmEventDescriptorSchema = S.schema(s =>
+  {
+    "discriminator": s.matches(S.option(S.string)),
+    "discriminatorByteLen": s.matches(S.int),
+    "includeTransaction": s.matches(S.bool),
+    "includeLogs": s.matches(S.bool),
+    "includeTokenBalances": s.matches(S.bool),
+    "accountFilters": s.matches(
+      S.option(
+        S.array(
+          S.schema(
+            s => {
+              "position": s.matches(S.int),
+              "values": s.matches(S.array(S.string)),
+            },
+          ),
+        ),
+      ),
+    ),
+    "isInner": s.matches(S.option(S.bool)),
+    "accounts": s.matches(S.option(S.array(S.string))),
+    "args": s.matches(S.option(S.json(~validate=false))),
+  }
+)
+
+let svmAbiSchema = S.schema(s =>
+  {
+    "programId": s.matches(S.string),
+    "definedTypes": s.matches(S.json(~validate=false)),
+    "source": s.matches(S.string),
+  }
+)
+
 let contractEventItemSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
@@ -199,6 +232,7 @@ let contractEventItemSchema = S.schema(s =>
     "kind": s.matches(S.option(S.string)),
     "blockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
     "transactionFields": s.matches(S.option(S.array(Internal.evmTransactionFieldSchema))),
+    "svm": s.matches(S.option(svmEventDescriptorSchema)),
   }
 )
 
@@ -208,6 +242,8 @@ let contractConfigSchema = S.schema(s =>
     "handler": s.matches(S.option(S.string)),
     // EVM-specific: event signatures for HyperSync queries
     "events": s.matches(S.option(S.array(contractEventItemSchema))),
+    // SVM-only: program-level Borsh schema (defined-types registry, source).
+    "svmAbi": s.matches(S.option(svmAbiSchema)),
   }
 )
 
@@ -215,6 +251,10 @@ let publicConfigEcosystemSchema = S.schema(s =>
   {
     "chains": s.matches(S.dict(publicConfigChainSchema)),
     "contracts": s.matches(S.option(S.dict(contractConfigSchema))),
+    // SVM-only alias: programs are the SVM analog of EVM/Fuel contracts.
+    // Parsed via the same `contractConfigSchema` and read in `fromPublic`'s
+    // `publicContractsConfig` switch.
+    "programs": s.matches(S.option(S.dict(contractConfigSchema))),
   }
 )
 
@@ -512,10 +552,19 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => false
   }
 
-  // Parse contract configs (ABIs, events, handlers)
-  let publicContractsConfig = switch (ecosystemName, publicConfig["evm"], publicConfig["fuel"]) {
-  | (Ecosystem.Evm, Some(evm), _) => evm["contracts"]
-  | (Ecosystem.Fuel, _, Some(fuel)) => fuel["contracts"]
+  // Parse contract configs (ABIs, events, handlers).
+  // SVM stores them under `svm.programs` in the public JSON — the per-program
+  // events drive `indexer.onInstruction` registration the same way EVM/Fuel
+  // contracts drive `onEvent`.
+  let publicContractsConfig = switch (
+    ecosystemName,
+    publicConfig["evm"],
+    publicConfig["fuel"],
+    publicConfig["svm"],
+  ) {
+  | (Ecosystem.Evm, Some(evm), _, _) => evm["contracts"]
+  | (Ecosystem.Fuel, _, Some(fuel), _) => fuel["contracts"]
+  | (Ecosystem.Svm, _, _, Some(svm)) => svm["programs"]
   | _ => None
   }
 
@@ -533,7 +582,12 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => (Utils.Set.fromArray(EventConfigBuilder.alwaysIncludedBlockFields), Utils.Set.make())
   }
 
-  let contractDataByName: dict<{"abi": EvmTypes.Abi.t, "events": option<array<_>>}> = Dict.make()
+  let contractDataByName: dict<{
+    "abi": EvmTypes.Abi.t,
+    "eventSignatures": array<string>,
+    "events": option<array<_>>,
+    "svmAbi": option<{"programId": string, "definedTypes": JSON.t, "source": string}>,
+  }> = Dict.make()
   switch publicContractsConfig {
   | Some(contractsDict) =>
     contractsDict
@@ -541,21 +595,44 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ->Array.forEach(((contractName, contractConfig)) => {
       let capitalizedName = contractName->Utils.String.capitalize
       let abi = contractConfig["abi"]->(Utils.magic: JSON.t => EvmTypes.Abi.t)
+      let eventSignatures = switch contractConfig["events"] {
+      | Some(events) => events->Array.map(eventItem => eventItem["sighash"])
+      | None => []
+      }
+      let widened =
+        contractConfig->(
+          Utils.magic: _ => {
+            "svmAbi": option<{"programId": string, "definedTypes": JSON.t, "source": string}>,
+          }
+        )
       contractDataByName->Dict.set(
         capitalizedName,
-        {"abi": abi, "events": contractConfig["events"]},
+        {
+          "abi": abi,
+          "eventSignatures": eventSignatures,
+          "events": contractConfig["events"],
+          "svmAbi": widened["svmAbi"],
+        },
       )
     })
   | None => ()
   }
 
-  // Build event configs for a contract from JSON event items
+  // Build event configs for a contract from JSON event items.
+  //
+  // `~addresses` is the chain-side address list. For SVM programs it's the
+  // single base58 program_id — wired onto each instruction's event config so
+  // the source can build `(programId, discriminator)`-keyed InstructionSelections.
+  // EVM and Fuel ignore it (the address lives in `ChainContract.addresses` and
+  // is looked up at dispatch time, not stamped on the event).
   let buildContractEvents = (
     ~contractName,
     ~events: option<array<_>>,
     ~abi,
     ~chainId: int,
     ~startBlock: option<int>,
+    ~addresses: array<string>,
+    ~svmDefinedTypes: JSON.t=JSON.Null,
   ) => {
     switch events {
     | None => []
@@ -586,6 +663,69 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               `Fuel event ${contractName}.${eventName} is missing "kind" in internal config`,
             )
           }
+        | Ecosystem.Svm =>
+          let programId = switch addresses {
+          | [pid] => pid->SvmTypes.Pubkey.fromStringUnsafe
+          | [] =>
+            JsError.throwWithMessage(
+              `SVM program ${contractName} on chain ${chainId->Int.toString} is missing a program_id`,
+            )
+          | _ =>
+            JsError.throwWithMessage(
+              `SVM program ${contractName} on chain ${chainId->Int.toString} has multiple addresses; a program is uniquely identified by a single program_id`,
+            )
+          }
+          let widenedEventItem =
+            eventItem->(
+              Utils.magic: _ => {
+                "svm": option<{
+                  "discriminator": option<string>,
+                  "discriminatorByteLen": int,
+                  "includeTransaction": bool,
+                  "includeLogs": bool,
+                  "includeTokenBalances": bool,
+                  "accountFilters": option<
+                    array<array<{"position": int, "values": array<string>}>>,
+                  >,
+                  "isInner": option<bool>,
+                  "accounts": option<array<string>>,
+                  "args": option<JSON.t>,
+                }>,
+              }
+            )
+          let svm = switch widenedEventItem["svm"] {
+          | Some(s) => s
+          | None =>
+            JsError.throwWithMessage(
+              `SVM instruction ${contractName}.${eventName} is missing the "svm" descriptor in internal config`,
+            )
+          }
+          let accountFilters =
+            (svm["accountFilters"]->Option.getOr([]))->Array.map(group =>
+              group->Array.map(af => {
+                Internal.position: af["position"],
+                values: af["values"]->SvmTypes.Pubkey.fromStringsUnsafe,
+              })
+            )
+          (EventConfigBuilder.buildSvmInstructionEventConfig(
+            ~contractName,
+            ~instructionName=eventName,
+            ~programId,
+            ~discriminator=svm["discriminator"],
+            ~discriminatorByteLen=svm["discriminatorByteLen"],
+            ~includeTransaction=svm["includeTransaction"],
+            ~includeLogs=svm["includeLogs"],
+            ~includeTokenBalances=svm["includeTokenBalances"],
+            ~accountFilters,
+            ~isInner=svm["isInner"],
+            ~isWildcard=false,
+            ~handler=None,
+            ~contractRegister=None,
+            ~accounts=svm["accounts"]->Option.getOr([]),
+            ~args=svm["args"]->Option.getOr(JSON.Null),
+            ~definedTypes=svmDefinedTypes,
+            ~startBlock?,
+          ) :> Internal.eventConfig)
         | _ =>
           (EventConfigBuilder.buildEvmEventConfig(
             ~contractName,
@@ -645,11 +785,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         ->Dict.toArray
         ->Array.map(((capitalizedName, contractData)) => {
           let chainContract = chainContracts->Dict.get(capitalizedName)
-          let addresses =
+          let rawAddresses =
             chainContract
             ->Option.flatMap(cc => cc["addresses"])
             ->Option.getOr([])
-            ->Array.map(parseAddress)
+          let addresses = rawAddresses->Array.map(parseAddress)
           let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
 
           // Build event configs from JSON (field selections resolved inline)
@@ -663,6 +803,10 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~abi=contractData["abi"],
             ~chainId,
             ~startBlock,
+            ~addresses=rawAddresses,
+            ~svmDefinedTypes=contractData["svmAbi"]
+            ->Option.map(a => a["definedTypes"])
+            ->Option.getOr(JSON.Null),
           )
 
           {
@@ -726,10 +870,14 @@ let fromPublic = (publicConfigJson: JSON.t) => {
           JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
         }
       | Ecosystem.Svm =>
-        switch publicChainConfig["rpc"] {
-        | Some(rpc) => SvmSourceConfig({rpc: rpc})
-        | None => JsError.throwWithMessage(`Chain ${chainName} is missing rpc endpoint in config`)
+        let hypersync = publicChainConfig["hypersync"]
+        let rpc = publicChainConfig["rpc"]
+        if hypersync->Option.isNone && rpc->Option.isNone {
+          JsError.throwWithMessage(
+            `Chain ${chainName} is missing a data source: provide either an rpc endpoint or an experimental hypersync config`,
+          )
         }
+        SvmSourceConfig({hypersync, rpc})
       }
 
       {

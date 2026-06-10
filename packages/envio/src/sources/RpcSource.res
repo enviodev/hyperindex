@@ -525,6 +525,12 @@ let makeThrowingGetEventBlock = (
   }
 }
 
+// `number`, `timestamp` and `hash` are always part of the selected block
+// fields, so they can be read from the assembled block at item construction.
+@get external getBlockNumber: Internal.eventBlock => int = "number"
+@get external getBlockTimestamp: Internal.eventBlock => int = "timestamp"
+@get external getBlockHash: Internal.eventBlock => string = "hash"
+
 // Field source classification for RPC calls
 type fieldSource = TransactionOnly | ReceiptOnly | Both
 
@@ -1158,8 +1164,9 @@ let make = (
 
                 Internal.Event({
                   eventConfig: (eventConfig :> Internal.eventConfig),
-                  timestamp: block->Evm.getTimestamp,
-                  blockNumber: block->Evm.getNumber,
+                  timestamp: block->getBlockTimestamp,
+                  blockNumber: block->getBlockNumber,
+                  blockHash: block->getBlockHash,
                   chain,
                   logIndex: log.logIndex,
                   event: {

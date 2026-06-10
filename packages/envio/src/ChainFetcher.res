@@ -229,7 +229,31 @@ let make = (
       ~lowercaseAddresses,
     )
   | Config.FuelSourceConfig({hypersync}) => [HyperFuelSource.make({chain, endpointUrl: hypersync})]
-  | Config.SvmSourceConfig({rpc}) => [Svm.makeRPCSource(~chain, ~rpc)]
+  | Config.SvmSourceConfig({hypersync, rpc}) =>
+    switch (hypersync, rpc) {
+    | (None, None) =>
+      JsError.throwWithMessage(
+        `Chain ${chain->ChainMap.Chain.toChainId->Int.toString} has no SVM data source`,
+      )
+    | (None, Some(rpc)) => [Svm.makeRPCSource(~chain, ~rpc)]
+    | (Some(hypersyncUrl), _) =>
+      // HyperSync drives instruction sync. A configured RPC is ignored for now
+      // (RPC fallback isn't wired up yet).
+      let svmEventConfigs =
+        chainConfig.contracts
+        ->Array.flatMap(contract => contract.events)
+        ->(Utils.magic: array<Internal.eventConfig> => array<Internal.svmInstructionEventConfig>)
+      let apiToken = Env.envioApiToken
+      [
+        HyperSyncSolanaSource.make({
+          chain,
+          endpointUrl: hypersyncUrl,
+          apiToken,
+          eventConfigs: svmEventConfigs,
+          clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
+        }),
+      ]
+    }
   // For tests: use ready-to-use sources directly
   | Config.CustomSources(sources) => sources
   }
