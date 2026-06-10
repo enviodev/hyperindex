@@ -3048,6 +3048,55 @@ mod test {
         insta::assert_snapshot!(json);
     }
 
+    #[test]
+    fn event_template_svm_instruction_rescript_snapshot() {
+        // The SVM per-instruction module is keyed only off the instruction
+        // name; pin the ReScript shape emitted by `from_svm_instruction_event`.
+        let event = system_config::Event {
+            name: "CreateMetadataAccountV3".to_string(),
+            kind: system_config::EventKind::Svm(system_config::SvmEventKind {
+                discriminator: Some("0x21".to_string()),
+                discriminator_byte_len: 1,
+                include_transaction: false,
+                include_logs: false,
+                include_token_balances: false,
+                account_filters: vec![],
+                is_inner: None,
+                accounts: vec![],
+                args: vec![],
+            }),
+            sighash: "0x21".to_string(),
+            event_signature: String::new(),
+            field_selection: None,
+        };
+        let template = EventTemplate::from_config_event(
+            &event,
+            None,
+            &"TokenMetadata".to_string().to_capitalized_options(),
+        )
+        .unwrap();
+        assert_eq!(template.name, "CreateMetadataAccountV3");
+        insta::assert_snapshot!(template.module_code);
+    }
+
+    #[test]
+    fn internal_config_json_code_generated_for_svm() {
+        let json = get_internal_config_json_helper("svm-metaplex-config.yaml");
+        insta::assert_snapshot!(json);
+    }
+
+    #[test]
+    fn envio_types_dts_generated_for_svm() {
+        let project_template = get_project_template_helper("svm-metaplex-config.yaml");
+        insta::assert_snapshot!(project_template.envio_types_dts);
+    }
+
+    #[test]
+    fn indexer_code_generated_for_svm() {
+        let project_template = get_project_template_helper("svm-metaplex-config.yaml");
+        insta::assert_snapshot!(project_template.indexer_code);
+    }
+
     /// End-to-end: `generate_templates` writes the four expected artifacts
     /// (`.envio/types.d.ts`, `.envio/.gitignore`, `envio-env.d.ts`, and for
     /// ReScript projects `src/Indexer.res`) into the project root. Also

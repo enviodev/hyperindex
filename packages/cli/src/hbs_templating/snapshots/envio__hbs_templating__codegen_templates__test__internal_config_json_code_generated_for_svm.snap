@@ -1,0 +1,313 @@
+---
+source: packages/cli/src/hbs_templating/codegen_templates.rs
+expression: json
+---
+{
+  "version": "0.0.1-dev",
+  "name": "Solana indexer",
+  "rollbackOnReorg": false,
+  "storage": {
+    "postgres": true
+  },
+  "svm": {
+    "chains": {
+      "0": {
+        "id": 0,
+        "startBlock": 200000000,
+        "hypersync": "https://solana.hypersync.xyz",
+        "contracts": {
+          "TokenMetadata": {
+            "addresses": [
+              "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+            ]
+          }
+        }
+      }
+    },
+    "programs": {
+      "TokenMetadata": {
+        "abi": null,
+        "events": [
+          {
+            "name": "CreateMetadataAccountV3",
+            "sighash": "0x21",
+            "kind": "svmInstruction",
+            "svm": {
+              "discriminator": "0x21",
+              "discriminatorByteLen": 1,
+              "includeTransaction": false,
+              "includeLogs": false,
+              "includeTokenBalances": false,
+              "accounts": [
+                "metadata",
+                "mint",
+                "mint_authority",
+                "payer",
+                "update_authority",
+                "system_program",
+                "rent"
+              ],
+              "args": [
+                {
+                  "name": "data",
+                  "type": {
+                    "defined": "DataV2"
+                  }
+                },
+                {
+                  "name": "is_mutable",
+                  "type": "bool"
+                },
+                {
+                  "name": "collection_details",
+                  "type": {
+                    "option": {
+                      "defined": "CollectionDetails"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "UpdateMetadataAccountV2",
+            "sighash": "0x0f",
+            "kind": "svmInstruction",
+            "svm": {
+              "discriminator": "0x0f",
+              "discriminatorByteLen": 1,
+              "includeTransaction": true,
+              "includeLogs": false,
+              "includeTokenBalances": false,
+              "accountFilters": [
+                [
+                  {
+                    "position": 0,
+                    "values": [
+                      "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+                    ]
+                  }
+                ]
+              ],
+              "accounts": [
+                "metadata",
+                "update_authority"
+              ],
+              "args": [
+                {
+                  "name": "data",
+                  "type": {
+                    "option": {
+                      "defined": "DataV2"
+                    }
+                  }
+                },
+                {
+                  "name": "update_authority",
+                  "type": {
+                    "option": "pubkey"
+                  }
+                },
+                {
+                  "name": "primary_sale_happened",
+                  "type": {
+                    "option": "bool"
+                  }
+                },
+                {
+                  "name": "is_mutable",
+                  "type": {
+                    "option": "bool"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "svmAbi": {
+          "programId": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+          "definedTypes": {
+            "BurnArgs": {
+              "enum": [
+                {
+                  "name": "V1",
+                  "fields": [
+                    {
+                      "name": "amount",
+                      "type": "u64"
+                    }
+                  ]
+                }
+              ]
+            },
+            "Collection": {
+              "struct": [
+                {
+                  "name": "verified",
+                  "type": "bool"
+                },
+                {
+                  "name": "key",
+                  "type": "pubkey"
+                }
+              ]
+            },
+            "CollectionDetails": {
+              "enum": [
+                {
+                  "name": "V1",
+                  "fields": [
+                    {
+                      "name": "size",
+                      "type": "u64"
+                    }
+                  ]
+                }
+              ]
+            },
+            "Creator": {
+              "struct": [
+                {
+                  "name": "address",
+                  "type": "pubkey"
+                },
+                {
+                  "name": "verified",
+                  "type": "bool"
+                },
+                {
+                  "name": "share",
+                  "type": "u8"
+                }
+              ]
+            },
+            "Data": {
+              "struct": [
+                {
+                  "name": "name",
+                  "type": "string"
+                },
+                {
+                  "name": "symbol",
+                  "type": "string"
+                },
+                {
+                  "name": "uri",
+                  "type": "string"
+                },
+                {
+                  "name": "seller_fee_basis_points",
+                  "type": "u16"
+                },
+                {
+                  "name": "creators",
+                  "type": {
+                    "option": {
+                      "vec": {
+                        "defined": "Creator"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "DataV2": {
+              "struct": [
+                {
+                  "name": "name",
+                  "type": "string"
+                },
+                {
+                  "name": "symbol",
+                  "type": "string"
+                },
+                {
+                  "name": "uri",
+                  "type": "string"
+                },
+                {
+                  "name": "seller_fee_basis_points",
+                  "type": "u16"
+                },
+                {
+                  "name": "creators",
+                  "type": {
+                    "option": {
+                      "vec": {
+                        "defined": "Creator"
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "collection",
+                  "type": {
+                    "option": {
+                      "defined": "Collection"
+                    }
+                  }
+                },
+                {
+                  "name": "uses",
+                  "type": {
+                    "option": {
+                      "defined": "Uses"
+                    }
+                  }
+                }
+              ]
+            },
+            "UseMethod": {
+              "enum": [
+                {
+                  "name": "Burn"
+                },
+                {
+                  "name": "Multiple"
+                },
+                {
+                  "name": "Single"
+                }
+              ]
+            },
+            "Uses": {
+              "struct": [
+                {
+                  "name": "use_method",
+                  "type": {
+                    "defined": "UseMethod"
+                  }
+                },
+                {
+                  "name": "remaining",
+                  "type": "u64"
+                },
+                {
+                  "name": "total",
+                  "type": "u64"
+                }
+              ]
+            }
+          },
+          "source": "bundled"
+        }
+      }
+    }
+  },
+  "enums": {},
+  "entities": [
+    {
+      "name": "EmptyEntity",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "emptyField",
+          "type": "string"
+        }
+      ]
+    }
+  ]
+}
