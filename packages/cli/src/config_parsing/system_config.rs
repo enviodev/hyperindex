@@ -475,10 +475,12 @@ impl Storage {
         }
         let postgres_default = postgres
             && postgres_config
-                .and_then(|c| c.default())
+                .and_then(|c| c.entity_default())
                 .unwrap_or(!clickhouse);
-        let clickhouse_default =
-            clickhouse && clickhouse_config.and_then(|c| c.default()).unwrap_or(false);
+        let clickhouse_default = clickhouse
+            && clickhouse_config
+                .and_then(|c| c.entity_default())
+                .unwrap_or(false);
         Ok(Self {
             postgres,
             clickhouse,
@@ -513,7 +515,7 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
             return Err(anyhow!(
                 "Schema validation failed:\n\
                  \n\
-                 Entities without a storage (no @storage directive, and no storage backend has `default: true` in config.yaml):\n\
+                 Entities with no storage backend (no @storage directive, and no backend is marked `default: true` in config.yaml):\n\
                  {listed}\n\
                  \n\
                  Fixes:\n  \
@@ -2773,13 +2775,19 @@ mod test {
             }
         }
 
-        fn storage(
-            (postgres, postgres_default): (bool, bool),
-            (clickhouse, clickhouse_default): (bool, bool),
-        ) -> Storage {
+        fn postgres_only() -> Storage {
             Storage {
-                postgres,
-                clickhouse,
+                postgres: true,
+                clickhouse: false,
+                postgres_default: true,
+                clickhouse_default: false,
+            }
+        }
+
+        fn multi(postgres_default: bool, clickhouse_default: bool) -> Storage {
+            Storage {
+                postgres: true,
+                clickhouse: true,
                 postgres_default,
                 clickhouse_default,
             }
@@ -2788,25 +2796,20 @@ mod test {
         #[test]
         fn single_storage_no_directive_ok() {
             let schema = make_schema(vec![entity("Transfer", None, None)]);
-            assert!(
-                validate_entity_storage(&storage((true, true), (false, false)), &schema).is_ok()
-            );
+            assert!(validate_entity_storage(&postgres_only(), &schema).is_ok());
         }
 
         #[test]
         fn single_storage_matching_directive_ok() {
             let schema = make_schema(vec![entity("Transfer", Some(true), None)]);
-            assert!(
-                validate_entity_storage(&storage((true, true), (false, false)), &schema).is_ok()
-            );
+            assert!(validate_entity_storage(&postgres_only(), &schema).is_ok());
         }
 
         #[test]
         fn single_storage_entity_targets_disabled_backend_e1() {
             // Global: postgres only. Entity wants clickhouse → E1.
             let schema = make_schema(vec![entity("Snapshot", Some(true), Some(true))]);
-            let err = validate_entity_storage(&storage((true, true), (false, false)), &schema)
-                .unwrap_err();
+            let err = validate_entity_storage(&postgres_only(), &schema).unwrap_err();
             assert_eq!(
                 err.to_string(),
                 "Schema validation failed:\n\
@@ -2826,9 +2829,7 @@ mod test {
                 entity("Snapshot", None, Some(true)),
                 entity("Audit", Some(true), Some(true)),
             ]);
-            assert!(
-                validate_entity_storage(&storage((true, true), (true, false)), &schema).is_ok()
-            );
+            assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
         }
 
         #[test]
@@ -2837,12 +2838,8 @@ mod test {
                 entity("Transfer", None, None),
                 entity("Snapshot", None, Some(true)),
             ]);
-            assert!(
-                validate_entity_storage(&storage((true, true), (true, false)), &schema).is_ok()
-            );
-            assert!(
-                validate_entity_storage(&storage((true, false), (true, true)), &schema).is_ok()
-            );
+            assert!(validate_entity_storage(&multi(true, false), &schema).is_ok());
+            assert!(validate_entity_storage(&multi(false, true), &schema).is_ok());
         }
 
         #[test]
@@ -2852,13 +2849,12 @@ mod test {
                 entity("Approval", None, None),
                 entity("DailySnapshot", None, Some(true)),
             ]);
-            let err = validate_entity_storage(&storage((true, false), (true, false)), &schema)
-                .unwrap_err();
+            let err = validate_entity_storage(&multi(false, false), &schema).unwrap_err();
             assert_eq!(
                 err.to_string(),
                 "Schema validation failed:\n\
                  \n\
-                 Entities without a storage (no @storage directive, and no storage backend has `default: true` in config.yaml):\n  \
+                 Entities with no storage backend (no @storage directive, and no backend is marked `default: true` in config.yaml):\n  \
                  - Approval\n  \
                  - Transfer\n\
                  \n\
@@ -2881,8 +2877,7 @@ mod test {
                 entity("Apple", None, None),
                 entity("Mango", None, None),
             ]);
-            let err = validate_entity_storage(&storage((true, false), (true, false)), &schema)
-                .unwrap_err();
+            let err = validate_entity_storage(&multi(false, false), &schema).unwrap_err();
             assert!(
                 err.to_string().contains("- Apple\n  - Mango\n  - Zebra"),
                 "Entities not listed alphabetically. Got:\n{err}"
