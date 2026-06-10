@@ -439,15 +439,18 @@ pub struct SystemConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Storage {
-    pub postgres: bool,
-    pub clickhouse: bool,
+pub struct StorageBackend {
     // Whether entities without an @storage directive are stored in the
     // backend. A single enabled backend is implicitly the default; with
     // multiple backends none is, unless opted in via `default: true`.
-    pub postgres_default: bool,
-    pub clickhouse_default: bool,
+    pub entity_default: bool,
     pub column_name_format: human_config::ColumnNameFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Storage {
+    pub postgres: Option<StorageBackend>,
+    pub clickhouse: Option<StorageBackend>,
 }
 
 impl Storage {
@@ -456,55 +459,41 @@ impl Storage {
             None => (None, None),
             Some(s) => (s.postgres.as_ref(), s.clickhouse.as_ref()),
         };
-        let clickhouse = clickhouse_config.is_some_and(|c| c.is_enabled());
+        let clickhouse_enabled = clickhouse_config.is_some_and(|c| c.is_enabled());
         // When clickhouse is enabled, postgres must be set explicitly
         // so that the validation below catches a clickhouse-only config
         // instead of silently defaulting postgres to true.
-        let postgres = postgres_config.map_or(!clickhouse, |c| c.is_enabled());
-        if clickhouse && !postgres {
+        let postgres_enabled = postgres_config.map_or(!clickhouse_enabled, |c| c.is_enabled());
+        if clickhouse_enabled && !postgres_enabled {
             return Err(anyhow!(
                 "ClickHouse is not supported as a single storage yet. Please enable Postgres \
                  alongside ClickHouse in the `storage` config."
             ));
         }
-        if !postgres && !clickhouse {
+        if !postgres_enabled && !clickhouse_enabled {
             return Err(anyhow!(
                 "At least one storage backend must be enabled. Please set `postgres: true` \
                  in the `storage` config (or omit the `storage` section entirely to use the \
                  default)."
             ));
         }
-        let postgres_default = postgres
-            && postgres_config
-                .and_then(|c| c.entity_default())
-                .unwrap_or(!clickhouse);
-        let clickhouse_default = clickhouse
-            && clickhouse_config
-                .and_then(|c| c.entity_default())
-                .unwrap_or(false);
-        // Column names are shared between the backends (ClickHouse mirrors
-        // the Postgres tables), so a single resolved value is used and
-        // conflicting per-backend settings are rejected.
-        let column_name_format = match (
-            postgres_config.and_then(|c| c.column_name_format()),
-            clickhouse_config.and_then(|c| c.column_name_format()),
-        ) {
-            (Some(pg), Some(ch)) if pg != ch => {
-                return Err(anyhow!(
-                    "Different `column_name_format` values per storage backend are not \
-                     supported. Please use the same value for all backends in the \
-                     `storage` config."
-                ))
-            }
-            (pg, ch) => pg.or(ch),
-        };
         Ok(Self {
-            postgres,
-            clickhouse,
-            postgres_default,
-            clickhouse_default,
-            column_name_format: column_name_format
-                .unwrap_or(human_config::ColumnNameFormat::Graphql),
+            postgres: postgres_enabled.then(|| StorageBackend {
+                entity_default: postgres_config
+                    .and_then(|c| c.entity_default())
+                    .unwrap_or(!clickhouse_enabled),
+                column_name_format: postgres_config
+                    .and_then(|c| c.column_name_format())
+                    .unwrap_or(human_config::ColumnNameFormat::Graphql),
+            }),
+            clickhouse: clickhouse_enabled.then(|| StorageBackend {
+                entity_default: clickhouse_config
+                    .and_then(|c| c.entity_default())
+                    .unwrap_or(false),
+                column_name_format: clickhouse_config
+                    .and_then(|c| c.column_name_format())
+                    .unwrap_or(human_config::ColumnNameFormat::Graphql),
+            }),
         })
     }
 }
@@ -518,7 +507,9 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
     // Entities without @storage fall back to the backends marked `default`
     // in config.yaml. When no backend is a default, such entities would end
     // up with no storage at all.
-    if !storage.postgres_default && !storage.clickhouse_default {
+    let postgres_default = storage.postgres.is_some_and(|b| b.entity_default);
+    let clickhouse_default = storage.clickhouse.is_some_and(|b| b.entity_default);
+    if !postgres_default && !clickhouse_default {
         let missing: Vec<&str> = entities
             .iter()
             .filter(|e| !e.has_storage_directive())
@@ -552,10 +543,10 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         .iter()
         .flat_map(|e| {
             let mut out: Vec<(&str, &'static str)> = Vec::new();
-            if e.postgres == Some(true) && !storage.postgres {
+            if e.postgres == Some(true) && storage.postgres.is_none() {
                 out.push((e.name.as_str(), "postgres"));
             }
-            if e.clickhouse == Some(true) && !storage.clickhouse {
+            if e.clickhouse == Some(true) && storage.clickhouse.is_none() {
                 out.push((e.name.as_str(), "clickhouse"));
             }
             out
@@ -586,7 +577,12 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
 /// (`tokenId` and an entity reference `token` both become `token_id`). Catch
 /// this at codegen time instead of failing on table creation.
 pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
-    if storage.column_name_format != human_config::ColumnNameFormat::SnakeCase {
+    // The snake_case mapping is the same for every backend, so one pass
+    // catches collisions no matter which backend opted in.
+    let uses_snake_case = [storage.postgres, storage.clickhouse].iter().any(|b| {
+        b.map(|b| b.column_name_format) == Some(human_config::ColumnNameFormat::SnakeCase)
+    });
+    if !uses_snake_case {
         return Ok(());
     }
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
@@ -2690,16 +2686,19 @@ mod test {
                 column_name_format,
             }))
         };
+        let backend = |entity_default: bool, column_name_format: ColumnNameFormat| {
+            Some(super::StorageBackend {
+                entity_default,
+                column_name_format,
+            })
+        };
 
         // Default (None) -> postgres only, postgres is the entity default
         assert_eq!(
             super::Storage::resolve(None).unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: false,
-                postgres_default: true,
-                clickhouse_default: false,
-                column_name_format: ColumnNameFormat::Graphql,
+                postgres: backend(true, ColumnNameFormat::Graphql),
+                clickhouse: None,
             }
         );
 
@@ -2711,11 +2710,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: false,
-                postgres_default: true,
-                clickhouse_default: false,
-                column_name_format: ColumnNameFormat::Graphql,
+                postgres: backend(true, ColumnNameFormat::Graphql),
+                clickhouse: None,
             }
         );
 
@@ -2728,11 +2724,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: true,
-                postgres_default: false,
-                clickhouse_default: false,
-                column_name_format: ColumnNameFormat::Graphql,
+                postgres: backend(false, ColumnNameFormat::Graphql),
+                clickhouse: backend(false, ColumnNameFormat::Graphql),
             }
         );
 
@@ -2745,11 +2738,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: true,
-                postgres_default: false,
-                clickhouse_default: true,
-                column_name_format: ColumnNameFormat::Graphql,
+                postgres: backend(false, ColumnNameFormat::Graphql),
+                clickhouse: backend(true, ColumnNameFormat::Graphql),
             }
         );
 
@@ -2761,11 +2751,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: true,
-                postgres_default: true,
-                clickhouse_default: true,
-                column_name_format: ColumnNameFormat::Graphql,
+                postgres: backend(true, ColumnNameFormat::Graphql),
+                clickhouse: backend(true, ColumnNameFormat::Graphql),
             }
         );
 
@@ -2778,11 +2765,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: false,
-                postgres_default: false,
-                clickhouse_default: false,
-                column_name_format: ColumnNameFormat::Graphql,
+                postgres: backend(false, ColumnNameFormat::Graphql),
+                clickhouse: None,
             }
         );
 
@@ -2794,11 +2778,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: false,
-                postgres_default: true,
-                clickhouse_default: false,
-                column_name_format: ColumnNameFormat::SnakeCase,
+                postgres: backend(true, ColumnNameFormat::SnakeCase),
+                clickhouse: None,
             }
         );
 
@@ -2810,15 +2791,12 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: false,
-                postgres_default: true,
-                clickhouse_default: false,
-                column_name_format: ColumnNameFormat::Graphql,
+                postgres: backend(true, ColumnNameFormat::Graphql),
+                clickhouse: None,
             }
         );
 
-        // column_name_format set on clickhouse applies to the shared resolution
+        // column_name_format is resolved per backend: only clickhouse opts in
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
                 postgres: enabled(true),
@@ -2826,24 +2804,22 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: true,
-                postgres_default: false,
-                clickhouse_default: false,
-                column_name_format: ColumnNameFormat::SnakeCase,
+                postgres: backend(false, ColumnNameFormat::Graphql),
+                clickhouse: backend(false, ColumnNameFormat::SnakeCase),
             }
         );
 
-        // Conflicting column_name_format between backends -> user-friendly error
-        let err = super::Storage::resolve(Some(&StorageConfig {
-            postgres: with_format(Some(ColumnNameFormat::Graphql)),
-            clickhouse: with_format(Some(ColumnNameFormat::SnakeCase)),
-        }))
-        .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Different `column_name_format` values per storage backend are not supported"),
-            "Unexpected error: {err}"
+        // Backends can diverge in both directions
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: with_format(Some(ColumnNameFormat::SnakeCase)),
+                clickhouse: with_format(Some(ColumnNameFormat::Graphql)),
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: backend(false, ColumnNameFormat::SnakeCase),
+                clickhouse: backend(false, ColumnNameFormat::Graphql),
+            }
         );
 
         // ClickHouse without Postgres -> user-friendly error
@@ -2923,23 +2899,24 @@ mod test {
             }
         }
 
+        fn backend(entity_default: bool) -> Option<super::super::StorageBackend> {
+            Some(super::super::StorageBackend {
+                entity_default,
+                column_name_format: ColumnNameFormat::Graphql,
+            })
+        }
+
         fn postgres_only() -> Storage {
             Storage {
-                postgres: true,
-                clickhouse: false,
-                postgres_default: true,
-                clickhouse_default: false,
-                column_name_format: ColumnNameFormat::Graphql,
+                postgres: backend(true),
+                clickhouse: None,
             }
         }
 
         fn multi(postgres_default: bool, clickhouse_default: bool) -> Storage {
             Storage {
-                postgres: true,
-                clickhouse: true,
-                postgres_default,
-                clickhouse_default,
-                column_name_format: ColumnNameFormat::Graphql,
+                postgres: backend(postgres_default),
+                clickhouse: backend(clickhouse_default),
             }
         }
 
@@ -3043,11 +3020,11 @@ mod test {
 
         fn storage(column_name_format: ColumnNameFormat) -> Storage {
             Storage {
-                postgres: true,
-                clickhouse: false,
-                postgres_default: true,
-                clickhouse_default: false,
-                column_name_format,
+                postgres: Some(super::super::StorageBackend {
+                    entity_default: true,
+                    column_name_format,
+                }),
+                clickhouse: None,
             }
         }
 
@@ -3062,7 +3039,9 @@ type Token {
 }"#,
             )
             .unwrap();
-            assert!(validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).is_ok());
+            assert!(
+                validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).is_ok()
+            );
         }
 
         #[test]
@@ -3076,8 +3055,8 @@ type Token {
 }"#,
             )
             .unwrap();
-            let err =
-                validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).unwrap_err();
+            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
+                .unwrap_err();
             assert_eq!(
                 err.to_string(),
                 "Schema validation failed:\n\
@@ -3107,8 +3086,8 @@ type Transfer {
 }"#,
             )
             .unwrap();
-            let err =
-                validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).unwrap_err();
+            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
+                .unwrap_err();
             assert!(
                 err.to_string().contains(
                     "- `Transfer`: fields `token`, `tokenId` all map to the \"token_id\" column."

@@ -1,11 +1,14 @@
 open Vitest
 
-// Mirrors the public config the CLI emits for `column_name_format: snake_case`:
-// the resolved db column names arrive as per-property `dbName` values.
+// Mirrors the public config the CLI emits when the backends configure
+// different `column_name_format`s: the resolved column names arrive as
+// per-property `dbName` (Postgres) and `clickhouseDbName` (ClickHouse)
+// values. Snapshot uses snake_case in Postgres only; Token uses snake_case
+// in ClickHouse only.
 let publicConfigJson: JSON.t = %raw(`{
   "version": "0.0.1-dev",
   "name": "test",
-  "storage": { "postgres": true, "columnNameFormat": "snake_case" },
+  "storage": { "postgres": true, "clickhouse": true },
   "evm": {
     "chains": {
       "ethereumMainnet": {
@@ -23,6 +26,12 @@ let publicConfigJson: JSON.t = %raw(`{
       { "name": "id", "type": "string" },
       { "name": "transactionIndex", "type": "int", "dbName": "transaction_index", "isIndex": true },
       { "name": "tokenOwner", "type": "entity", "dbName": "token_owner_id", "linkedEntity": "User", "entity": "User" }
+    ]
+  }, {
+    "name": "Token",
+    "properties": [
+      { "name": "id", "type": "string" },
+      { "name": "tokenId", "type": "int", "clickhouseDbName": "token_id" }
     ]
   }, {
     "name": "User",
@@ -115,15 +124,15 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[],$3::TEXT[])ON CONFLICT("id") DO UP
 VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "envio_change" = EXCLUDED."envio_change","transaction_index" = EXCLUDED."transaction_index","token_owner_id" = EXCLUDED."token_owner_id";`)
   })
 
-  it("creates the ClickHouse history table with db column names", t => {
+  it("keeps API field names in ClickHouse when only Postgres renames columns", t => {
     let query = ClickHouse.makeCreateHistoryTableQuery(
       ~entityConfig=snapshotEntity,
       ~database="envio",
     )
     t.expect(query).toBe(`CREATE TABLE IF NOT EXISTS envio.\`envio_history_Snapshot\` (
   \`id\` String,
-  \`transaction_index\` Int32,
-  \`token_owner_id\` String,
+  \`transactionIndex\` Int32,
+  \`tokenOwner_id\` String,
   \`envio_checkpoint_id\` UInt64,
   \`envio_change\` Enum8('SET', 'DELETE')
 )
@@ -131,7 +140,7 @@ ENGINE = MergeTree()
 ORDER BY (id, envio_checkpoint_id)`)
   })
 
-  it("serializes ClickHouse set updates with db column keys", t => {
+  it("serializes ClickHouse set updates with ClickHouse column keys", t => {
     let setUpdateSchema = EntityHistory.makeSetUpdateSchema(
       ClickHouse.makeClickHouseEntitySchema(snapshotEntity.table),
     )
@@ -146,10 +155,37 @@ ORDER BY (id, envio_checkpoint_id)`)
         "envio_change": "SET",
         "envio_checkpoint_id": "5",
         "id": "1",
-        "transaction_index": 5,
-        "token_owner_id": "user-1"
+        "transactionIndex": 5,
+        "tokenOwner_id": "user-1"
       }`),
     )
+  })
+
+  it("renames ClickHouse columns independently from Postgres", t => {
+    let tokenEntity = config.userEntitiesByName->Dict.getUnsafe("Token")
+    let pgQuery = PgStorage.makeCreateTableQuery(
+      tokenEntity.table,
+      ~pgSchema="test_schema",
+      ~isNumericArrayAsText=false,
+    )
+    let clickhouseQuery = ClickHouse.makeCreateHistoryTableQuery(
+      ~entityConfig=tokenEntity,
+      ~database="envio",
+    )
+    t.expect({
+      "postgres": pgQuery,
+      "clickhouse": clickhouseQuery,
+    }).toEqual({
+      "postgres": `CREATE TABLE IF NOT EXISTS "test_schema"."Token"("id" TEXT NOT NULL, "tokenId" INTEGER NOT NULL, PRIMARY KEY("id"));`,
+      "clickhouse": `CREATE TABLE IF NOT EXISTS envio.\`envio_history_Token\` (
+  \`id\` String,
+  \`token_id\` Int32,
+  \`envio_checkpoint_id\` UInt64,
+  \`envio_change\` Enum8('SET', 'DELETE')
+)
+ENGINE = MergeTree()
+ORDER BY (id, envio_checkpoint_id)`,
+    })
   })
 
   it("keeps using API field names for tables without renamed columns", t => {

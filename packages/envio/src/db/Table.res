@@ -44,9 +44,12 @@ type field = {
   linkedEntity: option<string>,
   defaultValue: option<string>,
   description: option<string>,
-  // Overrides the column name in the storage (eg when `column_name_format:
-  // snake_case` is configured), while the API keeps using fieldName.
+  // Override the column name per storage backend (eg when `column_name_format:
+  // snake_case` is configured), while the API keeps using fieldName. The
+  // backends can be configured with different formats, so each gets its own
+  // override: dbName is the Postgres column, clickhouseDbName the ClickHouse one.
   dbName: option<string>,
+  clickhouseDbName: option<string>,
 }
 
 type derivedFromField = {
@@ -70,6 +73,7 @@ let mkField = (
   ~linkedEntity=?,
   ~description=?,
   ~dbName=?,
+  ~clickhouseDbName=?,
 ) =>
   {
     fieldName,
@@ -83,6 +87,7 @@ let mkField = (
     defaultValue: default,
     description,
     dbName,
+    clickhouseDbName,
   }->Field
 
 let mkDerivedFromField = (fieldName, ~derivedFromEntity, ~derivedFromField, ~description=?) =>
@@ -111,6 +116,12 @@ let getApiFieldName = field =>
 // the storage is configured with a different column naming.
 let getDbFieldName = field =>
   switch field.dbName {
+  | Some(dbName) => dbName
+  | None => field->getApiFieldName
+  }
+
+let getClickHouseDbFieldName = field =>
+  switch field.clickhouseDbName {
   | Some(dbName) => dbName
   | None => field->getApiFieldName
   }

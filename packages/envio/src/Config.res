@@ -253,6 +253,7 @@ let propertySchema = S.schema(s =>
   {
     "name": s.matches(S.string),
     "dbName": s.matches(S.option(S.string)),
+    "clickhouseDbName": s.matches(S.option(S.string)),
     "type": s.matches(S.string),
     "isNullable": s.matches(S.option(S.bool)),
     "isArray": s.matches(S.option(S.bool)),
@@ -375,6 +376,7 @@ let parseEntitiesFromJson = (
         ~linkedEntity=?prop["linkedEntity"],
         ~description=?prop["description"],
         ~dbName=?prop["dbName"],
+        ~clickhouseDbName=?prop["clickhouseDbName"],
       )
     })
 

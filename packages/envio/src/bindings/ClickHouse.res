@@ -112,7 +112,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
     table.fields->Array.forEach(field => {
       switch field {
       | Field(f) => {
-          let fieldName = f->Table.getDbFieldName
+          let fieldName = f->Table.getClickHouseDbFieldName
           let fieldSchema = switch f.fieldType {
           | Date => {
               let dateSchema = Utils.Schema.clickHouseDate->S.toUnknown
@@ -318,7 +318,7 @@ let makeCreateHistoryTableQuery = (
     switch field {
     | Field(field) =>
       Some({
-        let fieldName = field->Table.getDbFieldName
+        let fieldName = field->Table.getClickHouseDbFieldName
         let clickHouseType = getClickHouseFieldType(
           ~fieldType=field.fieldType,
           ~isNullable=field.isNullable,
@@ -401,7 +401,7 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
     ->Array.filterMap(field => {
       switch field {
       | Field(field) => {
-          let fieldName = field->Table.getDbFieldName
+          let fieldName = field->Table.getClickHouseDbFieldName
           Some(`\`${fieldName}\``)
         }
       | DerivedFrom(_) => None
