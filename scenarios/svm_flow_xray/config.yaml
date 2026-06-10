@@ -1,0 +1,137 @@
+# yaml-language-server: $schema=../../packages/envio/svm.schema.json
+name: svm-flow-xray
+description: |
+  Solana Flow X-Ray: cross-protocol atomic money-flow + contagion radar.
+  Indexes Jupiter / Kamino / Drift / Raydium / SPL-Token / System instructions
+  with is_inner unset (matches inner + outer) so each tx's CPI tree, token
+  deltas, and cross-protocol edges reconstruct in SQL views (sql/views.sql).
+ecosystem: svm
+chains:
+  - # As of 2026-05-29 the public endpoint is at mainnet head (~422.33M) and
+    # the v0.0.4 server returns token_balances for every matched tx. Start
+    # ~220k slots behind head (~24h of chain time) — empirically the widest
+    # window that backfills cleanly with Orca + Meteora swap added. Widen
+    # further once HOS-1304 lands.
+    start_block: 422100000
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        # --- IDL-decoded protocols ---
+        - name: Jupiter
+          program_id: JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4
+          idl: idls/jupiter.json
+          # Legacy Anchor IDLs carry no inline discriminator; HyperIndex needs the
+          # 8-byte sha256("global:<snake_case>")[..8] both to dispatch and to look
+          # up the IDL arg/account schema. Computed per instruction below.
+          instructions:
+            - name: route
+              discriminator: "0xe517cb977ae3ad2a"
+              field_selection:
+                token_balance_fields: true
+            - name: sharedAccountsRoute
+              discriminator: "0xc1209b3341d69c81"
+              field_selection:
+                token_balance_fields: true
+        - name: Kamino
+          program_id: KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD
+          idl: idls/kamino.json
+          instructions:
+            - name: depositReserveLiquidityAndObligationCollateral
+              discriminator: "0x81c70402de271a2e"
+              field_selection:
+                token_balance_fields: true
+            - name: borrowObligationLiquidity
+              discriminator: "0x797f12cc49f5e141"
+              field_selection:
+                token_balance_fields: true
+            - name: repayObligationLiquidity
+              discriminator: "0x91b20de14cf09348"
+              field_selection:
+                token_balance_fields: true
+            - name: withdrawObligationCollateralAndRedeemReserveCollateral
+              discriminator: "0x4b5d5ddc2296dac4"
+              field_selection:
+                token_balance_fields: true
+        - name: Drift
+          program_id: dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH
+          idl: idls/drift.json
+          instructions:
+            - name: placePerpOrder
+              discriminator: "0x45a15dca787e4cb9"
+              field_selection:
+                token_balance_fields: true
+            - name: fillPerpOrder
+              discriminator: "0x0dbcf86786d96af0"
+              field_selection:
+                token_balance_fields: true
+            - name: liquidatePerp
+              discriminator: "0x4b2377f7bf128b02"
+              field_selection:
+                token_balance_fields: true
+                log_fields: true
+            - name: liquidateSpot
+              discriminator: "0x6b00802923e5fb12"
+              field_selection:
+                token_balance_fields: true
+                log_fields: true
+            - name: settlePnl
+              discriminator: "0x2b3dea2d0f5f9899"
+              field_selection:
+                token_balance_fields: true
+        # --- inline-decoded programs (no Anchor IDL) ---
+        # SplToken + System are intentionally NOT matched: they are the
+        # highest-frequency instructions on Solana and overwhelm the backfill.
+        # Per-tx token movement still arrives via transaction.tokenBalances on the
+        # DeFi-protocol events, so value flow is preserved without indexing every
+        # transfer. Re-add behind a tight slot window for a single-tx deep dive.
+        - name: Raydium
+          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+          instructions:
+            # Raydium v4 has no Anchor IDL; positional account order is the canonical
+            # SwapBaseIn layout (verify vs a live tx). amountIn/minAmountOut are stable.
+            - name: swap
+              discriminator: "0x09"
+              args:
+                - { name: amountIn, type: u64 }
+                - { name: minAmountOut, type: u64 }
+              accounts:
+                - tokenProgram
+                - amm
+                - ammAuthority
+                - ammOpenOrders
+                - ammTargetOrders
+                - poolCoinTokenAccount
+                - poolPcTokenAccount
+                - serumProgram
+                - serumMarket
+                - serumBids
+                - serumAsks
+                - serumEventQueue
+                - serumCoinVaultAccount
+                - serumPcVaultAccount
+                - serumVaultSigner
+                - userSourceTokenAccount
+                - userDestTokenAccount
+                - userSourceOwner
+              field_selection:
+                token_balance_fields: true
+        # Orca + Meteora narrow swap match (sha256("global:swap")[..8] =
+        # 0xf8c69e91e17587c8). Jupiter routes CPI into both constantly, so this
+        # is the difference between "Jupiter-only" tx cards and a real cross-
+        # protocol Sankey/CPI tree. Discriminator-filtered (not program-wide) so
+        # the response stays well inside the per-request budget.
+        - name: Orca
+          program_id: whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc
+          instructions:
+            - name: swap
+              discriminator: "0xf8c69e91e17587c8"
+              field_selection:
+                token_balance_fields: true
+        - name: Meteora
+          program_id: LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo
+          instructions:
+            - name: swap
+              discriminator: "0xf8c69e91e17587c8"
+              field_selection:
+                token_balance_fields: true

@@ -4,7 +4,7 @@ use crate::constants::reserved_keywords::{
     ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
     TYPESCRIPT_RESERVED_WORDS,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use regex::Regex;
 use std::collections::HashSet;
 
@@ -182,6 +182,181 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     }
 
     validate_names_valid_rescript(&contract_names, "contract".to_string())?;
+
+    Ok(())
+}
+
+pub fn is_valid_solana_pubkey(s: &str) -> bool {
+    // Base58 alphabet: 1-9, A-H, J-N, P-Z, a-k, m-z (no 0, O, I, l).
+    // Encoded 32-byte values are 32-44 chars (typically 43-44).
+    let len = s.len();
+    if !(32..=44).contains(&len) {
+        return false;
+    }
+    s.bytes().all(|b| {
+        matches!(b,
+            b'1'..=b'9'
+            | b'A'..=b'H'
+            | b'J'..=b'N'
+            | b'P'..=b'Z'
+            | b'a'..=b'k'
+            | b'm'..=b'z'
+        )
+    })
+}
+
+pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
+    let hex = s.strip_prefix("0x").unwrap_or(s);
+    if !matches!(hex.len(), 2 | 4 | 8 | 16) {
+        return Err(anyhow!(
+            "discriminator {:?} must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits \
+             after stripping a `0x` prefix), got {} digits",
+            s,
+            hex.len()
+        ));
+    }
+    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(anyhow!("discriminator {:?} contains non-hex characters", s));
+    }
+    Ok(())
+}
+
+pub fn validate_deserialized_svm_config_yaml(
+    svm_config: &super::human_config::svm::HumanConfig,
+) -> anyhow::Result<()> {
+    let mut all_program_names: Vec<String> = Vec::new();
+
+    for chain in &svm_config.chains {
+        if chain.experimental.is_none() && chain.rpc.is_none() {
+            return Err(anyhow!(
+                "A chain must define a data source: either an `rpc` endpoint or an \
+                 `experimental` HyperSync config. Both are missing."
+            ));
+        }
+
+        let programs = chain
+            .experimental
+            .as_ref()
+            .map(|e| e.programs.as_slice())
+            .unwrap_or(&[]);
+        for program in programs {
+            if !is_valid_solana_pubkey(&program.program_id) {
+                return Err(anyhow!(
+                    "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
+                     32-byte Solana pubkey",
+                    program.name,
+                    program.program_id
+                ));
+            }
+            all_program_names.push(program.name.clone());
+
+            let mut instruction_names = std::collections::HashSet::new();
+            for instr in &program.instructions {
+                if !instruction_names.insert(instr.name.clone()) {
+                    return Err(anyhow!(
+                        "Program {:?} declares the instruction {:?} more than once",
+                        program.name,
+                        instr.name
+                    ));
+                }
+                if let Some(discriminator) = &instr.discriminator {
+                    validate_svm_discriminator(discriminator).with_context(|| {
+                        format!("instruction {:?} in program {:?}", instr.name, program.name)
+                    })?;
+                }
+                if let Some(filters) = instr.account_filters.as_ref() {
+                    if let crate::config_parsing::human_config::svm::AccountFilters::AnyOf(any_of) =
+                        filters
+                    {
+                        if any_of.any_of.is_empty() {
+                            return Err(anyhow!(
+                                "`any_of` account filter on instruction {:?} (program {:?}) is \
+                                 empty; remove the `account_filters` field instead, or add at \
+                                 least one AND-group",
+                                instr.name,
+                                program.name
+                            ));
+                        }
+                    }
+                    let groups = filters.groups();
+                    for (group_idx, group) in groups.iter().enumerate() {
+                        if group.is_empty() {
+                            return Err(anyhow!(
+                                "Account filter group {} in instruction {:?} (program {:?}) is \
+                                 empty; each `any_of` branch must contain at least one entry",
+                                group_idx,
+                                instr.name,
+                                program.name
+                            ));
+                        }
+                        let mut seen_positions = std::collections::HashSet::new();
+                        for filter in group.iter() {
+                            if filter.position > 5 {
+                                return Err(anyhow!(
+                                    "Account filter position {} in instruction {:?} (program \
+                                     {:?}) must be in 0..=5 (positions 6..=9 are reserved for a \
+                                     future extension)",
+                                    filter.position,
+                                    instr.name,
+                                    program.name
+                                ));
+                            }
+                            if !seen_positions.insert(filter.position) {
+                                return Err(anyhow!(
+                                    "Duplicate position {} in account filter group {} of \
+                                     instruction {:?} (program {:?}); combine the pubkeys into a \
+                                     single `values` list, or use `any_of` to express OR across \
+                                     positions",
+                                    filter.position,
+                                    group_idx,
+                                    instr.name,
+                                    program.name
+                                ));
+                            }
+                            for value in &filter.values {
+                                if !is_valid_solana_pubkey(value) {
+                                    return Err(anyhow!(
+                                        "Account filter on instruction {:?} (program {:?}) has \
+                                         an invalid base58 pubkey {:?}",
+                                        instr.name,
+                                        program.name,
+                                        value
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(fs) = &instr.field_selection {
+                    for (name, val) in [
+                        ("transaction_fields", &fs.transaction_fields),
+                        ("log_fields", &fs.log_fields),
+                        ("token_balance_fields", &fs.token_balance_fields),
+                    ] {
+                        if let Some(v) = val {
+                            if v.is_per_field() {
+                                return Err(anyhow!(
+                                    "Per-field selection is not yet supported for \
+                                     `{name}` on instruction {:?} (program {:?}). \
+                                     Use `true` to include all fields.",
+                                    instr.name,
+                                    program.name
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !are_contract_names_unique(&all_program_names) {
+        return Err(anyhow!(
+            "Duplicate program names detected. All program names must be unique across all \
+             chains and are case-insensitive."
+        ));
+    }
+    validate_names_valid_rescript(&all_program_names, "program".to_string())?;
 
     Ok(())
 }
@@ -413,5 +588,313 @@ mod tests {
              They are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."
         );
+    }
+
+    mod svm {
+        use crate::config_parsing::human_config::svm::HumanConfig;
+        use crate::config_parsing::validation::{
+            is_valid_solana_pubkey, validate_deserialized_svm_config_yaml,
+            validate_svm_discriminator,
+        };
+
+        const TOKEN_METADATA: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+
+        #[test]
+        fn pubkey_accepts_real_program_ids() {
+            assert!(is_valid_solana_pubkey(TOKEN_METADATA));
+            // System program (32 ones; base58 lower bound).
+            assert!(is_valid_solana_pubkey("11111111111111111111111111111111"));
+        }
+
+        #[test]
+        fn pubkey_rejects_garbage() {
+            assert!(!is_valid_solana_pubkey(""));
+            assert!(!is_valid_solana_pubkey("short"));
+            // Contains '0' which is not in the base58 alphabet.
+            assert!(!is_valid_solana_pubkey(
+                "0mp02000000000000000000000000000000000000000"
+            ));
+            // Too long.
+            assert!(!is_valid_solana_pubkey(&"1".repeat(64)));
+        }
+
+        #[test]
+        fn discriminator_accepts_valid_lengths() {
+            for s in ["0x0f", "0x0fff", "0x0fffffff", "0x0fffffffffffffff"] {
+                assert!(
+                    validate_svm_discriminator(s).is_ok(),
+                    "expected {s:?} to be valid"
+                );
+            }
+            // Prefix is optional.
+            assert!(validate_svm_discriminator("0f").is_ok());
+        }
+
+        #[test]
+        fn discriminator_rejects_invalid_lengths_and_chars() {
+            for s in ["0x", "0x0", "0x012", "0xggggggg"] {
+                assert!(
+                    validate_svm_discriminator(s).is_err(),
+                    "expected {s:?} to be rejected"
+                );
+            }
+        }
+
+        fn parse(yaml: &str) -> HumanConfig {
+            serde_yaml::from_str(yaml).unwrap()
+        }
+
+        #[test]
+        fn validation_accepts_a_minimal_program() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: TokenMetadata
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
+"#,
+            );
+            validate_deserialized_svm_config_yaml(&cfg).unwrap();
+        }
+
+        #[test]
+        fn validation_rejects_duplicate_instruction_names() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - { name: Foo, discriminator: "0x0f" }
+            - { name: Foo, discriminator: "0x21" }
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("more than once"), "{err}");
+        }
+
+        #[test]
+        fn validation_rejects_duplicate_program_names_across_chains() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: shared
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions: []
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: SHARED
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions: []
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("Duplicate program names"), "{err}");
+        }
+
+        #[test]
+        fn validation_rejects_account_filter_position_out_of_range() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: I
+              account_filters:
+                - position: 6
+                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("0..=5"), "{err}");
+        }
+
+        #[test]
+        fn validation_rejects_duplicate_position_within_group() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: I
+              account_filters:
+                - position: 1
+                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+                - position: 1
+                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("Duplicate position"), "{err}");
+        }
+
+        #[test]
+        fn validation_rejects_empty_any_of() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: I
+              account_filters:
+                any_of: []
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("`any_of`"), "{err}");
+            assert!(err.to_string().contains("empty"), "{err}");
+        }
+
+        #[test]
+        fn validation_rejects_empty_any_of_group() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: I
+              account_filters:
+                any_of:
+                  - []
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("group"), "{err}");
+            assert!(err.to_string().contains("empty"), "{err}");
+        }
+
+        #[test]
+        fn validation_accepts_any_of_with_cross_group_duplicate_positions() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: I
+              account_filters:
+                any_of:
+                  - - position: 2
+                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+                  - - position: 2
+                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+"#,
+            );
+            assert!(validate_deserialized_svm_config_yaml(&cfg).is_ok());
+        }
+
+        #[test]
+        fn validation_rejects_bad_program_id() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: not_a_pubkey
+          instructions: []
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("invalid program_id"), "{err}");
+        }
+
+        #[test]
+        fn validation_accepts_rpc_only_chain() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - rpc: https://api.mainnet-beta.solana.com
+    start_block: 0
+"#,
+            );
+            validate_deserialized_svm_config_yaml(&cfg).unwrap();
+        }
+
+        #[test]
+        fn validation_rejects_chain_without_data_source() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+"#,
+            );
+            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
+            assert!(err.to_string().contains("data source"), "{err}");
+        }
     }
 }

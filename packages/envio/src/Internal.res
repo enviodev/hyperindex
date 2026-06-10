@@ -419,6 +419,50 @@ type evmContractConfig = {
   events: array<evmEventConfig>,
 }
 
+type svmAccountFilter = {
+  position: int,
+  values: array<SvmTypes.Pubkey.t>,
+}
+
+/** AND-group: every entry must match the same instruction. */
+type svmAccountFilterGroup = array<svmAccountFilter>
+
+type svmInstructionEventConfig = {
+  ...eventConfig,
+  /** Base58 Solana program id this instruction belongs to. */
+  programId: SvmTypes.Pubkey.t,
+  /** Hex-encoded discriminator. `None` matches every instruction in the program. */
+  discriminator: option<string>,
+  /** Length of the discriminator in bytes (0 / 1 / 2 / 4 / 8). Drives the
+   `dN` selector at query time and the dispatch-key precomputation in the
+   router. */
+  discriminatorByteLen: int,
+  includeTransaction: bool,
+  includeLogs: bool,
+  includeTokenBalances: bool,
+  /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
+   AND across positions. Empty outer array means "no account filter". */
+  accountFilters: array<svmAccountFilterGroup>,
+  /** `None` matches both outer and inner (CPI-invoked) instructions. */
+  isInner: option<bool>,
+  /** Positional account names from the Borsh schema, in declared order.
+   `[]` means no schema is attached for this instruction. */
+  accounts: array<string>,
+  /** Borsh args layout as `Vec<ArgDef>` JSON (see `human_config::svm::ArgDef`
+   on the Rust side). `JSON.Null` means no schema is attached. */
+  args: JSON.t,
+  /** Program-level nominal-type registry (`BTreeMap<String, ArgType>` JSON).
+   Duplicated on every event of the same program — the runtime dedups by
+   `programId` when registering. `JSON.Null` when empty. */
+  definedTypes: JSON.t,
+}
+
+type svmProgramConfig = {
+  name: string,
+  programId: SvmTypes.Pubkey.t,
+  instructions: array<svmInstructionEventConfig>,
+}
+
 type indexingAddress = {
   address: Address.t,
   contractName: string,

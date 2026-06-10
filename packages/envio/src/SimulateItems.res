@@ -321,18 +321,13 @@ let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
       let chainIdStr = chain->ChainMap.Chain.toChainId->Int.toString
       switch chainsDict->Dict.get(chainIdStr) {
       | Some(processChainJson) =>
-        let simulateRaw: option<array<JSON.t>> =
-          (processChainJson->(Utils.magic: JSON.t => {..}))["simulate"]->Nullable.toOption
+        let raw = processChainJson->(Utils.magic: JSON.t => {..})
+        let simulateRaw: option<array<JSON.t>> = raw["simulate"]->Nullable.toOption
         switch simulateRaw {
         | Some(simulateItems) =>
           let items = parse(~simulateItems, ~config, ~chainConfig)
-          // Use endBlock from processConfig (the user-specified range)
-          let startBlock: int =
-            (processChainJson->(Utils.magic: JSON.t => {..}))["startBlock"]->(
-              Utils.magic: 'a => int
-            )
-          let endBlock: int =
-            (processChainJson->(Utils.magic: JSON.t => {..}))["endBlock"]->(Utils.magic: 'a => int)
+          let startBlock: int = raw["startBlock"]->(Utils.magic: 'a => int)
+          let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
           let source = SimulateSource.make(~items, ~endBlock, ~chain)
           {...chainConfig, startBlock, endBlock, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig

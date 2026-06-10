@@ -158,11 +158,10 @@ async fn get_ecosystem_from_prompt(language: &Language) -> Result<Ecosystem> {
     match ecosystem_option {
         EcosystemOption::Evm => prompt_evm_init_option(language).await,
         EcosystemOption::Fuel => prompt_fuel_init_option(language).await,
-        // SVM only has one template option, skip the selection prompt
         EcosystemOption::Svm => Ok(Ecosystem::Svm {
-            init_flow: crate::init_config::svm::InitFlow::Template(
-                crate::init_config::svm::Template::FeatureBlockHandler,
-            ),
+            init_flow: svm_prompts::prompt_template_init_flow(
+                clap_definitions::svm::TemplateArgs { template: None },
+            )?,
         }),
     }
 }
