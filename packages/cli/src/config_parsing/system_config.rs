@@ -1125,7 +1125,7 @@ impl SystemConfig {
                     rollback_on_reorg: true,
                     save_full_history: false,
                     schema,
-                    field_selection: FieldSelection::fuel(),
+                    field_selection: FieldSelection::svm(),
                     enable_raw_events: false,
                     storage,
                     lowercase_addresses: false,
@@ -2187,6 +2187,29 @@ impl FieldSelection {
                 SelectedField {
                     name: "height".to_string(),
                     data_type: TypeIdent::Int,
+                },
+                SelectedField {
+                    name: "time".to_string(),
+                    data_type: TypeIdent::Int,
+                },
+            ],
+        )
+    }
+
+    pub fn svm() -> Self {
+        Self::new(
+            vec![SelectedField {
+                name: "id".to_string(),
+                data_type: TypeIdent::String,
+            }],
+            vec![
+                SelectedField {
+                    name: "slot".to_string(),
+                    data_type: TypeIdent::Int,
+                },
+                SelectedField {
+                    name: "hash".to_string(),
+                    data_type: TypeIdent::String,
                 },
                 SelectedField {
                     name: "time".to_string(),

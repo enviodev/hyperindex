@@ -1272,7 +1272,15 @@ impl ProjectTemplate {
             .collect::<Result<_>>()
             .context("Failed generating chain configs template")?;
 
-        let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
+        let global_field_selection = match cfg.get_ecosystem() {
+            // SVM blocks expose only {slot, hash, time}; skip the EVM default
+            // block fields the global selection would otherwise prepend.
+            Ecosystem::Svm => FieldSelection::new_without_defaults(FieldSelectionOptions {
+                transaction_fields: cfg.field_selection.transaction_fields.clone(),
+                block_fields: cfg.field_selection.block_fields.clone(),
+            }),
+            _ => FieldSelection::global_selection(&cfg.field_selection),
+        };
 
         let chain_id_cases = match &cfg.human_config {
             HumanConfig::Svm(hcfg) => hcfg

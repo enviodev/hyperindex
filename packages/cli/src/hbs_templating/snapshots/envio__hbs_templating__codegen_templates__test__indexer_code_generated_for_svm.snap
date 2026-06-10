@@ -14,7 +14,7 @@ module Transaction = {
 }
 
 module Block = {
-  type t = {number: int, timestamp: int, hash: string, id: string, height: int, time: int}
+  type t = {slot: int, hash: string, time: int}
 }
 
 module SingleOrMultiple: {
