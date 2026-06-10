@@ -36,4 +36,4 @@ module GetLogs: {
   ) => promise<logsQueryPage>
 }
 
-let heightRoute: Rest.route<unit, int>
+let getHeight: (~serverUrl: string, ~apiToken: string) => promise<int>

@@ -45,6 +45,31 @@ module GetLogs = {
 
   exception Error(error)
 
+  // Rust encodes structured failures as a JSON payload in the napi error's
+  // message: `{"kind":"MissingFields","fields":["receipt.txId", ...]}`.
+  // JSON.parse + shape check is the recovery protocol — no string-grepping
+  // on anyhow's Debug format.
+  let extractMissingParams = (exn: exn): option<array<string>> => {
+    let message = switch exn {
+    | JsExn(jsExn) => jsExn->JsExn.message
+    | _ => None
+    }
+    switch message {
+    | None => None
+    | Some(msg) =>
+      switch msg->JSON.parseOrThrow->JSON.Decode.object {
+      | exception _ => None
+      | None => None
+      | Some(obj) =>
+        switch (obj->Dict.get("kind"), obj->Dict.get("fields")) {
+        | (Some(String("MissingFields")), Some(Array(fields))) =>
+          Some(fields->Array.filterMap(JSON.Decode.string))
+        | _ => None
+        }
+      }
+    }
+  }
+
   let makeRequestBody = (
     ~fromBlock,
     ~toBlockInclusive,
@@ -100,9 +125,7 @@ module GetLogs = {
     let {receipts, blocks} = response_data
 
     let blocksDict = Dict.make()
-    blocks
-    ->(Utils.magic: option<'a> => 'a)
-    ->Array.forEach(block => {
+    blocks->Array.forEach(block => {
       blocksDict->Dict.set(block.height->(Utils.magic: int => string), block)
     })
 
@@ -160,7 +183,14 @@ module GetLogs = {
 
     let hyperFuelClient = CachedClients.getClient(~serverUrl, ~apiToken)
 
-    let res = await hyperFuelClient->HyperFuelClient.getSelectedData(query)
+    let res = switch await hyperFuelClient->HyperFuelClient.getSelectedData(query) {
+    | res => res
+    | exception exn =>
+      switch exn->extractMissingParams {
+      | Some(missingParams) => throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
+      | None => throw(exn)
+      }
+    }
     if res.nextBlock <= fromBlock {
       // Might happen when /height response was from another instance of HyperSync
       throw(Error(WrongInstance))
@@ -169,9 +199,5 @@ module GetLogs = {
   }
 }
 
-let heightRoute = Rest.route(() => {
-  path: "/height",
-  method: Get,
-  input: _ => (),
-  responses: [s => s.field("height", S.int)],
-})
+let getHeight = (~serverUrl, ~apiToken) =>
+  CachedClients.getClient(~serverUrl, ~apiToken)->HyperFuelClient.getHeight

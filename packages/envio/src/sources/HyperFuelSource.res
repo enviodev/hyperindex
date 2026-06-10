@@ -2,6 +2,8 @@ open Source
 
 exception EventRoutingFailed
 
+let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
+
 let mintEventTag = "mint"
 let burnEventTag = "burn"
 let transferEventTag = "transfer"
@@ -254,7 +256,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~toBlock,
       ~recieptsSelection,
     ) catch {
-    | HyperSync.GetLogs.Error(error) =>
+    | HyperFuel.GetLogs.Error(error) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
@@ -459,8 +461,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   let getBlockHashes = (~blockNumbers as _, ~logger as _) =>
     JsError.throwWithMessage("HyperFuel does not support getting block hashes")
 
-  let jsonApiClient = EnvioApiClient.make(endpointUrl)
-
   {
     name,
     sourceFor: Sync,
@@ -470,7 +470,17 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     poweredByHyperSync: true,
     getHeightOrThrow: async () => {
       let timerRef = Hrtime.makeTimer()
-      let height = await HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient)
+      let height = try await HyperFuel.getHeight(~serverUrl=endpointUrl, ~apiToken) catch {
+      | JsExn(e) =>
+        switch e->JsExn.message {
+        | Some(message) if message->isUnauthorizedError =>
+          Logging.error(`Your ENVIO_API_TOKEN was rejected by HyperFuel (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
+          // Retrying an unauthorized request can never succeed, so block forever
+          let _ = await Promise.make((_, _) => ())
+          0
+        | _ => throw(JsExn(e))
+        }
+      }
       let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
       Prometheus.SourceRequestCount.increment(
         ~sourceName=name,

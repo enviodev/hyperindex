@@ -38,10 +38,16 @@ fn parse_hashes(v: Option<Vec<String>>) -> Result<Vec<Hash>> {
         .collect()
 }
 
-fn bigints_to_u64(v: Option<Vec<BigInt>>) -> Vec<u64> {
+fn bigints_to_u64(v: Option<Vec<BigInt>>) -> Result<Vec<u64>> {
     v.unwrap_or_default()
         .into_iter()
-        .map(|b| b.get_u64().1)
+        .map(|b| {
+            let (sign_bit, value, lossless) = b.get_u64();
+            if sign_bit || !lossless {
+                anyhow::bail!("rb filter value must be an unsigned 64-bit integer");
+            }
+            Ok(value)
+        })
         .collect()
 }
 
@@ -52,7 +58,7 @@ impl TryFrom<ReceiptSelection> for net_types::ReceiptSelection {
         Ok(net_types::ReceiptSelection {
             root_contract_id: parse_hashes(s.root_contract_id)?,
             receipt_type: s.receipt_type.unwrap_or_default(),
-            rb: bigints_to_u64(s.rb),
+            rb: bigints_to_u64(s.rb).context("parse rb filter")?,
             tx_status: s.tx_status.unwrap_or_default(),
             ..Default::default()
         })

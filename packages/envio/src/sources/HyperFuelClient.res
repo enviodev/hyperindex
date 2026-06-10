@@ -94,7 +94,7 @@ module FuelTypes = {
 
 type queryResponseDataTyped = {
   receipts: array<FuelTypes.receipt>,
-  blocks: option<array<FuelTypes.block>>,
+  blocks: array<FuelTypes.block>,
 }
 
 type queryResponseTyped = {
@@ -113,9 +113,15 @@ type queryResponseTyped = {
 }
 
 @send
-external classNew: (Core.hyperfuelClientCtor, cfg) => t = "new"
+external classNew: (Core.hyperfuelClientCtor, cfg, ~userAgent: string) => t = "new"
 
-let make = (cfg: cfg) => Core.getAddon().hyperfuelClient->classNew(cfg)
+let make = (cfg: cfg) => {
+  let envioVersion = Utils.EnvioPackage.value.version
+  Core.getAddon().hyperfuelClient->classNew(cfg, ~userAgent=`hyperindex/${envioVersion}`)
+}
 
 @send
 external getSelectedData: (t, QueryTypes.query) => promise<queryResponseTyped> = "getSelectedData"
+
+@send
+external getHeight: t => promise<int> = "getHeight"
