@@ -390,14 +390,6 @@ let logLevelToString = (level: logLevel) =>
   | #error => "error"
   }
 
-/**
- * Set the log level for the underlying Rust logger.
- * Must be called before creating any HypersyncClient.
- */
-let setLogLevel = (level: logLevel) => {
-  Core.getAddon().setLogLevel(logLevelToString(level))
-}
-
 let make = (
   ~url,
   ~apiToken,

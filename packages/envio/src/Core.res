@@ -17,7 +17,6 @@ type addon = {
   hypersyncSolanaClient: hypersyncSolanaClientCtor,
   @as("Decoder")
   decoder: decoderCtor,
-  setLogLevel: string => unit,
   registerProgramSchema: (~descriptorJson: string) => int,
 }
 
