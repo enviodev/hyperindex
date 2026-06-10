@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2767
 expression: json
 ---
 {
@@ -14,7 +13,8 @@ expression: json
   "rawEvents": true,
   "storage": {
     "postgres": true,
-    "clickhouse": true
+    "clickhouse": true,
+    "columnNaming": "snake_case"
   },
   "evm": {
     "chains": {
@@ -132,6 +132,7 @@ expression: json
         },
         {
           "name": "emptyField",
+          "dbName": "empty_field",
           "type": "string"
         },
         {
@@ -141,6 +142,7 @@ expression: json
         },
         {
           "name": "optionalStatus",
+          "dbName": "optional_status",
           "type": "enum",
           "isNullable": true,
           "enum": "Status"
@@ -153,6 +155,7 @@ expression: json
         },
         {
           "name": "optionalRelated",
+          "dbName": "optional_related_id",
           "type": "entity",
           "isNullable": true,
           "linkedEntity": "RelatedEntity",
@@ -165,6 +168,7 @@ expression: json
         },
         {
           "name": "optionalTags",
+          "dbName": "optional_tags",
           "type": "string",
           "isNullable": true,
           "isArray": true

@@ -92,18 +92,18 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     )
   }
 
-  let dbFieldName = filterKeys->Array.getUnsafe(0)
-  let operatorObj = filter->Dict.getUnsafe(dbFieldName)
+  let apiFieldName = filterKeys->Array.getUnsafe(0)
+  let operatorObj = filter->Dict.getUnsafe(apiFieldName)
   let operatorKeys = operatorObj->Dict.keysToArray
 
   if operatorKeys->Array.length === 0 {
     JsError.throwWithMessage(
-      `Empty operator passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
+      `Empty operator passed to context.${entityConfig.name}.getWhere({ ${apiFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
     )
   }
   if operatorKeys->Array.length > 1 {
     JsError.throwWithMessage(
-      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Array.joinUnsafe(
+      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${apiFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Array.joinUnsafe(
           ", ",
         )}.`,
     )
@@ -111,18 +111,18 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
 
   let operatorKey = operatorKeys->Array.getUnsafe(0)
 
-  let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
+  let fieldSchema = switch entityConfig.table->Table.getFieldByApiName(apiFieldName) {
   | None =>
     JsError.throwWithMessage(
-      `Invalid field "${dbFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
+      `Invalid field "${apiFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
     )
   | Some(DerivedFrom(_)) =>
     JsError.throwWithMessage(
-      `The field "${dbFieldName}" on entity "${entityConfig.name}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
+      `The field "${apiFieldName}" on entity "${entityConfig.name}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
     )
   | Some(Field({isIndex: false, linkedEntity: None})) =>
     JsError.throwWithMessage(
-      `The field "${dbFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${dbFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
+      `The field "${apiFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${apiFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
     )
   | Some(Field({fieldSchema})) => fieldSchema
   }
@@ -140,7 +140,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
         ~persistence=params.persistence,
         ~operator=Eq,
         ~entityConfig,
-        ~fieldName=dbFieldName,
+        ~fieldName=apiFieldName,
         ~fieldValueSchema=fieldSchema,
         ~inMemoryStore=params.inMemoryStore,
         ~shouldGroup=params.isPreload,
@@ -161,7 +161,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
         ~persistence=params.persistence,
         ~operator,
         ~entityConfig,
-        ~fieldName=dbFieldName,
+        ~fieldName=apiFieldName,
         ~fieldValueSchema=fieldSchema,
         ~inMemoryStore=params.inMemoryStore,
         ~shouldGroup=params.isPreload,
@@ -179,7 +179,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     | "_lt" => Lt
     | _ =>
       JsError.throwWithMessage(
-        `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
+        `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${apiFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
       )
     }
 
@@ -190,7 +190,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
       ~persistence=params.persistence,
       ~operator,
       ~entityConfig,
-      ~fieldName=dbFieldName,
+      ~fieldName=apiFieldName,
       ~fieldValueSchema=fieldSchema,
       ~inMemoryStore=params.inMemoryStore,
       ~shouldGroup=params.isPreload,

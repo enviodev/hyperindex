@@ -44,6 +44,9 @@ type field = {
   linkedEntity: option<string>,
   defaultValue: option<string>,
   description: option<string>,
+  // Overrides the column name in the storage (eg when `column_naming:
+  // snake_case` is configured), while the API keeps using fieldName.
+  dbName: option<string>,
 }
 
 type derivedFromField = {
@@ -66,6 +69,7 @@ let mkField = (
   ~isIndex=false,
   ~linkedEntity=?,
   ~description=?,
+  ~dbName=?,
 ) =>
   {
     fieldName,
@@ -78,6 +82,7 @@ let mkField = (
     linkedEntity,
     defaultValue: default,
     description,
+    dbName,
   }->Field
 
 let mkDerivedFromField = (fieldName, ~derivedFromEntity, ~derivedFromField, ~description=?) =>
@@ -96,8 +101,19 @@ let getUserDefinedFieldName = fieldOrDerived =>
 
 let isLinkedEntityField = field => field.linkedEntity->Option.isSome
 
-let getDbFieldName = field =>
+// The field name exposed to the user-facing APIs (entity records, getWhere,
+// Hasura GraphQL). Entity references get an `_id` suffix since the column
+// stores the referenced entity id.
+let getApiFieldName = field =>
   field->isLinkedEntityField ? field.fieldName ++ "_id" : field.fieldName
+
+// The actual column name in the storage. Matches the API field name unless
+// the storage is configured with a different column naming.
+let getDbFieldName = field =>
+  switch field.dbName {
+  | Some(dbName) => dbName
+  | None => field->getApiFieldName
+  }
 
 let getFieldName = fieldOrDerived =>
   switch fieldOrDerived {
@@ -180,7 +196,7 @@ let mkTable = (tableName, ~compositeIndices=[], ~fields, ~description=?) => {
 let getPrimaryKeyFieldNames = table =>
   table.fields->Array.filterMap(field =>
     switch field {
-    | Field({isPrimaryKey: true, fieldName}) => Some(fieldName)
+    | Field({isPrimaryKey: true} as field) => Some(field->getDbFieldName)
     | _ => None
     }
   )
@@ -232,12 +248,12 @@ let getFieldByName = (table, fieldName) =>
 
 // TODO: Test whether it should be passed via args and match the column type
 
-let getFieldByDbName = (table, dbFieldName) =>
+let getFieldByApiName = (table, apiFieldName) =>
   table.fields->Array.find(field =>
     switch field {
-    | Field(f) => f->getDbFieldName
+    | Field(f) => f->getApiFieldName
     | DerivedFrom({fieldName}) => fieldName
-    } === dbFieldName
+    } === apiFieldName
   )
 
 exception NonExistingTableField(string)
@@ -276,7 +292,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
     switch schema->S.classify {
     | Object({items}) =>
       let dict = Dict.make()
-      items->Array.forEach(({location, inlinedLocation, schema}) => {
+      items->Array.forEach(({location, schema}) => {
         let rec coerceSchema = schema =>
           switch schema->S.classify {
           | BigInt => Utils.BigInt.schema->S.toUnknown
@@ -300,18 +316,21 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
           | _ => schema
           }
 
-        let field = switch table->getFieldByDbName(location) {
+        let field = switch table->getFieldByApiName(location) {
         | Some(field) => field
         | None => throw(NonExistingTableField(location))
         }
 
+        // Schema locations use API field names, while the SQL references
+        // columns by their possibly renamed db names.
+        let quotedDbName = `"${field->getFieldName}"`
         quotedFieldNames
-        ->Array.push(inlinedLocation)
+        ->Array.push(quotedDbName)
         ->ignore
         switch field {
         | Field({isPrimaryKey: false}) =>
           quotedNonPrimaryFieldNames
-          ->Array.push(inlinedLocation)
+          ->Array.push(quotedDbName)
           ->ignore
         | _ => ()
         }

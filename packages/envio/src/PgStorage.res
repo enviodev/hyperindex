@@ -1486,11 +1486,17 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         }),
       )
     }
+    // The load layer operates with API field names, while the column might
+    // be renamed in the database.
+    let dbFieldName = switch table->Table.getFieldByApiName(fieldName) {
+    | Some(field) => field->Table.getFieldName
+    | None => fieldName
+    }
     switch await sql->Postgres.preparedUnsafe(
       makeLoadByFieldQuery(
         ~pgSchema,
         ~tableName=table.tableName,
-        ~fieldName,
+        ~fieldName=dbFieldName,
         ~operator=(operator :> string),
       ),
       params,
@@ -1908,7 +1914,7 @@ let makeStorageFromEnv = (
               ~tableConfigs=tableNames->Array.map(tableName => {
                 Hasura.tableName,
                 description: None,
-                columnDescriptions: dict{},
+                columnConfigs: dict{},
               }),
             )->Promise.catch(err => {
               Logging.errorWithExn(

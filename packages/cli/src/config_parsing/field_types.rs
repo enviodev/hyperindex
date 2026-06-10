@@ -1,7 +1,9 @@
+use convert_case::{Case, Casing};
 use core::fmt;
 use serde::Serialize;
 use std::fmt::Display;
 
+use super::human_config::ColumnNaming;
 use crate::utils::text::Capitalize;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -73,4 +75,18 @@ pub struct Field {
     pub is_array: bool,
     pub field_type: Primitive,
     pub description: Option<String>,
+}
+
+impl Field {
+    pub fn db_column_name(&self, column_naming: ColumnNaming) -> String {
+        let base = match column_naming {
+            ColumnNaming::Graphql => self.field_name.clone(),
+            ColumnNaming::SnakeCase => self.field_name.to_case(Case::Snake),
+        };
+        if self.linked_entity.is_some() {
+            format!("{base}_id")
+        } else {
+            base
+        }
+    }
 }

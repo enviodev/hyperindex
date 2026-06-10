@@ -8,7 +8,8 @@ rollback_on_reorg: false
 save_full_history: true
 raw_events: true
 storage:
-  postgres: true
+  postgres:
+    column_naming: snake_case
   clickhouse: true
 field_selection:
   transaction_fields:

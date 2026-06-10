@@ -75,7 +75,7 @@ let handleLoadByField = (
   let results = []
 
   // Get the field schema from the entity's table to properly parse the JSON field value
-  let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(fieldName) {
+  let fieldSchema = switch entityConfig.table->Table.getFieldByApiName(fieldName) {
   | Some(Table.Field({fieldSchema})) => fieldSchema
   | _ => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
   }

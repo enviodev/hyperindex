@@ -1,7 +1,7 @@
 use super::{
     entity_parsing::IndexFieldDirection,
     field_types,
-    human_config::evm::For,
+    human_config::{evm::For, ColumnNaming},
     system_config::{self, Abi, Ecosystem, EventKind, FuelEventKind, SystemConfig},
 };
 use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
@@ -53,6 +53,8 @@ struct StorageConfig {
     postgres: bool,
     #[serde(skip_serializing_if = "is_false")]
     clickhouse: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    column_naming: Option<&'static str>,
 }
 
 impl From<&system_config::Storage> for StorageConfig {
@@ -60,6 +62,10 @@ impl From<&system_config::Storage> for StorageConfig {
         Self {
             postgres: s.postgres,
             clickhouse: s.clickhouse,
+            column_naming: match s.column_naming {
+                ColumnNaming::Graphql => None,
+                ColumnNaming::SnakeCase => Some("snake_case"),
+            },
         }
     }
 }
@@ -95,6 +101,11 @@ struct EntityStorageJson {
 #[serde(rename_all = "camelCase")]
 struct PropertyJson {
     name: String,
+    // The database column name; emitted only when it differs from the
+    // default naming the runtime derives from `name` (`name` plus an `_id`
+    // suffix for entity references).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    db_name: Option<String>,
     #[serde(rename = "type")]
     field_type: String,
     #[serde(skip_serializing_if = "is_false")]
@@ -555,8 +566,20 @@ impl SystemConfig {
                                     ("entity".into(), None, Some(name.clone()), None, None)
                                 }
                             };
+                        let db_name = match cfg.storage.column_naming {
+                            ColumnNaming::Graphql => None,
+                            ColumnNaming::SnakeCase => {
+                                let db_name = f.db_column_name(ColumnNaming::SnakeCase);
+                                if db_name == f.db_column_name(ColumnNaming::Graphql) {
+                                    None
+                                } else {
+                                    Some(db_name)
+                                }
+                            }
+                        };
                         PropertyJson {
                             name: f.field_name.clone(),
+                            db_name,
                             field_type,
                             is_nullable: f.is_nullable,
                             is_array: f.is_array,

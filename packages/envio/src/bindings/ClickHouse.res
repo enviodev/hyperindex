@@ -103,9 +103,11 @@ let getClickHouseFieldType = (
   isNullable ? `Nullable(${baseType})` : baseType
 }
 
-// Creates an entity schema from table definition, using clickHouseDate for Date fields
+// Creates an entity schema from table definition, using clickHouseDate for Date fields.
+// Serialized keys are the db column names, while the entity values are keyed
+// by API field names (they only differ when column renaming is configured).
 let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
-  S.schema(s => {
+  S.object(s => {
     let dict = Dict.make()
     table.fields->Array.forEach(field => {
       switch field {
@@ -142,7 +144,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
             }
           | _ => f.fieldSchema
           }
-          dict->Dict.set(fieldName, s.matches(fieldSchema))
+          dict->Dict.set(f->Table.getApiFieldName, s.field(fieldName, fieldSchema))
         }
       | DerivedFrom(_) => () // Skip derived fields
       }

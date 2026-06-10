@@ -94,9 +94,48 @@ pub struct BaseConfig {
 #[serde(deny_unknown_fields)]
 pub struct StorageConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub postgres: Option<bool>,
+    pub postgres: Option<StorageBackend>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub clickhouse: Option<bool>,
+    pub clickhouse: Option<StorageBackend>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(untagged)]
+pub enum StorageBackend {
+    Enabled(bool),
+    // Providing an options object enables the backend.
+    Config(StorageBackendConfig),
+}
+
+impl StorageBackend {
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            StorageBackend::Enabled(enabled) => *enabled,
+            StorageBackend::Config(_) => true,
+        }
+    }
+
+    pub fn column_naming(&self) -> Option<ColumnNaming> {
+        match self {
+            StorageBackend::Enabled(_) => None,
+            StorageBackend::Config(config) => config.column_naming,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct StorageBackendConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column_naming: Option<ColumnNaming>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
+pub enum ColumnNaming {
+    #[serde(rename = "graphql")]
+    Graphql,
+    #[serde(rename = "snake_case")]
+    SnakeCase,
 }
 
 // Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
@@ -109,17 +148,40 @@ impl JsonSchema for StorageConfig {
     }
 
     fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        let backend_options_schema = json_schema!({
+            "type": "object",
+            "properties": {
+                "column_naming": {
+                    "description": "How entity fields are reflected in the storage column names. \
+                                    `graphql` keeps the schema.graphql field names as is, \
+                                    `snake_case` converts them to snake_case in the database \
+                                    while keeping the GraphQL casing in the exposed APIs. \
+                                    (default: graphql)",
+                    "type": ["string", "null"],
+                    "enum": ["graphql", "snake_case", null]
+                }
+            },
+            "additionalProperties": false
+        });
         json_schema!({
             "type": "object",
             "properties": {
                 "postgres": {
-                    "description": "Whether to use Postgres as a storage backend (default: true).",
-                    "type": ["boolean", "null"]
+                    "description": "Whether to use Postgres as a storage backend (default: true). \
+                                    Pass an options object instead of `true` to configure the backend.",
+                    "anyOf": [
+                        { "type": ["boolean", "null"] },
+                        backend_options_schema
+                    ]
                 },
                 "clickhouse": {
                     "description": "Whether to additionally sync the indexed data to ClickHouse. \
-                                    Requires Postgres to be enabled (default: false).",
-                    "type": ["boolean", "null"]
+                                    Requires Postgres to be enabled (default: false). \
+                                    Pass an options object instead of `true` to configure the backend.",
+                    "anyOf": [
+                        { "type": ["boolean", "null"] },
+                        backend_options_schema
+                    ]
                 }
             },
             "additionalProperties": false,
@@ -127,8 +189,9 @@ impl JsonSchema for StorageConfig {
             //   1. `postgres: false` (with any clickhouse value) — either
             //      fails as "ClickHouse not supported as a single storage
             //      yet" or resolves to all-backends-disabled.
-            //   2. `clickhouse: true` without an explicit `postgres: true` —
-            //      the user must opt in to Postgres alongside ClickHouse.
+            //   2. `clickhouse` enabled (true or an options object) without
+            //      an explicit `postgres` opt-in — the user must enable
+            //      Postgres alongside ClickHouse.
             "allOf": [
                 {
                     "not": {
@@ -141,13 +204,23 @@ impl JsonSchema for StorageConfig {
                 {
                     "if": {
                         "properties": {
-                            "clickhouse": { "const": true }
+                            "clickhouse": {
+                                "anyOf": [
+                                    { "const": true },
+                                    { "type": "object" }
+                                ]
+                            }
                         },
                         "required": ["clickhouse"]
                     },
                     "then": {
                         "properties": {
-                            "postgres": { "const": true }
+                            "postgres": {
+                                "anyOf": [
+                                    { "const": true },
+                                    { "type": "object" }
+                                ]
+                            }
                         },
                         "required": ["postgres"]
                     }
@@ -1281,7 +1354,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
     #[test]
     fn deserialize_storage_config() {
-        use super::StorageConfig;
+        use super::{ColumnNaming, StorageBackend, StorageBackendConfig, StorageConfig};
 
         // Both fields present
         let yaml = "postgres: true\nclickhouse: true\n";
@@ -1289,8 +1362,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         assert_eq!(
             de,
             StorageConfig {
-                postgres: Some(true),
-                clickhouse: Some(true),
+                postgres: Some(StorageBackend::Enabled(true)),
+                clickhouse: Some(StorageBackend::Enabled(true)),
             }
         );
 
@@ -1301,9 +1374,32 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             de,
             StorageConfig {
                 postgres: None,
-                clickhouse: Some(true),
+                clickhouse: Some(StorageBackend::Enabled(true)),
             }
         );
+
+        // Backend configured with an options object
+        let yaml = "postgres:\n  column_naming: snake_case\nclickhouse: {}\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: Some(StorageBackend::Config(StorageBackendConfig {
+                    column_naming: Some(ColumnNaming::SnakeCase),
+                })),
+                clickhouse: Some(StorageBackend::Config(StorageBackendConfig {
+                    column_naming: None,
+                })),
+            }
+        );
+
+        // Unknown backend option should fail (deny_unknown_fields)
+        let yaml = "postgres:\n  table_naming: snake_case\n";
+        assert!(serde_yaml::from_str::<StorageConfig>(yaml).is_err());
+
+        // Unknown column_naming value should fail
+        let yaml = "postgres:\n  column_naming: kebab-case\n";
+        assert!(serde_yaml::from_str::<StorageConfig>(yaml).is_err());
 
         // Unknown field should fail (deny_unknown_fields)
         let yaml = "postgres: true\nbigquery: true\n";
@@ -1330,8 +1426,8 @@ chains:
         assert_eq!(
             cfg.base.storage,
             Some(super::StorageConfig {
-                postgres: Some(true),
-                clickhouse: Some(true),
+                postgres: Some(super::StorageBackend::Enabled(true)),
+                clickhouse: Some(super::StorageBackend::Enabled(true)),
             })
         );
     }

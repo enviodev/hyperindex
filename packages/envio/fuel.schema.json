@@ -89,17 +89,61 @@
       "type": "object",
       "properties": {
         "postgres": {
-          "description": "Whether to use Postgres as a storage backend (default: true).",
-          "type": [
-            "boolean",
-            "null"
+          "description": "Whether to use Postgres as a storage backend (default: true). Pass an options object instead of `true` to configure the backend.",
+          "anyOf": [
+            {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "column_naming": {
+                  "description": "How entity fields are reflected in the storage column names. `graphql` keeps the schema.graphql field names as is, `snake_case` converts them to snake_case in the database while keeping the GraphQL casing in the exposed APIs. (default: graphql)",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "graphql",
+                    "snake_case",
+                    null
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
           ]
         },
         "clickhouse": {
-          "description": "Whether to additionally sync the indexed data to ClickHouse. Requires Postgres to be enabled (default: false).",
-          "type": [
-            "boolean",
-            "null"
+          "description": "Whether to additionally sync the indexed data to ClickHouse. Requires Postgres to be enabled (default: false). Pass an options object instead of `true` to configure the backend.",
+          "anyOf": [
+            {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "column_naming": {
+                  "description": "How entity fields are reflected in the storage column names. `graphql` keeps the schema.graphql field names as is, `snake_case` converts them to snake_case in the database while keeping the GraphQL casing in the exposed APIs. (default: graphql)",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "graphql",
+                    "snake_case",
+                    null
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
           ]
         }
       },
@@ -121,7 +165,14 @@
           "if": {
             "properties": {
               "clickhouse": {
-                "const": true
+                "anyOf": [
+                  {
+                    "const": true
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
               }
             },
             "required": [
@@ -131,7 +182,14 @@
           "then": {
             "properties": {
               "postgres": {
-                "const": true
+                "anyOf": [
+                  {
+                    "const": true
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
               }
             },
             "required": [
