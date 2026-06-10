@@ -1274,6 +1274,13 @@ type FuelEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
       : never
     : never;
 
+// Surfaced when an SVM indexer configures no `programs`, so there's no
+// instruction to register a handler for. Mirrors `CodegenRequiredHint`: the
+// string literal becomes the argument type, so any `onInstruction` call fails
+// with this text naming the fix.
+type SvmNoProgramsHint =
+  "Add at least one entry under `svm.programs` in config.yaml to register instruction handlers with onInstruction.";
+
 // SVM ecosystem type — chains plus instruction + slot handler methods.
 type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
   "svm" extends keyof Config
@@ -1326,11 +1333,12 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                 ) => void;
               }
             : {
-                /** Untyped fallback for indexers with no `programs` in
-                 * config. `params` stays the generic shape. */
+                /** No `programs` configured under `svm` in config.yaml, so
+                 * there's nothing to register an instruction handler for. The
+                 * rest parameter is typed as a string-literal hint so any call
+                 * site fails with a message naming the fix. */
                 readonly onInstruction: (
-                  options: SvmOnInstructionOptions,
-                  handler: SvmOnInstructionHandler<Config>,
+                  ...hint: SvmNoProgramsHint[]
                 ) => void;
               })
         : never
