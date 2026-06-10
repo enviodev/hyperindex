@@ -1035,3 +1035,135 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
     t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((510, false)))
   })
 })
+
+describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
+  let sighash = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"
+  let transactionHash = "0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"
+  let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+
+  // Replaces globalThis.fetch with a JSON-RPC stub routed by request method.
+  // Returns a restore function.
+  let stubJsonRpcFetch: (string => JSON.t) => unit => unit = %raw(`(getResult) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, args) => {
+      const method = JSON.parse(args.body).method;
+      return new Response(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, result: getResult(method) }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    return () => {
+      globalThis.fetch = originalFetch;
+    };
+  }`)
+
+  Async.it(
+    "Throws a retryable error instead of a source-disabling one when the receipt is null",
+    async t => {
+      let eventConfig = MockIndexer.evmEventConfig(
+        ~id=`${sighash}_1`,
+        ~transactionFieldNames=[GasUsed],
+      )
+      let source = RpcSource.make({
+        url: "http://localhost:8545",
+        chain,
+        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventParams: [
+          {
+            sighash,
+            topicCount: 1,
+            eventName: eventConfig.name,
+            contractName: eventConfig.contractName,
+            params: [],
+          },
+        ],
+        lowercaseAddresses: false,
+      })
+
+      let logJson = JSON.Object(
+        Dict.fromArray([
+          ("address", JSON.String(mockAddress->Address.toString)),
+          ("topics", JSON.Array([JSON.String(sighash)])),
+          ("data", JSON.String("0x")),
+          ("blockNumber", JSON.String("0x64")),
+          ("transactionHash", JSON.String(transactionHash)),
+          ("transactionIndex", JSON.String("0x1")),
+          ("blockHash", JSON.String("0xb64")),
+          ("logIndex", JSON.String("0x2")),
+          ("removed", JSON.Boolean(false)),
+        ]),
+      )
+      let blockJson = JSON.Object(
+        Dict.fromArray([
+          ("number", JSON.String("0x64")),
+          ("timestamp", JSON.String("0x64")),
+          ("hash", JSON.String("0xb64")),
+          ("parentHash", JSON.String("0xb63")),
+        ]),
+      )
+
+      let restoreFetch = stubJsonRpcFetch(method =>
+        switch method {
+        | "eth_getLogs" => JSON.Array([logJson])
+        | "eth_getBlockByNumber" => blockJson
+        // eth_getTransactionByHash/eth_getTransactionReceipt return null,
+        // like a load-balanced node that hasn't caught up with the head
+        | _ => JSON.Null
+        }
+      )
+
+      let caught = try {
+        let _ = await source.getItemsOrThrow(
+          ~fromBlock=0,
+          ~toBlock=Some(100),
+          ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+          ~indexingAddresses=Dict.fromArray([
+            (
+              mockAddress->Address.toString,
+              (
+                {
+                  contractName: eventConfig.contractName,
+                  address: mockAddress,
+                  registrationBlock: -1,
+                  effectiveStartBlock: 0,
+                }: FetchState.indexingAddress
+              ),
+            ),
+          ]),
+          ~knownHeight=100,
+          ~partitionId="0",
+          ~selection={
+            dependsOnAddresses: true,
+            eventConfigs: [(eventConfig :> Internal.eventConfig)],
+          },
+          ~retry=0,
+          ~logger=Logging.createChild(~params={"test": "RpcSource missing transaction data"}),
+        )
+        restoreFetch()
+        None
+      } catch {
+      | exn =>
+        restoreFetch()
+        switch exn {
+        | Source.GetItemsError(error) => Some(error)
+        | _ => throw(exn)
+        }
+      }
+
+      t.expect(caught).toEqual(
+        Some(
+          FailedGettingItems({
+            exn: %raw(`null`),
+            attemptedToBlock: 100,
+            retry: WithBackoff({
+              message: `Transaction receipt not found for hash: ${transactionHash}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in 100ms.`,
+              backoffMillis: 100,
+            }),
+          }),
+        ),
+      )
+    },
+  )
+})

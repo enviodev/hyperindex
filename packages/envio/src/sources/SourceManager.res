@@ -528,11 +528,11 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
     sourceManager.newBlockStallTimeout
   }
 
-  let (source, newBlockHeight) = await Promise.race(
+  let (winnerSourceState, newBlockHeight) = await Promise.race(
     mainSources
     ->Array.map(async sourceState => {
       (
-        sourceState.source,
+        sourceState,
         await sourceManager->getSourceNewHeight(
           ~sourceState,
           ~knownHeight,
@@ -546,10 +546,11 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
     })
     ->Array.concat([
       Utils.delay(stallTimeout)->Promise.then(() => {
-        // Build fallback: sources not in mainSources with a valid role, even with recent lastFailedAt
+        // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
         let fallbackSources = []
         sourcesState->Array.forEach(sourceState => {
           if (
+            !sourceState.disabled &&
             !(mainSources->Array.includes(sourceState)) &&
             getSourceRole(
               ~sourceFor=sourceState.source.sourceFor,
@@ -582,7 +583,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
         Promise.race(
           fallbackSources->Array.map(async sourceState => {
             (
-              sourceState.source,
+              sourceState,
               await sourceManager->getSourceNewHeight(
                 ~sourceState,
                 ~knownHeight,
@@ -599,13 +600,24 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
     ]),
   )
 
-  sourceManager.activeSource = source
+  // A source still in recovery (or disabled while we waited) may win the
+  // height race, but it must not become activeSource — the next block-range
+  // query would immediately switch away from it, spamming switch logs.
+  let isWinnerWorking =
+    !winnerSourceState.disabled &&
+    switch winnerSourceState.lastFailedAt {
+    | Some(failedAt) => Date.now() -. failedAt >= sourceManager.recoveryTimeout
+    | None => true
+    }
+  if isWinnerWorking {
+    sourceManager.activeSource = winnerSourceState.source
+  }
 
   // Show a higher level log if we displayed a warning/error after newBlockStallTimeout
   let log = status.contents === Stalled ? Logging.childInfo : Logging.childTrace
   logger->log({
     "msg": `New blocks successfully found.`,
-    "source": source.name,
+    "source": winnerSourceState.source.name,
     "newBlockHeight": newBlockHeight,
   })
 

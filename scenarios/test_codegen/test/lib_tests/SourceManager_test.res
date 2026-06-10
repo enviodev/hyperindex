@@ -2783,6 +2783,131 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       ~message="Live source should remain primary — disabling Sync doesn't affect hasRealtime",
     ).toBe(liveMock.source)
   })
+
+  Async.itWithOptions(
+    "Disabled source is not polled for height as a stall fallback",
+    {retry: 3},
+    async t => {
+      let syncMock = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let liveMock = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Realtime)
+      let newBlockStallTimeoutRealtime = 5
+      let sourceManager = SourceManager.make(
+        ~isRealtime=false,
+        ~sources=[syncMock.source, liveMock.source],
+        ~maxPartitionConcurrency=10,
+        ~newBlockStallTimeoutRealtime,
+      )
+
+      // Disable live via UnsupportedSelection (live is primary in live mode)
+      let p1 =
+        sourceManager->SourceManager.executeQuery(
+          ~query=mockQuery(),
+          ~isRealtime=true,
+          ~knownHeight=100,
+        )
+      switch liveMock.getItemsOrThrowCalls {
+      | [call] => call.reject(Source.GetItemsError(UnsupportedSelection({message: "test disable"})))
+      | _ => JsError.throwWithMessage("Expected one pending call to liveMock")
+      }
+      await Utils.delay(0)
+      switch syncMock.getItemsOrThrowCalls {
+      | [call] => call.resolve([])
+      | _ => JsError.throwWithMessage("Expected syncMock to get the query after live disabled")
+      }
+      let _ = await p1
+
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
+
+      t.expect(
+        syncMock.getHeightOrThrowCalls->Array.length,
+        ~message="Sync is polled as primary",
+      ).toEqual(1)
+
+      await Utils.delay(newBlockStallTimeoutRealtime + 2)
+      t.expect(
+        liveMock.getHeightOrThrowCalls->Array.length,
+        ~message="Disabled live source should not be polled as a stall fallback",
+      ).toEqual(0)
+
+      syncMock.resolveGetHeightOrThrow(101)
+      t.expect(await p).toEqual(101)
+      t.expect(sourceManager->SourceManager.getActiveSource).toBe(syncMock.source)
+    },
+  )
+
+  Async.itWithOptions(
+    "Source in recovery that wins the height race does not become activeSource",
+    {retry: 3},
+    async t => {
+      let syncMock = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let fallbackMock = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow],
+        ~sourceFor=Fallback,
+      )
+      let newBlockStallTimeout = 5
+      let recoveryTimeout = 10_000.0
+      let sourceManager = SourceManager.make(
+        ~isRealtime=false,
+        ~sources=[syncMock.source, fallbackMock.source],
+        ~maxPartitionConcurrency=10,
+        ~newBlockStallTimeout,
+        ~recoveryTimeout,
+      )
+
+      // Fail sync until the query switches to fallback, marking sync with lastFailedAt
+      let p1 =
+        sourceManager->SourceManager.executeQuery(
+          ~query=mockQuery(),
+          ~isRealtime=false,
+          ~knownHeight=100,
+        )
+      for idx in 0 to 2 {
+        switch syncMock.getItemsOrThrowCalls {
+        | [call] =>
+          call.reject(
+            Source.GetItemsError(
+              FailedGettingItems({
+                exn: %raw(`null`),
+                attemptedToBlock: 100,
+                retry: WithBackoff({message: "test fail", backoffMillis: 0}),
+              }),
+            ),
+          )
+        | _ => JsError.throwWithMessage("Should have one pending call to syncMock")
+        }
+        await Promise.resolve()
+        if idx !== 2 {
+          await Utils.delay(0)
+        }
+      }
+      await Utils.delay(0)
+      switch fallbackMock.getItemsOrThrowCalls {
+      | [call] => call.resolve([])
+      | _ => JsError.throwWithMessage("Should have one pending call to fallbackMock")
+      }
+      let _ = await p1
+      t.expect(sourceManager->SourceManager.getActiveSource).toBe(fallbackMock.source)
+
+      // Sync (recent failure) is polled only after the stall timeout and wins the race
+      let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=100, ~reducedPolling=false)
+      t.expect(
+        syncMock.getHeightOrThrowCalls->Array.length,
+        ~message="Sync with recent failure is not a main height source",
+      ).toEqual(0)
+      await Utils.delay(newBlockStallTimeout + 2)
+      t.expect(
+        syncMock.getHeightOrThrowCalls->Array.length,
+        ~message="Sync is polled as a stall fallback",
+      ).toEqual(1)
+
+      syncMock.resolveGetHeightOrThrow(101)
+      t.expect(await p).toEqual(101)
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="Sync is still in recovery, so it must not steal activeSource from fallback",
+      ).toBe(fallbackMock.source)
+    },
+  )
 })
 
 describe("SourceManager height subscription", () => {
