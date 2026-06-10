@@ -7,6 +7,10 @@ type cfg = {
   maxNumRetries?: int,
   retryBaseMs?: int,
   retryCeilingMs?: int,
+  /// Per-program Borsh schema descriptors (JSON, one per program). The Rust
+  /// client builds these into decoders at creation and decodes matching
+  /// instructions inline on `get`.
+  programSchemas?: array<string>,
 }
 
 module QueryTypes = {
@@ -122,13 +126,6 @@ module QueryTypes = {
     includeInstruction?: bool,
   }
 
-  /// Reference to a program's registered Borsh schema, passed with the query
-  /// so the Rust client decodes matching instructions inline (in `get`).
-  type programSchemaRef = {
-    programId: string,
-    schemaHandle: int,
-  }
-
   type query = {
     fromSlot: int,
     toSlot?: int,
@@ -143,7 +140,6 @@ module QueryTypes = {
     maxNumInstructions?: int,
     maxNumLogs?: int,
     maxNumTokenBalances?: int,
-    programSchemas?: array<programSchemaRef>,
   }
 }
 
@@ -257,6 +253,7 @@ let make = (
   ~maxNumRetries=?,
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
+  ~programSchemas=?,
 ) => {
   Core.getAddon().hypersyncSolanaClient->classFromConfig({
     url,
@@ -265,5 +262,6 @@ let make = (
     ?maxNumRetries,
     ?retryBaseMs,
     ?retryCeilingMs,
+    ?programSchemas,
   })
 }

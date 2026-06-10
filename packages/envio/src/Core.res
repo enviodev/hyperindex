@@ -17,7 +17,6 @@ type addon = {
   hypersyncSolanaClient: hypersyncSolanaClientCtor,
   @as("Decoder")
   decoder: decoderCtor,
-  registerProgramSchema: (~descriptorJson: string) => int,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"

@@ -36,19 +36,6 @@ pub struct SolanaQuery {
     pub max_num_logs: Option<i64>,
     pub max_num_balances: Option<i64>,
     pub max_num_token_balances: Option<i64>,
-    /// Per-program Borsh schemas. When present, `get` decodes each returned
-    /// instruction whose `program_id` matches one of these, attaching `decoded`.
-    /// Purely client-side: ignored by the wire-query conversion below.
-    pub program_schemas: Option<Vec<ProgramSchemaRef>>,
-}
-
-/// Reference to a program's registered Borsh schema. `schema_handle` is the
-/// index returned by `register_program_schema`.
-#[napi(object)]
-#[derive(Default, Clone)]
-pub struct ProgramSchemaRef {
-    pub program_id: String,
-    pub schema_handle: u32,
 }
 
 #[napi(object)]

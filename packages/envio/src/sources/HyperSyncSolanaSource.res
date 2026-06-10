@@ -84,11 +84,13 @@ let synthLogIndex = (instr: HyperSyncSolanaClient.ResponseTypes.instruction) => 
 let serializeInstructionAddress = (addr: array<int>) =>
   addr->Array.map(n => n->Int.toString)->Array.joinUnsafe(",")
 
-// Build per-program schema descriptors by grouping eventConfigs by programId.
-// One `addon.registerProgramSchema` call per program at startup; the returned
-// handle goes into `schemaHandlesByProgram` and gets reused for every
-// matching instruction we decode.
-let buildSchemaHandles = (eventConfigs: array<Internal.svmInstructionEventConfig>): dict<int> => {
+// Build per-program schema descriptors by grouping eventConfigs by programId,
+// returning one descriptor JSON per program. These are handed to the Solana
+// client at creation; it builds them into decoders and decodes matching
+// instructions inline on `get`.
+let buildProgramSchemas = (eventConfigs: array<Internal.svmInstructionEventConfig>): array<
+  string,
+> => {
   // Group by programId base58 string. Skip events that carry no schema
   // (accounts == [] && args is JSON.Null && definedTypes is JSON.Null —
   // the resolved-empty case from system_config.rs).
@@ -146,27 +148,22 @@ let buildSchemaHandles = (eventConfigs: array<Internal.svmInstructionEventConfig
     }
   })
 
-  let handles = Dict.make()
   descriptorsByProgram
-  ->Dict.toArray
-  ->Array.forEach(((programIdString, descriptor)) => {
-    let json =
-      descriptor
-      ->(Utils.magic: {
-        "programId": string,
-        "definedTypes": JSON.t,
-        "instructions": array<{
-          "name": string,
-          "discriminator": string,
-          "accounts": array<string>,
-          "args": JSON.t,
-        }>,
-      } => JSON.t)
-      ->JSON.stringify
-    let handle = Core.getAddon().registerProgramSchema(~descriptorJson=json)
-    handles->Dict.set(programIdString, handle)
-  })
-  handles
+  ->Dict.valuesToArray
+  ->Array.map(descriptor =>
+    descriptor
+    ->(Utils.magic: {
+      "programId": string,
+      "definedTypes": JSON.t,
+      "instructions": array<{
+        "name": string,
+        "discriminator": string,
+        "accounts": array<string>,
+        "args": JSON.t,
+      }>,
+    } => JSON.t)
+    ->JSON.stringify
+  )
 }
 
 // Parse the Rust-decoded instruction (args/accounts arrive as JSON strings to
@@ -285,10 +282,17 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
   let name = "HyperSyncSolana"
   let chainId = chain->ChainMap.Chain.toChainId
 
+  // Built once at startup and handed to the client so `get` decodes matching
+  // instructions in Rust rather than per-instruction over the napi boundary.
+  let programSchemas = buildProgramSchemas(eventConfigs)
   let client = HyperSyncSolanaClient.make(
     ~url=endpointUrl,
     ~apiToken?,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
+    ~programSchemas=?switch programSchemas {
+    | [] => None
+    | arr => Some(arr)
+    },
   )
 
   let (eventRouter, programOrderings) = EventRouter.fromSvmEventConfigsOrThrow(eventConfigs, ~chain)
@@ -298,20 +302,6 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
   programOrderings->Array.forEach(o =>
     orderingByProgram->Dict.set(o.programId->SvmTypes.Pubkey.toString, o.byteLengthsDesc)
   )
-
-  // programId.toString -> Rust-side schema registry handle, registered once at
-  // startup. Passed to the client (below) so `get` decodes matching
-  // instructions in Rust rather than per-instruction over the napi boundary.
-  let schemaHandlesByProgram = buildSchemaHandles(eventConfigs)
-  let maybeProgramSchemas = switch schemaHandlesByProgram
-  ->Dict.toArray
-  ->Array.map(((programId, schemaHandle)): HyperSyncSolanaClient.QueryTypes.programSchemaRef => {
-    programId,
-    schemaHandle,
-  }) {
-  | [] => None
-  | arr => Some(arr)
-  }
 
   let needsTokenBalances = eventConfigs->Array.some(cfg => cfg.includeTokenBalances)
 
@@ -355,7 +345,6 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       maxNumTransactions: 2000,
       maxNumInstructions: 8000,
       maxNumTokenBalances: 16000,
-      programSchemas: ?maybeProgramSchemas,
     }
 
     Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")

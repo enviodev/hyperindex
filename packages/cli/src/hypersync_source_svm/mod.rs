@@ -29,6 +29,8 @@ pub(crate) mod mod_helpers {
     }
 }
 
+use hypersync_client_solana::decode::ProgramSchema as UpstreamSchema;
+
 use config::SolanaClientConfig;
 use query::SolanaQuery;
 use types::QueryResponse;
@@ -36,6 +38,10 @@ use types::QueryResponse;
 #[napi]
 pub struct HypersyncSolanaClient {
     inner: Arc<hypersync_client_solana::Client>,
+    /// Per-program Borsh schemas, keyed by base58 program id, built once from
+    /// the config at client creation. `get` decodes matching instructions
+    /// against these.
+    schemas: HashMap<String, UpstreamSchema>,
 }
 
 #[napi]
@@ -50,11 +56,17 @@ impl HypersyncSolanaClient {
     /// can use `@send` rather than `%raw` to invoke `new`.
     #[napi(factory)]
     pub fn from_config(cfg: SolanaClientConfig) -> napi::Result<HypersyncSolanaClient> {
+        let mut schemas = HashMap::new();
+        for descriptor_json in cfg.program_schemas.clone().unwrap_or_default() {
+            let schema = borsh_decoder::parse_program_schema(&descriptor_json).map_err(map_err)?;
+            schemas.insert(schema.program_id.clone(), schema);
+        }
         let inner = hypersync_client_solana::Client::new(cfg.into())
             .context("build solana client")
             .map_err(map_err)?;
         Ok(HypersyncSolanaClient {
             inner: Arc::new(inner),
+            schemas,
         })
     }
 
@@ -72,11 +84,6 @@ impl HypersyncSolanaClient {
     /// `StreamConfig::default()` and can DoS the server on multi-day windows).
     #[napi]
     pub async fn get(&self, query: SolanaQuery) -> napi::Result<QueryResponse> {
-        // Schemas to decode against ride along on the query so Borsh decoding
-        // happens here, in Rust, rather than per-instruction over the napi
-        // boundary — mirroring how the EVM client returns pre-decoded params.
-        let schema_refs = query.program_schemas.clone().unwrap_or_default();
-
         let q: hypersync_solana_net_types::query::SolanaQuery = query
             .try_into()
             .context("parse solana query")
@@ -88,23 +95,20 @@ impl HypersyncSolanaClient {
             .context("solana get")
             .map_err(map_err)?;
 
-        // Resolve program_id -> schema once, then decode each matching
-        // instruction inline. Skipped entirely when no schemas were supplied.
-        let schema_map: HashMap<String, _> = schema_refs
-            .into_iter()
-            .filter_map(|r| {
-                borsh_decoder::schema_for_handle(r.schema_handle).map(|s| (r.program_id, s))
-            })
-            .collect();
-        let decoded: Vec<Option<borsh_decoder::DecodedInstructionJson>> = if schema_map.is_empty() {
+        // Decode each matching instruction inline against the client's
+        // configured schemas — Borsh decoding happens here, in Rust, rather
+        // than per-instruction over the napi boundary, mirroring how the EVM
+        // client returns pre-decoded params. Skipped when no schemas exist.
+        let decoded: Vec<Option<borsh_decoder::DecodedInstructionJson>> = if self.schemas.is_empty()
+        {
             Vec::new()
         } else {
             resp.instructions
                 .iter()
                 .map(|ix| {
-                    schema_map.get(&ix.program_id).and_then(|schema| {
+                    self.schemas.get(&ix.program_id).and_then(|schema| {
                         borsh_decoder::decode_with_schema(
-                            schema.as_ref(),
+                            schema,
                             ix.accounts.clone(),
                             ix.data.clone(),
                         )

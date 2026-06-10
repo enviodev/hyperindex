@@ -1,20 +1,13 @@
 //! Borsh instruction decoder bridge.
 //!
-//! `register_program_schema` deserialises a JSON descriptor produced by
-//! `public_config.rs` into an upstream `ProgramSchema` and stashes it in a
-//! process-global table keyed by a stable `u32` index. The Solana client's
-//! `get` then passes those indices back on the query; `decode_with_schema`
-//! resolves each one via `schema_for_handle` and decodes the matching
-//! instructions inline, so the `DecodedInstruction` shape rides back on the
+//! `parse_program_schema` deserialises a JSON descriptor produced by
+//! `public_config.rs` into an upstream `ProgramSchema`. The Solana client
+//! builds these once at creation time and keeps them keyed by program id;
+//! its `get` then decodes each matching instruction inline via
+//! `decode_with_schema`, so the `DecodedInstruction` shape rides back on the
 //! query response instead of crossing the napi boundary one call at a time.
-//!
-//! Lifecycle: schemas are registered once per program at indexer startup
-//! and never freed. The process-global `Vec<Arc<ProgramSchema>>` is fine
-//! because the registry is fixed for the life of the indexer; no churn, no
-//! lifetime puzzle.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -57,45 +50,13 @@ pub struct InstructionSchemaJson {
     pub args: Vec<ArgDef>,
 }
 
-static REGISTRY: OnceLock<Mutex<Vec<Arc<UpstreamSchema>>>> = OnceLock::new();
-
-fn registry() -> &'static Mutex<Vec<Arc<UpstreamSchema>>> {
-    REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// Lock the registry, recovering the guard if a prior holder panicked. The
-/// critical sections only push/read `Arc`s, so a poisoned lock can't leave the
-/// registry torn — recover rather than crash the indexer worker.
-fn lock_registry() -> MutexGuard<'static, Vec<Arc<UpstreamSchema>>> {
-    registry()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// Register a program's Borsh schema. Returns a stable index the runtime
-/// hands back to `decode_instruction`. Indices are append-only; the registry
-/// is not cleared between indexer restarts within the same node process.
-#[napi_derive::napi]
-#[allow(dead_code)]
-pub fn register_program_schema(descriptor_json: String) -> napi::Result<u32> {
-    let descriptor: ProgramSchemaJson = serde_json::from_str(&descriptor_json)
-        .context("parse program schema descriptor")
-        .map_err(super::map_err)?;
-
-    let schema = build_program_schema(descriptor)
-        .context("build program schema")
-        .map_err(super::map_err)?;
-
-    let mut guard = lock_registry();
-    let idx = guard.len() as u32;
-    guard.push(Arc::new(schema));
-    Ok(idx)
-}
-
-/// Look up a registered schema by its handle. `None` when the handle was never
-/// registered (defensive — the runtime always registers before querying).
-pub(crate) fn schema_for_handle(schema_handle: u32) -> Option<Arc<UpstreamSchema>> {
-    lock_registry().get(schema_handle as usize).map(Arc::clone)
+/// Parse a JSON descriptor into an upstream `ProgramSchema`. The Solana client
+/// calls this once per configured program at creation time; the resulting
+/// schema's `program_id` is the key the client decodes against.
+pub(crate) fn parse_program_schema(descriptor_json: &str) -> Result<UpstreamSchema> {
+    let descriptor: ProgramSchemaJson =
+        serde_json::from_str(descriptor_json).context("parse program schema descriptor")?;
+    build_program_schema(descriptor).context("build program schema")
 }
 
 /// Decode a raw instruction against a resolved schema. Called inline by the
