@@ -40,7 +40,7 @@ let withServer = async (handler, body) => {
 describe("HyperFuelSource - getHeightOrThrow", () => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 
-  Async.it("Requests height via the client with auth and user agent headers", async t => {
+  Async.it("Requests height via the client with the bearer auth header", async t => {
     let capturedHeaders = ref(None)
     await withServer((req, res) => {
       capturedHeaders := Some(req.headers)
@@ -55,14 +55,9 @@ describe("HyperFuelSource - getHeightOrThrow", () => {
       let height = await source.getHeightOrThrow()
 
       let headers = capturedHeaders.contents->Option.getOrThrow
-      t.expect((
-        height,
-        headers->Dict.get("authorization"),
-        headers->Dict.get("user-agent"),
-      )).toEqual((
+      t.expect((height, headers->Dict.get("authorization"))).toEqual((
         123,
         Some("Bearer test-token"),
-        Some(`hyperindex/${Utils.EnvioPackage.value.version}`),
       ))
     })
   })

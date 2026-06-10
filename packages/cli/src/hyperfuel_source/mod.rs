@@ -1,10 +1,7 @@
-use std::time::Duration;
-
-use anyhow::{anyhow, Context, Result};
+use anyhow::Context;
 use napi_derive::napi;
 
 mod config;
-mod parse;
 mod query;
 mod types;
 
@@ -14,99 +11,43 @@ use types::{convert_response, ConvertError, QueryResponse};
 
 #[napi]
 pub struct HyperfuelClient {
-    http: reqwest::Client,
-    url: String,
-    bearer_token: Option<String>,
+    inner: hyperfuel_client::Client,
 }
 
 #[napi]
 impl HyperfuelClient {
     #[napi(factory)]
-    pub fn new(cfg: ClientConfig, user_agent: String) -> napi::Result<HyperfuelClient> {
-        // The hyperfuel-client crate's Client supports neither custom user
-        // agents nor authorized /height requests, so HTTP is done here and
-        // the crate is used only for its wire types and response parsing.
-        let http = reqwest::Client::builder()
-            .user_agent(user_agent)
-            .timeout(Duration::from_secs(30))
-            .tcp_keepalive(Duration::from_secs(7200))
-            .build()
-            .context("build http client")
+    pub fn new(cfg: ClientConfig) -> napi::Result<HyperfuelClient> {
+        let client_config: hyperfuel_client::ClientConfig =
+            cfg.try_into().context("build config").map_err(map_err)?;
+        let inner = hyperfuel_client::Client::new(client_config)
+            .context("build client")
             .map_err(map_err)?;
-        Ok(HyperfuelClient {
-            http,
-            url: cfg.url.trim_end_matches('/').to_string(),
-            bearer_token: cfg.bearer_token,
-        })
+        Ok(HyperfuelClient { inner })
     }
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let res = self
-            .request(self.http.get(format!("{}/height", self.url)))
-            .await
-            .map_err(|e| {
-                napi::Error::from_reason(format!("Failed to get HyperFuel height: {e}"))
-            })?;
-
-        #[derive(serde::Deserialize)]
-        struct ArchiveHeight {
-            height: Option<i64>,
-        }
-        let height: ArchiveHeight = res
-            .json()
-            .await
-            .context("read height response json")
-            .map_err(map_err)?;
-        height
-            .height
-            .context("missing height in response")
-            .map_err(map_err)
+        let height = self.inner.get_height().await.map_err(|e| {
+            // The client embeds a `{:?}` debug dump in its error message; keep
+            // only the first line so it stays readable on retries.
+            let message = format!("{e}");
+            let summary = message.lines().next().unwrap_or(message.as_str());
+            napi::Error::from_reason(format!("Failed to get HyperFuel height: {summary}"))
+        })?;
+        height.try_into().context("convert height").map_err(map_err)
     }
 
     #[napi]
     pub async fn get_selected_data(&self, query: Query) -> napi::Result<QueryResponse> {
         let query: hyperfuel_client::net_types::Query =
             query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .request(
-                self.http
-                    .post(format!("{}/query/arrow-ipc", self.url))
-                    .json(&query),
-            )
-            .await
-            .map_err(|e| {
-                napi::Error::from_reason(format!("Failed to get data from HyperFuel: {e}"))
-            })?;
-
-        let bytes = res
-            .bytes()
-            .await
-            .context("read response body")
-            .map_err(map_err)?;
-        let parsed = tokio::task::spawn_blocking(move || parse::parse_query_response(&bytes))
-            .await
-            .context("join parse task")
-            .map_err(map_err)?
-            .context("parse query response")
-            .map_err(map_err)?;
-
-        convert_response(parsed).map_err(convert_error_to_napi)
-    }
-}
-
-impl HyperfuelClient {
-    async fn request(&self, mut req: reqwest::RequestBuilder) -> Result<reqwest::Response> {
-        if let Some(bearer_token) = &self.bearer_token {
-            req = req.bearer_auth(bearer_token);
-        }
-        let res = req.send().await.context("execute http request")?;
-        let status = res.status();
-        if !status.is_success() {
-            let body = res.text().await.unwrap_or_default();
-            return Err(anyhow!("server responded with status {status}: {body}"));
-        }
-        Ok(res)
+        let res = self.inner.get_arrow(&query).await.map_err(|e| {
+            let message = format!("{e}");
+            let summary = message.lines().next().unwrap_or(message.as_str());
+            napi::Error::from_reason(format!("Failed to get data from HyperFuel: {summary}"))
+        })?;
+        convert_response(res).map_err(convert_error_to_napi)
     }
 }
 

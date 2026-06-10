@@ -1,10 +1,8 @@
 use anyhow::{Context, Result};
-use hyperfuel_client::ArrowBatch;
+use hyperfuel_client::{ArrowBatch, ArrowResponse};
 use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 use polars_arrow::array::{BinaryArray, Int64Array, StaticArray, UInt64Array, UInt8Array};
-
-use crate::hyperfuel_source::parse::ParsedResponse;
 
 #[napi(object)]
 pub struct QueryResponse {
@@ -177,9 +175,14 @@ fn blocks_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Block>, ConvertError>
     Ok(out)
 }
 
-pub(crate) fn convert_response(res: ParsedResponse) -> Result<QueryResponse, ConvertError> {
+pub(crate) fn convert_response(res: ArrowResponse) -> Result<QueryResponse, ConvertError> {
     Ok(QueryResponse {
-        archive_height: res.archive_height,
+        archive_height: res
+            .archive_height
+            .map(i64::try_from)
+            .transpose()
+            .context("convert archive_height")
+            .map_err(ConvertError::Other)?,
         next_block: res
             .next_block
             .try_into()
@@ -191,8 +194,8 @@ pub(crate) fn convert_response(res: ParsedResponse) -> Result<QueryResponse, Con
             .context("convert total_execution_time")
             .map_err(ConvertError::Other)?,
         data: QueryResponseData {
-            receipts: receipts_from_arrow(&res.receipts)?,
-            blocks: blocks_from_arrow(&res.blocks)?,
+            receipts: receipts_from_arrow(&res.data.receipts)?,
+            blocks: blocks_from_arrow(&res.data.blocks)?,
         },
     })
 }
