@@ -39,7 +39,7 @@
       "minimum": 0
     },
     "storage": {
-      "description": "Configuration for the storage backends the indexer writes to. Defaults to `postgres: true` when omitted. ClickHouse requires Postgres to be enabled (it is not supported as a single storage yet), and at least one backend must be enabled.",
+      "description": "Storage backends the indexer writes data to. Defaults to Postgres when omitted. Set `clickhouse: true` to additionally sync the indexed data to ClickHouse. Mark a backend with `default: true` to store entities that don't have an @storage directive in the schema, e.g. `clickhouse: {default: true}`.",
       "anyOf": [
         {
           "$ref": "#/$defs/StorageConfig"
@@ -72,17 +72,51 @@
       "type": "object",
       "properties": {
         "postgres": {
-          "description": "Whether to use Postgres as a storage backend (default: true).",
-          "type": [
-            "boolean",
-            "null"
+          "description": "Whether to use Postgres as a storage backend (default: true). Accepts a boolean or an options object (the object form implies the backend is enabled).",
+          "anyOf": [
+            {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "default": {
+                  "description": "Whether entities without an @storage directive are stored in this backend (default: true when Postgres is the only enabled backend, false otherwise).",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
           ]
         },
         "clickhouse": {
-          "description": "Whether to additionally sync the indexed data to ClickHouse. Requires Postgres to be enabled (default: false).",
-          "type": [
-            "boolean",
-            "null"
+          "description": "Whether to additionally sync the indexed data to ClickHouse. Requires Postgres to be enabled (default: false). Accepts a boolean or an options object (the object form implies the backend is enabled).",
+          "anyOf": [
+            {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "default": {
+                  "description": "Whether entities without an @storage directive are stored in this backend (default: false).",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
           ]
         }
       },
@@ -104,7 +138,14 @@
           "if": {
             "properties": {
               "clickhouse": {
-                "const": true
+                "anyOf": [
+                  {
+                    "const": true
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
               }
             },
             "required": [
@@ -114,7 +155,14 @@
           "then": {
             "properties": {
               "postgres": {
-                "const": true
+                "anyOf": [
+                  {
+                    "const": true
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
               }
             },
             "required": [
