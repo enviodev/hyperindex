@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
 use napi_derive::napi;
-use std::num::NonZeroU64;
-use url::Url;
 
 /// Configuration for the HyperFuel client.
 #[napi(object)]
@@ -16,18 +14,19 @@ impl TryFrom<ClientConfig> for hyperfuel_client::ClientConfig {
     type Error = anyhow::Error;
 
     fn try_from(config: ClientConfig) -> Result<Self> {
-        Ok(Self {
-            url: Some(Url::parse(&config.url).context("parse hyperfuel url")?),
-            bearer_token: config.bearer_token,
-            http_req_timeout_millis: config
+        // hyperfuel_client::ClientConfig holds a `url::Url`; go through serde so
+        // it parses the (already validated) endpoint without us taking a direct
+        // dependency on the url crate.
+        let json = serde_json::json!({
+            "url": config.url,
+            "bearer_token": config.bearer_token,
+            "http_req_timeout_millis": config
                 .http_req_timeout_millis
                 .and_then(|v| u64::try_from(v).ok())
-                .and_then(NonZeroU64::new),
+                .filter(|v| *v > 0),
             // Retries are handled by the indexer, not the binary client.
-            max_num_retries: Some(0),
-            retry_backoff_ms: None,
-            retry_base_ms: None,
-            retry_ceiling_ms: None,
-        })
+            "max_num_retries": 0,
+        });
+        serde_json::from_value(json).context("build hyperfuel client config")
     }
 }

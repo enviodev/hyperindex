@@ -207,10 +207,19 @@ let memoGetSelectionConfig = (~chain) => {
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
+  apiToken: option<string>,
 }
 
-let make = ({chain, endpointUrl}: options): t => {
+let make = ({chain, endpointUrl, apiToken}: options): t => {
   let name = "HyperFuel"
+
+  let apiToken = switch apiToken {
+  | Some(token) => token
+  | None =>
+    JsError.throwWithMessage(`An API token is required for using HyperFuel as a data-source.
+Set the ENVIO_API_TOKEN environment variable in your .env file.
+Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
+  }
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
@@ -240,6 +249,7 @@ let make = ({chain, endpointUrl}: options): t => {
     )
     let pageUnsafe = try await HyperFuel.GetLogs.query(
       ~serverUrl=endpointUrl,
+      ~apiToken,
       ~fromBlock,
       ~toBlock,
       ~recieptsSelection,
