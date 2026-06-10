@@ -31,7 +31,7 @@ pub struct ProjectPaths {
     #[arg(global = true, short, long)]
     pub directory: Option<String>,
 
-    ///The config file path, resolved relative to --directory (the current directory by default). It can also be set via the `ENVIO_CONFIG` environment variable.
+    ///The config file path, resolved relative to --directory (the working directory by default). It can also be set via the `ENVIO_CONFIG` environment variable.
     #[arg(global = true, long, env = "ENVIO_CONFIG", default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
 }
