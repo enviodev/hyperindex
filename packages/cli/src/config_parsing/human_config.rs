@@ -119,8 +119,8 @@ pub struct StorageBackendOptions {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
 pub enum ColumnNameFormat {
-    #[serde(rename = "graphql")]
-    Graphql,
+    #[serde(rename = "original")]
+    Original,
     #[serde(rename = "snake_case")]
     SnakeCase,
 }
@@ -209,12 +209,12 @@ impl JsonSchema for StorageConfig {
                             },
                             "column_name_format": {
                                 "description": "How entity fields are reflected in the storage column names. \
-                                                `graphql` keeps the schema.graphql field names as is, \
+                                                `original` keeps the schema.graphql field names as is, \
                                                 `snake_case` converts them to snake_case in the database \
-                                                while keeping the GraphQL casing in the exposed APIs. \
-                                                (default: graphql)",
+                                                while keeping the original casing in the exposed APIs. \
+                                                (default: original)",
                                 "type": ["string", "null"],
-                                "enum": ["graphql", "snake_case", null]
+                                "enum": ["original", "snake_case", null]
                             }
                         },
                         "additionalProperties": false

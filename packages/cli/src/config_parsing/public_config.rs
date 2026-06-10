@@ -569,10 +569,10 @@ impl SystemConfig {
                             |backend: Option<system_config::StorageBackend>| match backend
                                 .map(|b| b.column_name_format)
                             {
-                                None | Some(ColumnNameFormat::Graphql) => None,
+                                None | Some(ColumnNameFormat::Original) => None,
                                 Some(ColumnNameFormat::SnakeCase) => {
                                     let db_name = f.db_column_name(ColumnNameFormat::SnakeCase);
-                                    if db_name == f.db_column_name(ColumnNameFormat::Graphql) {
+                                    if db_name == f.db_column_name(ColumnNameFormat::Original) {
                                         None
                                     } else {
                                         Some(db_name)

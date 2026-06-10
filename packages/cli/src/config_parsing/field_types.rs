@@ -80,7 +80,7 @@ pub struct Field {
 impl Field {
     pub fn db_column_name(&self, column_name_format: ColumnNameFormat) -> String {
         let base = match column_name_format {
-            ColumnNameFormat::Graphql => self.field_name.clone(),
+            ColumnNameFormat::Original => self.field_name.clone(),
             ColumnNameFormat::SnakeCase => self.field_name.to_case(Case::Snake),
         };
         if self.linked_entity.is_some() {

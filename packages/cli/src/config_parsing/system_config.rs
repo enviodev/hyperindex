@@ -484,7 +484,7 @@ impl Storage {
                     .unwrap_or(!clickhouse_enabled),
                 column_name_format: postgres_config
                     .and_then(|c| c.column_name_format())
-                    .unwrap_or(human_config::ColumnNameFormat::Graphql),
+                    .unwrap_or(human_config::ColumnNameFormat::Original),
             }),
             clickhouse: clickhouse_enabled.then(|| StorageBackend {
                 entity_default: clickhouse_config
@@ -492,7 +492,7 @@ impl Storage {
                     .unwrap_or(false),
                 column_name_format: clickhouse_config
                     .and_then(|c| c.column_name_format())
-                    .unwrap_or(human_config::ColumnNameFormat::Graphql),
+                    .unwrap_or(human_config::ColumnNameFormat::Original),
             }),
         })
     }
@@ -2697,7 +2697,7 @@ mod test {
         assert_eq!(
             super::Storage::resolve(None).unwrap(),
             super::Storage {
-                postgres: backend(true, ColumnNameFormat::Graphql),
+                postgres: backend(true, ColumnNameFormat::Original),
                 clickhouse: None,
             }
         );
@@ -2710,7 +2710,7 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(true, ColumnNameFormat::Graphql),
+                postgres: backend(true, ColumnNameFormat::Original),
                 clickhouse: None,
             }
         );
@@ -2724,8 +2724,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(false, ColumnNameFormat::Graphql),
-                clickhouse: backend(false, ColumnNameFormat::Graphql),
+                postgres: backend(false, ColumnNameFormat::Original),
+                clickhouse: backend(false, ColumnNameFormat::Original),
             }
         );
 
@@ -2738,8 +2738,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(false, ColumnNameFormat::Graphql),
-                clickhouse: backend(true, ColumnNameFormat::Graphql),
+                postgres: backend(false, ColumnNameFormat::Original),
+                clickhouse: backend(true, ColumnNameFormat::Original),
             }
         );
 
@@ -2751,8 +2751,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(true, ColumnNameFormat::Graphql),
-                clickhouse: backend(true, ColumnNameFormat::Graphql),
+                postgres: backend(true, ColumnNameFormat::Original),
+                clickhouse: backend(true, ColumnNameFormat::Original),
             }
         );
 
@@ -2765,7 +2765,7 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(false, ColumnNameFormat::Graphql),
+                postgres: backend(false, ColumnNameFormat::Original),
                 clickhouse: None,
             }
         );
@@ -2791,7 +2791,7 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(true, ColumnNameFormat::Graphql),
+                postgres: backend(true, ColumnNameFormat::Original),
                 clickhouse: None,
             }
         );
@@ -2804,7 +2804,7 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(false, ColumnNameFormat::Graphql),
+                postgres: backend(false, ColumnNameFormat::Original),
                 clickhouse: backend(false, ColumnNameFormat::SnakeCase),
             }
         );
@@ -2813,12 +2813,12 @@ mod test {
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
                 postgres: with_format(Some(ColumnNameFormat::SnakeCase)),
-                clickhouse: with_format(Some(ColumnNameFormat::Graphql)),
+                clickhouse: with_format(Some(ColumnNameFormat::Original)),
             }))
             .unwrap(),
             super::Storage {
                 postgres: backend(false, ColumnNameFormat::SnakeCase),
-                clickhouse: backend(false, ColumnNameFormat::Graphql),
+                clickhouse: backend(false, ColumnNameFormat::Original),
             }
         );
 
@@ -2902,7 +2902,7 @@ mod test {
         fn backend(entity_default: bool) -> Option<super::super::StorageBackend> {
             Some(super::super::StorageBackend {
                 entity_default,
-                column_name_format: ColumnNameFormat::Graphql,
+                column_name_format: ColumnNameFormat::Original,
             })
         }
 
@@ -3113,7 +3113,7 @@ type Transfer {
 }"#,
             )
             .unwrap();
-            assert!(validate_db_column_names(&storage(ColumnNameFormat::Graphql), &schema).is_ok());
+            assert!(validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_ok());
         }
     }
 }
