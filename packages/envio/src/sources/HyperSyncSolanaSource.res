@@ -335,16 +335,6 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       toSlot: ?toBlock,
       instructions: instructionSelections,
       fields,
-      // Cap chunk size so the server can stream a response within its per-request
-      // budget. Without this, asking for a multi-day window blows the response
-      // size and the server times out / resets the connection mid-stream. The
-      // fetcher will pick up at the returned `next_slot` on the next iteration.
-      // Smaller caps -> more chunks but each fits well inside the server's
-      // per-request limit. Widen once HOS-1304 lands.
-      maxNumBlocks: 1000,
-      maxNumTransactions: 2000,
-      maxNumInstructions: 8000,
-      maxNumTokenBalances: 16000,
     }
 
     Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")
