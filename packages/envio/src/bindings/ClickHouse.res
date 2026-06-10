@@ -327,6 +327,14 @@ let makeCreateHistoryTableQuery = (
     | DerivedFrom(_) => None
     }
   })
+  // Nullable because the write path doesn't populate it yet.
+  let fieldDefinitions = switch entityConfig.crossChain {
+  | Some(true) =>
+    fieldDefinitions->Array.concat([
+      `\`chain_id\` ${getClickHouseFieldType(~fieldType=Int32, ~isNullable=true, ~isArray=false)}`,
+    ])
+  | _ => fieldDefinitions
+  }
 
   `CREATE TABLE IF NOT EXISTS ${database}.\`${EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
@@ -394,18 +402,20 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
   let checkpointsTableName = InternalTable.Checkpoints.table.tableName
   let checkpointIdField = (#id: InternalTable.Checkpoints.field :> string)
 
-  let entityFields =
-    entityConfig.table.fields
-    ->Array.filterMap(field => {
-      switch field {
-      | Field(field) => {
-          let fieldName = field->Table.getDbFieldName
-          Some(`\`${fieldName}\``)
-        }
-      | DerivedFrom(_) => None
+  let entityFieldsArray = entityConfig.table.fields->Array.filterMap(field => {
+    switch field {
+    | Field(field) => {
+        let fieldName = field->Table.getDbFieldName
+        Some(`\`${fieldName}\``)
       }
-    })
-    ->Array.joinUnsafe(", ")
+    | DerivedFrom(_) => None
+    }
+  })
+  let entityFieldsArray = switch entityConfig.crossChain {
+  | Some(true) => entityFieldsArray->Array.concat(["`chain_id`"])
+  | _ => entityFieldsArray
+  }
+  let entityFields = entityFieldsArray->Array.joinUnsafe(", ")
 
   `CREATE VIEW IF NOT EXISTS ${database}.\`${entityConfig.name}\` AS
 SELECT ${entityFields}

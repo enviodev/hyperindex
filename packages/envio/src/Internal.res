@@ -526,6 +526,9 @@ type genericEntityConfig<'entity> = {
   rowsSchema: S.t<array<'entity>>,
   table: Table.table,
   storage: entityStorage,
+  // Set for every entity in unordered multichain mode (absent in isolated
+  // mode). Storages add an extra chain_id column to the entity when true.
+  crossChain?: bool,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"

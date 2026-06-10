@@ -113,6 +113,17 @@ contracts:
 
 Global `field_selection` is at the root level (sibling to `contracts` and `chains`). Per-event `field_selection` is directly under the event entry. See `indexer-transactions` skill for full field lists.
 
+## multichain
+
+Root-level option controlling how entities relate across chains:
+
+```yaml
+multichain: isolated # or unordered (default)
+```
+
+- `unordered` (default) — events are processed as soon as they arrive from each chain and entities are shared across chains.
+- `isolated` — every chain's entities are kept isolated from each other.
+
 ## Environment Variables
 
 ```yaml

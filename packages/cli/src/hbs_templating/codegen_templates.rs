@@ -2810,6 +2810,28 @@ mod test {
     }
 
     #[test]
+    fn internal_config_json_entity_cross_chain_follows_multichain_mode() {
+        let entity_cross_chains = |config_file: &str| -> Vec<Option<serde_json::Value>> {
+            let json = get_internal_config_json_helper(config_file);
+            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+            parsed["entities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e.get("crossChain").cloned())
+                .collect()
+        };
+        assert_eq!(
+            (
+                entity_cross_chains("config1.yaml"),
+                entity_cross_chains("isolated-multichain.yaml"),
+            ),
+            (vec![Some(serde_json::json!(true)); 2], vec![None; 2]),
+            "unordered (default) stamps crossChain: true on every entity; isolated omits it"
+        );
+    }
+
+    #[test]
     fn internal_config_json_code_with_no_contracts() {
         // config4.yaml has empty contracts array - tests that comma is properly
         // placed before addressFormat when contracts section is omitted

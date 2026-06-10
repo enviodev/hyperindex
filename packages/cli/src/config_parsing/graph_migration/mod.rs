@@ -276,6 +276,7 @@ pub async fn generate_config_from_subgraph_id(
         field_selection: None,
         raw_events: None,
         address_format: None,
+        multichain: None,
     };
     let mut chains: Vec<Chain> = vec![];
 

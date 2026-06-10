@@ -176,6 +176,7 @@ pub mod evm {
                 field_selection: None,
                 raw_events: None,
                 address_format: None,
+                multichain: None,
             })
         }
 

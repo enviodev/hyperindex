@@ -276,6 +276,7 @@ let entityJsonSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
     "storage": s.matches(S.option(entityStorageSchema)),
+    "crossChain": s.matches(S.option(S.bool)),
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
     "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
@@ -449,6 +450,7 @@ let parseEntitiesFromJson = (
       ),
       table,
       storage,
+      crossChain: ?entityJson["crossChain"],
     }->Internal.fromGenericEntityConfig
   })
 }

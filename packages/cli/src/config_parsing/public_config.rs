@@ -1,7 +1,7 @@
 use super::{
     entity_parsing::IndexFieldDirection,
     field_types,
-    human_config::evm::For,
+    human_config::{evm::For, Multichain},
     system_config::{self, Abi, Ecosystem, EventKind, FuelEventKind, SystemConfig},
 };
 use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
@@ -76,6 +76,10 @@ struct EntityJson {
     // JSON byte-identical for projects predating per-backend `default`.
     #[serde(skip_serializing_if = "Option::is_none")]
     storage: Option<EntityStorageJson>,
+    // Present (true) for every entity in unordered multichain mode; omitted
+    // in isolated mode. Storages add a chain_id column when set.
+    #[serde(skip_serializing_if = "is_false")]
+    cross_chain: bool,
     properties: Vec<PropertyJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     derived_fields: Vec<DerivedFieldJson>,
@@ -627,6 +631,7 @@ impl SystemConfig {
                 Ok(EntityJson {
                     name: entity.name.clone(),
                     storage,
+                    cross_chain: matches!(cfg.multichain, Multichain::Unordered),
                     properties,
                     derived_fields,
                     composite_indices,
