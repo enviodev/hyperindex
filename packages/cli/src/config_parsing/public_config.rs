@@ -75,9 +75,11 @@ impl From<&system_config::Storage> for StorageConfig {
 struct EntityJson {
     name: String,
     // Mirrors the user's `@storage(...)` directive verbatim: only the args
-    // they wrote are emitted, and the whole field is omitted when the
-    // directive is absent. Resolution against the global storage happens
-    // on the ReScript side.
+    // they wrote are emitted. Without a directive the entity gets the
+    // backends marked `default` in config.yaml — stamped here, except when
+    // they coincide with the enabled backends: then the field is omitted
+    // and the ReScript side falls back to the global storage, keeping the
+    // JSON byte-identical for projects predating per-backend `default`.
     #[serde(skip_serializing_if = "Option::is_none")]
     storage: Option<EntityStorageJson>,
     properties: Vec<PropertyJson>,
@@ -631,8 +633,18 @@ impl SystemConfig {
                         postgres: entity.postgres,
                         clickhouse: entity.clickhouse,
                     })
-                } else {
+                } else if (cfg.storage.postgres_default, cfg.storage.clickhouse_default)
+                    == (cfg.storage.postgres, cfg.storage.clickhouse)
+                {
                     None
+                } else {
+                    // Emitted in the same shape a positive @storage directive
+                    // would produce, so switching an entity between the
+                    // directive and a config-level default doesn't diff.
+                    Some(EntityStorageJson {
+                        postgres: cfg.storage.postgres_default.then_some(true),
+                        clickhouse: cfg.storage.clickhouse_default.then_some(true),
+                    })
                 };
 
                 Ok(EntityJson {

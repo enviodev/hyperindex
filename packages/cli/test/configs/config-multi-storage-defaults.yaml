@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../../envio/evm.schema.json
+name: multi-storage-defaults
+schema: ../schemas/schema-with-multi-storage.graphql
+storage:
+  postgres:
+    default: true
+  clickhouse:
+    default: true
+chains:
+  - id: 1
+    start_block: 0
+    contracts: []

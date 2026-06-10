@@ -191,6 +191,18 @@ expression: json
           "type": "string"
         }
       ]
+    },
+    {
+      "name": "UnannotatedEntity",
+      "storage": {
+        "clickhouse": true
+      },
+      "properties": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
     }
   ]
 }

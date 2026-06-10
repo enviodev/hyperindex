@@ -442,39 +442,25 @@ pub struct SystemConfig {
 pub struct Storage {
     pub postgres: bool,
     pub clickhouse: bool,
+    // Whether entities without an @storage directive are stored in the
+    // backend. A single enabled backend is implicitly the default; with
+    // multiple backends none is, unless opted in via `default: true`.
+    pub postgres_default: bool,
+    pub clickhouse_default: bool,
     pub column_name_format: human_config::ColumnNameFormat,
 }
 
 impl Storage {
     pub fn resolve(config: Option<&human_config::StorageConfig>) -> Result<Self> {
-        let (postgres, clickhouse, column_name_format) = match config {
-            // Default: only Postgres enabled
-            None => (true, false, None),
-            Some(s) => {
-                let clickhouse = s.clickhouse.as_ref().map_or(false, |b| b.is_enabled());
-                // When clickhouse is enabled, postgres must be set explicitly
-                // so that the validation below catches a clickhouse-only config
-                // instead of silently defaulting postgres to true.
-                let postgres = s.postgres.as_ref().map_or(!clickhouse, |b| b.is_enabled());
-                // Column names are shared between the backends (ClickHouse
-                // mirrors the Postgres tables), so a single resolved value is
-                // used and conflicting per-backend settings are rejected.
-                let column_name_format = match (
-                    s.postgres.as_ref().and_then(|b| b.column_name_format()),
-                    s.clickhouse.as_ref().and_then(|b| b.column_name_format()),
-                ) {
-                    (Some(pg), Some(ch)) if pg != ch => {
-                        return Err(anyhow!(
-                            "Different `column_name_format` values per storage backend are not \
-                             supported. Please use the same value for all backends in the \
-                             `storage` config."
-                        ))
-                    }
-                    (pg, ch) => pg.or(ch),
-                };
-                (postgres, clickhouse, column_name_format)
-            }
+        let (postgres_config, clickhouse_config) = match config {
+            None => (None, None),
+            Some(s) => (s.postgres.as_ref(), s.clickhouse.as_ref()),
         };
+        let clickhouse = clickhouse_config.is_some_and(|c| c.is_enabled());
+        // When clickhouse is enabled, postgres must be set explicitly
+        // so that the validation below catches a clickhouse-only config
+        // instead of silently defaulting postgres to true.
+        let postgres = postgres_config.map_or(!clickhouse, |c| c.is_enabled());
         if clickhouse && !postgres {
             return Err(anyhow!(
                 "ClickHouse is not supported as a single storage yet. Please enable Postgres \
@@ -488,57 +474,78 @@ impl Storage {
                  default)."
             ));
         }
+        let postgres_default = postgres
+            && postgres_config
+                .and_then(|c| c.entity_default())
+                .unwrap_or(!clickhouse);
+        let clickhouse_default = clickhouse
+            && clickhouse_config
+                .and_then(|c| c.entity_default())
+                .unwrap_or(false);
+        // Column names are shared between the backends (ClickHouse mirrors
+        // the Postgres tables), so a single resolved value is used and
+        // conflicting per-backend settings are rejected.
+        let column_name_format = match (
+            postgres_config.and_then(|c| c.column_name_format()),
+            clickhouse_config.and_then(|c| c.column_name_format()),
+        ) {
+            (Some(pg), Some(ch)) if pg != ch => {
+                return Err(anyhow!(
+                    "Different `column_name_format` values per storage backend are not \
+                     supported. Please use the same value for all backends in the \
+                     `storage` config."
+                ))
+            }
+            (pg, ch) => pg.or(ch),
+        };
         Ok(Self {
             postgres,
             clickhouse,
-            column_name_format: column_name_format.unwrap_or(human_config::ColumnNameFormat::Graphql),
+            postgres_default,
+            clickhouse_default,
+            column_name_format: column_name_format
+                .unwrap_or(human_config::ColumnNameFormat::Graphql),
         })
-    }
-
-    pub fn is_multi(&self) -> bool {
-        self.postgres && self.clickhouse
     }
 }
 
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
-//
-// With two backends, the two failure modes are mutually exclusive: multi-storage
-// mode means both backends are on (so an entity can never target a disabled one),
-// and single-storage mode is exempt from the must-declare rule. If a third
-// backend lands the two checks could fire together — flag that here so a future
-// reader sees the simplification's premise.
 pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
-    if storage.is_multi() {
+    // Entities without @storage fall back to the backends marked `default`
+    // in config.yaml. When no backend is a default, such entities would end
+    // up with no storage at all.
+    if !storage.postgres_default && !storage.clickhouse_default {
         let missing: Vec<&str> = entities
             .iter()
             .filter(|e| !e.has_storage_directive())
             .map(|e| e.name.as_str())
             .collect();
-        if missing.is_empty() {
-            return Ok(());
+        if !missing.is_empty() {
+            let example = missing[0];
+            let listed = missing
+                .iter()
+                .map(|n| format!("  - {n}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(anyhow!(
+                "Schema validation failed:\n\
+                 \n\
+                 Entities with no storage backend (no @storage directive, and no backend is marked `default: true` in config.yaml):\n\
+                 {listed}\n\
+                 \n\
+                 Fixes:\n  \
+                 - Set `default: true` on a backend under `storage:` in config.yaml to include these entities automatically. Example:\n      \
+                 storage:\n        \
+                 postgres:\n          \
+                 default: true\n  \
+                 - Or add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
+                 type {example} @storage(postgres: true) {{ ... }}"
+            ));
         }
-        let example = missing[0];
-        let listed = missing
-            .iter()
-            .map(|n| format!("  - {n}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err(anyhow!(
-            "Schema validation failed:\n\
-             \n\
-             Entities missing the @storage directive (multi-storage mode requires it):\n\
-             {listed}\n\
-             \n\
-             Fixes:\n  \
-             - Add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
-             type {example} @storage(postgres: true) {{ ... }}\n      \
-             type {example} @storage(clickhouse: true) {{ ... }}\n      \
-             type {example} @storage(postgres: true, clickhouse: true) {{ ... }}"
-        ));
     }
 
     let unsupported: Vec<(&str, &'static str)> = entities
@@ -1103,10 +1110,12 @@ impl SystemConfig {
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
         let human_config_string =
             std::fs::read_to_string(&project_paths.config).context(format!(
-                "Failed to resolve config path {0}. Make sure you're in the correct \
-                 directory and that a config file with the name {0} exists. I can configure \
-                 another path by using the --config flag.",
+                "Failed to resolve config path {0} (--config {1} resolved relative to \
+                 --directory {2}). Make sure the file exists. Note that --config and \
+                 ENVIO_CONFIG are interpreted relative to --directory.",
                 &project_paths.config.to_str().unwrap_or("{unknown}"),
+                project_paths.config_relative_to_root().display(),
+                project_paths.project_root.display(),
             ))?;
 
         let mut env_state = EnvState::new(&project_paths.project_root);
@@ -2665,23 +2674,32 @@ mod test {
     #[test]
     fn test_storage_resolve() {
         use super::human_config::{
-            ColumnNameFormat, StorageBackend, StorageBackendConfig, StorageConfig,
+            ColumnNameFormat, StorageBackendConfig, StorageBackendOptions, StorageConfig,
         };
 
-        let enabled = |b| Some(StorageBackend::Enabled(b));
-        let configured = |column_name_format| {
-            Some(StorageBackend::Config(StorageBackendConfig {
+        let enabled = |b: bool| Some(StorageBackendConfig::Enabled(b));
+        let options = |default: Option<bool>| {
+            Some(StorageBackendConfig::Options(StorageBackendOptions {
+                default,
+                column_name_format: None,
+            }))
+        };
+        let with_format = |column_name_format: Option<ColumnNameFormat>| {
+            Some(StorageBackendConfig::Options(StorageBackendOptions {
+                default: None,
                 column_name_format,
             }))
         };
 
-        // Default (None) -> postgres only
+        // Default (None) -> postgres only, postgres is the entity default
         assert_eq!(
             super::Storage::resolve(None).unwrap(),
             super::Storage {
                 postgres: true,
                 clickhouse: false,
-                column_name_format: ColumnNameFormat::Graphql
+                postgres_default: true,
+                clickhouse_default: false,
+                column_name_format: ColumnNameFormat::Graphql,
             }
         );
 
@@ -2695,11 +2713,14 @@ mod test {
             super::Storage {
                 postgres: true,
                 clickhouse: false,
-                column_name_format: ColumnNameFormat::Graphql
+                postgres_default: true,
+                clickhouse_default: false,
+                column_name_format: ColumnNameFormat::Graphql,
             }
         );
 
-        // Both enabled -> ok
+        // Both enabled -> ok; with multiple backends none is an implicit
+        // entity default
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
                 postgres: enabled(true),
@@ -2709,35 +2730,91 @@ mod test {
             super::Storage {
                 postgres: true,
                 clickhouse: true,
-                column_name_format: ColumnNameFormat::Graphql
+                postgres_default: false,
+                clickhouse_default: false,
+                column_name_format: ColumnNameFormat::Graphql,
+            }
+        );
+
+        // Object form implies enabled; `default: true` opts clickhouse in
+        // as an entity default
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: enabled(true),
+                clickhouse: options(Some(true)),
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: true,
+                clickhouse: true,
+                postgres_default: false,
+                clickhouse_default: true,
+                column_name_format: ColumnNameFormat::Graphql,
+            }
+        );
+
+        // Both backends can be entity defaults when opted in explicitly
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: options(Some(true)),
+                clickhouse: options(Some(true)),
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: true,
+                clickhouse: true,
+                postgres_default: true,
+                clickhouse_default: true,
+                column_name_format: ColumnNameFormat::Graphql,
+            }
+        );
+
+        // Postgres as a single storage can opt out of being the entity
+        // default (entities then must carry @storage)
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: options(Some(false)),
+                clickhouse: None,
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: true,
+                clickhouse: false,
+                postgres_default: false,
+                clickhouse_default: false,
+                column_name_format: ColumnNameFormat::Graphql,
             }
         );
 
         // An options object enables the backend and resolves its options
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
-                postgres: configured(Some(ColumnNameFormat::SnakeCase)),
+                postgres: with_format(Some(ColumnNameFormat::SnakeCase)),
                 clickhouse: None,
             }))
             .unwrap(),
             super::Storage {
                 postgres: true,
                 clickhouse: false,
-                column_name_format: ColumnNameFormat::SnakeCase
+                postgres_default: true,
+                clickhouse_default: false,
+                column_name_format: ColumnNameFormat::SnakeCase,
             }
         );
 
         // An empty options object keeps the defaults
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
-                postgres: configured(None),
+                postgres: with_format(None),
                 clickhouse: None,
             }))
             .unwrap(),
             super::Storage {
                 postgres: true,
                 clickhouse: false,
-                column_name_format: ColumnNameFormat::Graphql
+                postgres_default: true,
+                clickhouse_default: false,
+                column_name_format: ColumnNameFormat::Graphql,
             }
         );
 
@@ -2745,20 +2822,22 @@ mod test {
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
                 postgres: enabled(true),
-                clickhouse: configured(Some(ColumnNameFormat::SnakeCase)),
+                clickhouse: with_format(Some(ColumnNameFormat::SnakeCase)),
             }))
             .unwrap(),
             super::Storage {
                 postgres: true,
                 clickhouse: true,
-                column_name_format: ColumnNameFormat::SnakeCase
+                postgres_default: false,
+                clickhouse_default: false,
+                column_name_format: ColumnNameFormat::SnakeCase,
             }
         );
 
         // Conflicting column_name_format between backends -> user-friendly error
         let err = super::Storage::resolve(Some(&StorageConfig {
-            postgres: configured(Some(ColumnNameFormat::Graphql)),
-            clickhouse: configured(Some(ColumnNameFormat::SnakeCase)),
+            postgres: with_format(Some(ColumnNameFormat::Graphql)),
+            clickhouse: with_format(Some(ColumnNameFormat::SnakeCase)),
         }))
         .unwrap_err();
         assert!(
@@ -2783,7 +2862,7 @@ mod test {
         // opt in to Postgres explicitly rather than relying on the default.
         let err = super::Storage::resolve(Some(&StorageConfig {
             postgres: None,
-            clickhouse: configured(None),
+            clickhouse: options(Some(true)),
         }))
         .unwrap_err();
         assert!(
@@ -2824,14 +2903,6 @@ mod test {
         use crate::config_parsing::entity_parsing::{Entity, Schema};
         use crate::config_parsing::human_config::ColumnNameFormat;
 
-        fn storage(postgres: bool, clickhouse: bool) -> Storage {
-            Storage {
-                postgres,
-                clickhouse,
-                column_name_format: ColumnNameFormat::Graphql,
-            }
-        }
-
         // Bypass `Schema::new` validation: only storage routing matters here.
         fn make_schema(entities: Vec<Entity>) -> Schema {
             let mut schema = Schema::empty();
@@ -2852,26 +2923,43 @@ mod test {
             }
         }
 
+        fn postgres_only() -> Storage {
+            Storage {
+                postgres: true,
+                clickhouse: false,
+                postgres_default: true,
+                clickhouse_default: false,
+                column_name_format: ColumnNameFormat::Graphql,
+            }
+        }
+
+        fn multi(postgres_default: bool, clickhouse_default: bool) -> Storage {
+            Storage {
+                postgres: true,
+                clickhouse: true,
+                postgres_default,
+                clickhouse_default,
+                column_name_format: ColumnNameFormat::Graphql,
+            }
+        }
+
         #[test]
         fn single_storage_no_directive_ok() {
             let schema = make_schema(vec![entity("Transfer", None, None)]);
-            let storage = storage(true, false);
-            assert!(validate_entity_storage(&storage, &schema).is_ok());
+            assert!(validate_entity_storage(&postgres_only(), &schema).is_ok());
         }
 
         #[test]
         fn single_storage_matching_directive_ok() {
             let schema = make_schema(vec![entity("Transfer", Some(true), None)]);
-            let storage = storage(true, false);
-            assert!(validate_entity_storage(&storage, &schema).is_ok());
+            assert!(validate_entity_storage(&postgres_only(), &schema).is_ok());
         }
 
         #[test]
         fn single_storage_entity_targets_disabled_backend_e1() {
             // Global: postgres only. Entity wants clickhouse → E1.
             let schema = make_schema(vec![entity("Snapshot", Some(true), Some(true))]);
-            let storage = storage(true, false);
-            let err = validate_entity_storage(&storage, &schema).unwrap_err();
+            let err = validate_entity_storage(&postgres_only(), &schema).unwrap_err();
             assert_eq!(
                 err.to_string(),
                 "Schema validation failed:\n\
@@ -2891,33 +2979,42 @@ mod test {
                 entity("Snapshot", None, Some(true)),
                 entity("Audit", Some(true), Some(true)),
             ]);
-            let storage = storage(true, true);
-            assert!(validate_entity_storage(&storage, &schema).is_ok());
+            assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
         }
 
         #[test]
-        fn multi_storage_missing_directives_e2() {
+        fn multi_storage_no_directive_falls_back_to_defaults_ok() {
+            let schema = make_schema(vec![
+                entity("Transfer", None, None),
+                entity("Snapshot", None, Some(true)),
+            ]);
+            assert!(validate_entity_storage(&multi(true, false), &schema).is_ok());
+            assert!(validate_entity_storage(&multi(false, true), &schema).is_ok());
+        }
+
+        #[test]
+        fn no_default_storage_and_missing_directives_e2() {
             let schema = make_schema(vec![
                 entity("Transfer", None, None),
                 entity("Approval", None, None),
-                entity("DailySnapshot", None, None),
+                entity("DailySnapshot", None, Some(true)),
             ]);
-            let storage = storage(true, true);
-            let err = validate_entity_storage(&storage, &schema).unwrap_err();
+            let err = validate_entity_storage(&multi(false, false), &schema).unwrap_err();
             assert_eq!(
                 err.to_string(),
                 "Schema validation failed:\n\
                  \n\
-                 Entities missing the @storage directive (multi-storage mode requires it):\n  \
+                 Entities with no storage backend (no @storage directive, and no backend is marked `default: true` in config.yaml):\n  \
                  - Approval\n  \
-                 - DailySnapshot\n  \
                  - Transfer\n\
                  \n\
                  Fixes:\n  \
-                 - Add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
-                 type Approval @storage(postgres: true) { ... }\n      \
-                 type Approval @storage(clickhouse: true) { ... }\n      \
-                 type Approval @storage(postgres: true, clickhouse: true) { ... }"
+                 - Set `default: true` on a backend under `storage:` in config.yaml to include these entities automatically. Example:\n      \
+                 storage:\n        \
+                 postgres:\n          \
+                 default: true\n  \
+                 - Or add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
+                 type Approval @storage(postgres: true) { ... }"
             );
         }
 
@@ -2930,8 +3027,7 @@ mod test {
                 entity("Apple", None, None),
                 entity("Mango", None, None),
             ]);
-            let storage = storage(true, true);
-            let err = validate_entity_storage(&storage, &schema).unwrap_err();
+            let err = validate_entity_storage(&multi(false, false), &schema).unwrap_err();
             assert!(
                 err.to_string().contains("- Apple\n  - Mango\n  - Zebra"),
                 "Entities not listed alphabetically. Got:\n{err}"
@@ -2949,6 +3045,8 @@ mod test {
             Storage {
                 postgres: true,
                 clickhouse: false,
+                postgres_default: true,
+                clickhouse_default: false,
                 column_name_format,
             }
         }

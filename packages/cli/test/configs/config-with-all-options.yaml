@@ -10,7 +10,8 @@ raw_events: true
 storage:
   postgres:
     column_name_format: snake_case
-  clickhouse: true
+  clickhouse:
+    default: true
 field_selection:
   transaction_fields:
     - hash

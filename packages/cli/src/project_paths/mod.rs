@@ -58,6 +58,13 @@ impl ParsedProjectPaths {
         Self::new(project_root, DEFAULT_CONFIG_PATH)
     }
 
+    /// The form consumers need when the project root acts as cwd.
+    pub fn config_relative_to_root(&self) -> PathBuf {
+        let normalized_root = path_utils::normalize_path(self.project_root.clone());
+        pathdiff::diff_paths(&self.config, &normalized_root)
+            .expect("config is validated to live under the project root")
+    }
+
     /// Path to the codegen-emitted `.envio/types.d.ts` file.
     pub fn envio_types_dts(&self) -> PathBuf {
         self.envio_dir.join(ENVIO_TYPES_FILE)
@@ -171,5 +178,36 @@ mod tests {
     #[test]
     fn check_default_does_not_panic() {
         ParsedProjectPaths::default();
+    }
+
+    #[test]
+    fn test_config_relative_to_root_round_trips_through_directory_join() {
+        let paths = ParsedProjectPaths::new("envio/analytics", "config.yaml").unwrap();
+        let relative = paths.config_relative_to_root();
+        let round_tripped =
+            ParsedProjectPaths::new("envio/analytics", relative.to_str().unwrap()).unwrap();
+        assert_eq!(
+            (relative, round_tripped),
+            (PathBuf::from("config.yaml"), paths)
+        );
+    }
+
+    #[test]
+    fn test_config_relative_to_root_with_default_root() {
+        let paths = ParsedProjectPaths::new("./", "configs/config.yaml").unwrap();
+        assert_eq!(
+            paths.config_relative_to_root(),
+            PathBuf::from("configs/config.yaml")
+        );
+    }
+
+    #[test]
+    fn test_config_relative_to_root_with_absolute_config() {
+        let paths =
+            ParsedProjectPaths::new("/repo/project", "/repo/project/configs/config.yaml").unwrap();
+        assert_eq!(
+            paths.config_relative_to_root(),
+            PathBuf::from("configs/config.yaml")
+        );
     }
 }
