@@ -43,14 +43,7 @@ type NodeArgs = {
   argMarketIndex?: number;
 };
 type MapArgs = (decoded: SvmDecodedInstruction) => NodeArgs;
-
-// The generated `onInstruction` keys program/instruction off codegen literal
-// unions; we drive registration from plain strings (kept in sync with config.yaml
-// + idls/NAMES.md), so widen the signature once here.
-const onIx = indexer.onInstruction as unknown as (
-  options: { program: string; instruction: string },
-  handler: (a: { instruction: SvmInstruction; context: FlowContext }) => Promise<void>,
-) => void;
+type FlowHandler = (a: { instruction: SvmInstruction; context: FlowContext }) => Promise<void>;
 
 const addrPath = (a: readonly number[]): string => a.join(".");
 const parentOf = (a: readonly number[]): string | undefined =>
@@ -135,17 +128,17 @@ function writeNode(
   writeTokenDeltas(instruction, context, txSig);
 }
 
-function register(program: string, instructionName: string, mapArgs?: MapArgs): void {
-  onIx({ program, instruction: instructionName }, async ({ instruction, context }) => {
+function nodeHandler(program: string, instructionName: string, mapArgs?: MapArgs): FlowHandler {
+  return async ({ instruction, context }) => {
     const decoded = instruction.decoded;
     const extra = decoded && mapArgs ? mapArgs(decoded) : {};
     writeNode(instruction, context, program, instructionName, extra);
     await bumpStats(instruction, context);
-  });
+  };
 }
 
-function registerLiquidation(program: string, instructionName: string, mapArgs: MapArgs): void {
-  onIx({ program, instruction: instructionName }, async ({ instruction, context }) => {
+function liquidationHandler(program: string, instructionName: string, mapArgs: MapArgs): FlowHandler {
+  return async ({ instruction, context }) => {
     const decoded = instruction.decoded;
     const extra = decoded ? mapArgs(decoded) : {};
     writeNode(instruction, context, program, instructionName, extra);
@@ -161,7 +154,7 @@ function registerLiquidation(program: string, instructionName: string, mapArgs: 
       });
     }
     await bumpStats(instruction, context);
-  });
+  };
 }
 
 // IDL-decoded programs surface decoded.args loosely (codegen types them `{}`),
@@ -206,25 +199,25 @@ const driftLiquidateSpot: MapArgs = (d) => {
 };
 const driftSettlePnl: MapArgs = (d) => ({ argMarketIndex: (d.args as Partial<DriftSettlePnlArgs>).marketIndex });
 
-register("Jupiter", "route", jupiterRoute);
-register("Jupiter", "sharedAccountsRoute", jupiterRoute);
+indexer.onInstruction({ program: "Jupiter", instruction: "route" }, nodeHandler("Jupiter", "route", jupiterRoute));
+indexer.onInstruction({ program: "Jupiter", instruction: "sharedAccountsRoute" }, nodeHandler("Jupiter", "sharedAccountsRoute", jupiterRoute));
 
-register("Kamino", "depositReserveLiquidityAndObligationCollateral", kaminoLiquidity);
-register("Kamino", "borrowObligationLiquidity", kaminoLiquidity);
-register("Kamino", "repayObligationLiquidity", kaminoLiquidity);
-register("Kamino", "withdrawObligationCollateralAndRedeemReserveCollateral", kaminoWithdraw);
+indexer.onInstruction({ program: "Kamino", instruction: "depositReserveLiquidityAndObligationCollateral" }, nodeHandler("Kamino", "depositReserveLiquidityAndObligationCollateral", kaminoLiquidity));
+indexer.onInstruction({ program: "Kamino", instruction: "borrowObligationLiquidity" }, nodeHandler("Kamino", "borrowObligationLiquidity", kaminoLiquidity));
+indexer.onInstruction({ program: "Kamino", instruction: "repayObligationLiquidity" }, nodeHandler("Kamino", "repayObligationLiquidity", kaminoLiquidity));
+indexer.onInstruction({ program: "Kamino", instruction: "withdrawObligationCollateralAndRedeemReserveCollateral" }, nodeHandler("Kamino", "withdrawObligationCollateralAndRedeemReserveCollateral", kaminoWithdraw));
 
-register("Drift", "placePerpOrder", driftPlacePerp);
-register("Drift", "fillPerpOrder");
-registerLiquidation("Drift", "liquidatePerp", driftLiquidatePerp);
-registerLiquidation("Drift", "liquidateSpot", driftLiquidateSpot);
-register("Drift", "settlePnl", driftSettlePnl);
+indexer.onInstruction({ program: "Drift", instruction: "placePerpOrder" }, nodeHandler("Drift", "placePerpOrder", driftPlacePerp));
+indexer.onInstruction({ program: "Drift", instruction: "fillPerpOrder" }, nodeHandler("Drift", "fillPerpOrder"));
+indexer.onInstruction({ program: "Drift", instruction: "liquidatePerp" }, liquidationHandler("Drift", "liquidatePerp", driftLiquidatePerp));
+indexer.onInstruction({ program: "Drift", instruction: "liquidateSpot" }, liquidationHandler("Drift", "liquidateSpot", driftLiquidateSpot));
+indexer.onInstruction({ program: "Drift", instruction: "settlePnl" }, nodeHandler("Drift", "settlePnl", driftSettlePnl));
 
 // SplToken + System are not matched (volume); see config.yaml. Their mapArgs
 // (splAmount / systemTransfer) are kept for a future tight-window deep dive.
-register("Raydium", "swap", raydiumSwap);
+indexer.onInstruction({ program: "Raydium", instruction: "swap" }, nodeHandler("Raydium", "swap", raydiumSwap));
 
 // Orca + Meteora swap: discriminator-filtered (not program-wide), so the
 // CPI tree gets the protocol nodes Jupiter routes through.
-register("Orca", "swap");
-register("Meteora", "swap");
+indexer.onInstruction({ program: "Orca", instruction: "swap" }, nodeHandler("Orca", "swap"));
+indexer.onInstruction({ program: "Meteora", instruction: "swap" }, nodeHandler("Meteora", "swap"));
