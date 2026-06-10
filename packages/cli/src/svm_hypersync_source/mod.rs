@@ -139,7 +139,7 @@ mod tests {
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
     /// Live test against `solana.hypersync.xyz`. Run with:
-    ///     cargo test -p envio --lib hypersync_source_svm::tests -- --ignored --nocapture
+    ///     cargo test -p envio --lib svm_hypersync_source::tests -- --ignored --nocapture
     #[tokio::test]
     #[ignore]
     async fn live_query_token_metadata() {
