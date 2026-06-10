@@ -174,6 +174,11 @@ pub async fn execute(
 /// `ENVIO_CONFIG` is always present in the returned `env`; callers may
 /// append extra env pairs (e.g. ClickHouse credentials from Docker for
 /// `envio dev`).
+///
+/// `ENVIO_CONFIG` is exported relative to the project root: the runtime
+/// chdirs into `cwd` before reading it, and a CLI re-invocation joins it
+/// onto `--directory` again — a cwd-joined value would resolve to
+/// `<root>/<root>/config.yaml` in both cases.
 pub fn build_start_command(
     config: &SystemConfig,
     reset: bool,
@@ -182,7 +187,7 @@ pub fn build_start_command(
 ) -> Result<Command> {
     let config_path = config
         .parsed_project_paths
-        .config
+        .config_relative_to_root()
         .to_string_lossy()
         .into_owned();
 
