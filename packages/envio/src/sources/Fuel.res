@@ -9,6 +9,8 @@ let ecosystem: Ecosystem.t = {
   blockFields: ["id", "height", "time"],
   transactionFields: ["id"],
   blockNumberName: "height",
+  blockTimestampName: "time",
+  blockHashName: "id",
   cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onBlock",
   // Fuel filter shape: `{block: {height: {_gte?, _lte?, _every?}}}`.

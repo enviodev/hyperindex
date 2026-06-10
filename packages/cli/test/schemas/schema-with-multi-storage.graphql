@@ -20,3 +20,7 @@ type EmptyEntity @storage(postgres: true, clickhouse: true) {
   tags: [String!]!
   optionalTags: [String!]
 }
+
+type UnannotatedEntity {
+  id: ID!
+}

@@ -9,6 +9,8 @@ let ecosystem: Ecosystem.t = {
   blockFields: ["slot"],
   transactionFields: [],
   blockNumberName: "height",
+  blockTimestampName: "time",
+  blockHashName: "hash",
   cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onSlot",
   // SVM filter shape: `{slot: {_gte?, _lte?, _every?}}`.

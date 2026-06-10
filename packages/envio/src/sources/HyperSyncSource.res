@@ -204,7 +204,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       timestamp: block.timestamp->Option.getUnsafe,
       chain,
       blockNumber: block.number->Option.getUnsafe,
-      blockHash: block.hash->Option.getOr(""),
+      blockHash: block.hash->Option.getUnsafe,
       logIndex,
       event: {
         contractName: eventConfig.contractName,

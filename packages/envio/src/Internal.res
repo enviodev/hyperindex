@@ -265,9 +265,16 @@ type genericEvent<'params, 'block, 'transaction> = {
   block: 'block,
 }
 
-type event = genericEvent<eventParams, eventBlock, eventTransaction>
+// Opaque internally — block-level values needed by the runtime
+// (blockNumber, timestamp, blockHash) live on the item instead.
+type event
 
 external fromGenericEvent: genericEvent<'a, 'b, 'c> => event = "%identity"
+
+// Escape hatch for serialization boundaries (raw events, logging)
+// which genuinely need the runtime shape.
+external toGenericEvent: event => genericEvent<eventParams, eventBlock, eventTransaction> =
+  "%identity"
 
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
@@ -474,9 +481,9 @@ type eventItem = private {
   timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
+  blockHash: string,
   logIndex: int,
   event: event,
-  blockHash: string,
 }
 
 // Opaque type to support both EVM and other ecosystems
@@ -508,9 +515,9 @@ type item =
       timestamp: int,
       chain: ChainMap.Chain.t,
       blockNumber: int,
+      blockHash: string,
       logIndex: int,
       event: event,
-      blockHash: string,
     })
   | @as(1) Block({onBlockConfig: onBlockConfig, blockNumber: int, logIndex: int})
 

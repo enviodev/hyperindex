@@ -5,6 +5,8 @@ type t = {
   blockFields: array<string>,
   transactionFields: array<string>,
   blockNumberName: string,
+  blockTimestampName: string,
+  blockHashName: string,
   cleanUpRawEventFieldsInPlace: JSON.t => unit,
   /** Method name that the block handler is exposed under on the public
       `indexer` object — `"onBlock"` for chain-based ecosystems, `"onSlot"`

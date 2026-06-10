@@ -1,7 +1,3 @@
-@get external getNumber: Internal.eventBlock => int = "number"
-@get external getTimestamp: Internal.eventBlock => int = "timestamp"
-@get external getId: Internal.eventBlock => string = "hash"
-
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
     delete fields.number
@@ -75,6 +71,8 @@ let ecosystem: Ecosystem.t = {
     "authorizationList",
   ],
   blockNumberName: "number",
+  blockTimestampName: "timestamp",
+  blockHashName: "hash",
   cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onBlock",
   // EVM filter shape: `{block: {number: {_gte?, _lte?, _every?}}}`.
