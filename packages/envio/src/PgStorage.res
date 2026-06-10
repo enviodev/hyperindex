@@ -285,12 +285,8 @@ let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
 }
 
-let makeLoadByFieldQuery = (~pgSchema, ~tableName, ~fieldName, ~operator) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE "${fieldName}" ${operator} $1;`
-}
-
-let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::text[]);`
+let makeLoadQuery = (~pgSchema, ~tableName, ~fieldName, ~operator) => {
+  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE "${fieldName}" ${operator} ANY($1);`
 }
 
 let makeDeleteByIdQuery = (~pgSchema, ~tableName) => {
@@ -1434,66 +1430,46 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     }
   }
 
-  let loadByIdsOrThrow = async (~ids, ~table: Table.table, ~rowsSchema) => {
-    switch await (
-      switch ids {
-      | [_] =>
-        sql->Postgres.preparedUnsafe(
-          makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
-          ids->Obj.magic,
-        )
-      | _ =>
-        sql->Postgres.preparedUnsafe(
-          makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
-          [ids]->Obj.magic,
-        )
-      }
-    ) {
-    | exception exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by ids`,
-          reason: exn,
-        }),
-      )
-    | rows =>
-      try rows->S.parseOrThrow(rowsSchema) catch {
-      | exn =>
-        throw(
-          Persistence.StorageError({
-            message: `Failed to parse "${table.tableName}" loaded from storage by ids`,
-            reason: exn,
-          }),
-        )
-      }
-    }
-  }
-
-  let loadByFieldOrThrow = async (
+  let loadOrThrow = async (
     ~fieldName: string,
     ~fieldSchema,
-    ~fieldValue,
+    ~fieldValues,
     ~operator: Persistence.operator,
     ~table: Table.table,
     ~rowsSchema,
   ) => {
-    let params = try [fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)]->Obj.magic catch {
-    | exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
-          reason: exn,
-        }),
-      )
-    }
-    switch await sql->Postgres.preparedUnsafe(
-      makeLoadByFieldQuery(
-        ~pgSchema,
-        ~tableName=table.tableName,
-        ~fieldName,
-        ~operator=(operator :> string),
-      ),
-      params,
+    switch await (
+      switch (fieldValues, fieldName, operator) {
+      // Primary-key lookups skip serialization (ids are already strings)
+      // and use a LIMIT 1 query, which is safe since id is unique.
+      | ([_], "id", #"=") =>
+        sql->Postgres.preparedUnsafe(
+          makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
+          fieldValues->Obj.magic,
+        )
+      | _ => {
+          let params = try [
+            fieldValues->S.reverseConvertToJsonOrThrow(S.array(fieldSchema)),
+          ]->Obj.magic catch {
+          | exn =>
+            throw(
+              Persistence.StorageError({
+                message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided values.`,
+                reason: exn,
+              }),
+            )
+          }
+          sql->Postgres.preparedUnsafe(
+            makeLoadQuery(
+              ~pgSchema,
+              ~tableName=table.tableName,
+              ~fieldName,
+              ~operator=(operator :> string),
+            ),
+            params,
+          )
+        }
+      }
     ) {
     | exception exn =>
       throw(
@@ -1507,7 +1483,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       | exn =>
         throw(
           Persistence.StorageError({
-            message: `Failed to parse "${table.tableName}" loaded from storage by ids`,
+            message: `Failed to parse "${table.tableName}" loaded from storage by field "${fieldName}"`,
             reason: exn,
           }),
         )
@@ -1803,8 +1779,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     isInitialized,
     initialize,
     resumeInitialState,
-    loadByFieldOrThrow,
-    loadByIdsOrThrow,
+    loadOrThrow,
     dumpEffectCache,
     reset,
     setChainMeta,

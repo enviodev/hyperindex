@@ -61,8 +61,7 @@ module Storage = {
     | #initialize
     | #resumeInitialState
     | #dumpEffectCache
-    | #loadByIdsOrThrow
-    | #loadByFieldOrThrow
+    | #loadOrThrow
   ]
 
   type t = {
@@ -77,10 +76,9 @@ module Storage = {
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,
     resolveLoadInitialState: Persistence.initialState => unit,
-    loadByIdsOrThrowCalls: array<{"ids": array<string>, "tableName": string}>,
-    loadByFieldOrThrowCalls: array<{
+    loadOrThrowCalls: array<{
       "fieldName": string,
-      "fieldValue": unknown,
+      "fieldValues": array<unknown>,
       "tableName": string,
       "operator": Persistence.operator,
     }>,
@@ -109,8 +107,7 @@ module Storage = {
     let initializeCalls = []
     let isInitializedResolveFns = []
     let initializeResolveFns = []
-    let loadByIdsOrThrowCalls = []
-    let loadByFieldOrThrowCalls = []
+    let loadOrThrowCalls = []
     let dumpEffectCacheCalls = ref(0)
     let resumeInitialStateCalls = []
     let resumeInitialStateResolveFns = []
@@ -118,8 +115,7 @@ module Storage = {
     {
       isInitializedCalls,
       initializeCalls,
-      loadByIdsOrThrowCalls,
-      loadByFieldOrThrowCalls,
+      loadOrThrowCalls,
       dumpEffectCacheCalls,
       resumeInitialStateCalls,
       resolveLoadInitialState: (initialState: Persistence.initialState) => {
@@ -167,35 +163,19 @@ module Storage = {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
           Promise.resolve()
         }),
-        loadByIdsOrThrow: (
-          type item,
-          ~ids,
-          ~table: Table.table,
-          ~rowsSchema as _: S.t<array<item>>,
-        ): promise<array<item>> => {
-          implementBody(#loadByIdsOrThrow, () => {
-            loadByIdsOrThrowCalls
-            ->Array.push({
-              "ids": ids,
-              "tableName": table.tableName,
-            })
-            ->ignore
-            Promise.resolve([])
-          })
-        },
-        loadByFieldOrThrow: (
+        loadOrThrow: (
           ~fieldName,
           ~fieldSchema as _,
-          ~fieldValue,
+          ~fieldValues,
           ~operator,
           ~table: Table.table,
           ~rowsSchema as _,
         ) => {
-          implementBody(#loadByFieldOrThrow, () => {
-            loadByFieldOrThrowCalls
+          implementBody(#loadOrThrow, () => {
+            loadOrThrowCalls
             ->Array.push({
               "fieldName": fieldName,
-              "fieldValue": fieldValue->Utils.magic,
+              "fieldValues": fieldValues->Utils.magic,
               "tableName": table.tableName,
               "operator": operator,
             })

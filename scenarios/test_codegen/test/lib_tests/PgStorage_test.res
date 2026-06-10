@@ -501,28 +501,38 @@ $$ LANGUAGE plpgsql;`)
     )
   })
 
-  describe("makeLoadByIdsQuery", () => {
+  describe("makeLoadQuery", () => {
     Async.it(
       "Should create correct SQL for loading multiple records by IDs",
       async t => {
-        let query = PgStorage.makeLoadByIdsQuery(~pgSchema="test_schema", ~tableName="users")
+        let query = PgStorage.makeLoadQuery(
+          ~pgSchema="test_schema",
+          ~tableName="users",
+          ~fieldName="id",
+          ~operator="=",
+        )
 
         t.expect(
           query,
           ~message="Should generate correct multiple IDs query SQL",
-        ).toBe(`SELECT * FROM "test_schema"."users" WHERE id = ANY($1::text[]);`)
+        ).toBe(`SELECT * FROM "test_schema"."users" WHERE "id" = ANY($1);`)
       },
     )
 
     Async.it(
-      "Should handle different schema and table names",
+      "Should handle different schema, table, field names and operators",
       async t => {
-        let query = PgStorage.makeLoadByIdsQuery(~pgSchema="production", ~tableName="entities")
+        let query = PgStorage.makeLoadQuery(
+          ~pgSchema="production",
+          ~tableName="entities",
+          ~fieldName="score",
+          ~operator=">",
+        )
 
         t.expect(
           query,
           ~message="Should generate correct SQL with different schema and table names",
-        ).toBe(`SELECT * FROM "production"."entities" WHERE id = ANY($1::text[]);`)
+        ).toBe(`SELECT * FROM "production"."entities" WHERE "score" > ANY($1);`)
       },
     )
   })

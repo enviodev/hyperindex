@@ -17,10 +17,13 @@ let loadById = (
     // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
-      await storage.loadByIdsOrThrow(
+      await storage.loadOrThrow(
         ~table=entityConfig.table,
         ~rowsSchema=entityConfig.rowsSchema,
-        ~ids=idsToLoad,
+        ~fieldName="id",
+        ~fieldSchema=S.string,
+        ~fieldValues=idsToLoad,
+        ~operator=#"=",
       )
     } catch {
     | Persistence.StorageError({message, reason}) =>
@@ -264,10 +267,13 @@ let loadEffect = (
       let {table, outputSchema} = effect.storageMeta
 
       let dbEntities = try {
-        await storage.loadByIdsOrThrow(
+        await storage.loadOrThrow(
           ~table,
           ~rowsSchema=Internal.effectCacheItemRowsSchema,
-          ~ids=idsToLoad,
+          ~fieldName="id",
+          ~fieldSchema=S.string,
+          ~fieldValues=idsToLoad,
+          ~operator=#"=",
         )
       } catch {
       | exn =>
@@ -380,7 +386,7 @@ let loadByField = (
     ->Array.map(async index => {
       inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
       try {
-        let entities = await storage.loadByFieldOrThrow(
+        let entities = await storage.loadOrThrow(
           ~operator=switch index {
           | Single({operator: Gt}) => #">"
           | Single({operator: Eq}) => #"="
@@ -389,8 +395,8 @@ let loadByField = (
           ~table=entityConfig.table,
           ~rowsSchema=entityConfig.rowsSchema,
           ~fieldName=index->TableIndices.Index.getFieldName,
-          ~fieldValue=switch index {
-          | Single({fieldValue}) => fieldValue
+          ~fieldValues=switch index {
+          | Single({fieldValue}) => [fieldValue]
           },
           ~fieldSchema=fieldValueSchema->(
             Utils.magic: S.t<'fieldValue> => S.t<TableIndices.FieldValue.t>

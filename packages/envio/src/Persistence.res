@@ -78,17 +78,13 @@ type storage = {
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
+  // Returns rows where the field compares to any of the provided values.
+  // Callers must pass a single value for non-"=" operators.
   @raises("StorageError")
-  loadByIdsOrThrow: 'item. (
-    ~ids: array<string>,
-    ~table: Table.table,
-    ~rowsSchema: S.t<array<'item>>,
-  ) => promise<array<'item>>,
-  @raises("StorageError")
-  loadByFieldOrThrow: 'item 'value. (
+  loadOrThrow: 'item 'value. (
     ~fieldName: string,
     ~fieldSchema: S.t<'value>,
-    ~fieldValue: 'value,
+    ~fieldValues: array<'value>,
     ~operator: operator,
     ~table: Table.table,
     ~rowsSchema: S.t<array<'item>>,

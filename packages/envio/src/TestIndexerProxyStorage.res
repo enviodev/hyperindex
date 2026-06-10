@@ -15,12 +15,11 @@ type serializableUpdatedEntity = {
 // Worker -> Main thread payloads
 @tag("type")
 type workerPayload =
-  | @as("loadByIds") LoadByIds({tableName: string, ids: array<string>})
-  | @as("loadByField")
-  LoadByField({
+  | @as("load")
+  Load({
       tableName: string,
       fieldName: string,
-      fieldValue: JSON.t,
+      fieldValues: array<JSON.t>,
       operator: Persistence.operator,
     })
   | @as("writeBatch")
@@ -107,23 +106,21 @@ let makeStorage = (proxy: t): Persistence.storage => {
     )
   },
   resumeInitialState: async () => proxy.initialState,
-  loadByIdsOrThrow: async (~ids, ~table: Table.table, ~rowsSchema) => {
-    let response = await proxy->sendRequest(~payload=LoadByIds({tableName: table.tableName, ids}))
-    response->S.parseOrThrow(rowsSchema)
-  },
-  loadByFieldOrThrow: async (
+  loadOrThrow: async (
     ~fieldName,
     ~fieldSchema,
-    ~fieldValue,
+    ~fieldValues,
     ~operator,
     ~table: Table.table,
     ~rowsSchema,
   ) => {
     let response = await proxy->sendRequest(
-      ~payload=LoadByField({
+      ~payload=Load({
         tableName: table.tableName,
         fieldName,
-        fieldValue: fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema),
+        fieldValues: fieldValues->Array.map(fieldValue =>
+          fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)
+        ),
         operator,
       }),
     )
