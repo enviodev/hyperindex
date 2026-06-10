@@ -78,7 +78,7 @@ module Storage = {
     resolveLoadInitialState: Persistence.initialState => unit,
     loadOrThrowCalls: array<{
       "fieldName": string,
-      "fieldValues": array<unknown>,
+      "fieldValue": unknown,
       "tableName": string,
       "operator": Persistence.operator,
     }>,
@@ -163,12 +163,12 @@ module Storage = {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
           Promise.resolve()
         }),
-        loadOrThrow: (~fieldName, ~fieldValues, ~operator, ~table: Table.table) => {
+        loadOrThrow: (~fieldName, ~fieldValue, ~operator, ~table: Table.table) => {
           implementBody(#loadOrThrow, () => {
             loadOrThrowCalls
             ->Array.push({
               "fieldName": fieldName,
-              "fieldValues": fieldValues->Utils.magic,
+              "fieldValue": fieldValue->Utils.magic,
               "tableName": table.tableName,
               "operator": operator,
             })

@@ -285,8 +285,12 @@ let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
 }
 
-let makeLoadQuery = (~pgSchema, ~tableName, ~fieldName, ~operator) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE "${fieldName}" ${operator} ANY($1);`
+let makeLoadQuery = (~pgSchema, ~tableName, ~fieldName, ~operator: Persistence.operator) => {
+  let condition = switch operator {
+  | #"in" => `= ANY($1)`
+  | #"=" | #">" | #"<" => `${(operator :> string)} $1`
+  }
+  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE "${fieldName}" ${condition};`
 }
 
 let makeDeleteByIdQuery = (~pgSchema, ~tableName) => {
@@ -1433,19 +1437,27 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   let loadOrThrow = async (
     type value,
     ~fieldName: string,
-    ~fieldValues: array<value>,
+    ~fieldValue: value,
     ~operator: Persistence.operator,
     ~table: Table.table,
   ) => {
     switch await (
-      switch (fieldValues, fieldName, operator) {
+      switch (fieldName, operator) {
       // Primary-key lookups skip serialization (ids are already strings)
-      // and use a LIMIT 1 query, which is safe since id is unique.
-      | ([_], "id", #"=") =>
-        sql->Postgres.preparedUnsafe(
-          makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
-          fieldValues->Obj.magic,
-        )
+      // and a single-id load uses a LIMIT 1 query, safe since id is unique.
+      | ("id", #"in") =>
+        switch fieldValue->(Utils.magic: value => array<string>) {
+        | [_] as ids =>
+          sql->Postgres.preparedUnsafe(
+            makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
+            ids->Obj.magic,
+          )
+        | ids =>
+          sql->Postgres.preparedUnsafe(
+            makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~fieldName, ~operator),
+            [ids]->Obj.magic,
+          )
+        }
       | _ => {
           let fieldSchema = switch table->Table.getFieldSchemaByDbName(fieldName) {
           | Some(fieldSchema) => fieldSchema
@@ -1457,26 +1469,25 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
               }),
             )
           }
+          let fieldSchema = switch operator {
+          | #"in" => S.array(fieldSchema)->S.toUnknown
+          | #"=" | #">" | #"<" => fieldSchema
+          }
           let params = try [
-            fieldValues
-            ->(Utils.magic: array<value> => array<unknown>)
-            ->S.reverseConvertToJsonOrThrow(S.array(fieldSchema)),
+            fieldValue
+            ->(Utils.magic: value => unknown)
+            ->S.reverseConvertToJsonOrThrow(fieldSchema),
           ]->Obj.magic catch {
           | exn =>
             throw(
               Persistence.StorageError({
-                message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided values.`,
+                message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
                 reason: exn,
               }),
             )
           }
           sql->Postgres.preparedUnsafe(
-            makeLoadQuery(
-              ~pgSchema,
-              ~tableName=table.tableName,
-              ~fieldName,
-              ~operator=(operator :> string),
-            ),
+            makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~fieldName, ~operator),
             params,
           )
         }

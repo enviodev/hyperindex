@@ -23,9 +23,9 @@ describe("LoadLayer", () => {
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
         "fieldName": "id",
-        "fieldValues": ["123"]->Utils.magic,
+        "fieldValue": ["123"]->Utils.magic,
         "tableName": "User",
-        "operator": #"=",
+        "operator": #"in",
       },
     ])
   })
@@ -54,15 +54,15 @@ describe("LoadLayer", () => {
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
         "fieldName": "id",
-        "fieldValues": ["1"]->Utils.magic,
+        "fieldValue": ["1"]->Utils.magic,
         "tableName": "User",
-        "operator": #"=",
+        "operator": #"in",
       },
       {
         "fieldName": "id",
-        "fieldValues": ["2"]->Utils.magic,
+        "fieldValue": ["2"]->Utils.magic,
         "tableName": "User",
-        "operator": #"=",
+        "operator": #"in",
       },
     ])
   })
@@ -92,9 +92,9 @@ describe("LoadLayer", () => {
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
           "fieldName": "id",
-          "fieldValues": ["1"]->Utils.magic,
+          "fieldValue": ["1"]->Utils.magic,
           "tableName": "User",
-          "operator": #"=",
+          "operator": #"in",
         },
       ])
     },
@@ -135,15 +135,15 @@ describe("LoadLayer", () => {
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
         "fieldName": "id",
-        "fieldValues": ["1"]->Utils.magic,
+        "fieldValue": ["1"]->Utils.magic,
         "tableName": "User",
-        "operator": #"=",
+        "operator": #"in",
       },
       {
         "fieldName": "id",
-        "fieldValues": ["2"]->Utils.magic,
+        "fieldValue": ["2"]->Utils.magic,
         "tableName": "User",
-        "operator": #"=",
+        "operator": #"in",
       },
     ])
   })
@@ -169,9 +169,9 @@ describe("LoadLayer", () => {
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
         "fieldName": "id",
-        "fieldValues": ["1", "2"]->Utils.magic,
+        "fieldValue": ["1", "2"]->Utils.magic,
         "tableName": "User",
-        "operator": #"=",
+        "operator": #"in",
       },
     ])
   })
@@ -215,9 +215,9 @@ describe("LoadLayer", () => {
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
           "fieldName": "id",
-          "fieldValues": ["2"]->Utils.magic,
+          "fieldValue": ["2"]->Utils.magic,
           "tableName": "User",
-          "operator": #"=",
+          "operator": #"in",
         },
       ])
     },
@@ -270,9 +270,9 @@ describe("LoadLayer", () => {
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
           "fieldName": "id",
-          "fieldValues": ["1"]->Utils.magic,
+          "fieldValue": ["1"]->Utils.magic,
           "tableName": "User",
-          "operator": #"=",
+          "operator": #"in",
         },
       ])
     },
@@ -325,15 +325,15 @@ describe("LoadLayer", () => {
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
           "fieldName": "id",
-          "fieldValues": ["2"]->Utils.magic,
+          "fieldValue": ["2"]->Utils.magic,
           "tableName": "User",
-          "operator": #"=",
+          "operator": #"in",
         },
         {
           "fieldName": "id",
-          "fieldValues": ["3"]->Utils.magic,
+          "fieldValue": ["3"]->Utils.magic,
           "tableName": "User",
-          "operator": #"=",
+          "operator": #"in",
         },
       ])
     },
@@ -378,13 +378,13 @@ describe("LoadLayer", () => {
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
         "fieldName": "id",
-        "fieldValues": ["123"]->Utils.magic,
+        "fieldValue": "123"->Utils.magic,
         "tableName": "User",
         "operator": #"=",
       },
       {
         "fieldName": "updatesCountOnUserForTesting",
-        "fieldValues": [0]->Utils.magic,
+        "fieldValue": 0->Utils.magic,
         "tableName": "User",
         "operator": #">",
       },
@@ -413,7 +413,7 @@ describe("LoadLayer", () => {
     t.expect(storageMock.loadOrThrowCalls->Array.get(2)).toEqual(
       Some({
         "fieldName": "updatesCountOnUserForTesting",
-        "fieldValues": [5]->Utils.magic,
+        "fieldValue": 5->Utils.magic,
         "tableName": "User",
         "operator": #"<",
       }),
@@ -479,13 +479,13 @@ describe("LoadLayer", () => {
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
         "fieldName": "id",
-        "fieldValues": ["1"]->Utils.magic,
+        "fieldValue": "1"->Utils.magic,
         "tableName": "User",
         "operator": #"=",
       },
       {
         "fieldName": "updatesCountOnUserForTesting",
-        "fieldValues": [0]->Utils.magic,
+        "fieldValue": 0->Utils.magic,
         "tableName": "User",
         "operator": #">",
       },
@@ -554,7 +554,7 @@ describe("LoadLayer", () => {
       let loadEntitiesByFieldSingleDbCall = [
         {
           "fieldName": "id",
-          "fieldValues": ["1"]->Utils.magic,
+          "fieldValue": "1"->Utils.magic,
           "tableName": "User",
           "operator": #"=",
         },

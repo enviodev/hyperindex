@@ -19,7 +19,7 @@ type workerPayload =
   Load({
       tableName: string,
       fieldName: string,
-      fieldValues: array<JSON.t>,
+      fieldValue: JSON.t,
       operator: Persistence.operator,
     })
   | @as("writeBatch")
@@ -109,7 +109,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
   loadOrThrow: async (
     type value,
     ~fieldName,
-    ~fieldValues: array<value>,
+    ~fieldValue: value,
     ~operator,
     ~table: Table.table,
   ) => {
@@ -120,13 +120,17 @@ let makeStorage = (proxy: t): Persistence.storage => {
         `TestIndexer: The table "${table.tableName}" doesn't have the field "${fieldName}"`,
       )
     }
+    let fieldSchema = switch operator {
+    | #"in" => S.array(fieldSchema)->S.toUnknown
+    | #"=" | #">" | #"<" => fieldSchema
+    }
     let response = await proxy->sendRequest(
       ~payload=Load({
         tableName: table.tableName,
         fieldName,
-        fieldValues: fieldValues
-        ->(Utils.magic: array<value> => array<unknown>)
-        ->Array.map(fieldValue => fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)),
+        fieldValue: fieldValue
+        ->(Utils.magic: value => unknown)
+        ->S.reverseConvertToJsonOrThrow(fieldSchema),
         operator,
       }),
     )

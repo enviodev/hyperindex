@@ -509,7 +509,7 @@ $$ LANGUAGE plpgsql;`)
           ~pgSchema="test_schema",
           ~tableName="users",
           ~fieldName="id",
-          ~operator="=",
+          ~operator=#"in",
         )
 
         t.expect(
@@ -526,13 +526,13 @@ $$ LANGUAGE plpgsql;`)
           ~pgSchema="production",
           ~tableName="entities",
           ~fieldName="score",
-          ~operator=">",
+          ~operator=#">",
         )
 
         t.expect(
           query,
           ~message="Should generate correct SQL with different schema and table names",
-        ).toBe(`SELECT * FROM "production"."entities" WHERE "score" > ANY($1);`)
+        ).toBe(`SELECT * FROM "production"."entities" WHERE "score" > $1;`)
       },
     )
   })

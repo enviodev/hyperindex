@@ -47,7 +47,7 @@ let handleLoad = (
   state: testIndexerState,
   ~tableName: string,
   ~fieldName: string,
-  ~fieldValues: array<JSON.t>,
+  ~fieldValue: JSON.t,
   ~operator: Persistence.operator,
 ): JSON.t => {
   let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
@@ -55,9 +55,11 @@ let handleLoad = (
   let results = []
 
   switch (fieldName, operator) {
-  | ("id", #"=") =>
-    fieldValues->Array.forEach(fieldValue => {
-      switch entityDict->Dict.get(fieldValue->S.parseOrThrow(S.string)) {
+  | ("id", #"in") =>
+    fieldValue
+    ->S.parseOrThrow(S.array(S.string))
+    ->Array.forEach(id => {
+      switch entityDict->Dict.get(id) {
       | Some(entity) =>
         // Serialize entity back to JSON for worker thread
         let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
@@ -73,8 +75,12 @@ let handleLoad = (
       }
 
       // Parse JSON field values to typed values using the field's schema
+      let rawFieldValues = switch operator {
+      | #"in" => fieldValue->(Utils.magic: JSON.t => array<JSON.t>)
+      | #"=" | #">" | #"<" => [fieldValue]
+      }
       let parsedFieldValues =
-        fieldValues->Array.map(fieldValue =>
+        rawFieldValues->Array.map(fieldValue =>
           fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
         )
 
@@ -89,7 +95,7 @@ let handleLoad = (
         | Some(entityFieldValue) => {
             let matches = parsedFieldValues->Array.some(parsedFieldValue =>
               switch operator {
-              | #"=" => entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
+              | #"=" | #"in" => entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
               | #">" => entityFieldValue->TableIndices.FieldValue.gt(parsedFieldValue)
               | #"<" => entityFieldValue->TableIndices.FieldValue.lt(parsedFieldValue)
               }
@@ -776,9 +782,9 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                   )
 
                 switch msg.payload {
-                | Load({tableName, fieldName, fieldValues, operator}) =>
+                | Load({tableName, fieldName, fieldValue, operator}) =>
                   state
-                  ->handleLoad(~tableName, ~fieldName, ~fieldValues, ~operator)
+                  ->handleLoad(~tableName, ~fieldName, ~fieldValue, ~operator)
                   ->respond
 
                 | WriteBatch({

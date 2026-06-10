@@ -21,8 +21,8 @@ let loadById = (
         await storage.loadOrThrow(
           ~table=entityConfig.table,
           ~fieldName="id",
-          ~fieldValues=idsToLoad,
-          ~operator=#"=",
+          ~fieldValue=idsToLoad,
+          ~operator=#"in",
         )
       )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
@@ -268,7 +268,7 @@ let loadEffect = (
 
       let dbEntities = try {
         (
-          await storage.loadOrThrow(~table, ~fieldName="id", ~fieldValues=idsToLoad, ~operator=#"=")
+          await storage.loadOrThrow(~table, ~fieldName="id", ~fieldValue=idsToLoad, ~operator=#"in")
         )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
       } catch {
       | exn =>
@@ -389,8 +389,8 @@ let loadByField = (
             },
             ~table=entityConfig.table,
             ~fieldName=index->TableIndices.Index.getFieldName,
-            ~fieldValues=switch index {
-            | Single({fieldValue}) => [fieldValue]
+            ~fieldValue=switch index {
+            | Single({fieldValue}) => fieldValue
             },
           )
         )->(Utils.magic: array<unknown> => array<Internal.entity>)

@@ -40,7 +40,7 @@ type initialState = {
   envioInfo: option<JSON.t>,
 }
 
-type operator = [#">" | #"=" | #"<"]
+type operator = [#">" | #"=" | #"<" | #"in"]
 
 type updatedEffectCache = {
   effect: Internal.effect,
@@ -78,13 +78,13 @@ type storage = {
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
-  // Returns rows where the field compares to any of the provided values.
-  // Callers must pass a single value for non-"=" operators.
+  // Returns rows where the field compares to the provided value.
+  // The #in operator expects fieldValue to be an array of values to match.
   // Values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
   loadOrThrow: 'value. (
     ~fieldName: string,
-    ~fieldValues: array<'value>,
+    ~fieldValue: 'value,
     ~operator: operator,
     ~table: Table.table,
   ) => promise<array<unknown>>,
