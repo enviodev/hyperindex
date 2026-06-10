@@ -61,8 +61,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
           event: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->Utils.magic,
         })
-        let eventItem = batchItem->Internal.castUnsafeEventItem
-
         allEvents->Array.push(batchItem)->ignore
 
         let query: FetchState.query = {
@@ -84,8 +82,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           fetchState.contents->FetchState.handleQueryResult(
             ~query,
             ~latestFetchedBlock={
-              blockNumber: eventItem.blockNumber,
-              blockTimestamp: eventItem.timestamp,
+              blockNumber: currentBlockNumber.contents,
+              blockTimestamp: currentTime.contents,
             },
             ~newItems=[batchItem],
           )

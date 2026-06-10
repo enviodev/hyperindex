@@ -32,7 +32,7 @@ module GetFinalizedSlot = {
   )
 }
 
-let makeRPCSource = (~chain, ~rpc: string): Source.t => {
+let makeRPCSource = (~chain, ~rpc: string, ~sourceFor: Source.sourceFor=Sync): Source.t => {
   let client = Rest.client(rpc)
   let chainId = chain->ChainMap.Chain.toChainId
 
@@ -47,7 +47,7 @@ let makeRPCSource = (~chain, ~rpc: string): Source.t => {
 
   {
     name,
-    sourceFor: Sync,
+    sourceFor,
     chain,
     poweredByHyperSync: false,
     pollingInterval: 10_000,

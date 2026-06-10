@@ -16,6 +16,7 @@ mod napi;
 mod project_paths;
 pub mod scripts;
 mod service_health;
+mod svm_hypersync_source;
 mod template_dirs;
 mod type_schema;
 mod utils;

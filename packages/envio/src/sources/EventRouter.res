@@ -116,3 +116,68 @@ let fromEvmEventModsOrThrow = (events: array<Internal.evmEventConfig>, ~chain): 
   })
   router
 }
+
+/** Dispatch key for SVM instructions. `None` matches any instruction in the
+ program (lowest priority). */
+let getSvmEventId = (~programId: SvmTypes.Pubkey.t, ~discriminator: option<string>) =>
+  switch discriminator {
+  | None => programId->SvmTypes.Pubkey.toString ++ "_none"
+  | Some(d) => programId->SvmTypes.Pubkey.toString ++ "_" ++ d
+  }
+
+/** Discriminator byte-lengths declared by a program, sorted descending. The
+ source uses this to probe `(programId, dN)` keys longest-first when routing
+ a returned instruction to a handler — matching the locked Q1 answer. */
+type svmProgramOrdering = {
+  programId: SvmTypes.Pubkey.t,
+  /** Byte lengths in descending order, deduplicated. Includes `0` only when
+   a handler is registered with no discriminator (program-wide match). */
+  byteLengthsDesc: array<int>,
+}
+
+let fromSvmEventConfigsOrThrow = (events: array<Internal.svmInstructionEventConfig>, ~chain): (
+  t<Internal.svmInstructionEventConfig>,
+  array<svmProgramOrdering>,
+) => {
+  let router = empty()
+  events->Array.forEach(config => {
+    // The router tag must include the programId so two programs declaring the
+    // same discriminator coexist. The source-side lookup uses the same shape
+    // via `getSvmEventId(~programId, ~discriminator)`.
+    let routerTag = getSvmEventId(~programId=config.programId, ~discriminator=config.discriminator)
+    router->addOrThrow(
+      routerTag,
+      config,
+      ~contractName=config.contractName,
+      ~eventName=config.name,
+      ~chain,
+      ~isWildcard=config.isWildcard,
+    )
+  })
+
+  // Per-program list of declared discriminator byte lengths, sorted desc.
+  let byProgram: dict<Utils.Set.t<int>> = Dict.make()
+  events->Array.forEach(config => {
+    let key = config.programId->SvmTypes.Pubkey.toString
+    let set = switch byProgram->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(s) => s
+    | None =>
+      let s = Utils.Set.make()
+      byProgram->Dict.set(key, s)
+      s
+    }
+    let _ = set->Utils.Set.add(config.discriminatorByteLen)
+  })
+  let ordering =
+    byProgram
+    ->Dict.toArray
+    ->Array.map(((programIdString, lens)) => {
+      let sorted = lens->Utils.Set.toArray->Array.toSorted((a, b) => (b - a)->Int.toFloat)
+      {
+        programId: programIdString->SvmTypes.Pubkey.fromStringUnsafe,
+        byteLengthsDesc: sorted,
+      }
+    })
+
+  (router, ordering)
+}

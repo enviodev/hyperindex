@@ -184,7 +184,7 @@ Initialize Svm indexer from an example template
 
 * `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
 
-  Possible values: `feature-block-handler`
+  Possible values: `metaplex-token-metadata`, `feature-block-handler`
 
 
 
