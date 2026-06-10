@@ -285,20 +285,27 @@ let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
 }
 
+let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
+  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1);`
+}
+
 let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE ${condition};`
 }
 
-// Appends the filter's serialized field values to params
+// Appends the filter's serialized field values to params (mutated in place)
 // and returns the matching SQL condition referencing them by index.
+// Field names are spliced as quoted identifiers only after the queryFields
+// lookup proves they exist on the table (and they originate from
+// codegen-validated schemas), so the interpolation can't be abused.
 let rec makeFilterCondition = (
   ~filter: Persistence.filter,
   ~table: Table.table,
   ~params: array<JSON.t>,
 ) => {
   let serializeParamOrThrow = (~fieldName, ~fieldValue: unknown, ~isArray) => {
-    let fieldSchema = switch table->Table.getFieldSchemaByDbName(fieldName) {
-    | Some(fieldSchema) => fieldSchema
+    let queryField = switch table->Table.queryFields->Dict.get(fieldName) {
+    | Some(queryField) => queryField
     | None =>
       throw(
         Persistence.StorageError({
@@ -307,8 +314,9 @@ let rec makeFilterCondition = (
         }),
       )
     }
-    let fieldSchema = isArray ? S.array(fieldSchema)->S.toUnknown : fieldSchema
-    let param = try fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema) catch {
+    let param = try fieldValue->S.reverseConvertToJsonOrThrow(
+      isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
+    ) catch {
     | exn =>
       throw(
         Persistence.StorageError({
@@ -333,8 +341,11 @@ let rec makeFilterCondition = (
         ~isArray=true,
       )})`
   | And({filters: []}) =>
-    JsError.throwWithMessage(
-      `Failed loading "${table.tableName}" from storage. The "and" filter must contain at least one nested filter.`,
+    throw(
+      Persistence.StorageError({
+        message: `Failed loading "${table.tableName}" from storage. The "and" filter must contain at least one nested filter.`,
+        reason: Utils.Error.make(`Empty "and" filter`),
+      }),
     )
   | And({filters}) =>
     `(${filters
@@ -1485,20 +1496,32 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   }
 
   let loadOrThrow = async (~filter: Persistence.filter, ~table: Table.table) => {
-    let promise = switch filter {
+    let (promise, condition) = switch filter {
     // Primary-key lookups skip serialization (ids are already strings)
     // and a single-id load uses a LIMIT 1 query, safe since id is unique.
-    | In({fieldName: "id", fieldValue: [_] as ids}) =>
-      sql->Postgres.preparedUnsafe(
-        makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
-        ids->Obj.magic,
+    | In({fieldName: "id", fieldValue: [_] as ids}) => (
+        sql->Postgres.preparedUnsafe(
+          makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
+          ids->Obj.magic,
+        ),
+        `id = $1`,
+      )
+    | In({fieldName: "id", fieldValue: ids}) => (
+        sql->Postgres.preparedUnsafe(
+          makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
+          [ids]->Obj.magic,
+        ),
+        `id = ANY($1)`,
       )
     | _ => {
         let params = []
         let condition = makeFilterCondition(~filter, ~table, ~params)
-        sql->Postgres.preparedUnsafe(
-          makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
-          params->Obj.magic,
+        (
+          sql->Postgres.preparedUnsafe(
+            makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
+            params->Obj.magic,
+          ),
+          condition,
         )
       }
     }
@@ -1506,7 +1529,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     | exception exn =>
       throw(
         Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage`,
+          message: `Failed loading "${table.tableName}" from storage by condition: ${condition}`,
           reason: exn,
         }),
       )
@@ -1515,7 +1538,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       | exn =>
         throw(
           Persistence.StorageError({
-            message: `Failed to parse "${table.tableName}" loaded from storage`,
+            message: `Failed to parse "${table.tableName}" loaded from storage by condition: ${condition}`,
             reason: exn,
           }),
         )

@@ -501,6 +501,20 @@ $$ LANGUAGE plpgsql;`)
     )
   })
 
+  describe("makeLoadByIdsQuery", () => {
+    Async.it(
+      "Should create correct SQL for loading multiple records by IDs",
+      async t => {
+        let query = PgStorage.makeLoadByIdsQuery(~pgSchema="test_schema", ~tableName="users")
+
+        t.expect(
+          query,
+          ~message="Should generate correct multiple IDs query SQL",
+        ).toBe(`SELECT * FROM "test_schema"."users" WHERE id = ANY($1);`)
+      },
+    )
+  })
+
   describe("makeFilterCondition", () => {
     let table = Table.mkTable(
       "users",
@@ -565,6 +579,24 @@ $$ LANGUAGE plpgsql;`)
           `("id" = $1 AND ("score" > $2 AND "score" < $3))`,
           ["1"->Utils.magic, 5->Utils.magic, 10->Utils.magic],
         ))
+      },
+    )
+
+    Async.it(
+      "Should throw a StorageError for an empty and filter",
+      async t => {
+        let result = try {
+          let _ = PgStorage.makeFilterCondition(~filter=And({filters: []}), ~table, ~params=[])
+          None
+        } catch {
+        | Persistence.StorageError({message}) => Some(message)
+        }
+
+        t.expect(result).toEqual(
+          Some(
+            `Failed loading "users" from storage. The "and" filter must contain at least one nested filter.`,
+          ),
+        )
       },
     )
   })

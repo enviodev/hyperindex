@@ -68,9 +68,9 @@ let handleLoad = (
       // TableIndices.FieldValue logic (same approach as InMemoryTable).
       // This properly handles bigint and BigDecimal comparisons
       let parseLeaf = (~fieldName, ~fieldValue: unknown) => {
-        let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(fieldName) {
-        | Some(Table.Field({fieldSchema})) => fieldSchema
-        | _ => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
+        let fieldSchema = switch entityConfig.table->Table.queryFields->Dict.get(fieldName) {
+        | Some({fieldSchema}) => fieldSchema
+        | None => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
         }
         fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
       }
@@ -111,6 +111,10 @@ let handleLoad = (
               parseLeaf(~fieldName, ~fieldValue)
             ),
             ~compare=TableIndices.FieldValue.eq,
+          )
+        | And({filters: []}) =>
+          JsError.throwWithMessage(
+            `Failed loading "${tableName}" from storage. The "and" filter must contain at least one nested filter.`,
           )
         | And({filters}) => {
             let matchers = filters->Array.map(makeMatcher)

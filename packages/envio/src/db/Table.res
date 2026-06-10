@@ -240,11 +240,31 @@ let getFieldByDbName = (table, dbFieldName) =>
     } === dbFieldName
   )
 
-let getFieldSchemaByDbName = (table, dbFieldName) =>
-  switch table->getFieldByDbName(dbFieldName) {
-  | Some(Field({fieldSchema})) => Some(fieldSchema)
-  | Some(DerivedFrom(_)) | None => None
-  }
+// Both schema instances are created once per field: rescript-schema compiles
+// and caches operations on the schema instance, so building S.array(fieldSchema)
+// per query would recompile the serializer on every call.
+type queryField = {
+  fieldSchema: S.t<unknown>,
+  // Serializes the values array of an "in" filter
+  arrayFieldSchema: S.t<unknown>,
+}
+let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
+  let dict = Dict.make()
+  table.fields->Array.forEach(field =>
+    switch field {
+    | Field(field) =>
+      dict->Dict.set(
+        field->getDbFieldName,
+        {
+          fieldSchema: field.fieldSchema,
+          arrayFieldSchema: S.array(field.fieldSchema)->S.toUnknown,
+        },
+      )
+    | DerivedFrom(_) => ()
+    }
+  )
+  dict
+})
 
 // Runtime entity objects are keyed by db field names (the camelCase record
 // field names are type-level only), so rows can be parsed with the same

@@ -107,15 +107,16 @@ let makeStorage = (proxy: t): Persistence.storage => {
   resumeInitialState: async () => proxy.initialState,
   loadOrThrow: async (~filter, ~table: Table.table) => {
     let serializeLeafOrThrow = (~fieldName, ~fieldValue: unknown, ~isArray) => {
-      let fieldSchema = switch table->Table.getFieldSchemaByDbName(fieldName) {
-      | Some(fieldSchema) => fieldSchema
+      let queryField = switch table->Table.queryFields->Dict.get(fieldName) {
+      | Some(queryField) => queryField
       | None =>
         JsError.throwWithMessage(
           `TestIndexer: The table "${table.tableName}" doesn't have the field "${fieldName}"`,
         )
       }
-      let fieldSchema = isArray ? S.array(fieldSchema)->S.toUnknown : fieldSchema
-      fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)
+      fieldValue->S.reverseConvertToJsonOrThrow(
+        isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
+      )
     }
     // Field values must be JSON-safe to survive the worker thread boundary
     let rec serializeFilter = (filter: Persistence.filter): Persistence.filter =>
@@ -123,17 +124,23 @@ let makeStorage = (proxy: t): Persistence.storage => {
       | Eq({fieldName, fieldValue}) =>
         Eq({
           fieldName,
-          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(Utils.magic: JSON.t => unknown),
+          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(
+            Utils.magic: JSON.t => unknown
+          ),
         })
       | Gt({fieldName, fieldValue}) =>
         Gt({
           fieldName,
-          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(Utils.magic: JSON.t => unknown),
+          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(
+            Utils.magic: JSON.t => unknown
+          ),
         })
       | Lt({fieldName, fieldValue}) =>
         Lt({
           fieldName,
-          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(Utils.magic: JSON.t => unknown),
+          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(
+            Utils.magic: JSON.t => unknown
+          ),
         })
       | In({fieldName, fieldValue}) =>
         In({

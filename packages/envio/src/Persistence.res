@@ -40,6 +40,8 @@ type initialState = {
   envioInfo: option<JSON.t>,
 }
 
+// The And case requires at least one nested filter (storage throws otherwise),
+// while In with an empty array matches nothing.
 @tag("operator")
 type rec filter =
   | @as("=") Eq({fieldName: string, fieldValue: unknown})
