@@ -9,7 +9,7 @@ use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
 use napi_derive::napi;
 
-use crate::hypersync_source::{
+use crate::evm_hypersync_source::{
     map_err,
     types::{sol_value_to_param, Event, EventParamsInput, Log, ParamMeta, ParamValue},
 };

@@ -878,6 +878,7 @@ let make = (
   let mutSuggestedBlockIntervals = Dict.make()
 
   let client = Rpc.makeClient(url)
+  let rpcClient = RpcClient.make(~url)
 
   let makeTransactionLoader = () =>
     LazyLoader.make(
@@ -1274,7 +1275,7 @@ let make = (
     getHeightOrThrow: async () => {
       let timerRef = Hrtime.makeTimer()
       let height = try {
-        await Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
+        await rpcClient.getHeight()
       } catch {
       | exn =>
         let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
