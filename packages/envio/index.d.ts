@@ -979,11 +979,9 @@ export type SvmInstructionParams = {
   readonly extraAccounts: readonly string[];
 };
 
-/** Block context for a matched instruction. The slot lives on
- * `SvmInstruction.slot`; `block` carries the remaining block metadata. */
+/** Block context for a matched instruction. */
 export type SvmInstructionBlock = {
-  /** Slot this instruction's block was matched in. Mirrors
-   * `SvmInstruction.slot`. */
+  /** Slot this instruction's block was matched in. */
   readonly slot: number;
   readonly time: number;
   /** Always empty for now — reserved for the future reorg-guard route. */
@@ -1057,8 +1055,6 @@ export type SvmInstruction<
   /** Present when the instruction's `include_logs` is `true`; only logs
    * scoped to this exact instruction (matching `instruction_address`). */
   readonly logs?: readonly SvmLog[];
-  /** Slot this instruction was matched in. */
-  readonly slot: number;
   readonly block: SvmInstructionBlock;
 };
 

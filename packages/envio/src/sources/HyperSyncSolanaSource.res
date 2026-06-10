@@ -212,7 +212,6 @@ let toSvmInstruction = (
   params: ?(instr.decoded->Option.map(parseDecoded)),
   ?transaction,
   ?logs,
-  slot: instr.slot,
   block,
 }
 

@@ -57,7 +57,7 @@ function writeTokenDeltas(instruction: SvmInstruction, context: FlowContext, txS
     context.TokenDelta.set({
       id: `${txSig}:${b.account}`,
       txSig,
-      slot: instruction.slot,
+      slot: instruction.block.slot,
       account: b.account,
       mint: b.mint ?? "",
       owner: b.owner,
@@ -71,7 +71,7 @@ function writeTokenDeltas(instruction: SvmInstruction, context: FlowContext, txS
 function writeFlowTx(instruction: SvmInstruction, context: FlowContext, txSig: string): void {
   context.FlowTx.set({
     id: txSig,
-    slot: instruction.slot,
+    slot: instruction.block.slot,
     feePayer: instruction.transaction?.feePayer,
     success: instruction.transaction?.success,
     fee: instruction.transaction?.fee,
@@ -83,7 +83,7 @@ async function bumpStats(instruction: SvmInstruction, context: FlowContext): Pro
   const prev = await context.IndexerStats.get(STATS_ID);
   context.IndexerStats.set({
     id: STATS_ID,
-    lastSlot: Math.max(prev?.lastSlot ?? 0, instruction.slot),
+    lastSlot: Math.max(prev?.lastSlot ?? 0, instruction.block.slot),
     totalInstructions: (prev?.totalInstructions ?? 0n) + 1n,
   });
 }
@@ -103,7 +103,7 @@ function writeNode(
   context.InstructionNode.set({
     id: `${txSig}:${path}`,
     txSig,
-    slot: instruction.slot,
+    slot: instruction.block.slot,
     addrPath: path,
     depth: Math.max(0, addr.length - 1),
     parentPath: parentOf(addr),
@@ -147,7 +147,7 @@ function liquidationHandler(program: string, instructionName: string, mapArgs: M
       context.LiquidationEvent.set({
         id: `${txSig}:${addrPath(instruction.instructionAddress)}`,
         txSig,
-        slot: instruction.slot,
+        slot: instruction.block.slot,
         ixName: params?.name ?? instructionName,
         marketIndex: extra.argMarketIndex,
         liabilityAmount: extra.argU64A,

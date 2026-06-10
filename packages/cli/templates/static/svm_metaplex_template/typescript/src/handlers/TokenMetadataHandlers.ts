@@ -50,16 +50,16 @@ indexer.onInstruction(
     const txSig = instruction.transaction?.signatures[0];
 
     context.log.info(
-      `Create: slot=${instruction.slot} mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
+      `Create: slot=${instruction.block.slot} mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
     );
 
     context.TokenMetadataAccount.set({
       id: metadataPda,
       mint,
       updateAuthority,
-      lastUpdatedSlot: instruction.slot,
+      lastUpdatedSlot: instruction.block.slot,
       updateCount: 0,
-      createdAtSlot: instruction.slot,
+      createdAtSlot: instruction.block.slot,
       lastTxSignature: txSig,
     });
     await bumpStats(context, "create");
@@ -76,7 +76,7 @@ indexer.onInstruction(
     const txSig = instruction.transaction?.signatures[0];
 
     context.log.info(
-      `Update: slot=${instruction.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
+      `Update: slot=${instruction.block.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
     );
 
     const existing = await context.TokenMetadataAccount.get(metadataPda);
@@ -84,7 +84,7 @@ indexer.onInstruction(
       context.TokenMetadataAccount.set({
         ...existing,
         updateAuthority,
-        lastUpdatedSlot: instruction.slot,
+        lastUpdatedSlot: instruction.block.slot,
         updateCount: existing.updateCount + 1,
         lastTxSignature: txSig,
       });
@@ -93,9 +93,9 @@ indexer.onInstruction(
         id: metadataPda,
         mint: "",
         updateAuthority,
-        lastUpdatedSlot: instruction.slot,
+        lastUpdatedSlot: instruction.block.slot,
         updateCount: 1,
-        createdAtSlot: instruction.slot,
+        createdAtSlot: instruction.block.slot,
         lastTxSignature: txSig,
       });
     }

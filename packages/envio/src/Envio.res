@@ -67,10 +67,9 @@ type svmLog = {
 
 /** Block context for a matched instruction. `time`/`hash` follow the
  EVM/Fuel field names so the shared `Ecosystem.t` getters in `Svm.res` read
- them uniformly. The slot lives on `svmInstruction.slot`. */
+ them uniformly. */
 type svmInstructionBlock = {
-  /** Slot this instruction's block was matched in. Mirrors
-   `svmInstruction.slot`. */
+  /** Slot this instruction's block was matched in. */
   slot: int,
   /** Unix block time (seconds). `0` when HyperSync didn't return a block
    for this instruction's slot. */
@@ -111,8 +110,6 @@ type svmInstruction = {
   /** Program log entries scoped to this instruction. Absent when the
    per-instruction `include_logs` flag is `false`. */
   logs?: array<svmLog>,
-  /** Slot this instruction was matched in. */
-  slot: int,
   block: svmInstructionBlock,
 }
 
