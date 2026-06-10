@@ -46,7 +46,7 @@ let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingA
 let handleLoad = (
   state: testIndexerState,
   ~tableName: string,
-  ~filter: Persistence.filter,
+  ~filter: EntityFilter.t,
 ): JSON.t => {
   let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
   let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
@@ -72,7 +72,7 @@ let handleLoad = (
       | None => false
       }
   }
-  let rec makeMatcher = (filter: Persistence.filter) =>
+  let rec makeMatcher = (filter: EntityFilter.t) =>
     switch filter {
     | Eq({fieldName, fieldValue}) =>
       leafMatcher(

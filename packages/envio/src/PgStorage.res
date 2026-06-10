@@ -295,7 +295,7 @@ let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
 // lookup proves they exist on the table (and they originate from
 // codegen-validated schemas), so the interpolation can't be abused.
 let rec makeFilterCondition = (
-  ~filter: Persistence.filter,
+  ~filter: EntityFilter.t,
   ~table: Table.table,
   ~params: array<JSON.t>,
 ) => {
@@ -1491,7 +1491,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     }
   }
 
-  let loadOrThrow = async (~filter: Persistence.filter, ~table: Table.table) => {
+  let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
     let (promise, condition) = switch filter {
     // Primary-key lookups skip serialization (ids are already strings)
     // and a single-id load uses a LIMIT 1 query, safe since id is unique.

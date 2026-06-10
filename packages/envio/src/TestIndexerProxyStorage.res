@@ -19,7 +19,7 @@ type workerPayload =
   Load({
       tableName: string,
       // Leaf field values are JSON-serialized with the table's field schemas
-      filter: Persistence.filter,
+      filter: EntityFilter.t,
     })
   | @as("writeBatch")
   WriteBatch({
@@ -119,7 +119,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
       )
     }
     // Field values must be JSON-safe to survive the worker thread boundary
-    let rec serializeFilter = (filter: Persistence.filter): Persistence.filter =>
+    let rec serializeFilter = (filter: EntityFilter.t): EntityFilter.t =>
       switch filter {
       | Eq({fieldName, fieldValue}) =>
         Eq({

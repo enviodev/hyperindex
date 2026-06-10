@@ -20,7 +20,7 @@ let loadById = (
       (
         await storage.loadOrThrow(
           ~table=entityConfig.table,
-          ~filter=Persistence.In({
+          ~filter=EntityFilter.In({
             fieldName: Table.idFieldName,
             fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
           }),
@@ -271,7 +271,7 @@ let loadEffect = (
         (
           await storage.loadOrThrow(
             ~table,
-            ~filter=Persistence.In({
+            ~filter=EntityFilter.In({
               fieldName: Table.idFieldName,
               fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
             }),
@@ -394,9 +394,9 @@ let loadByField = (
             | Single({fieldName, fieldValue, operator}) => {
                 let fieldValue = fieldValue->(Utils.magic: TableIndices.FieldValue.t => unknown)
                 switch operator {
-                | Eq => Persistence.Eq({fieldName, fieldValue})
-                | Gt => Persistence.Gt({fieldName, fieldValue})
-                | Lt => Persistence.Lt({fieldName, fieldValue})
+                | Eq => EntityFilter.Eq({fieldName, fieldValue})
+                | Gt => EntityFilter.Gt({fieldName, fieldValue})
+                | Lt => EntityFilter.Lt({fieldName, fieldValue})
                 }
               }
             },

@@ -40,16 +40,6 @@ type initialState = {
   envioInfo: option<JSON.t>,
 }
 
-// The And case requires at least one nested filter (storage throws otherwise),
-// while In with an empty array matches nothing.
-@tag("operator")
-type rec filter =
-  | @as("=") Eq({fieldName: string, fieldValue: unknown})
-  | @as(">") Gt({fieldName: string, fieldValue: unknown})
-  | @as("<") Lt({fieldName: string, fieldValue: unknown})
-  | @as("in") In({fieldName: string, fieldValue: array<unknown>})
-  | @as("and") And({filters: array<filter>})
-
 type updatedEffectCache = {
   effect: Internal.effect,
   items: array<Internal.effectCacheItem>,
@@ -89,7 +79,7 @@ type storage = {
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
-  loadOrThrow: (~filter: filter, ~table: Table.table) => promise<array<unknown>>,
+  loadOrThrow: (~filter: EntityFilter.t, ~table: Table.table) => promise<array<unknown>>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,

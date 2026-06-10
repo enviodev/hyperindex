@@ -77,7 +77,7 @@ module Storage = {
     resumeInitialStateCalls: array<bool>,
     resolveLoadInitialState: Persistence.initialState => unit,
     loadOrThrowCalls: array<{
-      "filter": Persistence.filter,
+      "filter": EntityFilter.t,
       "tableName": string,
     }>,
     dumpEffectCacheCalls: ref<int>,
