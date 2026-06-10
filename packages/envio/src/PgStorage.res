@@ -285,12 +285,62 @@ let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
 }
 
-let makeLoadQuery = (~pgSchema, ~tableName, ~fieldName, ~operator: Persistence.operator) => {
-  let condition = switch operator {
-  | #"in" => `= ANY($1)`
-  | #"=" | #">" | #"<" => `${(operator :> string)} $1`
+let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
+  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE ${condition};`
+}
+
+// Appends the filter's serialized field values to params
+// and returns the matching SQL condition referencing them by index.
+let rec makeFilterCondition = (
+  ~filter: Persistence.filter,
+  ~table: Table.table,
+  ~params: array<JSON.t>,
+) => {
+  let serializeParamOrThrow = (~fieldName, ~fieldValue: unknown, ~isArray) => {
+    let fieldSchema = switch table->Table.getFieldSchemaByDbName(fieldName) {
+    | Some(fieldSchema) => fieldSchema
+    | None =>
+      throw(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage. The table doesn't have the field "${fieldName}".`,
+          reason: Table.NonExistingTableField(fieldName),
+        }),
+      )
+    }
+    let fieldSchema = isArray ? S.array(fieldSchema)->S.toUnknown : fieldSchema
+    let param = try fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema) catch {
+    | exn =>
+      throw(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
+          reason: exn,
+        }),
+      )
+    }
+    params->Array.push(param)->ignore
+    `$${params->Array.length->Int.toString}`
   }
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE "${fieldName}" ${condition};`
+  let scalarCondition = (~fieldName, ~fieldValue, ~op) =>
+    `"${fieldName}" ${op} ${serializeParamOrThrow(~fieldName, ~fieldValue, ~isArray=false)}`
+  switch filter {
+  | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
+  | Gt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op=">")
+  | Lt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="<")
+  | In({fieldName, fieldValue}) =>
+    `"${fieldName}" = ANY(${serializeParamOrThrow(
+        ~fieldName,
+        ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
+        ~isArray=true,
+      )})`
+  | And({filters: []}) =>
+    JsError.throwWithMessage(
+      `Failed loading "${table.tableName}" from storage. The "and" filter must contain at least one nested filter.`,
+    )
+  | And({filters}) =>
+    `(${filters
+      ->Array.map(filter => makeFilterCondition(~filter, ~table, ~params))
+      ->Array.join(" AND ")})`
+  }
 }
 
 let makeDeleteByIdQuery = (~pgSchema, ~tableName) => {
@@ -1434,69 +1484,29 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     }
   }
 
-  let loadOrThrow = async (
-    type value,
-    ~fieldName: string,
-    ~fieldValue: value,
-    ~operator: Persistence.operator,
-    ~table: Table.table,
-  ) => {
-    switch await (
-      switch (fieldName, operator) {
-      // Primary-key lookups skip serialization (ids are already strings)
-      // and a single-id load uses a LIMIT 1 query, safe since id is unique.
-      | ("id", #"in") =>
-        switch fieldValue->(Utils.magic: value => array<string>) {
-        | [_] as ids =>
-          sql->Postgres.preparedUnsafe(
-            makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
-            ids->Obj.magic,
-          )
-        | ids =>
-          sql->Postgres.preparedUnsafe(
-            makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~fieldName, ~operator),
-            [ids]->Obj.magic,
-          )
-        }
-      | _ => {
-          let fieldSchema = switch table->Table.getFieldSchemaByDbName(fieldName) {
-          | Some(fieldSchema) => fieldSchema
-          | None =>
-            throw(
-              Persistence.StorageError({
-                message: `Failed loading "${table.tableName}" from storage. The table doesn't have the field "${fieldName}".`,
-                reason: Table.NonExistingTableField(fieldName),
-              }),
-            )
-          }
-          let fieldSchema = switch operator {
-          | #"in" => S.array(fieldSchema)->S.toUnknown
-          | #"=" | #">" | #"<" => fieldSchema
-          }
-          let params = try [
-            fieldValue
-            ->(Utils.magic: value => unknown)
-            ->S.reverseConvertToJsonOrThrow(fieldSchema),
-          ]->Obj.magic catch {
-          | exn =>
-            throw(
-              Persistence.StorageError({
-                message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
-                reason: exn,
-              }),
-            )
-          }
-          sql->Postgres.preparedUnsafe(
-            makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~fieldName, ~operator),
-            params,
-          )
-        }
+  let loadOrThrow = async (~filter: Persistence.filter, ~table: Table.table) => {
+    let promise = switch filter {
+    // Primary-key lookups skip serialization (ids are already strings)
+    // and a single-id load uses a LIMIT 1 query, safe since id is unique.
+    | In({fieldName: "id", fieldValue: [_] as ids}) =>
+      sql->Postgres.preparedUnsafe(
+        makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
+        ids->Obj.magic,
+      )
+    | _ => {
+        let params = []
+        let condition = makeFilterCondition(~filter, ~table, ~params)
+        sql->Postgres.preparedUnsafe(
+          makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
+          params->Obj.magic,
+        )
       }
-    ) {
+    }
+    switch await promise {
     | exception exn =>
       throw(
         Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}"`,
+          message: `Failed loading "${table.tableName}" from storage`,
           reason: exn,
         }),
       )
@@ -1505,7 +1515,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       | exn =>
         throw(
           Persistence.StorageError({
-            message: `Failed to parse "${table.tableName}" loaded from storage by field "${fieldName}"`,
+            message: `Failed to parse "${table.tableName}" loaded from storage`,
             reason: exn,
           }),
         )

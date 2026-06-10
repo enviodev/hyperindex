@@ -22,10 +22,8 @@ describe("LoadLayer", () => {
     t.expect(user).toEqual(None)
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "fieldName": "id",
-        "fieldValue": ["123"]->Utils.magic,
+        "filter": Persistence.In({fieldName: "id", fieldValue: ["123"]->Utils.magic}),
         "tableName": "User",
-        "operator": #"in",
       },
     ])
   })
@@ -53,16 +51,12 @@ describe("LoadLayer", () => {
     t.expect(user2).toEqual(None)
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "fieldName": "id",
-        "fieldValue": ["1"]->Utils.magic,
+        "filter": Persistence.In({fieldName: "id", fieldValue: ["1"]->Utils.magic}),
         "tableName": "User",
-        "operator": #"in",
       },
       {
-        "fieldName": "id",
-        "fieldValue": ["2"]->Utils.magic,
+        "filter": Persistence.In({fieldName: "id", fieldValue: ["2"]->Utils.magic}),
         "tableName": "User",
-        "operator": #"in",
       },
     ])
   })
@@ -91,10 +85,8 @@ describe("LoadLayer", () => {
       t.expect(user2).toEqual(None)
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "fieldName": "id",
-          "fieldValue": ["1"]->Utils.magic,
+          "filter": Persistence.In({fieldName: "id", fieldValue: ["1"]->Utils.magic}),
           "tableName": "User",
-          "operator": #"in",
         },
       ])
     },
@@ -134,16 +126,12 @@ describe("LoadLayer", () => {
     t.expect(user2).toEqual(None)
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "fieldName": "id",
-        "fieldValue": ["1"]->Utils.magic,
+        "filter": Persistence.In({fieldName: "id", fieldValue: ["1"]->Utils.magic}),
         "tableName": "User",
-        "operator": #"in",
       },
       {
-        "fieldName": "id",
-        "fieldValue": ["2"]->Utils.magic,
+        "filter": Persistence.In({fieldName: "id", fieldValue: ["2"]->Utils.magic}),
         "tableName": "User",
-        "operator": #"in",
       },
     ])
   })
@@ -168,10 +156,8 @@ describe("LoadLayer", () => {
     t.expect(users).toEqual([None, None])
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "fieldName": "id",
-        "fieldValue": ["1", "2"]->Utils.magic,
+        "filter": Persistence.In({fieldName: "id", fieldValue: ["1", "2"]->Utils.magic}),
         "tableName": "User",
-        "operator": #"in",
       },
     ])
   })
@@ -214,10 +200,8 @@ describe("LoadLayer", () => {
       ])
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "fieldName": "id",
-          "fieldValue": ["2"]->Utils.magic,
+          "filter": Persistence.In({fieldName: "id", fieldValue: ["2"]->Utils.magic}),
           "tableName": "User",
-          "operator": #"in",
         },
       ])
     },
@@ -269,10 +253,8 @@ describe("LoadLayer", () => {
       t.expect(user).toEqual(Some(user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)))
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "fieldName": "id",
-          "fieldValue": ["1"]->Utils.magic,
+          "filter": Persistence.In({fieldName: "id", fieldValue: ["1"]->Utils.magic}),
           "tableName": "User",
-          "operator": #"in",
         },
       ])
     },
@@ -324,16 +306,12 @@ describe("LoadLayer", () => {
       // but we are not sure that it'll bring some benefits
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "fieldName": "id",
-          "fieldValue": ["2"]->Utils.magic,
+          "filter": Persistence.In({fieldName: "id", fieldValue: ["2"]->Utils.magic}),
           "tableName": "User",
-          "operator": #"in",
         },
         {
-          "fieldName": "id",
-          "fieldValue": ["3"]->Utils.magic,
+          "filter": Persistence.In({fieldName: "id", fieldValue: ["3"]->Utils.magic}),
           "tableName": "User",
-          "operator": #"in",
         },
       ])
     },
@@ -377,16 +355,12 @@ describe("LoadLayer", () => {
     t.expect(users2).toEqual([])
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "fieldName": "id",
-        "fieldValue": "123"->Utils.magic,
+        "filter": Persistence.Eq({fieldName: "id", fieldValue: "123"->Utils.magic}),
         "tableName": "User",
-        "operator": #"=",
       },
       {
-        "fieldName": "updatesCountOnUserForTesting",
-        "fieldValue": 0->Utils.magic,
+        "filter": Persistence.Gt({fieldName: "updatesCountOnUserForTesting", fieldValue: 0->Utils.magic}),
         "tableName": "User",
-        "operator": #">",
       },
     ])
 
@@ -412,10 +386,8 @@ describe("LoadLayer", () => {
     ).toEqual(3)
     t.expect(storageMock.loadOrThrowCalls->Array.get(2)).toEqual(
       Some({
-        "fieldName": "updatesCountOnUserForTesting",
-        "fieldValue": 5->Utils.magic,
+        "filter": Persistence.Lt({fieldName: "updatesCountOnUserForTesting", fieldValue: 5->Utils.magic}),
         "tableName": "User",
-        "operator": #"<",
       }),
     )
   })
@@ -478,16 +450,12 @@ describe("LoadLayer", () => {
     ])
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "fieldName": "id",
-        "fieldValue": "1"->Utils.magic,
+        "filter": Persistence.Eq({fieldName: "id", fieldValue: "1"->Utils.magic}),
         "tableName": "User",
-        "operator": #"=",
       },
       {
-        "fieldName": "updatesCountOnUserForTesting",
-        "fieldValue": 0->Utils.magic,
+        "filter": Persistence.Gt({fieldName: "updatesCountOnUserForTesting", fieldValue: 0->Utils.magic}),
         "tableName": "User",
-        "operator": #">",
       },
     ])
 
@@ -553,10 +521,8 @@ describe("LoadLayer", () => {
 
       let loadEntitiesByFieldSingleDbCall = [
         {
-          "fieldName": "id",
-          "fieldValue": "1"->Utils.magic,
+          "filter": Persistence.Eq({fieldName: "id", fieldValue: "1"->Utils.magic}),
           "tableName": "User",
-          "operator": #"=",
         },
       ]
       t.expect(users).toEqual([])

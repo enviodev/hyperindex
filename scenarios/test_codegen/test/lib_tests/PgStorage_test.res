@@ -501,38 +501,70 @@ $$ LANGUAGE plpgsql;`)
     )
   })
 
-  describe("makeLoadQuery", () => {
+  describe("makeFilterCondition", () => {
+    let table = Table.mkTable(
+      "users",
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkField("score", Int32, ~fieldSchema=S.int),
+      ],
+    )
+
     Async.it(
-      "Should create correct SQL for loading multiple records by IDs",
+      "Should create condition and params for loading multiple records by IDs",
       async t => {
-        let query = PgStorage.makeLoadQuery(
-          ~pgSchema="test_schema",
-          ~tableName="users",
-          ~fieldName="id",
-          ~operator=#"in",
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=In({fieldName: "id", fieldValue: ["1", "2"]->Utils.magic}),
+          ~table,
+          ~params,
         )
 
-        t.expect(
-          query,
-          ~message="Should generate correct multiple IDs query SQL",
-        ).toBe(`SELECT * FROM "test_schema"."users" WHERE "id" = ANY($1);`)
+        t.expect((condition, params)).toEqual((
+          `"id" = ANY($1)`,
+          [["1", "2"]->(Utils.magic: array<string> => JSON.t)],
+        ))
       },
     )
 
     Async.it(
-      "Should handle different schema, table, field names and operators",
+      "Should create condition and params for a scalar comparison",
       async t => {
-        let query = PgStorage.makeLoadQuery(
-          ~pgSchema="production",
-          ~tableName="entities",
-          ~fieldName="score",
-          ~operator=#">",
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=Gt({fieldName: "score", fieldValue: 5->Utils.magic}),
+          ~table,
+          ~params,
         )
 
-        t.expect(
-          query,
-          ~message="Should generate correct SQL with different schema and table names",
-        ).toBe(`SELECT * FROM "production"."entities" WHERE "score" > $1;`)
+        t.expect((condition, params)).toEqual((`"score" > $1`, [5->(Utils.magic: int => JSON.t)]))
+      },
+    )
+
+    Async.it(
+      "Should number params across nested and filters",
+      async t => {
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=And({
+            filters: [
+              Eq({fieldName: "id", fieldValue: "1"->Utils.magic}),
+              And({
+                filters: [
+                  Gt({fieldName: "score", fieldValue: 5->Utils.magic}),
+                  Lt({fieldName: "score", fieldValue: 10->Utils.magic}),
+                ],
+              }),
+            ],
+          }),
+          ~table,
+          ~params,
+        )
+
+        t.expect((condition, params)).toEqual((
+          `("id" = $1 AND ("score" > $2 AND "score" < $3))`,
+          ["1"->Utils.magic, 5->Utils.magic, 10->Utils.magic],
+        ))
       },
     )
   })

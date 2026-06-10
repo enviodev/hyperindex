@@ -46,20 +46,16 @@ let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingA
 let handleLoad = (
   state: testIndexerState,
   ~tableName: string,
-  ~fieldName: string,
-  ~fieldValue: JSON.t,
-  ~operator: Persistence.operator,
+  ~filter: Persistence.filter,
 ): JSON.t => {
   let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
   let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
   let results = []
 
-  switch (fieldName, operator) {
-  | ("id", #"in") =>
-    fieldValue
-    ->S.parseOrThrow(S.array(S.string))
-    ->Array.forEach(id => {
-      switch entityDict->Dict.get(id) {
+  switch filter {
+  | In({fieldName: "id", fieldValue: ids}) =>
+    ids->Array.forEach(id => {
+      switch entityDict->Dict.get(id->(Utils.magic: unknown => string)) {
       | Some(entity) =>
         // Serialize entity back to JSON for worker thread
         let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
@@ -68,45 +64,70 @@ let handleLoad = (
       }
     })
   | _ => {
-      // Get the field schema from the entity's table to properly parse the JSON field values
-      let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(fieldName) {
-      | Some(Table.Field({fieldSchema})) => fieldSchema
-      | _ => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
-      }
-
-      // Parse JSON field values to typed values using the field's schema
-      let rawFieldValues = switch operator {
-      | #"in" => fieldValue->(Utils.magic: JSON.t => array<JSON.t>)
-      | #"=" | #">" | #"<" => [fieldValue]
-      }
-      let parsedFieldValues =
-        rawFieldValues->Array.map(fieldValue =>
-          fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
-        )
-
-      // Compare using TableIndices.FieldValue logic (same approach as InMemoryTable)
+      // Parse JSON field values using the field's schema and compare with
+      // TableIndices.FieldValue logic (same approach as InMemoryTable).
       // This properly handles bigint and BigDecimal comparisons
+      let parseLeaf = (~fieldName, ~fieldValue: unknown) => {
+        let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(fieldName) {
+        | Some(Table.Field({fieldSchema})) => fieldSchema
+        | _ => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
+        }
+        fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
+      }
+      let leafMatcher = (~fieldName, ~parsedFieldValues, ~compare) => {
+        (entityAsDict: dict<TableIndices.FieldValue.t>) =>
+          switch entityAsDict->Dict.get(fieldName) {
+          | Some(entityFieldValue) =>
+            parsedFieldValues->Array.some(parsedFieldValue =>
+              compare(entityFieldValue, parsedFieldValue)
+            )
+          | None => false
+          }
+      }
+      let rec makeMatcher = (filter: Persistence.filter) =>
+        switch filter {
+        | Eq({fieldName, fieldValue}) =>
+          leafMatcher(
+            ~fieldName,
+            ~parsedFieldValues=[parseLeaf(~fieldName, ~fieldValue)],
+            ~compare=TableIndices.FieldValue.eq,
+          )
+        | Gt({fieldName, fieldValue}) =>
+          leafMatcher(
+            ~fieldName,
+            ~parsedFieldValues=[parseLeaf(~fieldName, ~fieldValue)],
+            ~compare=TableIndices.FieldValue.gt,
+          )
+        | Lt({fieldName, fieldValue}) =>
+          leafMatcher(
+            ~fieldName,
+            ~parsedFieldValues=[parseLeaf(~fieldName, ~fieldValue)],
+            ~compare=TableIndices.FieldValue.lt,
+          )
+        | In({fieldName, fieldValue}) =>
+          leafMatcher(
+            ~fieldName,
+            ~parsedFieldValues=fieldValue->Array.map(fieldValue =>
+              parseLeaf(~fieldName, ~fieldValue)
+            ),
+            ~compare=TableIndices.FieldValue.eq,
+          )
+        | And({filters}) => {
+            let matchers = filters->Array.map(makeMatcher)
+            entityAsDict => matchers->Array.every(matcher => matcher(entityAsDict))
+          }
+        }
+      let matcher = makeMatcher(filter)
+
       entityDict
       ->Dict.valuesToArray
       ->Array.forEach(entity => {
         // Cast entity to dict of field values (same approach as InMemoryTable)
         let entityAsDict = entity->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
-        switch entityAsDict->Dict.get(fieldName) {
-        | Some(entityFieldValue) => {
-            let matches = parsedFieldValues->Array.some(parsedFieldValue =>
-              switch operator {
-              | #"=" | #"in" => entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
-              | #">" => entityFieldValue->TableIndices.FieldValue.gt(parsedFieldValue)
-              | #"<" => entityFieldValue->TableIndices.FieldValue.lt(parsedFieldValue)
-              }
-            )
-            if matches {
-              // Serialize entity back to JSON for worker thread
-              let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
-              results->Array.push(jsonEntity)->ignore
-            }
-          }
-        | None => ()
+        if matcher(entityAsDict) {
+          // Serialize entity back to JSON for worker thread
+          let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
+          results->Array.push(jsonEntity)->ignore
         }
       })
     }
@@ -782,10 +803,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                   )
 
                 switch msg.payload {
-                | Load({tableName, fieldName, fieldValue, operator}) =>
-                  state
-                  ->handleLoad(~tableName, ~fieldName, ~fieldValue, ~operator)
-                  ->respond
+                | Load({tableName, filter}) => state->handleLoad(~tableName, ~filter)->respond
 
                 | WriteBatch({
                     updatedEntities,

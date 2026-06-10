@@ -40,7 +40,13 @@ type initialState = {
   envioInfo: option<JSON.t>,
 }
 
-type operator = [#">" | #"=" | #"<" | #"in"]
+@tag("operator")
+type rec filter =
+  | @as("=") Eq({fieldName: string, fieldValue: unknown})
+  | @as(">") Gt({fieldName: string, fieldValue: unknown})
+  | @as("<") Lt({fieldName: string, fieldValue: unknown})
+  | @as("in") In({fieldName: string, fieldValue: array<unknown>})
+  | @as("and") And({filters: array<filter>})
 
 type updatedEffectCache = {
   effect: Internal.effect,
@@ -78,16 +84,10 @@ type storage = {
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
-  // Returns rows where the field compares to the provided value.
-  // The #in operator expects fieldValue to be an array of values to match.
-  // Values are serialized and rows parsed with the table's field schemas.
+  // Returns rows matching the filter.
+  // Field values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
-  loadOrThrow: 'value. (
-    ~fieldName: string,
-    ~fieldValue: 'value,
-    ~operator: operator,
-    ~table: Table.table,
-  ) => promise<array<unknown>>,
+  loadOrThrow: (~filter: filter, ~table: Table.table) => promise<array<unknown>>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,

@@ -18,9 +18,8 @@ type workerPayload =
   | @as("load")
   Load({
       tableName: string,
-      fieldName: string,
-      fieldValue: JSON.t,
-      operator: Persistence.operator,
+      // Leaf field values are JSON-serialized with the table's field schemas
+      filter: Persistence.filter,
     })
   | @as("writeBatch")
   WriteBatch({
@@ -106,33 +105,49 @@ let makeStorage = (proxy: t): Persistence.storage => {
     )
   },
   resumeInitialState: async () => proxy.initialState,
-  loadOrThrow: async (
-    type value,
-    ~fieldName,
-    ~fieldValue: value,
-    ~operator,
-    ~table: Table.table,
-  ) => {
-    let fieldSchema = switch table->Table.getFieldSchemaByDbName(fieldName) {
-    | Some(fieldSchema) => fieldSchema
-    | None =>
-      JsError.throwWithMessage(
-        `TestIndexer: The table "${table.tableName}" doesn't have the field "${fieldName}"`,
-      )
+  loadOrThrow: async (~filter, ~table: Table.table) => {
+    let serializeLeafOrThrow = (~fieldName, ~fieldValue: unknown, ~isArray) => {
+      let fieldSchema = switch table->Table.getFieldSchemaByDbName(fieldName) {
+      | Some(fieldSchema) => fieldSchema
+      | None =>
+        JsError.throwWithMessage(
+          `TestIndexer: The table "${table.tableName}" doesn't have the field "${fieldName}"`,
+        )
+      }
+      let fieldSchema = isArray ? S.array(fieldSchema)->S.toUnknown : fieldSchema
+      fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)
     }
-    let fieldSchema = switch operator {
-    | #"in" => S.array(fieldSchema)->S.toUnknown
-    | #"=" | #">" | #"<" => fieldSchema
-    }
+    // Field values must be JSON-safe to survive the worker thread boundary
+    let rec serializeFilter = (filter: Persistence.filter): Persistence.filter =>
+      switch filter {
+      | Eq({fieldName, fieldValue}) =>
+        Eq({
+          fieldName,
+          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(Utils.magic: JSON.t => unknown),
+        })
+      | Gt({fieldName, fieldValue}) =>
+        Gt({
+          fieldName,
+          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(Utils.magic: JSON.t => unknown),
+        })
+      | Lt({fieldName, fieldValue}) =>
+        Lt({
+          fieldName,
+          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(Utils.magic: JSON.t => unknown),
+        })
+      | In({fieldName, fieldValue}) =>
+        In({
+          fieldName,
+          fieldValue: serializeLeafOrThrow(
+            ~fieldName,
+            ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
+            ~isArray=true,
+          )->(Utils.magic: JSON.t => array<unknown>),
+        })
+      | And({filters}) => And({filters: filters->Array.map(serializeFilter)})
+      }
     let response = await proxy->sendRequest(
-      ~payload=Load({
-        tableName: table.tableName,
-        fieldName,
-        fieldValue: fieldValue
-        ->(Utils.magic: value => unknown)
-        ->S.reverseConvertToJsonOrThrow(fieldSchema),
-        operator,
-      }),
+      ~payload=Load({tableName: table.tableName, filter: filter->serializeFilter}),
     )
     response->S.parseOrThrow(table->Table.rowsSchema)
   },

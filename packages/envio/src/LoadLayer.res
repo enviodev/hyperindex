@@ -20,9 +20,10 @@ let loadById = (
       (
         await storage.loadOrThrow(
           ~table=entityConfig.table,
-          ~fieldName="id",
-          ~fieldValue=idsToLoad,
-          ~operator=#"in",
+          ~filter=Persistence.In({
+            fieldName: "id",
+            fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
+          }),
         )
       )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
@@ -268,7 +269,13 @@ let loadEffect = (
 
       let dbEntities = try {
         (
-          await storage.loadOrThrow(~table, ~fieldName="id", ~fieldValue=idsToLoad, ~operator=#"in")
+          await storage.loadOrThrow(
+            ~table,
+            ~filter=Persistence.In({
+              fieldName: "id",
+              fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
+            }),
+          )
         )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
       } catch {
       | exn =>
@@ -382,15 +389,16 @@ let loadByField = (
       try {
         let entities = (
           await storage.loadOrThrow(
-            ~operator=switch index {
-            | Single({operator: Gt}) => #">"
-            | Single({operator: Eq}) => #"="
-            | Single({operator: Lt}) => #"<"
-            },
             ~table=entityConfig.table,
-            ~fieldName=index->TableIndices.Index.getFieldName,
-            ~fieldValue=switch index {
-            | Single({fieldValue}) => fieldValue
+            ~filter=switch index {
+            | Single({fieldName, fieldValue, operator}) => {
+                let fieldValue = fieldValue->(Utils.magic: TableIndices.FieldValue.t => unknown)
+                switch operator {
+                | Eq => Persistence.Eq({fieldName, fieldValue})
+                | Gt => Persistence.Gt({fieldName, fieldValue})
+                | Lt => Persistence.Lt({fieldName, fieldValue})
+                }
+              }
             },
           )
         )->(Utils.magic: array<unknown> => array<Internal.entity>)

@@ -77,10 +77,8 @@ module Storage = {
     resumeInitialStateCalls: array<bool>,
     resolveLoadInitialState: Persistence.initialState => unit,
     loadOrThrowCalls: array<{
-      "fieldName": string,
-      "fieldValue": unknown,
+      "filter": Persistence.filter,
       "tableName": string,
-      "operator": Persistence.operator,
     }>,
     dumpEffectCacheCalls: ref<int>,
     storage: Persistence.storage,
@@ -163,14 +161,12 @@ module Storage = {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
           Promise.resolve()
         }),
-        loadOrThrow: (~fieldName, ~fieldValue, ~operator, ~table: Table.table) => {
+        loadOrThrow: (~filter, ~table: Table.table) => {
           implementBody(#loadOrThrow, () => {
             loadOrThrowCalls
             ->Array.push({
-              "fieldName": fieldName,
-              "fieldValue": fieldValue->Utils.magic,
+              "filter": filter,
               "tableName": table.tableName,
-              "operator": operator,
             })
             ->ignore
             Promise.resolve([])
