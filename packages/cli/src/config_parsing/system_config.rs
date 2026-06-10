@@ -1034,10 +1034,12 @@ impl SystemConfig {
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
         let human_config_string =
             std::fs::read_to_string(&project_paths.config).context(format!(
-                "Failed to resolve config path {0}. Make sure you're in the correct \
-                 directory and that a config file with the name {0} exists. I can configure \
-                 another path by using the --config flag.",
+                "Failed to resolve config path {0} (--config {1} resolved relative to \
+                 --directory {2}). Make sure the file exists. Note that --config and \
+                 ENVIO_CONFIG are interpreted relative to --directory.",
                 &project_paths.config.to_str().unwrap_or("{unknown}"),
+                project_paths.config_relative_to_root().display(),
+                project_paths.project_root.display(),
             ))?;
 
         let mut env_state = EnvState::new(&project_paths.project_root);
