@@ -118,11 +118,8 @@ type storage = {
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
   ) => promise<(array<{"id": string}>, array<unknown>)>,
-  // Write batch to storage. `siblingTxHooks` carries settled promises from
-  // peer storages (e.g. ClickHouse) that were kicked off in parallel — the
-  // primary storage awaits them inside its transaction so a peer failure
-  // aborts the commit, preserving cross-storage consistency. Non-primary
-  // storages can ignore the hook.
+  // `siblingTxHooks` are settled promises from peer storages — the primary
+  // awaits them inside its transaction so a peer failure aborts the commit.
   writeBatch: (
     ~batch: Batch.t,
     ~rawEvents: array<InternalTable.RawEvents.t>,
@@ -134,10 +131,8 @@ type storage = {
     ~updatedEntities: array<updatedEntity>,
     ~siblingTxHooks: array<promise<option<exn>>>=?,
   ) => promise<unit>,
-  // Align this storage to the primary's last-committed checkpoint after a
-  // resume — drops rows newer than `checkpointId` from history / checkpoints
-  // tables, so a mirror that crashed mid-batch lines up with the primary on
-  // restart. The primary itself is the source of truth and does no work.
+  // Drop rows newer than the primary's checkpoint after a resume so a mirror
+  // that crashed mid-batch lines up with the primary. No-op on the primary.
   alignToCheckpoint: (~checkpointId: Internal.checkpointId) => promise<unit>,
   // Release any long-lived resources (e.g. the postgres connection pool) so
   // short-lived CLI commands like `db-migrate setup` can exit cleanly.
@@ -154,12 +149,9 @@ type t = {
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
   mutable storageStatus: storageStatus,
-  // Primary system storage — owns chains, checkpoints, raw events, the
-  // canonical envio_info, and per-entity loaders / rollback queries. PG today.
+  // Primary owns system tables (chains, checkpoints, raw_events, envio_info)
+  // and rollback queries. PG today.
   mutable storage: storage,
-  // Peer storages (e.g. ClickHouse) that participate in init validation,
-  // writeBatch fan-out, reset, and close alongside `storage`. Empty when no
-  // additional backends are configured.
   additionalStorages: array<storage>,
 }
 
@@ -193,10 +185,8 @@ let resetAll = persistence =>
 let closeAll = persistence =>
   Promise.all(persistence->allStorages->Belt.Array.map(s => s.close()))->Utils.Promise.ignoreValue
 
-// Per-entity primary: the storage that owns the entity's canonical table for
-// load operations. PG wins when the entity opts into both backends; an entity
-// that opted out of PG falls back to the first peer storage that owns it (today
-// always ClickHouse). With only PG configured this always returns the primary.
+// PG wins when the entity opts into both backends; an entity that opted out
+// of PG falls back to the first peer storage.
 let getPrimaryStorageForEntity = (persistence, ~entityConfig: Internal.entityConfig) =>
   if entityConfig.storage.postgres {
     persistence.storage
@@ -225,9 +215,8 @@ let init = {
         })
         persistence.storageStatus = Initializing(promise)
         let storages = persistence->allStorages
-        // Skip the existence probe when forcing a reset — we're going to
-        // reinitialize regardless. Matches the old single-storage `||`
-        // short-circuit and keeps the call count predictable for callers.
+        // Reset short-circuits the existence probe — callers count on
+        // isInitialized never being called when reset is requested.
         let initializedFlags = reset
           ? []
           : await Promise.all(storages->Belt.Array.map(s => s.isInitialized()))
@@ -247,14 +236,11 @@ let init = {
               )
             ),
           )
-          // Primary is at index 0 — its initialState carries the canonical
-          // system data (chains, checkpointId, effect cache).
           let initialState = initialStates->Belt.Array.getUnsafe(0)
           Logging.info(`The indexer storage is ready. Starting indexing!`)
           persistence.storageStatus = Ready(initialState)
         } else if !allInitialized {
-          // Mixed state: some storages fresh, some already initialized.
-          // Refuse to proceed — would leave them out of sync.
+          // Resuming with one backend fresh would silently desync them.
           let initializedNames = []
           let freshNames = []
           storages->Belt.Array.forEachWithIndex((idx, s) =>
@@ -283,11 +269,8 @@ let init = {
           let resumedStates = await Promise.all(
             storages->Belt.Array.map(s => s.resumeInitialState()),
           )
-          // Each storage stores its own envio_info; compat-check every one
-          // against the running config. When more than one storage is
-          // configured we prefix the storage name on each bullet so the user
-          // can see which backend disagrees; with a single storage the prefix
-          // is noise.
+          // Prefix the storage name only when there's more than one — single-
+          // storage runs would just see noise like "postgres: chains.10".
           let allChangedPaths = []
           let shouldLabel = storages->Array.length > 1
           storages->Belt.Array.forEachWithIndex((idx, s) => {
@@ -305,8 +288,8 @@ let init = {
           Config.throwIfIncompatible(allChangedPaths, ~resetCommand)
           let initialState = resumedStates->Belt.Array.getUnsafe(0)
 
-          // Align mirror storages to the primary's committed checkpoint so a
-          // mid-batch crash on a mirror doesn't leave it ahead of PG.
+          // A mid-batch crash on a mirror could leave it ahead of PG —
+          // realign before resuming writes.
           if persistence.additionalStorages->Utils.Array.notEmpty {
             await Promise.all(
               persistence.additionalStorages->Belt.Array.map(s =>
@@ -411,10 +394,8 @@ let writeBatch = (
       })
       acc
     }
-    // Kick off mirror writes first so the primary's transaction can await
-    // their settlement before committing. A mirror failure throws inside the
-    // primary's tx, rolling back the PG side and preserving cross-storage
-    // consistency.
+    // Mirror writes run in parallel; the primary's tx awaits their
+    // settlement before COMMIT so a mirror failure aborts the PG side too.
     let siblingTxHooks = persistence.additionalStorages->Belt.Array.map(storage => {
       storage.writeBatch(
         ~batch,

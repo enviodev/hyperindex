@@ -1,13 +1,3 @@
-// ClickHouse-backed Persistence.storage. Replaces the prior `Sink` module —
-// ClickHouse now plugs into Persistence as a peer of Postgres, so the same
-// init/validate/reset flow runs over it.
-//
-// Many methods on Persistence.storage are PG-only today (loaders, effect
-// cache, chain meta, rollback queries). They throw a friendly "not supported
-// yet" error if invoked against ClickHouse; in practice they only fire for
-// entities whose primary storage resolves to ClickHouse, which today is
-// nobody since every entity opting into ClickHouse also opts into Postgres.
-
 let unsupported = (method: string) =>
   JsError.throwWithMessage(
     `${method} is not supported on ClickHouse storage yet. Enable \`storage.postgres\` on this entity to use this operation.`,
@@ -72,8 +62,8 @@ let make = (~host, ~database, ~username, ~password): Persistence.storage => {
     ~updatedEntities: array<Persistence.updatedEntity>,
     ~siblingTxHooks as _=[],
   ) => {
-    // Rollback handling — must run before writes for this batch so we don't
-    // leave history rows newer than the rollback target.
+    // Must run before writes so history rows newer than the rollback target
+    // are gone before this batch's rows land.
     switch rollbackTargetCheckpointId {
     | Some(checkpointId) => await ClickHouse.rollback(client, ~database, ~checkpointId)
     | None => ()
@@ -124,7 +114,6 @@ let make = (~host, ~database, ~username, ~password): Persistence.storage => {
   }
 }
 
-// Validates required env vars only when ClickHouse storage is enabled.
 let makeFromEnv = (): option<Persistence.storage> => {
   let host = Env.ClickHouse.host()
   let username = Env.ClickHouse.username()

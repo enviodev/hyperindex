@@ -980,9 +980,7 @@ let rec writeBatch = async (
           ->Promise.all
           ->Utils.Promise.ignoreValue
 
-          // Await any peer-storage writes (e.g. ClickHouse) before COMMIT.
-          // First settled error aborts the transaction so the PG side rolls
-          // back on a peer failure.
+          // First peer error aborts the tx so PG rolls back too.
           if siblingTxHooks->Utils.Array.notEmpty {
             let settled = await Promise.all(siblingTxHooks)
             switch settled->Belt.Array.getBy(o => o->Belt.Option.isSome) {
@@ -1209,9 +1207,6 @@ let make = (
     ~enums=[],
     ~envioInfo,
   ): Persistence.initialState => {
-    // PG owns tables only for entities that opted into Postgres. Other
-    // backends (e.g. ClickHouse) plug in as peer Persistence.storage values
-    // and own their own entity routing.
     let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
 
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
@@ -1659,7 +1654,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     getRollbackProgressDiff,
     getRollbackData,
     writeBatch: writeBatchMethod,
-    // PG is the source of truth — no realignment work to do.
     alignToCheckpoint: (~checkpointId as _) => Promise.resolve(),
     close,
   }
@@ -1739,9 +1733,6 @@ let makePersistenceFromConfig = (
   let additionalStorages = switch additionalStorages {
   | Some(storages) => storages
   | None =>
-    // Each backend opt-in in config.yaml maps to one peer storage. ClickHouse
-    // env vars are validated lazily here so users without it set never trip
-    // the check.
     if config.storage.clickhouse {
       switch ClickHouseStorage.makeFromEnv() {
       | Some(s) => [s]

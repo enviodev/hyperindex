@@ -412,8 +412,6 @@ FROM (
 WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> string)}'`
 }
 
-// Name mirrors the Postgres envio_info table — singleton row keyed on id=1,
-// holds the JSON config used for the resume compat check.
 let envioInfoTableName = "envio_info"
 
 let makeCreateEnvioInfoTableQuery = (~database: string, ~replicated: bool=false) => {
@@ -426,8 +424,7 @@ ENGINE = ${tableEngine}
 ORDER BY (id)`
 }
 
-// `FINAL` collapses duplicates from prior inserts so we always see the
-// latest config. The table only ever holds a single logical row (id=1).
+// `FINAL` collapses ReplacingMergeTree duplicates so we read the latest row.
 let readEnvioInfo = async (client, ~database: string): option<JSON.t> => {
   try {
     let result = await client->query({
@@ -474,7 +471,6 @@ let dropDatabase = async (client, ~database: string) => {
   await client->exec({query: `DROP DATABASE IF EXISTS ${database}`})
 }
 
-// Initialize ClickHouse tables for entities
 let initialize = async (
   client,
   ~database: string,
@@ -554,10 +550,8 @@ let isInitialized = async (client, ~database: string): bool => {
     | None => false
     }
     if dbExists {
-      // Database might exist as a leftover even though we never finished
-      // initializing it; require the envio_info table to call it ours.
-      // Without this check an interrupted prior `initialize` would look
-      // initialized and we'd resume against partial schemas.
+      // An interrupted prior `initialize` leaves the database but no
+      // envio_info — without this gate we'd resume against partial schemas.
       await hasEnvioInfoTable(client, ~database)
     } else {
       false
@@ -567,7 +561,6 @@ let isInitialized = async (client, ~database: string): bool => {
   }
 }
 
-// Delete rows newer than the rollback target from history + checkpoints tables.
 let rollback = async (client, ~database: string, ~checkpointId: Internal.checkpointId) => {
   try {
     // Get all history tables
