@@ -1,4 +1,4 @@
-// Local narrowing for `instruction.decoded.args` (typed `unknown` upstream).
+// Local narrowing for `instruction.params.args` (typed `unknown` upstream).
 // Borsh renders >=64-bit ints as decimal strings; BigInt(...) them for arithmetic.
 
 export interface SplAmountArgs {

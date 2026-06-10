@@ -6,7 +6,7 @@ import {
   type LiquidationEvent,
   type IndexerStats,
   type SvmInstruction,
-  type SvmDecodedInstruction,
+  type SvmInstructionParams,
 } from "envio";
 import type {
   SplAmountArgs,
@@ -42,7 +42,7 @@ type NodeArgs = {
   argMintB?: string;
   argMarketIndex?: number;
 };
-type MapArgs = (decoded: SvmDecodedInstruction) => NodeArgs;
+type MapArgs = (params: SvmInstructionParams) => NodeArgs;
 type FlowHandler = (a: { instruction: SvmInstruction; context: FlowContext }) => Promise<void>;
 
 const addrPath = (a: readonly number[]): string => a.join(".");
@@ -99,7 +99,7 @@ function writeNode(
   if (!txSig) return;
   const addr = instruction.instructionAddress;
   const path = addrPath(addr);
-  const decoded = instruction.decoded;
+  const params = instruction.params;
   context.InstructionNode.set({
     id: `${txSig}:${path}`,
     txSig,
@@ -112,7 +112,7 @@ function writeNode(
     // A handler only fires for its instruction's discriminator, so the
     // registered name is correct even when borsh decode fails (e.g. a Jupiter
     // routePlan variant newer than the bundled IDL).
-    ixName: decoded?.name ?? instructionName,
+    ixName: params?.name ?? instructionName,
     isInner: instruction.isInner,
     feePayer: instruction.transaction?.feePayer,
     success: instruction.transaction?.success,
@@ -130,8 +130,8 @@ function writeNode(
 
 function nodeHandler(program: string, instructionName: string, mapArgs?: MapArgs): FlowHandler {
   return async ({ instruction, context }) => {
-    const decoded = instruction.decoded;
-    const extra = decoded && mapArgs ? mapArgs(decoded) : {};
+    const params = instruction.params;
+    const extra = params && mapArgs ? mapArgs(params) : {};
     writeNode(instruction, context, program, instructionName, extra);
     await bumpStats(instruction, context);
   };
@@ -139,8 +139,8 @@ function nodeHandler(program: string, instructionName: string, mapArgs?: MapArgs
 
 function liquidationHandler(program: string, instructionName: string, mapArgs: MapArgs): FlowHandler {
   return async ({ instruction, context }) => {
-    const decoded = instruction.decoded;
-    const extra = decoded ? mapArgs(decoded) : {};
+    const params = instruction.params;
+    const extra = params ? mapArgs(params) : {};
     writeNode(instruction, context, program, instructionName, extra);
     const txSig = instruction.transaction?.signatures[0];
     if (txSig) {
@@ -148,7 +148,7 @@ function liquidationHandler(program: string, instructionName: string, mapArgs: M
         id: `${txSig}:${addrPath(instruction.instructionAddress)}`,
         txSig,
         slot: instruction.slot,
-        ixName: decoded?.name ?? instructionName,
+        ixName: params?.name ?? instructionName,
         marketIndex: extra.argMarketIndex,
         liabilityAmount: extra.argU64A,
       });

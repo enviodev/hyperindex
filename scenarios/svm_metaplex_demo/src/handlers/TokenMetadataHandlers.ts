@@ -27,14 +27,14 @@ async function bumpStats(
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "CreateMetadataAccountV3" },
   async ({ instruction, context }) => {
-    const decoded = instruction.decoded;
-    if (!decoded) {
+    const params = instruction.params;
+    if (!params) {
       // Bundled Metaplex schema should always match disc 0x21 — surface
       // mismatches loudly so the upstream decoder regression is obvious.
       console.warn("CreateMetadataAccountV3: no decoded payload");
       return;
     }
-    const { args, accounts } = decoded;
+    const { args, accounts } = params;
     const metadataPda = accounts.metadata;
     if (metadataPda === undefined) return;
     const mint = accounts.mint ?? "";
@@ -61,12 +61,12 @@ indexer.onInstruction(
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2" },
   async ({ instruction, context }) => {
-    const decoded = instruction.decoded;
-    if (!decoded) {
+    const params = instruction.params;
+    if (!params) {
       console.warn("UpdateMetadataAccountV2: no decoded payload");
       return;
     }
-    const { args, accounts } = decoded;
+    const { args, accounts } = params;
     const metadataPda = accounts.metadata;
     if (metadataPda === undefined) return;
     const updateAuthority = args.update_authority ?? accounts.update_authority;
