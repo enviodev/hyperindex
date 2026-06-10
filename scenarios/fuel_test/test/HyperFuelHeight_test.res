@@ -22,54 +22,67 @@ let startServer = async handler => {
   (server, `http://127.0.0.1:${port->Int.toString}`)
 }
 
+// Guarantees the temp server is closed even if the body throws, so a failing
+// assertion can't leak a listener and hang/cross-talk with later tests.
+let withServer = async (handler, body) => {
+  let (server, endpointUrl) = await startServer(handler)
+  try {
+    let result = await body(endpointUrl)
+    server->close
+    result
+  } catch {
+  | exn =>
+    server->close
+    throw(exn)
+  }
+}
+
 describe("HyperFuelSource - getHeightOrThrow", () => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 
   Async.it("Requests height via the client with auth and user agent headers", async t => {
     let capturedHeaders = ref(None)
-    let (server, endpointUrl) = await startServer((req, res) => {
+    await withServer((req, res) => {
       capturedHeaders := Some(req.headers)
       res->writeHead(200)
       res->endWith(`{"height": 123}`)
-    })
+    }, async endpointUrl => {
+      let source = HyperFuelSource.make({
+        chain,
+        endpointUrl,
+        apiToken: Some("test-token"),
+      })
+      let height = await source.getHeightOrThrow()
 
-    let source = HyperFuelSource.make({
-      chain,
-      endpointUrl,
-      apiToken: Some("test-token"),
+      let headers = capturedHeaders.contents->Option.getOrThrow
+      t.expect((
+        height,
+        headers->Dict.get("authorization"),
+        headers->Dict.get("user-agent"),
+      )).toEqual((
+        123,
+        Some("Bearer test-token"),
+        Some(`hyperindex/${Utils.EnvioPackage.value.version}`),
+      ))
     })
-    let height = await source.getHeightOrThrow()
-    server->close
-
-    let headers = capturedHeaders.contents->Option.getOrThrow
-    t.expect((
-      height,
-      headers->Dict.get("authorization"),
-      headers->Dict.get("user-agent"),
-    )).toEqual((
-      123,
-      Some("Bearer test-token"),
-      Some(`hyperindex/${Utils.EnvioPackage.value.version}`),
-    ))
   })
 
   Async.it("Blocks forever on 401 instead of throwing for a retry", async t => {
-    let (server, endpointUrl) = await startServer((_req, res) => {
+    await withServer((_req, res) => {
       res->writeHead(401)
       res->endWith("Unauthorized")
-    })
+    }, async endpointUrl => {
+      let source = HyperFuelSource.make({
+        chain,
+        endpointUrl,
+        apiToken: Some("rejected-token"),
+      })
+      let result = await Promise.race([
+        source.getHeightOrThrow()->Promise.thenResolve(_ => "resolved"),
+        Time.resolvePromiseAfterDelay(~delayMilliseconds=300)->Promise.thenResolve(() => "blocked"),
+      ])
 
-    let source = HyperFuelSource.make({
-      chain,
-      endpointUrl,
-      apiToken: Some("rejected-token"),
+      t.expect(result).toEqual("blocked")
     })
-    let result = await Promise.race([
-      source.getHeightOrThrow()->Promise.thenResolve(_ => "resolved"),
-      Time.resolvePromiseAfterDelay(~delayMilliseconds=300)->Promise.thenResolve(() => "blocked"),
-    ])
-    server->close
-
-    t.expect(result).toEqual("blocked")
   })
 })
