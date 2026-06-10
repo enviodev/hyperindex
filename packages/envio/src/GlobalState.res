@@ -497,10 +497,7 @@ let injectedActionReducer = (~markBatchProcessed: Ports.MarkBatchProcessed.t) =>
         // Can safely reset rollback state, since overwrite is not possible.
         // If rollback is pending, the EventBatchProcessed will be handled by the invalid action reducer instead.
         rollbackState: NoRollback,
-        chainManager: state.chainManager->ChainManager.updateProgressedChains(
-          ~batch,
-          ~getTimestamp=state.ctx.config.ecosystem.getTimestamp,
-        ),
+        chainManager: state.chainManager->ChainManager.updateProgressedChains(~batch),
       }
 
       let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
@@ -616,10 +613,7 @@ let injectedInvalidatedActionReducer = (
       (
         {
           ...state,
-          chainManager: state.chainManager->ChainManager.updateProgressedChains(
-            ~batch,
-            ~getTimestamp=state.ctx.config.ecosystem.getTimestamp,
-          ),
+          chainManager: state.chainManager->ChainManager.updateProgressedChains(~batch),
         },
         [Rollback],
       )

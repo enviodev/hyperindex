@@ -56,12 +56,11 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           timestamp: currentTime.contents,
           chain: ChainMap.Chain.makeUnsafe(~chainId=id),
           blockNumber: currentBlockNumber.contents,
+          blockHash: `0x${currentBlockNumber.contents->Int.toString}`,
           logIndex,
           eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
           event: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->Utils.magic,
         })
-        let eventItem = batchItem->Internal.castUnsafeEventItem
-
         allEvents->Array.push(batchItem)->ignore
 
         let query: FetchState.query = {
@@ -83,8 +82,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           fetchState.contents->FetchState.handleQueryResult(
             ~query,
             ~latestFetchedBlock={
-              blockNumber: eventItem.blockNumber,
-              blockTimestamp: eventItem.timestamp,
+              blockNumber: currentBlockNumber.contents,
+              blockTimestamp: currentTime.contents,
             },
             ~newItems=[batchItem],
           )
@@ -153,6 +152,7 @@ describe("ChainManager", () => {
           timestamp: 0,
           chain: MockConfig.chain1,
           blockNumber: 0,
+          blockHash: "0x0",
           logIndex: 0,
           eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
           event: `mock initial event`->Utils.magic,

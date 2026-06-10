@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=../../packages/envio/svm.schema.json
+name: svm-metaplex-demo
+description: |
+  HyperIndex Stage 4 demo. Indexes Metaplex Token Metadata
+  `CreateMetadataAccountV3` and `UpdateMetadataAccountV2` instructions on
+  Solana mainnet via HyperSync.
+ecosystem: svm
+chains:
+  - start_block: 417950000
+    # Unset for continuous live tailing. `src/indexer.test.ts` sets it to pin a
+    # finite, deterministic window over archived slots.
+    end_block: ${ENVIO_METAPLEX_END_BLOCK:-}
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: TokenMetadata
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: CreateMetadataAccountV3
+              discriminator: "0x21"
+              field_selection:
+                transaction_fields: true
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
+              field_selection:
+                transaction_fields: true

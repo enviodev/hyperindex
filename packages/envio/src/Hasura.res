@@ -40,6 +40,19 @@ let clearMetadataRoute = Rest.route(() => {
   responses,
 })
 
+let reloadMetadataRoute = Rest.route(() => {
+  method: Post,
+  path: "",
+  input: s => {
+    let _ = s.field("type", S.literal("reload_metadata"))
+    {
+      "args": s.field("args", S.json(~validate=false)),
+      "auth": s->auth,
+    }
+  },
+  responses,
+})
+
 let trackTablesRoute = Rest.route(() => {
   method: Post,
   path: "",
@@ -105,6 +118,31 @@ let clearHasuraMetadata = async (~endpoint, ~auth) => {
   | exn =>
     Logging.error({
       "msg": `There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "err": exn->Utils.prettifyExn,
+    })
+  }
+}
+
+let reloadHasuraMetadata = async (~endpoint, ~auth) => {
+  try {
+    let result = await reloadMetadataRoute->Rest.fetch(
+      {
+        "auth": auth,
+        "args": {
+          "reload_sources": ["default"],
+        }->(Utils.magic: 'a => JSON.t),
+      },
+      ~client=Rest.client(endpoint),
+    )
+    let msg = switch result {
+    | QuerySucceeded => "Hasura metadata reloaded"
+    | AlreadyDone => "Hasura metadata reload acknowledged"
+    }
+    Logging.trace(msg)
+  } catch {
+  | exn =>
+    Logging.error({
+      "msg": `There was an issue reloading hasura metadata - table tracking may race with schema creation.`,
       "err": exn->Utils.prettifyExn,
     })
   }
@@ -328,6 +366,11 @@ let trackDatabase = async (
   Logging.info("Tracking tables in Hasura")
 
   let _ = await clearHasuraMetadata(~endpoint, ~auth)
+
+  // Force Hasura to re-introspect the source schema before tracking, otherwise
+  // freshly-created user tables may be invisible to pg_track_tables and the call
+  // returns `metadata-warnings` (HTTP 400), leaving tracking permanently broken.
+  await reloadHasuraMetadata(~endpoint, ~auth)
 
   await trackTables(~endpoint, ~auth, ~pgSchema, ~tableConfigs)
 

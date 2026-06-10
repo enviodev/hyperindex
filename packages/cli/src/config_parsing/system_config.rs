@@ -35,6 +35,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use hypersync_client_solana::decode::{
+    metaplex_token_metadata, schema_from_anchor_idl_json, EnumVariant as SvmEnumVariant,
+    FieldType as SvmFieldType, InstructionSchema as SvmInstructionSchema,
+    NamedField as SvmNamedField, ProgramSchema as SvmProgramSchema,
+};
+
 type ContractNameKey = String;
 type NetworkIdKey = u64;
 type EntityKey = String;
@@ -1058,10 +1064,110 @@ impl SystemConfig {
                 })
             }
             HumanConfig::Svm(ref svm_config) => {
+                validation::validate_deserialized_svm_config_yaml(svm_config)?;
                 for network in &svm_config.chains {
                     let sync_source = DataSource::Svm {
                         rpc: network.rpc.clone(),
+                        hypersync_endpoint_url: network
+                            .experimental
+                            .as_ref()
+                            .map(|e| e.hypersync_config.url.clone()),
                     };
+
+                    let programs = network
+                        .experimental
+                        .as_ref()
+                        .map(|e| e.programs.as_slice())
+                        .unwrap_or(&[]);
+                    let mut chain_contracts = Vec::new();
+                    for program in programs {
+                        let svm_abi =
+                            resolve_program_schema(program, project_paths).with_context(|| {
+                                format!(
+                                    "Resolving Borsh schema for program '{}' ({})",
+                                    program.name, program.program_id
+                                )
+                            })?;
+                        let events = program
+                            .instructions
+                            .iter()
+                            .map(|instr| -> Result<Event> {
+                                let (normalized_discriminator, byte_len) =
+                                    match &instr.discriminator {
+                                        Some(d) => {
+                                            let hex = d.strip_prefix("0x").unwrap_or(d);
+                                            let byte_len = (hex.len() / 2) as u8;
+                                            (Some(format!("0x{hex}")), byte_len)
+                                        }
+                                        None => (None, 0u8),
+                                    };
+                                let (accounts, args) = resolve_instruction_layout(instr, &svm_abi)
+                                    .with_context(|| {
+                                        format!("Layout for instruction '{}'", instr.name)
+                                    })?;
+                                let fs = instr.field_selection.as_ref();
+                                let include_token_balances = fs
+                                    .and_then(|f| f.token_balance_fields.as_ref())
+                                    .is_some_and(|v| v.is_enabled());
+                                let include_transaction = fs
+                                    .and_then(|f| f.transaction_fields.as_ref())
+                                    .is_some_and(|v| v.is_enabled())
+                                    || include_token_balances;
+                                let include_logs = fs
+                                    .and_then(|f| f.log_fields.as_ref())
+                                    .is_some_and(|v| v.is_enabled());
+                                let svm_kind = SvmEventKind {
+                                    discriminator: normalized_discriminator.clone(),
+                                    discriminator_byte_len: byte_len,
+                                    include_token_balances,
+                                    include_transaction,
+                                    include_logs,
+                                    account_filters: instr
+                                        .account_filters
+                                        .as_ref()
+                                        .map(|filters| {
+                                            filters
+                                                .groups()
+                                                .into_iter()
+                                                .map(|group| {
+                                                    group
+                                                        .iter()
+                                                        .map(|af| SvmAccountFilter {
+                                                            position: af.position,
+                                                            values: af.values.clone(),
+                                                        })
+                                                        .collect()
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
+                                    is_inner: instr.is_inner,
+                                    accounts,
+                                    args,
+                                };
+                                Ok(Event {
+                                    name: instr.name.clone(),
+                                    kind: EventKind::Svm(svm_kind),
+                                    sighash: normalized_discriminator.clone().unwrap_or_default(),
+                                    event_signature: String::new(),
+                                    field_selection: None,
+                                })
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+
+                        let contract = Contract::new(
+                            program.name.clone(),
+                            program.handler.clone(),
+                            events,
+                            Abi::Svm(svm_abi),
+                        )?;
+                        contracts.insert(contract.name.clone(), contract.clone());
+                        chain_contracts.push(ChainContract {
+                            name: program.name.clone(),
+                            addresses: vec![program.program_id.clone()],
+                            start_block: None,
+                        });
+                    }
 
                     let chain = Chain {
                         id: 0, //network.id,
@@ -1071,12 +1177,17 @@ impl SystemConfig {
                         max_reorg_depth: None,
                         block_lag: network.block_lag,
                         sync_source,
-                        contracts: vec![],
+                        contracts: chain_contracts,
                     };
 
                     unique_hashmap::try_insert(&mut chains, chain.id, chain)
                         .context("Failed inserting chain at chains map")?;
                 }
+
+                // Reorg rollback is only meaningful for the experimental
+                // HyperSync source (it surfaces block hashes); RPC-only chains
+                // keep it off for now.
+                let uses_hypersync = svm_config.chains.iter().any(|n| n.experimental.is_some());
 
                 Ok(SystemConfig {
                     name: svm_config.base.name.clone(),
@@ -1088,10 +1199,10 @@ impl SystemConfig {
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     contracts,
-                    rollback_on_reorg: false,
+                    rollback_on_reorg: uses_hypersync,
                     save_full_history: false,
                     schema,
-                    field_selection: FieldSelection::fuel(),
+                    field_selection: FieldSelection::svm(),
                     enable_raw_events: false,
                     storage,
                     lowercase_addresses: false,
@@ -1197,7 +1308,8 @@ pub enum DataSource {
         hypersync_endpoint_url: ServerUrl,
     },
     Svm {
-        rpc: ServerUrl,
+        rpc: Option<ServerUrl>,
+        hypersync_endpoint_url: Option<ServerUrl>,
     },
 }
 
@@ -1433,10 +1545,296 @@ impl EvmAbi {
     }
 }
 
+/// Base58 program id for the bundled Metaplex Token Metadata schema. Kept
+/// here (rather than imported from the upstream crate) so a future bundled
+/// schema can be added by appending a row to the `bundled_program_schemas`
+/// table without leaking strings across the module boundary.
+const METAPLEX_TOKEN_METADATA_PROGRAM_ID: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+
+/// One row in the bundled-programs table: `(program_id, source_name,
+/// accessor returning the upstream `ProgramSchema`)`.
+type BundledProgramRow = (
+    &'static str,
+    &'static str,
+    fn() -> &'static SvmProgramSchema,
+);
+
+/// Table of bundled programs. Lookup by base58 `program_id`. To add a
+/// program: ship a `ProgramSchema` constant in `hypersync_client_solana`,
+/// expose a public accessor, then add a row here.
+fn bundled_program_schemas() -> Vec<BundledProgramRow> {
+    vec![(
+        METAPLEX_TOKEN_METADATA_PROGRAM_ID,
+        "metaplex_token_metadata",
+        metaplex_token_metadata,
+    )]
+}
+
+fn resolve_program_schema(
+    program: &human_config::svm::Program,
+    project_paths: &ParsedProjectPaths,
+) -> Result<SvmAbi> {
+    let any_instruction_carries_schema = program
+        .instructions
+        .iter()
+        .any(|i| i.accounts.is_some() || i.args.is_some());
+
+    if let Some(idl_path) = program.idl.as_deref() {
+        if any_instruction_carries_schema {
+            return Err(anyhow!(
+                "Program '{}': `idl` is mutually exclusive with per-instruction \
+                 `accounts`/`args` overrides. Use one or the other.",
+                program.name
+            ));
+        }
+        let abs = project_paths.project_root.join(idl_path);
+        let body = fs::read_to_string(&abs)
+            .with_context(|| format!("reading IDL at '{}'", abs.display()))?;
+        let schema = schema_from_anchor_idl_json(&body)
+            .with_context(|| format!("parsing IDL at '{}'", abs.display()))?;
+        return Ok(SvmAbi {
+            program_id: program.program_id.clone(),
+            instructions: schema.instructions,
+            defined_types: schema.defined_types,
+            source: SvmSchemaSource::AnchorIdl {
+                path: idl_path.to_string(),
+            },
+        });
+    }
+
+    if !any_instruction_carries_schema {
+        if let Some((_, name, getter)) = bundled_program_schemas()
+            .into_iter()
+            .find(|(pid, _, _)| *pid == program.program_id.as_str())
+        {
+            let schema = getter();
+            return Ok(SvmAbi {
+                program_id: program.program_id.clone(),
+                instructions: schema.instructions.clone(),
+                defined_types: schema.defined_types.clone(),
+                source: SvmSchemaSource::Bundled { name },
+            });
+        }
+    }
+
+    Ok(SvmAbi {
+        program_id: program.program_id.clone(),
+        instructions: BTreeMap::new(),
+        defined_types: BTreeMap::new(),
+        source: SvmSchemaSource::Inline,
+    })
+}
+
+/// Resolve per-instruction `(accounts, args)` from one of:
+/// 1. YAML per-instruction `accounts`/`args` overrides (highest priority).
+/// 2. The matching `InstructionSchema` on the program's resolved schema
+///    (bundled OR Anchor IDL), keyed by the YAML `discriminator` bytes.
+/// 3. An empty pair (`accounts: []`, `args: []`) so existing untyped
+///    handlers keep working.
+fn resolve_instruction_layout(
+    instr: &human_config::svm::Instruction,
+    abi: &SvmAbi,
+) -> Result<(Vec<String>, Vec<SvmNamedField>)> {
+    if let (Some(accounts_yaml), Some(args_yaml)) = (&instr.accounts, &instr.args) {
+        let args = args_yaml
+            .iter()
+            .map(yaml_arg_to_named_field)
+            .collect::<Result<Vec<_>>>()?;
+        return Ok((accounts_yaml.clone(), args));
+    }
+    if instr.accounts.is_some() != instr.args.is_some() {
+        return Err(anyhow!(
+            "Instruction '{}': `accounts` and `args` must be provided together \
+             (or both omitted to fall back to a bundled/IDL schema).",
+            instr.name
+        ));
+    }
+
+    if let Some(disc_bytes) = disc_to_bytes(instr.discriminator.as_deref())? {
+        if let Some(ix_schema) = abi.instructions.get(&disc_bytes) {
+            let accounts = ix_schema.accounts.iter().map(|a| a.name.clone()).collect();
+            let args = ix_schema.args.clone();
+            return Ok((accounts, args));
+        }
+    }
+
+    Ok((Vec::new(), Vec::new()))
+}
+
+fn disc_to_bytes(disc: Option<&str>) -> Result<Option<Vec<u8>>> {
+    let Some(s) = disc else { return Ok(None) };
+    let hex = s.strip_prefix("0x").unwrap_or(s);
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&hex[i..i + 2], 16)
+                .with_context(|| format!("invalid hex byte at offset {i} in discriminator '{s}'"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Some(bytes))
+}
+
+fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
+    Ok(SvmNamedField {
+        name: arg.name.clone(),
+        ty: yaml_type_to_field_type(&arg.ty)
+            .with_context(|| format!("translating type for arg '{}'", arg.name))?,
+    })
+}
+
+/// Convert an upstream `FieldType` into the YAML/wire-format `ArgType`. Used
+/// when serializing `SvmEventKind.args` / `SvmAbi.defined_types` into
+/// `internal_config.json` for the runtime to consume.
+pub fn field_type_to_arg_type(ty: &SvmFieldType) -> human_config::svm::ArgType {
+    use human_config::svm::{ArgComposite as C, ArgPrimitive as P, ArgType as T};
+    match ty {
+        SvmFieldType::Bool => T::Primitive(P::Bool),
+        SvmFieldType::U8 => T::Primitive(P::U8),
+        SvmFieldType::U16 => T::Primitive(P::U16),
+        SvmFieldType::U32 => T::Primitive(P::U32),
+        SvmFieldType::U64 => T::Primitive(P::U64),
+        SvmFieldType::U128 => T::Primitive(P::U128),
+        SvmFieldType::I8 => T::Primitive(P::I8),
+        SvmFieldType::I16 => T::Primitive(P::I16),
+        SvmFieldType::I32 => T::Primitive(P::I32),
+        SvmFieldType::I64 => T::Primitive(P::I64),
+        SvmFieldType::I128 => T::Primitive(P::I128),
+        SvmFieldType::F32 => T::Primitive(P::F32),
+        SvmFieldType::F64 => T::Primitive(P::F64),
+        SvmFieldType::String => T::Primitive(P::String),
+        SvmFieldType::Bytes => T::Primitive(P::Bytes),
+        SvmFieldType::Pubkey => T::Primitive(P::Pubkey),
+        SvmFieldType::Option(inner) => {
+            T::Composite(C::Option(Box::new(field_type_to_arg_type(inner))))
+        }
+        SvmFieldType::Vec(inner) => T::Composite(C::Vec(Box::new(field_type_to_arg_type(inner)))),
+        SvmFieldType::Array { ty, len } => {
+            T::Composite(C::Array(Box::new(field_type_to_arg_type(ty)), *len))
+        }
+        SvmFieldType::Defined(name) => T::Composite(C::Defined(name.clone())),
+        SvmFieldType::Struct(fields) => T::Composite(C::Struct(
+            fields.iter().map(named_field_to_arg_def).collect(),
+        )),
+        SvmFieldType::Enum(variants) => T::Composite(C::Enum(
+            variants
+                .iter()
+                .map(|v| human_config::svm::ArgEnumVariant {
+                    name: v.name.clone(),
+                    fields: v
+                        .fields
+                        .as_ref()
+                        .map(|fs| fs.iter().map(named_field_to_arg_def).collect()),
+                })
+                .collect(),
+        )),
+    }
+}
+
+pub fn named_field_to_arg_def(nf: &SvmNamedField) -> human_config::svm::ArgDef {
+    human_config::svm::ArgDef {
+        name: nf.name.clone(),
+        ty: field_type_to_arg_type(&nf.ty),
+    }
+}
+
+fn yaml_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFieldType> {
+    use human_config::svm::{ArgComposite as C, ArgPrimitive as P, ArgType as T};
+    Ok(match ty {
+        T::Primitive(p) => match p {
+            P::Bool => SvmFieldType::Bool,
+            P::U8 => SvmFieldType::U8,
+            P::U16 => SvmFieldType::U16,
+            P::U32 => SvmFieldType::U32,
+            P::U64 => SvmFieldType::U64,
+            P::U128 => SvmFieldType::U128,
+            P::I8 => SvmFieldType::I8,
+            P::I16 => SvmFieldType::I16,
+            P::I32 => SvmFieldType::I32,
+            P::I64 => SvmFieldType::I64,
+            P::I128 => SvmFieldType::I128,
+            P::F32 => SvmFieldType::F32,
+            P::F64 => SvmFieldType::F64,
+            P::String => SvmFieldType::String,
+            P::Bytes => SvmFieldType::Bytes,
+            P::Pubkey | P::PublicKey => SvmFieldType::Pubkey,
+        },
+        T::Composite(c) => match c {
+            C::Option(inner) => SvmFieldType::Option(Box::new(yaml_type_to_field_type(inner)?)),
+            C::Vec(inner) => SvmFieldType::Vec(Box::new(yaml_type_to_field_type(inner)?)),
+            C::Array(inner, len) => SvmFieldType::Array {
+                ty: Box::new(yaml_type_to_field_type(inner)?),
+                len: *len,
+            },
+            C::Defined(name) => SvmFieldType::Defined(name.clone()),
+            C::Struct(fields) => SvmFieldType::Struct(
+                fields
+                    .iter()
+                    .map(yaml_arg_to_named_field)
+                    .collect::<Result<_>>()?,
+            ),
+            C::Enum(variants) => SvmFieldType::Enum(
+                variants
+                    .iter()
+                    .map(|v| {
+                        let fields = v
+                            .fields
+                            .as_ref()
+                            .map(|fs| {
+                                fs.iter()
+                                    .map(yaml_arg_to_named_field)
+                                    .collect::<Result<_>>()
+                            })
+                            .transpose()?;
+                        Ok(SvmEnumVariant {
+                            name: v.name.clone(),
+                            fields,
+                        })
+                    })
+                    .collect::<Result<_>>()?,
+            ),
+        },
+    })
+}
+
+// Suppress unused warnings on imports only referenced via paths above when
+// the enum-variant constructor isn't reached at compile time.
+#[allow(dead_code)]
+const _UNUSED_ENUM_VARIANT: Option<SvmEnumVariant> = None;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Abi {
     Evm(EvmAbi),
     Fuel(Box<FuelAbi>),
+    /// Solana programs ship no on-chain ABI artifact. The `SvmAbi` payload
+    /// holds the program-level Borsh schema (defined-types registry, source
+    /// origin) shared across all of the program's instructions. The
+    /// per-instruction Borsh layout lives on each `SvmEventKind`.
+    Svm(SvmAbi),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SvmAbi {
+    /// Base58 program id this schema describes.
+    pub program_id: String,
+    /// Per-instruction Borsh layout (accounts + args), keyed by full
+    /// discriminator bytes. Populated from an Anchor IDL's `instructions` or the
+    /// bundled-schema registry; empty for inline (per-instruction YAML) schemas.
+    pub instructions: BTreeMap<Vec<u8>, SvmInstructionSchema>,
+    /// Nominal-type registry referenced by `SvmFieldType::Defined`. Populated
+    /// from an Anchor IDL's `types:` block, the bundled-schema registry, or
+    /// empty for hand-written ad-hoc schemas.
+    pub defined_types: BTreeMap<String, SvmFieldType>,
+    pub source: SvmSchemaSource,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SvmSchemaSource {
+    /// User-supplied `idl: <path>` parsed at codegen time.
+    AnchorIdl { path: String },
+    /// `program_id` matched a bundled `ProgramSchema` (e.g. Metaplex).
+    Bundled { name: &'static str },
+    /// Hand-written per-instruction `accounts`/`args` in YAML.
+    Inline,
 }
 
 impl Abi {
@@ -1444,6 +1842,7 @@ impl Abi {
         match self {
             Abi::Evm(abi) => abi.path.clone(),
             Abi::Fuel(abi) => Some(abi.path_buf.clone()),
+            Abi::Svm(_) => None,
         }
     }
 
@@ -1506,9 +1905,41 @@ pub enum FuelEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct SvmAccountFilter {
+    pub position: u8,
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SvmEventKind {
+    /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
+    /// instruction in the program.
+    pub discriminator: Option<String>,
+    /// Length of the decoded discriminator in bytes (0 / 1 / 2 / 4 / 8). The
+    /// router precomputes a per-program ordering on this so dispatch tries
+    /// longest first.
+    pub discriminator_byte_len: u8,
+    pub include_transaction: bool,
+    pub include_logs: bool,
+    pub include_token_balances: bool,
+    /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
+    /// AND across positions. An empty outer list means "no account filter".
+    pub account_filters: Vec<Vec<SvmAccountFilter>>,
+    /// `None` matches both outer and inner (CPI-invoked) instructions.
+    pub is_inner: Option<bool>,
+    /// Positional account names. Empty when the user supplied no schema and
+    /// no bundled/IDL schema applies; in that case `decoded.accounts` is `{}`.
+    pub accounts: Vec<String>,
+    /// Borsh argument layout in declared order. Empty for unknown
+    /// instructions; the raw `instruction.data` is still available.
+    pub args: Vec<SvmNamedField>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
     Params(Vec<EventParam>),
     Fuel(FuelEventKind),
+    Svm(SvmEventKind),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1835,6 +2266,29 @@ impl FieldSelection {
                 SelectedField {
                     name: "height".to_string(),
                     data_type: TypeIdent::Int,
+                },
+                SelectedField {
+                    name: "time".to_string(),
+                    data_type: TypeIdent::Int,
+                },
+            ],
+        )
+    }
+
+    pub fn svm() -> Self {
+        Self::new(
+            vec![SelectedField {
+                name: "id".to_string(),
+                data_type: TypeIdent::String,
+            }],
+            vec![
+                SelectedField {
+                    name: "slot".to_string(),
+                    data_type: TypeIdent::Int,
+                },
+                SelectedField {
+                    name: "hash".to_string(),
+                    data_type: TypeIdent::String,
                 },
                 SelectedField {
                     name: "time".to_string(),
@@ -2239,6 +2693,7 @@ mod test {
         {
             super::Abi::Evm(abi) => abi.typed.clone(),
             super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
+            super::Abi::Svm(_) => panic!("Svm abi should not be parsed"),
         };
 
         let expected_abi_string = r#"
@@ -2326,6 +2781,7 @@ mod test {
         {
             super::Abi::Evm(abi) => abi.typed.clone(),
             super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
+            super::Abi::Svm(_) => panic!("Svm abi should not be parsed"),
         };
 
         let expected_abi_string = r#"
@@ -3113,7 +3569,120 @@ type Transfer {
 }"#,
             )
             .unwrap();
-            assert!(validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_ok());
+            assert!(
+                validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_ok()
+            );
+        }
+
+        // The check also applies when only ClickHouse opts into snake_case
+        #[test]
+        fn clickhouse_only_snake_case_collision_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+  tokenId: BigInt!
+  token_id: BigInt!
+}"#,
+            )
+            .unwrap();
+            let storage = Storage {
+                postgres: Some(super::super::StorageBackend {
+                    entity_default: true,
+                    column_name_format: ColumnNameFormat::Original,
+                }),
+                clickhouse: Some(super::super::StorageBackend {
+                    entity_default: false,
+                    column_name_format: ColumnNameFormat::SnakeCase,
+                }),
+            };
+            assert!(validate_db_column_names(&storage, &schema).is_err());
+        }
+    }
+
+    mod svm_translation {
+        use super::SystemConfig;
+        use crate::config_parsing::system_config::{Abi, DataSource, EventKind};
+        use crate::project_paths::ParsedProjectPaths;
+        use pretty_assertions::assert_eq;
+
+        /// End-to-end: the Metaplex YAML fixture deserializes, validates, and
+        /// translates into a single Contract whose two Events carry the
+        /// expected discriminator + flags. Guards Stage 3 + Stage 4 plumbing
+        /// from drifting out of sync.
+        #[test]
+        fn translates_metaplex_yaml_into_contract_events() {
+            let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+            let project_paths =
+                ParsedProjectPaths::new(&test_dir, "configs/svm-metaplex-config.yaml")
+                    .expect("paths");
+            let config = SystemConfig::parse_from_project_files(&project_paths).expect("parse");
+
+            // Single chain, single program -> one contract with two events.
+            let contracts = config.contracts.values().collect::<Vec<_>>();
+            assert_eq!(contracts.len(), 1);
+            let token_metadata = contracts[0];
+            assert_eq!(token_metadata.name, "TokenMetadata");
+            assert!(matches!(token_metadata.abi, Abi::Svm(_)));
+            assert_eq!(token_metadata.events.len(), 2);
+
+            let kinds: Vec<_> = token_metadata
+                .events
+                .iter()
+                .map(|e| match &e.kind {
+                    EventKind::Svm(k) => (
+                        e.name.as_str(),
+                        k.discriminator.as_deref(),
+                        k.discriminator_byte_len,
+                        k.include_transaction,
+                        k.include_logs,
+                        k.include_token_balances,
+                        k.account_filters.len(),
+                    ),
+                    _ => panic!("expected Svm event kind, got {:?}", e.kind),
+                })
+                .collect();
+            assert_eq!(
+                kinds,
+                vec![
+                    (
+                        "CreateMetadataAccountV3",
+                        Some("0x21"),
+                        1,
+                        false,
+                        false,
+                        false,
+                        0
+                    ),
+                    (
+                        "UpdateMetadataAccountV2",
+                        Some("0x0f"),
+                        1,
+                        true,
+                        false,
+                        false,
+                        1
+                    ),
+                ],
+            );
+
+            // Chain data carries the program_id on the contract-side address,
+            // and the HyperSync URL flows through to the source config.
+            let chains = config.get_chains();
+            assert_eq!(chains.len(), 1);
+            let chain = chains[0];
+            assert_eq!(chain.contracts.len(), 1);
+            assert_eq!(
+                chain.contracts[0].addresses,
+                vec!["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string()],
+            );
+            assert!(matches!(
+                &chain.sync_source,
+                DataSource::Svm {
+                    hypersync_endpoint_url: Some(url),
+                    ..
+                } if url == "https://solana.hypersync.xyz"
+            ));
         }
     }
 }
