@@ -10,12 +10,12 @@ pub mod executor;
 mod fuel;
 mod hbs_templating;
 mod hypersync_source;
-mod hypersync_source_svm;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
 mod project_paths;
 pub mod scripts;
 mod service_health;
+mod svm_hypersync_source;
 mod template_dirs;
 mod type_schema;
 mod utils;
