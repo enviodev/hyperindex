@@ -85,7 +85,9 @@ pub struct BaseConfig {
         description = "Configuration for the storage backends the indexer writes to. Defaults to \
                        `postgres: true` when omitted. ClickHouse requires Postgres to be enabled \
                        (it is not supported as a single storage yet), and at least one backend \
-                       must be enabled."
+                       must be enabled. Each backend accepts a boolean or an options object with \
+                       `default` controlling whether entities without an @storage directive are \
+                       stored in it."
     )]
     pub storage: Option<StorageConfig>,
 }
@@ -94,9 +96,40 @@ pub struct BaseConfig {
 #[serde(deny_unknown_fields)]
 pub struct StorageConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub postgres: Option<bool>,
+    pub postgres: Option<StorageBackendConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub clickhouse: Option<bool>,
+    pub clickhouse: Option<StorageBackendConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(untagged)]
+pub enum StorageBackendConfig {
+    Enabled(bool),
+    // The object form implies the backend is enabled.
+    Options(StorageBackendOptions),
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct StorageBackendOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<bool>,
+}
+
+impl StorageBackendConfig {
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Enabled(enabled) => *enabled,
+            Self::Options(_) => true,
+        }
+    }
+
+    pub fn default(&self) -> Option<bool> {
+        match self {
+            Self::Enabled(_) => None,
+            Self::Options(options) => options.default,
+        }
+    }
 }
 
 // Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
@@ -113,13 +146,45 @@ impl JsonSchema for StorageConfig {
             "type": "object",
             "properties": {
                 "postgres": {
-                    "description": "Whether to use Postgres as a storage backend (default: true).",
-                    "type": ["boolean", "null"]
+                    "description": "Whether to use Postgres as a storage backend (default: true). \
+                                    Accepts a boolean or an options object (the object form \
+                                    implies the backend is enabled).",
+                    "anyOf": [
+                        { "type": ["boolean", "null"] },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "default": {
+                                    "description": "Whether entities without an @storage \
+                                                    directive are stored in this backend \
+                                                    (default: true for postgres).",
+                                    "type": ["boolean", "null"]
+                                }
+                            },
+                            "additionalProperties": false
+                        }
+                    ]
                 },
                 "clickhouse": {
                     "description": "Whether to additionally sync the indexed data to ClickHouse. \
-                                    Requires Postgres to be enabled (default: false).",
-                    "type": ["boolean", "null"]
+                                    Requires Postgres to be enabled (default: false). Accepts a \
+                                    boolean or an options object (the object form implies the \
+                                    backend is enabled).",
+                    "anyOf": [
+                        { "type": ["boolean", "null"] },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "default": {
+                                    "description": "Whether entities without an @storage \
+                                                    directive are stored in this backend \
+                                                    (default: false for clickhouse).",
+                                    "type": ["boolean", "null"]
+                                }
+                            },
+                            "additionalProperties": false
+                        }
+                    ]
                 }
             },
             "additionalProperties": false,
@@ -127,8 +192,9 @@ impl JsonSchema for StorageConfig {
             //   1. `postgres: false` (with any clickhouse value) — either
             //      fails as "ClickHouse not supported as a single storage
             //      yet" or resolves to all-backends-disabled.
-            //   2. `clickhouse: true` without an explicit `postgres: true` —
-            //      the user must opt in to Postgres alongside ClickHouse.
+            //   2. ClickHouse enabled (true or object form) without an
+            //      explicitly enabled postgres — the user must opt in to
+            //      Postgres alongside ClickHouse.
             "allOf": [
                 {
                     "not": {
@@ -141,13 +207,17 @@ impl JsonSchema for StorageConfig {
                 {
                     "if": {
                         "properties": {
-                            "clickhouse": { "const": true }
+                            "clickhouse": {
+                                "anyOf": [{ "const": true }, { "type": "object" }]
+                            }
                         },
                         "required": ["clickhouse"]
                     },
                     "then": {
                         "properties": {
-                            "postgres": { "const": true }
+                            "postgres": {
+                                "anyOf": [{ "const": true }, { "type": "object" }]
+                            }
                         },
                         "required": ["postgres"]
                     }
@@ -1281,7 +1351,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
     #[test]
     fn deserialize_storage_config() {
-        use super::StorageConfig;
+        use super::{StorageBackendConfig, StorageConfig};
 
         // Both fields present
         let yaml = "postgres: true\nclickhouse: true\n";
@@ -1289,8 +1359,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         assert_eq!(
             de,
             StorageConfig {
-                postgres: Some(true),
-                clickhouse: Some(true),
+                postgres: Some(StorageBackendConfig::Enabled(true)),
+                clickhouse: Some(StorageBackendConfig::Enabled(true)),
             }
         );
 
@@ -1301,7 +1371,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             de,
             StorageConfig {
                 postgres: None,
-                clickhouse: Some(true),
+                clickhouse: Some(StorageBackendConfig::Enabled(true)),
             }
         );
 
@@ -1315,13 +1385,57 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     }
 
     #[test]
+    fn deserialize_storage_backend_options() {
+        use super::{StorageBackendConfig, StorageBackendOptions, StorageConfig};
+
+        let yaml = "postgres: true\nclickhouse:\n  default: true\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: Some(StorageBackendConfig::Enabled(true)),
+                clickhouse: Some(StorageBackendConfig::Options(StorageBackendOptions {
+                    default: Some(true),
+                })),
+            }
+        );
+        let clickhouse = de.clickhouse.unwrap();
+        assert_eq!(
+            (clickhouse.is_enabled(), clickhouse.default()),
+            (true, Some(true))
+        );
+
+        // Empty object form implies enabled with no default override
+        let yaml = "postgres: {}\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: Some(StorageBackendConfig::Options(StorageBackendOptions {
+                    default: None,
+                })),
+                clickhouse: None,
+            }
+        );
+
+        // Unknown field in the options object should fail
+        let yaml = "clickhouse:\n  defautl: true\n";
+        let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("untagged enum"),
+            "Unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn deserialize_evm_config_with_storage() {
         use super::evm::HumanConfig as EvmConfig;
         let yaml = r#"
 name: storage-test
 storage:
   postgres: true
-  clickhouse: true
+  clickhouse:
+    default: true
 chains:
   - id: 1
     start_block: 0
@@ -1330,8 +1444,12 @@ chains:
         assert_eq!(
             cfg.base.storage,
             Some(super::StorageConfig {
-                postgres: Some(true),
-                clickhouse: Some(true),
+                postgres: Some(super::StorageBackendConfig::Enabled(true)),
+                clickhouse: Some(super::StorageBackendConfig::Options(
+                    super::StorageBackendOptions {
+                        default: Some(true),
+                    }
+                )),
             })
         );
     }

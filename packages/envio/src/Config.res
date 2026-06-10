@@ -353,7 +353,7 @@ let parseEnumsFromJson = (enumsJson: dict<array<string>>): array<Table.enumConfi
 let parseEntitiesFromJson = (
   entitiesJson: array<'entityJson>,
   ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
-  ~globalStorage: storage,
+  ~storageDefaults: Internal.entityStorage,
 ): array<Internal.entityConfig> => {
   entitiesJson->Array.mapWithIndex((entityJson, index) => {
     let entityName = entityJson["name"]
@@ -434,10 +434,7 @@ let parseEntitiesFromJson = (
         postgres: s["postgres"]->Option.getOr(false),
         clickhouse: s["clickhouse"]->Option.getOr(false),
       }
-    | None => {
-        postgres: globalStorage.postgres,
-        clickhouse: globalStorage.clickhouse,
-      }
+    | None => storageDefaults
     }
 
     {
@@ -457,6 +454,8 @@ let publicConfigStorageSchema = S.schema(s =>
   {
     "postgres": s.matches(S.bool),
     "clickhouse": s.matches(S.option(S.bool)),
+    "postgresDefault": s.matches(S.option(S.bool)),
+    "clickhouseDefault": s.matches(S.option(S.bool)),
   }
 )
 
@@ -775,10 +774,18 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
   }
 
+  // The CLI omits the default flags from the JSON when they match the
+  // implied values (postgres: true, clickhouse: false), so `getOr` here
+  // must mirror those exact values.
+  let storageDefaults: Internal.entityStorage = {
+    postgres: publicConfig["storage"]["postgresDefault"]->Option.getOr(true),
+    clickhouse: publicConfig["storage"]["clickhouseDefault"]->Option.getOr(false),
+  }
+
   let userEntities =
     publicConfig["entities"]
     ->Option.getOr([])
-    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage)
+    ->parseEntitiesFromJson(~enumConfigsByName, ~storageDefaults)
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 

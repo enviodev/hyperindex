@@ -377,6 +377,72 @@ describe("Config.fromPublic", () => {
     })
   })
 
+  it("resolves entity storage from global defaults when @storage is absent", t => {
+    let publicConfigJson: JSON.t = %raw(`{
+      "version": "0.0.1-dev",
+      "name": "test",
+      "storage": { "postgres": true, "clickhouse": true, "postgresDefault": false, "clickhouseDefault": true },
+      "evm": {
+        "chains": {
+          "ethereumMainnet": {
+            "id": 1,
+            "startBlock": 0,
+            "rpcs": [{ "url": "https://eth.com", "for": "sync" }]
+          }
+        },
+        "addressFormat": "checksum"
+      },
+      "enums": {},
+      "entities": [
+        {
+          "name": "User",
+          "properties": [{ "name": "id", "type": "string" }]
+        },
+        {
+          "name": "Snapshot",
+          "storage": { "postgres": true },
+          "properties": [{ "name": "id", "type": "string" }]
+        }
+      ]
+    }`)
+
+    let config = Config.fromPublic(publicConfigJson)
+    t.expect(config.userEntities->Array.map(e => (e.name, e.storage))).toEqual([
+      ("User", {Internal.postgres: false, clickhouse: true}),
+      ("Snapshot", {Internal.postgres: true, clickhouse: false}),
+    ])
+  })
+
+  it("entity storage defaults to postgres only when default flags are omitted", t => {
+    let publicConfigJson: JSON.t = %raw(`{
+      "version": "0.0.1-dev",
+      "name": "test",
+      "storage": { "postgres": true, "clickhouse": true },
+      "evm": {
+        "chains": {
+          "ethereumMainnet": {
+            "id": 1,
+            "startBlock": 0,
+            "rpcs": [{ "url": "https://eth.com", "for": "sync" }]
+          }
+        },
+        "addressFormat": "checksum"
+      },
+      "enums": {},
+      "entities": [
+        {
+          "name": "User",
+          "properties": [{ "name": "id", "type": "string" }]
+        }
+      ]
+    }`)
+
+    let config = Config.fromPublic(publicConfigJson)
+    t.expect(config.userEntities->Array.map(e => (e.name, e.storage))).toEqual([
+      ("User", {Internal.postgres: true, clickhouse: false}),
+    ])
+  })
+
   it("works with already-capitalized contract name", t => {
     let publicConfigJson: JSON.t = %raw(`{
       "version": "0.0.1-dev",

@@ -9,7 +9,8 @@ save_full_history: true
 raw_events: true
 storage:
   postgres: true
-  clickhouse: true
+  clickhouse:
+    default: true
 field_selection:
   transaction_fields:
     - hash

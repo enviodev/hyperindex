@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2767
 expression: json
 ---
 {
@@ -14,7 +13,8 @@ expression: json
   "rawEvents": true,
   "storage": {
     "postgres": true,
-    "clickhouse": true
+    "clickhouse": true,
+    "clickhouseDefault": true
   },
   "evm": {
     "chains": {
@@ -184,6 +184,15 @@ expression: json
         },
         {
           "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "UnannotatedEntity",
+      "properties": [
+        {
+          "name": "id",
           "type": "string"
         }
       ]

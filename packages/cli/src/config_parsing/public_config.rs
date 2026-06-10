@@ -53,6 +53,14 @@ struct StorageConfig {
     postgres: bool,
     #[serde(skip_serializing_if = "is_false")]
     clickhouse: bool,
+    // Skipped when matching the implied values (postgres: true,
+    // clickhouse: false) so configs not using per-backend `default`
+    // keep emitting byte-identical JSON — an added key would trip the
+    // persisted-config diff for every existing project.
+    #[serde(skip_serializing_if = "is_true")]
+    postgres_default: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    clickhouse_default: bool,
 }
 
 impl From<&system_config::Storage> for StorageConfig {
@@ -60,6 +68,8 @@ impl From<&system_config::Storage> for StorageConfig {
         Self {
             postgres: s.postgres,
             clickhouse: s.clickhouse,
+            postgres_default: s.postgres_default,
+            clickhouse_default: s.clickhouse_default,
         }
     }
 }
