@@ -1112,6 +1112,11 @@ impl SystemConfig {
                         .context("Failed inserting chain at chains map")?;
                 }
 
+                // Reorg rollback is only meaningful for the experimental
+                // HyperSync source (it surfaces block hashes); RPC-only chains
+                // keep it off for now.
+                let uses_hypersync = svm_config.chains.iter().any(|n| n.experimental.is_some());
+
                 Ok(SystemConfig {
                     name: svm_config.base.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -1122,7 +1127,7 @@ impl SystemConfig {
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     contracts,
-                    rollback_on_reorg: true,
+                    rollback_on_reorg: uses_hypersync,
                     save_full_history: false,
                     schema,
                     field_selection: FieldSelection::svm(),
