@@ -89,20 +89,32 @@ let mockClient: SvmHyperSyncClient.t = {
   },
 }
 
+// The source captures its client at construction, so the mock addon only
+// needs to be in place for the `make` call; restore the previous addon right
+// after to avoid leaking the mock into other tests.
 let makeSource = () => {
+  let prevAddon = Core.addonRef.contents
   Core.addonRef :=
     Some(
       {
-        "HypersyncSolanaClient": {"fromConfig": (_: SvmHyperSyncClient.cfg) => mockClient},
+        "HypersyncSolanaClient": {
+          "fromConfig": (_: SvmHyperSyncClient.cfg, _: string) => mockClient,
+        },
       }->(Utils.magic: {..} => Core.addon),
     )
-  SvmHyperSyncSource.make({
+  let source = try SvmHyperSyncSource.make({
     chain,
     endpointUrl: "https://solana.hypersync.xyz",
     apiToken: None,
     eventConfigs: [makeEventConfig()],
     clientTimeoutMillis: 10_000,
-  })
+  }) catch {
+  | exn =>
+    Core.addonRef := prevAddon
+    throw(exn)
+  }
+  Core.addonRef := prevAddon
+  source
 }
 
 let indexingAddresses = Dict.fromArray([

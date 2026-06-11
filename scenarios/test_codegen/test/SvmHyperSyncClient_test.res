@@ -25,7 +25,9 @@ describe_skip("SvmHyperSyncClient live", () => {
       },
     }
     let resp = await client.get(~query)
-    let first = resp.data.instructions->Array.getUnsafe(0)
+    // Option-typed so an empty live response fails the shape assertion below
+    // instead of throwing on the index.
+    let first = resp.data.instructions->Array.get(0)
 
     let blockTimeBySlot = Dict.make()
     resp.data.blocks->Array.forEach(b =>
@@ -38,8 +40,8 @@ describe_skip("SvmHyperSyncClient live", () => {
     let summary = {
       "heightLooksRecent": height > 300_000_000,
       "hasInstructions": resp.data.instructions->Array.length > 0,
-      "firstProgramId": first.programId,
-      "firstDataIsHex": first.data->String.startsWith("0x"),
+      "firstProgramId": first->Option.mapOr("", i => i.programId),
+      "firstDataIsHex": first->Option.mapOr(false, i => i.data->String.startsWith("0x")),
       // Every matched instruction's slot must come with a sane blockTime —
       // `SvmHyperSyncSource` relies on this join for `instruction.block.time`.
       "allInstructionSlotsHaveBlockTime": resp.data.instructions->Array.every(instr =>
