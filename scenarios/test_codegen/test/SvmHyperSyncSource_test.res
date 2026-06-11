@@ -97,7 +97,7 @@ let makeSource = () => {
   Core.addonRef :=
     Some(
       {
-        "HypersyncSolanaClient": {
+        "SvmHypersyncClient": {
           "fromConfig": (_: SvmHyperSyncClient.cfg, _: string) => mockClient,
         },
       }->(Utils.magic: {..} => Core.addon),
