@@ -1023,14 +1023,19 @@ let rec writeBatch = async (
     | Some({targetCheckpointId: rollbackTargetCheckpointId}) =>
       Some(
         sql => {
-          let promises = allEntities->Array.map(entityConfig => {
-            sql->EntityHistory.rollback(
-              ~pgSchema,
-              ~entityName=entityConfig.name,
-              ~entityIndex=entityConfig.index,
-              ~rollbackTargetCheckpointId,
-            )
-          })
+          let promises = allEntities->Array.filterMap((entityConfig: Internal.entityConfig) =>
+            // Entities without Postgres storage have no history table here
+            entityConfig.storage.postgres
+              ? Some(
+                  sql->EntityHistory.rollback(
+                    ~pgSchema,
+                    ~entityName=entityConfig.name,
+                    ~entityIndex=entityConfig.index,
+                    ~rollbackTargetCheckpointId,
+                  ),
+                )
+              : None
+          )
           promises
           ->Array.push(
             sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
@@ -1714,22 +1719,35 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId,
   ) => {
-    await Promise.all2((
-      // Get IDs of entities that should be deleted (created after rollback target with no prior history)
-      sql
-      ->Postgres.preparedUnsafe(
-        makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
-      )
-      ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
-      // Get entities that should be restored to their state at or before rollback target
-      sql
-      ->Postgres.preparedUnsafe(
-        makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
-      )
-      ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
-    ))
+    if entityConfig.storage.postgres {
+      let (removedIds, restoredRows) = await Promise.all2((
+        // Get IDs of entities that should be deleted (created after rollback target with no prior history)
+        sql
+        ->Postgres.preparedUnsafe(
+          makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
+          [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        )
+        ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
+        // Get entities that should be restored to their state at or before rollback target
+        sql
+        ->Postgres.preparedUnsafe(
+          makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
+          [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        )
+        ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
+      ))
+      (removedIds, restoredRows->S.parseOrThrow(entityConfig.rowsSchema))
+    } else {
+      // Entities without Postgres storage have no history table here;
+      // their rollback diff comes from the sink's own history.
+      switch sink {
+      | Some(sink) => await sink.getRollbackData(~entityConfig, ~rollbackTargetCheckpointId)
+      | None =>
+        JsError.throwWithMessage(
+          `Cannot get rollback data for entity "${entityConfig.name}": it has no Postgres storage and no sink is configured.`,
+        )
+      }
+    }
   }
 
   let writeBatchMethod = async (

@@ -121,11 +121,12 @@ type storage = {
       "new_progress_block_number": int,
     }>,
   >,
-  // Get rollback data for entity
+  // Get rollback data for entity: ids to delete and entities to restore
+  // to their state at the rollback target checkpoint
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => promise<(array<{"id": string}>, array<unknown>)>,
+  ) => promise<(array<{"id": string}>, array<Internal.entity>)>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,

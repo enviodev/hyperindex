@@ -689,13 +689,18 @@ let injectedTaskReducer = (
         | Some(safeCheckpointId) =>
           await state.ctx.persistence.storage.pruneStaleCheckpoints(~safeCheckpointId)
 
-          for idx in 0 to state.ctx.persistence.allEntities->Array.length - 1 {
+          // Entities without Postgres storage have no history table to prune
+          let entitiesWithHistory =
+            state.ctx.persistence.allEntities->Array.filter(entityConfig =>
+              entityConfig.storage.postgres
+            )
+          for idx in 0 to entitiesWithHistory->Array.length - 1 {
             if idx !== 0 {
               // Add some delay between entities
               // To unblock the pg client if it's needed for something else
               await Utils.delay(1000)
             }
-            let entityConfig = state.ctx.persistence.allEntities->Array.getUnsafe(idx)
+            let entityConfig = entitiesWithHistory->Array.getUnsafe(idx)
             let timeRef = Hrtime.makeTimer()
             try {
               let () = await state.ctx.persistence.storage.pruneStaleEntityHistory(

@@ -162,4 +162,129 @@ WHERE \`envio_change\` = 'SET'`
       },
     )
   })
+
+  describe("makeGetRollbackRemovedIdsQuery", () => {
+    Async.it(
+      "Should create SQL returning ids created after the rollback target",
+      async t => {
+        let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
+        let query = ClickHouse.makeGetRollbackRemovedIdsQuery(
+          ~entityConfig,
+          ~database="test_db",
+          ~rollbackTargetCheckpointId=100n,
+        )
+
+        let expectedQuery = `SELECT DISTINCT \`id\`
+FROM test_db.\`envio_history_EntityWithAllTypes\`
+WHERE \`envio_checkpoint_id\` > 100
+  AND \`id\` NOT IN (
+    SELECT \`id\` FROM test_db.\`envio_history_EntityWithAllTypes\`
+    WHERE \`envio_checkpoint_id\` <= 100
+  )`
+
+        t.expect(query, ~message="Removed ids SQL should match exactly").toBe(expectedQuery)
+      },
+    )
+  })
+
+  describe("makeGetRollbackRestoredEntitiesQuery", () => {
+    Async.it(
+      "Should create SQL returning the latest state at or before the rollback target",
+      async t => {
+        let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
+        let query = ClickHouse.makeGetRollbackRestoredEntitiesQuery(
+          ~entityConfig,
+          ~database="test_db",
+          ~rollbackTargetCheckpointId=100n,
+        )
+
+        let expectedQuery = `SELECT \`id\`, \`string\`, \`optString\`, \`arrayOfStrings\`, \`int_\`, \`optInt\`, \`arrayOfInts\`, \`float_\`, \`optFloat\`, \`arrayOfFloats\`, \`bool\`, \`optBool\`, \`bigInt\`, \`optBigInt\`, \`arrayOfBigInts\`, \`bigDecimal\`, \`optBigDecimal\`, \`bigDecimalWithConfig\`, \`arrayOfBigDecimals\`, \`timestamp\`, \`optTimestamp\`, \`json\`, \`enumField\`, \`optEnumField\`, \`envio_change\`
+FROM test_db.\`envio_history_EntityWithAllTypes\`
+WHERE \`envio_checkpoint_id\` <= 100
+  AND \`id\` IN (
+    SELECT DISTINCT \`id\` FROM test_db.\`envio_history_EntityWithAllTypes\`
+    WHERE \`envio_checkpoint_id\` > 100
+  )
+ORDER BY \`envio_checkpoint_id\` DESC
+LIMIT 1 BY \`id\`
+SETTINGS date_time_output_format = 'iso', output_format_json_quote_decimals = 1`
+
+        t.expect(query, ~message="Restored entities SQL should match exactly").toBe(expectedQuery)
+      },
+    )
+  })
+})
+
+describe("Test makeClickHouseEntitySchema parsing", () => {
+  Async.it("Should parse a ClickHouse history row back into an entity", async t => {
+    let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
+    let clickHouseSchema = ClickHouse.makeClickHouseEntitySchema(entityConfig.table)
+
+    // Row shape returned by the restored-entities query: iso timestamps, quoted
+    // decimals and 64-bit integers, plus the envio_change column which the
+    // schema should ignore
+    let row = %raw(`{
+      "id": "test-id",
+      "string": "test",
+      "optString": null,
+      "arrayOfStrings": [],
+      "int_": 1,
+      "optInt": null,
+      "arrayOfInts": [],
+      "float_": 1.0,
+      "optFloat": null,
+      "arrayOfFloats": [],
+      "bool": true,
+      "optBool": null,
+      "bigInt": "1",
+      "optBigInt": null,
+      "arrayOfBigInts": [],
+      "bigDecimal": "1",
+      "optBigDecimal": null,
+      "bigDecimalWithConfig": "1",
+      "arrayOfBigDecimals": [],
+      "timestamp": "2009-02-13T23:31:30.123Z",
+      "optTimestamp": "2009-02-13T23:31:30.123Z",
+      "json": "{}",
+      "enumField": "ADMIN",
+      "optEnumField": null,
+      "envio_change": "SET"
+    }`)
+
+    let testDate = Date.fromTime(1234567890123.0)
+    let expectedEntity: Indexer.Entities.EntityWithAllTypes.t = {
+      id: "test-id",
+      string: "test",
+      optString: None,
+      arrayOfStrings: [],
+      int_: 1,
+      optInt: None,
+      arrayOfInts: [],
+      float_: 1.0,
+      optFloat: None,
+      arrayOfFloats: [],
+      bool: true,
+      optBool: None,
+      bigInt: BigInt.fromInt(1),
+      optBigInt: None,
+      arrayOfBigInts: [],
+      bigDecimal: BigDecimal.fromFloat(1.0),
+      optBigDecimal: None,
+      bigDecimalWithConfig: BigDecimal.fromFloat(1.0),
+      arrayOfBigDecimals: [],
+      timestamp: testDate,
+      optTimestamp: Some(testDate),
+      // The Json field round-trips as the string stored in the ClickHouse
+      // String column
+      json: %raw(`"{}"`),
+      enumField: ADMIN,
+      optEnumField: None,
+    }
+
+    let parsed = row->S.parseOrThrow(clickHouseSchema)
+
+    t.expect(parsed, ~message="Row should parse back into the entity").toEqual(
+      expectedEntity->(Utils.magic: Indexer.Entities.EntityWithAllTypes.t => Internal.entity),
+    )
+  })
 })

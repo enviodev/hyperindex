@@ -10,6 +10,10 @@ type t = {
     ~batch: Batch.t,
     ~updatedEntities: array<Persistence.updatedEntity>,
   ) => promise<unit>,
+  getRollbackData: (
+    ~entityConfig: Internal.entityConfig,
+    ~rollbackTargetCheckpointId: Internal.checkpointId,
+  ) => promise<(array<{"id": string}>, array<Internal.entity>)>,
 }
 
 let makeClickHouse = (~host, ~database, ~username, ~password): t => {
@@ -39,6 +43,14 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
         }),
       )->Utils.Promise.ignoreValue
       await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)
+    },
+    getRollbackData: (~entityConfig, ~rollbackTargetCheckpointId) => {
+      ClickHouse.getRollbackDataOrThrow(
+        client,
+        ~database,
+        ~entityConfig,
+        ~rollbackTargetCheckpointId,
+      )
     },
   }
 }

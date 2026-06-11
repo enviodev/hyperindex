@@ -419,6 +419,122 @@ FROM (
 WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> string)}'`
 }
 
+// Returns entity IDs that only have history rows after the rollback target.
+// These entities didn't exist at the target and should be deleted during rollback.
+let makeGetRollbackRemovedIdsQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~database: string,
+  ~rollbackTargetCheckpointId: Internal.checkpointId,
+) => {
+  let historyTableRef = `${database}.\`${EntityHistory.historyTableName(
+      ~entityName=entityConfig.name,
+      ~entityIndex=entityConfig.index,
+    )}\``
+  let target = rollbackTargetCheckpointId->BigInt.toString
+
+  `SELECT DISTINCT \`${Table.idFieldName}\`
+FROM ${historyTableRef}
+WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${target}
+  AND \`${Table.idFieldName}\` NOT IN (
+    SELECT \`${Table.idFieldName}\` FROM ${historyTableRef}
+    WHERE \`${EntityHistory.checkpointIdFieldName}\` <= ${target}
+  )`
+}
+
+// Returns the most recent history row at or before the rollback target for every
+// ID modified after it. The row still carries the change action: a DELETE row
+// means the entity didn't exist at the target.
+// The SETTINGS clause makes DateTime64 and Decimal values come back in the
+// string formats makeClickHouseEntitySchema can parse.
+let makeGetRollbackRestoredEntitiesQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~database: string,
+  ~rollbackTargetCheckpointId: Internal.checkpointId,
+) => {
+  let historyTableRef = `${database}.\`${EntityHistory.historyTableName(
+      ~entityName=entityConfig.name,
+      ~entityIndex=entityConfig.index,
+    )}\``
+  let target = rollbackTargetCheckpointId->BigInt.toString
+
+  let dataFieldsCommaSeparated =
+    entityConfig.table.fields
+    ->Array.filterMap(field => {
+      switch field {
+      | Field(field) => Some(`\`${field->Table.getDbFieldName}\``)
+      | DerivedFrom(_) => None
+      }
+    })
+    ->Array.joinUnsafe(", ")
+
+  `SELECT ${dataFieldsCommaSeparated}, \`${EntityHistory.changeFieldName}\`
+FROM ${historyTableRef}
+WHERE \`${EntityHistory.checkpointIdFieldName}\` <= ${target}
+  AND \`${Table.idFieldName}\` IN (
+    SELECT DISTINCT \`${Table.idFieldName}\` FROM ${historyTableRef}
+    WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${target}
+  )
+ORDER BY \`${EntityHistory.checkpointIdFieldName}\` DESC
+LIMIT 1 BY \`${Table.idFieldName}\`
+SETTINGS date_time_output_format = 'iso', output_format_json_quote_decimals = 1`
+}
+
+// Computes the rollback diff from the ClickHouse history table. Used for
+// entities without Postgres storage, where the history table is the only
+// source of truth.
+let getRollbackDataOrThrow = async (
+  client,
+  ~database: string,
+  ~entityConfig: Internal.entityConfig,
+  ~rollbackTargetCheckpointId: Internal.checkpointId,
+): (array<{"id": string}>, array<Internal.entity>) => {
+  try {
+    let fetchRows = async (queryString): array<dict<unknown>> => {
+      let result = await client->query({query: queryString})
+      (await result->json)["data"]
+    }
+
+    let (removedRows, restoredRows) = await Promise.all2((
+      fetchRows(
+        makeGetRollbackRemovedIdsQuery(~entityConfig, ~database, ~rollbackTargetCheckpointId),
+      ),
+      fetchRows(
+        makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~database, ~rollbackTargetCheckpointId),
+      ),
+    ))
+
+    let removedIds = removedRows->(Utils.magic: array<dict<unknown>> => array<{"id": string}>)
+    let setRows = []
+    restoredRows->Array.forEach(row => {
+      if (
+        row->Dict.getUnsafe(EntityHistory.changeFieldName)->(Utils.magic: unknown => string) ===
+          (EntityHistory.RowAction.DELETE :> string)
+      ) {
+        removedIds
+        ->Array.push({
+          "id": row->Dict.getUnsafe(Table.idFieldName)->(Utils.magic: unknown => string),
+        })
+        ->ignore
+      } else {
+        setRows->Array.push(row)->ignore
+      }
+    })
+
+    let restoredEntities =
+      setRows->S.parseOrThrow(S.array(makeClickHouseEntitySchema(entityConfig.table)))
+
+    (removedIds, restoredEntities)
+  } catch {
+  | exn =>
+    throw(
+      Persistence.StorageError({
+        message: `Failed to get rollback data from ClickHouse for entity "${entityConfig.name}"`,
+        reason: exn->Utils.prettifyExn,
+      }),
+    )
+  }
+}
+
 // Initialize ClickHouse tables for entities
 let initialize = async (
   client,
