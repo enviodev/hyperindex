@@ -121,6 +121,43 @@ let toOperationKey = (filter: t, ~entityName) =>
   | And(_) => `${entityName}.getWhere({${filter->printOperationFilter(~paramsCount=ref(0))}})`
   }
 
+// Collapses filters sharing an operation key into fewer storage queries:
+// Eq and In batches merge into a single In on the field. Gt/Lt/And have
+// no lossless single-query form without an Or operator, so they stay as is.
+// Expects a homogeneous batch — filters with the same operation key.
+let merge = (filters: array<t>) =>
+  switch filters {
+  | [] | [_] => filters
+  | _ =>
+    switch filters->Array.getUnsafe(0) {
+    | Eq({fieldName}) => [
+        In({
+          fieldName,
+          fieldValue: filters->Array.filterMap(filter =>
+            switch filter {
+            | Eq({fieldValue}) => Some(fieldValue)
+            | _ => None
+            }
+          ),
+        }),
+      ]
+    | In({fieldName}) => [
+        In({
+          fieldName,
+          fieldValue: filters
+          ->Array.map(filter =>
+            switch filter {
+            | In({fieldValue}) => fieldValue
+            | _ => []
+            }
+          )
+          ->Array.flat,
+        }),
+      ]
+    | Gt(_) | Lt(_) | And(_) => filters
+    }
+  }
+
 // A field missing on the entity reads as `undefined`, which matches the `None`
 // arm of `FieldValue.t` (`option<...>`), so nullable columns omitted on the
 // entity object are compared as null rather than crashing.
