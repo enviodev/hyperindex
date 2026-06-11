@@ -74,7 +74,9 @@ let rec toString = (filter: t) =>
   | Lt({fieldName, fieldValue}) =>
     `${fieldName}:Lt:${fieldValue->FieldValue.castFrom->FieldValue.toString}`
   | In({fieldName, fieldValue}) =>
-    `${fieldName}:In:${fieldValue->FieldValue.castFrom->FieldValue.toString}`
+    `${fieldName}:In:[${fieldValue
+      ->Array.map(v => v->FieldValue.castFrom->FieldValue.toString)
+      ->Array.join(",")}]`
   | And({filters}) => `And(${filters->Array.map(toString)->Array.join(",")})`
   }
 
