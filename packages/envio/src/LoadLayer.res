@@ -368,9 +368,15 @@ let loadByFilter = (
 
     let size = ref(0)
 
-    let _ = await filters
+    filters->Array.forEach(filter => inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter))
+
+    // Loading a superset of rows via a merged query is safe: every loaded
+    // entity is matched against all registered indices, not only the
+    // query's own filter.
+    let queries = filters->EntityFilter.merge
+
+    let _ = await queries
     ->Array.map(async filter => {
-      inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter)
       try {
         let entities =
           (await storage.loadOrThrow(~table=entityConfig.table, ~filter))->(
