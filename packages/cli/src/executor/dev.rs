@@ -21,7 +21,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
 
     let up_result = docker_env::up(docker_env::UpOptions {
         project_root: &config.parsed_project_paths.project_root,
-        clickhouse: config.storage.clickhouse,
+        clickhouse: config.storage.clickhouse.is_some(),
     })
     .await
     .context("Failed starting Docker containers")?;

@@ -113,6 +113,16 @@ pub enum StorageBackendConfig {
 pub struct StorageBackendOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column_name_format: Option<ColumnNameFormat>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
+pub enum ColumnNameFormat {
+    #[serde(rename = "original")]
+    Original,
+    #[serde(rename = "snake_case")]
+    SnakeCase,
 }
 
 // Hand-rolled instead of #[serde(untagged)]: the untagged derive swallows
@@ -166,6 +176,13 @@ impl StorageBackendConfig {
             Self::Options(options) => options.default,
         }
     }
+
+    pub fn column_name_format(&self) -> Option<ColumnNameFormat> {
+        match self {
+            Self::Enabled(_) => None,
+            Self::Options(options) => options.column_name_format,
+        }
+    }
 }
 
 // Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
@@ -189,6 +206,15 @@ impl JsonSchema for StorageConfig {
                             "default": {
                                 "description": default_description,
                                 "type": ["boolean", "null"]
+                            },
+                            "column_name_format": {
+                                "description": "How entity fields are reflected in the storage column names. \
+                                                `original` keeps the schema.graphql field names as is, \
+                                                `snake_case` converts them to snake_case in the database \
+                                                while keeping the original casing in the exposed APIs. \
+                                                (default: original)",
+                                "type": ["string", "null"],
+                                "enum": ["original", "snake_case", null]
                             }
                         },
                         "additionalProperties": false
@@ -1665,7 +1691,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
     #[test]
     fn deserialize_storage_config() {
-        use super::{StorageBackendConfig, StorageConfig};
+        use super::{ColumnNameFormat, StorageBackendConfig, StorageBackendOptions, StorageConfig};
 
         // Both fields present
         let yaml = "postgres: true\nclickhouse: true\n";
@@ -1689,6 +1715,31 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             }
         );
 
+        // Backend configured with an options object
+        let yaml = "postgres:\n  column_name_format: snake_case\nclickhouse: {}\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: Some(StorageBackendConfig::Options(StorageBackendOptions {
+                    default: None,
+                    column_name_format: Some(ColumnNameFormat::SnakeCase),
+                })),
+                clickhouse: Some(StorageBackendConfig::Options(StorageBackendOptions {
+                    default: None,
+                    column_name_format: None,
+                })),
+            }
+        );
+
+        // Unknown backend option should fail (deny_unknown_fields)
+        let yaml = "postgres:\n  table_naming: snake_case\n";
+        assert!(serde_yaml::from_str::<StorageConfig>(yaml).is_err());
+
+        // Unknown column_name_format value should fail
+        let yaml = "postgres:\n  column_name_format: kebab-case\n";
+        assert!(serde_yaml::from_str::<StorageConfig>(yaml).is_err());
+
         // Unknown field should fail (deny_unknown_fields)
         let yaml = "postgres: true\nbigquery: true\n";
         let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
@@ -1710,6 +1761,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 postgres: Some(StorageBackendConfig::Enabled(true)),
                 clickhouse: Some(StorageBackendConfig::Options(StorageBackendOptions {
                     default: Some(true),
+                    column_name_format: None,
                 })),
             }
         );
@@ -1722,6 +1774,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             StorageConfig {
                 postgres: Some(StorageBackendConfig::Options(StorageBackendOptions {
                     default: None,
+                    column_name_format: None,
                 })),
                 clickhouse: None,
             }
@@ -1733,7 +1786,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
         assert!(
             err.to_string()
-                .contains("unknown field `defautl`, expected `default`"),
+                .contains("unknown field `defautl`, expected `default` or `column_name_format`"),
             "Unexpected error: {err}"
         );
 
@@ -1768,6 +1821,7 @@ chains:
                 clickhouse: Some(super::StorageBackendConfig::Options(
                     super::StorageBackendOptions {
                         default: Some(true),
+                        column_name_format: None,
                     }
                 )),
             })
