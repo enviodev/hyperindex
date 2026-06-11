@@ -156,16 +156,17 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
   if operatorKey === "_in" {
     let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
 
-    if fieldValues->Array.some(fieldValue => fieldValue === %raw(`undefined`)) {
-      JsError.throwWithMessage(
-        `Undefined value passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: { _in: [...] } }). The undefined value is not supported in getWhere operators. Please provide non-undefined values.`,
-      )
-    }
-
     // Load each value as a separate Eq filter to memoize
     // them in memory on the per-value level
     fieldValues
-    ->Array.map(fieldValue => loadWithFilter(EntityFilter.Eq({fieldName: dbFieldName, fieldValue})))
+    ->Array.map(fieldValue => {
+      if fieldValue === %raw(`undefined`) {
+        JsError.throwWithMessage(
+          `Undefined value passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: { _in: [...] } }). The undefined value is not supported in getWhere operators. Please provide non-undefined values.`,
+        )
+      }
+      loadWithFilter(EntityFilter.Eq({fieldName: dbFieldName, fieldValue}))
+    })
     ->Promise.all
     ->Promise.thenResolve(results => results->Array.flat)
   } else if operatorKey === "_gte" || operatorKey === "_lte" {
