@@ -7,6 +7,10 @@ description: >-
 
 # Investigating CI Failures
 
+Local verification only runs the tests relevant to a change; the full suite runs
+in CI on push. After pushing, check the CI result here for full coverage and
+investigate any failures.
+
 This repo is public, so unauthenticated GitHub API calls work. Use `gh` if
 available, otherwise fall back to `curl` + `python3`.
 
