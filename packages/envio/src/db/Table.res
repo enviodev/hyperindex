@@ -125,7 +125,7 @@ let getClickHouseDbFieldName = field =>
   | None => field->getApiFieldName
   }
 
-let getFieldName = fieldOrDerived =>
+let getPgFieldName = fieldOrDerived =>
   switch fieldOrDerived {
   | Field(field) => field->getPgDbFieldName
   | DerivedFrom({fieldName}) => fieldName
@@ -203,7 +203,7 @@ let mkTable = (tableName, ~compositeIndices=[], ~fields, ~description=?) => {
   description,
 }
 
-let getPrimaryKeyFieldNames = table =>
+let getPgPrimaryKeyFieldNames = table =>
   table.fields->Array.filterMap(field =>
     switch field {
     | Field({isPrimaryKey: true} as field) => Some(field->getPgDbFieldName)
@@ -218,10 +218,6 @@ let getFields = table =>
     | DerivedFrom(_) => None
     }
   )
-
-let getFieldNames = table => {
-  table->getFields->Array.map(getPgDbFieldName)
-}
 
 let getNonDefaultFields = table =>
   table.fields->Array.filterMap(field =>
@@ -249,10 +245,6 @@ let getDerivedFromFields = table =>
     }
   )
 
-let getNonDefaultFieldNames = table => {
-  table->getNonDefaultFields->Array.map(getPgDbFieldName)
-}
-
 let getFieldByName = (table, fieldName) =>
   table.fields->Array.find(field => field->getUserDefinedFieldName === fieldName)
 
@@ -273,9 +265,11 @@ type queryField = {
   fieldSchema: S.t<unknown>,
   // Serializes the values array of an "in" filter
   arrayFieldSchema: S.t<unknown>,
-  // The column referenced in SQL, which only differs from the API field
-  // name keying this entry when column renaming is configured
-  dbFieldName: string,
+  // The Postgres column referenced in load SQL, which only differs from the
+  // API field name keying this entry when column renaming is configured.
+  // Loads are served by Postgres only (ClickHouse is a write-only sink), so
+  // no ClickHouse counterpart is needed here.
+  pgDbFieldName: string,
 }
 let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
   let dict = Dict.make()
@@ -287,7 +281,7 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
         {
           fieldSchema: field.fieldSchema,
           arrayFieldSchema: S.array(field.fieldSchema)->S.toUnknown,
-          dbFieldName: field->getPgDbFieldName,
+          pgDbFieldName: field->getPgDbFieldName,
         },
       )
     | DerivedFrom(_) => ()
@@ -297,9 +291,30 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
 })
 
 // Runtime entity objects are keyed by API field names (the camelCase record
-// field names are type-level only), while rows arrive keyed by db column
-// names — the keys only differ when column renaming is configured.
+// field names are type-level only), so rows already keyed by API names can
+// be parsed with the same per-field schemas the entity schema is assembled
+// from.
 let rowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
+  S.array(
+    S.schema(s => {
+      let dict = Dict.make()
+      table.fields->Array.forEach(
+        field =>
+          switch field {
+          | Field(field) => dict->Dict.set(field->getApiFieldName, s.matches(field.fieldSchema))
+          | DerivedFrom(_) => ()
+          },
+      )
+      dict
+    })->(Utils.magic: S.t<dict<unknown>> => S.t<unknown>),
+  )
+)
+
+// Parses rows loaded from Postgres, which are keyed by the possibly renamed
+// column names, into entity objects keyed by API field names. Lives here
+// rather than in PgStorage because InMemoryStore also parses Postgres
+// rollback rows and can't depend on PgStorage without a module cycle.
+let pgRowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
   S.array(
     S.object(s => {
       let dict = Dict.make()
@@ -329,7 +344,7 @@ let getUnfilteredCompositeIndicesUnsafe = (table): array<array<compositeIndexFie
   table.compositeIndices->Array.map(compositeIndex =>
     compositeIndex->Array.map(indexField => {
       let dbFieldName = switch table->getFieldByName(indexField.fieldName) {
-      | Some(field) => field->getFieldName
+      | Some(field) => field->getPgFieldName
       | None => throw(NonExistingTableField(indexField.fieldName)) //Unexpected should be validated in schema parser
       }
       {fieldName: dbFieldName, direction: indexField.direction}
@@ -386,7 +401,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
 
         // Schema locations use API field names, while the SQL references
         // columns by their possibly renamed db names.
-        let quotedDbName = `"${field->getFieldName}"`
+        let quotedDbName = `"${field->getPgFieldName}"`
         quotedFieldNames
         ->Array.push(quotedDbName)
         ->ignore

@@ -108,7 +108,7 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[],$3::TEXT[])ON CONFLICT("id") DO UP
     let rows = %raw(`[{ "id": "1", "transaction_index": 5, "token_owner_id": "user-1" }]`)
     let entities = rows->S.parseOrThrow(
       snapshotEntity.table
-      ->Table.rowsSchema
+      ->Table.pgRowsSchema
       ->(Utils.magic: S.t<array<unknown>> => S.t<array<Internal.entity>>),
     )
     t.expect(entities->(Utils.magic: array<Internal.entity> => array<snapshot>)).toEqual([

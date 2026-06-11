@@ -98,7 +98,7 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
     })
     ->Array.joinUnsafe(", ")
 
-  let primaryKeyFieldNames = table->Table.getPrimaryKeyFieldNames
+  let primaryKeyFieldNames = table->Table.getPgPrimaryKeyFieldNames
   let primaryKey = primaryKeyFieldNames->Array.map(field => `"${field}"`)->Array.joinUnsafe(", ")
 
   `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
@@ -245,7 +245,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     ->Table.getDerivedFromFields
     ->Array.forEach(derivedFromField => {
       let indexField =
-        derivedSchema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
+        derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
       query :=
         query.contents ++
         "\n" ++
@@ -325,7 +325,7 @@ let rec makeFilterCondition = (
   }
   let scalarCondition = (~fieldName, ~fieldValue, ~op) => {
     let queryField = getQueryFieldOrThrow(fieldName)
-    `"${queryField.dbFieldName}" ${op} ${serializeParamOrThrow(
+    `"${queryField.pgDbFieldName}" ${op} ${serializeParamOrThrow(
         ~queryField,
         ~fieldName,
         ~fieldValue,
@@ -338,7 +338,7 @@ let rec makeFilterCondition = (
   | Lt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="<")
   | In({fieldName, fieldValue}) => {
       let queryField = getQueryFieldOrThrow(fieldName)
-      `"${queryField.dbFieldName}" = ANY(${serializeParamOrThrow(
+      `"${queryField.pgDbFieldName}" = ANY(${serializeParamOrThrow(
           ~queryField,
           ~fieldName,
           ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
@@ -375,7 +375,7 @@ let makeInsertUnnestSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~is
   let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes} =
     table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
 
-  let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+  let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
 
   `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Array.joinUnsafe(", ")})
 SELECT * FROM unnest(${arrayFieldTypes
@@ -405,7 +405,7 @@ let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~it
   let {quotedFieldNames, quotedNonPrimaryFieldNames} =
     table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
 
-  let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+  let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
   let fieldsCount = quotedFieldNames->Array.length
 
   // Create placeholder variables for the VALUES clause - using $1, $2, etc.
@@ -1515,7 +1515,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         }),
       )
     | rows =>
-      try rows->S.parseOrThrow(table->Table.rowsSchema) catch {
+      try rows->S.parseOrThrow(table->Table.pgRowsSchema) catch {
       | exn =>
         throw(
           Persistence.StorageError({

@@ -396,7 +396,7 @@ let trackDatabase = async (
       let derivedFromField = derivedFromFields->Array.getUnsafe(j)
       //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
       let relationalFieldName =
-        schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
+        schema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
 
       await createEntityRelationship(
         ~endpoint,

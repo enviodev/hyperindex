@@ -440,7 +440,7 @@ module Indexer = {
         sql
         ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(ec.table->Table.rowsSchema)
+          items->S.parseOrThrow(ec.table->Table.pgRowsSchema)
         })
         ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
@@ -495,7 +495,7 @@ module Indexer = {
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
         )
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(entityConfig.table->Table.rowsSchema)
+          items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
         })
         ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
