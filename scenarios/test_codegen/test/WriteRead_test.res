@@ -493,11 +493,21 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
 
           errors := [
             expectGetWhereError(() => context.\"Token".getWhere(%raw(`{tokenId: undefined}`))),
+            expectGetWhereError(() => context.\"Token".getWhere(%raw(`{tokenId: null}`))),
             expectGetWhereError(
               () => context.\"Token".getWhere(%raw(`{tokenId: {_eq: undefined}}`)),
             ),
+            expectGetWhereError(() => context.\"Token".getWhere(%raw(`{tokenId: {_eq: null}}`))),
             expectGetWhereError(
-              () => context.\"Token".getWhere(%raw(`{tokenId: {_in: [undefined]}}`)),
+              () => context.\"Token".getWhere(%raw(`{tokenId: {_in: [1n, undefined]}}`)),
+            ),
+            // A typoed operator or field gets its specific error
+            // even when the value is also nullish
+            expectGetWhereError(
+              () => context.\"Token".getWhere(%raw(`{tokenId: {_foo: undefined}}`)),
+            ),
+            expectGetWhereError(
+              () => context.\"Token".getWhere(%raw(`{nonExistingField: {_eq: undefined}}`)),
             ),
           ]
         },
@@ -506,9 +516,13 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     await indexerMock.getBatchWritePromise()
 
     t.expect(errors.contents).toEqual([
-      `Undefined value passed to context.Token.getWhere({ tokenId: undefined }). The undefined value is not supported in getWhere filters. Please provide an operator like { _eq: value }.`,
-      `Undefined value passed to context.Token.getWhere({ tokenId: { _eq: undefined } }). The undefined value is not supported in getWhere operators. Please provide a non-undefined value.`,
-      `Undefined value passed to context.Token.getWhere({ tokenId: { _in: [...] } }). The undefined value is not supported in getWhere operators. Please provide non-undefined values.`,
+      `Invalid undefined value passed to context.Token.getWhere({ tokenId: undefined }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
+      `Invalid null value passed to context.Token.getWhere({ tokenId: null }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
+      `Invalid undefined value passed to context.Token.getWhere({ tokenId: { _eq: undefined } }). Filtering by null or undefined values is not supported in getWhere.`,
+      `Invalid null value passed to context.Token.getWhere({ tokenId: { _eq: null } }). Filtering by null or undefined values is not supported in getWhere.`,
+      `Invalid undefined value passed to context.Token.getWhere({ tokenId: { _in: [...] } }). Filtering by null or undefined values is not supported in getWhere. The undefined value is at index 1 of the _in array.`,
+      `Invalid operator "_foo" in context.Token.getWhere({ tokenId: { _foo: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
+      `Invalid field "nonExistingField" in context.Token.getWhere(). The field doesn't exist. Rerun 'pnpm dev' to update generated code after schema.graphql changes.`,
     ])
   })
 })

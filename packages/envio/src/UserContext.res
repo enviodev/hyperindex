@@ -75,6 +75,22 @@ type entityContextParams = {
   entityConfig: Internal.entityConfig,
 }
 
+let getUndefinedOrNullName = (value: 'a) =>
+  if value === %raw(`undefined`) {
+    Some("undefined")
+  } else if value === %raw(`null`) {
+    Some("null")
+  } else {
+    None
+  }
+
+// Nullish values would otherwise turn into a "= NULL" query
+// silently matching nothing.
+let throwUnsupportedGetWhereValue = (~valueName, ~entityName, ~filterDisplay, ~hint="") =>
+  JsError.throwWithMessage(
+    `Invalid ${valueName} value passed to context.${entityName}.getWhere(${filterDisplay}). Filtering by null or undefined values is not supported in getWhere.${hint}`,
+  )
+
 let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
   let entityConfig = params.entityConfig
   let filterKeys = filter->Dict.keysToArray
@@ -95,10 +111,15 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
   let dbFieldName = filterKeys->Array.getUnsafe(0)
   let operatorObj = filter->Dict.getUnsafe(dbFieldName)
 
-  if operatorObj === %raw(`undefined`) {
-    JsError.throwWithMessage(
-      `Undefined value passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: undefined }). The undefined value is not supported in getWhere filters. Please provide an operator like { _eq: value }.`,
+  switch operatorObj->getUndefinedOrNullName {
+  | Some(valueName) =>
+    throwUnsupportedGetWhereValue(
+      ~valueName,
+      ~entityName=entityConfig.name,
+      ~filterDisplay=`{ ${dbFieldName}: ${valueName} }`,
+      ~hint=` Please provide an operator like { _eq: value }.`,
     )
+  | None => ()
   }
 
   let operatorKeys = operatorObj->Dict.keysToArray
@@ -117,12 +138,18 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
   }
 
   let operatorKey = operatorKeys->Array.getUnsafe(0)
-  let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
 
-  if fieldValue === %raw(`undefined`) {
+  let throwInvalidOperator = () =>
     JsError.throwWithMessage(
-      `Undefined value passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: undefined } }). The undefined value is not supported in getWhere operators. Please provide a non-undefined value.`,
+      `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
     )
+
+  // Validate the operator and the field before the value, so a typoed
+  // operator or field gets the more specific error even when the value
+  // is also nullish
+  switch operatorKey {
+  | "_eq" | "_gt" | "_lt" | "_gte" | "_lte" | "_in" => ()
+  | _ => throwInvalidOperator()
   }
 
   switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
@@ -141,6 +168,17 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
   | Some(Field(_)) => ()
   }
 
+  let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
+  switch fieldValue->getUndefinedOrNullName {
+  | Some(valueName) =>
+    throwUnsupportedGetWhereValue(
+      ~valueName,
+      ~entityName=entityConfig.name,
+      ~filterDisplay=`{ ${dbFieldName}: { ${operatorKey}: ${valueName} } }`,
+    )
+  | None => ()
+  }
+
   @inline
   let loadWithFilter = filter =>
     LoadLayer.loadByFilter(
@@ -157,13 +195,21 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
 
     // Load each value as a separate Eq filter to memoize
-    // them in memory on the per-value level
+    // them in memory on the per-value level.
+    // A nullish value throws mid-map and leaves the loads of earlier
+    // values running unawaited, which is fine since the whole
+    // getWhere call rejects
     fieldValues
-    ->Array.map(fieldValue => {
-      if fieldValue === %raw(`undefined`) {
-        JsError.throwWithMessage(
-          `Undefined value passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: { _in: [...] } }). The undefined value is not supported in getWhere operators. Please provide non-undefined values.`,
+    ->Array.mapWithIndex((fieldValue, index) => {
+      switch fieldValue->getUndefinedOrNullName {
+      | Some(valueName) =>
+        throwUnsupportedGetWhereValue(
+          ~valueName,
+          ~entityName=entityConfig.name,
+          ~filterDisplay=`{ ${dbFieldName}: { _in: [...] } }`,
+          ~hint=` The ${valueName} value is at index ${index->Int.toString} of the _in array.`,
         )
+      | None => ()
       }
       loadWithFilter(EntityFilter.Eq({fieldName: dbFieldName, fieldValue}))
     })
@@ -187,10 +233,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     | "_eq" => EntityFilter.Eq({fieldName: dbFieldName, fieldValue})
     | "_gt" => EntityFilter.Gt({fieldName: dbFieldName, fieldValue})
     | "_lt" => EntityFilter.Lt({fieldName: dbFieldName, fieldValue})
-    | _ =>
-      JsError.throwWithMessage(
-        `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
-      )
+    | _ => throwInvalidOperator()
     }
 
     loadWithFilter(filter)
