@@ -47,21 +47,27 @@ pub struct HypersyncSolanaClient {
 #[napi]
 impl HypersyncSolanaClient {
     #[napi(constructor)]
-    pub fn new(cfg: SolanaClientConfig) -> napi::Result<HypersyncSolanaClient> {
-        Self::from_config(cfg)
+    pub fn new(
+        cfg: SolanaClientConfig,
+        user_agent: String,
+    ) -> napi::Result<HypersyncSolanaClient> {
+        Self::from_config(cfg, user_agent)
     }
 
-    /// Factory mirroring EVM's `new_with_agent`. Exposed so callers that grab
-    /// the class dynamically (e.g. ReScript reaching through the addon dict)
-    /// can use `@send` rather than `%raw` to invoke `new`.
+    /// Factory taking a custom user agent, mirroring EVM's `new_with_agent`.
+    /// Exposed so callers that grab the class dynamically (e.g. ReScript
+    /// reaching through the addon dict) can use `@send` rather than `%raw`.
     #[napi(factory)]
-    pub fn from_config(cfg: SolanaClientConfig) -> napi::Result<HypersyncSolanaClient> {
+    pub fn from_config(
+        cfg: SolanaClientConfig,
+        user_agent: String,
+    ) -> napi::Result<HypersyncSolanaClient> {
         let mut schemas = HashMap::new();
         for descriptor_json in cfg.program_schemas.clone().unwrap_or_default() {
             let schema = borsh_decoder::parse_program_schema(&descriptor_json).map_err(map_err)?;
             schemas.insert(schema.program_id.clone(), schema);
         }
-        let inner = hypersync_client_solana::Client::new(cfg.into())
+        let inner = hypersync_client_solana::Client::new_with_agent(cfg.into(), user_agent)
             .context("build solana client")
             .map_err(map_err)?;
         Ok(HypersyncSolanaClient {
@@ -143,10 +149,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_query_token_metadata() {
-        let client = HypersyncSolanaClient::new(SolanaClientConfig {
-            url: "https://solana.hypersync.xyz".into(),
-            ..Default::default()
-        })
+        let client = HypersyncSolanaClient::new(
+            SolanaClientConfig {
+                url: "https://solana.hypersync.xyz".into(),
+                ..Default::default()
+            },
+            "hyperindex-test".into(),
+        )
         .expect("build client");
 
         let height = client.get_height().await.expect("get_height");
@@ -158,7 +167,6 @@ mod tests {
             to_slot: Some(height),
             instructions: Some(vec![InstructionSelection {
                 program_id: Some(vec![TOKEN_METADATA_PROGRAM.into()]),
-                include_transaction: Some(true),
                 ..Default::default()
             }]),
             max_num_instructions: Some(200),
