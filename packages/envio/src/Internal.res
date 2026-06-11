@@ -576,7 +576,6 @@ type genericEntityConfig<'entity> = {
   name: string,
   index: int,
   schema: S.t<'entity>,
-  rowsSchema: S.t<array<'entity>>,
   table: Table.table,
   storage: entityStorage,
 }
@@ -622,9 +621,6 @@ type effect = {
 }
 let cacheTablePrefix = "envio_effect_"
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
-let effectCacheItemRowsSchema = S.array(
-  S.schema(s => {id: s.matches(S.string), output: s.matches(cacheOutputSchema)}),
-)
 let makeCacheTable = (~effectName) => {
   Table.mkTable(
     cacheTablePrefix ++ effectName,

@@ -121,8 +121,6 @@ module EnvioAddresses = {
     contractName: s.matches(S.string),
   })
 
-  let rowsSchema = S.array(schema)
-
   let table = Table.mkTable(
     name,
     ~fields=[
@@ -141,7 +139,6 @@ module EnvioAddresses = {
     Internal.name,
     index,
     schema,
-    rowsSchema,
     table,
     // Internal address tracking is Postgres-only; the global config is
     // always required to have Postgres enabled (Storage::resolve forbids
@@ -471,27 +468,6 @@ let parseEntitiesFromJson = (
       dict
     })
 
-    // Rows loaded from the storage are keyed by db column names, which only
-    // differ from the entity field names when column renaming is configured
-    let rowSchema = if entityJson["properties"]->Array.some(prop => prop["postgresDbName"]->Option.isSome) {
-      S.object(s => {
-        let dict = Dict.make()
-        entityJson["properties"]->Array.forEach(
-          prop => {
-            let (_, fieldSchema, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
-            let apiFieldName = prop->getApiFieldName
-            dict->Dict.set(
-              apiFieldName,
-              s.field(prop["postgresDbName"]->Option.getOr(apiFieldName), fieldSchema),
-            )
-          },
-        )
-        dict
-      })
-    } else {
-      schema
-    }
-
     // Resolve per-entity storage against the global config. The CLI
     // validates that an entity never opts into a backend the global
     // config didn't enable, and that at least one backend stays true
@@ -511,9 +487,6 @@ let parseEntitiesFromJson = (
       Internal.name: entityName,
       index,
       schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
-      rowsSchema: S.array(rowSchema)->(
-        Utils.magic: S.t<array<dict<unknown>>> => S.t<array<Internal.entity>>
-      ),
       table,
       storage,
     }->Internal.fromGenericEntityConfig

@@ -106,7 +106,11 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[],$3::TEXT[])ON CONFLICT("id") DO UP
 
   it("parses rows keyed by db column names into entities", t => {
     let rows = %raw(`[{ "id": "1", "transaction_index": 5, "token_owner_id": "user-1" }]`)
-    let entities = rows->S.parseOrThrow(snapshotEntity.rowsSchema)
+    let entities = rows->S.parseOrThrow(
+      snapshotEntity.table
+      ->Table.rowsSchema
+      ->(Utils.magic: S.t<array<unknown>> => S.t<array<Internal.entity>>),
+    )
     t.expect(entities->(Utils.magic: array<Internal.entity> => array<snapshot>)).toEqual([
       snapshot1,
     ])
@@ -230,18 +234,19 @@ ORDER BY (id, envio_checkpoint_id)`,
     )
 
     let rawRows = await sql->Postgres.unsafe(`SELECT * FROM "${pgSchema}"."Snapshot";`)
-    let loadedByIds = await storage.loadByIdsOrThrow(
-      ~ids=["1"],
+    let loadedByIds = await storage.loadOrThrow(
+      ~filter=EntityFilter.In({
+        fieldName: "id",
+        fieldValue: ["1"]->(Utils.magic: array<string> => array<unknown>),
+      }),
       ~table=snapshotEntity.table,
-      ~rowsSchema=snapshotEntity.rowsSchema,
     )
-    let loadedByField = await storage.loadByFieldOrThrow(
-      ~fieldName="transactionIndex",
-      ~fieldSchema=S.int,
-      ~fieldValue=5,
-      ~operator=#"=",
+    let loadedByField = await storage.loadOrThrow(
+      ~filter=EntityFilter.Eq({
+        fieldName: "transactionIndex",
+        fieldValue: 5->(Utils.magic: int => unknown),
+      }),
       ~table=snapshotEntity.table,
-      ~rowsSchema=snapshotEntity.rowsSchema,
     )
 
     let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
@@ -249,8 +254,8 @@ ORDER BY (id, envio_checkpoint_id)`,
 
     t.expect({
       "rawRows": rawRows->(Utils.magic: array<unknown> => JSON.t),
-      "loadedByIds": loadedByIds->(Utils.magic: array<Internal.entity> => array<snapshot>),
-      "loadedByField": loadedByField->(Utils.magic: array<Internal.entity> => array<snapshot>),
+      "loadedByIds": loadedByIds->(Utils.magic: array<unknown> => array<snapshot>),
+      "loadedByField": loadedByField->(Utils.magic: array<unknown> => array<snapshot>),
     }).toEqual({
       "rawRows": %raw(`[{ "id": "1", "transaction_index": 5, "token_owner_id": "user-1" }]`),
       "loadedByIds": [snapshot1],

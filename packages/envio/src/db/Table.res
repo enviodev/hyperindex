@@ -266,6 +266,59 @@ let getFieldByApiName = (table, apiFieldName) =>
     } === apiFieldName
   )
 
+// Both schema instances are created once per field: rescript-schema compiles
+// and caches operations on the schema instance, so building S.array(fieldSchema)
+// per query would recompile the serializer on every call.
+type queryField = {
+  fieldSchema: S.t<unknown>,
+  // Serializes the values array of an "in" filter
+  arrayFieldSchema: S.t<unknown>,
+  // The column referenced in SQL, which only differs from the API field
+  // name keying this entry when column renaming is configured
+  dbFieldName: string,
+}
+let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
+  let dict = Dict.make()
+  table.fields->Array.forEach(field =>
+    switch field {
+    | Field(field) =>
+      dict->Dict.set(
+        field->getApiFieldName,
+        {
+          fieldSchema: field.fieldSchema,
+          arrayFieldSchema: S.array(field.fieldSchema)->S.toUnknown,
+          dbFieldName: field->getPgDbFieldName,
+        },
+      )
+    | DerivedFrom(_) => ()
+    }
+  )
+  dict
+})
+
+// Runtime entity objects are keyed by API field names (the camelCase record
+// field names are type-level only), while rows arrive keyed by db column
+// names — the keys only differ when column renaming is configured.
+let rowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
+  S.array(
+    S.object(s => {
+      let dict = Dict.make()
+      table.fields->Array.forEach(
+        field =>
+          switch field {
+          | Field(field) =>
+            dict->Dict.set(
+              field->getApiFieldName,
+              s.field(field->getPgDbFieldName, field.fieldSchema),
+            )
+          | DerivedFrom(_) => ()
+          },
+      )
+      dict
+    })->(Utils.magic: S.t<dict<unknown>> => S.t<unknown>),
+  )
+)
+
 exception NonExistingTableField(string)
 
 /*
