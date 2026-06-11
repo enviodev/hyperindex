@@ -17,11 +17,15 @@ let loadById = (
     // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
-      await storage.loadByIdsOrThrow(
-        ~table=entityConfig.table,
-        ~rowsSchema=entityConfig.rowsSchema,
-        ~ids=idsToLoad,
-      )
+      (
+        await storage.loadOrThrow(
+          ~table=entityConfig.table,
+          ~filter=EntityFilter.In({
+            fieldName: Table.idFieldName,
+            fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
+          }),
+        )
+      )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
     | Persistence.StorageError({message, reason}) =>
       reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
@@ -264,11 +268,15 @@ let loadEffect = (
       let {table, outputSchema} = effect.storageMeta
 
       let dbEntities = try {
-        await storage.loadByIdsOrThrow(
-          ~table,
-          ~rowsSchema=Internal.effectCacheItemRowsSchema,
-          ~ids=idsToLoad,
-        )
+        (
+          await storage.loadOrThrow(
+            ~table,
+            ~filter=EntityFilter.In({
+              fieldName: Table.idFieldName,
+              fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
+            }),
+          )
+        )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
       } catch {
       | exn =>
         item
@@ -349,7 +357,6 @@ let loadByField = (
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
   ~fieldName,
-  ~fieldValueSchema,
   ~shouldGroup,
   ~item,
   ~fieldValue,
@@ -380,22 +387,21 @@ let loadByField = (
     ->Array.map(async index => {
       inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
       try {
-        let entities = await storage.loadByFieldOrThrow(
-          ~operator=switch index {
-          | Single({operator: Gt}) => #">"
-          | Single({operator: Eq}) => #"="
-          | Single({operator: Lt}) => #"<"
-          },
-          ~table=entityConfig.table,
-          ~rowsSchema=entityConfig.rowsSchema,
-          ~fieldName=index->TableIndices.Index.getFieldName,
-          ~fieldValue=switch index {
-          | Single({fieldValue}) => fieldValue
-          },
-          ~fieldSchema=fieldValueSchema->(
-            Utils.magic: S.t<'fieldValue> => S.t<TableIndices.FieldValue.t>
-          ),
-        )
+        let entities = (
+          await storage.loadOrThrow(
+            ~table=entityConfig.table,
+            ~filter=switch index {
+            | Single({fieldName, fieldValue, operator}) => {
+                let fieldValue = fieldValue->(Utils.magic: TableIndices.FieldValue.t => unknown)
+                switch operator {
+                | Eq => EntityFilter.Eq({fieldName, fieldValue})
+                | Gt => EntityFilter.Gt({fieldName, fieldValue})
+                | Lt => EntityFilter.Lt({fieldName, fieldValue})
+                }
+              }
+            },
+          )
+        )->(Utils.magic: array<unknown> => array<Internal.entity>)
 
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(

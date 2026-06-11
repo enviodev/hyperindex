@@ -2,6 +2,12 @@ open Source
 
 exception QueryTimout(string)
 
+// eth_getTransactionByHash/eth_getTransactionReceipt returning null is usually
+// transient: a load-balanced provider can route the lookup to a node that
+// hasn't caught up with the one that served eth_getLogs. Must stay retryable,
+// unlike other field-selection failures which disable the source.
+exception TransactionDataNotFound({message: string})
+
 // Minimal block data needed for infrastructure (reorg guard, timestamps, etc.)
 type blockInfo = {
   number: int,
@@ -974,14 +980,21 @@ let make = (
     ~getTransactionJson=async transactionHash => {
       switch await transactionLoader.contents->LazyLoader.get(transactionHash) {
       | Some(json) => json
-      | None => JsError.throwWithMessage(`Transaction not found for hash: ${transactionHash}`)
+      | None =>
+        throw(
+          TransactionDataNotFound({message: `Transaction not found for hash: ${transactionHash}`}),
+        )
       }
     },
     ~getReceiptJson=async transactionHash => {
       switch await receiptLoader.contents->LazyLoader.get(transactionHash) {
       | Some(json) => json
       | None =>
-        JsError.throwWithMessage(`Transaction receipt not found for hash: ${transactionHash}`)
+        throw(
+          TransactionDataNotFound({
+            message: `Transaction receipt not found for hash: ${transactionHash}`,
+          }),
+        )
       }
     },
     ~lowercaseAddresses,
@@ -1025,7 +1038,7 @@ let make = (
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
-    ~retry as _,
+    ~retry,
     ~logger as _,
   ) => {
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
@@ -1150,6 +1163,23 @@ let make = (
                     ~selectedTransactionFields=eventConfig.selectedTransactionFields,
                   ),
                 )) catch {
+                | TransactionDataNotFound({message}) =>
+                  let backoffMillis = switch retry {
+                  | 0 => 100
+                  | _ => 500 * retry
+                  }
+                  throw(
+                    Source.GetItemsError(
+                      FailedGettingItems({
+                        exn: %raw(`null`),
+                        attemptedToBlock: toBlock,
+                        retry: WithBackoff({
+                          message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+                          backoffMillis,
+                        }),
+                      }),
+                    ),
+                  )
                 | exn =>
                   throw(
                     Source.GetItemsError(
