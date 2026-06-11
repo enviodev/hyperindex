@@ -1038,6 +1038,123 @@ describe("FetchState.registerDynamicContracts", () => {
     },
   )
 
+  it(
+    "Warns and skips when two contracts register the same address within one batch",
+    t => {
+      let fetchState = makeInitial()
+
+      let dc1 = makeDynContractRegistration(
+        ~blockNumber=10,
+        ~contractAddress=mockAddress1,
+        ~contractName="Gravatar",
+      )
+      let dc2 = makeDynContractRegistration(
+        ~blockNumber=10,
+        ~contractAddress=mockAddress1,
+        ~contractName="NftFactory",
+      )
+      let item2 = dc2->dcToItem
+
+      let updatedFetchState = fetchState->FetchState.registerDynamicContracts([dc1->dcToItem, item2])
+
+      t.expect(
+        (
+          updatedFetchState.indexingAddresses
+          ->Dict.get(mockAddress1->Address.toString)
+          ->Option.map(ia => ia.contractName),
+          // dc spliced out - won't be persisted to envio_addresses
+          item2->Internal.getItemDcs,
+          updatedFetchState.optimizedPartitions.entities
+          ->Dict.valuesToArray
+          ->Array.every(p =>
+            p.addressesByContractName
+            ->Utils.Dict.dangerouslyGetNonOption("NftFactory")
+            ->Option.map(addrs => !(addrs->Array.includes(mockAddress1)))
+            ->Option.getOr(true)
+          ),
+        ),
+        ~message=`first registration wins,
+          the conflicting dc is spliced out,
+          and the address never enters the second contract's partitions`,
+      ).toEqual((Some("Gravatar"), Some([]), true))
+    },
+  )
+
+  it(
+    "Warns and skips a conflicting no-events dc registered after an events dc in the same batch",
+    t => {
+      let fetchState = makeInitial()
+
+      let eventsDc = makeDynContractRegistration(
+        ~blockNumber=10,
+        ~contractAddress=mockAddress1,
+        ~contractName="Gravatar",
+      )
+      let noEventsDc = makeDynContractRegistration(
+        ~blockNumber=10,
+        ~contractAddress=mockAddress1,
+        ~contractName="UnknownContract",
+      )
+      let noEventsItem = noEventsDc->dcToItem
+
+      let updatedFetchState =
+        fetchState->FetchState.registerDynamicContracts([eventsDc->dcToItem, noEventsItem])
+
+      t.expect(
+        (
+          updatedFetchState.indexingAddresses
+          ->Dict.get(mockAddress1->Address.toString)
+          ->Option.map(ia => ia.contractName),
+          noEventsItem->Internal.getItemDcs,
+        ),
+        ~message=`the events registration is preserved on indexingAddresses
+          and the conflicting no-events dc is spliced out`,
+      ).toEqual((Some("Gravatar"), Some([])))
+    },
+  )
+
+  it(
+    "Warns and skips a conflicting events dc registered after a no-events dc in the same batch",
+    t => {
+      let fetchState = makeInitial()
+
+      let noEventsDc = makeDynContractRegistration(
+        ~blockNumber=10,
+        ~contractAddress=mockAddress1,
+        ~contractName="UnknownContract",
+      )
+      let eventsDc = makeDynContractRegistration(
+        ~blockNumber=10,
+        ~contractAddress=mockAddress1,
+        ~contractName="Gravatar",
+      )
+      let eventsItem = eventsDc->dcToItem
+
+      let updatedFetchState =
+        fetchState->FetchState.registerDynamicContracts([noEventsDc->dcToItem, eventsItem])
+
+      t.expect(
+        (
+          updatedFetchState.indexingAddresses
+          ->Dict.get(mockAddress1->Address.toString)
+          ->Option.map(ia => ia.contractName),
+          eventsItem->Internal.getItemDcs,
+          updatedFetchState.optimizedPartitions.entities
+          ->Dict.valuesToArray
+          ->Array.every(p =>
+            p.addressesByContractName
+            ->Utils.Dict.dangerouslyGetNonOption("Gravatar")
+            ->Option.map(addrs => !(addrs->Array.includes(mockAddress1)))
+            ->Option.getOr(true)
+          ),
+        ),
+        ~message=`the no-events registration wins,
+          the conflicting events dc is spliced out,
+          and the address never enters Gravatar partitions`,
+      ).toEqual((Some("UnknownContract"), Some([]), true))
+    },
+  )
+
   it("Correctly registers all valid contracts even when some are skipped in the middle", t => {
     let fetchState = makeInitial()
 
