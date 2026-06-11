@@ -337,13 +337,13 @@ module Decoder = {
 
   @send
   external classFromParams: (
-    Core.decoderCtor,
+    Core.evmDecoderCtor,
     array<eventParamsInput>,
     ~checksumAddresses: bool=?,
   ) => tWithParams = "fromParams"
 
   let fromParams = (eventParams, ~checksumAddresses=?) =>
-    Core.getAddon().decoder->classFromParams(eventParams, ~checksumAddresses?)
+    Core.getAddon().evmDecoder->classFromParams(eventParams, ~checksumAddresses?)
 }
 
 module EventItems = {
@@ -372,11 +372,15 @@ type t = {
 }
 
 @send
-external classNew: (Core.hypersyncClientCtor, cfg, string, array<Decoder.eventParamsInput>) => t =
-  "new"
+external classNew: (
+  Core.evmHypersyncClientCtor,
+  cfg,
+  string,
+  array<Decoder.eventParamsInput>,
+) => t = "new"
 
 let makeWithAgent = (cfg, ~userAgent, ~eventParams) =>
-  Core.getAddon().hypersyncClient->classNew(cfg, userAgent, eventParams)
+  Core.getAddon().evmHypersyncClient->classNew(cfg, userAgent, eventParams)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
