@@ -3,6 +3,7 @@ type TokenMetadataAccount {
   mint: String!
   updateAuthority: String
   lastUpdatedSlot: Int!
+  lastUpdatedTime: Int!
   updateCount: Int!
   createdAtSlot: Int!
   lastTxSignature: String
