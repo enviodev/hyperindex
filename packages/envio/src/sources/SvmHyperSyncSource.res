@@ -274,7 +274,7 @@ let probeRouter = (
 }
 
 let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: options): t => {
-  let name = "HyperSyncSolana"
+  let name = "SvmHyperSync"
   let chainId = chain->ChainMap.Chain.toChainId
 
   // Built once at startup and handed to the client so `get` decodes matching
@@ -347,9 +347,11 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
           : None
       ),
     }
+    // `toBlock` is inclusive, but `toSlot` is exclusive on the wire — without
+    // the +1 a bounded range stalls one slot short of its end.
     let query: SvmHyperSyncClient.query = {
       fromSlot: fromBlock,
-      toSlot: ?toBlock,
+      toSlot: ?(toBlock->Option.map(toBlock => toBlock + 1)),
       instructions: instructionSelections,
       fields,
     }
@@ -364,7 +366,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
             exn,
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: WithBackoff({
-              message: `Unexpected issue while fetching instructions from HyperSync Solana. Attempt a retry.`,
+              message: `Unexpected issue while fetching instructions from SVM HyperSync. Attempt a retry.`,
               backoffMillis: switch retry {
               | 0 => 500
               | _ => 1000 * retry
