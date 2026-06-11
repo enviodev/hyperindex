@@ -1031,19 +1031,19 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 })
 
-describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
+describe("RpcSource - getItemsOrThrow with missing transaction or block data", () => {
   let sighash = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"
   let transactionHash = "0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"
   let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
 
-  // Replaces globalThis.fetch with a JSON-RPC stub routed by request method.
-  // Returns a restore function.
-  let stubJsonRpcFetch: (string => JSON.t) => unit => unit = %raw(`(getResult) => {
+  // Replaces globalThis.fetch with a JSON-RPC stub routed by request method
+  // and params. Returns a restore function.
+  let stubJsonRpcFetch: ((string, array<JSON.t>) => JSON.t) => unit => unit = %raw(`(getResult) => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (_url, args) => {
-      const method = JSON.parse(args.body).method;
+      const body = JSON.parse(args.body);
       return new Response(
-        JSON.stringify({ jsonrpc: "2.0", id: 1, result: getResult(method) }),
+        JSON.stringify({ jsonrpc: "2.0", id: 1, result: getResult(body.method, body.params) }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     };
@@ -1052,6 +1052,88 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
     };
   }`)
 
+  let makeSource = (eventConfig: Internal.evmEventConfig) =>
+    RpcSource.make({
+      url: "http://localhost:8545",
+      chain,
+      eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+      sourceFor: Sync,
+      syncConfig: EvmChain.getSyncConfig({}),
+      allEventParams: [
+        {
+          sighash,
+          topicCount: 1,
+          eventName: eventConfig.name,
+          contractName: eventConfig.contractName,
+          params: [],
+        },
+      ],
+      lowercaseAddresses: false,
+    })
+
+  let makeLogJson = (~blockNumber) =>
+    JSON.Object(
+      Dict.fromArray([
+        ("address", JSON.String(mockAddress->Address.toString)),
+        ("topics", JSON.Array([JSON.String(sighash)])),
+        ("data", JSON.String("0x")),
+        ("blockNumber", JSON.String(blockNumber)),
+        ("transactionHash", JSON.String(transactionHash)),
+        ("transactionIndex", JSON.String("0x1")),
+        ("blockHash", JSON.String("0xb64")),
+        ("logIndex", JSON.String("0x2")),
+        ("removed", JSON.Boolean(false)),
+      ]),
+    )
+
+  let blockJson = JSON.Object(
+    Dict.fromArray([
+      ("number", JSON.String("0x64")),
+      ("timestamp", JSON.String("0x64")),
+      ("hash", JSON.String("0xb64")),
+      ("parentHash", JSON.String("0xb63")),
+    ]),
+  )
+
+  let callGetItemsOrThrow = async (
+    source: Source.t,
+    ~eventConfig: Internal.evmEventConfig,
+    ~fromBlock=0,
+    ~toBlock=100,
+    ~retry,
+  ) =>
+    try {
+      let _ = await source.getItemsOrThrow(
+        ~fromBlock,
+        ~toBlock=Some(toBlock),
+        ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+        ~indexingAddresses=Dict.fromArray([
+          (
+            mockAddress->Address.toString,
+            (
+              {
+                contractName: eventConfig.contractName,
+                address: mockAddress,
+                registrationBlock: -1,
+                effectiveStartBlock: 0,
+              }: FetchState.indexingAddress
+            ),
+          ),
+        ]),
+        ~knownHeight=toBlock,
+        ~partitionId="0",
+        ~selection={
+          dependsOnAddresses: true,
+          eventConfigs: [(eventConfig :> Internal.eventConfig)],
+        },
+        ~retry,
+        ~logger=Logging.createChild(~params={"test": "RpcSource missing data"}),
+      )
+      None
+    } catch {
+    | Source.GetItemsError(error) => Some(error)
+    }
+
   Async.it(
     "Throws a retryable error instead of a source-disabling one when the receipt is null",
     async t => {
@@ -1059,49 +1141,11 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
         ~id=`${sighash}_1`,
         ~transactionFieldNames=[GasUsed],
       )
-      let source = RpcSource.make({
-        url: "http://localhost:8545",
-        chain,
-        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
-        sourceFor: Sync,
-        syncConfig: EvmChain.getSyncConfig({}),
-        allEventParams: [
-          {
-            sighash,
-            topicCount: 1,
-            eventName: eventConfig.name,
-            contractName: eventConfig.contractName,
-            params: [],
-          },
-        ],
-        lowercaseAddresses: false,
-      })
+      let source = makeSource(eventConfig)
 
-      let logJson = JSON.Object(
-        Dict.fromArray([
-          ("address", JSON.String(mockAddress->Address.toString)),
-          ("topics", JSON.Array([JSON.String(sighash)])),
-          ("data", JSON.String("0x")),
-          ("blockNumber", JSON.String("0x64")),
-          ("transactionHash", JSON.String(transactionHash)),
-          ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0xb64")),
-          ("logIndex", JSON.String("0x2")),
-          ("removed", JSON.Boolean(false)),
-        ]),
-      )
-      let blockJson = JSON.Object(
-        Dict.fromArray([
-          ("number", JSON.String("0x64")),
-          ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0xb64")),
-          ("parentHash", JSON.String("0xb63")),
-        ]),
-      )
-
-      let restoreFetch = stubJsonRpcFetch(method =>
+      let restoreFetch = stubJsonRpcFetch((method, _params) =>
         switch method {
-        | "eth_getLogs" => JSON.Array([logJson])
+        | "eth_getLogs" => JSON.Array([makeLogJson(~blockNumber="0x64")])
         | "eth_getBlockByNumber" => blockJson
         // eth_getTransactionByHash/eth_getTransactionReceipt return null,
         // like a load-balanced node that hasn't caught up with the head
@@ -1110,39 +1154,10 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
       )
 
       let caught = try {
-        let callGetItemsOrThrow = async (~retry) =>
-          try {
-            let _ = await source.getItemsOrThrow(
-              ~fromBlock=0,
-              ~toBlock=Some(100),
-              ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
-              ~indexingAddresses=Dict.fromArray([
-                (
-                  mockAddress->Address.toString,
-                  (
-                    {
-                      contractName: eventConfig.contractName,
-                      address: mockAddress,
-                      registrationBlock: -1,
-                      effectiveStartBlock: 0,
-                    }: FetchState.indexingAddress
-                  ),
-                ),
-              ]),
-              ~knownHeight=100,
-              ~partitionId="0",
-              ~selection={
-                dependsOnAddresses: true,
-                eventConfigs: [(eventConfig :> Internal.eventConfig)],
-              },
-              ~retry,
-              ~logger=Logging.createChild(~params={"test": "RpcSource missing transaction data"}),
-            )
-            None
-          } catch {
-          | Source.GetItemsError(error) => Some(error)
-          }
-        let result = (await callGetItemsOrThrow(~retry=0), await callGetItemsOrThrow(~retry=2))
+        let result = (
+          await callGetItemsOrThrow(source, ~eventConfig, ~retry=0),
+          await callGetItemsOrThrow(source, ~eventConfig, ~retry=2),
+        )
         restoreFetch()
         result
       } catch {
@@ -1173,6 +1188,128 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
           }),
         ),
       ))
+    },
+  )
+
+  Async.it(
+    "Throws a retryable error instead of a field-selection one when the event's block is null",
+    async t => {
+      let eventConfig = MockIndexer.evmEventConfig(~id=`${sighash}_1`, ~blockFieldNames=[Number])
+      let source = makeSource(eventConfig)
+
+      let restoreFetch = stubJsonRpcFetch((method, params) =>
+        switch (method, params->Array.get(0)) {
+        | ("eth_getLogs", _) => JSON.Array([makeLogJson(~blockNumber="0x32")])
+        // The event's block is null, like a load-balanced node that hasn't
+        // caught up with the one that served eth_getLogs
+        | ("eth_getBlockByNumber", Some(JSON.String("0x32"))) => JSON.Null
+        | ("eth_getBlockByNumber", _) => blockJson
+        | _ => JSON.Null
+        }
+      )
+
+      let caught = try {
+        let result = await callGetItemsOrThrow(source, ~eventConfig, ~retry=0)
+        restoreFetch()
+        result
+      } catch {
+      | exn =>
+        restoreFetch()
+        throw(exn)
+      }
+
+      t.expect(caught).toEqual(
+        Some(
+          FailedGettingItems({
+            exn: %raw(`null`),
+            attemptedToBlock: 100,
+            retry: WithBackoff({
+              message: `Block not found for number 50. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in 100ms.`,
+              backoffMillis: 100,
+            }),
+          }),
+        ),
+      )
+    },
+  )
+
+  Async.it(
+    "Throws a retryable error instead of shrinking the block range when the latest block is null",
+    async t => {
+      let eventConfig = MockIndexer.evmEventConfig(~id=`${sighash}_1`)
+      let source = makeSource(eventConfig)
+
+      let restoreFetch = stubJsonRpcFetch((method, _params) =>
+        switch method {
+        | "eth_getLogs" => JSON.Array([])
+        // eth_getBlockByNumber returns null for the toBlock at the head
+        | _ => JSON.Null
+        }
+      )
+
+      let caught = try {
+        let result = await callGetItemsOrThrow(source, ~eventConfig, ~retry=0)
+        restoreFetch()
+        result
+      } catch {
+      | exn =>
+        restoreFetch()
+        throw(exn)
+      }
+
+      t.expect(caught).toEqual(
+        Some(
+          FailedGettingItems({
+            exn: %raw(`null`),
+            attemptedToBlock: 100,
+            retry: WithBackoff({
+              message: `Block not found for number 100. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in 100ms.`,
+              backoffMillis: 100,
+            }),
+          }),
+        ),
+      )
+    },
+  )
+
+  Async.it(
+    "Throws a retryable error instead of a raw exception when the first block parent is null",
+    async t => {
+      let eventConfig = MockIndexer.evmEventConfig(~id=`${sighash}_1`)
+      let source = makeSource(eventConfig)
+
+      let restoreFetch = stubJsonRpcFetch((method, params) =>
+        switch (method, params->Array.get(0)) {
+        | ("eth_getLogs", _) => JSON.Array([])
+        // The parent block of fromBlock is null
+        | ("eth_getBlockByNumber", Some(JSON.String("0x0"))) => JSON.Null
+        | ("eth_getBlockByNumber", _) => blockJson
+        | _ => JSON.Null
+        }
+      )
+
+      let caught = try {
+        let result = await callGetItemsOrThrow(source, ~eventConfig, ~fromBlock=1, ~retry=0)
+        restoreFetch()
+        result
+      } catch {
+      | exn =>
+        restoreFetch()
+        throw(exn)
+      }
+
+      t.expect(caught).toEqual(
+        Some(
+          FailedGettingItems({
+            exn: %raw(`null`),
+            attemptedToBlock: 100,
+            retry: WithBackoff({
+              message: `Block not found for number 0. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in 100ms.`,
+              backoffMillis: 100,
+            }),
+          }),
+        ),
+      )
     },
   )
 })

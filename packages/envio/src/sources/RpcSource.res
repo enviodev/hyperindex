@@ -2,11 +2,30 @@ open Source
 
 exception QueryTimout(string)
 
-// eth_getTransactionByHash/eth_getTransactionReceipt returning null is usually
-// transient: a load-balanced provider can route the lookup to a node that
-// hasn't caught up with the one that served eth_getLogs. Must stay retryable,
-// unlike other field-selection failures which disable the source.
-exception TransactionDataNotFound({message: string})
+// eth_getTransactionByHash/eth_getTransactionReceipt/eth_getBlockByNumber
+// returning null is usually transient: a load-balanced provider can route the
+// lookup to a node that hasn't caught up with the one that served eth_getLogs.
+// Must stay retryable, unlike other field-selection failures which disable the source.
+exception DataNotFound({message: string})
+
+let blockNotFoundMessage = blockNumber => `Block not found for number ${blockNumber->Int.toString}`
+
+let makeDataNotFoundGetItemsError = (~message, ~attemptedToBlock, ~retry) => {
+  let backoffMillis = switch retry {
+  | 0 => 100
+  | _ => 500 * retry
+  }
+  Source.GetItemsError(
+    FailedGettingItems({
+      exn: %raw(`null`),
+      attemptedToBlock,
+      retry: WithBackoff({
+        message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+        backoffMillis,
+      }),
+    }),
+  )
+}
 
 // Minimal block data needed for infrastructure (reorg guard, timestamps, etc.)
 type blockInfo = {
@@ -15,13 +34,6 @@ type blockInfo = {
   hash: string,
   parentHash: string,
 }
-
-let getKnownRawBlock = async (~client, ~blockNumber) =>
-  switch await Rpc.getRawBlock(~client, ~blockNumber) {
-  | Some(json) => json
-  | None =>
-    JsError.throwWithMessage(`RPC returned null for blockNumber ${blockNumber->Int.toString}`)
-  }
 
 // Extract infrastructure fields (number, timestamp, hash) from raw block JSON
 let parseBlockInfo = (json: JSON.t): blockInfo => {
@@ -42,7 +54,10 @@ let parseBlockInfo = (json: JSON.t): blockInfo => {
   }
 }
 
-let getKnownRawBlockWithBackoff = async (
+// Retries transport errors in place. Resolves None when the RPC returns null
+// for the block (a node behind the head), so callers can map it to a retryable
+// DataNotFound instead of retrying forever against the same source.
+let getRawBlockWithBackoff = async (
   ~client,
   ~sourceName,
   ~chain,
@@ -58,7 +73,7 @@ let getKnownRawBlockWithBackoff = async (
       ~chainId=chain->ChainMap.Chain.toChainId,
       ~method="eth_getBlockByNumber",
     )
-    switch await getKnownRawBlock(~client, ~blockNumber) {
+    switch await Rpc.getRawBlock(~client, ~blockNumber) {
     | exception err =>
       Logging.warn({
         "err": err->Utils.prettifyExn,
@@ -69,7 +84,7 @@ let getKnownRawBlockWithBackoff = async (
       })
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
       currentBackoff := currentBackoff.contents * 2
-    | json => result := Some(json)
+    | maybeJson => result := Some(maybeJson)
     }
   }
   result.contents->Option.getOrThrow
@@ -242,6 +257,7 @@ let getNextPage = (
   ~partitionId,
   ~sourceName,
   ~chainId,
+  ~retry,
 ): promise<eventBatchQuery> => {
   //If the query hangs for longer than this, reject this promise to reduce the block interval
   let queryTimoutPromise =
@@ -262,49 +278,56 @@ let getNextPage = (
       toBlock,
     },
   )->Promise.then(async logs => {
-    {
-      logs,
-      latestFetchedBlockInfo: await latestFetchedBlockPromise,
+    switch await latestFetchedBlockPromise {
+    | Some(latestFetchedBlockInfo) => {logs, latestFetchedBlockInfo}
+    | None => throw(DataNotFound({message: blockNotFoundMessage(toBlock)}))
     }
   })
 
   [queryTimoutPromise, logsPromise]
   ->Promise.race
   ->Promise.catch(err => {
-    switch getSuggestedBlockIntervalFromExn(err) {
-    | Some((nextBlockIntervalTry, isMaxRange)) =>
-      mutSuggestedBlockIntervals->Dict.set(
-        isMaxRange ? maxSuggestedBlockIntervalKey : partitionId,
-        nextBlockIntervalTry,
-      )
-      throw(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn: err,
-            attemptedToBlock: toBlock,
-            retry: WithSuggestedToBlock({
-              toBlock: fromBlock + nextBlockIntervalTry - 1,
+    switch err {
+    // Shrinking the block range can't make a missing head block appear,
+    // so fail over with backoff like missing transaction data.
+    | DataNotFound({message}) =>
+      throw(makeDataNotFoundGetItemsError(~message, ~attemptedToBlock=toBlock, ~retry))
+    | _ =>
+      switch getSuggestedBlockIntervalFromExn(err) {
+      | Some((nextBlockIntervalTry, isMaxRange)) =>
+        mutSuggestedBlockIntervals->Dict.set(
+          isMaxRange ? maxSuggestedBlockIntervalKey : partitionId,
+          nextBlockIntervalTry,
+        )
+        throw(
+          Source.GetItemsError(
+            FailedGettingItems({
+              exn: err,
+              attemptedToBlock: toBlock,
+              retry: WithSuggestedToBlock({
+                toBlock: fromBlock + nextBlockIntervalTry - 1,
+              }),
             }),
-          }),
-        ),
-      )
-    | None =>
-      let executedBlockInterval = toBlock - fromBlock + 1
-      let nextBlockIntervalTry =
-        (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt
-      mutSuggestedBlockIntervals->Dict.set(partitionId, nextBlockIntervalTry)
-      throw(
-        Source.GetItemsError(
-          Source.FailedGettingItems({
-            exn: err,
-            attemptedToBlock: toBlock,
-            retry: WithBackoff({
-              message: `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
-              backoffMillis: sc.backoffMillis,
+          ),
+        )
+      | None =>
+        let executedBlockInterval = toBlock - fromBlock + 1
+        let nextBlockIntervalTry =
+          (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt
+        mutSuggestedBlockIntervals->Dict.set(partitionId, nextBlockIntervalTry)
+        throw(
+          Source.GetItemsError(
+            Source.FailedGettingItems({
+              exn: err,
+              attemptedToBlock: toBlock,
+              retry: WithBackoff({
+                message: `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
+                backoffMillis: sc.backoffMillis,
+              }),
             }),
-          }),
-        ),
-      )
+          ),
+        )
+      }
     }
   })
 }
@@ -915,7 +938,7 @@ let make = (
   let makeBlockLoader = () =>
     LazyLoader.make(
       ~loaderFn=blockNumber => {
-        getKnownRawBlockWithBackoff(
+        getRawBlockWithBackoff(
           ~client,
           ~sourceName=name,
           ~chain,
@@ -971,18 +994,21 @@ let make = (
   let transactionLoader = ref(makeTransactionLoader())
   let receiptLoader = ref(makeReceiptLoader())
 
+  let getBlockJsonOrThrow = async blockNumber =>
+    switch await blockLoader.contents->LazyLoader.get(blockNumber) {
+    | Some(json) => json
+    | None => throw(DataNotFound({message: blockNotFoundMessage(blockNumber)}))
+    }
+
   let getEventBlockOrThrow = makeThrowingGetEventBlock(
-    ~getBlockJson=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
+    ~getBlockJson=getBlockJsonOrThrow,
     ~lowercaseAddresses,
   )
   let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
     ~getTransactionJson=async transactionHash => {
       switch await transactionLoader.contents->LazyLoader.get(transactionHash) {
       | Some(json) => json
-      | None =>
-        throw(
-          TransactionDataNotFound({message: `Transaction not found for hash: ${transactionHash}`}),
-        )
+      | None => throw(DataNotFound({message: `Transaction not found for hash: ${transactionHash}`}))
       }
     },
     ~getReceiptJson=async transactionHash => {
@@ -990,7 +1016,7 @@ let make = (
       | Some(json) => json
       | None =>
         throw(
-          TransactionDataNotFound({
+          DataNotFound({
             message: `Transaction receipt not found for hash: ${transactionHash}`,
           }),
         )
@@ -1062,11 +1088,15 @@ let make = (
     //Defensively ensure we never query a target block below fromBlock
     ->Pervasives.max(fromBlock)
 
+    // Outer None: fromBlock is 0, there's no parent to fetch. Inner None: the
+    // RPC returned null for the block — mapped to a retryable error only when
+    // awaited, because rejecting here would become an unhandled rejection
+    // whenever getNextPage throws first.
     let firstBlockParentPromise =
       fromBlock > 0
         ? blockLoader.contents
           ->LazyLoader.get(fromBlock - 1)
-          ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
+          ->Promise.thenResolve(maybeJson => Some(maybeJson->Option.map(parseBlockInfo)))
         : Promise.resolve(None)
 
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
@@ -1080,13 +1110,14 @@ let make = (
       ~loadBlock=blockNumber =>
         blockLoader.contents
         ->LazyLoader.get(blockNumber)
-        ->Promise.thenResolve(parseBlockInfo),
+        ->Promise.thenResolve(maybeJson => maybeJson->Option.map(parseBlockInfo)),
       ~syncConfig,
       ~client,
       ~mutSuggestedBlockIntervals,
       ~partitionId,
       ~sourceName=name,
       ~chainId=chain->ChainMap.Chain.toChainId,
+      ~retry,
     )
 
     let executedBlockInterval = suggestedToBlock - fromBlock + 1
@@ -1162,23 +1193,8 @@ let make = (
                     ~selectedTransactionFields=eventConfig.selectedTransactionFields,
                   ),
                 )) catch {
-                | TransactionDataNotFound({message}) =>
-                  let backoffMillis = switch retry {
-                  | 0 => 100
-                  | _ => 500 * retry
-                  }
-                  throw(
-                    Source.GetItemsError(
-                      FailedGettingItems({
-                        exn: %raw(`null`),
-                        attemptedToBlock: toBlock,
-                        retry: WithBackoff({
-                          message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                          backoffMillis,
-                        }),
-                      }),
-                    ),
-                  )
+                | DataNotFound({message}) =>
+                  throw(makeDataNotFoundGetItemsError(~message, ~attemptedToBlock=toBlock, ~retry))
                 | exn =>
                   throw(
                     Source.GetItemsError(
@@ -1219,7 +1235,18 @@ let make = (
     })
     ->Promise.all
 
-    let optFirstBlockParent = await firstBlockParentPromise
+    let optFirstBlockParent = switch await firstBlockParentPromise {
+    | None => None
+    | Some(Some(blockInfo)) => Some(blockInfo)
+    | Some(None) =>
+      throw(
+        makeDataNotFoundGetItemsError(
+          ~message=blockNotFoundMessage(fromBlock - 1),
+          ~attemptedToBlock=toBlock,
+          ~retry,
+        ),
+      )
+    }
 
     let totalTimeElapsed = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
@@ -1268,7 +1295,7 @@ let make = (
 
   let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
     blockNumbers
-    ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
+    ->Array.map(blockNum => getBlockJsonOrThrow(blockNum))
     ->Promise.all
     ->Promise.thenResolve(rawBlocks => {
       rawBlocks
