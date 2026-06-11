@@ -41,9 +41,8 @@ pub struct JsonRpcClient {
 }
 
 impl JsonRpcClient {
-    /// Matches hypersync_client::ClientConfig::default_http_req_timeout_millis.
     pub const fn default_http_req_timeout_millis() -> u64 {
-        30_000
+        120_000
     }
 
     pub fn new(url: String, http_req_timeout_millis: u64) -> Result<Self> {
