@@ -2691,6 +2691,7 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
     async t => {
       let stallWriteBatch: ref<option<promise<unit>>> = ref(None)
       let writeBatchCalls = ref(0)
+      let rollbackReadBeforeFlush = ref(false)
 
       let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -2713,6 +2714,21 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
         ],
         ~mapStorage=storage => {
           ...storage,
+          // Record an ordering violation instead of relying on timing alone:
+          // the rollback must not read checkpoints while a stalled batch
+          // write is still pending.
+          getRollbackTargetCheckpoint: (~reorgChainId, ~lastKnownValidBlockNumber) => {
+            if stallWriteBatch.contents->Option.isSome {
+              rollbackReadBeforeFlush := true
+            }
+            storage.getRollbackTargetCheckpoint(~reorgChainId, ~lastKnownValidBlockNumber)
+          },
+          getRollbackProgressDiff: (~rollbackTargetCheckpointId) => {
+            if stallWriteBatch.contents->Option.isSome {
+              rollbackReadBeforeFlush := true
+            }
+            storage.getRollbackProgressDiff(~rollbackTargetCheckpointId)
+          },
           writeBatch: (
             ~batch,
             ~rollback,
@@ -2870,6 +2886,11 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
       await indexerMock.getRollbackReadyPromise()
+
+      t.expect(
+        rollbackReadBeforeFlush.contents,
+        ~message="Rollback must flush the in-flight batch write before reading rollback checkpoints from the db",
+      ).toEqual(false)
 
       t.expect(
         (
