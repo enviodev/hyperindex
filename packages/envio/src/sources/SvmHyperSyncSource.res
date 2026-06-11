@@ -347,9 +347,11 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
           : None
       ),
     }
+    // `toBlock` is inclusive, but `toSlot` is exclusive on the wire — without
+    // the +1 a bounded range stalls one slot short of its end.
     let query: SvmHyperSyncClient.query = {
       fromSlot: fromBlock,
-      toSlot: ?toBlock,
+      toSlot: ?(toBlock->Option.map(toBlock => toBlock + 1)),
       instructions: instructionSelections,
       fields,
     }
