@@ -39,24 +39,25 @@ describe("RpcSource - name", () => {
 })
 
 describe("RpcSource - getHeightOrThrow", () => {
-  Async.itWithOptions(
-    "Returns the name of the source including sanitized rpc url",
-    {retry: 3},
-    async t => {
-      let source = RpcSource.make({
-        url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
-        chain: MockConfig.chain1337,
-        eventRouter: EventRouter.empty(),
-        sourceFor: Sync,
-        syncConfig: EvmChain.getSyncConfig({}),
-        allEventParams: [],
-        lowercaseAddresses: false,
-      })
-      let height = await source.getHeightOrThrow()
-      t.expect(height > 21994218).toBe(true)
-      t.expect(height < 30000000).toBe(true)
-    },
-  )
+  Async.it("Returns the current height of the chain", async t => {
+    let source = RpcSource.make({
+      url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
+      chain: MockConfig.chain1337,
+      eventRouter: EventRouter.empty(),
+      sourceFor: Sync,
+      syncConfig: EvmChain.getSyncConfig({}),
+      allEventParams: [],
+      lowercaseAddresses: false,
+    })
+    let height = await source.getHeightOrThrow()
+    t.expect({
+      "aboveLowerBound": height > 21994218,
+      "belowUpperBound": height < 30000000,
+    }).toEqual({
+      "aboveLowerBound": true,
+      "belowUpperBound": true,
+    })
+  })
 })
 
 describe("RpcSource - getEventTransactionOrThrow", () => {
@@ -141,10 +142,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     })
   })
 
-  Async.itWithOptions(
-    "Queries transaction fields from raw JSON (with real RPC)",
-    {retry: 3},
-    async t => {
+  Async.it("Queries transaction fields from raw JSON (with real RPC)", async t => {
     let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
 
     let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
@@ -650,10 +648,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     t.expect(result).toEqual(%raw(`{"baseFeePerGas": 1000000000n, "difficulty": 17179869184n}`))
   })
 
-  Async.itWithOptions(
-    "Queries block fields from raw JSON (with real RPC)",
-    {retry: 3},
-    async t => {
+  Async.it("Queries block fields from raw JSON (with real RPC)", async t => {
     let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
     let client = Rpc.makeClient(rpcUrl)
 

@@ -1,10 +1,11 @@
 // Resolution order:
-//   1. Production: require("envio-{os}-{arch}") — platform-specific npm package
-//   2. Dev build:  find repo → cargo build --lib → load from target/debug/
+//   1. Production: require("envio-{os}-{arch}") - platform-specific npm package
+//   2. Dev build:  find repo -> cargo build --lib -> load from target/debug/
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
 type hypersyncClientCtor
+type hypersyncSolanaClientCtor
 type decoderCtor
 
 type addon = {
@@ -12,6 +13,8 @@ type addon = {
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
   @as("HypersyncClient")
   hypersyncClient: hypersyncClientCtor,
+  @as("HypersyncSolanaClient")
+  hypersyncSolanaClient: hypersyncSolanaClientCtor,
   @as("Decoder")
   decoder: decoderCtor,
 }
@@ -122,8 +125,8 @@ let loadAddon = () => {
   }
 
   // Only swallow MODULE_NOT_FOUND (the optional package isn't installed on
-  // this host). Any other failure — corrupt .node, ABI mismatch, dlopen
-  // error — is a real load failure and must surface.
+  // this host). Any other failure - corrupt .node, ABI mismatch, dlopen
+  // error - is a real load failure and must surface.
   let rec tryRequire = i =>
     switch candidates[i] {
     | None => None
