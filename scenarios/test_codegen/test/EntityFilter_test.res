@@ -57,6 +57,8 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       parse(%raw(`{score: {_in: []}}`)),
       // Unindexed linked entity fields are allowed via the _id api name
       parse(%raw(`{owner_id: {_eq: 1}}`)),
+      // Primary key fields are allowed without an explicit index
+      parse(%raw(`{id: {_eq: 1}}`)),
     ]).toEqual([
       [Eq({fieldName: "score", fieldValue: v(1)})],
       [Gt({fieldName: "score", fieldValue: v(1)})],
@@ -66,6 +68,63 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       [Eq({fieldName: "score", fieldValue: v(1)}), Eq({fieldName: "score", fieldValue: v(2)})],
       [],
       [Eq({fieldName: "owner_id", fieldValue: v(1)})],
+      [Eq({fieldName: "id", fieldValue: v(1)})],
+    ])
+  })
+
+  it("Combines multiple operators and fields into a cross product of And filters", t => {
+    t.expect([
+      parse(%raw(`{score: {_gt: 1, _lt: 5}}`)),
+      parse(%raw(`{score: {_eq: 1}, owner_id: {_eq: 2}}`)),
+      parse(%raw(`{score: {_gte: 1}, owner_id: {_eq: 2}}`)),
+      parse(%raw(`{score: {_in: [1, 2]}, owner_id: {_eq: 3}}`)),
+      parse(%raw(`{score: {_in: []}, owner_id: {_eq: 3}}`)),
+    ]).toEqual([
+      [
+        And({
+          filters: [
+            Gt({fieldName: "score", fieldValue: v(1)}),
+            Lt({fieldName: "score", fieldValue: v(5)}),
+          ],
+        }),
+      ],
+      [
+        And({
+          filters: [
+            Eq({fieldName: "score", fieldValue: v(1)}),
+            Eq({fieldName: "owner_id", fieldValue: v(2)}),
+          ],
+        }),
+      ],
+      [
+        And({
+          filters: [
+            Eq({fieldName: "score", fieldValue: v(1)}),
+            Eq({fieldName: "owner_id", fieldValue: v(2)}),
+          ],
+        }),
+        And({
+          filters: [
+            Gt({fieldName: "score", fieldValue: v(1)}),
+            Eq({fieldName: "owner_id", fieldValue: v(2)}),
+          ],
+        }),
+      ],
+      [
+        And({
+          filters: [
+            Eq({fieldName: "score", fieldValue: v(1)}),
+            Eq({fieldName: "owner_id", fieldValue: v(3)}),
+          ],
+        }),
+        And({
+          filters: [
+            Eq({fieldName: "score", fieldValue: v(2)}),
+            Eq({fieldName: "owner_id", fieldValue: v(3)}),
+          ],
+        }),
+      ],
+      [],
     ])
   })
 
@@ -87,7 +146,6 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       getError(%raw(`{score: "abc"}`)),
       getError(%raw(`{score: [1]}`)),
       getError(%raw(`{score: {}}`)),
-      getError(%raw(`{score: {_eq: 1, _gt: 2}}`)),
       getError(%raw(`{score: {_foo: 1}}`)),
       getError(%raw(`{nonExistingField: {_eq: 1}}`)),
       getError(%raw(`{tokens: {_eq: 1}}`)),
@@ -98,14 +156,13 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       getError(%raw(`{score: {_in: 5}}`)),
     ]).toEqual([
       `Empty filter passed to context.User.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
-      `Multiple filter fields passed to context.User.getWhere(). Currently only one filter field per call is supported. Received fields: score, name.`,
+      `The field "name" on entity "User" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  name: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
       `Invalid undefined value passed to context.User.getWhere({ score: undefined }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
       `Invalid null value passed to context.User.getWhere({ score: null }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
       `Invalid value passed to context.User.getWhere({ score: ... }). Please provide an operator like { _eq: value }.`,
       `Invalid value passed to context.User.getWhere({ score: ... }). Please provide an operator like { _eq: value }.`,
       `Invalid value passed to context.User.getWhere({ score: ... }). Please provide an operator like { _eq: value }.`,
       `Empty operator passed to context.User.getWhere({ score: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
-      `Multiple operators passed to context.User.getWhere({ score: ... }). Currently only one operator per filter field is supported. Received operators: _eq, _gt.`,
       `Invalid operator "_foo" in context.User.getWhere({ score: { _foo: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
       `Invalid field "nonExistingField" in context.User.getWhere(). The field doesn't exist. Rerun 'pnpm dev' to update generated code after schema.graphql changes.`,
       `The field "tokens" on entity "User" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
