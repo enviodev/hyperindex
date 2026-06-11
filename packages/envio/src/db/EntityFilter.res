@@ -100,7 +100,10 @@ let throwUnsupportedGetWhereValue = (~valueName, ~entityName, ~filterDisplay, ~h
 
 // Each returned filter should be loaded separately and the results flattened:
 // _in maps to one Eq per value so loads memoize on the per-value level,
-// and _gte/_lte are composed from Eq + Gt/Lt
+// and _gte/_lte are composed from Eq + Gt/Lt. Each field+operator pair
+// expands into a group of such alternatives, and multiple pairs combine
+// as a cross product of And filters — the groups stay disjoint, so the
+// flattened results contain no duplicates.
 let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Table.table): array<
   t,
 > => {
@@ -111,131 +114,133 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
       `Empty filter passed to context.${entityName}.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
     )
   }
-  if filterKeys->Array.length > 1 {
-    JsError.throwWithMessage(
-      `Multiple filter fields passed to context.${entityName}.getWhere(). Currently only one filter field per call is supported. Received fields: ${filterKeys->Array.joinUnsafe(
-          ", ",
-        )}.`,
-    )
-  }
 
-  let apiFieldName = filterKeys->Array.getUnsafe(0)
-  let operatorObj = filter->Dict.getUnsafe(apiFieldName)
+  let filterGroups = filterKeys->Array.flatMap(apiFieldName => {
+    let operatorObj = filter->Dict.getUnsafe(apiFieldName)
 
-  switch operatorObj->getUndefinedOrNullName {
-  | Some(valueName) =>
-    throwUnsupportedGetWhereValue(
-      ~valueName,
-      ~entityName,
-      ~filterDisplay=`{ ${apiFieldName}: ${valueName} }`,
-      ~hint=` Please provide an operator like { _eq: value }.`,
-    )
-  | None => ()
-  }
+    switch operatorObj->getUndefinedOrNullName {
+    | Some(valueName) =>
+      throwUnsupportedGetWhereValue(
+        ~valueName,
+        ~entityName,
+        ~filterDisplay=`{ ${apiFieldName}: ${valueName} }`,
+        ~hint=` Please provide an operator like { _eq: value }.`,
+      )
+    | None => ()
+    }
 
-  // A primitive operator value wouldn't throw on Dict.keysToArray, but report
-  // string indices or no keys as operators, so catch it with a real hint instead
-  if operatorObj->typeof !== #object || operatorObj->Array.isArray {
-    JsError.throwWithMessage(
-      `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: ... }). Please provide an operator like { _eq: value }.`,
-    )
-  }
-
-  let operatorKeys = operatorObj->Dict.keysToArray
-
-  if operatorKeys->Array.length === 0 {
-    JsError.throwWithMessage(
-      `Empty operator passed to context.${entityName}.getWhere({ ${apiFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
-    )
-  }
-  if operatorKeys->Array.length > 1 {
-    JsError.throwWithMessage(
-      `Multiple operators passed to context.${entityName}.getWhere({ ${apiFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Array.joinUnsafe(
-          ", ",
-        )}.`,
-    )
-  }
-
-  let operatorKey = operatorKeys->Array.getUnsafe(0)
-
-  let throwInvalidOperator = () =>
-    JsError.throwWithMessage(
-      `Invalid operator "${operatorKey}" in context.${entityName}.getWhere({ ${apiFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
-    )
-
-  // Validate the operator and the field before the value, so a typoed
-  // operator or field gets the more specific error even when the value
-  // is also nullish
-  switch operatorKey {
-  | "_eq" | "_gt" | "_lt" | "_gte" | "_lte" | "_in" => ()
-  | _ => throwInvalidOperator()
-  }
-
-  switch table->Table.getFieldByApiName(apiFieldName) {
-  | None =>
-    JsError.throwWithMessage(
-      `Invalid field "${apiFieldName}" in context.${entityName}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
-    )
-  | Some(DerivedFrom(_)) =>
-    JsError.throwWithMessage(
-      `The field "${apiFieldName}" on entity "${entityName}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
-    )
-  | Some(Field({isIndex: false, linkedEntity: None})) =>
-    JsError.throwWithMessage(
-      `The field "${apiFieldName}" on entity "${entityName}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${apiFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
-    )
-  | Some(Field(_)) => ()
-  }
-
-  let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
-  switch fieldValue->getUndefinedOrNullName {
-  | Some(valueName) =>
-    throwUnsupportedGetWhereValue(
-      ~valueName,
-      ~entityName,
-      ~filterDisplay=`{ ${apiFieldName}: { ${operatorKey}: ${valueName} } }`,
-    )
-  | None => ()
-  }
-
-  if operatorKey === "_in" {
-    if !(fieldValue->Array.isArray) {
+    // A primitive operator value wouldn't throw on Dict.keysToArray, but report
+    // string indices or no keys as operators, so catch it with a real hint instead
+    if operatorObj->typeof !== #object || operatorObj->Array.isArray {
       JsError.throwWithMessage(
-        `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: { _in: ... } }). The _in operator expects an array of values.`,
+        `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: ... }). Please provide an operator like { _eq: value }.`,
       )
     }
-    let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
 
-    fieldValues->Array.mapWithIndex((fieldValue, index) => {
+    let operatorKeys = operatorObj->Dict.keysToArray
+
+    if operatorKeys->Array.length === 0 {
+      JsError.throwWithMessage(
+        `Empty operator passed to context.${entityName}.getWhere({ ${apiFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
+      )
+    }
+
+    let throwInvalidOperator = operatorKey =>
+      JsError.throwWithMessage(
+        `Invalid operator "${operatorKey}" in context.${entityName}.getWhere({ ${apiFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
+      )
+
+    // Validate the operators and the field before the values, so a typoed
+    // operator or field gets the more specific error even when the value
+    // is also nullish
+    operatorKeys->Array.forEach(operatorKey =>
+      switch operatorKey {
+      | "_eq" | "_gt" | "_lt" | "_gte" | "_lte" | "_in" => ()
+      | _ => throwInvalidOperator(operatorKey)
+      }
+    )
+
+    switch table->Table.getFieldByApiName(apiFieldName) {
+    | None =>
+      JsError.throwWithMessage(
+        `Invalid field "${apiFieldName}" in context.${entityName}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
+      )
+    | Some(DerivedFrom(_)) =>
+      JsError.throwWithMessage(
+        `The field "${apiFieldName}" on entity "${entityName}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
+      )
+    | Some(Field({isPrimaryKey: false, isIndex: false, linkedEntity: None})) =>
+      JsError.throwWithMessage(
+        `The field "${apiFieldName}" on entity "${entityName}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${apiFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
+      )
+    | Some(Field(_)) => ()
+    }
+
+    operatorKeys->Array.map(operatorKey => {
+      let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
       switch fieldValue->getUndefinedOrNullName {
       | Some(valueName) =>
         throwUnsupportedGetWhereValue(
           ~valueName,
           ~entityName,
-          ~filterDisplay=`{ ${apiFieldName}: { _in: [...] } }`,
-          ~hint=` The ${valueName} value is at index ${index->Int.toString} of the _in array.`,
+          ~filterDisplay=`{ ${apiFieldName}: { ${operatorKey}: ${valueName} } }`,
         )
       | None => ()
       }
-      Eq({fieldName: apiFieldName, fieldValue})
-    })
-  } else if operatorKey === "_gte" || operatorKey === "_lte" {
-    [
-      Eq({fieldName: apiFieldName, fieldValue}),
-      operatorKey === "_gte"
-        ? Gt({fieldName: apiFieldName, fieldValue})
-        : Lt({fieldName: apiFieldName, fieldValue}),
-    ]
-  } else {
-    [
+
       switch operatorKey {
-      | "_eq" => Eq({fieldName: apiFieldName, fieldValue})
-      | "_gt" => Gt({fieldName: apiFieldName, fieldValue})
-      | "_lt" => Lt({fieldName: apiFieldName, fieldValue})
-      | _ => throwInvalidOperator()
-      },
-    ]
-  }
+      | "_in" => {
+          if !(fieldValue->Array.isArray) {
+            JsError.throwWithMessage(
+              `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: { _in: ... } }). The _in operator expects an array of values.`,
+            )
+          }
+          let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
+
+          fieldValues->Array.mapWithIndex(
+            (fieldValue, index) => {
+              switch fieldValue->getUndefinedOrNullName {
+              | Some(valueName) =>
+                throwUnsupportedGetWhereValue(
+                  ~valueName,
+                  ~entityName,
+                  ~filterDisplay=`{ ${apiFieldName}: { _in: [...] } }`,
+                  ~hint=` The ${valueName} value is at index ${index->Int.toString} of the _in array.`,
+                )
+              | None => ()
+              }
+              Eq({fieldName: apiFieldName, fieldValue})
+            },
+          )
+        }
+      | "_gte" => [
+          Eq({fieldName: apiFieldName, fieldValue}),
+          Gt({fieldName: apiFieldName, fieldValue}),
+        ]
+      | "_lte" => [
+          Eq({fieldName: apiFieldName, fieldValue}),
+          Lt({fieldName: apiFieldName, fieldValue}),
+        ]
+      | "_eq" => [Eq({fieldName: apiFieldName, fieldValue})]
+      | "_gt" => [Gt({fieldName: apiFieldName, fieldValue})]
+      | "_lt" => [Lt({fieldName: apiFieldName, fieldValue})]
+      | _ => throwInvalidOperator(operatorKey)
+      }
+    })
+  })
+
+  filterGroups
+  ->Array.reduce([[]], (combinations, group) =>
+    combinations->Array.flatMap(combination =>
+      group->Array.map(filter => combination->Array.concat([filter]))
+    )
+  )
+  ->Array.map(filters =>
+    switch filters {
+    | [filter] => filter
+    | _ => And({filters: filters})
+    }
+  )
 }
 
 let rec printOperationFilter = (filter: t, ~paramsCount: ref<int>) =>
