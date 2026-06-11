@@ -143,3 +143,90 @@ let rec matches = (filter: t, ~entity: dict<FieldValue.t>) =>
     JsError.throwWithMessage(`The "and" filter must contain at least one nested filter.`)
   | And({filters}) => filters->Array.every(filter => filter->matches(~entity))
   }
+
+// Canonical declaration of Persistence.StorageError, which re-exports it.
+// Declared here so filter helpers can throw it without a dependency cycle:
+// Persistence depends on EntityFilter for the storage interface.
+exception StorageError({message: string, reason: exn})
+
+// Appends the filter's serialized field values to params (mutated in place)
+// and returns the matching SQL condition referencing them by index.
+// Field names are spliced as quoted identifiers only after the queryFields
+// lookup proves they exist on the table (and they originate from
+// codegen-validated schemas), so the interpolation can't be abused.
+let rec toSqlCondition = (filter: t, ~table: Table.table, ~params: array<JSON.t>) => {
+  let serializeParamOrThrow = (~fieldName, ~fieldValue: unknown, ~isArray) => {
+    let queryField = switch table->Table.queryFields->Dict.get(fieldName) {
+    | Some(queryField) => queryField
+    | None =>
+      throw(
+        StorageError({
+          message: `Failed loading "${table.tableName}" from storage. The table doesn't have the field "${fieldName}".`,
+          reason: Table.NonExistingTableField(fieldName),
+        }),
+      )
+    }
+    let param = try fieldValue->S.reverseConvertToJsonOrThrow(
+      isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
+    ) catch {
+    | exn =>
+      throw(
+        StorageError({
+          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
+          reason: exn,
+        }),
+      )
+    }
+    params->Array.push(param)->ignore
+    `$${params->Array.length->Int.toString}`
+  }
+  let scalarCondition = (~fieldName, ~fieldValue, ~op) =>
+    `"${fieldName}" ${op} ${serializeParamOrThrow(~fieldName, ~fieldValue, ~isArray=false)}`
+  switch filter {
+  | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
+  | Gt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op=">")
+  | Lt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="<")
+  | In({fieldName, fieldValue}) =>
+    `"${fieldName}" = ANY(${serializeParamOrThrow(
+        ~fieldName,
+        ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
+        ~isArray=true,
+      )})`
+  | And({filters: []}) =>
+    throw(
+      StorageError({
+        message: `Failed loading "${table.tableName}" from storage. The "and" filter must contain at least one nested filter.`,
+        reason: Utils.Error.make(`Empty "and" filter`),
+      }),
+    )
+  | And({filters}) =>
+    `(${filters
+      ->Array.map(filter => filter->toSqlCondition(~table, ~params))
+      ->Array.join(" AND ")})`
+  }
+}
+
+// In values are mapped as one array (isArray=true), so storages can
+// serialize them with the table's cached array schema in a single pass.
+let rec mapValues = (
+  filter: t,
+  ~mapValue: (~fieldName: string, ~fieldValue: unknown, ~isArray: bool) => unknown,
+) =>
+  switch filter {
+  | Eq({fieldName, fieldValue}) =>
+    Eq({fieldName, fieldValue: mapValue(~fieldName, ~fieldValue, ~isArray=false)})
+  | Gt({fieldName, fieldValue}) =>
+    Gt({fieldName, fieldValue: mapValue(~fieldName, ~fieldValue, ~isArray=false)})
+  | Lt({fieldName, fieldValue}) =>
+    Lt({fieldName, fieldValue: mapValue(~fieldName, ~fieldValue, ~isArray=false)})
+  | In({fieldName, fieldValue}) =>
+    In({
+      fieldName,
+      fieldValue: mapValue(
+        ~fieldName,
+        ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
+        ~isArray=true,
+      )->(Utils.magic: unknown => array<unknown>),
+    })
+  | And({filters}) => And({filters: filters->Array.map(filter => filter->mapValues(~mapValue))})
+  }
