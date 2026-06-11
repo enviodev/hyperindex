@@ -281,10 +281,6 @@ $$ LANGUAGE plpgsql;`,
   ]
 }
 
-let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
-}
-
 let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE ${condition};`
 }
@@ -1492,39 +1488,12 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   }
 
   let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
-    let (promise, condition) = switch filter {
-    // Primary-key lookups skip serialization (ids are already strings)
-    // and a single-id load uses a LIMIT 1 query, safe since id is unique.
-    | In({fieldName, fieldValue: [_] as ids}) if fieldName === Table.idFieldName => (
-        sql->Postgres.preparedUnsafe(
-          makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
-          ids->Obj.magic,
-        ),
-        `id = $1`,
-      )
-    | In({fieldName, fieldValue: ids}) if fieldName === Table.idFieldName => {
-        let condition = `"${fieldName}" = ANY($1)`
-        (
-          sql->Postgres.preparedUnsafe(
-            makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
-            [ids]->Obj.magic,
-          ),
-          condition,
-        )
-      }
-    | _ => {
-        let params = []
-        let condition = makeFilterCondition(~filter, ~table, ~params)
-        (
-          sql->Postgres.preparedUnsafe(
-            makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
-            params->Obj.magic,
-          ),
-          condition,
-        )
-      }
-    }
-    switch await promise {
+    let params = []
+    let condition = makeFilterCondition(~filter, ~table, ~params)
+    switch await sql->Postgres.preparedUnsafe(
+      makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
+      params->Obj.magic,
+    ) {
     | exception exn =>
       throw(
         Persistence.StorageError({

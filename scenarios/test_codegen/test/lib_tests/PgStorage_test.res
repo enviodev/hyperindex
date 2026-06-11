@@ -475,32 +475,6 @@ $$ LANGUAGE plpgsql;`)
     )
   })
 
-  describe("makeLoadByIdQuery", () => {
-    Async.it(
-      "Should create correct SQL for loading single record by ID",
-      async t => {
-        let query = PgStorage.makeLoadByIdQuery(~pgSchema="test_schema", ~tableName="users")
-
-        t.expect(
-          query,
-          ~message="Should generate correct single ID query SQL",
-        ).toBe(`SELECT * FROM "test_schema"."users" WHERE id = $1 LIMIT 1;`)
-      },
-    )
-
-    Async.it(
-      "Should handle different schema and table names",
-      async t => {
-        let query = PgStorage.makeLoadByIdQuery(~pgSchema="public", ~tableName="A")
-
-        t.expect(
-          query,
-          ~message="Should generate correct SQL with different schema and table names",
-        ).toBe(`SELECT * FROM "public"."A" WHERE id = $1 LIMIT 1;`)
-      },
-    )
-  })
-
   describe("makeFilterCondition", () => {
     let table = Table.mkTable(
       "users",
