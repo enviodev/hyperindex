@@ -279,6 +279,33 @@ let toOperationKey = (filter: t, ~entityName) =>
   | And(_) => `${entityName}.getWhere({${filter->printOperationFilter(~paramsCount=ref(0))}})`
   }
 
+// Values bound to the operation key's $N placeholders, in placeholder
+// order. A top-level In is reported flat, since a merged query holds one
+// value per batched call there, while an In nested in And binds its whole
+// array to a single placeholder, mirroring the one paramsCount increment
+// per flat filter in printOperationFilter.
+let getParams = (filter: t) =>
+  switch filter {
+  | Eq({fieldValue}) => [fieldValue]
+  | Gt({fieldValue}) => [fieldValue]
+  | Lt({fieldValue}) => [fieldValue]
+  | In({fieldValue}) => fieldValue
+  | And(_) => {
+      let acc = []
+      let rec collect = (filter: t) =>
+        switch filter {
+        | Eq({fieldValue}) => acc->Array.push(fieldValue)->ignore
+        | Gt({fieldValue}) => acc->Array.push(fieldValue)->ignore
+        | Lt({fieldValue}) => acc->Array.push(fieldValue)->ignore
+        | In({fieldValue}) =>
+          acc->Array.push(fieldValue->(Utils.magic: array<unknown> => unknown))->ignore
+        | And({filters}) => filters->Array.forEach(collect)
+        }
+      collect(filter)
+      acc
+    }
+  }
+
 // Collapses filters sharing an operation key into fewer storage queries:
 // Eq and In batches merge into a single In on the field. Gt/Lt/And have
 // no lossless single-query form without an Or operator, so they stay as is.
