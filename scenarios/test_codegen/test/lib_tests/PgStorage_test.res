@@ -489,7 +489,10 @@ $$ LANGUAGE plpgsql;`)
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=In({fieldName: "id", fieldValue: ["1", "2"]->(Utils.magic: array<string> => array<unknown>)}),
+          ~filter=In({
+            fieldName: "id",
+            fieldValue: ["1", "2"]->(Utils.magic: array<string> => array<unknown>),
+          }),
           ~table,
           ~params,
         )
@@ -537,7 +540,11 @@ $$ LANGUAGE plpgsql;`)
 
         t.expect((condition, params)).toEqual((
           `("id" = $1 AND ("score" > $2 AND "score" < $3))`,
-          ["1"->(Utils.magic: string => JSON.t), 5->(Utils.magic: int => JSON.t), 10->(Utils.magic: int => JSON.t)],
+          [
+            "1"->(Utils.magic: string => JSON.t),
+            5->(Utils.magic: int => JSON.t),
+            10->(Utils.magic: int => JSON.t),
+          ],
         ))
       },
     )
