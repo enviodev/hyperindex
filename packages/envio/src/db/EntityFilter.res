@@ -80,6 +80,27 @@ let rec toString = (filter: t) =>
   | And({filters}) => `And(${filters->Array.map(toString)->Array.join(",")})`
   }
 
+// LoadManager group key and Prometheus operation label. Filters which may
+// be batched into a single storage query must produce the same key,
+// so concrete values are replaced with $N placeholders.
+let toOperationKey = (filter: t, ~entityName) => {
+  let paramsCount = ref(0)
+  let rec print = (filter: t) => {
+    let nextParam = () => {
+      paramsCount := paramsCount.contents + 1
+      `$${paramsCount.contents->Int.toString}`
+    }
+    switch filter {
+    | Eq({fieldName}) => `${fieldName}: ${nextParam()}`
+    | Gt({fieldName}) => `${fieldName}: {_gt: ${nextParam()}}`
+    | Lt({fieldName}) => `${fieldName}: {_lt: ${nextParam()}}`
+    | In({fieldName}) => `${fieldName}: {_in: ${nextParam()}}`
+    | And({filters}) => filters->Array.map(print)->Array.join(", ")
+    }
+  }
+  `${entityName}.getWhere({${print(filter)}})`
+}
+
 // A field missing on the entity reads as `undefined`, which matches the `None`
 // arm of `FieldValue.t` (`option<...>`), so nullable columns omitted on the
 // entity object are compared as null rather than crashing.
