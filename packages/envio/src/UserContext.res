@@ -127,73 +127,56 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
   | Some(Field(_)) => ()
   }
 
+  let loadWithFilter = filter =>
+    LoadLayer.loadByFilter(
+      ~loadManager=params.loadManager,
+      ~persistence=params.persistence,
+      ~entityConfig,
+      ~inMemoryStore=params.inMemoryStore,
+      ~shouldGroup=params.isPreload,
+      ~item=params.item,
+      ~filter,
+    )
+
   if operatorKey === "_in" {
     let fieldValues =
       operatorObj
       ->Dict.getUnsafe(operatorKey)
       ->(Utils.magic: unknown => array<unknown>)
 
+    // Load each value as a separate Eq filter to memoize
+    // them in memory on the per-value level
     fieldValues
-    ->Array.map(fieldValue =>
-      LoadLayer.loadByField(
-        ~loadManager=params.loadManager,
-        ~persistence=params.persistence,
-        ~operator=Eq,
-        ~entityConfig,
-        ~fieldName=dbFieldName,
-        ~inMemoryStore=params.inMemoryStore,
-        ~shouldGroup=params.isPreload,
-        ~item=params.item,
-        ~fieldValue,
-      )
-    )
+    ->Array.map(fieldValue => loadWithFilter(EntityFilter.Eq({fieldName: dbFieldName, fieldValue})))
     ->Promise.all
     ->Promise.thenResolve(results => results->Array.flat)
   } else if operatorKey === "_gte" || operatorKey === "_lte" {
     // _gte and _lte are composed from Eq + Gt/Lt
-    let rangeOperator: TableIndices.Operator.t = operatorKey === "_gte" ? Gt : Lt
     let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
+    let rangeFilter =
+      operatorKey === "_gte"
+        ? EntityFilter.Gt({fieldName: dbFieldName, fieldValue})
+        : EntityFilter.Lt({fieldName: dbFieldName, fieldValue})
 
-    let loadWithOperator = operator =>
-      LoadLayer.loadByField(
-        ~loadManager=params.loadManager,
-        ~persistence=params.persistence,
-        ~operator,
-        ~entityConfig,
-        ~fieldName=dbFieldName,
-        ~inMemoryStore=params.inMemoryStore,
-        ~shouldGroup=params.isPreload,
-        ~item=params.item,
-        ~fieldValue,
-      )
-
-    [loadWithOperator(Eq), loadWithOperator(rangeOperator)]
+    [
+      loadWithFilter(EntityFilter.Eq({fieldName: dbFieldName, fieldValue})),
+      loadWithFilter(rangeFilter),
+    ]
     ->Promise.all
     ->Promise.thenResolve(results => results->Array.flat)
   } else {
-    let operator: TableIndices.Operator.t = switch operatorKey {
-    | "_eq" => Eq
-    | "_gt" => Gt
-    | "_lt" => Lt
+    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
+    let filter = switch operatorKey {
+    | "_eq" => EntityFilter.Eq({fieldName: dbFieldName, fieldValue})
+    | "_gt" => EntityFilter.Gt({fieldName: dbFieldName, fieldValue})
+    | "_lt" => EntityFilter.Lt({fieldName: dbFieldName, fieldValue})
     | _ =>
       JsError.throwWithMessage(
         `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
       )
     }
 
-    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
-
-    LoadLayer.loadByField(
-      ~loadManager=params.loadManager,
-      ~persistence=params.persistence,
-      ~operator,
-      ~entityConfig,
-      ~fieldName=dbFieldName,
-      ~inMemoryStore=params.inMemoryStore,
-      ~shouldGroup=params.isPreload,
-      ~item=params.item,
-      ~fieldValue,
-    )
+    loadWithFilter(filter)
   }
 }
 

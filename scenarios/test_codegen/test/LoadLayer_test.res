@@ -324,27 +324,29 @@ describe("LoadLayer", () => {
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
     let getUsersWithId = fieldValue =>
-      LoadLayer.loadByField(
+      LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~operator=Eq,
         ~inMemoryStore,
-        ~fieldName="id",
         ~item,
-        ~fieldValue,
+        ~filter=EntityFilter.Eq({
+          fieldName: "id",
+          fieldValue: fieldValue->(Utils.magic: string => unknown),
+        }),
         ~shouldGroup=true,
       )
     let getUsersWithUpdates = fieldValue =>
-      LoadLayer.loadByField(
+      LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~operator=Gt,
         ~inMemoryStore,
-        ~fieldName="updatesCountOnUserForTesting",
         ~item,
-        ~fieldValue,
+        ~filter=EntityFilter.Gt({
+          fieldName: "updatesCountOnUserForTesting",
+          fieldValue: fieldValue->(Utils.magic: int => unknown),
+        }),
         ~shouldGroup=true,
       )
 
@@ -366,15 +368,16 @@ describe("LoadLayer", () => {
 
     // Test Lt operator
     let getUsersWithUpdatesLt = fieldValue =>
-      LoadLayer.loadByField(
+      LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~operator=Lt,
         ~inMemoryStore,
-        ~fieldName="updatesCountOnUserForTesting",
         ~item,
-        ~fieldValue,
+        ~filter=EntityFilter.Lt({
+          fieldName: "updatesCountOnUserForTesting",
+          fieldValue: fieldValue->(Utils.magic: int => unknown),
+        }),
         ~shouldGroup=true,
       )
 
@@ -417,28 +420,30 @@ describe("LoadLayer", () => {
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
     let getUsersWithId = fieldValue =>
-      LoadLayer.loadByField(
+      LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~operator=Eq,
         ~inMemoryStore,
-        ~fieldName="id",
         ~item,
-        ~fieldValue,
+        ~filter=EntityFilter.Eq({
+          fieldName: "id",
+          fieldValue: fieldValue->(Utils.magic: string => unknown),
+        }),
         ~shouldGroup=true,
       )
 
     let getUsersWithUpdates = fieldValue =>
-      LoadLayer.loadByField(
+      LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~operator=Gt,
         ~inMemoryStore,
-        ~fieldName="updatesCountOnUserForTesting",
         ~item,
-        ~fieldValue,
+        ~filter=EntityFilter.Gt({
+          fieldName: "updatesCountOnUserForTesting",
+          fieldValue: fieldValue->(Utils.magic: int => unknown),
+        }),
         ~shouldGroup=true,
       )
 
@@ -505,15 +510,16 @@ describe("LoadLayer", () => {
 
       let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
       let getUsersWithId = fieldValue =>
-        LoadLayer.loadByField(
+        LoadLayer.loadByFilter(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig(User),
-          ~operator=Eq,
           ~inMemoryStore,
-          ~fieldName="id",
           ~item,
-          ~fieldValue,
+          ~filter=EntityFilter.Eq({
+            fieldName: "id",
+            fieldValue: fieldValue->(Utils.magic: string => unknown),
+          }),
           ~shouldGroup=true,
         )
 
