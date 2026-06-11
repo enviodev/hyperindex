@@ -287,4 +287,27 @@ describe("Test makeClickHouseEntitySchema parsing", () => {
       expectedEntity->(Utils.magic: Indexer.Entities.EntityWithAllTypes.t => Internal.entity),
     )
   })
+
+  Async.it("Should parse every ClickHouse DateTime output format", async t => {
+    let parse = value => value->S.parseOrThrow(Utils.Schema.clickHouseDate)
+
+    t.expect(
+      [
+        %raw(`"2009-02-13 23:31:30.123"`)->parse,
+        %raw(`"2009-02-13T23:31:30.123Z"`)->parse,
+        %raw(`1234567890.5`)->parse,
+      ],
+      ~message="simple, iso and unix_timestamp formats should all parse",
+    ).toEqual([
+      Date.fromTime(1234567890123.0),
+      Date.fromTime(1234567890123.0),
+      Date.fromTime(1234567890500.0),
+    ])
+  })
+
+  Async.it("Should throw on an invalid ClickHouse DateTime value", async t => {
+    t.expect(() =>
+      %raw(`"not a date"`)->S.parseOrThrow(Utils.Schema.clickHouseDate)->ignore
+    ).toThrow()
+  })
 })
