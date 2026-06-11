@@ -80,6 +80,13 @@ let rec toString = (filter: t) =>
   | And({filters}) => `And(${filters->Array.map(toString)->Array.join(",")})`
   }
 
+let rec valuesCount = (filter: t) =>
+  switch filter {
+  | Eq(_) | Gt(_) | Lt(_) => 1
+  | In({fieldValue}) => fieldValue->Array.length
+  | And({filters}) => filters->Array.reduce(0, (acc, filter) => acc + filter->valuesCount)
+  }
+
 let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema.graphql changes.`
 
 let getUndefinedOrNullName = (value: 'a) =>
