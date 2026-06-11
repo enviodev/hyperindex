@@ -113,6 +113,16 @@ pub enum StorageBackendConfig {
 pub struct StorageBackendOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column_name_format: Option<ColumnNameFormat>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
+pub enum ColumnNameFormat {
+    #[serde(rename = "original")]
+    Original,
+    #[serde(rename = "snake_case")]
+    SnakeCase,
 }
 
 // Hand-rolled instead of #[serde(untagged)]: the untagged derive swallows
@@ -166,6 +176,13 @@ impl StorageBackendConfig {
             Self::Options(options) => options.default,
         }
     }
+
+    pub fn column_name_format(&self) -> Option<ColumnNameFormat> {
+        match self {
+            Self::Enabled(_) => None,
+            Self::Options(options) => options.column_name_format,
+        }
+    }
 }
 
 // Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
@@ -189,6 +206,15 @@ impl JsonSchema for StorageConfig {
                             "default": {
                                 "description": default_description,
                                 "type": ["boolean", "null"]
+                            },
+                            "column_name_format": {
+                                "description": "How entity fields are reflected in the storage column names. \
+                                                `original` keeps the schema.graphql field names as is, \
+                                                `snake_case` converts them to snake_case in the database \
+                                                while keeping the original casing in the exposed APIs. \
+                                                (default: original)",
+                                "type": ["string", "null"],
+                                "enum": ["original", "snake_case", null]
                             }
                         },
                         "additionalProperties": false
@@ -942,6 +968,16 @@ pub mod svm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
+    pub struct HypersyncConfig {
+        #[schemars(
+            description = "URL of the HyperSync endpoint (default: the public Solana HyperSync \
+                           endpoint at https://solana.hypersync.xyz)"
+        )]
+        pub url: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Chain {
         // #[schemars(
         //     description = "The cluster's genesis hash used to identify the Svm blockchain."
@@ -952,10 +988,13 @@ pub mod svm {
                            Code generation is unaffected. \
                            For testing, prefer using a test framework instead.")]
         pub skip: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data."
+            description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain \
+                           data. Required unless `experimental` is set, in which case it is \
+                           ignored in favour of the experimental HyperSync source."
         )]
-        pub rpc: String,
+        pub rpc: Option<String>,
         #[schemars(
             description = "The slot number at which the indexer should start ingesting data"
         )]
@@ -969,6 +1008,279 @@ pub mod svm {
                            Useful for avoiding reorg issues by indexing slightly behind the tip."
         )]
         pub block_lag: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Experimental HyperSync-backed instruction indexing. This config shape \
+                           Veil change in future releases."
+        )]
+        pub experimental: Option<Experimental>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Experimental {
+        #[schemars(
+            description = "HyperSync Config for fetching historical instructions on this chain."
+        )]
+        pub hypersync_config: HypersyncConfig,
+        #[schemars(description = "Solana programs to index on this chain.")]
+        pub programs: Vec<Program>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Program {
+        #[schemars(
+            description = "A unique project-wide name for this program (used in generated code)."
+        )]
+        pub name: String,
+        #[schemars(description = "Base58-encoded program id (32 bytes).")]
+        pub program_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional relative path to a file where handlers are registered for \
+                           the given program. If not provided, handlers can be auto-loaded from \
+                           the src directory."
+        )]
+        pub handler: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON \
+                           file. When present, codegen parses the IDL and derives \
+                           `accounts`/`args` for every named instruction. Mutually \
+                           exclusive with per-instruction `accounts`/`args` overrides."
+        )]
+        pub idl: Option<String>,
+        #[schemars(description = "A list of instructions that should be indexed on this program.")]
+        pub instructions: Vec<Instruction>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Instruction {
+        #[schemars(
+            description = "Name of the instruction in the HyperIndex generated code. Should be \
+                           unique per program."
+        )]
+        pub name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Hex-encoded instruction-data prefix used as the discriminator \
+                           (\"0x\" optional). Must be 1, 2, 4, or 8 bytes after decoding. \
+                           An 8-byte value matches the standard Anchor discriminator."
+        )]
+        pub discriminator: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Filter on inner-vs-outer instructions. None / absent matches both."
+        )]
+        pub is_inner: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional positional account filters. Two shapes are accepted: a flat \
+                           list of `{position, values}` entries (AND across positions, OR within \
+                           `values`); or `{any_of: [[...]] }`, a list of AND-groups that are \
+                           OR-ed together. Positions must be in 0..=5; positions 6..=9 are \
+                           reserved for a future extension."
+        )]
+        pub account_filters: Option<AccountFilters>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Select which additional data to fetch for each matched instruction. \
+                           Each key accepts `true` (include all fields) or a list of field \
+                           names (per-field selection, not yet supported). When absent, only \
+                           the instruction itself is included."
+        )]
+        pub field_selection: Option<SvmFieldSelection>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional positional account names. The Nth entry names \
+                           account slot N on the dispatched instruction; surfaces as \
+                           `event.instruction.decoded.accounts.<name>`. Accounts beyond \
+                           the named list become `extra_accounts`."
+        )]
+        pub accounts: Option<Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional Borsh argument schema. Each entry names one arg and \
+                           gives its type; the decoder walks the instruction data after \
+                           the discriminator in declared order. Mutually exclusive with \
+                           the program-level `idl` field."
+        )]
+        pub args: Option<Vec<ArgDef>>,
+    }
+
+    /// One named argument of an instruction. Mirrors
+    /// `hypersync_client_solana::decode::NamedField`.
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct ArgDef {
+        #[schemars(description = "Field name as it appears on the decoded args object.")]
+        pub name: String,
+        #[serde(rename = "type")]
+        #[schemars(description = "Borsh type of this field.")]
+        pub ty: ArgType,
+    }
+
+    /// User-facing Borsh type grammar. Mirrors
+    /// `hypersync_client_solana::decode::FieldType`. The YAML accepts either:
+    /// - A bare string for primitives (`"u64"`, `"pubkey"`, `"bool"`, ...).
+    /// - A tagged object for composites (`{ vec: u8 }`, `{ option: pubkey }`,
+    ///   `{ array: [u8, 32] }`, `{ defined: "DataV2" }`).
+    /// - An object with `kind: struct` or `kind: enum` for nominal types
+    ///   declared inline on this field. Most users will use `defined` and
+    ///   declare the nominal types under the program's `types:` block (Anchor
+    ///   IDL shape) once that lands; for now inline `struct` / `enum` is the
+    ///   only way to express nominal shapes ad-hoc.
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum ArgType {
+        Primitive(ArgPrimitive),
+        Composite(ArgComposite),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(rename_all = "lowercase")]
+    pub enum ArgPrimitive {
+        Bool,
+        U8,
+        U16,
+        U32,
+        U64,
+        U128,
+        I8,
+        I16,
+        I32,
+        I64,
+        I128,
+        F32,
+        F64,
+        String,
+        Bytes,
+        Pubkey,
+        #[serde(rename = "publicKey")]
+        PublicKey,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub enum ArgComposite {
+        #[serde(rename = "option")]
+        Option(Box<ArgType>),
+        #[serde(rename = "vec")]
+        Vec(Box<ArgType>),
+        /// `[ <element type>, <length> ]` — same shape Anchor IDLs use.
+        #[serde(rename = "array")]
+        Array(Box<ArgType>, usize),
+        /// Reference to a nominal type defined in the program-level
+        /// `defined_types` registry (populated from an Anchor IDL `types:`
+        /// block or the bundled-Metaplex registry).
+        #[serde(rename = "defined")]
+        Defined(String),
+        /// Inline-or-registry struct. Used as a nominal type definition in
+        /// the `defined_types` registry; rarely seen at the field level.
+        #[serde(rename = "struct")]
+        Struct(Vec<ArgDef>),
+        /// Inline-or-registry enum. Same role as `Struct`: a nominal type
+        /// definition in the `defined_types` registry.
+        #[serde(rename = "enum")]
+        Enum(Vec<ArgEnumVariant>),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct ArgEnumVariant {
+        pub name: String,
+        /// `None` for unit variants; `Some([])` for struct variants with no
+        /// fields. The Borsh wire format is identical in both cases (the
+        /// 1-byte tag), but the distinction is preserved for round-tripping.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub fields: Option<Vec<ArgDef>>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct AccountFilter {
+        #[schemars(description = "Account position within the instruction (0..=5).")]
+        pub position: u8,
+        #[schemars(description = "Allowed base58 pubkeys for this account position.")]
+        pub values: Vec<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct AnyOfAccountFilters {
+        #[schemars(
+            description = "A non-empty list of AND-groups. Each group is itself a non-empty list \
+                           of `{position, values}` entries that must all match the same \
+                           instruction. An instruction matches `any_of` when any one group \
+                           matches."
+        )]
+        pub any_of: Vec<Vec<AccountFilter>>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum AccountFilters {
+        Flat(Vec<AccountFilter>),
+        AnyOf(AnyOfAccountFilters),
+    }
+
+    impl AccountFilters {
+        pub fn groups(&self) -> Vec<&[AccountFilter]> {
+            match self {
+                AccountFilters::Flat(entries) => vec![entries.as_slice()],
+                AccountFilters::AnyOf(any_of) => {
+                    any_of.any_of.iter().map(|g| g.as_slice()).collect()
+                }
+            }
+        }
+    }
+
+    /// Value for a field-selection entry. `true` includes all fields;
+    /// a list of field names enables per-field selection (not yet supported).
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum FieldSelectionValue {
+        All(bool),
+        Fields(Vec<String>),
+    }
+
+    impl FieldSelectionValue {
+        pub fn is_enabled(&self) -> bool {
+            match self {
+                FieldSelectionValue::All(b) => *b,
+                FieldSelectionValue::Fields(f) => !f.is_empty(),
+            }
+        }
+
+        pub fn is_per_field(&self) -> bool {
+            matches!(self, FieldSelectionValue::Fields(_))
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct SvmFieldSelection {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Include the parent transaction for each matched instruction. \
+                           Use `true` to include all fields."
+        )]
+        pub transaction_fields: Option<FieldSelectionValue>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Include program logs scoped to each matched instruction. \
+                           Use `true` to include all fields."
+        )]
+        pub log_fields: Option<FieldSelectionValue>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Include SPL Token / Token-2022 balance snapshots for the \
+                           parent transaction. Implies transaction_fields: true. \
+                           Use `true` to include all fields."
+        )]
+        pub token_balance_fields: Option<FieldSelectionValue>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -1379,7 +1691,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
     #[test]
     fn deserialize_storage_config() {
-        use super::{StorageBackendConfig, StorageConfig};
+        use super::{ColumnNameFormat, StorageBackendConfig, StorageBackendOptions, StorageConfig};
 
         // Both fields present
         let yaml = "postgres: true\nclickhouse: true\n";
@@ -1403,6 +1715,31 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             }
         );
 
+        // Backend configured with an options object
+        let yaml = "postgres:\n  column_name_format: snake_case\nclickhouse: {}\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: Some(StorageBackendConfig::Options(StorageBackendOptions {
+                    default: None,
+                    column_name_format: Some(ColumnNameFormat::SnakeCase),
+                })),
+                clickhouse: Some(StorageBackendConfig::Options(StorageBackendOptions {
+                    default: None,
+                    column_name_format: None,
+                })),
+            }
+        );
+
+        // Unknown backend option should fail (deny_unknown_fields)
+        let yaml = "postgres:\n  table_naming: snake_case\n";
+        assert!(serde_yaml::from_str::<StorageConfig>(yaml).is_err());
+
+        // Unknown column_name_format value should fail
+        let yaml = "postgres:\n  column_name_format: kebab-case\n";
+        assert!(serde_yaml::from_str::<StorageConfig>(yaml).is_err());
+
         // Unknown field should fail (deny_unknown_fields)
         let yaml = "postgres: true\nbigquery: true\n";
         let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
@@ -1424,6 +1761,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 postgres: Some(StorageBackendConfig::Enabled(true)),
                 clickhouse: Some(StorageBackendConfig::Options(StorageBackendOptions {
                     default: Some(true),
+                    column_name_format: None,
                 })),
             }
         );
@@ -1436,6 +1774,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             StorageConfig {
                 postgres: Some(StorageBackendConfig::Options(StorageBackendOptions {
                     default: None,
+                    column_name_format: None,
                 })),
                 clickhouse: None,
             }
@@ -1447,7 +1786,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
         assert!(
             err.to_string()
-                .contains("unknown field `defautl`, expected `default`"),
+                .contains("unknown field `defautl`, expected `default` or `column_name_format`"),
             "Unexpected error: {err}"
         );
 
@@ -1482,6 +1821,7 @@ chains:
                 clickhouse: Some(super::StorageBackendConfig::Options(
                     super::StorageBackendOptions {
                         default: Some(true),
+                        column_name_format: None,
                     }
                 )),
             })
@@ -1514,5 +1854,105 @@ chains:
             },
             de
         );
+    }
+
+    mod svm_yaml {
+        use crate::config_parsing::human_config::svm::*;
+        use pretty_assertions::assert_eq;
+
+        const METAPLEX_YAML: &str = r#"
+name: metaplex-token-metadata
+ecosystem: svm
+chains:
+  - start_block: 200000000
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: TokenMetadata
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: CreateMetadataAccountV3
+              discriminator: "0x21"
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
+              account_filters:
+                - position: 0
+                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+              field_selection:
+                transaction_fields: true
+"#;
+
+        #[test]
+        fn deserialize_metaplex_yaml() {
+            let cfg: HumanConfig = serde_yaml::from_str(METAPLEX_YAML).unwrap();
+            assert_eq!(cfg.chains.len(), 1);
+            let chain = &cfg.chains[0];
+            let experimental = chain.experimental.as_ref().unwrap();
+            assert_eq!(
+                experimental.hypersync_config.url.as_str(),
+                "https://solana.hypersync.xyz"
+            );
+            let programs = &experimental.programs;
+            assert_eq!(programs.len(), 1);
+            let program = &programs[0];
+            assert_eq!(
+                program,
+                &Program {
+                    name: "TokenMetadata".to_string(),
+                    program_id: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
+                    handler: None,
+                    idl: None,
+                    instructions: vec![
+                        Instruction {
+                            name: "CreateMetadataAccountV3".to_string(),
+                            discriminator: Some("0x21".to_string()),
+                            is_inner: None,
+                            account_filters: None,
+                            field_selection: None,
+                            accounts: None,
+                            args: None,
+                        },
+                        Instruction {
+                            name: "UpdateMetadataAccountV2".to_string(),
+                            discriminator: Some("0x0f".to_string()),
+                            is_inner: None,
+                            account_filters: Some(AccountFilters::Flat(vec![AccountFilter {
+                                position: 0,
+                                values: vec![
+                                    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
+                                ],
+                            }])),
+                            field_selection: Some(SvmFieldSelection {
+                                transaction_fields: Some(FieldSelectionValue::All(true)),
+                                log_fields: None,
+                                token_balance_fields: None,
+                            }),
+                            accounts: None,
+                            args: None,
+                        },
+                    ],
+                }
+            );
+        }
+
+        #[test]
+        fn rejects_unknown_fields() {
+            let bad = r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 1
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: P
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          bogus_extra: true
+          instructions: []
+"#;
+            assert!(serde_yaml::from_str::<HumanConfig>(bad).is_err());
+        }
     }
 }

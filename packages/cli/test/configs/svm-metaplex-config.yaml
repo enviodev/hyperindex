@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=../../../envio/svm.schema.json
+name: Solana indexer
+ecosystem: svm
+chains:
+  - start_block: 200000000
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: TokenMetadata
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: CreateMetadataAccountV3
+              discriminator: "0x21"
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
+              account_filters:
+                - position: 0
+                  values:
+                    - metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+              field_selection:
+                transaction_fields: true

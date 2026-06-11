@@ -43,67 +43,48 @@ let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingA
   registrationBlock: dc.registrationBlock,
 }
 
-let handleLoadByIds = (
-  state: testIndexerState,
-  ~tableName: string,
-  ~ids: array<string>,
-): JSON.t => {
+let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFilter.t): JSON.t => {
   let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
   let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
   let results = []
-  ids->Array.forEach(id => {
-    switch entityDict->Dict.get(id) {
-    | Some(entity) =>
-      // Serialize entity back to JSON for worker thread
-      let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
-      results->Array.push(jsonEntity)->ignore
-    | None => ()
+
+  // Field values arrive as JSON from the worker boundary, so parse them
+  // with the field's schema before comparing. This properly handles
+  // bigint and BigDecimal comparisons
+  let parseLeaf = (~fieldName, ~fieldValue: unknown): unknown => {
+    let fieldSchema = switch entityConfig.table->Table.queryFields->Dict.get(fieldName) {
+    | Some({fieldSchema}) => fieldSchema
+    | None => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
     }
-  })
-  results->JSON.Encode.array
-}
-
-let handleLoadByField = (
-  state: testIndexerState,
-  ~tableName: string,
-  ~fieldName: string,
-  ~fieldValue: JSON.t,
-  ~operator: Persistence.operator,
-): JSON.t => {
-  let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
-  let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
-  let results = []
-
-  // Get the field schema from the entity's table to properly parse the JSON field value
-  let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(fieldName) {
-  | Some(Table.Field({fieldSchema})) => fieldSchema
-  | _ => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
+    fieldValue->S.convertOrThrow(fieldSchema)
   }
+  let rec parseFilter = (filter: EntityFilter.t): EntityFilter.t =>
+    switch filter {
+    | Eq({fieldName, fieldValue}) => Eq({fieldName, fieldValue: parseLeaf(~fieldName, ~fieldValue)})
+    | Gt({fieldName, fieldValue}) => Gt({fieldName, fieldValue: parseLeaf(~fieldName, ~fieldValue)})
+    | Lt({fieldName, fieldValue}) => Lt({fieldName, fieldValue: parseLeaf(~fieldName, ~fieldValue)})
+    | In({fieldName, fieldValue}) =>
+      In({
+        fieldName,
+        fieldValue: fieldValue->Array.map(fieldValue => parseLeaf(~fieldName, ~fieldValue)),
+      })
+    | And({filters: []}) =>
+      JsError.throwWithMessage(
+        `Failed loading "${tableName}" from storage. The "and" filter must contain at least one nested filter.`,
+      )
+    | And({filters}) => And({filters: filters->Array.map(parseFilter)})
+    }
+  let filter = parseFilter(filter)
 
-  // Parse JSON field value to typed value using the field's schema
-  let parsedFieldValue = fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
-
-  // Compare using TableIndices.FieldValue logic (same approach as InMemoryTable)
-  // This properly handles bigint and BigDecimal comparisons
   entityDict
   ->Dict.valuesToArray
   ->Array.forEach(entity => {
     // Cast entity to dict of field values (same approach as InMemoryTable)
-    let entityAsDict = entity->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
-    switch entityAsDict->Dict.get(fieldName) {
-    | Some(entityFieldValue) => {
-        let matches = switch operator {
-        | #"=" => entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
-        | #">" => entityFieldValue->TableIndices.FieldValue.gt(parsedFieldValue)
-        | #"<" => entityFieldValue->TableIndices.FieldValue.lt(parsedFieldValue)
-        }
-        if matches {
-          // Serialize entity back to JSON for worker thread
-          let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
-          results->Array.push(jsonEntity)->ignore
-        }
-      }
-    | None => ()
+    let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
+    if filter->EntityFilter.matches(~entity=entityAsDict) {
+      // Serialize entity back to JSON for worker thread
+      let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
+      results->Array.push(jsonEntity)->ignore
     }
   })
 
@@ -777,12 +758,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                   )
 
                 switch msg.payload {
-                | LoadByIds({tableName, ids}) => state->handleLoadByIds(~tableName, ~ids)->respond
-
-                | LoadByField({tableName, fieldName, fieldValue, operator}) =>
-                  state
-                  ->handleLoadByField(~tableName, ~fieldName, ~fieldValue, ~operator)
-                  ->respond
+                | Load({tableName, filter}) => state->handleLoad(~tableName, ~filter)->respond
 
                 | WriteBatch({
                     updatedEntities,

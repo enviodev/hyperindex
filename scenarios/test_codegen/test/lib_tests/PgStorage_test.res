@@ -475,54 +475,88 @@ $$ LANGUAGE plpgsql;`)
     )
   })
 
-  describe("makeLoadByIdQuery", () => {
-    Async.it(
-      "Should create correct SQL for loading single record by ID",
-      async t => {
-        let query = PgStorage.makeLoadByIdQuery(~pgSchema="test_schema", ~tableName="users")
+  describe("makeFilterCondition", () => {
+    let table = Table.mkTable(
+      "users",
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkField("score", Int32, ~fieldSchema=S.int),
+      ],
+    )
 
-        t.expect(
-          query,
-          ~message="Should generate correct single ID query SQL",
-        ).toBe(`SELECT * FROM "test_schema"."users" WHERE id = $1 LIMIT 1;`)
+    Async.it(
+      "Should create condition and params for loading multiple records by IDs",
+      async t => {
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=In({fieldName: "id", fieldValue: ["1", "2"]->(Utils.magic: array<string> => array<unknown>)}),
+          ~table,
+          ~params,
+        )
+
+        t.expect((condition, params)).toEqual((
+          `"id" = ANY($1)`,
+          [["1", "2"]->(Utils.magic: array<string> => JSON.t)],
+        ))
       },
     )
 
     Async.it(
-      "Should handle different schema and table names",
+      "Should create condition and params for a scalar comparison",
       async t => {
-        let query = PgStorage.makeLoadByIdQuery(~pgSchema="public", ~tableName="A")
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=Gt({fieldName: "score", fieldValue: 5->(Utils.magic: int => unknown)}),
+          ~table,
+          ~params,
+        )
 
-        t.expect(
-          query,
-          ~message="Should generate correct SQL with different schema and table names",
-        ).toBe(`SELECT * FROM "public"."A" WHERE id = $1 LIMIT 1;`)
-      },
-    )
-  })
-
-  describe("makeLoadByIdsQuery", () => {
-    Async.it(
-      "Should create correct SQL for loading multiple records by IDs",
-      async t => {
-        let query = PgStorage.makeLoadByIdsQuery(~pgSchema="test_schema", ~tableName="users")
-
-        t.expect(
-          query,
-          ~message="Should generate correct multiple IDs query SQL",
-        ).toBe(`SELECT * FROM "test_schema"."users" WHERE id = ANY($1::text[]);`)
+        t.expect((condition, params)).toEqual((`"score" > $1`, [5->(Utils.magic: int => JSON.t)]))
       },
     )
 
     Async.it(
-      "Should handle different schema and table names",
+      "Should number params across nested and filters",
       async t => {
-        let query = PgStorage.makeLoadByIdsQuery(~pgSchema="production", ~tableName="entities")
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=And({
+            filters: [
+              Eq({fieldName: "id", fieldValue: "1"->(Utils.magic: string => unknown)}),
+              And({
+                filters: [
+                  Gt({fieldName: "score", fieldValue: 5->(Utils.magic: int => unknown)}),
+                  Lt({fieldName: "score", fieldValue: 10->(Utils.magic: int => unknown)}),
+                ],
+              }),
+            ],
+          }),
+          ~table,
+          ~params,
+        )
 
-        t.expect(
-          query,
-          ~message="Should generate correct SQL with different schema and table names",
-        ).toBe(`SELECT * FROM "production"."entities" WHERE id = ANY($1::text[]);`)
+        t.expect((condition, params)).toEqual((
+          `("id" = $1 AND ("score" > $2 AND "score" < $3))`,
+          ["1"->(Utils.magic: string => JSON.t), 5->(Utils.magic: int => JSON.t), 10->(Utils.magic: int => JSON.t)],
+        ))
+      },
+    )
+
+    Async.it(
+      "Should throw a StorageError for an empty and filter",
+      async t => {
+        let result = try {
+          let _ = PgStorage.makeFilterCondition(~filter=And({filters: []}), ~table, ~params=[])
+          None
+        } catch {
+        | Persistence.StorageError({message}) => Some(message)
+        }
+
+        t.expect(result).toEqual(
+          Some(
+            `Failed loading "users" from storage. The "and" filter must contain at least one nested filter.`,
+          ),
+        )
       },
     )
   })
@@ -1005,7 +1039,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
 
 describe("PgStorage.makeRawEvent", () => {
   Async.it(
-    "Derives a raw event row from a batch item, copying block hash before cleanup and stringifying bigint block fields",
+    "Derives a raw event row from a batch item, taking block hash from the item and stringifying bigint block fields",
     async t => {
       let srcAddress = "0x00000000000000000000000000000000000000ab"->(Utils.magic: string => Address.t)
       let blockNumber = 5
@@ -1029,6 +1063,7 @@ describe("PgStorage.makeRawEvent", () => {
           timestamp: 1234,
           chain: ChainMap.Chain.makeUnsafe(~chainId=137),
           blockNumber,
+          blockHash: "0xblockhash",
           logIndex,
           event,
         })->Internal.castUnsafeEventItem

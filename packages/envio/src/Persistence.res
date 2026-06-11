@@ -40,8 +40,6 @@ type initialState = {
   envioInfo: option<JSON.t>,
 }
 
-type operator = [#">" | #"=" | #"<"]
-
 type updatedEffectCache = {
   effect: Internal.effect,
   items: array<Internal.effectCacheItem>,
@@ -78,21 +76,10 @@ type storage = {
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
+  // Returns rows matching the filter.
+  // Field values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
-  loadByIdsOrThrow: 'item. (
-    ~ids: array<string>,
-    ~table: Table.table,
-    ~rowsSchema: S.t<array<'item>>,
-  ) => promise<array<'item>>,
-  @raises("StorageError")
-  loadByFieldOrThrow: 'item 'value. (
-    ~fieldName: string,
-    ~fieldSchema: S.t<'value>,
-    ~fieldValue: 'value,
-    ~operator: operator,
-    ~table: Table.table,
-    ~rowsSchema: S.t<array<'item>>,
-  ) => promise<array<'item>>,
+  loadOrThrow: (~filter: EntityFilter.t, ~table: Table.table) => promise<array<unknown>>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,

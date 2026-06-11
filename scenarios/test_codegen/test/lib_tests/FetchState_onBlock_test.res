@@ -56,6 +56,7 @@ let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
   timestamp: blockNumber * 15,
   chain: ChainMap.Chain.makeUnsafe(~chainId),
   blockNumber,
+  blockHash: `0x${blockNumber->Int.toString}`,
   eventConfig: Utils.magic("Mock eventConfig in fetchstate test"),
   logIndex,
   event: Utils.magic("Mock event in fetchstate test"),

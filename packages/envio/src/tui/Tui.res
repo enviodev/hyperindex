@@ -13,6 +13,7 @@ module ChainLine = {
     ~endBlock,
     ~poweredByHyperSync,
     ~eventsProcessed,
+    ~blockUnit: string,
   ) => {
     let chainsWidth = Pervasives.min(stdoutColumns - 2, 60)
     let headerWidth = maxChainIdLength + 10 // 10 for additional text
@@ -27,9 +28,10 @@ module ChainLine = {
       let toBlockStr = toBlock->TuiData.formatLocaleString
       let eventsStr = eventsProcessed->TuiData.formatFloatLocaleString
 
+      let endLabel = ` (End ${blockUnit})`
       let blocksText =
-        `Blocks: ${progressBlockStr} / ${toBlockStr}` ++
-        (endBlock->Option.isSome ? " (End Block)" : "") ++ `  `
+        `${blockUnit}s: ${progressBlockStr} / ${toBlockStr}` ++
+        (endBlock->Option.isSome ? endLabel : "") ++ `  `
       let eventsText = `Events: ${eventsStr}`
 
       let fitsSameLine = blocksText->String.length + eventsText->String.length <= chainsWidth
@@ -213,6 +215,10 @@ module App = {
             poweredByHyperSync: (
               cf.sourceManager->SourceManager.getActiveSource
             ).poweredByHyperSync,
+            blockUnit: switch state.ctx.config.ecosystem.name {
+            | Svm => "Slot"
+            | Evm | Fuel => "Block"
+            },
             rateLimitTimeMs: cf.sourceManager->SourceManager.getRateLimitTimeMs,
             isRateLimited: cf.sourceManager->SourceManager.isRateLimited,
             rateLimitResetInMs: cf.sourceManager->SourceManager.getRateLimitResetInMs,
@@ -255,6 +261,7 @@ module App = {
           stdoutColumns={stdoutColumns}
           poweredByHyperSync={chainData.poweredByHyperSync}
           eventsProcessed={chainData.eventsProcessed}
+          blockUnit={chainData.blockUnit}
         />
       })
       ->React.array}

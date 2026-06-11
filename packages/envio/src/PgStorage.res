@@ -81,7 +81,7 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
     ->Table.getFields
     ->Array.map(field => {
       let {fieldType, isNullable, isArray, defaultValue} = field
-      let fieldName = field->Table.getDbFieldName
+      let fieldName = field->Table.getPgDbFieldName
 
       {
         `"${fieldName}" ${Table.getPgFieldType(
@@ -98,7 +98,7 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
     })
     ->Array.joinUnsafe(", ")
 
-  let primaryKeyFieldNames = table->Table.getPrimaryKeyFieldNames
+  let primaryKeyFieldNames = table->Table.getPgPrimaryKeyFieldNames
   let primaryKey = primaryKeyFieldNames->Array.map(field => `"${field}"`)->Array.joinUnsafe(", ")
 
   `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
@@ -245,7 +245,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     ->Table.getDerivedFromFields
     ->Array.forEach(derivedFromField => {
       let indexField =
-        derivedSchema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
+        derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
       query :=
         query.contents ++
         "\n" ++
@@ -281,16 +281,82 @@ $$ LANGUAGE plpgsql;`,
   ]
 }
 
-let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
+let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
+  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE ${condition};`
 }
 
-let makeLoadByFieldQuery = (~pgSchema, ~tableName, ~fieldName, ~operator) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE "${fieldName}" ${operator} $1;`
-}
-
-let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::text[]);`
+// Appends the filter's serialized field values to params (mutated in place)
+// and returns the matching SQL condition referencing them by index.
+// Field names are spliced as quoted identifiers only after the queryFields
+// lookup proves they exist on the table (and they originate from
+// codegen-validated schemas), so the interpolation can't be abused.
+let rec makeFilterCondition = (
+  ~filter: EntityFilter.t,
+  ~table: Table.table,
+  ~params: array<JSON.t>,
+) => {
+  // Filters reference fields by API name, while the SQL references columns
+  // by their possibly renamed db names.
+  let getQueryFieldOrThrow = fieldName =>
+    switch table->Table.queryFields->Dict.get(fieldName) {
+    | Some(queryField) => queryField
+    | None =>
+      throw(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage. The table doesn't have the field "${fieldName}".`,
+          reason: Table.NonExistingTableField(fieldName),
+        }),
+      )
+    }
+  let serializeParamOrThrow = (~queryField: Table.queryField, ~fieldName, ~fieldValue: unknown, ~isArray) => {
+    let param = try fieldValue->S.reverseConvertToJsonOrThrow(
+      isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
+    ) catch {
+    | exn =>
+      throw(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
+          reason: exn,
+        }),
+      )
+    }
+    params->Array.push(param)->ignore
+    `$${params->Array.length->Int.toString}`
+  }
+  let scalarCondition = (~fieldName, ~fieldValue, ~op) => {
+    let queryField = getQueryFieldOrThrow(fieldName)
+    `"${queryField.pgDbFieldName}" ${op} ${serializeParamOrThrow(
+        ~queryField,
+        ~fieldName,
+        ~fieldValue,
+        ~isArray=false,
+      )}`
+  }
+  switch filter {
+  | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
+  | Gt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op=">")
+  | Lt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="<")
+  | In({fieldName, fieldValue}) => {
+      let queryField = getQueryFieldOrThrow(fieldName)
+      `"${queryField.pgDbFieldName}" = ANY(${serializeParamOrThrow(
+          ~queryField,
+          ~fieldName,
+          ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
+          ~isArray=true,
+        )})`
+    }
+  | And({filters: []}) =>
+    throw(
+      Persistence.StorageError({
+        message: `Failed loading "${table.tableName}" from storage. The "and" filter must contain at least one nested filter.`,
+        reason: Utils.Error.make(`Empty "and" filter`),
+      }),
+    )
+  | And({filters}) =>
+    `(${filters
+      ->Array.map(filter => makeFilterCondition(~filter, ~table, ~params))
+      ->Array.join(" AND ")})`
+  }
 }
 
 let makeDeleteByIdQuery = (~pgSchema, ~tableName) => {
@@ -309,7 +375,7 @@ let makeInsertUnnestSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~is
   let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes} =
     table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
 
-  let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+  let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
 
   `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Array.joinUnsafe(", ")})
 SELECT * FROM unnest(${arrayFieldTypes
@@ -339,7 +405,7 @@ let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~it
   let {quotedFieldNames, quotedNonPrimaryFieldNames} =
     table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
 
-  let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+  let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
   let fieldsCount = quotedFieldNames->Array.length
 
   // Create placeholder variables for the VALUES clause - using $1, $2, etc.
@@ -700,7 +766,7 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
   // Get all field names for the INSERT statement
   let allHistoryFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
-    | Field(field) => field->Table.getDbFieldName->Some
+    | Field(field) => field->Table.getPgDbFieldName->Some
     | DerivedFrom(_) => None
     }
   )
@@ -772,8 +838,8 @@ let makeRawEvent = (
   eventItem: Internal.eventItem,
   ~config: Config.t,
 ): InternalTable.RawEvents.t => {
-  let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = eventItem
-  let {block, transaction, params, logIndex, srcAddress} = event
+  let {event, eventConfig, chain, blockNumber, blockHash, timestamp: blockTimestamp} = eventItem
+  let {block, transaction, params, logIndex, srcAddress} = event->Internal.toGenericEvent
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =
@@ -809,7 +875,7 @@ let makeRawEvent = (
     blockNumber,
     logIndex,
     srcAddress,
-    blockHash: block->config.ecosystem.getId,
+    blockHash,
     blockTimestamp,
     blockFields,
     transactionFields,
@@ -1159,7 +1225,7 @@ let rec writeBatch = async (
 let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
   let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
-    | Field(field) => field->Table.getDbFieldName->Some
+    | Field(field) => field->Table.getPgDbFieldName->Some
     | DerivedFrom(_) => None
     }
   )
@@ -1434,80 +1500,26 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     }
   }
 
-  let loadByIdsOrThrow = async (~ids, ~table: Table.table, ~rowsSchema) => {
-    switch await (
-      switch ids {
-      | [_] =>
-        sql->Postgres.preparedUnsafe(
-          makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
-          ids->Obj.magic,
-        )
-      | _ =>
-        sql->Postgres.preparedUnsafe(
-          makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
-          [ids]->Obj.magic,
-        )
-      }
-    ) {
-    | exception exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by ids`,
-          reason: exn,
-        }),
-      )
-    | rows =>
-      try rows->S.parseOrThrow(rowsSchema) catch {
-      | exn =>
-        throw(
-          Persistence.StorageError({
-            message: `Failed to parse "${table.tableName}" loaded from storage by ids`,
-            reason: exn,
-          }),
-        )
-      }
-    }
-  }
-
-  let loadByFieldOrThrow = async (
-    ~fieldName: string,
-    ~fieldSchema,
-    ~fieldValue,
-    ~operator: Persistence.operator,
-    ~table: Table.table,
-    ~rowsSchema,
-  ) => {
-    let params = try [fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)]->Obj.magic catch {
-    | exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
-          reason: exn,
-        }),
-      )
-    }
+  let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
+    let params = []
+    let condition = makeFilterCondition(~filter, ~table, ~params)
     switch await sql->Postgres.preparedUnsafe(
-      makeLoadByFieldQuery(
-        ~pgSchema,
-        ~tableName=table.tableName,
-        ~fieldName,
-        ~operator=(operator :> string),
-      ),
-      params,
+      makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
+      params->Obj.magic,
     ) {
     | exception exn =>
       throw(
         Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}"`,
+          message: `Failed loading "${table.tableName}" from storage by condition: ${condition}`,
           reason: exn,
         }),
       )
     | rows =>
-      try rows->S.parseOrThrow(rowsSchema) catch {
+      try rows->S.parseOrThrow(table->Table.pgRowsSchema) catch {
       | exn =>
         throw(
           Persistence.StorageError({
-            message: `Failed to parse "${table.tableName}" loaded from storage by ids`,
+            message: `Failed to parse "${table.tableName}" loaded from storage by condition: ${condition}`,
             reason: exn,
           }),
         )
@@ -1803,8 +1815,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     isInitialized,
     initialize,
     resumeInitialState,
-    loadByFieldOrThrow,
-    loadByIdsOrThrow,
+    loadOrThrow,
     dumpEffectCache,
     reset,
     setChainMeta,
@@ -1908,7 +1919,7 @@ let makeStorageFromEnv = (
               ~tableConfigs=tableNames->Array.map(tableName => {
                 Hasura.tableName,
                 description: None,
-                columnDescriptions: dict{},
+                columnConfigs: dict{},
               }),
             )->Promise.catch(err => {
               Logging.errorWithExn(

@@ -103,14 +103,16 @@ let getClickHouseFieldType = (
   isNullable ? `Nullable(${baseType})` : baseType
 }
 
-// Creates an entity schema from table definition, using clickHouseDate for Date fields
+// Creates an entity schema from table definition, using clickHouseDate for Date fields.
+// Serialized keys are the db column names, while the entity values are keyed
+// by API field names (they only differ when column renaming is configured).
 let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
-  S.schema(s => {
+  S.object(s => {
     let dict = Dict.make()
     table.fields->Array.forEach(field => {
       switch field {
       | Field(f) => {
-          let fieldName = f->Table.getDbFieldName
+          let fieldName = f->Table.getClickHouseDbFieldName
           let fieldSchema = switch f.fieldType {
           | Date => {
               let dateSchema = Utils.Schema.clickHouseDate->S.toUnknown
@@ -142,7 +144,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
             }
           | _ => f.fieldSchema
           }
-          dict->Dict.set(fieldName, s.matches(fieldSchema))
+          dict->Dict.set(f->Table.getApiFieldName, s.field(fieldName, fieldSchema))
         }
       | DerivedFrom(_) => () // Skip derived fields
       }
@@ -316,7 +318,7 @@ let makeCreateHistoryTableQuery = (
     switch field {
     | Field(field) =>
       Some({
-        let fieldName = field->Table.getDbFieldName
+        let fieldName = field->Table.getClickHouseDbFieldName
         let clickHouseType = getClickHouseFieldType(
           ~fieldType=field.fieldType,
           ~isNullable=field.isNullable,
@@ -399,7 +401,7 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
     ->Array.filterMap(field => {
       switch field {
       | Field(field) => {
-          let fieldName = field->Table.getDbFieldName
+          let fieldName = field->Table.getClickHouseDbFieldName
           Some(`\`${fieldName}\``)
         }
       | DerivedFrom(_) => None

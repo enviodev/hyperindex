@@ -1,22 +1,28 @@
 // Resolution order:
-//   1. Production: require("envio-{os}-{arch}") — platform-specific npm package
-//   2. Dev build:  find repo → cargo build --lib → load from target/debug/
+//   1. Production: require("envio-{os}-{arch}") - platform-specific npm package
+//   2. Dev build:  find repo -> cargo build --lib -> load from target/debug/
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
-type hypersyncClientCtor
+type evmHypersyncClientCtor
+type evmRpcClientCtor
+type evmDecoderCtor
+type hypersyncSolanaClientCtor
 type hyperfuelClientCtor
-type decoderCtor
 
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
-  @as("HypersyncClient")
-  hypersyncClient: hypersyncClientCtor,
+  @as("EvmHypersyncClient")
+  evmHypersyncClient: evmHypersyncClientCtor,
+  @as("EvmRpcClient")
+  evmRpcClient: evmRpcClientCtor,
+  @as("EvmDecoder")
+  evmDecoder: evmDecoderCtor,
+  @as("HypersyncSolanaClient")
+  hypersyncSolanaClient: hypersyncSolanaClientCtor,
   @as("HyperfuelClient")
   hyperfuelClient: hyperfuelClientCtor,
-  @as("Decoder")
-  decoder: decoderCtor,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"
@@ -125,8 +131,8 @@ let loadAddon = () => {
   }
 
   // Only swallow MODULE_NOT_FOUND (the optional package isn't installed on
-  // this host). Any other failure — corrupt .node, ABI mismatch, dlopen
-  // error — is a real load failure and must surface.
+  // this host). Any other failure - corrupt .node, ABI mismatch, dlopen
+  // error - is a real load failure and must surface.
   let rec tryRequire = i =>
     switch candidates[i] {
     | None => None

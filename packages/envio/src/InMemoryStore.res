@@ -548,7 +548,10 @@ let prepareRollbackDiff = async (
       )
     })
 
-    let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
+    let restoredEntities =
+      restoredEntitiesResult
+      ->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
+      ->(Utils.magic: array<unknown> => array<Internal.entity>)
 
     restoredEntities->Array.forEach((entity: Internal.entity) => {
       setEntities->Utils.Dict.push(entityConfig.name, entity.id)
