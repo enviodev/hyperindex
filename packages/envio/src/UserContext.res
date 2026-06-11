@@ -127,6 +127,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
   | Some(Field(_)) => ()
   }
 
+  @inline
   let loadWithFilter = filter =>
     LoadLayer.loadByFilter(
       ~loadManager=params.loadManager,
