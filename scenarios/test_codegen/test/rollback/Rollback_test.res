@@ -2685,4 +2685,274 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       ).toEqual([])
     },
   )
+
+  Async.it(
+    "Flushes in-flight batch write before computing rollback diffs (no silent data loss on non-reorg chain)",
+    async t => {
+      let stallWriteBatch: ref<option<promise<unit>>> = ref(None)
+      let writeBatchCalls = ref(0)
+
+      let sourceMock1337 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock100 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock1337.source]),
+          },
+          {
+            chain: #100,
+            sourceConfig: Config.CustomSources([sourceMock100.source]),
+          },
+        ],
+        ~mapStorage=storage => {
+          ...storage,
+          writeBatch: (
+            ~batch,
+            ~rollback,
+            ~isInReorgThreshold,
+            ~config,
+            ~allEntities,
+            ~updatedEffectsCache,
+            ~updatedEntities,
+            ~chainMetaData,
+          ) => {
+            writeBatchCalls := writeBatchCalls.contents + 1
+            let run = async () => {
+              switch stallWriteBatch.contents {
+              | Some(gate) => await gate
+              | None => ()
+              }
+              await storage.writeBatch(
+                ~batch,
+                ~rollback,
+                ~isInReorgThreshold,
+                ~config,
+                ~allEntities,
+                ~updatedEffectsCache,
+                ~updatedEntities,
+                ~chainMetaData,
+              )
+            }
+            run()
+          },
+        },
+      )
+      await Utils.delay(0)
+
+      let _ = await Promise.all2((
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+      ))
+
+      // Chain 100 progresses first so its checkpoint lands below the future
+      // rollback target checkpoint (chain 1337 at block 103). Otherwise the
+      // global checkpoint ordering would roll chain 100 back anyway and mask
+      // the in-flight write race.
+      sourceMock100.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 103,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.\"SimpleEntity".set({
+                id: "victim",
+                value: "before",
+              })
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=103,
+        ~resolveAt=#first,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      sourceMock1337.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 103,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.\"SimpleEntity".set({
+                id: "reorg",
+                value: "valid",
+              })
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=103,
+        ~resolveAt=#first,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      sourceMock1337.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 106,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.\"SimpleEntity".set({
+                id: "reorg",
+                value: "reorged",
+              })
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=106,
+        ~resolveAt=#first,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      // Stall the next batch write so it stays in-flight during the rollback
+      let resolveStall = ref(() => ())
+      stallWriteBatch := Some(Promise.make((resolve, _reject) => resolveStall := () => resolve()))
+      let writeBatchCallsBeforeStall = writeBatchCalls.contents
+
+      sourceMock100.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 106,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.\"SimpleEntity".set({
+                id: "victim",
+                value: "in-flight",
+              })
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=106,
+        ~resolveAt=#first,
+      )
+      // Wait until the batch is processed and its (stalled) write has started
+      while writeBatchCalls.contents == writeBatchCallsBeforeStall {
+        await Utils.delay(1)
+      }
+
+      // Reorg on chain 1337 while chain 100's batch write is still in-flight
+      sourceMock1337.resolveGetItemsOrThrow(
+        [],
+        ~prevRangeLastBlock={
+          blockNumber: 106,
+          blockHash: "0x106-reorged",
+        },
+        ~resolveAt=#first,
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      t.expect(
+        sourceMock1337.getBlockHashesCalls,
+        ~message="Should have called getBlockHashes to find rollback depth",
+      ).toEqual([[100, 103]])
+      sourceMock1337.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+        {blockNumber: 103, blockHash: "0x103", blockTimestamp: 103},
+      ])
+
+      // Let the rollback proceed to the flush of the stalled write, then
+      // release it. If the rollback read the progress diff before flushing,
+      // chain 100's checkpoint at block 106 wouldn't be in the db yet: its
+      // entity change would be reverted without the chain being rolled back,
+      // and the event would never be reprocessed.
+      await Utils.delay(10)
+      resolveStall.contents()
+      stallWriteBatch := None
+
+      // Clean up pending calls from before rollback
+      sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
+
+      await indexerMock.getRollbackReadyPromise()
+
+      t.expect(
+        (
+          sourceMock100.getItemsOrThrowCalls->Array.map(c => c.payload),
+          sourceMock1337.getItemsOrThrowCalls->Array.map(c => c.payload),
+        ),
+        ~message="Both chains should refetch from block 106 after rollback (chain 100's in-flight checkpoint was flushed and included in the progress diff)",
+      ).toEqual((
+        // Chain 100: partition kept (lfb <= target), chunk history preserved
+        [
+          {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
+          {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
+        ],
+        // Chain 1337: partition deleted (lfb > target), recreated fresh
+        [{"fromBlock": 106, "toBlock": None, "retry": 0, "p": "0"}],
+      ))
+
+      sourceMock100.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 106,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.\"SimpleEntity".set({
+                id: "victim",
+                value: "reapplied",
+              })
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=106,
+        ~resolveAt=#first,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(
+        (
+          (await indexerMock.query(SimpleEntity))->Array.toSorted((a, b) =>
+            String.compare(a.id, b.id)
+          ),
+          await indexerMock.queryHistory(SimpleEntity),
+          await indexerMock.metric("envio_rollback_events"),
+        ),
+        ~message="Chain 100's in-flight entity change should be rolled back together with its progress and reapplied on refetch",
+      ).toEqual((
+        [
+          {
+            Indexer.Entities.SimpleEntity.id: "reorg",
+            value: "valid",
+          },
+          {
+            Indexer.Entities.SimpleEntity.id: "victim",
+            value: "reapplied",
+          },
+        ],
+        [
+          Set({
+            checkpointId: 4n,
+            entityId: "reorg",
+            entity: {
+              Indexer.Entities.SimpleEntity.id: "reorg",
+              value: "valid",
+            },
+          }),
+          Set({
+            checkpointId: 3n,
+            entityId: "victim",
+            entity: {
+              Indexer.Entities.SimpleEntity.id: "victim",
+              value: "before",
+            },
+          }),
+          Set({
+            checkpointId: 8n,
+            entityId: "victim",
+            entity: {
+              Indexer.Entities.SimpleEntity.id: "victim",
+              value: "reapplied",
+            },
+          }),
+        ],
+        [{value: "2", labels: Dict.make()}],
+      ))
+    },
+  )
 })
