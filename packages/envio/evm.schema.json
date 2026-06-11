@@ -148,6 +148,18 @@
                     "boolean",
                     "null"
                   ]
+                },
+                "column_name_format": {
+                  "description": "How entity fields are reflected in the storage column names. `original` keeps the schema.graphql field names as is, `snake_case` converts them to snake_case in the database while keeping the original casing in the exposed APIs. (default: original)",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "original",
+                    "snake_case",
+                    null
+                  ]
                 }
               },
               "additionalProperties": false
@@ -171,6 +183,18 @@
                   "type": [
                     "boolean",
                     "null"
+                  ]
+                },
+                "column_name_format": {
+                  "description": "How entity fields are reflected in the storage column names. `original` keeps the schema.graphql field names as is, `snake_case` converts them to snake_case in the database while keeping the original casing in the exposed APIs. (default: original)",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "original",
+                    "snake_case",
+                    null
                   ]
                 }
               },

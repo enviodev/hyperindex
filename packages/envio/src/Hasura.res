@@ -148,10 +148,38 @@ let reloadHasuraMetadata = async (~endpoint, ~auth) => {
   }
 }
 
+type columnConfig = {
+  // The GraphQL field name exposed by Hasura, when it differs from the
+  // column name in the database (eg with `column_name_format: snake_case`).
+  customName: option<string>,
+  comment: option<string>,
+}
+
 type trackTableConfig = {
   tableName: string,
   description: option<string>,
-  columnDescriptions: dict<string>,
+  // Keyed by db column name
+  columnConfigs: dict<columnConfig>,
+}
+
+let makeColumnConfigs = (table: Table.table): dict<columnConfig> => {
+  let columnConfigs = dict{}
+  table.fields->Array.forEach(fieldOrDerived =>
+    switch fieldOrDerived {
+    | Table.Field(field) => {
+        let apiFieldName = field->Table.getApiFieldName
+        let dbFieldName = field->Table.getPgDbFieldName
+        // Expose renamed columns in GraphQL under the original field name
+        let customName = apiFieldName === dbFieldName ? None : Some(apiFieldName)
+        switch (customName, field.description) {
+        | (None, None) => ()
+        | (customName, comment) => columnConfigs->Dict.set(dbFieldName, {customName, comment})
+        }
+      }
+    | Table.DerivedFrom(_) => ()
+    }
+  )
+  columnConfigs
 }
 
 let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<trackTableConfig>) => {
@@ -162,7 +190,7 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<track
         "args": {
           // If set to false, any warnings will cause the API call to fail and no new tables to be tracked. Otherwise tables that fail to track will be raised as warnings. (default: true)
           "allow_warnings": false,
-          "tables": tableConfigs->Array.map(({tableName, description, columnDescriptions}) => {
+          "tables": tableConfigs->Array.map(({tableName, description, columnConfigs}) => {
             let configuration = dict{
               "custom_name": tableName->(Utils.magic: string => JSON.t),
             }
@@ -170,15 +198,26 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<track
             | Some(d) => configuration->Dict.set("comment", d->(Utils.magic: string => JSON.t))
             | None => ()
             }
-            let columnConfigEntries = columnDescriptions->Dict.toArray
+            let columnConfigEntries = columnConfigs->Dict.toArray
             if columnConfigEntries->Array.length > 0 {
-              let columnConfig = dict{}
-              columnConfigEntries->Array.forEach(((column, comment)) =>
-                columnConfig->Dict.set(column, {"comment": comment}->(Utils.magic: {..} => JSON.t))
-              )
+              let columnConfigJson = dict{}
+              columnConfigEntries->Array.forEach(((column, config)) => {
+                let entry = dict{}
+                switch config.customName {
+                | Some(customName) =>
+                  entry->Dict.set("custom_name", customName->(Utils.magic: string => JSON.t))
+                | None => ()
+                }
+                switch config.comment {
+                | Some(comment) =>
+                  entry->Dict.set("comment", comment->(Utils.magic: string => JSON.t))
+                | None => ()
+                }
+                columnConfigJson->Dict.set(column, entry->(Utils.magic: dict<JSON.t> => JSON.t))
+              })
               configuration->Dict.set(
                 "column_config",
-                columnConfig->(Utils.magic: dict<JSON.t> => JSON.t),
+                columnConfigJson->(Utils.magic: dict<JSON.t> => JSON.t),
               )
             }
             {
@@ -254,7 +293,8 @@ let createEntityRelationship = async (
   ~isDerivedFrom: bool,
   ~comment: option<string>=?,
 ) => {
-  let derivedFromTo = isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}_id" : "id"`
+  // The column_mapping references columns by their db names
+  let derivedFromTo = isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}" : "id"`
 
   let tableJson = {
     "schema": pgSchema,
@@ -304,36 +344,23 @@ let trackDatabase = async (
     {
       tableName: InternalTable.RawEvents.table.tableName,
       description: None,
-      columnDescriptions: dict{},
+      columnConfigs: dict{},
     },
     {
       tableName: InternalTable.Views.metaViewName,
       description: None,
-      columnDescriptions: dict{},
+      columnConfigs: dict{},
     },
     {
       tableName: InternalTable.Views.chainMetadataViewName,
       description: None,
-      columnDescriptions: dict{},
+      columnConfigs: dict{},
     },
   ]
   let userTableConfigs = userEntities->Array.map(entity => {
-    let columnDescriptions = dict{}
-    entity.table.fields->Array.forEach(fieldOrDerived =>
-      switch fieldOrDerived {
-      | Table.Field(field) =>
-        switch field.description {
-        | Some(d) => columnDescriptions->Dict.set(field->Table.getDbFieldName, d)
-        | None => ()
-        }
-      | Table.DerivedFrom(_) => ()
-      }
-    )
-    {
-      tableName: entity.table.tableName,
-      description: entity.table.description,
-      columnDescriptions,
-    }
+    tableName: entity.table.tableName,
+    description: entity.table.description,
+    columnConfigs: entity.table->makeColumnConfigs,
   })
   let tableConfigs = [exposedInternalTableConfigs, userTableConfigs]->Array.flat
   let tableNames = tableConfigs->Array.map(c => c.tableName)
@@ -371,7 +398,7 @@ let trackDatabase = async (
       let derivedFromField = derivedFromFields->Array.getUnsafe(j)
       //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
       let relationalFieldName =
-        schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
+        schema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
 
       await createEntityRelationship(
         ~endpoint,
@@ -399,7 +426,7 @@ let trackDatabase = async (
         ~relationshipType="object",
         ~isDerivedFrom=false,
         ~objectName=field.fieldName,
-        ~relationalKey=field.fieldName,
+        ~relationalKey=field->Table.getPgDbFieldName,
         ~mappedEntity=linkedEntityName,
         ~comment=?field.description,
       )

@@ -113,7 +113,11 @@ impl Schema {
             &schema_path.to_str().unwrap_or("bad file path"),
         ))?;
 
-        let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
+        Self::from_string(&schema_string)
+    }
+
+    pub fn from_string(schema_string: &str) -> anyhow::Result<Self> {
+        let schema_doc = graphql_parser::parse_schema::<String>(schema_string)
             .context("Failed to parse schema as document")?;
 
         Self::from_document(schema_doc).context("Failed converting schema doc to schema struct")
