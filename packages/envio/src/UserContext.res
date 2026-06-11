@@ -94,6 +94,13 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
 
   let dbFieldName = filterKeys->Array.getUnsafe(0)
   let operatorObj = filter->Dict.getUnsafe(dbFieldName)
+
+  if operatorObj === %raw(`undefined`) {
+    JsError.throwWithMessage(
+      `Undefined value passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: undefined }). The undefined value is not supported in getWhere filters. Please provide an operator like { _eq: value }.`,
+    )
+  }
+
   let operatorKeys = operatorObj->Dict.keysToArray
 
   if operatorKeys->Array.length === 0 {
@@ -110,6 +117,13 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
   }
 
   let operatorKey = operatorKeys->Array.getUnsafe(0)
+  let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
+
+  if fieldValue === %raw(`undefined`) {
+    JsError.throwWithMessage(
+      `Undefined value passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: undefined } }). The undefined value is not supported in getWhere operators. Please provide a non-undefined value.`,
+    )
+  }
 
   switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
   | None =>
@@ -140,10 +154,13 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     )
 
   if operatorKey === "_in" {
-    let fieldValues =
-      operatorObj
-      ->Dict.getUnsafe(operatorKey)
-      ->(Utils.magic: unknown => array<unknown>)
+    let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
+
+    if fieldValues->Array.some(fieldValue => fieldValue === %raw(`undefined`)) {
+      JsError.throwWithMessage(
+        `Undefined value passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: { _in: [...] } }). The undefined value is not supported in getWhere operators. Please provide non-undefined values.`,
+      )
+    }
 
     // Load each value as a separate Eq filter to memoize
     // them in memory on the per-value level
@@ -153,7 +170,6 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     ->Promise.thenResolve(results => results->Array.flat)
   } else if operatorKey === "_gte" || operatorKey === "_lte" {
     // _gte and _lte are composed from Eq + Gt/Lt
-    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
     let rangeFilter =
       operatorKey === "_gte"
         ? EntityFilter.Gt({fieldName: dbFieldName, fieldValue})
@@ -166,7 +182,6 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     ->Promise.all
     ->Promise.thenResolve(results => results->Array.flat)
   } else {
-    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
     let filter = switch operatorKey {
     | "_eq" => EntityFilter.Eq({fieldName: dbFieldName, fieldValue})
     | "_gt" => EntityFilter.Gt({fieldName: dbFieldName, fieldValue})

@@ -462,4 +462,53 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
       ~message="should have removed index on deleted token, leaving one token",
     ).toBe(1)
   })
+
+  Async.it("getWhere throws a user friendly error for undefined filter values", async t => {
+    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
+    )
+    await Utils.delay(0)
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    let errors = ref([])
+
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 50,
+        logIndex: 1,
+        handler: async ({context}) => {
+          let expectGetWhereError = (
+            getWhere: unit => promise<array<Indexer.Entities.Token.t>>,
+          ) =>
+            try {
+              let _ = getWhere()
+              "Expected getWhere to throw"
+            } catch {
+            | JsExn(e) => e->JsExn.message->Option.getOr("(no message)")
+            }
+
+          errors := [
+            expectGetWhereError(() => context.\"Token".getWhere(%raw(`{tokenId: undefined}`))),
+            expectGetWhereError(
+              () => context.\"Token".getWhere(%raw(`{tokenId: {_eq: undefined}}`)),
+            ),
+            expectGetWhereError(
+              () => context.\"Token".getWhere(%raw(`{tokenId: {_in: [undefined]}}`)),
+            ),
+          ]
+        },
+      },
+    ])
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(errors.contents).toEqual([
+      `Undefined value passed to context.Token.getWhere({ tokenId: undefined }). The undefined value is not supported in getWhere filters. Please provide an operator like { _eq: value }.`,
+      `Undefined value passed to context.Token.getWhere({ tokenId: { _eq: undefined } }). The undefined value is not supported in getWhere operators. Please provide a non-undefined value.`,
+      `Undefined value passed to context.Token.getWhere({ tokenId: { _in: [...] } }). The undefined value is not supported in getWhere operators. Please provide non-undefined values.`,
+    ])
+  })
 })
