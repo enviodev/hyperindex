@@ -10,8 +10,8 @@ mod evm_hypersync_source;
 mod evm_rpc_source;
 pub mod executor;
 mod fuel;
+mod fuel_hypersync_source;
 mod hbs_templating;
-mod hyperfuel_source;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
 mod project_paths;
