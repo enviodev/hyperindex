@@ -5,12 +5,12 @@
 module CachedClients = {
   let cache: dict<HyperFuelClient.t> = Dict.make()
 
-  let getClient = url => {
-    switch cache->Utils.Dict.dangerouslyGetNonOption(url) {
+  let getClient = (~serverUrl, ~apiToken) => {
+    switch cache->Utils.Dict.dangerouslyGetNonOption(serverUrl) {
     | Some(client) => client
     | None =>
-      let newClient = HyperFuelClient.make({url: url})
-      cache->Dict.set(url, newClient)
+      let newClient = HyperFuelClient.make({url: serverUrl, bearerToken: apiToken})
+      cache->Dict.set(serverUrl, newClient)
       newClient
     }
   }
@@ -36,28 +36,7 @@ type item = {
   block: block,
 }
 
-type blockNumberAndHash = {
-  blockNumber: int,
-  hash: string,
-}
-
 type logsQueryPage = hyperSyncPage<item>
-
-type missingParams = {
-  queryName: string,
-  missingParams: array<string>,
-}
-type queryError = UnexpectedMissingParams(missingParams)
-
-let queryErrorToMsq = (e: queryError): string => {
-  switch e {
-  | UnexpectedMissingParams({queryName, missingParams}) =>
-    `${queryName} query failed due to unexpected missing params on response:
-      ${missingParams->Array.joinUnsafe(", ")}`
-  }
-}
-
-type queryResponse<'a> = result<'a, queryError>
 
 module GetLogs = {
   type error =
@@ -65,6 +44,31 @@ module GetLogs = {
     | WrongInstance
 
   exception Error(error)
+
+  // Rust encodes structured failures as a JSON payload in the napi error's
+  // message: `{"kind":"MissingFields","fields":["receipt.txId", ...]}`.
+  // JSON.parse + shape check is the recovery protocol — no string-grepping
+  // on anyhow's Debug format.
+  let extractMissingParams = (exn: exn): option<array<string>> => {
+    let message = switch exn {
+    | JsExn(jsExn) => jsExn->JsExn.message
+    | _ => None
+    }
+    switch message {
+    | None => None
+    | Some(msg) =>
+      switch msg->JSON.parseOrThrow->JSON.Decode.object {
+      | exception _ => None
+      | None => None
+      | Some(obj) =>
+        switch (obj->Dict.get("kind"), obj->Dict.get("fields")) {
+        | (Some(String("MissingFields")), Some(Array(fields))) =>
+          Some(fields->Array.filterMap(JSON.Decode.string))
+        | _ => None
+        }
+      }
+    }
+  }
 
   let makeRequestBody = (
     ~fromBlock,
@@ -121,9 +125,7 @@ module GetLogs = {
     let {receipts, blocks} = response_data
 
     let blocksDict = Dict.make()
-    blocks
-    ->(Utils.magic: option<'a> => 'a)
-    ->Array.forEach(block => {
+    blocks->Array.forEach(block => {
       blocksDict->Dict.set(block.height->(Utils.magic: int => string), block)
     })
 
@@ -166,16 +168,29 @@ module GetLogs = {
     page
   }
 
-  let query = async (~serverUrl, ~fromBlock, ~toBlock, ~recieptsSelection): logsQueryPage => {
+  let query = async (
+    ~serverUrl,
+    ~apiToken,
+    ~fromBlock,
+    ~toBlock,
+    ~recieptsSelection,
+  ): logsQueryPage => {
     let query: HyperFuelClient.QueryTypes.query = makeRequestBody(
       ~fromBlock,
       ~toBlockInclusive=toBlock,
       ~recieptsSelection,
     )
 
-    let hyperFuelClient = CachedClients.getClient(serverUrl)
+    let hyperFuelClient = CachedClients.getClient(~serverUrl, ~apiToken)
 
-    let res = await hyperFuelClient->HyperFuelClient.getSelectedData(query)
+    let res = switch await hyperFuelClient->HyperFuelClient.getSelectedData(query) {
+    | res => res
+    | exception exn =>
+      switch exn->extractMissingParams {
+      | Some(missingParams) => throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
+      | None => throw(exn)
+      }
+    }
     if res.nextBlock <= fromBlock {
       // Might happen when /height response was from another instance of HyperSync
       throw(Error(WrongInstance))
@@ -184,75 +199,5 @@ module GetLogs = {
   }
 }
 
-module BlockData = {
-  let convertResponse = (res: HyperFuelClient.queryResponseTyped): option<
-    ReorgDetection.blockDataWithTimestamp,
-  > => {
-    res.data.blocks->Option.flatMap(blocks => {
-      blocks
-      ->Array.get(0)
-      ->Option.map(block => {
-        switch block {
-        | {height: blockNumber, time: timestamp, id: blockHash} =>
-          (
-            {
-              blockTimestamp: timestamp,
-              blockNumber,
-              blockHash,
-            }: ReorgDetection.blockDataWithTimestamp
-          )
-        }
-      })
-    })
-  }
-
-  let rec queryBlockData = async (~serverUrl, ~blockNumber, ~logger): option<
-    ReorgDetection.blockDataWithTimestamp,
-  > => {
-    let query: HyperFuelClient.QueryTypes.query = {
-      fromBlock: blockNumber,
-      toBlockExclusive: blockNumber + 1,
-      // FIXME: Theoretically it should work without the outputs filter, but it doesn't for some reason
-      outputs: [%raw(`{}`)],
-      // FIXME: Had to add inputs {} as well, since it failed on block 1211599 during wildcard Call indexing
-      inputs: [%raw(`{}`)],
-      fieldSelection: {
-        block: [Height, Id, Time],
-      },
-      includeAllBlocks: true,
-    }
-
-    let hyperFuelClient = CachedClients.getClient(serverUrl)
-
-    let logger = Logging.createChildFrom(
-      ~logger,
-      ~params={"logType": "hypersync get blockhash query", "blockNumber": blockNumber},
-    )
-
-    let executeQuery = () => hyperFuelClient->HyperFuelClient.getSelectedData(query)
-
-    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger)
-
-    // If the block is not found, retry the query. This can occur since replicas of hypersync might not hack caught up yet
-    if res.nextBlock <= blockNumber {
-      let logger = Logging.createChild(~params={"url": serverUrl})
-      let delayMilliseconds = 100
-      logger->Logging.childInfo(
-        `Block #${blockNumber->Int.toString} not found in HyperFuel. HyperFuel has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
-      )
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds)
-      await queryBlockData(~serverUrl, ~blockNumber, ~logger)
-    } else {
-      res->convertResponse
-    }
-  }
-}
-
-let queryBlockData = BlockData.queryBlockData
-
-let heightRoute = Rest.route(() => {
-  path: "/height",
-  method: Get,
-  input: _ => (),
-  responses: [s => s.field("height", S.int)],
-})
+let getHeight = (~serverUrl, ~apiToken) =>
+  CachedClients.getClient(~serverUrl, ~apiToken)->HyperFuelClient.getHeight
