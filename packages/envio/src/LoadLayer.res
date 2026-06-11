@@ -374,9 +374,46 @@ let loadByFilter = (
 
     let size = ref(0)
 
-    let _ = await filters
+    filters->Array.forEach(filter => inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter))
+
+    // Filters in a group always share the operator and field name (both are
+    // encoded in the group key), so Eq and In batches collapse into a single
+    // In query. Loading a superset of rows is safe: every loaded entity is
+    // matched against all registered indices, not only the query's own filter.
+    let queries = if filters->Array.length === 1 {
+      filters
+    } else {
+      switch filters->Array.getUnsafe(0) {
+      | Eq({fieldName}) => [
+          EntityFilter.In({
+            fieldName,
+            fieldValue: filters->Array.filterMap(filter =>
+              switch filter {
+              | Eq({fieldValue}) => Some(fieldValue)
+              | _ => None
+              }
+            ),
+          }),
+        ]
+      | In({fieldName}) => [
+          EntityFilter.In({
+            fieldName,
+            fieldValue: filters
+            ->Array.map(filter =>
+              switch filter {
+              | In({fieldValue}) => fieldValue
+              | _ => []
+              }
+            )
+            ->Array.flat,
+          }),
+        ]
+      | Gt(_) | Lt(_) | And(_) => filters
+      }
+    }
+
+    let _ = await queries
     ->Array.map(async filter => {
-      inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter)
       try {
         let entities =
           (await storage.loadOrThrow(~table=entityConfig.table, ~filter))->(

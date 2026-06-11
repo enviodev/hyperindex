@@ -395,6 +395,135 @@ describe("LoadLayer", () => {
     )
   })
 
+  Async.it("Merges concurrent Eq filters on the same field into a single In query", async t => {
+    let storageMock = MockIndexer.Storage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+
+    let user1: Indexer.Entities.User.t = {
+      id: "1",
+      accountType: USER,
+      address: "0x1",
+      gravatar_id: None,
+      updatesCountOnUserForTesting: 0,
+    }
+
+    let inMemoryStore = MockIndexer.InMemoryStore.make(
+      ~entities=[(MockIndexer.entityConfig(User), [user1])],
+    )
+
+    let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+    let getUsersWithAddress = fieldValue =>
+      LoadLayer.loadByFilter(
+        ~loadManager,
+        ~persistence=storageMock->MockIndexer.Storage.toPersistence,
+        ~entityConfig=MockIndexer.entityConfig(User),
+        ~inMemoryStore,
+        ~item,
+        ~filter=EntityFilter.Eq({
+          fieldName: "address",
+          fieldValue: fieldValue->(Utils.magic: string => unknown),
+        }),
+        ~shouldGroup=true,
+      )
+
+    let users = await Promise.all([getUsersWithAddress("0x1"), getUsersWithAddress("0x2")])
+
+    t.expect((users, storageMock.loadOrThrowCalls)).toEqual((
+      [[user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)], []],
+      [
+        {
+          "filter": EntityFilter.In({
+            fieldName: "address",
+            fieldValue: ["0x1", "0x2"]->(Utils.magic: array<string> => array<unknown>),
+          }),
+          "tableName": "User",
+        },
+      ],
+    ))
+  })
+
+  Async.it("Merges concurrent In filters on the same field into a single In query", async t => {
+    let storageMock = MockIndexer.Storage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+    let inMemoryStore = MockIndexer.InMemoryStore.make()
+
+    let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+    let getUsersWithAddresses = fieldValues =>
+      LoadLayer.loadByFilter(
+        ~loadManager,
+        ~persistence=storageMock->MockIndexer.Storage.toPersistence,
+        ~entityConfig=MockIndexer.entityConfig(User),
+        ~inMemoryStore,
+        ~item,
+        ~filter=EntityFilter.In({
+          fieldName: "address",
+          fieldValue: fieldValues->(Utils.magic: array<string> => array<unknown>),
+        }),
+        ~shouldGroup=true,
+      )
+
+    let users = await Promise.all([
+      getUsersWithAddresses(["0x1", "0x2"]),
+      getUsersWithAddresses(["0x3"]),
+    ])
+
+    t.expect((users, storageMock.loadOrThrowCalls)).toEqual((
+      [[], []],
+      [
+        {
+          "filter": EntityFilter.In({
+            fieldName: "address",
+            fieldValue: ["0x1", "0x2", "0x3"]->(Utils.magic: array<string> => array<unknown>),
+          }),
+          "tableName": "User",
+        },
+      ],
+    ))
+  })
+
+  Async.it("Doesn't merge concurrent Gt filters", async t => {
+    let storageMock = MockIndexer.Storage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+    let inMemoryStore = MockIndexer.InMemoryStore.make()
+
+    let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+    let getUsersWithUpdates = fieldValue =>
+      LoadLayer.loadByFilter(
+        ~loadManager,
+        ~persistence=storageMock->MockIndexer.Storage.toPersistence,
+        ~entityConfig=MockIndexer.entityConfig(User),
+        ~inMemoryStore,
+        ~item,
+        ~filter=EntityFilter.Gt({
+          fieldName: "updatesCountOnUserForTesting",
+          fieldValue: fieldValue->(Utils.magic: int => unknown),
+        }),
+        ~shouldGroup=true,
+      )
+
+    let users = await Promise.all([getUsersWithUpdates(0), getUsersWithUpdates(5)])
+
+    t.expect((users, storageMock.loadOrThrowCalls)).toEqual((
+      [[], []],
+      [
+        {
+          "filter": EntityFilter.Gt({
+            fieldName: "updatesCountOnUserForTesting",
+            fieldValue: 0->(Utils.magic: int => unknown),
+          }),
+          "tableName": "User",
+        },
+        {
+          "filter": EntityFilter.Gt({
+            fieldName: "updatesCountOnUserForTesting",
+            fieldValue: 5->(Utils.magic: int => unknown),
+          }),
+          "tableName": "User",
+        },
+      ],
+    ))
+  })
+
   Async.it("Gets entity from inMemoryStore by index if it exists", async t => {
     let storageMock = MockIndexer.Storage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
