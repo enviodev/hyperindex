@@ -411,7 +411,7 @@ let loadByFilter = (
     timerRef->Prometheus.StorageLoad.endOperation(
       ~storage=storage.name,
       ~operation=key,
-      ~whereSize=filters->Array.length,
+      ~whereSize=filters->Array.reduce(0, (acc, filter) => acc + filter->EntityFilter.valuesCount),
       ~size=size.contents,
     )
   }

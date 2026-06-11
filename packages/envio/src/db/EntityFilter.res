@@ -80,6 +80,13 @@ let rec toString = (filter: t) =>
   | And({filters}) => `And(${filters->Array.map(toString)->Array.join(",")})`
   }
 
+let rec valuesCount = (filter: t) =>
+  switch filter {
+  | Eq(_) | Gt(_) | Lt(_) => 1
+  | In({fieldValue}) => fieldValue->Array.length
+  | And({filters}) => filters->Array.reduce(0, (acc, filter) => acc + filter->valuesCount)
+  }
+
 // A field missing on the entity reads as `undefined`, which matches the `None`
 // arm of `FieldValue.t` (`option<...>`), so nullable columns omitted on the
 // entity object are compared as null rather than crashing.
