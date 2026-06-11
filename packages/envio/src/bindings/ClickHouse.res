@@ -342,7 +342,8 @@ let makeCreateHistoryTableQuery = (
       ~fieldType=Enum({config: EntityHistory.RowAction.config->Table.fromGenericEnumConfig}),
       ~isNullable=false,
       ~isArray=false,
-    )}
+    )},
+  INDEX ${EntityHistory.checkpointIdFieldName}_idx \`${EntityHistory.checkpointIdFieldName}\` TYPE minmax GRANULARITY 1
 )
 ENGINE = ${tableEngine}
 ORDER BY (${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
@@ -419,43 +420,44 @@ FROM (
 WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> string)}'`
 }
 
-// Returns entity IDs that only have history rows after the rollback target.
-// These entities didn't exist at the target and should be deleted during rollback.
-let makeGetRollbackRemovedIdsQuery = (
+// Returns the ids of entities with history rows after the rollback target.
+// Bounded by the progress checkpoint: rows above it can exist when a previous
+// run crashed before the Postgres commit and the cleanup mutation issued by
+// resume hasn't materialized yet — they must not contribute to the diff.
+let makeGetRollbackModifiedIdsQuery = (
   ~entityConfig: Internal.entityConfig,
   ~database: string,
   ~rollbackTargetCheckpointId: Internal.checkpointId,
+  ~progressCheckpointId: Internal.checkpointId,
 ) => {
   let historyTableRef = `${database}.\`${EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
     )}\``
-  let target = rollbackTargetCheckpointId->BigInt.toString
 
   `SELECT DISTINCT \`${Table.idFieldName}\`
 FROM ${historyTableRef}
-WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${target}
-  AND \`${Table.idFieldName}\` NOT IN (
-    SELECT \`${Table.idFieldName}\` FROM ${historyTableRef}
-    WHERE \`${EntityHistory.checkpointIdFieldName}\` <= ${target}
-  )`
+WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${rollbackTargetCheckpointId->BigInt.toString}
+  AND \`${EntityHistory.checkpointIdFieldName}\` <= ${progressCheckpointId->BigInt.toString}`
 }
 
 // Returns the most recent history row at or before the rollback target for every
-// ID modified after it. The row still carries the change action: a DELETE row
-// means the entity didn't exist at the target.
+// modified id that has one. The row still carries the change action: a DELETE
+// row means the entity didn't exist at the target. Modified ids without a row
+// here were created after the target — the removed/restored split happens on
+// the client, which avoids an anti-join over the ids of the whole table.
 // The SETTINGS clause makes Decimal values come back as strings the
 // BigDecimal schema can parse.
 let makeGetRollbackRestoredEntitiesQuery = (
   ~entityConfig: Internal.entityConfig,
   ~database: string,
   ~rollbackTargetCheckpointId: Internal.checkpointId,
+  ~progressCheckpointId: Internal.checkpointId,
 ) => {
   let historyTableRef = `${database}.\`${EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
     )}\``
-  let target = rollbackTargetCheckpointId->BigInt.toString
 
   let dataFieldsCommaSeparated =
     entityConfig.table.fields
@@ -469,10 +471,11 @@ let makeGetRollbackRestoredEntitiesQuery = (
 
   `SELECT ${dataFieldsCommaSeparated}, \`${EntityHistory.changeFieldName}\`
 FROM ${historyTableRef}
-WHERE \`${EntityHistory.checkpointIdFieldName}\` <= ${target}
+WHERE \`${EntityHistory.checkpointIdFieldName}\` <= ${rollbackTargetCheckpointId->BigInt.toString}
   AND \`${Table.idFieldName}\` IN (
     SELECT DISTINCT \`${Table.idFieldName}\` FROM ${historyTableRef}
-    WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${target}
+    WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${rollbackTargetCheckpointId->BigInt.toString}
+      AND \`${EntityHistory.checkpointIdFieldName}\` <= ${progressCheckpointId->BigInt.toString}
   )
 ORDER BY \`${EntityHistory.checkpointIdFieldName}\` DESC
 LIMIT 1 BY \`${Table.idFieldName}\`
@@ -487,6 +490,7 @@ let getRollbackDataOrThrow = async (
   ~database: string,
   ~entityConfig: Internal.entityConfig,
   ~rollbackTargetCheckpointId: Internal.checkpointId,
+  ~progressCheckpointId: Internal.checkpointId,
 ): (array<{"id": string}>, array<Internal.entity>) => {
   try {
     let fetchRows = async (queryString): array<dict<unknown>> => {
@@ -494,29 +498,46 @@ let getRollbackDataOrThrow = async (
       (await result->json)["data"]
     }
 
-    let (removedRows, restoredRows) = await Promise.all2((
+    let (modifiedRows, restoredRows) = await Promise.all2((
       fetchRows(
-        makeGetRollbackRemovedIdsQuery(~entityConfig, ~database, ~rollbackTargetCheckpointId),
+        makeGetRollbackModifiedIdsQuery(
+          ~entityConfig,
+          ~database,
+          ~rollbackTargetCheckpointId,
+          ~progressCheckpointId,
+        ),
       ),
       fetchRows(
-        makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~database, ~rollbackTargetCheckpointId),
+        makeGetRollbackRestoredEntitiesQuery(
+          ~entityConfig,
+          ~database,
+          ~rollbackTargetCheckpointId,
+          ~progressCheckpointId,
+        ),
       ),
     ))
 
-    let removedIds = removedRows->(Utils.magic: array<dict<unknown>> => array<{"id": string}>)
+    let removedIds = []
     let setRows = []
+    let restoredIds = Utils.Set.make()
     restoredRows->Array.forEach(row => {
+      let id = row->Dict.getUnsafe(Table.idFieldName)->(Utils.magic: unknown => string)
+      let _ = restoredIds->Utils.Set.add(id)
       if (
         row->Dict.getUnsafe(EntityHistory.changeFieldName)->(Utils.magic: unknown => string) ===
           (EntityHistory.RowAction.DELETE :> string)
       ) {
-        removedIds
-        ->Array.push({
-          "id": row->Dict.getUnsafe(Table.idFieldName)->(Utils.magic: unknown => string),
-        })
-        ->ignore
+        removedIds->Array.push({"id": id})->ignore
       } else {
         setRows->Array.push(row)->ignore
+      }
+    })
+    // Modified ids with no history at or before the target didn't exist at
+    // the rollback point
+    modifiedRows->Array.forEach(row => {
+      let id = row->Dict.getUnsafe(Table.idFieldName)->(Utils.magic: unknown => string)
+      if !(restoredIds->Utils.Set.has(id)) {
+        removedIds->Array.push({"id": id})->ignore
       }
     })
 

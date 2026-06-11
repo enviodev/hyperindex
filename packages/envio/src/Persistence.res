@@ -122,10 +122,13 @@ type storage = {
     }>,
   >,
   // Get rollback data for entity: ids to delete and entities to restore
-  // to their state at the rollback target checkpoint
+  // to their state at the rollback target checkpoint. History rows above
+  // progressCheckpointId are ignored — non-transactional storages may
+  // contain them after a crashed run.
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
+    ~progressCheckpointId: Internal.checkpointId,
   ) => promise<(array<{"id": string}>, array<Internal.entity>)>,
   // Write batch to storage
   writeBatch: (

@@ -13,6 +13,7 @@ type t = {
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
+    ~progressCheckpointId: Internal.checkpointId,
   ) => promise<(array<{"id": string}>, array<Internal.entity>)>,
 }
 
@@ -44,12 +45,13 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
       )->Utils.Promise.ignoreValue
       await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)
     },
-    getRollbackData: (~entityConfig, ~rollbackTargetCheckpointId) => {
+    getRollbackData: (~entityConfig, ~rollbackTargetCheckpointId, ~progressCheckpointId) => {
       ClickHouse.getRollbackDataOrThrow(
         client,
         ~database,
         ~entityConfig,
         ~rollbackTargetCheckpointId,
+        ~progressCheckpointId,
       )
     },
   }

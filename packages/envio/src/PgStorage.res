@@ -1718,6 +1718,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   let getRollbackData = async (
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId,
+    ~progressCheckpointId,
   ) => {
     if entityConfig.storage.postgres {
       let (removedIds, restoredRows) = await Promise.all2((
@@ -1739,12 +1740,17 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       (removedIds, restoredRows->S.parseOrThrow(entityConfig.rowsSchema))
     } else {
       // Entities without Postgres storage have no history table here;
-      // their rollback diff comes from the sink's own history.
+      // their rollback diff comes from the ClickHouse history.
       switch sink {
-      | Some(sink) => await sink.getRollbackData(~entityConfig, ~rollbackTargetCheckpointId)
+      | Some(sink) =>
+        await sink.getRollbackData(
+          ~entityConfig,
+          ~rollbackTargetCheckpointId,
+          ~progressCheckpointId,
+        )
       | None =>
         JsError.throwWithMessage(
-          `Cannot get rollback data for entity "${entityConfig.name}": it has no Postgres storage and no sink is configured.`,
+          `Cannot get rollback data for entity "${entityConfig.name}": it has no Postgres storage and ClickHouse storage is not configured.`,
         )
       }
     }
