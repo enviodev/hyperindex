@@ -144,7 +144,7 @@ type t = {
   mutable storage: storage,
 }
 
-exception StorageError = EntityFilter.StorageError
+exception StorageError({message: string, reason: exn})
 
 let make = (
   ~userEntities,

@@ -285,6 +285,67 @@ let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE ${condition};`
 }
 
+// Appends the filter's serialized field values to params (mutated in place)
+// and returns the matching SQL condition referencing them by index.
+// Field names are spliced as quoted identifiers only after the queryFields
+// lookup proves they exist on the table (and they originate from
+// codegen-validated schemas), so the interpolation can't be abused.
+let rec makeFilterCondition = (
+  ~filter: EntityFilter.t,
+  ~table: Table.table,
+  ~params: array<JSON.t>,
+) => {
+  let serializeParamOrThrow = (~fieldName, ~fieldValue: unknown, ~isArray) => {
+    let queryField = switch table->Table.queryFields->Dict.get(fieldName) {
+    | Some(queryField) => queryField
+    | None =>
+      throw(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage. The table doesn't have the field "${fieldName}".`,
+          reason: Table.NonExistingTableField(fieldName),
+        }),
+      )
+    }
+    let param = try fieldValue->S.reverseConvertToJsonOrThrow(
+      isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
+    ) catch {
+    | exn =>
+      throw(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
+          reason: exn,
+        }),
+      )
+    }
+    params->Array.push(param)->ignore
+    `$${params->Array.length->Int.toString}`
+  }
+  let scalarCondition = (~fieldName, ~fieldValue, ~op) =>
+    `"${fieldName}" ${op} ${serializeParamOrThrow(~fieldName, ~fieldValue, ~isArray=false)}`
+  switch filter {
+  | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
+  | Gt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op=">")
+  | Lt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="<")
+  | In({fieldName, fieldValue}) =>
+    `"${fieldName}" = ANY(${serializeParamOrThrow(
+        ~fieldName,
+        ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
+        ~isArray=true,
+      )})`
+  | And({filters: []}) =>
+    throw(
+      Persistence.StorageError({
+        message: `Failed loading "${table.tableName}" from storage. The "and" filter must contain at least one nested filter.`,
+        reason: Utils.Error.make(`Empty "and" filter`),
+      }),
+    )
+  | And({filters}) =>
+    `(${filters
+      ->Array.map(filter => makeFilterCondition(~filter, ~table, ~params))
+      ->Array.join(" AND ")})`
+  }
+}
+
 let makeDeleteByIdQuery = (~pgSchema, ~tableName) => {
   `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = $1;`
 }
@@ -1428,7 +1489,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
   let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
     let params = []
-    let condition = filter->EntityFilter.toSqlCondition(~table, ~params)
+    let condition = makeFilterCondition(~filter, ~table, ~params)
     switch await sql->Postgres.preparedUnsafe(
       makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
       params->Obj.magic,
