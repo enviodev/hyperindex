@@ -108,11 +108,10 @@ let rec printOperationFilter = (filter: t, ~paramsCount: ref<int>) =>
     }
   }
 
-// LoadManager group key and Prometheus operation label. Filters which may
-// be batched into a single storage query must produce the same key,
-// so concrete values are replaced with $N placeholders.
-// Computed on every loadByFilter call, so flat filters are built with
-// a single concatenation and only And pays for the param counter.
+// Filters that may be batched into a single storage query must produce
+// the same key, so concrete values are replaced with $N placeholders.
+// The flat cases duplicate printOperationFilter to keep this hot path
+// allocation-free.
 let toOperationKey = (filter: t, ~entityName) =>
   switch filter {
   | Eq({fieldName}) => `${entityName}.getWhere({${fieldName}: $1})`
@@ -144,8 +143,8 @@ let rec matches = (filter: t, ~entity: dict<FieldValue.t>) =>
   | And({filters}) => filters->Array.every(filter => filter->matches(~entity))
   }
 
-// In values are mapped as one array (isArray=true), so storages can
-// serialize them with the table's cached array schema in a single pass.
+// In values are mapped as one array (isArray=true), so they can be
+// converted with the table's cached array schema in a single pass.
 let rec mapValues = (
   filter: t,
   ~mapValue: (~fieldName: string, ~fieldValue: unknown, ~isArray: bool) => unknown,
