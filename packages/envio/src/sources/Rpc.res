@@ -214,10 +214,6 @@ module GetBlockByNumber = {
   let rawRoute = makeRpcRoute("eth_getBlockByNumber", paramsSchema, S.null(S.json(~validate=false)))
 }
 
-module GetBlockHeight = {
-  let route = makeRpcRoute("eth_blockNumber", S.tuple(_ => ()), hexIntSchema)
-}
-
 module GetTransactionByHash = {
   let rawRoute = makeRpcRoute(
     "eth_getTransactionByHash",

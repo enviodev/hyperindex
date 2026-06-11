@@ -61,8 +61,7 @@ module Storage = {
     | #initialize
     | #resumeInitialState
     | #dumpEffectCache
-    | #loadByIdsOrThrow
-    | #loadByFieldOrThrow
+    | #loadOrThrow
   ]
 
   type t = {
@@ -77,12 +76,9 @@ module Storage = {
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,
     resolveLoadInitialState: Persistence.initialState => unit,
-    loadByIdsOrThrowCalls: array<{"ids": array<string>, "tableName": string}>,
-    loadByFieldOrThrowCalls: array<{
-      "fieldName": string,
-      "fieldValue": unknown,
+    loadOrThrowCalls: array<{
+      "filter": EntityFilter.t,
       "tableName": string,
-      "operator": Persistence.operator,
     }>,
     dumpEffectCacheCalls: ref<int>,
     storage: Persistence.storage,
@@ -109,8 +105,7 @@ module Storage = {
     let initializeCalls = []
     let isInitializedResolveFns = []
     let initializeResolveFns = []
-    let loadByIdsOrThrowCalls = []
-    let loadByFieldOrThrowCalls = []
+    let loadOrThrowCalls = []
     let dumpEffectCacheCalls = ref(0)
     let resumeInitialStateCalls = []
     let resumeInitialStateResolveFns = []
@@ -118,8 +113,7 @@ module Storage = {
     {
       isInitializedCalls,
       initializeCalls,
-      loadByIdsOrThrowCalls,
-      loadByFieldOrThrowCalls,
+      loadOrThrowCalls,
       dumpEffectCacheCalls,
       resumeInitialStateCalls,
       resolveLoadInitialState: (initialState: Persistence.initialState) => {
@@ -167,37 +161,12 @@ module Storage = {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
           Promise.resolve()
         }),
-        loadByIdsOrThrow: (
-          type item,
-          ~ids,
-          ~table: Table.table,
-          ~rowsSchema as _: S.t<array<item>>,
-        ): promise<array<item>> => {
-          implementBody(#loadByIdsOrThrow, () => {
-            loadByIdsOrThrowCalls
+        loadOrThrow: (~filter, ~table: Table.table) => {
+          implementBody(#loadOrThrow, () => {
+            loadOrThrowCalls
             ->Array.push({
-              "ids": ids,
+              "filter": filter,
               "tableName": table.tableName,
-            })
-            ->ignore
-            Promise.resolve([])
-          })
-        },
-        loadByFieldOrThrow: (
-          ~fieldName,
-          ~fieldSchema as _,
-          ~fieldValue,
-          ~operator,
-          ~table: Table.table,
-          ~rowsSchema as _,
-        ) => {
-          implementBody(#loadByFieldOrThrow, () => {
-            loadByFieldOrThrowCalls
-            ->Array.push({
-              "fieldName": fieldName,
-              "fieldValue": fieldValue->Utils.magic,
-              "tableName": table.tableName,
-              "operator": operator,
             })
             ->ignore
             Promise.resolve([])
@@ -471,9 +440,9 @@ module Indexer = {
         sql
         ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(ec.rowsSchema)
+          items->S.parseOrThrow(ec.table->Table.rowsSchema)
         })
-        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+        ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
       queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
@@ -526,9 +495,9 @@ module Indexer = {
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
         )
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(entityConfig.rowsSchema)
+          items->S.parseOrThrow(entityConfig.table->Table.rowsSchema)
         })
-        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+        ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
       queryCheckpoints: () => {
         sql
