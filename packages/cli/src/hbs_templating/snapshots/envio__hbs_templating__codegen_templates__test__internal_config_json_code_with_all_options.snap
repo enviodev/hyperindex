@@ -131,6 +131,8 @@ expression: json
         },
         {
           "name": "emptyField",
+          "postgresDbName": "empty_field",
+          "clickhouseDbName": "empty_field",
           "type": "string"
         },
         {
@@ -140,6 +142,8 @@ expression: json
         },
         {
           "name": "optionalStatus",
+          "postgresDbName": "optional_status",
+          "clickhouseDbName": "optional_status",
           "type": "enum",
           "isNullable": true,
           "enum": "Status"
@@ -152,6 +156,8 @@ expression: json
         },
         {
           "name": "optionalRelated",
+          "postgresDbName": "optional_related_id",
+          "clickhouseDbName": "optional_related_id",
           "type": "entity",
           "isNullable": true,
           "linkedEntity": "RelatedEntity",
@@ -164,6 +170,8 @@ expression: json
         },
         {
           "name": "optionalTags",
+          "postgresDbName": "optional_tags",
+          "clickhouseDbName": "optional_tags",
           "type": "string",
           "isNullable": true,
           "isArray": true
