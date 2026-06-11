@@ -1115,44 +1115,48 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
       )
 
       let caught = try {
-        let _ = await source.getItemsOrThrow(
-          ~fromBlock=0,
-          ~toBlock=Some(100),
-          ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
-          ~indexingAddresses=Dict.fromArray([
-            (
-              mockAddress->Address.toString,
-              (
-                {
-                  contractName: eventConfig.contractName,
-                  address: mockAddress,
-                  registrationBlock: -1,
-                  effectiveStartBlock: 0,
-                }: FetchState.indexingAddress
-              ),
-            ),
-          ]),
-          ~knownHeight=100,
-          ~partitionId="0",
-          ~selection={
-            dependsOnAddresses: true,
-            eventConfigs: [(eventConfig :> Internal.eventConfig)],
-          },
-          ~retry=0,
-          ~logger=Logging.createChild(~params={"test": "RpcSource missing transaction data"}),
-        )
+        let callGetItemsOrThrow = async (~retry) =>
+          try {
+            let _ = await source.getItemsOrThrow(
+              ~fromBlock=0,
+              ~toBlock=Some(100),
+              ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+              ~indexingAddresses=Dict.fromArray([
+                (
+                  mockAddress->Address.toString,
+                  (
+                    {
+                      contractName: eventConfig.contractName,
+                      address: mockAddress,
+                      registrationBlock: -1,
+                      effectiveStartBlock: 0,
+                    }: FetchState.indexingAddress
+                  ),
+                ),
+              ]),
+              ~knownHeight=100,
+              ~partitionId="0",
+              ~selection={
+                dependsOnAddresses: true,
+                eventConfigs: [(eventConfig :> Internal.eventConfig)],
+              },
+              ~retry,
+              ~logger=Logging.createChild(~params={"test": "RpcSource missing transaction data"}),
+            )
+            None
+          } catch {
+          | Source.GetItemsError(error) => Some(error)
+          }
+        let result = (await callGetItemsOrThrow(~retry=0), await callGetItemsOrThrow(~retry=2))
         restoreFetch()
-        None
+        result
       } catch {
       | exn =>
         restoreFetch()
-        switch exn {
-        | Source.GetItemsError(error) => Some(error)
-        | _ => throw(exn)
-        }
+        throw(exn)
       }
 
-      t.expect(caught).toEqual(
+      t.expect(caught).toEqual((
         Some(
           FailedGettingItems({
             exn: %raw(`null`),
@@ -1163,7 +1167,17 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
             }),
           }),
         ),
-      )
+        Some(
+          FailedGettingItems({
+            exn: %raw(`null`),
+            attemptedToBlock: 100,
+            retry: WithBackoff({
+              message: `Transaction receipt not found for hash: ${transactionHash}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in 1000ms.`,
+              backoffMillis: 1000,
+            }),
+          }),
+        ),
+      ))
     },
   )
 })
