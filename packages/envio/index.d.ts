@@ -107,7 +107,7 @@ export type Prettify<T> = { [K in keyof T]: T[K] } & {};
 
 /**
  * Operator for filtering entity fields in getWhere queries.
- * Only fields with `@index` in the schema can be queried at runtime.
+ * Only `id` and fields with `@index` in the schema can be queried at runtime.
  */
 export type GetWhereOperator<T> = {
   /** Matches entities where the field equals the given value. */
@@ -128,7 +128,7 @@ export type GetWhereOperator<T> = {
  * Constructs a getWhere filter type from an entity type.
  * Each field can be filtered using {@link GetWhereOperator} (`_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`).
  *
- * Note: only fields with `@index` in the schema can be queried at runtime.
+ * Note: only `id` and fields with `@index` in the schema can be queried at runtime.
  * Attempting to filter on a non-indexed field will throw a descriptive error.
  */
 export type GetWhereFilter<E> = {
