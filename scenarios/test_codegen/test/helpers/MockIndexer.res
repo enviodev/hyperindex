@@ -265,6 +265,9 @@ module Indexer = {
     ~batchSize=?,
     ~shouldRollbackOnReorg=true,
     ~reducedPollingInterval=?,
+    // Lets a test intercept storage methods, e.g. to stall writeBatch and
+    // exercise races between in-flight writes and the indexer loop.
+    ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
   ) => {
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
@@ -311,11 +314,8 @@ module Indexer = {
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
-    let storage = PgStorage.makeStorageFromEnv(
-      ~config,
-      ~sql,
-      ~pgSchema,
-      ~isHasuraEnabled=enableHasura,
+    let storage = mapStorage(
+      PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=enableHasura),
     )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
@@ -547,6 +547,7 @@ module Indexer = {
           ~batchSize?,
           ~shouldRollbackOnReorg,
           ~reducedPollingInterval?,
+          ~mapStorage,
         )
       },
       graphql: query => {
