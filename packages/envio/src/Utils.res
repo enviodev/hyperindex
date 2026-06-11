@@ -499,14 +499,18 @@ module Schema = {
     ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
 
   // ClickHouse expects timestamps as numbers (milliseconds), not ISO strings.
-  // The parser relies on queries selecting DateTime values with
-  // date_time_output_format = 'iso'.
+  // Queries return DateTime64 in the default 'simple' format
+  // ("2009-02-13 23:31:30.123") in the column's UTC timezone, so normalize
+  // to ISO before constructing a Date.
   let clickHouseDate =
     S.json(~validate=false)
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
     ->S.preprocess(_ => {
       serializer: date => date->magic->Date.getTime,
-      parser: value => value->(magic: unknown => string)->Date.fromString->magic,
+      parser: value =>
+        (value->(magic: unknown => string)->String.replace(" ", "T") ++ "Z")
+        ->Date.fromString
+        ->magic,
     })
 
   // When trying to serialize data to Json pg type, it will fail with

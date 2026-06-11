@@ -444,8 +444,8 @@ WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${target}
 // Returns the most recent history row at or before the rollback target for every
 // ID modified after it. The row still carries the change action: a DELETE row
 // means the entity didn't exist at the target.
-// The SETTINGS clause makes DateTime64 and Decimal values come back in the
-// string formats makeClickHouseEntitySchema can parse.
+// The SETTINGS clause makes Decimal values come back as strings the
+// BigDecimal schema can parse.
 let makeGetRollbackRestoredEntitiesQuery = (
   ~entityConfig: Internal.entityConfig,
   ~database: string,
@@ -476,7 +476,7 @@ WHERE \`${EntityHistory.checkpointIdFieldName}\` <= ${target}
   )
 ORDER BY \`${EntityHistory.checkpointIdFieldName}\` DESC
 LIMIT 1 BY \`${Table.idFieldName}\`
-SETTINGS date_time_output_format = 'iso', output_format_json_quote_decimals = 1`
+SETTINGS output_format_json_quote_decimals = 1`
 }
 
 // Computes the rollback diff from the ClickHouse history table. Used for

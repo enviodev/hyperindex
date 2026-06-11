@@ -207,7 +207,7 @@ WHERE \`envio_checkpoint_id\` <= 100
   )
 ORDER BY \`envio_checkpoint_id\` DESC
 LIMIT 1 BY \`id\`
-SETTINGS date_time_output_format = 'iso', output_format_json_quote_decimals = 1`
+SETTINGS output_format_json_quote_decimals = 1`
 
         t.expect(query, ~message="Restored entities SQL should match exactly").toBe(expectedQuery)
       },
@@ -220,9 +220,9 @@ describe("Test makeClickHouseEntitySchema parsing", () => {
     let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
     let clickHouseSchema = ClickHouse.makeClickHouseEntitySchema(entityConfig.table)
 
-    // Row shape returned by the restored-entities query: iso timestamps, quoted
-    // decimals and 64-bit integers, plus the envio_change column which the
-    // schema should ignore
+    // Row shape returned by the restored-entities query: timestamps in the
+    // default 'simple' format, quoted decimals and 64-bit integers, plus the
+    // envio_change column which the schema should ignore
     let row = %raw(`{
       "id": "test-id",
       "string": "test",
@@ -243,8 +243,8 @@ describe("Test makeClickHouseEntitySchema parsing", () => {
       "optBigDecimal": null,
       "bigDecimalWithConfig": "1",
       "arrayOfBigDecimals": [],
-      "timestamp": "2009-02-13T23:31:30.123Z",
-      "optTimestamp": "2009-02-13T23:31:30.123Z",
+      "timestamp": "2009-02-13 23:31:30.123",
+      "optTimestamp": "2009-02-13 23:31:30.123",
       "json": "{}",
       "enumField": "ADMIN",
       "optEnumField": null,
