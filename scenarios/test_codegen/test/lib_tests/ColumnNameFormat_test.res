@@ -192,6 +192,32 @@ ORDER BY (id, envio_checkpoint_id)`,
     })
   })
 
+  it("maps API field names to pg columns for load filters", t => {
+    let mapping =
+      snapshotEntity.table
+      ->Table.queryFields
+      ->Dict.toArray
+      ->Array.map(((apiName, queryField: Table.queryField)) => (apiName, queryField.pgDbFieldName))
+      ->Dict.fromArray
+    t.expect(mapping->(Utils.magic: dict<string> => JSON.t)).toEqual(
+      %raw(`{
+        "id": "id",
+        "transactionIndex": "transaction_index",
+        "tokenOwner_id": "token_owner_id"
+      }`),
+    )
+  })
+
+  it("exposes renamed columns in Hasura under the original field name", t => {
+    let columnConfigs = Hasura.makeColumnConfigs(snapshotEntity.table)
+    t.expect(columnConfigs->(Utils.magic: dict<Hasura.columnConfig> => JSON.t)).toEqual(
+      %raw(`{
+        "transaction_index": { "customName": "transactionIndex" },
+        "token_owner_id": { "customName": "tokenOwner_id" }
+      }`),
+    )
+  })
+
   it("keeps using API field names for tables without renamed columns", t => {
     let userEntity = config.userEntitiesByName->Dict.getUnsafe("User")
     let query = PgStorage.makeCreateTableQuery(

@@ -162,6 +162,26 @@ type trackTableConfig = {
   columnConfigs: dict<columnConfig>,
 }
 
+let makeColumnConfigs = (table: Table.table): dict<columnConfig> => {
+  let columnConfigs = dict{}
+  table.fields->Array.forEach(fieldOrDerived =>
+    switch fieldOrDerived {
+    | Table.Field(field) => {
+        let apiFieldName = field->Table.getApiFieldName
+        let dbFieldName = field->Table.getPgDbFieldName
+        // Expose renamed columns in GraphQL under the original field name
+        let customName = apiFieldName === dbFieldName ? None : Some(apiFieldName)
+        switch (customName, field.description) {
+        | (None, None) => ()
+        | (customName, comment) => columnConfigs->Dict.set(dbFieldName, {customName, comment})
+        }
+      }
+    | Table.DerivedFrom(_) => ()
+    }
+  )
+  columnConfigs
+}
+
 let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<trackTableConfig>) => {
   try {
     let result = await trackTablesRoute->Rest.fetch(
@@ -338,27 +358,9 @@ let trackDatabase = async (
     },
   ]
   let userTableConfigs = userEntities->Array.map(entity => {
-    let columnConfigs = dict{}
-    entity.table.fields->Array.forEach(fieldOrDerived =>
-      switch fieldOrDerived {
-      | Table.Field(field) => {
-          let apiFieldName = field->Table.getApiFieldName
-          let dbFieldName = field->Table.getPgDbFieldName
-          // Expose renamed columns in GraphQL under the original field name
-          let customName = apiFieldName === dbFieldName ? None : Some(apiFieldName)
-          switch (customName, field.description) {
-          | (None, None) => ()
-          | (customName, comment) => columnConfigs->Dict.set(dbFieldName, {customName, comment})
-          }
-        }
-      | Table.DerivedFrom(_) => ()
-      }
-    )
-    {
-      tableName: entity.table.tableName,
-      description: entity.table.description,
-      columnConfigs,
-    }
+    tableName: entity.table.tableName,
+    description: entity.table.description,
+    columnConfigs: entity.table->makeColumnConfigs,
   })
   let tableConfigs = [exposedInternalTableConfigs, userTableConfigs]->Array.flat
   let tableNames = tableConfigs->Array.map(c => c.tableName)

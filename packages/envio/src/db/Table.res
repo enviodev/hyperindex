@@ -290,31 +290,10 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
   dict
 })
 
-// Runtime entity objects are keyed by API field names (the camelCase record
-// field names are type-level only), so rows already keyed by API names can
-// be parsed with the same per-field schemas the entity schema is assembled
-// from.
-let rowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
-  S.array(
-    S.schema(s => {
-      let dict = Dict.make()
-      table.fields->Array.forEach(
-        field =>
-          switch field {
-          | Field(field) => dict->Dict.set(field->getApiFieldName, s.matches(field.fieldSchema))
-          | DerivedFrom(_) => ()
-          },
-      )
-      dict
-    })->(Utils.magic: S.t<dict<unknown>> => S.t<unknown>),
-  )
-)
-
-// Parses rows loaded from Postgres, which are keyed by the possibly renamed
-// column names, into entity objects keyed by API field names. Lives here
-// rather than in PgStorage because InMemoryStore also parses Postgres
-// rollback rows and can't depend on PgStorage without a module cycle.
-let pgRowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
+// Parses rows into entity objects keyed by API field names (the camelCase
+// record field names are type-level only), reading each value from the
+// row key produced by ~rowFieldName.
+let makeRowsSchema = (table, ~rowFieldName) =>
   S.array(
     S.object(s => {
       let dict = Dict.make()
@@ -322,16 +301,24 @@ let pgRowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
         field =>
           switch field {
           | Field(field) =>
-            dict->Dict.set(
-              field->getApiFieldName,
-              s.field(field->getPgDbFieldName, field.fieldSchema),
-            )
+            dict->Dict.set(field->getApiFieldName, s.field(field->rowFieldName, field.fieldSchema))
           | DerivedFrom(_) => ()
           },
       )
       dict
     })->(Utils.magic: S.t<dict<unknown>> => S.t<unknown>),
   )
+
+let rowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
+  table->makeRowsSchema(~rowFieldName=getApiFieldName)
+)
+
+// Rows loaded from Postgres are keyed by the possibly renamed column names.
+// Lives here rather than in PgStorage because InMemoryStore also parses
+// Postgres rollback rows and can't depend on PgStorage without a module
+// cycle.
+let pgRowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
+  table->makeRowsSchema(~rowFieldName=getPgDbFieldName)
 )
 
 exception NonExistingTableField(string)

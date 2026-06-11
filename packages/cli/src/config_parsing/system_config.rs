@@ -579,59 +579,128 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
     ))
 }
 
-/// Snake-casing distinct GraphQL field names can collide on the same DB column
-/// (`tokenId` and an entity reference `token` both become `token_id`). Catch
-/// this at codegen time instead of failing on table creation.
+// Postgres truncates longer identifiers silently, which can collide two
+// distinct columns and breaks the Hasura custom_name mapping (it is keyed
+// by the untruncated name).
+const MAX_PG_IDENTIFIER_LENGTH: usize = 63;
+
+/// Resolved column names can break table creation in ways schema.graphql
+/// validation can't see: distinct fields may collide on the same column
+/// (`tokenId` and an entity reference `token` both become `token_id`), shadow
+/// the reserved `envio_*` columns added to entity history tables, or exceed
+/// Postgres's identifier length limit. Catch all of these at codegen time
+/// instead of failing on table creation.
 pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
-    // The snake_case mapping is the same for every backend, so one pass
-    // catches collisions no matter which backend opted in.
-    let uses_snake_case = [storage.postgres, storage.clickhouse].iter().any(|b| {
-        b.map(|b| b.column_name_format) == Some(human_config::ColumnNameFormat::SnakeCase)
-    });
-    if !uses_snake_case {
-        return Ok(());
+    let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
+    for backend in [storage.postgres, storage.clickhouse].iter().flatten() {
+        if !formats.contains(&backend.column_name_format) {
+            formats.push(backend.column_name_format);
+        }
     }
+
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
+    let mut reserved: Vec<String> = vec![];
+    let mut too_long: Vec<String> = vec![];
     let mut collisions: Vec<String> = vec![];
-    for entity in entities {
-        let mut field_names_by_column: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for gql_field in entity.get_fields() {
-            if let Some(pg_field) = gql_field.get_postgres_field(schema, entity)? {
-                field_names_by_column
-                    .entry(pg_field.db_column_name(human_config::ColumnNameFormat::SnakeCase))
-                    .or_default()
-                    .push(pg_field.field_name.clone());
+    for format in &formats {
+        for entity in &entities {
+            let mut field_names_by_column: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for gql_field in entity.get_fields() {
+                if let Some(pg_field) = gql_field.get_postgres_field(schema, entity)? {
+                    let column = pg_field.db_column_name(*format);
+                    if column.starts_with("envio_") {
+                        let line = format!(
+                            "  - `{}.{}` maps to the \"{column}\" column.",
+                            entity.name, pg_field.field_name
+                        );
+                        // The same field can resolve identically under both
+                        // configured formats; report it once.
+                        if !reserved.contains(&line) {
+                            reserved.push(line);
+                        }
+                    }
+                    if column.len() > MAX_PG_IDENTIFIER_LENGTH {
+                        let line = format!(
+                            "  - `{}.{}` maps to the \"{column}\" column ({} characters).",
+                            entity.name,
+                            pg_field.field_name,
+                            column.len()
+                        );
+                        if !too_long.contains(&line) {
+                            too_long.push(line);
+                        }
+                    }
+                    field_names_by_column
+                        .entry(column)
+                        .or_default()
+                        .push(pg_field.field_name.clone());
+                }
             }
-        }
-        for (column, field_names) in field_names_by_column {
-            if field_names.len() > 1 {
-                let fields = field_names
-                    .iter()
-                    .map(|f| format!("`{f}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                collisions.push(format!(
-                    "  - `{}`: fields {fields} all map to the \"{column}\" column.",
-                    entity.name
-                ));
+            for (column, field_names) in field_names_by_column {
+                if field_names.len() > 1 {
+                    let fields = field_names
+                        .iter()
+                        .map(|f| format!("`{f}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let line = format!(
+                        "  - `{}`: fields {fields} all map to the \"{column}\" column.",
+                        entity.name
+                    );
+                    if !collisions.contains(&line) {
+                        collisions.push(line);
+                    }
+                }
             }
         }
     }
-    if collisions.is_empty() {
-        return Ok(());
+
+    if !reserved.is_empty() {
+        return Err(anyhow!(
+            "Schema validation failed:\n\
+             \n\
+             Entity fields that would create database columns with the reserved `envio_` prefix:\n\
+             {}\n\
+             \n\
+             Fixes:\n  \
+             - Rename the listed fields in schema.graphql. Column names starting with `envio_` \
+             are reserved for internal indexer columns (eg `envio_change` in entity history \
+             tables).",
+            reserved.join("\n")
+        ));
     }
-    let listed = collisions.join("\n");
-    Err(anyhow!(
-        "Schema validation failed:\n\
-         \n\
-         `column_name_format: snake_case` maps multiple entity fields to the same database column:\n\
-         {listed}\n\
-         \n\
-         Fixes:\n  \
-         - Rename the conflicting fields in schema.graphql so their snake_case versions are unique."
-    ))
+    if !too_long.is_empty() {
+        return Err(anyhow!(
+            "Schema validation failed:\n\
+             \n\
+             Entity fields that would create database column names longer than {MAX_PG_IDENTIFIER_LENGTH} \
+             characters (Postgres truncates longer identifiers, which can cause collisions and \
+             broken GraphQL field mappings):\n\
+             {}\n\
+             \n\
+             Fixes:\n  \
+             - Shorten the listed fields in schema.graphql so the resulting column names fit \
+             within {MAX_PG_IDENTIFIER_LENGTH} characters.",
+            too_long.join("\n")
+        ));
+    }
+    if !collisions.is_empty() {
+        return Err(anyhow!(
+            "Schema validation failed:\n\
+             \n\
+             Multiple entity fields map to the same database column:\n\
+             {}\n\
+             \n\
+             Fixes:\n  \
+             - Rename the conflicting fields in schema.graphql so they map to distinct columns. \
+             Note that entity reference fields get an `_id` suffix, and `column_name_format: \
+             snake_case` converts field names to snake_case.",
+            collisions.join("\n")
+        ));
+    }
+    Ok(())
 }
 
 //Getter methods for system config
@@ -3517,11 +3586,114 @@ type Token {
                 err.to_string(),
                 "Schema validation failed:\n\
                  \n\
-                 `column_name_format: snake_case` maps multiple entity fields to the same database column:\n  \
+                 Multiple entity fields map to the same database column:\n  \
                  - `Token`: fields `tokenId`, `token_id` all map to the \"token_id\" column.\n\
                  \n\
                  Fixes:\n  \
-                 - Rename the conflicting fields in schema.graphql so their snake_case versions are unique."
+                 - Rename the conflicting fields in schema.graphql so they map to distinct columns. \
+                 Note that entity reference fields get an `_id` suffix, and `column_name_format: \
+                 snake_case` converts field names to snake_case."
+            );
+        }
+
+        // Entity references collide in the original format too: a `token`
+        // reference and a literal `token_id` scalar produce the same column.
+        #[test]
+        fn original_format_reference_collision_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+}
+
+type Transfer {
+  id: ID!
+  token: Token!
+  token_id: BigInt!
+}"#,
+            )
+            .unwrap();
+            let err = validate_db_column_names(&storage(ColumnNameFormat::Original), &schema)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains(
+                    "- `Transfer`: fields `token`, `token_id` all map to the \"token_id\" column."
+                ),
+                "Unexpected error: {err}"
+            );
+        }
+
+        // Snake-casing a camelCase field can shadow the internal columns the
+        // indexer adds to entity history tables.
+        #[test]
+        fn snake_case_reserved_envio_prefix_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+  envioChange: BigInt!
+}"#,
+            )
+            .unwrap();
+            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
+                .unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Schema validation failed:\n\
+                 \n\
+                 Entity fields that would create database columns with the reserved `envio_` prefix:\n  \
+                 - `Token.envioChange` maps to the \"envio_change\" column.\n\
+                 \n\
+                 Fixes:\n  \
+                 - Rename the listed fields in schema.graphql. Column names starting with `envio_` \
+                 are reserved for internal indexer columns (eg `envio_change` in entity history \
+                 tables)."
+            );
+        }
+
+        #[test]
+        fn original_format_reserved_envio_prefix_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+  envio_checkpoint_id: BigInt!
+}"#,
+            )
+            .unwrap();
+            let err = validate_db_column_names(&storage(ColumnNameFormat::Original), &schema)
+                .unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("- `Token.envio_checkpoint_id` maps to the \"envio_checkpoint_id\" column."),
+                "Unexpected error: {err}"
+            );
+        }
+
+        // Postgres silently truncates identifiers to 63 characters, and
+        // snake_case makes names longer than the field the user wrote.
+        #[test]
+        fn column_name_longer_than_pg_limit_rejected() {
+            let long_field = "a".repeat(30) + &"B".repeat(1) + &"b".repeat(31) + "Cc";
+            let schema = Schema::from_string(&format!(
+                r#"
+type Token {{
+  id: ID!
+  {long_field}: BigInt!
+}}"#,
+            ))
+            .unwrap();
+            // 64 characters as written: fine in the original format,
+            // rejected once snake_case inserts separators.
+            assert_eq!(long_field.len(), 64);
+            assert!(
+                validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_err()
+            );
+            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("longer than 63"),
+                "Unexpected error: {err}"
             );
         }
 
