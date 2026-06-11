@@ -238,7 +238,7 @@ type t = {
 }
 
 @send
-external classFromConfig: (Core.hypersyncSolanaClientCtor, cfg, string) => t = "fromConfig"
+external classFromConfig: (Core.svmHypersyncClientCtor, cfg, string) => t = "fromConfig"
 
 let make = (
   ~url,
@@ -250,7 +250,7 @@ let make = (
   ~programSchemas=?,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
-  Core.getAddon().hypersyncSolanaClient->classFromConfig(
+  Core.getAddon().svmHypersyncClient->classFromConfig(
     {
       url,
       ?apiToken,

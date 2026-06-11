@@ -31,12 +31,12 @@ pub(crate) mod mod_helpers {
 
 use hypersync_client_solana::decode::ProgramSchema as UpstreamSchema;
 
-use config::SolanaClientConfig;
-use query::SolanaQuery;
+use config::SvmClientConfig;
+use query::SvmQuery;
 use types::QueryResponse;
 
 #[napi]
-pub struct HypersyncSolanaClient {
+pub struct SvmHypersyncClient {
     inner: Arc<hypersync_client_solana::Client>,
     /// Per-program Borsh schemas, keyed by base58 program id, built once from
     /// the config at client creation. `get` decodes matching instructions
@@ -45,12 +45,12 @@ pub struct HypersyncSolanaClient {
 }
 
 #[napi]
-impl HypersyncSolanaClient {
+impl SvmHypersyncClient {
     #[napi(constructor)]
     pub fn new(
-        cfg: SolanaClientConfig,
+        cfg: SvmClientConfig,
         user_agent: String,
-    ) -> napi::Result<HypersyncSolanaClient> {
+    ) -> napi::Result<SvmHypersyncClient> {
         Self::from_config(cfg, user_agent)
     }
 
@@ -59,9 +59,9 @@ impl HypersyncSolanaClient {
     /// reaching through the addon dict) can use `@send` rather than `%raw`.
     #[napi(factory)]
     pub fn from_config(
-        cfg: SolanaClientConfig,
+        cfg: SvmClientConfig,
         user_agent: String,
-    ) -> napi::Result<HypersyncSolanaClient> {
+    ) -> napi::Result<SvmHypersyncClient> {
         let mut schemas = HashMap::new();
         for descriptor_json in cfg.program_schemas.clone().unwrap_or_default() {
             let schema = borsh_decoder::parse_program_schema(&descriptor_json).map_err(map_err)?;
@@ -70,7 +70,7 @@ impl HypersyncSolanaClient {
         let inner = hypersync_client_solana::Client::new_with_agent(cfg.into(), user_agent)
             .context("build solana client")
             .map_err(map_err)?;
-        Ok(HypersyncSolanaClient {
+        Ok(SvmHypersyncClient {
             inner: Arc::new(inner),
             schemas,
         })
@@ -89,7 +89,7 @@ impl HypersyncSolanaClient {
     /// must NOT call `collect` (which spins up parallel batched requests under
     /// `StreamConfig::default()` and can DoS the server on multi-day windows).
     #[napi]
-    pub async fn get(&self, query: SolanaQuery) -> napi::Result<QueryResponse> {
+    pub async fn get(&self, query: SvmQuery) -> napi::Result<QueryResponse> {
         let q: hypersync_solana_net_types::query::SolanaQuery = query
             .try_into()
             .context("parse solana query")
@@ -140,7 +140,7 @@ pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use query::{InstructionSelection, SolanaQuery};
+    use query::{InstructionSelection, SvmQuery};
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
@@ -149,8 +149,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_query_token_metadata() {
-        let client = HypersyncSolanaClient::new(
-            SolanaClientConfig {
+        let client = SvmHypersyncClient::new(
+            SvmClientConfig {
                 url: "https://solana.hypersync.xyz".into(),
                 ..Default::default()
             },
@@ -162,7 +162,7 @@ mod tests {
         eprintln!("current slot: {}", height);
         let from = height.saturating_sub(10_000).max(0);
 
-        let q = SolanaQuery {
+        let q = SvmQuery {
             from_slot: from,
             to_slot: Some(height),
             instructions: Some(vec![InstructionSelection {
