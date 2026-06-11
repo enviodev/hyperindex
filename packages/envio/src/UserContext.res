@@ -75,6 +75,22 @@ type entityContextParams = {
   entityConfig: Internal.entityConfig,
 }
 
+let getUndefinedOrNullName = (value: 'a) =>
+  if value === %raw(`undefined`) {
+    Some("undefined")
+  } else if value === %raw(`null`) {
+    Some("null")
+  } else {
+    None
+  }
+
+// Nullish values would otherwise turn into a "= NULL" query
+// silently matching nothing.
+let throwUnsupportedGetWhereValue = (~valueName, ~entityName, ~filterDisplay, ~hint="") =>
+  JsError.throwWithMessage(
+    `Invalid ${valueName} value passed to context.${entityName}.getWhere(${filterDisplay}). Filtering by null or undefined values is not supported in getWhere.${hint}`,
+  )
+
 let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
   let entityConfig = params.entityConfig
   let filterKeys = filter->Dict.keysToArray
@@ -92,18 +108,30 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     )
   }
 
-  let dbFieldName = filterKeys->Array.getUnsafe(0)
-  let operatorObj = filter->Dict.getUnsafe(dbFieldName)
+  let apiFieldName = filterKeys->Array.getUnsafe(0)
+  let operatorObj = filter->Dict.getUnsafe(apiFieldName)
+
+  switch operatorObj->getUndefinedOrNullName {
+  | Some(valueName) =>
+    throwUnsupportedGetWhereValue(
+      ~valueName,
+      ~entityName=entityConfig.name,
+      ~filterDisplay=`{ ${apiFieldName}: ${valueName} }`,
+      ~hint=` Please provide an operator like { _eq: value }.`,
+    )
+  | None => ()
+  }
+
   let operatorKeys = operatorObj->Dict.keysToArray
 
   if operatorKeys->Array.length === 0 {
     JsError.throwWithMessage(
-      `Empty operator passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
+      `Empty operator passed to context.${entityConfig.name}.getWhere({ ${apiFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
     )
   }
   if operatorKeys->Array.length > 1 {
     JsError.throwWithMessage(
-      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Array.joinUnsafe(
+      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${apiFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Array.joinUnsafe(
           ", ",
         )}.`,
     )
@@ -111,20 +139,44 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
 
   let operatorKey = operatorKeys->Array.getUnsafe(0)
 
-  switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
+  let throwInvalidOperator = () =>
+    JsError.throwWithMessage(
+      `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${apiFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
+    )
+
+  // Validate the operator and the field before the value, so a typoed
+  // operator or field gets the more specific error even when the value
+  // is also nullish
+  switch operatorKey {
+  | "_eq" | "_gt" | "_lt" | "_gte" | "_lte" | "_in" => ()
+  | _ => throwInvalidOperator()
+  }
+
+  switch entityConfig.table->Table.getFieldByApiName(apiFieldName) {
   | None =>
     JsError.throwWithMessage(
-      `Invalid field "${dbFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
+      `Invalid field "${apiFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
     )
   | Some(DerivedFrom(_)) =>
     JsError.throwWithMessage(
-      `The field "${dbFieldName}" on entity "${entityConfig.name}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
+      `The field "${apiFieldName}" on entity "${entityConfig.name}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
     )
   | Some(Field({isIndex: false, linkedEntity: None})) =>
     JsError.throwWithMessage(
-      `The field "${dbFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${dbFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
+      `The field "${apiFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${apiFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
     )
   | Some(Field(_)) => ()
+  }
+
+  let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
+  switch fieldValue->getUndefinedOrNullName {
+  | Some(valueName) =>
+    throwUnsupportedGetWhereValue(
+      ~valueName,
+      ~entityName=entityConfig.name,
+      ~filterDisplay=`{ ${apiFieldName}: { ${operatorKey}: ${valueName} } }`,
+    )
+  | None => ()
   }
 
   @inline
@@ -140,41 +192,48 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     )
 
   if operatorKey === "_in" {
-    let fieldValues =
-      operatorObj
-      ->Dict.getUnsafe(operatorKey)
-      ->(Utils.magic: unknown => array<unknown>)
+    let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
 
     // Load each value as a separate Eq filter to memoize
-    // them in memory on the per-value level
+    // them in memory on the per-value level.
+    // A nullish value throws mid-map and leaves the loads of earlier
+    // values running unawaited, which is fine since the whole
+    // getWhere call rejects
     fieldValues
-    ->Array.map(fieldValue => loadWithFilter(EntityFilter.Eq({fieldName: dbFieldName, fieldValue})))
+    ->Array.mapWithIndex((fieldValue, index) => {
+      switch fieldValue->getUndefinedOrNullName {
+      | Some(valueName) =>
+        throwUnsupportedGetWhereValue(
+          ~valueName,
+          ~entityName=entityConfig.name,
+          ~filterDisplay=`{ ${apiFieldName}: { _in: [...] } }`,
+          ~hint=` The ${valueName} value is at index ${index->Int.toString} of the _in array.`,
+        )
+      | None => ()
+      }
+      loadWithFilter(EntityFilter.Eq({fieldName: apiFieldName, fieldValue}))
+    })
     ->Promise.all
     ->Promise.thenResolve(results => results->Array.flat)
   } else if operatorKey === "_gte" || operatorKey === "_lte" {
     // _gte and _lte are composed from Eq + Gt/Lt
-    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
     let rangeFilter =
       operatorKey === "_gte"
-        ? EntityFilter.Gt({fieldName: dbFieldName, fieldValue})
-        : EntityFilter.Lt({fieldName: dbFieldName, fieldValue})
+        ? EntityFilter.Gt({fieldName: apiFieldName, fieldValue})
+        : EntityFilter.Lt({fieldName: apiFieldName, fieldValue})
 
     [
-      loadWithFilter(EntityFilter.Eq({fieldName: dbFieldName, fieldValue})),
+      loadWithFilter(EntityFilter.Eq({fieldName: apiFieldName, fieldValue})),
       loadWithFilter(rangeFilter),
     ]
     ->Promise.all
     ->Promise.thenResolve(results => results->Array.flat)
   } else {
-    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
     let filter = switch operatorKey {
-    | "_eq" => EntityFilter.Eq({fieldName: dbFieldName, fieldValue})
-    | "_gt" => EntityFilter.Gt({fieldName: dbFieldName, fieldValue})
-    | "_lt" => EntityFilter.Lt({fieldName: dbFieldName, fieldValue})
-    | _ =>
-      JsError.throwWithMessage(
-        `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
-      )
+    | "_eq" => EntityFilter.Eq({fieldName: apiFieldName, fieldValue})
+    | "_gt" => EntityFilter.Gt({fieldName: apiFieldName, fieldValue})
+    | "_lt" => EntityFilter.Lt({fieldName: apiFieldName, fieldValue})
+    | _ => throwInvalidOperator()
     }
 
     loadWithFilter(filter)

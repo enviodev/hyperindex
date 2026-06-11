@@ -201,11 +201,11 @@ let svmEventDescriptorSchema = S.schema(s =>
     "accountFilters": s.matches(
       S.option(
         S.array(
-          S.schema(
-            s => {
+          S.schema(s =>
+            {
               "position": s.matches(S.int),
               "values": s.matches(S.array(S.string)),
-            },
+            }
           ),
         ),
       ),
@@ -289,6 +289,8 @@ let derivedFieldSchema = S.schema(s =>
 let propertySchema = S.schema(s =>
   {
     "name": s.matches(S.string),
+    "postgresDbName": s.matches(S.option(S.string)),
+    "clickhouseDbName": s.matches(S.option(S.string)),
     "type": s.matches(S.string),
     "isNullable": s.matches(S.option(S.bool)),
     "isArray": s.matches(S.option(S.bool)),
@@ -410,6 +412,8 @@ let parseEntitiesFromJson = (
         ~isIndex,
         ~linkedEntity=?prop["linkedEntity"],
         ~description=?prop["description"],
+        ~postgresDbName=?prop["postgresDbName"],
+        ~clickhouseDbName=?prop["clickhouseDbName"],
       )
     })
 
@@ -444,19 +448,21 @@ let parseEntitiesFromJson = (
       ~description=?entityJson["description"],
     )
 
+    let getApiFieldName = prop =>
+      switch prop["linkedEntity"] {
+      | Some(_) => prop["name"] ++ "_id"
+      | None => prop["name"]
+      }
+
     // Build schema dynamically from properties
-    // Use db field names (with _id suffix for linked entities) as schema locations
-    // to match the database column names used in Table.toSqlParams
+    // Use API field names (with _id suffix for linked entities) as schema
+    // locations to match the generated entity types
     let schema = S.schema(s => {
       let dict = Dict.make()
       entityJson["properties"]->Array.forEach(
         prop => {
           let (_, fieldSchema, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
-          let dbFieldName = switch prop["linkedEntity"] {
-          | Some(_) => prop["name"] ++ "_id"
-          | None => prop["name"]
-          }
-          dict->Dict.set(dbFieldName, s.matches(fieldSchema))
+          dict->Dict.set(prop->getApiFieldName, s.matches(fieldSchema))
         },
       )
       dict
@@ -586,7 +592,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     "abi": EvmTypes.Abi.t,
     "eventSignatures": array<string>,
     "events": option<array<_>>,
-    "svmAbi": option<{"programId": string, "definedTypes": JSON.t, "source": string}>,
+    "svmAbi": option<{
+      "programId": string,
+      "definedTypes": JSON.t,
+      "source": string,
+    }>,
   }> = Dict.make()
   switch publicContractsConfig {
   | Some(contractsDict) =>
@@ -602,7 +612,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       let widened =
         contractConfig->(
           Utils.magic: _ => {
-            "svmAbi": option<{"programId": string, "definedTypes": JSON.t, "source": string}>,
+            "svmAbi": option<{
+              "programId": string,
+              "definedTypes": JSON.t,
+              "source": string,
+            }>,
           }
         )
       contractDataByName->Dict.set(
@@ -701,11 +715,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             )
           }
           let accountFilters =
-            (svm["accountFilters"]->Option.getOr([]))->Array.map(group =>
-              group->Array.map(af => {
-                Internal.position: af["position"],
-                values: af["values"]->SvmTypes.Pubkey.fromStringsUnsafe,
-              })
+            svm["accountFilters"]
+            ->Option.getOr([])
+            ->Array.map(group =>
+              group->Array.map(
+                af => {
+                  Internal.position: af["position"],
+                  values: af["values"]->SvmTypes.Pubkey.fromStringsUnsafe,
+                },
+              )
             )
           (EventConfigBuilder.buildSvmInstructionEventConfig(
             ~contractName,
@@ -817,6 +835,29 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             startBlock,
           }
         })
+
+      // The same address under two contract definitions (or twice under one)
+      // would later violate the (chainId, address) primary key of
+      // envio_addresses with an opaque Postgres error — fail fast with the
+      // offending pair instead. parseAddress already canonicalizes casing
+      // (checksum or lowercase), so an exact match catches case variants too.
+      let contractNameByAddress = Dict.make()
+      contracts->Array.forEach(contract => {
+        contract.addresses->Array.forEach(
+          address => {
+            let addressString = address->Address.toString
+            switch contractNameByAddress->Dict.get(addressString) {
+            | Some(existingContractName) =>
+              JsError.throwWithMessage(
+                existingContractName === contract.name
+                  ? `Address ${addressString} is listed multiple times for the contract ${contract.name} on chain ${chainId->Int.toString}. Please remove the duplicate from your config.`
+                  : `Address ${addressString} on chain ${chainId->Int.toString} is configured for multiple contracts: ${existingContractName} and ${contract.name}. Indexing the same address with multiple contract definitions is not supported. Please define the events on a single contract definition instead.`,
+              )
+            | None => contractNameByAddress->Dict.set(addressString, contract.name)
+            }
+          },
+        )
+      })
 
       let sourceConfig = switch ecosystemName {
       | Ecosystem.Evm =>

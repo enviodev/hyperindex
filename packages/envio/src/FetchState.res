@@ -974,6 +974,10 @@ let registerDynamicContracts = (
   // so that later conflicting registrations are detected, and are persisted
   // to envio_addresses so they can be picked up on restart with updated config.
   let noEventsAddresses: dict<indexingAddress> = Dict.make()
+  // Batch-level view of all addresses registered so far (across contracts,
+  // including no-events ones), so two contracts registering the same address
+  // within one batch conflict the same way as against indexingAddresses.
+  let registeringAddresses: dict<indexingAddress> = Dict.make()
 
   for itemIdx in 0 to items->Array.length - 1 {
     let item = items->Array.getUnsafe(itemIdx)
@@ -1021,9 +1025,7 @@ let registerDynamicContracts = (
             }
             shouldRemove := true
           | None =>
-            let registeringContracts =
-              registeringContractsByContract->Utils.Dict.getOrInsertEmptyDict(dc.contractName)
-            let shouldUpdate = switch registeringContracts->Utils.Dict.dangerouslyGetNonOption(
+            let shouldUpdate = switch registeringAddresses->Utils.Dict.dangerouslyGetNonOption(
               dc.address->Address.toString,
             ) {
             | Some(registeringContract) if registeringContract.contractName != dc.contractName =>
@@ -1046,7 +1048,10 @@ let registerDynamicContracts = (
                   earliestRegisteringEventBlockNumber.contents,
                   dcWithStartBlock.effectiveStartBlock,
                 )
-              registeringContracts->Dict.set(dc.address->Address.toString, dcWithStartBlock)
+              registeringContractsByContract
+              ->Utils.Dict.getOrInsertEmptyDict(dc.contractName)
+              ->Dict.set(dc.address->Address.toString, dcWithStartBlock)
+              registeringAddresses->Dict.set(dc.address->Address.toString, dcWithStartBlock)
             } else {
               shouldRemove := true
             }
@@ -1073,11 +1078,14 @@ let registerDynamicContracts = (
             }
             shouldRemove := true
           | None =>
-            switch noEventsAddresses->Utils.Dict.dangerouslyGetNonOption(
+            switch registeringAddresses->Utils.Dict.dangerouslyGetNonOption(
               dc.address->Address.toString,
             ) {
-            | Some(_) =>
-              // Already queued for persistence by an earlier item in this batch.
+            | Some(existingContract) =>
+              if existingContract.contractName != dc.contractName {
+                fetchState->warnDifferentContractType(~existingContract, ~dc=dcAsIndexingAddress)
+              }
+              // Otherwise already queued for persistence by an earlier item in this batch.
               shouldRemove := true
             | None =>
               let logger = Logging.createChild(
@@ -1092,6 +1100,7 @@ let registerDynamicContracts = (
               // skip partition registration since there's nothing to fetch.
               logger->Logging.childWarn(`Persisting contract registration without fetching: Contract doesn't have any events to fetch. It'll be picked up on restart if you add events for the contract.`)
               noEventsAddresses->Dict.set(dc.address->Address.toString, dcAsIndexingAddress)
+              registeringAddresses->Dict.set(dc.address->Address.toString, dcAsIndexingAddress)
             }
           }
         }

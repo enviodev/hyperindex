@@ -108,22 +108,16 @@ module QueryTypes = {
     a8?: array<string>,
     a9?: array<string>,
     isInner?: bool,
-    includeTransaction?: bool,
-    includeLogs?: bool,
-    includeTokenBalances?: bool,
   }
 
   type transactionSelection = {
     feePayer?: array<string>,
     success?: bool,
-    includeInstructions?: bool,
   }
 
   type logSelection = {
     programId?: array<string>,
     kind?: array<string>,
-    includeTransaction?: bool,
-    includeInstruction?: bool,
   }
 
   type query = {
@@ -244,7 +238,7 @@ type t = {
 }
 
 @send
-external classFromConfig: (Core.hypersyncSolanaClientCtor, cfg) => t = "fromConfig"
+external classFromConfig: (Core.hypersyncSolanaClientCtor, cfg, string) => t = "fromConfig"
 
 let make = (
   ~url,
@@ -255,13 +249,17 @@ let make = (
   ~retryCeilingMs=?,
   ~programSchemas=?,
 ) => {
-  Core.getAddon().hypersyncSolanaClient->classFromConfig({
-    url,
-    ?apiToken,
-    ?httpReqTimeoutMillis,
-    ?maxNumRetries,
-    ?retryBaseMs,
-    ?retryCeilingMs,
-    ?programSchemas,
-  })
+  let envioVersion = Utils.EnvioPackage.value.version
+  Core.getAddon().hypersyncSolanaClient->classFromConfig(
+    {
+      url,
+      ?apiToken,
+      ?httpReqTimeoutMillis,
+      ?maxNumRetries,
+      ?retryBaseMs,
+      ?retryCeilingMs,
+      ?programSchemas,
+    },
+    `hyperindex/${envioVersion}`,
+  )
 }
