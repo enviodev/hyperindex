@@ -121,8 +121,6 @@ module EnvioAddresses = {
     contractName: s.matches(S.string),
   })
 
-  let rowsSchema = S.array(schema)
-
   let table = Table.mkTable(
     name,
     ~fields=[
@@ -141,7 +139,6 @@ module EnvioAddresses = {
     Internal.name,
     index,
     schema,
-    rowsSchema,
     table,
     // Internal address tracking is Postgres-only; the global config is
     // always required to have Postgres enabled (Storage::resolve forbids
@@ -484,9 +481,6 @@ let parseEntitiesFromJson = (
       Internal.name: entityName,
       index,
       schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
-      rowsSchema: S.array(schema)->(
-        Utils.magic: S.t<array<dict<unknown>>> => S.t<array<Internal.entity>>
-      ),
       table,
       storage,
     }->Internal.fromGenericEntityConfig

@@ -15,13 +15,11 @@ type serializableUpdatedEntity = {
 // Worker -> Main thread payloads
 @tag("type")
 type workerPayload =
-  | @as("loadByIds") LoadByIds({tableName: string, ids: array<string>})
-  | @as("loadByField")
-  LoadByField({
+  | @as("load")
+  Load({
       tableName: string,
-      fieldName: string,
-      fieldValue: JSON.t,
-      operator: Persistence.operator,
+      // Leaf field values are JSON-serialized with the table's field schemas
+      filter: EntityFilter.t,
     })
   | @as("writeBatch")
   WriteBatch({
@@ -107,27 +105,58 @@ let makeStorage = (proxy: t): Persistence.storage => {
     )
   },
   resumeInitialState: async () => proxy.initialState,
-  loadByIdsOrThrow: async (~ids, ~table: Table.table, ~rowsSchema) => {
-    let response = await proxy->sendRequest(~payload=LoadByIds({tableName: table.tableName, ids}))
-    response->S.parseOrThrow(rowsSchema)
-  },
-  loadByFieldOrThrow: async (
-    ~fieldName,
-    ~fieldSchema,
-    ~fieldValue,
-    ~operator,
-    ~table: Table.table,
-    ~rowsSchema,
-  ) => {
+  loadOrThrow: async (~filter, ~table: Table.table) => {
+    let serializeLeafOrThrow = (~fieldName, ~fieldValue: unknown, ~isArray) => {
+      let queryField = switch table->Table.queryFields->Dict.get(fieldName) {
+      | Some(queryField) => queryField
+      | None =>
+        JsError.throwWithMessage(
+          `TestIndexer: The table "${table.tableName}" doesn't have the field "${fieldName}"`,
+        )
+      }
+      fieldValue->S.reverseConvertToJsonOrThrow(
+        isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
+      )
+    }
+    // Field values must be JSON-safe to survive the worker thread boundary
+    let rec serializeFilter = (filter: EntityFilter.t): EntityFilter.t =>
+      switch filter {
+      | Eq({fieldName, fieldValue}) =>
+        Eq({
+          fieldName,
+          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(
+            Utils.magic: JSON.t => unknown
+          ),
+        })
+      | Gt({fieldName, fieldValue}) =>
+        Gt({
+          fieldName,
+          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(
+            Utils.magic: JSON.t => unknown
+          ),
+        })
+      | Lt({fieldName, fieldValue}) =>
+        Lt({
+          fieldName,
+          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(
+            Utils.magic: JSON.t => unknown
+          ),
+        })
+      | In({fieldName, fieldValue}) =>
+        In({
+          fieldName,
+          fieldValue: serializeLeafOrThrow(
+            ~fieldName,
+            ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
+            ~isArray=true,
+          )->(Utils.magic: JSON.t => array<unknown>),
+        })
+      | And({filters}) => And({filters: filters->Array.map(serializeFilter)})
+      }
     let response = await proxy->sendRequest(
-      ~payload=LoadByField({
-        tableName: table.tableName,
-        fieldName,
-        fieldValue: fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema),
-        operator,
-      }),
+      ~payload=Load({tableName: table.tableName, filter: filter->serializeFilter}),
     )
-    response->S.parseOrThrow(rowsSchema)
+    response->S.parseOrThrow(table->Table.rowsSchema)
   },
   writeBatch: async (
     ~batch,
