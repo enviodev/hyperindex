@@ -285,11 +285,12 @@ let toOperationKey = (filter: t, ~entityName) =>
 // Expects a homogeneous batch — filters with the same operation key.
 // A mismatched filter throws: dropping it would leave its already
 // registered index without the matching db rows, silently losing data.
-let merge = (filters: array<t>) => {
-  let throwUnmergeable = (filter: t) =>
-    JsError.throwWithMessage(
-      `Unexpected filter ${filter->toString} in a merged batch. Filters batched into a single query must use the same operator and field.`,
-    )
+let throwUnmergeable = (filter: t) =>
+  JsError.throwWithMessage(
+    `Unexpected filter ${filter->toString} in a merged batch. Filters batched into a single query must use the same operator and field.`,
+  )
+
+let merge = (filters: array<t>) =>
   switch filters {
   | [] | [_] => filters
   | _ =>
@@ -321,7 +322,6 @@ let merge = (filters: array<t>) => {
     | Gt(_) | Lt(_) | And(_) => filters
     }
   }
-}
 
 // A field missing on the entity reads as `undefined`, which matches the `None`
 // arm of `FieldValue.t` (`option<...>`), so nullable columns omitted on the
