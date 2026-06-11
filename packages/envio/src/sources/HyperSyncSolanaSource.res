@@ -59,9 +59,6 @@ let buildInstructionSelections = (eventConfigs: array<Internal.svmInstructionEve
             a4: ?pick(4),
             a5: ?pick(5),
             isInner: ?cfg.isInner,
-            includeTransaction: cfg.includeTransaction,
-            includeLogs: cfg.includeLogs,
-            includeTokenBalances: cfg.includeTokenBalances,
           }: HyperSyncSolanaClient.QueryTypes.instructionSelection
         )
       })
