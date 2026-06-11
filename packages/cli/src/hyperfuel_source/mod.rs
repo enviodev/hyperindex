@@ -17,10 +17,10 @@ pub struct HyperfuelClient {
 #[napi]
 impl HyperfuelClient {
     #[napi(factory)]
-    pub fn new(cfg: ClientConfig) -> napi::Result<HyperfuelClient> {
+    pub fn new(cfg: ClientConfig, user_agent: String) -> napi::Result<HyperfuelClient> {
         let client_config: hyperfuel_client::ClientConfig =
             cfg.try_into().context("build config").map_err(map_err)?;
-        let inner = hyperfuel_client::Client::new(client_config)
+        let inner = hyperfuel_client::Client::new_with_agent(client_config, user_agent)
             .context("build client")
             .map_err(map_err)?;
         Ok(HyperfuelClient { inner })

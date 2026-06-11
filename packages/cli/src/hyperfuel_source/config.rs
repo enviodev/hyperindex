@@ -18,7 +18,7 @@ impl TryFrom<ClientConfig> for hyperfuel_client::ClientConfig {
         // dependency on the url crate.
         let json = serde_json::json!({
             "url": config.url,
-            "bearer_token": config.bearer_token,
+            "api_token": config.bearer_token.unwrap_or_default(),
             // Retries are handled by the indexer, not the binary client.
             "max_num_retries": 0,
         });

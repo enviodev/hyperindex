@@ -2569,9 +2569,9 @@ dependencies = [
 
 [[package]]
 name = "hyperfuel-client"
-version = "3.2.0"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c591e080a7b56d2f95553b1f232e0bde05e2c5ad0e4fdca0dd698ed16f3915f1"
+checksum = "2dc89b6e970dc4a896a05735b76f4ef7afe0464e425568495eb94ab514dff2a5"
 dependencies = [
  "alloy-dyn-abi 0.8.26",
  "alloy-json-abi 0.8.26",
@@ -2599,6 +2599,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+ "uuid",
  "xxhash-rust",
 ]
 

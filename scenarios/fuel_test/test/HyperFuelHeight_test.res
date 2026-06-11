@@ -40,7 +40,10 @@ let withServer = async (handler, body) => {
 describe("HyperFuelSource - getHeightOrThrow", () => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 
-  Async.it("Requests height via the client with the bearer auth header", async t => {
+  // The native client validates that the token is a UUID before sending requests.
+  let apiToken = "11111111-1111-1111-1111-111111111111"
+
+  Async.it("Requests height via the client with auth and user agent headers", async t => {
     let capturedHeaders = ref(None)
     await withServer((req, res) => {
       capturedHeaders := Some(req.headers)
@@ -50,14 +53,19 @@ describe("HyperFuelSource - getHeightOrThrow", () => {
       let source = HyperFuelSource.make({
         chain,
         endpointUrl,
-        apiToken: Some("test-token"),
+        apiToken: Some(apiToken),
       })
       let height = await source.getHeightOrThrow()
 
       let headers = capturedHeaders.contents->Option.getOrThrow
-      t.expect((height, headers->Dict.get("authorization"))).toEqual((
+      t.expect((
+        height,
+        headers->Dict.get("authorization"),
+        headers->Dict.get("user-agent"),
+      )).toEqual((
         123,
-        Some("Bearer test-token"),
+        Some(`Bearer ${apiToken}`),
+        Some(`hyperindex/${Utils.EnvioPackage.value.version}`),
       ))
     })
   })
@@ -70,7 +78,7 @@ describe("HyperFuelSource - getHeightOrThrow", () => {
       let source = HyperFuelSource.make({
         chain,
         endpointUrl,
-        apiToken: Some("rejected-token"),
+        apiToken: Some(apiToken),
       })
       let result = await Promise.race([
         source.getHeightOrThrow()->Promise.thenResolve(_ => "resolved"),
