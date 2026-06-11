@@ -43,78 +43,45 @@ let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingA
   registrationBlock: dc.registrationBlock,
 }
 
-let handleLoad = (
-  state: testIndexerState,
-  ~tableName: string,
-  ~filter: EntityFilter.t,
-): JSON.t => {
+let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFilter.t): JSON.t => {
   let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
   let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
   let results = []
 
-  // Parse JSON field values using the field's schema and compare with
-  // TableIndices.FieldValue logic (same approach as InMemoryTable).
-  // This properly handles bigint and BigDecimal comparisons
-  let parseLeaf = (~fieldName, ~fieldValue: unknown) => {
+  // Field values arrive as JSON from the worker boundary, so parse them
+  // with the field's schema before comparing. This properly handles
+  // bigint and BigDecimal comparisons
+  let parseLeaf = (~fieldName, ~fieldValue: unknown): unknown => {
     let fieldSchema = switch entityConfig.table->Table.queryFields->Dict.get(fieldName) {
     | Some({fieldSchema}) => fieldSchema
     | None => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
     }
-    fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
+    fieldValue->S.convertOrThrow(fieldSchema)
   }
-  let leafMatcher = (~fieldName, ~parsedFieldValues, ~compare) => {
-    (entityAsDict: dict<TableIndices.FieldValue.t>) =>
-      switch entityAsDict->Dict.get(fieldName) {
-      | Some(entityFieldValue) =>
-        parsedFieldValues->Array.some(parsedFieldValue =>
-          compare(entityFieldValue, parsedFieldValue)
-        )
-      | None => false
-      }
-  }
-  let rec makeMatcher = (filter: EntityFilter.t) =>
+  let rec parseFilter = (filter: EntityFilter.t): EntityFilter.t =>
     switch filter {
-    | Eq({fieldName, fieldValue}) =>
-      leafMatcher(
-        ~fieldName,
-        ~parsedFieldValues=[parseLeaf(~fieldName, ~fieldValue)],
-        ~compare=TableIndices.FieldValue.eq,
-      )
-    | Gt({fieldName, fieldValue}) =>
-      leafMatcher(
-        ~fieldName,
-        ~parsedFieldValues=[parseLeaf(~fieldName, ~fieldValue)],
-        ~compare=TableIndices.FieldValue.gt,
-      )
-    | Lt({fieldName, fieldValue}) =>
-      leafMatcher(
-        ~fieldName,
-        ~parsedFieldValues=[parseLeaf(~fieldName, ~fieldValue)],
-        ~compare=TableIndices.FieldValue.lt,
-      )
+    | Eq({fieldName, fieldValue}) => Eq({fieldName, fieldValue: parseLeaf(~fieldName, ~fieldValue)})
+    | Gt({fieldName, fieldValue}) => Gt({fieldName, fieldValue: parseLeaf(~fieldName, ~fieldValue)})
+    | Lt({fieldName, fieldValue}) => Lt({fieldName, fieldValue: parseLeaf(~fieldName, ~fieldValue)})
     | In({fieldName, fieldValue}) =>
-      leafMatcher(
-        ~fieldName,
-        ~parsedFieldValues=fieldValue->Array.map(fieldValue => parseLeaf(~fieldName, ~fieldValue)),
-        ~compare=TableIndices.FieldValue.eq,
-      )
+      In({
+        fieldName,
+        fieldValue: fieldValue->Array.map(fieldValue => parseLeaf(~fieldName, ~fieldValue)),
+      })
     | And({filters: []}) =>
       JsError.throwWithMessage(
         `Failed loading "${tableName}" from storage. The "and" filter must contain at least one nested filter.`,
       )
-    | And({filters}) => {
-        let matchers = filters->Array.map(makeMatcher)
-        entityAsDict => matchers->Array.every(matcher => matcher(entityAsDict))
-      }
+    | And({filters}) => And({filters: filters->Array.map(parseFilter)})
     }
-  let matcher = makeMatcher(filter)
+  let filter = parseFilter(filter)
 
   entityDict
   ->Dict.valuesToArray
   ->Array.forEach(entity => {
     // Cast entity to dict of field values (same approach as InMemoryTable)
-    let entityAsDict = entity->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
-    if matcher(entityAsDict) {
+    let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
+    if filter->EntityFilter.matches(~entity=entityAsDict) {
       // Serialize entity back to JSON for worker thread
       let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
       results->Array.push(jsonEntity)->ignore
