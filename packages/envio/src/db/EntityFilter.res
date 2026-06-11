@@ -101,7 +101,9 @@ let throwUnsupportedGetWhereValue = (~valueName, ~entityName, ~filterDisplay, ~h
 // Each returned filter should be loaded separately and the results flattened:
 // _in maps to one Eq per value so loads memoize on the per-value level,
 // and _gte/_lte are composed from Eq + Gt/Lt
-let parseOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Table.table): array<t> => {
+let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Table.table): array<
+  t,
+> => {
   let filterKeys = filter->Dict.keysToArray
 
   if filterKeys->Array.length === 0 {

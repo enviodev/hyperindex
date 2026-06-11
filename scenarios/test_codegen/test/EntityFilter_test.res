@@ -26,6 +26,90 @@ describe("EntityFilter.toOperationKey", () => {
   })
 })
 
+describe("EntityFilter.parseGetWhereOrThrow", () => {
+  let table = Table.mkTable(
+    "users",
+    ~fields=[
+      Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+      Table.mkField("score", Int32, ~isIndex=true, ~fieldSchema=S.int),
+      Table.mkField("name", String, ~fieldSchema=S.string),
+      Table.mkField("owner", Entity({name: "Owner"}), ~linkedEntity="Owner", ~fieldSchema=S.string),
+      Table.mkDerivedFromField("tokens", ~derivedFromEntity="Token", ~derivedFromField="owner"),
+    ],
+  )
+
+  // The filter comes from user-land JS, so test inputs are raw objects
+  let parse = (filter: 'a) =>
+    filter
+    ->(Utils.magic: 'a => dict<dict<unknown>>)
+    ->EntityFilter.parseGetWhereOrThrow(~entityName="User", ~table)
+
+  let v = (value: int) => value->(Utils.magic: int => unknown)
+
+  it("Parses every operator into the filters to load", t => {
+    t.expect([
+      parse(%raw(`{score: {_eq: 1}}`)),
+      parse(%raw(`{score: {_gt: 1}}`)),
+      parse(%raw(`{score: {_lt: 1}}`)),
+      parse(%raw(`{score: {_gte: 1}}`)),
+      parse(%raw(`{score: {_lte: 1}}`)),
+      parse(%raw(`{score: {_in: [1, 2]}}`)),
+      parse(%raw(`{score: {_in: []}}`)),
+      // Unindexed linked entity fields are allowed via the _id api name
+      parse(%raw(`{owner_id: {_eq: 1}}`)),
+    ]).toEqual([
+      [Eq({fieldName: "score", fieldValue: v(1)})],
+      [Gt({fieldName: "score", fieldValue: v(1)})],
+      [Lt({fieldName: "score", fieldValue: v(1)})],
+      [Eq({fieldName: "score", fieldValue: v(1)}), Gt({fieldName: "score", fieldValue: v(1)})],
+      [Eq({fieldName: "score", fieldValue: v(1)}), Lt({fieldName: "score", fieldValue: v(1)})],
+      [Eq({fieldName: "score", fieldValue: v(1)}), Eq({fieldName: "score", fieldValue: v(2)})],
+      [],
+      [Eq({fieldName: "owner_id", fieldValue: v(1)})],
+    ])
+  })
+
+  it("Throws a user friendly error for every invalid filter", t => {
+    let getError = (filter: 'a) =>
+      try {
+        let _ = parse(filter)
+        "Expected parseGetWhereOrThrow to throw"
+      } catch {
+      | JsExn(e) => e->JsExn.message->Option.getOr("(no message)")
+      }
+
+    t.expect([
+      getError(%raw(`{}`)),
+      getError(%raw(`{score: {_eq: 1}, name: {_eq: "a"}}`)),
+      getError(%raw(`{score: undefined}`)),
+      getError(%raw(`{score: null}`)),
+      getError(%raw(`{score: {}}`)),
+      getError(%raw(`{score: {_eq: 1, _gt: 2}}`)),
+      getError(%raw(`{score: {_foo: 1}}`)),
+      getError(%raw(`{nonExistingField: {_eq: 1}}`)),
+      getError(%raw(`{tokens: {_eq: 1}}`)),
+      getError(%raw(`{name: {_eq: "a"}}`)),
+      getError(%raw(`{score: {_eq: undefined}}`)),
+      getError(%raw(`{score: {_eq: null}}`)),
+      getError(%raw(`{score: {_in: [1, undefined]}}`)),
+    ]).toEqual([
+      `Empty filter passed to context.User.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
+      `Multiple filter fields passed to context.User.getWhere(). Currently only one filter field per call is supported. Received fields: score, name.`,
+      `Invalid undefined value passed to context.User.getWhere({ score: undefined }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
+      `Invalid null value passed to context.User.getWhere({ score: null }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
+      `Empty operator passed to context.User.getWhere({ score: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
+      `Multiple operators passed to context.User.getWhere({ score: ... }). Currently only one operator per filter field is supported. Received operators: _eq, _gt.`,
+      `Invalid operator "_foo" in context.User.getWhere({ score: { _foo: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
+      `Invalid field "nonExistingField" in context.User.getWhere(). The field doesn't exist. Rerun 'pnpm dev' to update generated code after schema.graphql changes.`,
+      `The field "tokens" on entity "User" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
+      `The field "name" on entity "User" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  name: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
+      `Invalid undefined value passed to context.User.getWhere({ score: { _eq: undefined } }). Filtering by null or undefined values is not supported in getWhere.`,
+      `Invalid null value passed to context.User.getWhere({ score: { _eq: null } }). Filtering by null or undefined values is not supported in getWhere.`,
+      `Invalid undefined value passed to context.User.getWhere({ score: { _in: [...] } }). Filtering by null or undefined values is not supported in getWhere. The undefined value is at index 1 of the _in array.`,
+    ])
+  })
+})
+
 describe("EntityFilter.mapValues", () => {
   it("Maps scalar values one by one and In values as a whole array", t => {
     let calls = []

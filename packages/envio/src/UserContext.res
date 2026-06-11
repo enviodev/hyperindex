@@ -1,5 +1,3 @@
-let codegenHelpMessage = EntityFilter.codegenHelpMessage
-
 type contextParams = {
   item: Internal.item,
   checkpointId: Internal.checkpointId,
@@ -78,9 +76,8 @@ type entityContextParams = {
 let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
   let entityConfig = params.entityConfig
 
-  filter
-  ->EntityFilter.parseOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table)
-  ->Array.map(filter =>
+  @inline
+  let loadWithFilter = filter =>
     LoadLayer.loadByFilter(
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
@@ -90,9 +87,18 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
       ~item=params.item,
       ~filter,
     )
-  )
-  ->Promise.all
-  ->Promise.thenResolve(results => results->Array.flat)
+
+  switch filter->EntityFilter.parseGetWhereOrThrow(
+    ~entityName=entityConfig.name,
+    ~table=entityConfig.table,
+  ) {
+  | [filter] => loadWithFilter(filter)
+  | filters =>
+    filters
+    ->Array.map(loadWithFilter)
+    ->Promise.all
+    ->Promise.thenResolve(results => results->Array.flat)
+  }
 }
 
 let noopSet = (_entity: Internal.entity) => ()
@@ -284,7 +290,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         ->(Utils.magic: entityContextParams => unknown)
       | None =>
         JsError.throwWithMessage(
-          `Invalid context access by '${prop}' property. ${codegenHelpMessage}`,
+          `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
         )
       }
     }
@@ -353,7 +359,7 @@ let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
         {"add": addFn}->(Utils.magic: {"add": Address.t => unit} => unknown)
       } else {
         JsError.throwWithMessage(
-          `Invalid contract name '${prop}' on context.chain. ${codegenHelpMessage}`,
+          `Invalid contract name '${prop}' on context.chain. ${EntityFilter.codegenHelpMessage}`,
         )
       }
     }
@@ -376,7 +382,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
       ->(Utils.magic: contractRegisterParams => unknown)
     | _ =>
       JsError.throwWithMessage(
-        `Invalid context access by '${prop}' property. Use context.chain.ContractName.add(address) to register contracts. ${codegenHelpMessage}`,
+        `Invalid context access by '${prop}' property. Use context.chain.ContractName.add(address) to register contracts. ${EntityFilter.codegenHelpMessage}`,
       )
     }
   },
