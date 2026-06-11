@@ -289,6 +289,8 @@ let derivedFieldSchema = S.schema(s =>
 let propertySchema = S.schema(s =>
   {
     "name": s.matches(S.string),
+    "postgresDbName": s.matches(S.option(S.string)),
+    "clickhouseDbName": s.matches(S.option(S.string)),
     "type": s.matches(S.string),
     "isNullable": s.matches(S.option(S.bool)),
     "isArray": s.matches(S.option(S.bool)),
@@ -410,6 +412,8 @@ let parseEntitiesFromJson = (
         ~isIndex,
         ~linkedEntity=?prop["linkedEntity"],
         ~description=?prop["description"],
+        ~postgresDbName=?prop["postgresDbName"],
+        ~clickhouseDbName=?prop["clickhouseDbName"],
       )
     })
 
@@ -444,19 +448,21 @@ let parseEntitiesFromJson = (
       ~description=?entityJson["description"],
     )
 
+    let getApiFieldName = prop =>
+      switch prop["linkedEntity"] {
+      | Some(_) => prop["name"] ++ "_id"
+      | None => prop["name"]
+      }
+
     // Build schema dynamically from properties
-    // Use db field names (with _id suffix for linked entities) as schema locations
-    // to match the database column names used in Table.toSqlParams
+    // Use API field names (with _id suffix for linked entities) as schema
+    // locations to match the generated entity types
     let schema = S.schema(s => {
       let dict = Dict.make()
       entityJson["properties"]->Array.forEach(
         prop => {
           let (_, fieldSchema, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
-          let dbFieldName = switch prop["linkedEntity"] {
-          | Some(_) => prop["name"] ++ "_id"
-          | None => prop["name"]
-          }
-          dict->Dict.set(dbFieldName, s.matches(fieldSchema))
+          dict->Dict.set(prop->getApiFieldName, s.matches(fieldSchema))
         },
       )
       dict

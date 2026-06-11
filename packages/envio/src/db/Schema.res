@@ -6,11 +6,11 @@ let make = (tables: array<Table.table>) => {
 
 exception UndefinedEntity(Table.derivedFromField)
 exception UndefinedFieldInEntity(Table.derivedFromField)
-let getDerivedFromFieldName = (schema: t, derivedFromField: Table.derivedFromField) =>
+let getDerivedFromPgFieldName = (schema: t, derivedFromField: Table.derivedFromField) =>
   switch schema->Utils.Dict.dangerouslyGetNonOption(derivedFromField.derivedFromEntity) {
   | Some(entity) =>
     switch entity->Table.getFieldByName(derivedFromField.derivedFromField) {
-    | Some(field) => field->Table.getFieldName->Ok
+    | Some(field) => field->Table.getPgFieldName->Ok
     | None => Error(UndefinedFieldInEntity(derivedFromField)) //Unexpected, schema should be parsed on codegen
     }
   | None => Error(UndefinedEntity(derivedFromField)) //Unexpected, schema should be parsed on codegen

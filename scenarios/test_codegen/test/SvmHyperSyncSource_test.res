@@ -1,0 +1,205 @@
+open Vitest
+
+// Regression coverage for SvmHyperSyncSource.getItemsOrThrow response
+// parsing, driven through a mocked napi client (no network):
+//   1. `instruction.block.time` must carry the slot's blockTime from the
+//      response's blocks table (reported as arriving `undefined` downstream).
+//   2. The query must spell out transaction/log columns when an event config
+//      opts in — the server returns no rows for a table whose field list is
+//      empty, so omitting them silently drops `instruction.transaction`.
+
+let metaplexProgramId = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
+
+let blockTime = 1778064393
+let slot = 417950033
+let txSignature = "5tuam3k7KxWf4Zxk42oDyZwztZGcHJ4eqkKS3DtCLSiqjGn4EdDGqnaQc5ymU6fFH99UMSvuSjhL4usZgJjquaQD"
+
+let makeEventConfig = (): Internal.svmInstructionEventConfig => {
+  id: "0x21",
+  name: "CreateMetadataAccountV3",
+  contractName: "TokenMetadata",
+  isWildcard: false,
+  filterByAddresses: false,
+  dependsOnAddresses: true,
+  handler: None,
+  contractRegister: None,
+  paramsRawEventSchema: %raw(`null`),
+  simulateParamsSchema: %raw(`null`),
+  startBlock: None,
+  programId: metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe,
+  discriminator: Some("0x21"),
+  discriminatorByteLen: 1,
+  includeTransaction: true,
+  includeLogs: false,
+  includeTokenBalances: false,
+  accountFilters: [],
+  isInner: None,
+  accounts: [],
+  args: JSON.Null,
+  definedTypes: JSON.Null,
+}
+
+let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
+  nextSlot: slot + 1,
+  responseBytes: 0,
+  data: {
+    blocks: [
+      {
+        slot,
+        blockhash: "99K5yyU2jLxLDeRCJ9YSSMy6VBJTNcnePWUH9uCHAWCB",
+        blockTime,
+      },
+    ],
+    transactions: [
+      {
+        slot,
+        transactionIndex: 965,
+        signatures: [txSignature],
+        accountKeys: [],
+        loadedAddressesWritable: [],
+        loadedAddressesReadonly: [],
+      },
+    ],
+    instructions: [
+      {
+        slot,
+        transactionIndex: 965,
+        instructionAddress: [1],
+        programId: metaplexProgramId,
+        accounts: [],
+        data: "0x21",
+        d1: "0x21",
+        isInner: false,
+        isCommitted: true,
+      },
+    ],
+    logs: [],
+    tokenBalances: [],
+  },
+}
+
+let capturedQueries: array<SvmHyperSyncClient.query> = []
+
+let mockClient: SvmHyperSyncClient.t = {
+  getHeight: () => Promise.resolve(slot + 1000),
+  get: (~query) => {
+    capturedQueries->Array.push(query)
+    Promise.resolve(mockResponse)
+  },
+}
+
+// The source captures its client at construction, so the mock addon only
+// needs to be in place for the `make` call; restore the previous addon right
+// after to avoid leaking the mock into other tests.
+let makeSource = () => {
+  let prevAddon = Core.addonRef.contents
+  Core.addonRef :=
+    Some(
+      {
+        "HypersyncSolanaClient": {
+          "fromConfig": (_: SvmHyperSyncClient.cfg, _: string) => mockClient,
+        },
+      }->(Utils.magic: {..} => Core.addon),
+    )
+  let source = try SvmHyperSyncSource.make({
+    chain,
+    endpointUrl: "https://solana.hypersync.xyz",
+    apiToken: None,
+    eventConfigs: [makeEventConfig()],
+    clientTimeoutMillis: 10_000,
+  }) catch {
+  | exn =>
+    Core.addonRef := prevAddon
+    throw(exn)
+  }
+  Core.addonRef := prevAddon
+  source
+}
+
+let indexingAddresses = Dict.fromArray([
+  (
+    metaplexProgramId,
+    (
+      {
+        address: metaplexProgramId->Address.unsafeFromString,
+        contractName: "TokenMetadata",
+        registrationBlock: -1,
+        effectiveStartBlock: 0,
+      }: FetchState.indexingAddress
+    ),
+  ),
+])
+
+describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
+  Async.it("joins blockTime onto items and requests opted-in table columns", async t => {
+    let source = makeSource()
+    let eventConfig = makeEventConfig()
+
+    let response = await source.getItemsOrThrow(
+      ~fromBlock=slot - 10,
+      ~toBlock=Some(slot + 10),
+      ~addressesByContractName=Dict.fromArray([
+        ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
+      ]),
+      ~indexingAddresses,
+      ~knownHeight=slot + 1000,
+      ~partitionId="0",
+      ~selection={
+        eventConfigs: [(eventConfig :> Internal.eventConfig)],
+        dependsOnAddresses: true,
+      },
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+    )
+
+    let item = switch response.parsedQueueItems {
+    | [Internal.Event({timestamp, blockNumber, event})] =>
+      let instruction = event->(Utils.magic: Internal.event => Envio.svmInstruction)
+      Some({
+        "timestamp": timestamp,
+        "blockNumber": blockNumber,
+        "block": instruction.block,
+        "transactionSignatures": instruction.transaction->Option.map(tx => tx.signatures),
+      })
+    | _ => None
+    }
+
+    t.expect({
+      "item": item,
+      "query": capturedQueries->Array.getUnsafe(0),
+    }).toEqual({
+      "item": Some({
+        "timestamp": blockTime,
+        "blockNumber": slot,
+        "block": ({slot, time: blockTime, hash: ""}: Envio.svmInstructionBlock),
+        "transactionSignatures": Some([txSignature]),
+      }),
+      // Default merge mode: requesting a table's columns opts the matched
+      // result set into that join, so selections carry no include flags.
+      "query": (
+        {
+          fromSlot: slot - 10,
+          toSlot: slot + 10,
+          instructions: [{programId: [metaplexProgramId], d1: ["0x21"]}],
+          fields: {
+            block: [Slot, Blockhash, BlockTime],
+            transaction: [
+              Slot,
+              TransactionIndex,
+              Signatures,
+              FeePayer,
+              Success,
+              Err,
+              Fee,
+              ComputeUnitsConsumed,
+              AccountKeys,
+              RecentBlockhash,
+              Version,
+            ],
+          },
+        }: SvmHyperSyncClient.query
+      ),
+    })
+  })
+})

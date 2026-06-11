@@ -445,14 +445,18 @@ pub struct SystemConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Storage {
-    pub postgres: bool,
-    pub clickhouse: bool,
+pub struct StorageBackend {
     // Whether entities without an @storage directive are stored in the
     // backend. A single enabled backend is implicitly the default; with
     // multiple backends none is, unless opted in via `default: true`.
-    pub postgres_default: bool,
-    pub clickhouse_default: bool,
+    pub entity_default: bool,
+    pub column_name_format: human_config::ColumnNameFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Storage {
+    pub postgres: Option<StorageBackend>,
+    pub clickhouse: Option<StorageBackend>,
 }
 
 impl Storage {
@@ -461,37 +465,41 @@ impl Storage {
             None => (None, None),
             Some(s) => (s.postgres.as_ref(), s.clickhouse.as_ref()),
         };
-        let clickhouse = clickhouse_config.is_some_and(|c| c.is_enabled());
+        let clickhouse_enabled = clickhouse_config.is_some_and(|c| c.is_enabled());
         // When clickhouse is enabled, postgres must be set explicitly
         // so that the validation below catches a clickhouse-only config
         // instead of silently defaulting postgres to true.
-        let postgres = postgres_config.map_or(!clickhouse, |c| c.is_enabled());
-        if clickhouse && !postgres {
+        let postgres_enabled = postgres_config.map_or(!clickhouse_enabled, |c| c.is_enabled());
+        if clickhouse_enabled && !postgres_enabled {
             return Err(anyhow!(
                 "ClickHouse is not supported as a single storage yet. Please enable Postgres \
                  alongside ClickHouse in the `storage` config."
             ));
         }
-        if !postgres && !clickhouse {
+        if !postgres_enabled && !clickhouse_enabled {
             return Err(anyhow!(
                 "At least one storage backend must be enabled. Please set `postgres: true` \
                  in the `storage` config (or omit the `storage` section entirely to use the \
                  default)."
             ));
         }
-        let postgres_default = postgres
-            && postgres_config
-                .and_then(|c| c.entity_default())
-                .unwrap_or(!clickhouse);
-        let clickhouse_default = clickhouse
-            && clickhouse_config
-                .and_then(|c| c.entity_default())
-                .unwrap_or(false);
         Ok(Self {
-            postgres,
-            clickhouse,
-            postgres_default,
-            clickhouse_default,
+            postgres: postgres_enabled.then(|| StorageBackend {
+                entity_default: postgres_config
+                    .and_then(|c| c.entity_default())
+                    .unwrap_or(!clickhouse_enabled),
+                column_name_format: postgres_config
+                    .and_then(|c| c.column_name_format())
+                    .unwrap_or(human_config::ColumnNameFormat::Original),
+            }),
+            clickhouse: clickhouse_enabled.then(|| StorageBackend {
+                entity_default: clickhouse_config
+                    .and_then(|c| c.entity_default())
+                    .unwrap_or(false),
+                column_name_format: clickhouse_config
+                    .and_then(|c| c.column_name_format())
+                    .unwrap_or(human_config::ColumnNameFormat::Original),
+            }),
         })
     }
 }
@@ -505,7 +513,9 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
     // Entities without @storage fall back to the backends marked `default`
     // in config.yaml. When no backend is a default, such entities would end
     // up with no storage at all.
-    if !storage.postgres_default && !storage.clickhouse_default {
+    let postgres_default = storage.postgres.is_some_and(|b| b.entity_default);
+    let clickhouse_default = storage.clickhouse.is_some_and(|b| b.entity_default);
+    if !postgres_default && !clickhouse_default {
         let missing: Vec<&str> = entities
             .iter()
             .filter(|e| !e.has_storage_directive())
@@ -539,10 +549,10 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         .iter()
         .flat_map(|e| {
             let mut out: Vec<(&str, &'static str)> = Vec::new();
-            if e.postgres == Some(true) && !storage.postgres {
+            if e.postgres == Some(true) && storage.postgres.is_none() {
                 out.push((e.name.as_str(), "postgres"));
             }
-            if e.clickhouse == Some(true) && !storage.clickhouse {
+            if e.clickhouse == Some(true) && storage.clickhouse.is_none() {
                 out.push((e.name.as_str(), "clickhouse"));
             }
             out
@@ -567,6 +577,158 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
          Fixes:\n  \
          - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml."
     ))
+}
+
+// Postgres truncates longer identifiers silently, which can collide two
+// distinct columns and breaks the Hasura custom_name mapping (it is keyed
+// by the untruncated name).
+const MAX_PG_IDENTIFIER_LENGTH: usize = 63;
+
+/// Resolved column names can break table creation in ways schema.graphql
+/// validation can't see: distinct fields may collide on the same column
+/// (`tokenId` and an entity reference `token` both become `token_id`), shadow
+/// the reserved `envio_*` columns added to entity history tables, or exceed
+/// Postgres's identifier length limit. Catch all of these at codegen time
+/// instead of failing on table creation.
+pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+    let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
+    for backend in [storage.postgres, storage.clickhouse].iter().flatten() {
+        if !formats.contains(&backend.column_name_format) {
+            formats.push(backend.column_name_format);
+        }
+    }
+
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // The identifier length limit is Postgres-specific (ClickHouse has no
+    // comparable limit), so only names that become Postgres columns are
+    // checked against it.
+    let pg_format = storage.postgres.map(|b| b.column_name_format);
+
+    let mut empty: Vec<String> = vec![];
+    let mut reserved: Vec<String> = vec![];
+    let mut too_long: Vec<String> = vec![];
+    let mut collisions: Vec<String> = vec![];
+    for format in &formats {
+        for entity in &entities {
+            let mut field_names_by_column: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for gql_field in entity.get_fields() {
+                if let Some(pg_field) = gql_field.get_postgres_field(schema, entity)? {
+                    let column = pg_field.db_column_name(*format);
+                    // Unreachable for any name the conversion produces today,
+                    // but an empty identifier would silently break CREATE
+                    // TABLE, so guard against future boundary changes.
+                    if column.is_empty() {
+                        let line =
+                            format!("  - `{}.{}`", entity.name, pg_field.field_name);
+                        if !empty.contains(&line) {
+                            empty.push(line);
+                        }
+                    }
+                    if column.starts_with("envio_") {
+                        let line = format!(
+                            "  - `{}.{}` maps to the \"{column}\" column.",
+                            entity.name, pg_field.field_name
+                        );
+                        // The same field can resolve identically under both
+                        // configured formats; report it once.
+                        if !reserved.contains(&line) {
+                            reserved.push(line);
+                        }
+                    }
+                    if Some(*format) == pg_format && column.len() > MAX_PG_IDENTIFIER_LENGTH {
+                        let line = format!(
+                            "  - `{}.{}` maps to the \"{column}\" column ({} characters).",
+                            entity.name,
+                            pg_field.field_name,
+                            column.len()
+                        );
+                        if !too_long.contains(&line) {
+                            too_long.push(line);
+                        }
+                    }
+                    field_names_by_column
+                        .entry(column)
+                        .or_default()
+                        .push(pg_field.field_name.clone());
+                }
+            }
+            for (column, field_names) in field_names_by_column {
+                if field_names.len() > 1 {
+                    let fields = field_names
+                        .iter()
+                        .map(|f| format!("`{f}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let line = format!(
+                        "  - `{}`: fields {fields} all map to the \"{column}\" column.",
+                        entity.name
+                    );
+                    if !collisions.contains(&line) {
+                        collisions.push(line);
+                    }
+                }
+            }
+        }
+    }
+
+    if !empty.is_empty() {
+        return Err(anyhow!(
+            "Schema validation failed:\n\
+             \n\
+             Entity fields that would create an empty database column name:\n\
+             {}\n\
+             \n\
+             Fixes:\n  \
+             - Rename the listed fields in schema.graphql.",
+            empty.join("\n")
+        ));
+    }
+    if !reserved.is_empty() {
+        return Err(anyhow!(
+            "Schema validation failed:\n\
+             \n\
+             Entity fields that would create database columns with the reserved `envio_` prefix:\n\
+             {}\n\
+             \n\
+             Fixes:\n  \
+             - Rename the listed fields in schema.graphql. Column names starting with `envio_` \
+             are reserved for internal indexer columns (eg `envio_change` in entity history \
+             tables).",
+            reserved.join("\n")
+        ));
+    }
+    if !too_long.is_empty() {
+        return Err(anyhow!(
+            "Schema validation failed:\n\
+             \n\
+             Entity fields that would create database column names longer than {MAX_PG_IDENTIFIER_LENGTH} \
+             characters (Postgres truncates longer identifiers, which can cause collisions and \
+             broken GraphQL field mappings):\n\
+             {}\n\
+             \n\
+             Fixes:\n  \
+             - Shorten the listed fields in schema.graphql so the resulting column names fit \
+             within {MAX_PG_IDENTIFIER_LENGTH} characters.",
+            too_long.join("\n")
+        ));
+    }
+    if !collisions.is_empty() {
+        return Err(anyhow!(
+            "Schema validation failed:\n\
+             \n\
+             Multiple entity fields map to the same database column:\n\
+             {}\n\
+             \n\
+             Fixes:\n  \
+             - Rename the conflicting fields in schema.graphql so they map to distinct columns. \
+             Note that entity reference fields get an `_id` suffix, and `column_name_format: \
+             snake_case` converts field names to snake_case.",
+            collisions.join("\n")
+        ));
+    }
+    Ok(())
 }
 
 //Getter methods for system config
@@ -675,6 +837,7 @@ impl SystemConfig {
         let base_config = human_config.get_base_config();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
         validate_entity_storage(&storage, &schema)?;
+        validate_db_column_names(&storage, &schema)?;
 
         let final_project_paths = project_paths.clone();
 
@@ -3059,23 +3222,36 @@ mod test {
 
     #[test]
     fn test_storage_resolve() {
-        use super::human_config::{StorageBackendConfig, StorageBackendOptions, StorageConfig};
+        use super::human_config::{
+            ColumnNameFormat, StorageBackendConfig, StorageBackendOptions, StorageConfig,
+        };
 
         let enabled = |b: bool| Some(StorageBackendConfig::Enabled(b));
         let options = |default: Option<bool>| {
             Some(StorageBackendConfig::Options(StorageBackendOptions {
                 default,
+                column_name_format: None,
             }))
+        };
+        let with_format = |column_name_format: Option<ColumnNameFormat>| {
+            Some(StorageBackendConfig::Options(StorageBackendOptions {
+                default: None,
+                column_name_format,
+            }))
+        };
+        let backend = |entity_default: bool, column_name_format: ColumnNameFormat| {
+            Some(super::StorageBackend {
+                entity_default,
+                column_name_format,
+            })
         };
 
         // Default (None) -> postgres only, postgres is the entity default
         assert_eq!(
             super::Storage::resolve(None).unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: false,
-                postgres_default: true,
-                clickhouse_default: false,
+                postgres: backend(true, ColumnNameFormat::Original),
+                clickhouse: None,
             }
         );
 
@@ -3087,10 +3263,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: false,
-                postgres_default: true,
-                clickhouse_default: false,
+                postgres: backend(true, ColumnNameFormat::Original),
+                clickhouse: None,
             }
         );
 
@@ -3103,10 +3277,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: true,
-                postgres_default: false,
-                clickhouse_default: false,
+                postgres: backend(false, ColumnNameFormat::Original),
+                clickhouse: backend(false, ColumnNameFormat::Original),
             }
         );
 
@@ -3119,10 +3291,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: true,
-                postgres_default: false,
-                clickhouse_default: true,
+                postgres: backend(false, ColumnNameFormat::Original),
+                clickhouse: backend(true, ColumnNameFormat::Original),
             }
         );
 
@@ -3134,10 +3304,8 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: true,
-                postgres_default: true,
-                clickhouse_default: true,
+                postgres: backend(true, ColumnNameFormat::Original),
+                clickhouse: backend(true, ColumnNameFormat::Original),
             }
         );
 
@@ -3150,10 +3318,60 @@ mod test {
             }))
             .unwrap(),
             super::Storage {
-                postgres: true,
-                clickhouse: false,
-                postgres_default: false,
-                clickhouse_default: false,
+                postgres: backend(false, ColumnNameFormat::Original),
+                clickhouse: None,
+            }
+        );
+
+        // An options object enables the backend and resolves its options
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: with_format(Some(ColumnNameFormat::SnakeCase)),
+                clickhouse: None,
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: backend(true, ColumnNameFormat::SnakeCase),
+                clickhouse: None,
+            }
+        );
+
+        // An empty options object keeps the defaults
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: with_format(None),
+                clickhouse: None,
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: backend(true, ColumnNameFormat::Original),
+                clickhouse: None,
+            }
+        );
+
+        // column_name_format is resolved per backend: only clickhouse opts in
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: enabled(true),
+                clickhouse: with_format(Some(ColumnNameFormat::SnakeCase)),
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: backend(false, ColumnNameFormat::Original),
+                clickhouse: backend(false, ColumnNameFormat::SnakeCase),
+            }
+        );
+
+        // Backends can diverge in both directions
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: with_format(Some(ColumnNameFormat::SnakeCase)),
+                clickhouse: with_format(Some(ColumnNameFormat::Original)),
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: backend(false, ColumnNameFormat::SnakeCase),
+                clickhouse: backend(false, ColumnNameFormat::Original),
             }
         );
 
@@ -3212,6 +3430,7 @@ mod test {
     mod entity_storage_validation {
         use super::super::{validate_entity_storage, Storage};
         use crate::config_parsing::entity_parsing::{Entity, Schema};
+        use crate::config_parsing::human_config::ColumnNameFormat;
 
         // Bypass `Schema::new` validation: only storage routing matters here.
         fn make_schema(entities: Vec<Entity>) -> Schema {
@@ -3233,21 +3452,24 @@ mod test {
             }
         }
 
+        fn backend(entity_default: bool) -> Option<super::super::StorageBackend> {
+            Some(super::super::StorageBackend {
+                entity_default,
+                column_name_format: ColumnNameFormat::Original,
+            })
+        }
+
         fn postgres_only() -> Storage {
             Storage {
-                postgres: true,
-                clickhouse: false,
-                postgres_default: true,
-                clickhouse_default: false,
+                postgres: backend(true),
+                clickhouse: None,
             }
         }
 
         fn multi(postgres_default: bool, clickhouse_default: bool) -> Storage {
             Storage {
-                postgres: true,
-                clickhouse: true,
-                postgres_default,
-                clickhouse_default,
+                postgres: backend(postgres_default),
+                clickhouse: backend(clickhouse_default),
             }
         }
 
@@ -3340,6 +3562,273 @@ mod test {
                 err.to_string().contains("- Apple\n  - Mango\n  - Zebra"),
                 "Entities not listed alphabetically. Got:\n{err}"
             );
+        }
+    }
+
+    // --- validate_db_column_names: snake_case column collision checks ---
+
+    mod db_column_name_validation {
+        use super::super::{validate_db_column_names, Storage};
+        use crate::config_parsing::{entity_parsing::Schema, human_config::ColumnNameFormat};
+
+        fn storage(column_name_format: ColumnNameFormat) -> Storage {
+            Storage {
+                postgres: Some(super::super::StorageBackend {
+                    entity_default: true,
+                    column_name_format,
+                }),
+                clickhouse: None,
+            }
+        }
+
+        #[test]
+        fn snake_case_unique_columns_ok() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+  tokenId: BigInt!
+  transactionIndex: Int!
+}"#,
+            )
+            .unwrap();
+            assert!(
+                validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).is_ok()
+            );
+        }
+
+        #[test]
+        fn snake_case_collision_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+  tokenId: BigInt!
+  token_id: BigInt!
+}"#,
+            )
+            .unwrap();
+            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
+                .unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Schema validation failed:\n\
+                 \n\
+                 Multiple entity fields map to the same database column:\n  \
+                 - `Token`: fields `tokenId`, `token_id` all map to the \"token_id\" column.\n\
+                 \n\
+                 Fixes:\n  \
+                 - Rename the conflicting fields in schema.graphql so they map to distinct columns. \
+                 Note that entity reference fields get an `_id` suffix, and `column_name_format: \
+                 snake_case` converts field names to snake_case."
+            );
+        }
+
+        // Entity references collide in the original format too: a `token`
+        // reference and a literal `token_id` scalar produce the same column.
+        #[test]
+        fn original_format_reference_collision_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+}
+
+type Transfer {
+  id: ID!
+  token: Token!
+  token_id: BigInt!
+}"#,
+            )
+            .unwrap();
+            let err = validate_db_column_names(&storage(ColumnNameFormat::Original), &schema)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains(
+                    "- `Transfer`: fields `token`, `token_id` all map to the \"token_id\" column."
+                ),
+                "Unexpected error: {err}"
+            );
+        }
+
+        // Snake-casing a camelCase field can shadow the internal columns the
+        // indexer adds to entity history tables.
+        #[test]
+        fn snake_case_reserved_envio_prefix_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+  envioChange: BigInt!
+}"#,
+            )
+            .unwrap();
+            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
+                .unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Schema validation failed:\n\
+                 \n\
+                 Entity fields that would create database columns with the reserved `envio_` prefix:\n  \
+                 - `Token.envioChange` maps to the \"envio_change\" column.\n\
+                 \n\
+                 Fixes:\n  \
+                 - Rename the listed fields in schema.graphql. Column names starting with `envio_` \
+                 are reserved for internal indexer columns (eg `envio_change` in entity history \
+                 tables)."
+            );
+        }
+
+        #[test]
+        fn original_format_reserved_envio_prefix_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+  envio_checkpoint_id: BigInt!
+}"#,
+            )
+            .unwrap();
+            let err = validate_db_column_names(&storage(ColumnNameFormat::Original), &schema)
+                .unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("- `Token.envio_checkpoint_id` maps to the \"envio_checkpoint_id\" column."),
+                "Unexpected error: {err}"
+            );
+        }
+
+        // Postgres silently truncates identifiers to 63 characters, and
+        // snake_case makes names longer than the field the user wrote.
+        #[test]
+        fn column_name_longer_than_pg_limit_rejected() {
+            let long_field = "a".repeat(30) + &"B".repeat(1) + &"b".repeat(31) + "Cc";
+            let schema = Schema::from_string(&format!(
+                r#"
+type Token {{
+  id: ID!
+  {long_field}: BigInt!
+}}"#,
+            ))
+            .unwrap();
+            // 64 characters as written: rejected for Postgres in both
+            // formats (snake_case only makes it longer).
+            assert_eq!(long_field.len(), 64);
+            assert!(
+                validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_err()
+            );
+            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("longer than 63"),
+                "Unexpected error: {err}"
+            );
+        }
+
+        // ClickHouse has no 63-character identifier limit, so a name that
+        // only becomes too long under ClickHouse's snake_case is accepted
+        // as long as the Postgres column stays within the limit.
+        #[test]
+        fn length_limit_not_applied_to_clickhouse_columns() {
+            let long_field = "a".repeat(30) + "B" + &"b".repeat(29) + "Cc";
+            let schema = Schema::from_string(&format!(
+                r#"
+type Token {{
+  id: ID!
+  {long_field}: BigInt!
+}}"#,
+            ))
+            .unwrap();
+            // 62 characters as written, 64 once snake_case inserts separators
+            assert_eq!(long_field.len(), 62);
+            let pg_original_ch_snake = Storage {
+                postgres: Some(super::super::StorageBackend {
+                    entity_default: true,
+                    column_name_format: ColumnNameFormat::Original,
+                }),
+                clickhouse: Some(super::super::StorageBackend {
+                    entity_default: false,
+                    column_name_format: ColumnNameFormat::SnakeCase,
+                }),
+            };
+            assert!(validate_db_column_names(&pg_original_ch_snake, &schema).is_ok());
+            assert!(
+                validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).is_err()
+            );
+        }
+
+        // Entity references get an `_id` suffix on the column, so a `token`
+        // reference collides with a scalar `tokenId` field.
+        #[test]
+        fn snake_case_entity_reference_collision_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+}
+
+type Transfer {
+  id: ID!
+  token: Token!
+  tokenId: BigInt!
+}"#,
+            )
+            .unwrap();
+            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains(
+                    "- `Transfer`: fields `token`, `tokenId` all map to the \"token_id\" column."
+                ),
+                "Unexpected error: {err}"
+            );
+        }
+
+        // The same schema is valid with the default naming, where the
+        // reference column is `token_id` but the scalar stays `tokenId`.
+        #[test]
+        fn graphql_naming_skips_the_check() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+}
+
+type Transfer {
+  id: ID!
+  token: Token!
+  tokenId: BigInt!
+}"#,
+            )
+            .unwrap();
+            assert!(
+                validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_ok()
+            );
+        }
+
+        // The check also applies when only ClickHouse opts into snake_case
+        #[test]
+        fn clickhouse_only_snake_case_collision_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+  tokenId: BigInt!
+  token_id: BigInt!
+}"#,
+            )
+            .unwrap();
+            let storage = Storage {
+                postgres: Some(super::super::StorageBackend {
+                    entity_default: true,
+                    column_name_format: ColumnNameFormat::Original,
+                }),
+                clickhouse: Some(super::super::StorageBackend {
+                    entity_default: false,
+                    column_name_format: ColumnNameFormat::SnakeCase,
+                }),
+            };
+            assert!(validate_db_column_names(&storage, &schema).is_err());
         }
     }
 

@@ -50,6 +50,7 @@ indexer.onInstruction(
       mint,
       updateAuthority,
       lastUpdatedSlot: instruction.block.slot,
+      lastUpdatedTime: instruction.block.time,
       updateCount: 0,
       createdAtSlot: instruction.block.slot,
       lastTxSignature: txSig,
@@ -82,6 +83,7 @@ indexer.onInstruction(
         ...existing,
         updateAuthority,
         lastUpdatedSlot: instruction.block.slot,
+        lastUpdatedTime: instruction.block.time,
         updateCount: existing.updateCount + 1,
         lastTxSignature: txSig,
       });
@@ -93,6 +95,7 @@ indexer.onInstruction(
         mint: "",
         updateAuthority,
         lastUpdatedSlot: instruction.block.slot,
+        lastUpdatedTime: instruction.block.time,
         updateCount: 1,
         createdAtSlot: instruction.block.slot,
         lastTxSignature: txSig,

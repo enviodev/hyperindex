@@ -350,58 +350,38 @@ let loadEffect = (
   )
 }
 
-let loadByField = (
+let loadByFilter = (
   ~loadManager,
   ~persistence: Persistence.t,
-  ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
-  ~fieldName,
   ~shouldGroup,
   ~item,
-  ~fieldValue,
+  ~filter: EntityFilter.t,
 ) => {
-  let operatorCallName = switch operator {
-  | Eq => "eq"
-  | Gt => "gt"
-  | Lt => "lt"
+  let key = switch filter {
+  | Eq({fieldName}) => `${entityConfig.name}.getWhere.${fieldName}.eq`
+  | Gt({fieldName}) => `${entityConfig.name}.getWhere.${fieldName}.gt`
+  | Lt({fieldName}) => `${entityConfig.name}.getWhere.${fieldName}.lt`
+  | In({fieldName}) => `${entityConfig.name}.getWhere.${fieldName}.in`
+  | And(_) => `${entityConfig.name}.getWhere.and`
   }
-  let key = `${entityConfig.name}.getWhere.${fieldName}.${operatorCallName}`
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
-  let load = async (fieldValues: array<'fieldValue>, ~onError as _) => {
+  let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
 
     let size = ref(0)
 
-    let indiciesToLoad = fieldValues->Array.map((fieldValue): TableIndices.Index.t => {
-      Single({
-        fieldName,
-        fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
-        operator,
-      })
-    })
-
-    let _ = await indiciesToLoad
-    ->Array.map(async index => {
-      inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
+    let _ = await filters
+    ->Array.map(async filter => {
+      inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter)
       try {
-        let entities = (
-          await storage.loadOrThrow(
-            ~table=entityConfig.table,
-            ~filter=switch index {
-            | Single({fieldName, fieldValue, operator}) => {
-                let fieldValue = fieldValue->(Utils.magic: TableIndices.FieldValue.t => unknown)
-                switch operator {
-                | Eq => EntityFilter.Eq({fieldName, fieldValue})
-                | Gt => EntityFilter.Gt({fieldName, fieldValue})
-                | Lt => EntityFilter.Lt({fieldName, fieldValue})
-                }
-              }
-            },
+        let entities =
+          (await storage.loadOrThrow(~table=entityConfig.table, ~filter))->(
+            Utils.magic: array<unknown> => array<Internal.entity>
           )
-        )->(Utils.magic: array<unknown> => array<Internal.entity>)
 
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(
@@ -418,10 +398,8 @@ let loadByField = (
           ~logger=Logging.createChildFrom(
             ~logger=item->Logging.getItemLogger,
             ~params={
-              "operator": operatorCallName,
               "tableName": entityConfig.table.tableName,
-              "fieldName": fieldName,
-              "fieldValue": fieldValue,
+              "filter": filter,
             },
           ),
           ~msg=message,
@@ -433,7 +411,7 @@ let loadByField = (
     timerRef->Prometheus.StorageLoad.endOperation(
       ~storage=storage.name,
       ~operation=key,
-      ~whereSize=fieldValues->Array.length,
+      ~whereSize=filters->Array.length,
       ~size=size.contents,
     )
   }
@@ -441,11 +419,10 @@ let loadByField = (
   loadManager->LoadManager.call(
     ~key,
     ~load,
-    ~input=fieldValue,
+    ~input=filter,
     ~shouldGroup,
-    ~hasher=fieldValue =>
-      fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString,
-    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex(~fieldName, ~operator),
-    ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex(~fieldName, ~operator),
+    ~hasher=EntityFilter.toString,
+    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex,
+    ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex,
   )
 }

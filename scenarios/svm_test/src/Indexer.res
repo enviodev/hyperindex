@@ -10,7 +10,7 @@ module Transaction = {
 }
 
 module Block = {
-  type t = {number: int, timestamp: int, hash: string, id: string, height: int, time: int}
+  type t = {slot: int, hash: string, time: int}
 }
 
 module SingleOrMultiple: {
@@ -58,6 +58,12 @@ module SingleOrMultiple: {
 type onEventOptions<'eventIdentity, 'where> = {
   event: 'eventIdentity,
   wildcard?: bool,
+  where?: 'where,
+}
+
+/** Options for `indexer.onInstruction` (SVM). */
+type onInstructionOptions<'eventIdentity, 'where> = {
+  instruction: 'eventIdentity,
   where?: 'where,
 }
 
@@ -152,6 +158,11 @@ type indexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
+  /** Register an instruction handler. */
+  onInstruction: 'event 'paramsConstructor 'where. (
+    onInstructionOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
+    Internal.genericHandler<Internal.genericHandlerArgs<'event, handlerContext>>,
+  ) => unit,
   /** Register a Slot Handler. Evaluates `where` once per configured chain at registration time. */
   onSlot: (
     Envio.onBlockOptions<indexerChain>,
