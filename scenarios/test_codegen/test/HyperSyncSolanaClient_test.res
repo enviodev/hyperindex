@@ -15,7 +15,7 @@ describe_skip("HyperSyncSolanaClient live", () => {
     let query: HyperSyncSolanaClient.query = {
       fromSlot: Pervasives.max(0, height - 10_000),
       toSlot: height,
-      instructions: [{programId: [tokenMetadataProgram], includeTransaction: true}],
+      instructions: [{programId: [tokenMetadataProgram]}],
       maxNumInstructions: 200,
     }
     let resp = await client.get(~query)
