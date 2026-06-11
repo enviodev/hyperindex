@@ -442,6 +442,61 @@ describe("LoadLayer", () => {
     ))
   })
 
+  Async.it(
+    "Distributes db rows of the merged query to the matching filter indices",
+    async t => {
+      let user = (id, address): Indexer.Entities.User.t => {
+        id,
+        accountType: USER,
+        address,
+        gravatar_id: None,
+        updatesCountOnUserForTesting: 0,
+      }
+      let user1 = user("1", "0x1")
+      let user2 = user("2", "0x2")
+
+      let storageMock = MockIndexer.Storage.make(
+        [#loadOrThrow],
+        ~dbEntities=[(MockIndexer.entityConfig(User), [user1, user2, user("3", "0x3")])],
+      )
+      let loadManager = LoadManager.make()
+      let inMemoryStore = MockIndexer.InMemoryStore.make()
+
+      let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+      let getUsersWithAddress = fieldValue =>
+        LoadLayer.loadByFilter(
+          ~loadManager,
+          ~persistence=storageMock->MockIndexer.Storage.toPersistence,
+          ~entityConfig=MockIndexer.entityConfig(User),
+          ~inMemoryStore,
+          ~item,
+          ~filter=EntityFilter.Eq({
+            fieldName: "address",
+            fieldValue: fieldValue->(Utils.magic: string => unknown),
+          }),
+          ~shouldGroup=true,
+        )
+
+      let users = await Promise.all([getUsersWithAddress("0x1"), getUsersWithAddress("0x2")])
+
+      t.expect((users, storageMock.loadOrThrowCalls)).toEqual((
+        [
+          [user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)],
+          [user2->(Utils.magic: Indexer.Entities.User.t => Internal.entity)],
+        ],
+        [
+          {
+            "filter": EntityFilter.In({
+              fieldName: "address",
+              fieldValue: ["0x1", "0x2"]->(Utils.magic: array<string> => array<unknown>),
+            }),
+            "tableName": "User",
+          },
+        ],
+      ))
+    },
+  )
+
   Async.it("Merges concurrent In filters on the same field into a single In query", async t => {
     let storageMock = MockIndexer.Storage.make([#loadOrThrow])
     let loadManager = LoadManager.make()

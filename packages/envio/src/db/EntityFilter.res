@@ -125,7 +125,13 @@ let toOperationKey = (filter: t, ~entityName) =>
 // Eq and In batches merge into a single In on the field. Gt/Lt/And have
 // no lossless single-query form without an Or operator, so they stay as is.
 // Expects a homogeneous batch — filters with the same operation key.
-let merge = (filters: array<t>) =>
+// A mismatched filter throws: dropping it would leave its already
+// registered index without the matching db rows, silently losing data.
+let merge = (filters: array<t>) => {
+  let throwUnmergeable = (filter: t) =>
+    JsError.throwWithMessage(
+      `Unexpected filter ${filter->toString} in a merged batch. Filters batched into a single query must use the same operator and field.`,
+    )
   switch filters {
   | [] | [_] => filters
   | _ =>
@@ -133,10 +139,10 @@ let merge = (filters: array<t>) =>
     | Eq({fieldName}) => [
         In({
           fieldName,
-          fieldValue: filters->Array.filterMap(filter =>
+          fieldValue: filters->Array.map(filter =>
             switch filter {
-            | Eq({fieldValue}) => Some(fieldValue)
-            | _ => None
+            | Eq({fieldValue}) => fieldValue
+            | _ => throwUnmergeable(filter)
             }
           ),
         }),
@@ -148,7 +154,7 @@ let merge = (filters: array<t>) =>
           ->Array.map(filter =>
             switch filter {
             | In({fieldValue}) => fieldValue
-            | _ => []
+            | _ => throwUnmergeable(filter)
             }
           )
           ->Array.flat,
@@ -157,6 +163,7 @@ let merge = (filters: array<t>) =>
     | Gt(_) | Lt(_) | And(_) => filters
     }
   }
+}
 
 // A field missing on the entity reads as `undefined`, which matches the `None`
 // arm of `FieldValue.t` (`option<...>`), so nullable columns omitted on the

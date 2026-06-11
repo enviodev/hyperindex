@@ -84,7 +84,7 @@ module Storage = {
     storage: Persistence.storage,
   }
 
-  let make = (methods: array<method>) => {
+  let make = (methods: array<method>, ~dbEntities=[]) => {
     let implement = (method: method, fn) => {
       if methods->Array.includes(method) {
         fn
@@ -169,7 +169,19 @@ module Storage = {
               "tableName": table.tableName,
             })
             ->ignore
-            Promise.resolve([])
+            let rows = switch dbEntities->Array.find(((
+              entityConfig: Internal.entityConfig,
+              _,
+            )) => entityConfig.table.tableName === table.tableName) {
+            | Some((_, rows)) =>
+              rows->Array.filter(row =>
+                filter->EntityFilter.matches(
+                  ~entity=row->(Utils.magic: 'entity => dict<EntityFilter.FieldValue.t>),
+                )
+              )
+            | None => []
+            }
+            Promise.resolve(rows->(Utils.magic: array<'entity> => array<unknown>))
           })
         },
         reset: () => JsError.throwWithMessage("Not implemented"),

@@ -57,6 +57,18 @@ describe("EntityFilter.merge", () => {
       [],
     ))
   })
+
+  it("Throws on a mismatched filter instead of silently dropping it", t => {
+    let v = i => i->(Utils.magic: int => unknown)
+    t.expect(() =>
+      [
+        EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
+        EntityFilter.And({filters: [EntityFilter.Eq({fieldName: "a", fieldValue: v(2)})]}),
+      ]->EntityFilter.merge
+    ).toThrowError(
+      "Unexpected filter And(a:Eq:2) in a merged batch. Filters batched into a single query must use the same operator and field.",
+    )
+  })
 })
 
 describe("EntityFilter.mapValues", () => {
