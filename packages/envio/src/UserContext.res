@@ -92,10 +92,10 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     ~entityName=entityConfig.name,
     ~table=entityConfig.table,
   ) {
-  | [filter] => loadWithFilter(filter)
+  | [single] => loadWithFilter(single)
   | filters =>
     filters
-    ->Array.map(loadWithFilter)
+    ->Array.map(filter => loadWithFilter(filter))
     ->Promise.all
     ->Promise.thenResolve(results => results->Array.flat)
   }

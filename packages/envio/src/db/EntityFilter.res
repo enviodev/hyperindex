@@ -133,6 +133,14 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
   | None => ()
   }
 
+  // A primitive operator value wouldn't throw on Dict.keysToArray, but report
+  // string indices or no keys as operators, so catch it with a real hint instead
+  if operatorObj->typeof !== #object || operatorObj->Array.isArray {
+    JsError.throwWithMessage(
+      `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: ... }). Please provide an operator like { _eq: value }.`,
+    )
+  }
+
   let operatorKeys = operatorObj->Dict.keysToArray
 
   if operatorKeys->Array.length === 0 {
@@ -191,6 +199,11 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
   }
 
   if operatorKey === "_in" {
+    if !(fieldValue->Array.isArray) {
+      JsError.throwWithMessage(
+        `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: { _in: ... } }). The _in operator expects an array of values.`,
+      )
+    }
     let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
 
     fieldValues->Array.mapWithIndex((fieldValue, index) => {

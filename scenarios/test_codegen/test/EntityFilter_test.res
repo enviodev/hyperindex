@@ -83,6 +83,9 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       getError(%raw(`{score: {_eq: 1}, name: {_eq: "a"}}`)),
       getError(%raw(`{score: undefined}`)),
       getError(%raw(`{score: null}`)),
+      getError(%raw(`{score: 5}`)),
+      getError(%raw(`{score: "abc"}`)),
+      getError(%raw(`{score: [1]}`)),
       getError(%raw(`{score: {}}`)),
       getError(%raw(`{score: {_eq: 1, _gt: 2}}`)),
       getError(%raw(`{score: {_foo: 1}}`)),
@@ -92,11 +95,15 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       getError(%raw(`{score: {_eq: undefined}}`)),
       getError(%raw(`{score: {_eq: null}}`)),
       getError(%raw(`{score: {_in: [1, undefined]}}`)),
+      getError(%raw(`{score: {_in: 5}}`)),
     ]).toEqual([
       `Empty filter passed to context.User.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
       `Multiple filter fields passed to context.User.getWhere(). Currently only one filter field per call is supported. Received fields: score, name.`,
       `Invalid undefined value passed to context.User.getWhere({ score: undefined }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
       `Invalid null value passed to context.User.getWhere({ score: null }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
+      `Invalid value passed to context.User.getWhere({ score: ... }). Please provide an operator like { _eq: value }.`,
+      `Invalid value passed to context.User.getWhere({ score: ... }). Please provide an operator like { _eq: value }.`,
+      `Invalid value passed to context.User.getWhere({ score: ... }). Please provide an operator like { _eq: value }.`,
       `Empty operator passed to context.User.getWhere({ score: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
       `Multiple operators passed to context.User.getWhere({ score: ... }). Currently only one operator per filter field is supported. Received operators: _eq, _gt.`,
       `Invalid operator "_foo" in context.User.getWhere({ score: { _foo: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
@@ -106,6 +113,7 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       `Invalid undefined value passed to context.User.getWhere({ score: { _eq: undefined } }). Filtering by null or undefined values is not supported in getWhere.`,
       `Invalid null value passed to context.User.getWhere({ score: { _eq: null } }). Filtering by null or undefined values is not supported in getWhere.`,
       `Invalid undefined value passed to context.User.getWhere({ score: { _in: [...] } }). Filtering by null or undefined values is not supported in getWhere. The undefined value is at index 1 of the _in array.`,
+      `Invalid value passed to context.User.getWhere({ score: { _in: ... } }). The _in operator expects an array of values.`,
     ])
   })
 })
