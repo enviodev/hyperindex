@@ -14,7 +14,7 @@ use napi_derive::napi;
 /// numeric types (`i64` instead of `u64`).
 #[napi(object)]
 #[derive(Default, Clone)]
-pub struct SolanaQuery {
+pub struct SvmQuery {
     pub from_slot: i64,
     pub to_slot: Option<i64>,
     pub instructions: Option<Vec<InstructionSelection>>,
@@ -196,10 +196,10 @@ impl From<TokenBalanceSelection> for net::TokenBalanceSelection {
     }
 }
 
-impl TryFrom<SolanaQuery> for net::SolanaQuery {
+impl TryFrom<SvmQuery> for net::SolanaQuery {
     type Error = anyhow::Error;
 
-    fn try_from(q: SolanaQuery) -> Result<Self> {
+    fn try_from(q: SvmQuery) -> Result<Self> {
         anyhow::ensure!(q.from_slot >= 0, "from_slot must be non-negative");
         Ok(Self {
             from_slot: q.from_slot as u64,

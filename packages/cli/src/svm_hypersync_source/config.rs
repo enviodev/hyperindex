@@ -5,7 +5,7 @@ use napi_derive::napi;
 /// Configuration for the Solana HyperSync client.
 #[napi(object)]
 #[derive(Default, Clone)]
-pub struct SolanaClientConfig {
+pub struct SvmClientConfig {
     pub url: String,
     pub api_token: Option<String>,
     pub http_req_timeout_millis: Option<i64>,
@@ -18,8 +18,8 @@ pub struct SolanaClientConfig {
     pub program_schemas: Option<Vec<String>>,
 }
 
-impl From<SolanaClientConfig> for hypersync_client_solana::config::ClientConfig {
-    fn from(c: SolanaClientConfig) -> Self {
+impl From<SvmClientConfig> for hypersync_client_solana::config::ClientConfig {
+    fn from(c: SvmClientConfig) -> Self {
         let default = Self::default();
         Self {
             url: c.url,

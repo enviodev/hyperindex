@@ -97,7 +97,7 @@ let makeSource = () => {
   Core.addonRef :=
     Some(
       {
-        "HypersyncSolanaClient": {
+        "SvmHypersyncClient": {
           "fromConfig": (_: SvmHyperSyncClient.cfg, _: string) => mockClient,
         },
       }->(Utils.magic: {..} => Core.addon),
@@ -180,7 +180,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "query": (
         {
           fromSlot: slot - 10,
-          toSlot: slot + 10,
+          // Inclusive `toBlock` becomes exclusive `toSlot` on the wire (+1).
+          toSlot: slot + 11,
           instructions: [{programId: [metaplexProgramId], d1: ["0x21"]}],
           fields: {
             block: [Slot, Blockhash, BlockTime],
