@@ -33,7 +33,10 @@ impl EvmRpcClient {
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
         let height = self.inner.get_height().await.map_err(rpc_error_to_napi)?;
-        height.try_into().context("convert height").map_err(map_err)
+        height
+            .try_into()
+            .context("block height exceeds i64::MAX")
+            .map_err(map_err)
     }
 }
 
