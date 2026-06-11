@@ -80,6 +80,47 @@ let rec toString = (filter: t) =>
   | And({filters}) => `And(${filters->Array.map(toString)->Array.join(",")})`
   }
 
+let rec printOperationFilter = (filter: t, ~paramsCount: ref<int>) =>
+  switch filter {
+  | Eq({fieldName}) => {
+      paramsCount := paramsCount.contents + 1
+      `${fieldName}: $${paramsCount.contents->Int.toString}`
+    }
+  | Gt({fieldName}) => {
+      paramsCount := paramsCount.contents + 1
+      `${fieldName}: {_gt: $${paramsCount.contents->Int.toString}}`
+    }
+  | Lt({fieldName}) => {
+      paramsCount := paramsCount.contents + 1
+      `${fieldName}: {_lt: $${paramsCount.contents->Int.toString}}`
+    }
+  | In({fieldName}) => {
+      paramsCount := paramsCount.contents + 1
+      `${fieldName}: {_in: $${paramsCount.contents->Int.toString}}`
+    }
+  | And({filters}) => {
+      let acc = ref("")
+      for idx in 0 to filters->Array.length - 1 {
+        let part = filters->Array.getUnsafe(idx)->printOperationFilter(~paramsCount)
+        acc := (acc.contents === "" ? part : `${acc.contents}, ${part}`)
+      }
+      acc.contents
+    }
+  }
+
+// Filters that may be batched into a single storage query must produce
+// the same key, so concrete values are replaced with $N placeholders.
+// The flat cases duplicate printOperationFilter to keep this hot path
+// allocation-free.
+let toOperationKey = (filter: t, ~entityName) =>
+  switch filter {
+  | Eq({fieldName}) => `${entityName}.getWhere({${fieldName}: $1})`
+  | Gt({fieldName}) => `${entityName}.getWhere({${fieldName}: {_gt: $1}})`
+  | Lt({fieldName}) => `${entityName}.getWhere({${fieldName}: {_lt: $1}})`
+  | In({fieldName}) => `${entityName}.getWhere({${fieldName}: {_in: $1}})`
+  | And(_) => `${entityName}.getWhere({${filter->printOperationFilter(~paramsCount=ref(0))}})`
+  }
+
 // A field missing on the entity reads as `undefined`, which matches the `None`
 // arm of `FieldValue.t` (`option<...>`), so nullable columns omitted on the
 // entity object are compared as null rather than crashing.
@@ -100,4 +141,29 @@ let rec matches = (filter: t, ~entity: dict<FieldValue.t>) =>
   | And({filters: []}) =>
     JsError.throwWithMessage(`The "and" filter must contain at least one nested filter.`)
   | And({filters}) => filters->Array.every(filter => filter->matches(~entity))
+  }
+
+// In values are mapped as one array (isArray=true), so they can be
+// converted with the table's cached array schema in a single pass.
+let rec mapValues = (
+  filter: t,
+  ~mapValue: (~fieldName: string, ~fieldValue: unknown, ~isArray: bool) => unknown,
+) =>
+  switch filter {
+  | Eq({fieldName, fieldValue}) =>
+    Eq({fieldName, fieldValue: mapValue(~fieldName, ~fieldValue, ~isArray=false)})
+  | Gt({fieldName, fieldValue}) =>
+    Gt({fieldName, fieldValue: mapValue(~fieldName, ~fieldValue, ~isArray=false)})
+  | Lt({fieldName, fieldValue}) =>
+    Lt({fieldName, fieldValue: mapValue(~fieldName, ~fieldValue, ~isArray=false)})
+  | In({fieldName, fieldValue}) =>
+    In({
+      fieldName,
+      fieldValue: mapValue(
+        ~fieldName,
+        ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
+        ~isArray=true,
+      )->(Utils.magic: unknown => array<unknown>),
+    })
+  | And({filters}) => And({filters: filters->Array.map(filter => filter->mapValues(~mapValue))})
   }
