@@ -284,10 +284,44 @@ let toOperationKey = (filter: t, ~entityName) =>
   | And(_) => `${entityName}.getWhere({${filter->printOperationFilter(~paramsCount=ref(0))}})`
   }
 
+// Values bound to the operation key's $N placeholders, in placeholder
+// order. A top-level In is reported flat, since a merged query holds one
+// value per batched call there, while an In nested in And binds its whole
+// array to a single placeholder, mirroring the one paramsCount increment
+// per flat filter in printOperationFilter.
+let getParams = (filter: t) =>
+  switch filter {
+  | Eq({fieldValue}) => [fieldValue]
+  | Gt({fieldValue}) => [fieldValue]
+  | Lt({fieldValue}) => [fieldValue]
+  | In({fieldValue}) => fieldValue
+  | And(_) => {
+      let acc = []
+      let rec collect = (filter: t) =>
+        switch filter {
+        | Eq({fieldValue}) => acc->Array.push(fieldValue)->ignore
+        | Gt({fieldValue}) => acc->Array.push(fieldValue)->ignore
+        | Lt({fieldValue}) => acc->Array.push(fieldValue)->ignore
+        | In({fieldValue}) =>
+          acc->Array.push(fieldValue->(Utils.magic: array<unknown> => unknown))->ignore
+        | And({filters}) => filters->Array.forEach(collect)
+        }
+      collect(filter)
+      acc
+    }
+  }
+
 // Collapses filters sharing an operation key into fewer storage queries:
 // Eq and In batches merge into a single In on the field. Gt/Lt/And have
 // no lossless single-query form without an Or operator, so they stay as is.
 // Expects a homogeneous batch — filters with the same operation key.
+// A mismatched filter throws: dropping it would leave its already
+// registered index without the matching db rows, silently losing data.
+let throwUnmergeable = (filter: t) =>
+  JsError.throwWithMessage(
+    `Unexpected filter ${filter->toString} in a merged batch. Filters batched into a single query must use the same operator and field.`,
+  )
+
 let merge = (filters: array<t>) =>
   switch filters {
   | [] | [_] => filters
@@ -296,10 +330,10 @@ let merge = (filters: array<t>) =>
     | Eq({fieldName}) => [
         In({
           fieldName,
-          fieldValue: filters->Array.filterMap(filter =>
+          fieldValue: filters->Array.map(filter =>
             switch filter {
-            | Eq({fieldValue}) => Some(fieldValue)
-            | _ => None
+            | Eq({fieldValue}) => fieldValue
+            | _ => throwUnmergeable(filter)
             }
           ),
         }),
@@ -311,7 +345,7 @@ let merge = (filters: array<t>) =>
           ->Array.map(filter =>
             switch filter {
             | In({fieldValue}) => fieldValue
-            | _ => []
+            | _ => throwUnmergeable(filter)
             }
           )
           ->Array.flat,

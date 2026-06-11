@@ -397,9 +397,13 @@ let loadByFilter = (
         reason->ErrorHandling.mkLogAndRaise(
           ~logger=Logging.createChildFrom(
             ~logger=item->Logging.getItemLogger,
+            // The executed query might be merged from multiple getWhere
+            // calls, so report it as the operation users write with the
+            // values bound to its placeholders, instead of an internal
+            // filter representation they never constructed.
             ~params={
-              "tableName": entityConfig.table.tableName,
-              "filter": filter,
+              "operation": key,
+              "params": filter->EntityFilter.getParams,
             },
           ),
           ~msg=message,

@@ -175,6 +175,29 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
   })
 })
 
+describe("EntityFilter.getParams", () => {
+  it("Reports a top-level In flat and a nested In as a single placeholder value", t => {
+    let v = i => i->(Utils.magic: int => unknown)
+    t.expect((
+      EntityFilter.Eq({fieldName: "a", fieldValue: v(1)})->EntityFilter.getParams,
+      EntityFilter.Gt({fieldName: "a", fieldValue: v(1)})->EntityFilter.getParams,
+      EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2)]})->EntityFilter.getParams,
+      EntityFilter.And({
+        filters: [
+          Gt({fieldName: "a", fieldValue: v(1)}),
+          Lt({fieldName: "b", fieldValue: v(2)}),
+          In({fieldName: "c", fieldValue: [v(3), v(4)]}),
+        ],
+      })->EntityFilter.getParams,
+    )).toEqual((
+      [v(1)],
+      [v(1)],
+      [v(1), v(2)],
+      [v(1), v(2), [3, 4]->(Utils.magic: array<int> => unknown)],
+    ))
+  })
+})
+
 describe("EntityFilter.merge", () => {
   it("Merges Eq and In batches into a single In, keeps the rest as is", t => {
     let v = i => i->(Utils.magic: int => unknown)
@@ -205,6 +228,18 @@ describe("EntityFilter.merge", () => {
       [EntityFilter.Eq({fieldName: "a", fieldValue: v(1)})],
       [],
     ))
+  })
+
+  it("Throws on a mismatched filter instead of silently dropping it", t => {
+    let v = i => i->(Utils.magic: int => unknown)
+    t.expect(() =>
+      [
+        EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
+        EntityFilter.And({filters: [EntityFilter.Eq({fieldName: "a", fieldValue: v(2)})]}),
+      ]->EntityFilter.merge
+    ).toThrowError(
+      "Unexpected filter And(a:Eq:2) in a merged batch. Filters batched into a single query must use the same operator and field.",
+    )
   })
 })
 
