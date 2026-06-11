@@ -80,26 +80,47 @@ let rec toString = (filter: t) =>
   | And({filters}) => `And(${filters->Array.map(toString)->Array.join(",")})`
   }
 
+let rec printOperationFilter = (filter: t, ~paramsCount: ref<int>) =>
+  switch filter {
+  | Eq({fieldName}) => {
+      paramsCount := paramsCount.contents + 1
+      `${fieldName}: $${paramsCount.contents->Int.toString}`
+    }
+  | Gt({fieldName}) => {
+      paramsCount := paramsCount.contents + 1
+      `${fieldName}: {_gt: $${paramsCount.contents->Int.toString}}`
+    }
+  | Lt({fieldName}) => {
+      paramsCount := paramsCount.contents + 1
+      `${fieldName}: {_lt: $${paramsCount.contents->Int.toString}}`
+    }
+  | In({fieldName}) => {
+      paramsCount := paramsCount.contents + 1
+      `${fieldName}: {_in: $${paramsCount.contents->Int.toString}}`
+    }
+  | And({filters}) => {
+      let acc = ref("")
+      for idx in 0 to filters->Array.length - 1 {
+        let part = filters->Array.getUnsafe(idx)->printOperationFilter(~paramsCount)
+        acc := (acc.contents === "" ? part : `${acc.contents}, ${part}`)
+      }
+      acc.contents
+    }
+  }
+
 // LoadManager group key and Prometheus operation label. Filters which may
 // be batched into a single storage query must produce the same key,
 // so concrete values are replaced with $N placeholders.
-let toOperationKey = (filter: t, ~entityName) => {
-  let paramsCount = ref(0)
-  let rec print = (filter: t) => {
-    let nextParam = () => {
-      paramsCount := paramsCount.contents + 1
-      `$${paramsCount.contents->Int.toString}`
-    }
-    switch filter {
-    | Eq({fieldName}) => `${fieldName}: ${nextParam()}`
-    | Gt({fieldName}) => `${fieldName}: {_gt: ${nextParam()}}`
-    | Lt({fieldName}) => `${fieldName}: {_lt: ${nextParam()}}`
-    | In({fieldName}) => `${fieldName}: {_in: ${nextParam()}}`
-    | And({filters}) => filters->Array.map(print)->Array.join(", ")
-    }
+// Computed on every loadByFilter call, so flat filters are built with
+// a single concatenation and only And pays for the param counter.
+let toOperationKey = (filter: t, ~entityName) =>
+  switch filter {
+  | Eq({fieldName}) => `${entityName}.getWhere({${fieldName}: $1})`
+  | Gt({fieldName}) => `${entityName}.getWhere({${fieldName}: {_gt: $1}})`
+  | Lt({fieldName}) => `${entityName}.getWhere({${fieldName}: {_lt: $1}})`
+  | In({fieldName}) => `${entityName}.getWhere({${fieldName}: {_in: $1}})`
+  | And(_) => `${entityName}.getWhere({${filter->printOperationFilter(~paramsCount=ref(0))}})`
   }
-  `${entityName}.getWhere({${print(filter)}})`
-}
 
 // A field missing on the entity reads as `undefined`, which matches the `None`
 // arm of `FieldValue.t` (`option<...>`), so nullable columns omitted on the
