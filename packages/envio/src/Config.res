@@ -201,11 +201,11 @@ let svmEventDescriptorSchema = S.schema(s =>
     "accountFilters": s.matches(
       S.option(
         S.array(
-          S.schema(
-            s => {
+          S.schema(s =>
+            {
               "position": s.matches(S.int),
               "values": s.matches(S.array(S.string)),
-            },
+            }
           ),
         ),
       ),
@@ -586,7 +586,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     "abi": EvmTypes.Abi.t,
     "eventSignatures": array<string>,
     "events": option<array<_>>,
-    "svmAbi": option<{"programId": string, "definedTypes": JSON.t, "source": string}>,
+    "svmAbi": option<{
+      "programId": string,
+      "definedTypes": JSON.t,
+      "source": string,
+    }>,
   }> = Dict.make()
   switch publicContractsConfig {
   | Some(contractsDict) =>
@@ -602,7 +606,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       let widened =
         contractConfig->(
           Utils.magic: _ => {
-            "svmAbi": option<{"programId": string, "definedTypes": JSON.t, "source": string}>,
+            "svmAbi": option<{
+              "programId": string,
+              "definedTypes": JSON.t,
+              "source": string,
+            }>,
           }
         )
       contractDataByName->Dict.set(
@@ -701,11 +709,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             )
           }
           let accountFilters =
-            (svm["accountFilters"]->Option.getOr([]))->Array.map(group =>
-              group->Array.map(af => {
-                Internal.position: af["position"],
-                values: af["values"]->SvmTypes.Pubkey.fromStringsUnsafe,
-              })
+            svm["accountFilters"]
+            ->Option.getOr([])
+            ->Array.map(group =>
+              group->Array.map(
+                af => {
+                  Internal.position: af["position"],
+                  values: af["values"]->SvmTypes.Pubkey.fromStringsUnsafe,
+                },
+              )
             )
           (EventConfigBuilder.buildSvmInstructionEventConfig(
             ~contractName,
@@ -817,6 +829,29 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             startBlock,
           }
         })
+
+      // The same address under two contract definitions (or twice under one)
+      // would later violate the (chainId, address) primary key of
+      // envio_addresses with an opaque Postgres error — fail fast with the
+      // offending pair instead. parseAddress already canonicalizes casing
+      // (checksum or lowercase), so an exact match catches case variants too.
+      let contractNameByAddress = Dict.make()
+      contracts->Array.forEach(contract => {
+        contract.addresses->Array.forEach(
+          address => {
+            let addressString = address->Address.toString
+            switch contractNameByAddress->Dict.get(addressString) {
+            | Some(existingContractName) =>
+              JsError.throwWithMessage(
+                existingContractName === contract.name
+                  ? `Address ${addressString} is listed multiple times for the contract ${contract.name} on chain ${chainId->Int.toString}. Please remove the duplicate from your config.`
+                  : `Address ${addressString} on chain ${chainId->Int.toString} is configured for multiple contracts: ${existingContractName} and ${contract.name}. Indexing the same address with multiple contract definitions is not supported. Please define the events on a single contract definition instead.`,
+              )
+            | None => contractNameByAddress->Dict.set(addressString, contract.name)
+            }
+          },
+        )
+      })
 
       let sourceConfig = switch ecosystemName {
       | Ecosystem.Evm =>
