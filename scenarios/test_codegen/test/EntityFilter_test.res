@@ -26,6 +26,39 @@ describe("EntityFilter.toOperationKey", () => {
   })
 })
 
+describe("EntityFilter.merge", () => {
+  it("Merges Eq and In batches into a single In, keeps the rest as is", t => {
+    let v = i => i->(Utils.magic: int => unknown)
+    t.expect(
+      (
+        [
+          EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
+          EntityFilter.Eq({fieldName: "a", fieldValue: v(2)}),
+        ]->EntityFilter.merge,
+        [
+          EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2)]}),
+          EntityFilter.In({fieldName: "a", fieldValue: [v(3)]}),
+        ]->EntityFilter.merge,
+        [
+          EntityFilter.Gt({fieldName: "a", fieldValue: v(1)}),
+          EntityFilter.Gt({fieldName: "a", fieldValue: v(2)}),
+        ]->EntityFilter.merge,
+        [EntityFilter.Eq({fieldName: "a", fieldValue: v(1)})]->EntityFilter.merge,
+        []->EntityFilter.merge,
+      ),
+    ).toEqual((
+      [EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2)]})],
+      [EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2), v(3)]})],
+      [
+        EntityFilter.Gt({fieldName: "a", fieldValue: v(1)}),
+        EntityFilter.Gt({fieldName: "a", fieldValue: v(2)}),
+      ],
+      [EntityFilter.Eq({fieldName: "a", fieldValue: v(1)})],
+      [],
+    ))
+  })
+})
+
 describe("EntityFilter.mapValues", () => {
   it("Maps scalar values one by one and In values as a whole array", t => {
     let calls = []
