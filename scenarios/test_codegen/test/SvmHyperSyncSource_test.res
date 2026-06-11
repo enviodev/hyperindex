@@ -1,6 +1,6 @@
 open Vitest
 
-// Regression coverage for HyperSyncSolanaSource.getItemsOrThrow response
+// Regression coverage for SvmHyperSyncSource.getItemsOrThrow response
 // parsing, driven through a mocked napi client (no network):
 //   1. `instruction.block.time` must carry the slot's blockTime from the
 //      response's blocks table (reported as arriving `undefined` downstream).
@@ -40,7 +40,7 @@ let makeEventConfig = (): Internal.svmInstructionEventConfig => {
   definedTypes: JSON.Null,
 }
 
-let mockResponse: HyperSyncSolanaClient.ResponseTypes.queryResponse = {
+let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
   nextSlot: slot + 1,
   responseBytes: 0,
   data: {
@@ -79,9 +79,9 @@ let mockResponse: HyperSyncSolanaClient.ResponseTypes.queryResponse = {
   },
 }
 
-let capturedQueries: array<HyperSyncSolanaClient.query> = []
+let capturedQueries: array<SvmHyperSyncClient.query> = []
 
-let mockClient: HyperSyncSolanaClient.t = {
+let mockClient: SvmHyperSyncClient.t = {
   getHeight: () => Promise.resolve(slot + 1000),
   get: (~query) => {
     capturedQueries->Array.push(query)
@@ -93,10 +93,10 @@ let makeSource = () => {
   Core.addonRef :=
     Some(
       {
-        "HypersyncSolanaClient": {"fromConfig": (_: HyperSyncSolanaClient.cfg) => mockClient},
+        "HypersyncSolanaClient": {"fromConfig": (_: SvmHyperSyncClient.cfg) => mockClient},
       }->(Utils.magic: {..} => Core.addon),
     )
-  HyperSyncSolanaSource.make({
+  SvmHyperSyncSource.make({
     chain,
     endpointUrl: "https://solana.hypersync.xyz",
     apiToken: None,
@@ -119,7 +119,7 @@ let indexingAddresses = Dict.fromArray([
   ),
 ])
 
-describe("HyperSyncSolanaSource.getItemsOrThrow (mocked client)", () => {
+describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   Async.it("joins blockTime onto items and requests opted-in table columns", async t => {
     let source = makeSource()
     let eventConfig = makeEventConfig()
@@ -138,7 +138,7 @@ describe("HyperSyncSolanaSource.getItemsOrThrow (mocked client)", () => {
         dependsOnAddresses: true,
       },
       ~retry=0,
-      ~logger=Logging.createChild(~params={"test": "HyperSyncSolanaSource"}),
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
     )
 
     let item = switch response.parsedQueueItems {
@@ -155,7 +155,7 @@ describe("HyperSyncSolanaSource.getItemsOrThrow (mocked client)", () => {
 
     t.expect({
       "item": item,
-      "queryFields": (capturedQueries->Array.getUnsafe(0): HyperSyncSolanaClient.query).fields,
+      "query": capturedQueries->Array.getUnsafe(0),
     }).toEqual({
       "item": Some({
         "timestamp": blockTime,
@@ -163,9 +163,14 @@ describe("HyperSyncSolanaSource.getItemsOrThrow (mocked client)", () => {
         "block": ({slot, time: blockTime, hash: ""}: Envio.svmInstructionBlock),
         "transactionSignatures": Some([txSignature]),
       }),
-      "queryFields": Some(
-        (
-          {
+      // Default merge mode: requesting a table's columns opts the matched
+      // result set into that join, so selections carry no include flags.
+      "query": (
+        {
+          fromSlot: slot - 10,
+          toSlot: slot + 10,
+          instructions: [{programId: [metaplexProgramId], d1: ["0x21"]}],
+          fields: {
             block: [Slot, Blockhash, BlockTime],
             transaction: [
               Slot,
@@ -180,8 +185,8 @@ describe("HyperSyncSolanaSource.getItemsOrThrow (mocked client)", () => {
               RecentBlockhash,
               Version,
             ],
-          }: HyperSyncSolanaClient.QueryTypes.fieldSelection
-        ),
+          },
+        }: SvmHyperSyncClient.query
       ),
     })
   })

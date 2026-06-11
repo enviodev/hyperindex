@@ -6,17 +6,19 @@ open Vitest
 //
 // `describe_skip` so CI / `pnpm test` doesn't depend on the network. Flip to
 // `describe` to run locally.
-describe_skip("HyperSyncSolanaClient live", () => {
+describe_skip("SvmHyperSyncClient live", () => {
   let tokenMetadataProgram = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 
   Async.it("returns Token Metadata instructions for a recent slot window", async t => {
-    let client = HyperSyncSolanaClient.make(~url="https://solana.hypersync.xyz")
+    let client = SvmHyperSyncClient.make(~url="https://solana.hypersync.xyz")
     let height = await client.getHeight()
-    let query: HyperSyncSolanaClient.query = {
+    let query: SvmHyperSyncClient.query = {
       fromSlot: Pervasives.max(0, height - 10_000),
       toSlot: height,
-      instructions: [{programId: [tokenMetadataProgram], includeTransaction: true}],
+      instructions: [{programId: [tokenMetadataProgram]}],
       maxNumInstructions: 200,
+      // Default merge mode: requesting a table's columns opts the matched
+      // result set into that join — no per-selection include flags needed.
       fields: {
         block: [Slot, Blockhash, BlockTime],
         transaction: [Slot, TransactionIndex, Signatures],
@@ -39,7 +41,7 @@ describe_skip("HyperSyncSolanaClient live", () => {
       "firstProgramId": first.programId,
       "firstDataIsHex": first.data->String.startsWith("0x"),
       // Every matched instruction's slot must come with a sane blockTime —
-      // `HyperSyncSolanaSource` relies on this join for `instruction.block.time`.
+      // `SvmHyperSyncSource` relies on this join for `instruction.block.time`.
       "allInstructionSlotsHaveBlockTime": resp.data.instructions->Array.every(instr =>
         switch blockTimeBySlot->Dict.get(instr.slot->Int.toString) {
         | Some(time) => time > 1_600_000_000

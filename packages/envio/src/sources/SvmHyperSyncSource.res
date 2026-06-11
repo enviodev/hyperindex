@@ -17,7 +17,7 @@ type options = {
 // which case we skip — better to over-fetch nothing than ship a degenerate
 // query.
 let buildInstructionSelections = (eventConfigs: array<Internal.svmInstructionEventConfig>): array<
-  HyperSyncSolanaClient.QueryTypes.instructionSelection,
+  SvmHyperSyncClient.QueryTypes.instructionSelection,
 > => {
   eventConfigs->Array.flatMap(cfg => {
     let programIdString = cfg.programId->SvmTypes.Pubkey.toString
@@ -59,10 +59,7 @@ let buildInstructionSelections = (eventConfigs: array<Internal.svmInstructionEve
             a4: ?pick(4),
             a5: ?pick(5),
             isInner: ?cfg.isInner,
-            includeTransaction: cfg.includeTransaction,
-            includeLogs: cfg.includeLogs,
-            includeTokenBalances: cfg.includeTokenBalances,
-          }: HyperSyncSolanaClient.QueryTypes.instructionSelection
+          }: SvmHyperSyncClient.QueryTypes.instructionSelection
         )
       })
     }
@@ -75,7 +72,7 @@ let buildInstructionSelections = (eventConfigs: array<Internal.svmInstructionEve
 // JS's 53-bit safe-integer range: transactionIndex ≤ ~10k per slot,
 // instruction position ≤ 1000 per tx, depth ≤ ~10. Outer-only instructions
 // land at `tx * 65536`; inner ones append depth-weighted offsets.
-let synthLogIndex = (instr: HyperSyncSolanaClient.ResponseTypes.instruction) => {
+let synthLogIndex = (instr: SvmHyperSyncClient.ResponseTypes.instruction) => {
   let tx = instr.transactionIndex
   let addrSum = instr.instructionAddress->Array.reduce(0, (acc, n) => acc * 1024 + n + 1)
   tx * 65536 + addrSum
@@ -169,7 +166,7 @@ let buildProgramSchemas = (eventConfigs: array<Internal.svmInstructionEventConfi
 // Parse the Rust-decoded instruction (args/accounts arrive as JSON strings to
 // side-step napi-rs's lack of native JSON passthrough) into the public shape.
 let parseDecoded = (
-  d: HyperSyncSolanaClient.ResponseTypes.decodedInstruction,
+  d: SvmHyperSyncClient.ResponseTypes.decodedInstruction,
 ): Envio.svmInstructionParams => {
   let args = try JSON.parseOrThrow(d.argsJson) catch {
   | _ => JSON.Object(Dict.make())
@@ -188,7 +185,7 @@ let parseDecoded = (
 }
 
 let toSvmInstruction = (
-  instr: HyperSyncSolanaClient.ResponseTypes.instruction,
+  instr: SvmHyperSyncClient.ResponseTypes.instruction,
   ~programName,
   ~instructionName,
   ~transaction,
@@ -212,9 +209,7 @@ let toSvmInstruction = (
   block,
 }
 
-let toSvmTransaction = (
-  tx: HyperSyncSolanaClient.ResponseTypes.transaction,
-): Envio.svmTransaction => {
+let toSvmTransaction = (tx: SvmHyperSyncClient.ResponseTypes.transaction): Envio.svmTransaction => {
   signatures: tx.signatures,
   accountKeys: tx.accountKeys->SvmTypes.Pubkey.fromStringsUnsafe,
   feePayer: ?(tx.feePayer->Option.map(SvmTypes.Pubkey.fromStringUnsafe)),
@@ -229,7 +224,7 @@ let toSvmTransaction = (
 }
 
 let toSvmTokenBalance = (
-  tb: HyperSyncSolanaClient.ResponseTypes.tokenBalance,
+  tb: SvmHyperSyncClient.ResponseTypes.tokenBalance,
 ): Envio.svmTokenBalance => {
   account: ?(tb.account->Option.map(SvmTypes.Pubkey.fromStringUnsafe)),
   mint: ?(tb.mint->Option.map(SvmTypes.Pubkey.fromStringUnsafe)),
@@ -244,7 +239,7 @@ let toSvmTokenBalance = (
 let probeRouter = (
   router: EventRouter.t<Internal.svmInstructionEventConfig>,
   programId: SvmTypes.Pubkey.t,
-  instr: HyperSyncSolanaClient.ResponseTypes.instruction,
+  instr: SvmHyperSyncClient.ResponseTypes.instruction,
   byteLengthsDesc: array<int>,
   ~contractAddress,
   ~indexingAddresses,
@@ -285,7 +280,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
   // Built once at startup and handed to the client so `get` decodes matching
   // instructions in Rust rather than per-instruction over the napi boundary.
   let programSchemas = buildProgramSchemas(eventConfigs)
-  let client = HyperSyncSolanaClient.make(
+  let client = SvmHyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken?,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
@@ -322,11 +317,11 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     let pageFetchRef = Hrtime.makeTimer()
 
     let instructionSelections = buildInstructionSelections(eventConfigs)
-    // The server returns rows for the transaction/log/token-balance tables
-    // only when the table's field list is non-empty (instructions and blocks
-    // are exempt), so each opted-into table needs its columns spelled out here
-    // or the per-selection include flags silently return nothing.
-    let fields: HyperSyncSolanaClient.QueryTypes.fieldSelection = {
+    // Under the server's default merge mode, requesting a table's columns is
+    // what opts the matched result set into that join — a table with an empty
+    // field list returns no rows (instructions and blocks are exempt), so each
+    // opted-into table needs its columns spelled out here.
+    let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = {
       block: [Slot, Blockhash, BlockTime],
       transaction: ?(
         needsTransactions
@@ -352,7 +347,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
           : None
       ),
     }
-    let query: HyperSyncSolanaClient.query = {
+    let query: SvmHyperSyncClient.query = {
       fromSlot: fromBlock,
       toSlot: ?toBlock,
       instructions: instructionSelections,
@@ -558,7 +553,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     let fromRef = ref(fromSlot)
     let keepGoing = ref(true)
     while keepGoing.contents {
-      let query: HyperSyncSolanaClient.query = {
+      let query: SvmHyperSyncClient.query = {
         fromSlot: fromRef.contents,
         toSlot: toSlot + 1,
         includeAllBlocks: true,

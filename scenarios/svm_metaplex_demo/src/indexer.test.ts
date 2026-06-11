@@ -1,5 +1,5 @@
 // Live E2E test against `solana.hypersync.xyz`. Drives the SVM stack
-// end-to-end: HyperSyncSolanaSource → EventRouter → `indexer.onInstruction`
+// end-to-end: SvmHyperSyncSource → EventRouter → `indexer.onInstruction`
 // dispatch → entity writes. `config.yaml` interpolates `ENVIO_METAPLEX_END_BLOCK`
 // into `end_block` to pin a finite window here; the live demo leaves it unset
 // for continuous tailing.
