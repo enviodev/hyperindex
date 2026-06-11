@@ -81,7 +81,7 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
     ->Table.getFields
     ->Array.map(field => {
       let {fieldType, isNullable, isArray, defaultValue} = field
-      let fieldName = field->Table.getDbFieldName
+      let fieldName = field->Table.getPgDbFieldName
 
       {
         `"${fieldName}" ${Table.getPgFieldType(
@@ -98,7 +98,7 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
     })
     ->Array.joinUnsafe(", ")
 
-  let primaryKeyFieldNames = table->Table.getPrimaryKeyFieldNames
+  let primaryKeyFieldNames = table->Table.getPgPrimaryKeyFieldNames
   let primaryKey = primaryKeyFieldNames->Array.map(field => `"${field}"`)->Array.joinUnsafe(", ")
 
   `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
@@ -245,7 +245,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     ->Table.getDerivedFromFields
     ->Array.forEach(derivedFromField => {
       let indexField =
-        derivedSchema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
+        derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
       query :=
         query.contents ++
         "\n" ++
@@ -295,8 +295,10 @@ let rec makeFilterCondition = (
   ~table: Table.table,
   ~params: array<JSON.t>,
 ) => {
-  let serializeParamOrThrow = (~fieldName, ~fieldValue: unknown, ~isArray) => {
-    let queryField = switch table->Table.queryFields->Dict.get(fieldName) {
+  // Filters reference fields by API name, while the SQL references columns
+  // by their possibly renamed db names.
+  let getQueryFieldOrThrow = fieldName =>
+    switch table->Table.queryFields->Dict.get(fieldName) {
     | Some(queryField) => queryField
     | None =>
       throw(
@@ -306,6 +308,7 @@ let rec makeFilterCondition = (
         }),
       )
     }
+  let serializeParamOrThrow = (~queryField: Table.queryField, ~fieldName, ~fieldValue: unknown, ~isArray) => {
     let param = try fieldValue->S.reverseConvertToJsonOrThrow(
       isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
     ) catch {
@@ -320,18 +323,28 @@ let rec makeFilterCondition = (
     params->Array.push(param)->ignore
     `$${params->Array.length->Int.toString}`
   }
-  let scalarCondition = (~fieldName, ~fieldValue, ~op) =>
-    `"${fieldName}" ${op} ${serializeParamOrThrow(~fieldName, ~fieldValue, ~isArray=false)}`
+  let scalarCondition = (~fieldName, ~fieldValue, ~op) => {
+    let queryField = getQueryFieldOrThrow(fieldName)
+    `"${queryField.pgDbFieldName}" ${op} ${serializeParamOrThrow(
+        ~queryField,
+        ~fieldName,
+        ~fieldValue,
+        ~isArray=false,
+      )}`
+  }
   switch filter {
   | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
   | Gt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op=">")
   | Lt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="<")
-  | In({fieldName, fieldValue}) =>
-    `"${fieldName}" = ANY(${serializeParamOrThrow(
-        ~fieldName,
-        ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
-        ~isArray=true,
-      )})`
+  | In({fieldName, fieldValue}) => {
+      let queryField = getQueryFieldOrThrow(fieldName)
+      `"${queryField.pgDbFieldName}" = ANY(${serializeParamOrThrow(
+          ~queryField,
+          ~fieldName,
+          ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
+          ~isArray=true,
+        )})`
+    }
   | And({filters: []}) =>
     throw(
       Persistence.StorageError({
@@ -362,7 +375,7 @@ let makeInsertUnnestSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~is
   let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes} =
     table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
 
-  let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+  let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
 
   `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Array.joinUnsafe(", ")})
 SELECT * FROM unnest(${arrayFieldTypes
@@ -392,7 +405,7 @@ let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~it
   let {quotedFieldNames, quotedNonPrimaryFieldNames} =
     table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
 
-  let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+  let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
   let fieldsCount = quotedFieldNames->Array.length
 
   // Create placeholder variables for the VALUES clause - using $1, $2, etc.
@@ -753,7 +766,7 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
   // Get all field names for the INSERT statement
   let allHistoryFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
-    | Field(field) => field->Table.getDbFieldName->Some
+    | Field(field) => field->Table.getPgDbFieldName->Some
     | DerivedFrom(_) => None
     }
   )
@@ -1212,7 +1225,7 @@ let rec writeBatch = async (
 let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
   let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
-    | Field(field) => field->Table.getDbFieldName->Some
+    | Field(field) => field->Table.getPgDbFieldName->Some
     | DerivedFrom(_) => None
     }
   )
@@ -1502,7 +1515,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         }),
       )
     | rows =>
-      try rows->S.parseOrThrow(table->Table.rowsSchema) catch {
+      try rows->S.parseOrThrow(table->Table.pgRowsSchema) catch {
       | exn =>
         throw(
           Persistence.StorageError({
@@ -1906,7 +1919,7 @@ let makeStorageFromEnv = (
               ~tableConfigs=tableNames->Array.map(tableName => {
                 Hasura.tableName,
                 description: None,
-                columnDescriptions: dict{},
+                columnConfigs: dict{},
               }),
             )->Promise.catch(err => {
               Logging.errorWithExn(

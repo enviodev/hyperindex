@@ -462,4 +462,40 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
       ~message="should have removed index on deleted token, leaving one token",
     ).toBe(1)
   })
+
+  Async.it("getWhere throws a user friendly error for an invalid filter", async t => {
+    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
+    )
+    await Utils.delay(0)
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    let error = ref("")
+
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 50,
+        logIndex: 1,
+        handler: async ({context}) => {
+          error := (
+            try {
+              let _ = await context.\"Token".getWhere(%raw(`{tokenId: undefined}`))
+              "Expected getWhere to throw"
+            } catch {
+            | JsExn(e) => e->JsExn.message->Option.getOr("(no message)")
+            }
+          )
+        },
+      },
+    ])
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(error.contents).toEqual(
+      `Invalid undefined value passed to context.Token.getWhere({ tokenId: undefined }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
+    )
+  })
 })

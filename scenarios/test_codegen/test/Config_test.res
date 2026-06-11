@@ -413,6 +413,128 @@ describe("Config.fromPublic", () => {
     ])
   })
 
+  // Guards against the opaque `duplicate key value violates unique constraint
+  // "envio_addresses_pkey"` failure at storage init: envio_addresses is keyed
+  // by (chainId, address), so the same address under two contract definitions
+  // on one chain must be rejected at config load with the offending pair.
+  it("throws when the same address is configured for two contracts on one chain", t => {
+    let publicConfigJson: JSON.t = %raw(`{
+      "version": "0.0.1-dev",
+      "name": "test",
+      "storage": { "postgres": true },
+      "evm": {
+        "chains": {
+          "ethereumMainnet": {
+            "id": 1,
+            "startBlock": 0,
+            "rpcs": [{ "url": "https://eth.com", "for": "sync" }],
+            "contracts": {
+              "AaveToken": {
+                "addresses": ["0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"]
+              },
+              "AaveV3": {
+                "addresses": ["0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"]
+              }
+            }
+          }
+        },
+        "contracts": {
+          "AaveToken": {
+            "abi": [{"type":"event","name":"Transfer","inputs":[],"anonymous":false}],
+            "events": [{ "event": "Transfer()", "name": "Transfer", "sighash": "0x00000000" }]
+          },
+          "AaveV3": {
+            "abi": [{"type":"event","name":"DelegateChanged","inputs":[],"anonymous":false}],
+            "events": [{ "event": "DelegateChanged()", "name": "DelegateChanged", "sighash": "0x00000001" }]
+          }
+        },
+        "addressFormat": "checksum"
+      }
+    }`)
+
+    t.expect(() => Config.fromPublic(publicConfigJson)->ignore).toThrowError(
+      "Address 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9 on chain 1 is configured for multiple contracts: AaveToken and AaveV3. Indexing the same address with multiple contract definitions is not supported. Please define the events on a single contract definition instead.",
+    )
+  })
+
+  it("throws when the same address is listed twice for one contract", t => {
+    let publicConfigJson: JSON.t = %raw(`{
+      "version": "0.0.1-dev",
+      "name": "test",
+      "storage": { "postgres": true },
+      "evm": {
+        "chains": {
+          "ethereumMainnet": {
+            "id": 1,
+            "startBlock": 0,
+            "rpcs": [{ "url": "https://eth.com", "for": "sync" }],
+            "contracts": {
+              "AaveToken": {
+                "addresses": [
+                  "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+                  "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"
+                ]
+              }
+            }
+          }
+        },
+        "contracts": {
+          "AaveToken": {
+            "abi": [{"type":"event","name":"Transfer","inputs":[],"anonymous":false}],
+            "events": [{ "event": "Transfer()", "name": "Transfer", "sighash": "0x00000000" }]
+          }
+        },
+        "addressFormat": "checksum"
+      }
+    }`)
+
+    t.expect(() => Config.fromPublic(publicConfigJson)->ignore).toThrowError(
+      "Address 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9 is listed multiple times for the contract AaveToken on chain 1. Please remove the duplicate from your config.",
+    )
+  })
+
+  it("allows the same address on different chains", t => {
+    let publicConfigJson: JSON.t = %raw(`{
+      "version": "0.0.1-dev",
+      "name": "test",
+      "storage": { "postgres": true },
+      "evm": {
+        "chains": {
+          "ethereumMainnet": {
+            "id": 1,
+            "startBlock": 0,
+            "rpcs": [{ "url": "https://eth.com", "for": "sync" }],
+            "contracts": {
+              "AaveToken": {
+                "addresses": ["0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"]
+              }
+            }
+          },
+          "polygon": {
+            "id": 137,
+            "startBlock": 0,
+            "rpcs": [{ "url": "https://polygon.com", "for": "sync" }],
+            "contracts": {
+              "AaveToken": {
+                "addresses": ["0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"]
+              }
+            }
+          }
+        },
+        "contracts": {
+          "AaveToken": {
+            "abi": [{"type":"event","name":"Transfer","inputs":[],"anonymous":false}],
+            "events": [{ "event": "Transfer()", "name": "Transfer", "sighash": "0x00000000" }]
+          }
+        },
+        "addressFormat": "checksum"
+      }
+    }`)
+
+    let config = Config.fromPublic(publicConfigJson)
+    t.expect(config.chainMap->ChainMap.values->Array.length).toBe(2)
+  })
+
   it("works with already-capitalized contract name", t => {
     let publicConfigJson: JSON.t = %raw(`{
       "version": "0.0.1-dev",

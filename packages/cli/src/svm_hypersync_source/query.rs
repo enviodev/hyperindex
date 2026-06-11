@@ -14,7 +14,7 @@ use napi_derive::napi;
 /// numeric types (`i64` instead of `u64`).
 #[napi(object)]
 #[derive(Default, Clone)]
-pub struct SolanaQuery {
+pub struct SvmQuery {
     pub from_slot: i64,
     pub to_slot: Option<i64>,
     pub instructions: Option<Vec<InstructionSelection>>,
@@ -76,12 +76,6 @@ pub struct InstructionSelection {
     pub a8: Option<Vec<String>>,
     pub a9: Option<Vec<String>>,
     pub is_inner: Option<bool>,
-    pub include_transaction: Option<bool>,
-    pub include_logs: Option<bool>,
-    /// Also return native SOL balances for matched txs (scoped join).
-    pub include_balances: Option<bool>,
-    /// Also return SPL token balances for matched txs (scoped join).
-    pub include_token_balances: Option<bool>,
 }
 
 #[napi(object)]
@@ -89,9 +83,6 @@ pub struct InstructionSelection {
 pub struct TransactionSelection {
     pub fee_payer: Option<Vec<String>>,
     pub success: Option<bool>,
-    pub include_instructions: Option<bool>,
-    pub include_balances: Option<bool>,
-    pub include_token_balances: Option<bool>,
 }
 
 #[napi(object)]
@@ -99,10 +90,6 @@ pub struct TransactionSelection {
 pub struct LogSelection {
     pub program_id: Option<Vec<String>>,
     pub kind: Option<Vec<String>>,
-    pub include_transaction: Option<bool>,
-    pub include_instruction: Option<bool>,
-    pub include_balances: Option<bool>,
-    pub include_token_balances: Option<bool>,
 }
 
 /// Per-table field selection. Each field accepts a list of column names; an
@@ -168,11 +155,6 @@ impl From<InstructionSelection> for net::InstructionSelection {
             a8: s.a8.unwrap_or_default(),
             a9: s.a9.unwrap_or_default(),
             is_inner: s.is_inner,
-            include_transaction: s.include_transaction.unwrap_or_default(),
-            include_logs: s.include_logs.unwrap_or_default(),
-            include_inner_instructions: false,
-            include_balances: s.include_balances.unwrap_or_default(),
-            include_token_balances: s.include_token_balances.unwrap_or_default(),
         }
     }
 }
@@ -182,9 +164,6 @@ impl From<TransactionSelection> for net::TransactionSelection {
         Self {
             fee_payer: s.fee_payer.unwrap_or_default(),
             success: s.success,
-            include_instructions: s.include_instructions.unwrap_or_default(),
-            include_balances: s.include_balances.unwrap_or_default(),
-            include_token_balances: s.include_token_balances.unwrap_or_default(),
         }
     }
 }
@@ -194,10 +173,6 @@ impl From<LogSelection> for net::LogSelection {
         Self {
             program_id: s.program_id.unwrap_or_default(),
             kind: s.kind.unwrap_or_default(),
-            include_transaction: s.include_transaction.unwrap_or_default(),
-            include_instruction: s.include_instruction.unwrap_or_default(),
-            include_balances: s.include_balances.unwrap_or_default(),
-            include_token_balances: s.include_token_balances.unwrap_or_default(),
         }
     }
 }
@@ -221,10 +196,10 @@ impl From<TokenBalanceSelection> for net::TokenBalanceSelection {
     }
 }
 
-impl TryFrom<SolanaQuery> for net::SolanaQuery {
+impl TryFrom<SvmQuery> for net::SolanaQuery {
     type Error = anyhow::Error;
 
-    fn try_from(q: SolanaQuery) -> Result<Self> {
+    fn try_from(q: SvmQuery) -> Result<Self> {
         anyhow::ensure!(q.from_slot >= 0, "from_slot must be non-negative");
         Ok(Self {
             from_slot: q.from_slot as u64,
@@ -268,7 +243,7 @@ impl TryFrom<SolanaQuery> for net::SolanaQuery {
             include_all_blocks: q.include_all_blocks.unwrap_or_default(),
             include_balances: q.include_balances.unwrap_or_default(),
             include_token_balances: q.include_token_balances.unwrap_or_default(),
-            fields: q
+            field_selection: q
                 .fields
                 .map(TryInto::try_into)
                 .transpose()?

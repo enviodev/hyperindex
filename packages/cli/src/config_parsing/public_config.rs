@@ -1,7 +1,7 @@
 use super::{
     entity_parsing::IndexFieldDirection,
     field_types,
-    human_config::{self, evm::For},
+    human_config::{self, evm::For, ColumnNameFormat},
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, Ecosystem, EventKind,
         FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
@@ -61,8 +61,8 @@ struct StorageConfig {
 impl From<&system_config::Storage> for StorageConfig {
     fn from(s: &system_config::Storage) -> Self {
         Self {
-            postgres: s.postgres,
-            clickhouse: s.clickhouse,
+            postgres: s.postgres.is_some(),
+            clickhouse: s.clickhouse.is_some(),
         }
     }
 }
@@ -100,6 +100,14 @@ struct EntityStorageJson {
 #[serde(rename_all = "camelCase")]
 struct PropertyJson {
     name: String,
+    // Per-backend database column names; each is emitted only when it
+    // differs from the default naming the runtime derives from `name`
+    // (`name` plus an `_id` suffix for entity references). They can diverge
+    // when the backends configure different `column_name_format`s.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    postgres_db_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clickhouse_db_name: Option<String>,
     #[serde(rename = "type")]
     field_type: String,
     #[serde(skip_serializing_if = "is_false")]
@@ -681,8 +689,24 @@ impl SystemConfig {
                                     ("entity".into(), None, Some(name.clone()), None, None)
                                 }
                             };
+                        let db_name_for =
+                            |backend: Option<system_config::StorageBackend>| match backend
+                                .map(|b| b.column_name_format)
+                            {
+                                None | Some(ColumnNameFormat::Original) => None,
+                                Some(ColumnNameFormat::SnakeCase) => {
+                                    let db_name = f.db_column_name(ColumnNameFormat::SnakeCase);
+                                    if db_name == f.db_column_name(ColumnNameFormat::Original) {
+                                        None
+                                    } else {
+                                        Some(db_name)
+                                    }
+                                }
+                            };
                         PropertyJson {
                             name: f.field_name.clone(),
+                            postgres_db_name: db_name_for(cfg.storage.postgres),
+                            clickhouse_db_name: db_name_for(cfg.storage.clickhouse),
                             field_type,
                             is_nullable: f.is_nullable,
                             is_array: f.is_array,
@@ -734,18 +758,26 @@ impl SystemConfig {
                         postgres: entity.postgres,
                         clickhouse: entity.clickhouse,
                     })
-                } else if (cfg.storage.postgres_default, cfg.storage.clickhouse_default)
-                    == (cfg.storage.postgres, cfg.storage.clickhouse)
-                {
-                    None
                 } else {
-                    // Emitted in the same shape a positive @storage directive
-                    // would produce, so switching an entity between the
-                    // directive and a config-level default doesn't diff.
-                    Some(EntityStorageJson {
-                        postgres: cfg.storage.postgres_default.then_some(true),
-                        clickhouse: cfg.storage.clickhouse_default.then_some(true),
-                    })
+                    let postgres_default = cfg.storage.postgres.is_some_and(|b| b.entity_default);
+                    let clickhouse_default =
+                        cfg.storage.clickhouse.is_some_and(|b| b.entity_default);
+                    if (postgres_default, clickhouse_default)
+                        == (
+                            cfg.storage.postgres.is_some(),
+                            cfg.storage.clickhouse.is_some(),
+                        )
+                    {
+                        None
+                    } else {
+                        // Emitted in the same shape a positive @storage directive
+                        // would produce, so switching an entity between the
+                        // directive and a config-level default doesn't diff.
+                        Some(EntityStorageJson {
+                            postgres: postgres_default.then_some(true),
+                            clickhouse: clickhouse_default.then_some(true),
+                        })
+                    }
                 };
 
                 Ok(EntityJson {

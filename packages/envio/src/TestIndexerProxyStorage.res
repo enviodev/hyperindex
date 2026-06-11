@@ -114,47 +114,18 @@ let makeStorage = (proxy: t): Persistence.storage => {
           `TestIndexer: The table "${table.tableName}" doesn't have the field "${fieldName}"`,
         )
       }
-      fieldValue->S.reverseConvertToJsonOrThrow(
+      fieldValue
+      ->S.reverseConvertToJsonOrThrow(
         isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
       )
+      ->(Utils.magic: JSON.t => unknown)
     }
-    // Field values must be JSON-safe to survive the worker thread boundary
-    let rec serializeFilter = (filter: EntityFilter.t): EntityFilter.t =>
-      switch filter {
-      | Eq({fieldName, fieldValue}) =>
-        Eq({
-          fieldName,
-          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(
-            Utils.magic: JSON.t => unknown
-          ),
-        })
-      | Gt({fieldName, fieldValue}) =>
-        Gt({
-          fieldName,
-          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(
-            Utils.magic: JSON.t => unknown
-          ),
-        })
-      | Lt({fieldName, fieldValue}) =>
-        Lt({
-          fieldName,
-          fieldValue: serializeLeafOrThrow(~fieldName, ~fieldValue, ~isArray=false)->(
-            Utils.magic: JSON.t => unknown
-          ),
-        })
-      | In({fieldName, fieldValue}) =>
-        In({
-          fieldName,
-          fieldValue: serializeLeafOrThrow(
-            ~fieldName,
-            ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
-            ~isArray=true,
-          )->(Utils.magic: JSON.t => array<unknown>),
-        })
-      | And({filters}) => And({filters: filters->Array.map(serializeFilter)})
-      }
     let response = await proxy->sendRequest(
-      ~payload=Load({tableName: table.tableName, filter: filter->serializeFilter}),
+      ~payload=Load({
+        tableName: table.tableName,
+        // Field values must be JSON-safe to survive the worker thread boundary
+        filter: filter->EntityFilter.mapValues(~mapValue=serializeLeafOrThrow),
+      }),
     )
     response->S.parseOrThrow(table->Table.rowsSchema)
   },
