@@ -247,7 +247,7 @@ let make = (
         ->(Utils.magic: array<Internal.eventConfig> => array<Internal.svmInstructionEventConfig>)
       let apiToken = Env.envioApiToken
       [
-        HyperSyncSolanaSource.make({
+        SvmHyperSyncSource.make({
           chain,
           endpointUrl: hypersyncUrl,
           apiToken,

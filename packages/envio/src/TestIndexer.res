@@ -51,30 +51,14 @@ let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFi
   // Field values arrive as JSON from the worker boundary, so parse them
   // with the field's schema before comparing. This properly handles
   // bigint and BigDecimal comparisons
-  let parseLeaf = (~fieldName, ~fieldValue: unknown): unknown => {
-    let fieldSchema = switch entityConfig.table->Table.queryFields->Dict.get(fieldName) {
-    | Some({fieldSchema}) => fieldSchema
+  let parseLeaf = (~fieldName, ~fieldValue: unknown, ~isArray): unknown => {
+    let queryField = switch entityConfig.table->Table.queryFields->Dict.get(fieldName) {
+    | Some(queryField) => queryField
     | None => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
     }
-    fieldValue->S.convertOrThrow(fieldSchema)
+    fieldValue->S.convertOrThrow(isArray ? queryField.arrayFieldSchema : queryField.fieldSchema)
   }
-  let rec parseFilter = (filter: EntityFilter.t): EntityFilter.t =>
-    switch filter {
-    | Eq({fieldName, fieldValue}) => Eq({fieldName, fieldValue: parseLeaf(~fieldName, ~fieldValue)})
-    | Gt({fieldName, fieldValue}) => Gt({fieldName, fieldValue: parseLeaf(~fieldName, ~fieldValue)})
-    | Lt({fieldName, fieldValue}) => Lt({fieldName, fieldValue: parseLeaf(~fieldName, ~fieldValue)})
-    | In({fieldName, fieldValue}) =>
-      In({
-        fieldName,
-        fieldValue: fieldValue->Array.map(fieldValue => parseLeaf(~fieldName, ~fieldValue)),
-      })
-    | And({filters: []}) =>
-      JsError.throwWithMessage(
-        `Failed loading "${tableName}" from storage. The "and" filter must contain at least one nested filter.`,
-      )
-    | And({filters}) => And({filters: filters->Array.map(parseFilter)})
-    }
-  let filter = parseFilter(filter)
+  let filter = filter->EntityFilter.mapValues(~mapValue=parseLeaf)
 
   entityDict
   ->Dict.valuesToArray

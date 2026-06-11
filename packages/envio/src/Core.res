@@ -7,7 +7,7 @@
 type evmHypersyncClientCtor
 type evmRpcClientCtor
 type evmDecoderCtor
-type hypersyncSolanaClientCtor
+type svmHypersyncClientCtor
 type hyperfuelClientCtor
 
 type addon = {
@@ -19,8 +19,8 @@ type addon = {
   evmRpcClient: evmRpcClientCtor,
   @as("EvmDecoder")
   evmDecoder: evmDecoderCtor,
-  @as("HypersyncSolanaClient")
-  hypersyncSolanaClient: hypersyncSolanaClientCtor,
+  @as("SvmHypersyncClient")
+  svmHypersyncClient: svmHypersyncClientCtor,
   @as("HyperfuelClient")
   hyperfuelClient: hyperfuelClientCtor,
 }

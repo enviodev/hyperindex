@@ -1,5 +1,5 @@
 // Live E2E test against `solana.hypersync.xyz`. Drives the SVM stack
-// end-to-end: HyperSyncSolanaSource → EventRouter → `indexer.onInstruction`
+// end-to-end: SvmHyperSyncSource → EventRouter → `indexer.onInstruction`
 // dispatch → entity writes. `config.yaml` interpolates `ENVIO_METAPLEX_END_BLOCK`
 // into `end_block` to pin a finite window here; the live demo leaves it unset
 // for continuous tailing.
@@ -46,10 +46,20 @@ describe("SVM Metaplex indexer (live)", () => {
       // archived window's contents change — the *shape* of the result
       // (real Metaplex activity, both instruction kinds firing, counter
       // consistency) is what we're locking in.
+      // Slot 417,950,000 landed in May 2026; any sane blockTime in the window
+      // is comfortably above this floor, while a dropped join yields 0.
+      const BLOCK_TIME_FLOOR = 1_700_000_000;
+
       const summary = {
         startSlot: START_SLOT,
         endSlot: END_SLOT,
         producedTokenAccounts: tokenChanges.length > 0,
+        allWritesCarryBlockTime: tokenChanges.every(
+          (t) => t.lastUpdatedTime > BLOCK_TIME_FLOOR,
+        ),
+        allWritesCarryTxSignature: tokenChanges.every(
+          (t) => typeof t.lastTxSignature === "string" && t.lastTxSignature.length > 0,
+        ),
         producedStatsRow: finalStats !== undefined,
         finalStatsHasCreates: (finalStats?.createCount ?? 0) > 0,
         totalsMatchHandlerInvocations:
@@ -62,6 +72,8 @@ describe("SVM Metaplex indexer (live)", () => {
         startSlot: START_SLOT,
         endSlot: END_SLOT,
         producedTokenAccounts: true,
+        allWritesCarryBlockTime: true,
+        allWritesCarryTxSignature: true,
         producedStatsRow: true,
         finalStatsHasCreates: true,
         totalsMatchHandlerInvocations: true,
