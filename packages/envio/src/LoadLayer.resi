@@ -8,16 +8,14 @@ let loadById: (
   ~entityId: string,
 ) => promise<option<Internal.entity>>
 
-let loadByField: (
+let loadByFilter: (
   ~loadManager: LoadManager.t,
   ~persistence: Persistence.t,
-  ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore: InMemoryStore.t,
-  ~fieldName: string,
   ~shouldGroup: bool,
   ~item: Internal.item,
-  ~fieldValue: 'fieldValue,
+  ~filter: EntityFilter.t,
 ) => promise<array<Internal.entity>>
 
 let loadEffect: (
