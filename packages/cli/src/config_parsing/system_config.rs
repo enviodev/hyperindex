@@ -601,6 +601,12 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
+    // The identifier length limit is Postgres-specific (ClickHouse has no
+    // comparable limit), so only names that become Postgres columns are
+    // checked against it.
+    let pg_format = storage.postgres.map(|b| b.column_name_format);
+
+    let mut empty: Vec<String> = vec![];
     let mut reserved: Vec<String> = vec![];
     let mut too_long: Vec<String> = vec![];
     let mut collisions: Vec<String> = vec![];
@@ -610,6 +616,16 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
             for gql_field in entity.get_fields() {
                 if let Some(pg_field) = gql_field.get_postgres_field(schema, entity)? {
                     let column = pg_field.db_column_name(*format);
+                    // Unreachable for any name the conversion produces today,
+                    // but an empty identifier would silently break CREATE
+                    // TABLE, so guard against future boundary changes.
+                    if column.is_empty() {
+                        let line =
+                            format!("  - `{}.{}`", entity.name, pg_field.field_name);
+                        if !empty.contains(&line) {
+                            empty.push(line);
+                        }
+                    }
                     if column.starts_with("envio_") {
                         let line = format!(
                             "  - `{}.{}` maps to the \"{column}\" column.",
@@ -621,7 +637,7 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
                             reserved.push(line);
                         }
                     }
-                    if column.len() > MAX_PG_IDENTIFIER_LENGTH {
+                    if Some(*format) == pg_format && column.len() > MAX_PG_IDENTIFIER_LENGTH {
                         let line = format!(
                             "  - `{}.{}` maps to the \"{column}\" column ({} characters).",
                             entity.name,
@@ -657,6 +673,18 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
         }
     }
 
+    if !empty.is_empty() {
+        return Err(anyhow!(
+            "Schema validation failed:\n\
+             \n\
+             Entity fields that would create an empty database column name:\n\
+             {}\n\
+             \n\
+             Fixes:\n  \
+             - Rename the listed fields in schema.graphql.",
+            empty.join("\n")
+        ));
+    }
     if !reserved.is_empty() {
         return Err(anyhow!(
             "Schema validation failed:\n\
@@ -3683,8 +3711,8 @@ type Token {{
 }}"#,
             ))
             .unwrap();
-            // 64 characters as written: fine in the original format,
-            // rejected once snake_case inserts separators.
+            // 64 characters as written: rejected for Postgres in both
+            // formats (snake_case only makes it longer).
             assert_eq!(long_field.len(), 64);
             assert!(
                 validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_err()
@@ -3694,6 +3722,38 @@ type Token {{
             assert!(
                 err.to_string().contains("longer than 63"),
                 "Unexpected error: {err}"
+            );
+        }
+
+        // ClickHouse has no 63-character identifier limit, so a name that
+        // only becomes too long under ClickHouse's snake_case is accepted
+        // as long as the Postgres column stays within the limit.
+        #[test]
+        fn length_limit_not_applied_to_clickhouse_columns() {
+            let long_field = "a".repeat(30) + "B" + &"b".repeat(29) + "Cc";
+            let schema = Schema::from_string(&format!(
+                r#"
+type Token {{
+  id: ID!
+  {long_field}: BigInt!
+}}"#,
+            ))
+            .unwrap();
+            // 62 characters as written, 64 once snake_case inserts separators
+            assert_eq!(long_field.len(), 62);
+            let pg_original_ch_snake = Storage {
+                postgres: Some(super::super::StorageBackend {
+                    entity_default: true,
+                    column_name_format: ColumnNameFormat::Original,
+                }),
+                clickhouse: Some(super::super::StorageBackend {
+                    entity_default: false,
+                    column_name_format: ColumnNameFormat::SnakeCase,
+                }),
+            };
+            assert!(validate_db_column_names(&pg_original_ch_snake, &schema).is_ok());
+            assert!(
+                validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).is_err()
             );
         }
 

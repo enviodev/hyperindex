@@ -91,19 +91,16 @@ impl Field {
     }
 }
 
-// Deviates from convert_case's default boundaries by keeping digits attached
-// to the word before them, matching how identifiers like erc20 read:
-// balanceERC20 -> balance_erc20 (not balance_erc_20), field1 -> field1,
-// while still splitting before a word that starts after a digit:
-// erc20Balance -> erc20_balance.
+// Deviates from convert_case's default boundaries in two ways: underscores
+// the user wrote are kept verbatim rather than treated as word separators
+// (_foo -> _foo, foo__bar -> foo__bar), and digits stay attached to the word
+// before them, matching how identifiers like erc20 read: balanceERC20 ->
+// balance_erc20 (not balance_erc_20), field1 -> field1, while still
+// splitting before a word that starts after a digit: erc20Balance ->
+// erc20_balance.
 pub fn to_snake_case(name: &str) -> String {
-    name.with_boundaries(&[
-        Boundary::Underscore,
-        Boundary::LowerUpper,
-        Boundary::Acronym,
-        Boundary::DigitUpper,
-    ])
-    .to_case(Case::Snake)
+    name.with_boundaries(&[Boundary::LowerUpper, Boundary::Acronym, Boundary::DigitUpper])
+        .to_case(Case::Snake)
 }
 
 #[cfg(test)]
@@ -125,6 +122,15 @@ mod test {
             ("token_id", "token_id"),
             ("envio_change", "envio_change"),
             ("id", "id"),
+            // Underscores the user wrote are kept verbatim, never split,
+            // dropped, or squashed
+            ("_foo", "_foo"),
+            ("foo_", "foo_"),
+            ("foo__bar", "foo__bar"),
+            ("_", "_"),
+            ("x_X", "x_x"),
+            ("fooBar_baz", "foo_bar_baz"),
+            ("FOO_BAR", "foo_bar"),
         ];
         for (input, expected) in cases {
             assert_eq!(to_snake_case(input), expected, "snake_case of {input}");
