@@ -359,13 +359,7 @@ let loadByFilter = (
   ~item,
   ~filter: EntityFilter.t,
 ) => {
-  let key = switch filter {
-  | Eq({fieldName}) => `${entityConfig.name}.getWhere.${fieldName}.eq`
-  | Gt({fieldName}) => `${entityConfig.name}.getWhere.${fieldName}.gt`
-  | Lt({fieldName}) => `${entityConfig.name}.getWhere.${fieldName}.lt`
-  | In({fieldName}) => `${entityConfig.name}.getWhere.${fieldName}.in`
-  | And(_) => `${entityConfig.name}.getWhere.and`
-  }
+  let key = filter->EntityFilter.toOperationKey(~entityName=entityConfig.name)
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (filters: array<EntityFilter.t>, ~onError as _) => {

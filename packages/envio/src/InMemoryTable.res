@@ -53,15 +53,22 @@ module Entity = {
   > => {
     let changes = []
     let keptPrev = []
-    self.prevEntityChanges->Array.forEach(change =>
-      if change->Change.getCheckpointId > upToCheckpointId {
+    self.prevEntityChanges->Array.forEach(change => {
+      let checkpointId = change->Change.getCheckpointId
+      if checkpointId > upToCheckpointId {
         keptPrev->Array.push(change)
-      } else {
+      } else if checkpointId > committedCheckpointId {
         changes->Array.push(change)
       }
-    )
+      // Drop changes at or below committedCheckpointId: they were already
+      // snapshotted by the write that committed them. They land here when an
+      // entity is overwritten while that write is still in flight — set's
+      // guard compares against the not-yet-advanced committed checkpoint —
+      // and re-emitting them would write duplicate history rows.
+    })
+    let removedCount = self.prevEntityChanges->Array.length - keptPrev->Array.length
     self.prevEntityChanges = keptPrev
-    self.changesCount = self.changesCount -. changes->Array.length->Int.toFloat
+    self.changesCount = self.changesCount -. removedCount->Int.toFloat
     self.latestEntityChangeById->Utils.Dict.forEach(change => {
       let checkpointId = change->Change.getCheckpointId
       if checkpointId > committedCheckpointId && !(checkpointId > upToCheckpointId) {

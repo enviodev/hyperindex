@@ -158,6 +158,12 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
         chain.validate_endblock_lte_startblock()?;
         chain.validate_finite_endblock_networks()?;
 
+        // Addresses are compared case-insensitively: checksum and lowercase
+        // spellings of the same address collide on the (chainId, address)
+        // primary key of envio_addresses at runtime.
+        let mut contract_by_address: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+
         for contract in chain.contracts.as_ref().unwrap_or(&vec![]) {
             if contract.config.as_ref().is_some() {
                 contract_names.push(contract.name.clone());
@@ -169,6 +175,33 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
                     return Err(anyhow!(
                         "One of the contract addresses in the config file isn't valid",
                     ));
+                }
+
+                match contract_by_address
+                    .insert(contract_address.to_lowercase(), contract.name.clone())
+                {
+                    Some(existing_contract) if existing_contract == contract.name => {
+                        return Err(anyhow!(
+                            "Address {} is listed multiple times for the contract {} on chain {}. \
+                             Please remove the duplicate from your config.",
+                            contract_address,
+                            contract.name,
+                            chain.id
+                        ));
+                    }
+                    Some(existing_contract) => {
+                        return Err(anyhow!(
+                            "Address {} on chain {} is configured for multiple contracts: {} and \
+                             {}. Indexing the same address with multiple contract definitions is \
+                             not supported. Please define the events on a single contract \
+                             definition instead.",
+                            contract_address,
+                            chain.id,
+                            existing_contract,
+                            contract.name
+                        ));
+                    }
+                    None => {}
                 }
             }
         }
@@ -588,6 +621,86 @@ mod tests {
              They are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."
         );
+    }
+
+    mod evm {
+        use crate::config_parsing::human_config::evm::HumanConfig;
+        use crate::config_parsing::validation::validate_deserialized_config_yaml;
+
+        fn parse(yaml: &str) -> HumanConfig {
+            serde_yaml::from_str(yaml).unwrap()
+        }
+
+        #[test]
+        fn validation_rejects_same_address_on_two_contracts_of_one_chain() {
+            let cfg = parse(
+                r#"
+name: x
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: AaveToken
+        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
+      - name: AaveV3
+        address:
+          - "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
+"#,
+            );
+            let err = validate_deserialized_config_yaml(&cfg).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Address 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9 on chain 1 is configured for \
+                 multiple contracts: AaveToken and AaveV3. Indexing the same address with \
+                 multiple contract definitions is not supported. Please define the events on a \
+                 single contract definition instead."
+            );
+        }
+
+        #[test]
+        fn validation_rejects_address_listed_twice_for_one_contract() {
+            // Case-insensitive: checksum and lowercase spellings are the same address
+            let cfg = parse(
+                r#"
+name: x
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: AaveToken
+        address:
+          - "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
+          - "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"
+"#,
+            );
+            let err = validate_deserialized_config_yaml(&cfg).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Address 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9 is listed multiple times for \
+                 the contract AaveToken on chain 1. Please remove the duplicate from your config."
+            );
+        }
+
+        #[test]
+        fn validation_accepts_same_address_on_different_chains() {
+            let cfg = parse(
+                r#"
+name: x
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: AaveToken
+        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
+  - id: 137
+    start_block: 0
+    contracts:
+      - name: AaveToken
+        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
+"#,
+            );
+            validate_deserialized_config_yaml(&cfg).unwrap();
+        }
     }
 
     mod svm {
