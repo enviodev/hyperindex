@@ -237,9 +237,14 @@ let rec onQueryResponse = (
           },
         ),
       }
-      schedule(state, (~stateId) =>
-        processPartitionQueryResponse(state, partitionQueryResponse, ~stateId)
-      )
+      schedule(state, (~stateId) => {
+        // Deliberately detached: a contract-register failure (a user error)
+        // must surface as an uncaught rejection carrying the original error.
+        // The TestIndexer worker relies on this to relay the original message
+        // through the worker 'error' event instead of a generic exit code.
+        processPartitionQueryResponse(state, partitionQueryResponse, ~stateId)->Promise.ignore
+        Promise.resolve()
+      })
     | Some(reorgDetectedBlockNumber) =>
       let restoredChainFetchers = switch state.rollbackState {
       | RollbackReady({eventsProcessedDiffByChain}) =>
@@ -495,19 +500,23 @@ and processPartitionQueryResponse = async (
 
   // The contract registration above is async, so the submit happens on a fresh
   // read of the latest fetch state.
-  submitQueryResponse(
-    state,
-    ~newItems,
-    ~newItemsWithDcs,
-    ~knownHeight,
-    ~latestFetchedBlock={
-      blockNumber: latestFetchedBlockNumber,
-      blockTimestamp: latestFetchedBlockTimestamp,
-    },
-    ~chain,
-    ~query,
-    ~stateId,
-  )
+  try {
+    submitQueryResponse(
+      state,
+      ~newItems,
+      ~newItemsWithDcs,
+      ~knownHeight,
+      ~latestFetchedBlock={
+        blockNumber: latestFetchedBlockNumber,
+        blockTimestamp: latestFetchedBlockTimestamp,
+      },
+      ~chain,
+      ~query,
+      ~stateId,
+    )
+  } catch {
+  | exn => errorExit(state, exn->ErrorHandling.make(~msg=unexpectedErrorMsg))
+  }
 }
 
 and checkAndFetchForChain = async (state: t, chain, ~stateId) => {
@@ -609,7 +618,7 @@ and updateChainMetadataAndCheckForExit = async (state: t, ~shouldExit, ~stateId)
     updateChainMetadataTable(chainManager, ~inMemoryStore=state.ctx.inMemoryStore)
     await state.ctx.inMemoryStore->InMemoryStore.flush
     successExit(state, ~stateId)
-  | ExitWithError(msg) => errorExit(state, ErrorHandling.make(JsError.throwWithMessage(msg)))
+  | ExitWithError(msg) => errorExit(state, ErrorHandling.make(Utils.Error.make(msg)))
   | NoExit => updateChainMetadataTable(chainManager, ~inMemoryStore=state.ctx.inMemoryStore)
   }
 }
@@ -653,10 +662,13 @@ and processEventBatch = async (state: t, ~stateId) => {
 
     if shouldEnterReorgThreshold {
       enterReorgThreshold(state)
-      schedule(state, (~stateId) => nextQuery(state, ~target=CheckAllChains, ~stateId))
     }
 
     if progressedChainsById->Utils.Dict.isEmpty {
+      if shouldEnterReorgThreshold {
+        schedule(state, (~stateId) => nextQuery(state, ~target=CheckAllChains, ~stateId))
+      }
+
       // When resuming from persisted state, all events may already be processed.
       // Log the same completion message and handle exit just like eventBatchProcessed does.
       if (
