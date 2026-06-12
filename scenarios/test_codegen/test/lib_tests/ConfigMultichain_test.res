@@ -78,4 +78,93 @@ ORDER BY (id, envio_checkpoint_id)`,
       ))
     },
   )
+
+  Async.it(
+    "Includes the chain id column in the insert query for isolated entities",
+    async t => {
+      let snakeCase = makePublicConfig(
+        ~storage=%raw(`{postgres: true, postgresColumnNameFormat: "snake_case"}`),
+      )
+      let original = makePublicConfig(~storage=%raw(`{postgres: true}`))
+      let makeInsertQuery = (config: Config.t) => {
+        let isolated = config.userEntitiesByName->Dict.getUnsafe("IsolatedEntity")
+        PgStorage.makeInsertUnnestSetQuery(
+          ~pgSchema="s",
+          ~table=isolated.table,
+          ~itemSchema=PgStorage.getWriteSchema(isolated),
+          ~isRawEvents=false,
+        )
+      }
+
+      t.expect((makeInsertQuery(snakeCase), makeInsertQuery(original))).toEqual((
+        `INSERT INTO "s"."IsolatedEntity" ("id", "chain_id")
+SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id") DO UPDATE SET "chain_id" = EXCLUDED."chain_id";`,
+        `INSERT INTO "s"."IsolatedEntity" ("id", "chainId")
+SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id") DO UPDATE SET "chainId" = EXCLUDED."chainId";`,
+      ))
+    },
+  )
+
+  Async.it(
+    "Stamps the chain id from the change's checkpoint when writing isolated entities",
+    async t => {
+      let config = makePublicConfig(
+        ~storage=%raw(`{postgres: true, postgresColumnNameFormat: "snake_case"}`),
+      )
+      let isolated = config.userEntitiesByName->Dict.getUnsafe("IsolatedEntity")
+      let pgSchema = "multichain_write_test"
+      let sql = PgStorage.makeClient()
+      let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
+
+      let _ = await storage.initialize(
+        ~entities=[isolated],
+        ~enums=[EntityHistory.RowAction.config->Table.fromGenericEnumConfig],
+        ~envioInfo=%raw(`{}`),
+      )
+
+      let batch: Batch.t = {
+        totalBatchSize: 2,
+        items: [],
+        progressedChainsById: Dict.make(),
+        isInReorgThreshold: false,
+        checkpointIds: [1n, 2n],
+        checkpointChainIds: [1, 137],
+        checkpointBlockNumbers: [10, 20],
+        checkpointBlockHashes: [Null.null, Null.null],
+        checkpointEventsProcessed: [1, 1],
+      }
+      let entity = id =>
+        Dict.fromArray([("id", id->(Utils.magic: string => unknown))])->(
+          Utils.magic: dict<unknown> => Internal.entity
+        )
+
+      await storage.writeBatch(
+        ~batch,
+        ~rollback=None,
+        ~isInReorgThreshold=false,
+        ~config,
+        ~allEntities=[isolated],
+        ~updatedEffectsCache=[],
+        ~updatedEntities=[
+          {
+            entityConfig: isolated,
+            changes: [
+              Set({entityId: "a", entity: entity("a"), checkpointId: 1n}),
+              Set({entityId: "b", entity: entity("b"), checkpointId: 2n}),
+            ],
+          },
+        ],
+        ~chainMetaData=None,
+      )
+
+      let rows = await sql->Postgres.unsafe(
+        `SELECT * FROM "${pgSchema}"."IsolatedEntity" ORDER BY "id";`,
+      )
+
+      t.expect(
+        rows,
+        ~message="Rows should carry the chain id of the checkpoint their change was made at",
+      ).toEqual(%raw(`[{id: "a", chain_id: 1}, {id: "b", chain_id: 137}]`))
+    },
+  )
 })

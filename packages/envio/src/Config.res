@@ -144,6 +144,9 @@ module EnvioAddresses = {
     // always required to have Postgres enabled (Storage::resolve forbids
     // a Postgres-disabled global), so this is safe regardless of mode.
     storage: {postgres: true, clickhouse: false},
+    // The chain id is an explicit part of the schema, so no implicit
+    // chain id column should be added.
+    crossChain: true,
   }->Internal.fromGenericEntityConfig
 }
 
@@ -445,12 +448,10 @@ let parseEntitiesFromJson = (
 
     // Cross-chain entities (unordered multichain mode) share rows across
     // chains; isolated ones are chain-scoped, so their tables get a chain id
-    // column. It's not part of the entity schema: the column exists in the
-    // database only.
-    let fields = switch entityJson["crossChain"] {
-    | Some(true) => fields
-    | _ => fields->Array.concat([chainIdField])
-    }
+    // column. It's not part of the entity schema: storage writes stamp the
+    // value from the change's checkpoint.
+    let crossChain = entityJson["crossChain"]->Option.getOr(false)
+    let fields = crossChain ? fields : fields->Array.concat([chainIdField])
 
     let table = Table.mkTable(
       entityName,
@@ -500,7 +501,7 @@ let parseEntitiesFromJson = (
       schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
       table,
       storage,
-      crossChain: ?entityJson["crossChain"],
+      crossChain,
     }->Internal.fromGenericEntityConfig
   })
 }

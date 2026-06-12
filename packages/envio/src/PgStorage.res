@@ -106,6 +106,82 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
       : ""});`
 }
 
+// Isolated (non cross-chain) entities have a chain id column which is not
+// part of the entity schema — writes stamp the value onto entity copies, so
+// inserts need a schema with the chainId field appended.
+let getWriteSchema: Internal.entityConfig => S.t<
+  Internal.entity,
+> = Utils.WeakMap.memoize((entityConfig: Internal.entityConfig) =>
+  if entityConfig.crossChain {
+    entityConfig.schema
+  } else {
+    switch entityConfig.schema->S.classify {
+    | Object({items}) =>
+      S.schema(s => {
+        let dict = Dict.make()
+        items->Array.forEach(({location, schema}) => dict->Dict.set(location, s.matches(schema)))
+        dict->Dict.set("chainId", s.matches(S.int->S.toUnknown))
+        dict
+      })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>)
+    | _ =>
+      JsError.throwWithMessage(
+        `Failed creating write schema for entity "${entityConfig.name}". Expected an object schema.`,
+      )
+    }
+  }
+)
+
+let withChainId = (entity: Internal.entity, ~chainId: int): Internal.entity => {
+  let copy = entity->(Utils.magic: Internal.entity => dict<unknown>)->Dict.copy
+  copy->Dict.set("chainId", chainId->(Utils.magic: int => unknown))
+  copy->(Utils.magic: dict<unknown> => Internal.entity)
+}
+
+// Stamps the chain id onto Set changes of isolated entities, resolved from
+// the checkpoint the change was made at. Rollback-restored changes reference
+// a checkpoint outside of the batch — their entities already carry the chain
+// id from the history row, so they pass through unchanged.
+let stampIsolatedChainIds = (
+  ~updatedEntities: array<Persistence.updatedEntity>,
+  ~batch: Batch.t,
+): array<Persistence.updatedEntity> => {
+  let hasIsolated =
+    updatedEntities->Array.some(({entityConfig}: Persistence.updatedEntity) =>
+      !entityConfig.crossChain
+    )
+  if !hasIsolated {
+    updatedEntities
+  } else {
+    let chainIdByCheckpointId = Dict.make()
+    for idx in 0 to batch.checkpointIds->Array.length - 1 {
+      chainIdByCheckpointId->Dict.set(
+        batch.checkpointIds->Array.getUnsafe(idx)->BigInt.toString,
+        batch.checkpointChainIds->Array.getUnsafe(idx),
+      )
+    }
+    updatedEntities->Array.map(({entityConfig, changes} as update: Persistence.updatedEntity) =>
+      if entityConfig.crossChain {
+        update
+      } else {
+        {
+          entityConfig,
+          changes: changes->Array.map(change =>
+            switch change {
+            | Set({entityId, entity, checkpointId}) =>
+              switch chainIdByCheckpointId->Dict.get(checkpointId->BigInt.toString) {
+              | Some(chainId) =>
+                Change.Set({entityId, checkpointId, entity: entity->withChainId(~chainId)})
+              | None => change
+              }
+            | Delete(_) => change
+            }
+          ),
+        }
+      }
+    )
+  }
+}
+
 let entityHistoryCache = Utils.WeakMap.make()
 let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgEntityHistory<
   'entity,
@@ -160,7 +236,9 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
         ~fields=dataFields->Array.concat([checkpointIdField, actionField]),
       )
 
-      let setChangeSchema = EntityHistory.makeSetUpdateSchema(entityConfig.schema)
+      // The write schema so isolated entities record the chain id in history
+      // rows — rollback restore reads it back from there.
+      let setChangeSchema = EntityHistory.makeSetUpdateSchema(getWriteSchema(entityConfig))
 
       {
         EntityHistory.table,
@@ -308,7 +386,12 @@ let rec makeFilterCondition = (
         }),
       )
     }
-  let serializeParamOrThrow = (~queryField: Table.queryField, ~fieldName, ~fieldValue: unknown, ~isArray) => {
+  let serializeParamOrThrow = (
+    ~queryField: Table.queryField,
+    ~fieldName,
+    ~fieldValue: unknown,
+    ~isArray,
+  ) => {
     let param = try fieldValue->S.reverseConvertToJsonOrThrow(
       isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
     ) catch {
@@ -1056,7 +1139,7 @@ let rec writeBatch = async (
               sql->setOrThrow(
                 ~items=entitiesToSet,
                 ~table=entityConfig.table,
-                ~itemSchema=entityConfig.schema,
+                ~itemSchema=getWriteSchema(entityConfig),
                 ~pgSchema,
               ),
             )
@@ -1754,6 +1837,10 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~updatedEntities,
     ~chainMetaData,
   ) => {
+    // Before the storage split, so the ClickHouse sink gets stamped
+    // entities as well.
+    let updatedEntities = stampIsolatedChainIds(~updatedEntities, ~batch)
+
     let pgUpdates = []
     let chUpdates = []
     for i in 0 to updatedEntities->Array.length - 1 {
