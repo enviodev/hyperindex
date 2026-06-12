@@ -371,26 +371,15 @@ module Indexer = {
       ~registrations,
       ~reducedPollingInterval?,
     )
-    let globalState = GlobalState.make(
+    let state = GlobalState.make(
       ~ctx,
       ~chainManager,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
+      ~markBatchProcessed=MarkBatchProcessedAdapter.make(~inMemoryStore=ctx.inMemoryStore),
       ~onError,
     )
-    let gsManager =
-      globalState->GlobalStateManager.make(
-        ~reducers=GlobalState.makeReducers(
-          ~markBatchProcessed=MarkBatchProcessedAdapter.make(~inMemoryStore=ctx.inMemoryStore),
-        ),
-      )
-    gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
-    /*
-        NOTE:
-          This `ProcessEventBatch` dispatch shouldn't be necessary but we are adding for safety, it should immediately return doing 
-          nothing since there is no events on the queues.
- */
-    gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
+    state->GlobalState.start
 
     {
       getBatchWritePromise: () => {
@@ -435,7 +424,7 @@ module Indexer = {
       getRollbackReadyPromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
           while (
-            switch (gsManager->GlobalStateManager.getState).rollbackState {
+            switch state.rollbackState {
             | RollbackReady(_) => false
             | _ => true
             }
@@ -545,11 +534,8 @@ module Indexer = {
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.
         await ctx.inMemoryStore->RealInMemoryStore.flush
-        let state = gsManager->GlobalStateManager.getState
-        gsManager->GlobalStateManager.setState({
-          ...gsManager->GlobalStateManager.getState,
-          id: state.id + 1,
-        })
+        // Bump the id so any task/action still in flight from this run is discarded.
+        state.id = state.id + 1
         await make(
           ~chains,
           ~enableHasura,
