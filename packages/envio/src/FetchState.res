@@ -200,7 +200,7 @@ module OptimizedPartitions = {
   // We optimize for fastest data which we get in any case.
   // If the value is off, it'll only result in
   // quering the same block range multiple times
-  let tooFarBlockRange = 20_000
+  let tooFarBlockRange = 50_000
 
   let ascSortFn = (a, b) =>
     Int.compare(a.latestFetchedBlock.blockNumber, b.latestFetchedBlock.blockNumber)
