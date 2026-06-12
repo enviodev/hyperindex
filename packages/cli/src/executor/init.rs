@@ -426,8 +426,9 @@ fn is_agentic_init_mode(env: &AgenticEnv) -> bool {
 
 /// `--help` preamble for `envio init`, shown before clap's generated usage.
 /// Agents reflexively probe `--help` before running a command; leading with the
-/// zero-arg quick start (and the same guidance the bare command prints) keeps
-/// them on the supported path instead of the advanced subcommands.
+/// zero-arg quick start keeps them on the supported path instead of the
+/// advanced subcommands. The detailed plan is left to the bare command, which
+/// prints it once the agent actually runs `envio init`.
 pub fn init_help_preamble() -> String {
     let mut out = String::new();
     out.push_str(
@@ -435,11 +436,10 @@ pub fn init_help_preamble() -> String {
          pnpx envio init\n\n",
     );
     out.push_str(
-        "At a terminal it opens an interactive setup. When an AI agent or CI runs it, init prints \
-         the plan below and the exact command to continue with. The subcommands further down are \
-         manual overrides for when you already know precisely what you want.\n\n",
+        "At a terminal it opens an interactive setup; when an AI agent or CI runs it, init prints \
+         the next step to take. The subcommands below are manual overrides for when you already \
+         know precisely what you want.\n",
     );
-    out.push_str(&agentic_init_prompt(false));
     out
 }
 

@@ -6,26 +6,7 @@ Quick start — the best way to begin, for both humans and AI. Run with no subco
 
   pnpx envio init
 
-At a terminal it opens an interactive setup. When an AI agent or CI runs it, init prints the plan below and the exact command to continue with. The subcommands further down are manual overrides for when you already know precisely what you want.
-
-Welcome to Envio Indexer! Let's set up an indexer that will become a reliable blockchain backend you trust, love, and own.
-
-Leave the rest to your favorite agent:
-
-  1. ENVIO_API_TOKEN is not set. Ask the user to create one at https://envio.dev/app/api-tokens and provide it to the session before continuing.
-  2. Prompt the user for the project intent if it is missing from context (what should the indexer track and surface?).
-  3. Determine the chain, contract, and addresses needed to produce that result. Use web search or block-explorer tool calls when the user hasn't supplied them.
-  4. To continue, call:
-
-pnpx envio init contract-import explorer \
-  -n ${indexer-name} \
-  -c ${address} \
-  -b ${chainId} \
-  --single-contract \
-  --all-events \
-  -d ${directory}
-
-Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until the user's goal is met.
+At a terminal it opens an interactive setup; when an AI agent or CI runs it, init prints the next step to take. The subcommands below are manual overrides for when you already know precisely what you want.
 
 
 Initialize an indexer with one of the initialization options
