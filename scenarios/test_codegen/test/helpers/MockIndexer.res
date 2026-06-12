@@ -376,7 +376,6 @@ module Indexer = {
       ~chainManager,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
-      ~markBatchProcessed=MarkBatchProcessedAdapter.make(~inMemoryStore=ctx.inMemoryStore),
       ~onError,
     )
     state->GlobalState.start

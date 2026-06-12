@@ -841,7 +841,6 @@ let start = async (
     ~isDevelopmentMode,
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,
-    ~markBatchProcessed=MarkBatchProcessedAdapter.make(~inMemoryStore=ctx.inMemoryStore),
     ~onError,
   )
   if shouldUseTui {
