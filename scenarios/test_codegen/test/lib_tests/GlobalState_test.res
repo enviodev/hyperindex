@@ -1,5 +1,7 @@
 open Vitest
 
+let nextImmediate = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => resolve()))
+
 let makeState = () => {
   let config = Config.loadWithoutRegistrations()
 
@@ -71,7 +73,7 @@ describe("GlobalState scheduling", () => {
     state.id = state.id + 1
     state->GlobalState.schedule(async (~stateId) => runs->Array.push(stateId))
 
-    await Utils.delay(1)
+    await nextImmediate()
 
     t.expect(runs, ~message="Only the schedule after the bump should run").toEqual([1])
   })
@@ -97,7 +99,7 @@ describe("GlobalState scheduling", () => {
       state.rollbackState = FindingReorgDepth
 
       state->GlobalState.eventBatchProcessed(~batch, ~stateId=staleId)
-      await Utils.delay(1)
+      await nextImmediate()
 
       t.expect(
         {
@@ -131,7 +133,7 @@ describe("GlobalState scheduling", () => {
     state.id = state.id + 1
 
     state->GlobalState.eventBatchProcessed(~batch, ~stateId=staleId)
-    await Utils.delay(1)
+    await nextImmediate()
 
     t.expect(
       {
