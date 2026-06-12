@@ -394,6 +394,7 @@ let parseEntitiesFromJson = (
   entitiesJson: array<'entityJson>,
   ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
   ~globalStorage: storage,
+  ~chainIdField: Table.fieldOrDerived,
 ): array<Internal.entityConfig> => {
   entitiesJson->Array.mapWithIndex((entityJson, index) => {
     let entityName = entityJson["name"]
@@ -441,6 +442,15 @@ let parseEntitiesFromJson = (
           },
         )
       )
+
+    // Cross-chain entities (unordered multichain mode) share rows across
+    // chains; isolated ones are chain-scoped, so their tables get a chain id
+    // column. It's not part of the entity schema: the column exists in the
+    // database only.
+    let fields = switch entityJson["crossChain"] {
+    | Some(true) => fields
+    | _ => fields->Array.concat([chainIdField])
+    }
 
     let table = Table.mkTable(
       entityName,
@@ -498,7 +508,9 @@ let parseEntitiesFromJson = (
 let publicConfigStorageSchema = S.schema(s =>
   {
     "postgres": s.matches(S.bool),
+    "postgresColumnNameFormat": s.matches(S.option(S.string)),
     "clickhouse": s.matches(S.option(S.bool)),
+    "clickhouseColumnNameFormat": s.matches(S.option(S.string)),
   }
 )
 
@@ -960,10 +972,19 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
   }
 
+  let chainIdDbName = format => format === Some("snake_case") ? Some("chain_id") : None
+  let chainIdField = Table.mkField(
+    "chainId",
+    Int32,
+    ~fieldSchema=S.int,
+    ~postgresDbName=?chainIdDbName(publicConfig["storage"]["postgresColumnNameFormat"]),
+    ~clickhouseDbName=?chainIdDbName(publicConfig["storage"]["clickhouseColumnNameFormat"]),
+  )
+
   let userEntities =
     publicConfig["entities"]
     ->Option.getOr([])
-    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage)
+    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage, ~chainIdField)
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 

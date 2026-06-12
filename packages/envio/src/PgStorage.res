@@ -106,15 +106,6 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
       : ""});`
 }
 
-// Appended to cross-chain entity tables at initialize. Nullable because
-// the write path doesn't populate it yet.
-let crossChainIdField = Table.mkField(
-  "chain_id",
-  Int32,
-  ~isNullable=true,
-  ~fieldSchema=S.null(S.int),
-)
-
 let entityHistoryCache = Utils.WeakMap.make()
 let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgEntityHistory<
   'entity,
@@ -144,13 +135,6 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
         | DerivedFrom(_) => None
         }
       )
-
-      // Must mirror the entity table shape from makeInitializeTransaction:
-      // makeBackfillHistoryQuery copies rows positionally via SELECT e.*.
-      let dataFields = switch entityConfig.crossChain {
-      | Some(true) => dataFields->Array.concat([crossChainIdField])
-      | _ => dataFields
-      }
 
       let actionField = Table.mkField(
         EntityHistory.changeFieldName,
@@ -209,15 +193,8 @@ let makeInitializeTransaction = (
   let allTables = generalTables->Array.copy
   let allEntityTables = []
   entities->Array.forEach((entityConfig: Internal.entityConfig) => {
-    let entityTable: Table.table = switch entityConfig.crossChain {
-    | Some(true) => {
-        ...entityConfig.table,
-        fields: entityConfig.table.fields->Array.concat([crossChainIdField]),
-      }
-    | _ => entityConfig.table
-    }
-    allEntityTables->Array.push(entityTable)->ignore
-    allTables->Array.push(entityTable)->ignore
+    allEntityTables->Array.push(entityConfig.table)->ignore
+    allTables->Array.push(entityConfig.table)->ignore
     allTables->Array.push(getEntityHistory(~entityConfig).table)->ignore
   })
   let derivedSchema = Schema.make(allEntityTables)

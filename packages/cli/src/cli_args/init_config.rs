@@ -315,6 +315,7 @@ pub mod fuel {
                 ecosystem: EcosystemTag::Fuel,
                 contracts: None,
                 raw_events: None,
+                multichain: None,
                 chains: network_configs,
             }
         }

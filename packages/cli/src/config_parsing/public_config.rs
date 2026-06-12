@@ -54,15 +54,31 @@ pub(crate) struct PublicConfigJson<'a> {
 #[serde(rename_all = "camelCase")]
 struct StorageConfig {
     postgres: bool,
+    // Per-backend column_name_format; emitted only for the non-default
+    // snake_case so the JSON stays byte-identical for existing projects.
+    // The runtime uses it to spell columns it appends itself (the chain id
+    // column in isolated multichain mode).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    postgres_column_name_format: Option<&'static str>,
     #[serde(skip_serializing_if = "is_false")]
     clickhouse: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clickhouse_column_name_format: Option<&'static str>,
 }
 
 impl From<&system_config::Storage> for StorageConfig {
     fn from(s: &system_config::Storage) -> Self {
+        let format_of = |backend: Option<system_config::StorageBackend>| match backend
+            .map(|b| b.column_name_format)
+        {
+            None | Some(ColumnNameFormat::Original) => None,
+            Some(ColumnNameFormat::SnakeCase) => Some("snake_case"),
+        };
         Self {
             postgres: s.postgres.is_some(),
+            postgres_column_name_format: format_of(s.postgres),
             clickhouse: s.clickhouse.is_some(),
+            clickhouse_column_name_format: format_of(s.clickhouse),
         }
     }
 }

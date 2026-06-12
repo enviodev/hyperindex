@@ -579,7 +579,7 @@ type genericEntityConfig<'entity> = {
   table: Table.table,
   storage: entityStorage,
   // Set for every entity in unordered multichain mode (absent in isolated
-  // mode). Storages add an extra chain_id column to the entity when true.
+  // mode, where the entity table gets a chain id column instead).
   crossChain?: bool,
 }
 type entityConfig = genericEntityConfig<entity>

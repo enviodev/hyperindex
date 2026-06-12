@@ -13,7 +13,9 @@ expression: json
   "rawEvents": true,
   "storage": {
     "postgres": true,
-    "clickhouse": true
+    "postgresColumnNameFormat": "snake_case",
+    "clickhouse": true,
+    "clickhouseColumnNameFormat": "snake_case"
   },
   "evm": {
     "chains": {

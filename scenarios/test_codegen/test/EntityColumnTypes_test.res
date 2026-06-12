@@ -143,14 +143,6 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
           "numeric_scale": Nullable.make(6),
           "is_nullable": "NO",
         },
-        {
-          "column_name": "chain_id",
-          "data_type": "integer",
-          "element_data_type": "",
-          "numeric_precision": Nullable.null,
-          "numeric_scale": Nullable.null,
-          "is_nullable": "YES",
-        },
       ])
     },
   )

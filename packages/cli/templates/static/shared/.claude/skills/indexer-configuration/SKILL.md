@@ -122,7 +122,9 @@ multichain: isolated # or unordered (default)
 ```
 
 - `unordered` (default) — events are processed as soon as they arrive from each chain and entities are shared across chains.
-- `isolated` — every chain's entities are kept isolated from each other.
+- `isolated` — every chain's entities are kept isolated from each other. Each entity table gets a non-nullable chain id column (`chainId`, or `chain_id` with `column_name_format: snake_case`), so entity fields with that name are rejected.
+
+Supported for all ecosystems (EVM, Fuel, SVM).
 
 ## Environment Variables
 

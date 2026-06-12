@@ -127,7 +127,6 @@ ORDER BY (id)`
   \`json\` String,
   \`enumField\` Enum8('ADMIN', 'USER'),
   \`optEnumField\` Nullable(Enum8('ADMIN', 'USER')),
-  \`chain_id\` Nullable(Int32),
   \`envio_checkpoint_id\` UInt64,
   \`envio_change\` Enum8('SET', 'DELETE')
 )
@@ -137,22 +136,6 @@ ORDER BY (id, envio_checkpoint_id)`
         t.expect(query, ~message="A entity history table SQL should match exactly").toBe(
           expectedQuery,
         )
-      },
-    )
-
-    Async.it(
-      "Should not add chain_id column for entities without crossChain",
-      async t => {
-        let entityConfig: Internal.entityConfig = {
-          ...MockIndexer.entityConfig(EntityWithAllTypes),
-          crossChain: ?None,
-        }
-        let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
-
-        t.expect(
-          query->String.includes("chain_id"),
-          ~message="History table should be created without a chain_id column",
-        ).toBe(false)
       },
     )
   })
@@ -165,9 +148,9 @@ ORDER BY (id, envio_checkpoint_id)`
         let query = ClickHouse.makeCreateViewQuery(~entityConfig=entity, ~database="test_db")
 
         let expectedQuery = `CREATE VIEW IF NOT EXISTS test_db.\`EntityWithAllTypes\` AS
-SELECT \`id\`, \`string\`, \`optString\`, \`arrayOfStrings\`, \`int_\`, \`optInt\`, \`arrayOfInts\`, \`float_\`, \`optFloat\`, \`arrayOfFloats\`, \`bool\`, \`optBool\`, \`bigInt\`, \`optBigInt\`, \`arrayOfBigInts\`, \`bigDecimal\`, \`optBigDecimal\`, \`bigDecimalWithConfig\`, \`arrayOfBigDecimals\`, \`timestamp\`, \`optTimestamp\`, \`json\`, \`enumField\`, \`optEnumField\`, \`chain_id\`
+SELECT \`id\`, \`string\`, \`optString\`, \`arrayOfStrings\`, \`int_\`, \`optInt\`, \`arrayOfInts\`, \`float_\`, \`optFloat\`, \`arrayOfFloats\`, \`bool\`, \`optBool\`, \`bigInt\`, \`optBigInt\`, \`arrayOfBigInts\`, \`bigDecimal\`, \`optBigDecimal\`, \`bigDecimalWithConfig\`, \`arrayOfBigDecimals\`, \`timestamp\`, \`optTimestamp\`, \`json\`, \`enumField\`, \`optEnumField\`
 FROM (
-  SELECT \`id\`, \`string\`, \`optString\`, \`arrayOfStrings\`, \`int_\`, \`optInt\`, \`arrayOfInts\`, \`float_\`, \`optFloat\`, \`arrayOfFloats\`, \`bool\`, \`optBool\`, \`bigInt\`, \`optBigInt\`, \`arrayOfBigInts\`, \`bigDecimal\`, \`optBigDecimal\`, \`bigDecimalWithConfig\`, \`arrayOfBigDecimals\`, \`timestamp\`, \`optTimestamp\`, \`json\`, \`enumField\`, \`optEnumField\`, \`chain_id\`, \`envio_change\`
+  SELECT \`id\`, \`string\`, \`optString\`, \`arrayOfStrings\`, \`int_\`, \`optInt\`, \`arrayOfInts\`, \`float_\`, \`optFloat\`, \`arrayOfFloats\`, \`bool\`, \`optBool\`, \`bigInt\`, \`optBigInt\`, \`arrayOfBigInts\`, \`bigDecimal\`, \`optBigDecimal\`, \`bigDecimalWithConfig\`, \`arrayOfBigDecimals\`, \`timestamp\`, \`optTimestamp\`, \`json\`, \`enumField\`, \`optEnumField\`, \`envio_change\`
   FROM test_db.\`envio_history_EntityWithAllTypes\`
   WHERE \`envio_checkpoint_id\` <= (SELECT max(id) FROM test_db.\`envio_checkpoints\`)
   ORDER BY \`envio_checkpoint_id\` DESC
