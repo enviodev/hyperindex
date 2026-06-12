@@ -43,67 +43,32 @@ let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingA
   registrationBlock: dc.registrationBlock,
 }
 
-let handleLoadByIds = (
-  state: testIndexerState,
-  ~tableName: string,
-  ~ids: array<string>,
-): JSON.t => {
+let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFilter.t): JSON.t => {
   let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
   let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
   let results = []
-  ids->Array.forEach(id => {
-    switch entityDict->Dict.get(id) {
-    | Some(entity) =>
-      // Serialize entity back to JSON for worker thread
-      let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
-      results->Array.push(jsonEntity)->ignore
-    | None => ()
+
+  // Field values arrive as JSON from the worker boundary, so parse them
+  // with the field's schema before comparing. This properly handles
+  // bigint and BigDecimal comparisons
+  let parseLeaf = (~fieldName, ~fieldValue: unknown, ~isArray): unknown => {
+    let queryField = switch entityConfig.table->Table.queryFields->Dict.get(fieldName) {
+    | Some(queryField) => queryField
+    | None => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
     }
-  })
-  results->JSON.Encode.array
-}
-
-let handleLoadByField = (
-  state: testIndexerState,
-  ~tableName: string,
-  ~fieldName: string,
-  ~fieldValue: JSON.t,
-  ~operator: Persistence.operator,
-): JSON.t => {
-  let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
-  let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
-  let results = []
-
-  // Get the field schema from the entity's table to properly parse the JSON field value
-  let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(fieldName) {
-  | Some(Table.Field({fieldSchema})) => fieldSchema
-  | _ => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
+    fieldValue->S.convertOrThrow(isArray ? queryField.arrayFieldSchema : queryField.fieldSchema)
   }
+  let filter = filter->EntityFilter.mapValues(~mapValue=parseLeaf)
 
-  // Parse JSON field value to typed value using the field's schema
-  let parsedFieldValue = fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
-
-  // Compare using TableIndices.FieldValue logic (same approach as InMemoryTable)
-  // This properly handles bigint and BigDecimal comparisons
   entityDict
   ->Dict.valuesToArray
   ->Array.forEach(entity => {
     // Cast entity to dict of field values (same approach as InMemoryTable)
-    let entityAsDict = entity->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
-    switch entityAsDict->Dict.get(fieldName) {
-    | Some(entityFieldValue) => {
-        let matches = switch operator {
-        | #"=" => entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
-        | #">" => entityFieldValue->TableIndices.FieldValue.gt(parsedFieldValue)
-        | #"<" => entityFieldValue->TableIndices.FieldValue.lt(parsedFieldValue)
-        }
-        if matches {
-          // Serialize entity back to JSON for worker thread
-          let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
-          results->Array.push(jsonEntity)->ignore
-        }
-      }
-    | None => ()
+    let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
+    if filter->EntityFilter.matches(~entity=entityAsDict) {
+      // Serialize entity back to JSON for worker thread
+      let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
+      results->Array.push(jsonEntity)->ignore
     }
   })
 
@@ -777,12 +742,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                   )
 
                 switch msg.payload {
-                | LoadByIds({tableName, ids}) => state->handleLoadByIds(~tableName, ~ids)->respond
-
-                | LoadByField({tableName, fieldName, fieldValue, operator}) =>
-                  state
-                  ->handleLoadByField(~tableName, ~fieldName, ~fieldValue, ~operator)
-                  ->respond
+                | Load({tableName, filter}) => state->handleLoad(~tableName, ~filter)->respond
 
                 | WriteBatch({
                     updatedEntities,

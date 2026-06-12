@@ -1,5 +1,3 @@
-let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema.graphql changes.`
-
 type contextParams = {
   item: Internal.item,
   checkpointId: Internal.checkpointId,
@@ -77,126 +75,29 @@ type entityContextParams = {
 
 let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
   let entityConfig = params.entityConfig
-  let filterKeys = filter->Dict.keysToArray
 
-  if filterKeys->Array.length === 0 {
-    JsError.throwWithMessage(
-      `Empty filter passed to context.${entityConfig.name}.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
-    )
-  }
-  if filterKeys->Array.length > 1 {
-    JsError.throwWithMessage(
-      `Multiple filter fields passed to context.${entityConfig.name}.getWhere(). Currently only one filter field per call is supported. Received fields: ${filterKeys->Array.joinUnsafe(
-          ", ",
-        )}.`,
-    )
-  }
-
-  let dbFieldName = filterKeys->Array.getUnsafe(0)
-  let operatorObj = filter->Dict.getUnsafe(dbFieldName)
-  let operatorKeys = operatorObj->Dict.keysToArray
-
-  if operatorKeys->Array.length === 0 {
-    JsError.throwWithMessage(
-      `Empty operator passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
-    )
-  }
-  if operatorKeys->Array.length > 1 {
-    JsError.throwWithMessage(
-      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Array.joinUnsafe(
-          ", ",
-        )}.`,
-    )
-  }
-
-  let operatorKey = operatorKeys->Array.getUnsafe(0)
-
-  let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
-  | None =>
-    JsError.throwWithMessage(
-      `Invalid field "${dbFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
-    )
-  | Some(DerivedFrom(_)) =>
-    JsError.throwWithMessage(
-      `The field "${dbFieldName}" on entity "${entityConfig.name}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
-    )
-  | Some(Field({isIndex: false, linkedEntity: None})) =>
-    JsError.throwWithMessage(
-      `The field "${dbFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${dbFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
-    )
-  | Some(Field({fieldSchema})) => fieldSchema
-  }
-
-  if operatorKey === "_in" {
-    let fieldValues =
-      operatorObj
-      ->Dict.getUnsafe(operatorKey)
-      ->(Utils.magic: unknown => array<unknown>)
-
-    fieldValues
-    ->Array.map(fieldValue =>
-      LoadLayer.loadByField(
-        ~loadManager=params.loadManager,
-        ~persistence=params.persistence,
-        ~operator=Eq,
-        ~entityConfig,
-        ~fieldName=dbFieldName,
-        ~fieldValueSchema=fieldSchema,
-        ~inMemoryStore=params.inMemoryStore,
-        ~shouldGroup=params.isPreload,
-        ~item=params.item,
-        ~fieldValue,
-      )
-    )
-    ->Promise.all
-    ->Promise.thenResolve(results => results->Array.flat)
-  } else if operatorKey === "_gte" || operatorKey === "_lte" {
-    // _gte and _lte are composed from Eq + Gt/Lt
-    let rangeOperator: TableIndices.Operator.t = operatorKey === "_gte" ? Gt : Lt
-    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
-
-    let loadWithOperator = operator =>
-      LoadLayer.loadByField(
-        ~loadManager=params.loadManager,
-        ~persistence=params.persistence,
-        ~operator,
-        ~entityConfig,
-        ~fieldName=dbFieldName,
-        ~fieldValueSchema=fieldSchema,
-        ~inMemoryStore=params.inMemoryStore,
-        ~shouldGroup=params.isPreload,
-        ~item=params.item,
-        ~fieldValue,
-      )
-
-    [loadWithOperator(Eq), loadWithOperator(rangeOperator)]
-    ->Promise.all
-    ->Promise.thenResolve(results => results->Array.flat)
-  } else {
-    let operator: TableIndices.Operator.t = switch operatorKey {
-    | "_eq" => Eq
-    | "_gt" => Gt
-    | "_lt" => Lt
-    | _ =>
-      JsError.throwWithMessage(
-        `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
-      )
-    }
-
-    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
-
-    LoadLayer.loadByField(
+  @inline
+  let loadWithFilter = filter =>
+    LoadLayer.loadByFilter(
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
-      ~operator,
       ~entityConfig,
-      ~fieldName=dbFieldName,
-      ~fieldValueSchema=fieldSchema,
       ~inMemoryStore=params.inMemoryStore,
       ~shouldGroup=params.isPreload,
       ~item=params.item,
-      ~fieldValue,
+      ~filter,
     )
+
+  switch filter->EntityFilter.parseGetWhereOrThrow(
+    ~entityName=entityConfig.name,
+    ~table=entityConfig.table,
+  ) {
+  | [single] => loadWithFilter(single)
+  | filters =>
+    filters
+    ->Array.map(filter => loadWithFilter(filter))
+    ->Promise.all
+    ->Promise.thenResolve(results => results->Array.flat)
   }
 }
 
@@ -389,7 +290,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         ->(Utils.magic: entityContextParams => unknown)
       | None =>
         JsError.throwWithMessage(
-          `Invalid context access by '${prop}' property. ${codegenHelpMessage}`,
+          `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
         )
       }
     }
@@ -458,7 +359,7 @@ let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
         {"add": addFn}->(Utils.magic: {"add": Address.t => unit} => unknown)
       } else {
         JsError.throwWithMessage(
-          `Invalid contract name '${prop}' on context.chain. ${codegenHelpMessage}`,
+          `Invalid contract name '${prop}' on context.chain. ${EntityFilter.codegenHelpMessage}`,
         )
       }
     }
@@ -481,7 +382,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
       ->(Utils.magic: contractRegisterParams => unknown)
     | _ =>
       JsError.throwWithMessage(
-        `Invalid context access by '${prop}' property. Use context.chain.ContractName.add(address) to register contracts. ${codegenHelpMessage}`,
+        `Invalid context access by '${prop}' property. Use context.chain.ContractName.add(address) to register contracts. ${EntityFilter.codegenHelpMessage}`,
       )
     }
   },

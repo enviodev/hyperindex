@@ -546,10 +546,11 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
     })
     ->Array.concat([
       Utils.delay(stallTimeout)->Promise.then(() => {
-        // Build fallback: sources not in mainSources with a valid role, even with recent lastFailedAt
+        // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
         let fallbackSources = []
         sourcesState->Array.forEach(sourceState => {
           if (
+            !sourceState.disabled &&
             !(mainSources->Array.includes(sourceState)) &&
             getSourceRole(
               ~sourceFor=sourceState.source.sourceFor,

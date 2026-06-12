@@ -36,6 +36,7 @@ impl Template for fuel::Template {
 impl Template for svm::Template {
     fn to_dir_name(&self) -> String {
         match self {
+            svm::Template::MetaplexTokenMetadata => "svm_metaplex",
             svm::Template::FeatureBlockHandler => "svmblock",
         }
         .to_string()

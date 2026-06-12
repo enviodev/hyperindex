@@ -6,15 +6,17 @@ pub mod config_parsing;
 pub mod constants;
 pub mod docker_env;
 mod evm;
+mod evm_hypersync_source;
+mod evm_rpc_source;
 pub mod executor;
 mod fuel;
 mod hbs_templating;
-mod hypersync_source;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
 mod project_paths;
 pub mod scripts;
 mod service_health;
+mod svm_hypersync_source;
 mod template_dirs;
 mod type_schema;
 mod utils;

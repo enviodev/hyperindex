@@ -15,13 +15,11 @@ type serializableUpdatedEntity = {
 // Worker -> Main thread payloads
 @tag("type")
 type workerPayload =
-  | @as("loadByIds") LoadByIds({tableName: string, ids: array<string>})
-  | @as("loadByField")
-  LoadByField({
+  | @as("load")
+  Load({
       tableName: string,
-      fieldName: string,
-      fieldValue: JSON.t,
-      operator: Persistence.operator,
+      // Leaf field values are JSON-serialized with the table's field schemas
+      filter: EntityFilter.t,
     })
   | @as("writeBatch")
   WriteBatch({
@@ -107,27 +105,29 @@ let makeStorage = (proxy: t): Persistence.storage => {
     )
   },
   resumeInitialState: async () => proxy.initialState,
-  loadByIdsOrThrow: async (~ids, ~table: Table.table, ~rowsSchema) => {
-    let response = await proxy->sendRequest(~payload=LoadByIds({tableName: table.tableName, ids}))
-    response->S.parseOrThrow(rowsSchema)
-  },
-  loadByFieldOrThrow: async (
-    ~fieldName,
-    ~fieldSchema,
-    ~fieldValue,
-    ~operator,
-    ~table: Table.table,
-    ~rowsSchema,
-  ) => {
+  loadOrThrow: async (~filter, ~table: Table.table) => {
+    let serializeLeafOrThrow = (~fieldName, ~fieldValue: unknown, ~isArray) => {
+      let queryField = switch table->Table.queryFields->Dict.get(fieldName) {
+      | Some(queryField) => queryField
+      | None =>
+        JsError.throwWithMessage(
+          `TestIndexer: The table "${table.tableName}" doesn't have the field "${fieldName}"`,
+        )
+      }
+      fieldValue
+      ->S.reverseConvertToJsonOrThrow(
+        isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
+      )
+      ->(Utils.magic: JSON.t => unknown)
+    }
     let response = await proxy->sendRequest(
-      ~payload=LoadByField({
+      ~payload=Load({
         tableName: table.tableName,
-        fieldName,
-        fieldValue: fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema),
-        operator,
+        // Field values must be JSON-safe to survive the worker thread boundary
+        filter: filter->EntityFilter.mapValues(~mapValue=serializeLeafOrThrow),
       }),
     )
-    response->S.parseOrThrow(rowsSchema)
+    response->S.parseOrThrow(table->Table.rowsSchema)
   },
   writeBatch: async (
     ~batch,

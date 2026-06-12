@@ -38,7 +38,7 @@ let evmSimulateBlockSchema = S.schema(s =>
   }
 )
 
-type evmSimulateBlock = {number: int, timestamp: int}
+type evmSimulateBlock = {number: int, timestamp: int, hash: string}
 
 let parseEvmSimulateBlock = (
   ~defaultBlockNumber: int,
@@ -125,7 +125,7 @@ let fuelSimulateBlockSchema = S.schema(s =>
   }
 )
 
-type fuelSimulateBlock = {height: int, time: int}
+type fuelSimulateBlock = {height: int, time: int, id: string}
 
 let parseFuelSimulateBlock = (
   ~defaultBlockNumber: int,
@@ -259,15 +259,15 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
         rawItem["block"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
       let transactionJson: option<JSON.t> =
         rawItem["transaction"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
-      let (block, blockNumber, timestamp) = switch config.ecosystem.name {
+      let (block, blockNumber, timestamp, blockHash) = switch config.ecosystem.name {
       | Fuel =>
         let block = parseFuelSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => fuelSimulateBlock)
-        (block, blockFields.height, blockFields.time)
+        (block, blockFields.height, blockFields.time, blockFields.id)
       | Evm =>
         let block = parseEvmSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
-        (block, blockFields.number, blockFields.timestamp)
+        (block, blockFields.number, blockFields.timestamp, blockFields.hash)
       | Svm => JsError.throwWithMessage("simulate is not supported for SVM ecosystem")
       }
       let transaction = switch config.ecosystem.name {
@@ -286,6 +286,7 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
           timestamp,
           chain,
           blockNumber,
+          blockHash,
           logIndex,
           event: {
             contractName: eventConfig.contractName,
@@ -320,18 +321,13 @@ let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
       let chainIdStr = chain->ChainMap.Chain.toChainId->Int.toString
       switch chainsDict->Dict.get(chainIdStr) {
       | Some(processChainJson) =>
-        let simulateRaw: option<array<JSON.t>> =
-          (processChainJson->(Utils.magic: JSON.t => {..}))["simulate"]->Nullable.toOption
+        let raw = processChainJson->(Utils.magic: JSON.t => {..})
+        let simulateRaw: option<array<JSON.t>> = raw["simulate"]->Nullable.toOption
         switch simulateRaw {
         | Some(simulateItems) =>
           let items = parse(~simulateItems, ~config, ~chainConfig)
-          // Use endBlock from processConfig (the user-specified range)
-          let startBlock: int =
-            (processChainJson->(Utils.magic: JSON.t => {..}))["startBlock"]->(
-              Utils.magic: 'a => int
-            )
-          let endBlock: int =
-            (processChainJson->(Utils.magic: JSON.t => {..}))["endBlock"]->(Utils.magic: 'a => int)
+          let startBlock: int = raw["startBlock"]->(Utils.magic: 'a => int)
+          let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
           let source = SimulateSource.make(~items, ~endBlock, ~chain)
           {...chainConfig, startBlock, endBlock, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig

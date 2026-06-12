@@ -1,0 +1,17 @@
+type TokenMetadataAccount {
+  id: ID!
+  mint: String!
+  updateAuthority: String
+  lastUpdatedSlot: Int!
+  lastUpdatedTime: Int!
+  updateCount: Int!
+  createdAtSlot: Int!
+  lastTxSignature: String
+}
+
+type ProgramStats {
+  id: ID!
+  totalInstructions: Int!
+  createCount: Int!
+  updateCount: Int!
+}

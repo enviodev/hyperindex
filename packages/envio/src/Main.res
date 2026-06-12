@@ -296,6 +296,59 @@ let getGlobalIndexer = (): 'indexer => {
     )
   }
 
+  // SVM identity: `{program, instruction}` from TS or
+  // `{instruction: GADT{contract, _0}}` from ReScript. Same two-format dance
+  // as the EVM `parseIdentityConfig`, but reading the SVM-native field names.
+  let parseSvmIdentityConfig = (identityConfig: 'a) => {
+    let raw =
+      identityConfig->(
+        Utils.magic: 'a => {"program": unknown, "instruction": unknown, "where": option<JSON.t>}
+      )
+    let (programName, instructionName) = if typeof(raw["program"]) === #string {
+      (
+        raw["program"]->(Utils.magic: unknown => string),
+        raw["instruction"]->(Utils.magic: unknown => string),
+      )
+    } else {
+      let inst = raw["instruction"]->(Utils.magic: unknown => {"contract": string, "_0": string})
+      (inst["contract"], inst["_0"])
+    }
+    let where = raw["where"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch where {
+    | None => None
+    | Some(_) =>
+      Some({
+        where: ?(where->(Utils.magic: option<JSON.t> => option<_>)),
+      })
+    }
+    (programName, instructionName, eventOptions)
+  }
+
+  // onInstruction: delegates to HandlerRegister.setHandler. The SVM analog of
+  // onEvent; the registration store keys on `(contractName, eventName)` which
+  // for SVM is `(programName, instructionName)`.
+  let onInstructionFn = (identityConfig: 'a, handler: 'b) => {
+    HandlerRegister.throwIfFinishedRegistration(~methodName="onInstruction")
+    let (programName, instructionName, eventOptions) = parseSvmIdentityConfig(identityConfig)
+    // The generic dispatch hands every handler `{event, context}`. SVM handlers
+    // receive the instruction under `instruction`, so remap the field here; the
+    // payload object itself is the `svmInstruction` built in SvmHyperSyncSource.
+    let userHandler =
+      handler->(
+        Utils.magic: 'b => Envio.svmOnInstructionArgs<Internal.handlerContext> => promise<unit>
+      )
+    HandlerRegister.setHandler(
+      ~contractName=programName,
+      ~eventName=instructionName,
+      (args: Internal.genericHandlerArgs<Internal.event, Internal.handlerContext>) =>
+        userHandler({
+          instruction: args.event->(Utils.magic: Internal.event => Envio.svmInstruction),
+          context: args.context,
+        }),
+      ~eventOptions,
+    )
+  }
+
   // contractRegister: delegates to HandlerRegister.setContractRegister
   let contractRegisterFn = (identityConfig: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="contractRegister")
@@ -467,6 +520,7 @@ let getGlobalIndexer = (): 'indexer => {
             "description",
             "chainIds",
             "chains",
+            "onInstruction",
             "onSlot",
             "~internalAndWillBeRemovedSoon_onRollbackCommit",
           ]
@@ -490,6 +544,7 @@ let getGlobalIndexer = (): 'indexer => {
         chains->(Utils.magic: {..} => unknown)
       }
     | "onEvent" => onEventFn->Utils.magic
+    | "onInstruction" => onInstructionFn->Utils.magic
     | "contractRegister" => contractRegisterFn->Utils.magic
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
     | "~internalAndWillBeRemovedSoon_onRollbackCommit" => onRollbackCommitFn->Utils.magic

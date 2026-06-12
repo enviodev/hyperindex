@@ -1,12 +1,10 @@
 module Entity = {
   type relatedEntityId = string
-  type indexWithRelatedIds = (TableIndices.Index.t, Utils.Set.t<relatedEntityId>)
-  // Keyed by TableIndices.Index.toString
-  type indicesSerializedToValue = dict<indexWithRelatedIds>
-  // Keyed by TableIndices.Index.getFieldName
-  type indexFieldNameToIndices = dict<indicesSerializedToValue>
+  type filterWithRelatedIds = (EntityFilter.t, Utils.Set.t<relatedEntityId>)
+  // Keyed by EntityFilter.toString
+  type filterIndices = dict<filterWithRelatedIds>
 
-  type entityIndices = Utils.Set.t<TableIndices.Index.t>
+  type entityFilters = Utils.Set.t<EntityFilter.t>
   type t = {
     latestEntityChangeById: dict<Change.t<Internal.entity>>,
     // Recorded changes (new latest ids + prevEntityChanges pushes), tracked
@@ -15,8 +13,8 @@ module Entity = {
     // Swapped out when a write starts so processing keeps appending while the
     // previous changes persist in the background.
     mutable prevEntityChanges: array<Change.t<Internal.entity>>,
-    mutable indicesByEntityId: dict<entityIndices>,
-    mutable fieldNameIndices: indexFieldNameToIndices,
+    mutable filtersByEntityId: dict<entityFilters>,
+    mutable filterIndices: filterIndices,
   }
 
   // Helper to extract entity ID from any entity
@@ -30,30 +28,21 @@ module Entity = {
       )
     }
 
-  let getOrCreateEntityIndices = (self: t, ~entityId) =>
-    switch self.indicesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
+  let getOrCreateEntityFilters = (self: t, ~entityId) =>
+    switch self.filtersByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | Some(s) => s
     | None =>
       let s = Utils.Set.make()
-      self.indicesByEntityId->Dict.set(entityId, s)
+      self.filtersByEntityId->Dict.set(entityId, s)
       s
     }
-
-  let makeIndicesSerializedToValue = (
-    ~index,
-    ~relatedEntityIds=Utils.Set.make(),
-  ): indicesSerializedToValue => {
-    let empty = Dict.make()
-    empty->Dict.set(index->TableIndices.Index.toString, (index, relatedEntityIds))
-    empty
-  }
 
   let make = (): t => {
     latestEntityChangeById: Dict.make(),
     changesCount: 0.,
     prevEntityChanges: [],
-    indicesByEntityId: Dict.make(),
-    fieldNameIndices: Dict.make(),
+    filtersByEntityId: Dict.make(),
+    filterIndices: Dict.make(),
   }
 
   // Changes to persist for checkpoints in (committedCheckpointId, upToCheckpointId].
@@ -64,15 +53,22 @@ module Entity = {
   > => {
     let changes = []
     let keptPrev = []
-    self.prevEntityChanges->Array.forEach(change =>
-      if change->Change.getCheckpointId > upToCheckpointId {
+    self.prevEntityChanges->Array.forEach(change => {
+      let checkpointId = change->Change.getCheckpointId
+      if checkpointId > upToCheckpointId {
         keptPrev->Array.push(change)
-      } else {
+      } else if checkpointId > committedCheckpointId {
         changes->Array.push(change)
       }
-    )
+      // Drop changes at or below committedCheckpointId: they were already
+      // snapshotted by the write that committed them. They land here when an
+      // entity is overwritten while that write is still in flight — set's
+      // guard compares against the not-yet-advanced committed checkpoint —
+      // and re-emitting them would write duplicate history rows.
+    })
+    let removedCount = self.prevEntityChanges->Array.length - keptPrev->Array.length
     self.prevEntityChanges = keptPrev
-    self.changesCount = self.changesCount -. changes->Array.length->Int.toFloat
+    self.changesCount = self.changesCount -. removedCount->Int.toFloat
     self.latestEntityChangeById->Utils.Dict.forEach(change => {
       let checkpointId = change->Change.getCheckpointId
       if checkpointId > committedCheckpointId && !(checkpointId > upToCheckpointId) {
@@ -99,63 +95,49 @@ module Entity = {
     })
     keysToDelete->Array.forEach(key => self.latestEntityChangeById->Utils.Dict.deleteInPlace(key))
     self.changesCount = self.changesCount -. keysToDelete->Array.length->Int.toFloat
-    self.indicesByEntityId = Dict.make()
-    self.fieldNameIndices = Dict.make()
+    self.filtersByEntityId = Dict.make()
+    self.filterIndices = Dict.make()
   }
 
   let updateIndices = (self: t, ~entity: Internal.entity) => {
     let entityId = entity->getEntityIdUnsafe
-    //Remove any invalid indices on entity
-    switch self.indicesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
+    let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
+
+    //Remove any invalid filters on entity
+    switch self.filtersByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | None => ()
-    | Some(entityIndices) =>
-      entityIndices->Utils.Set.forEach(index => {
-        let fieldName = index->TableIndices.Index.getFieldName
-        let fieldValue =
-          entity
-          ->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
-          ->Dict.getUnsafe(fieldName)
-        if !(index->TableIndices.Index.evaluate(~fieldName, ~fieldValue)) {
-          entityIndices->Utils.Set.delete(index)->ignore
+    | Some(entityFilters) =>
+      entityFilters->Utils.Set.forEach(filter => {
+        if !(filter->EntityFilter.matches(~entity=entityAsDict)) {
+          entityFilters->Utils.Set.delete(filter)->ignore
         }
       })
     }
 
-    self.fieldNameIndices->Utils.Dict.forEachWithKey((indices, fieldName) => {
-      // A missing key reads as `undefined`, which matches the `None` arm of
-      // `FieldValue.t` (`option<...>`). Mirror `addEmptyIndex` so nullable
-      // FK columns that were omitted on the set entity don't crash.
-      let fieldValue =
-        entity
-        ->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
-        ->Dict.getUnsafe(fieldName)
-      indices->Utils.Dict.forEach(((index, relatedEntityIds)) => {
-        if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
-          //Add entity id to indices and add index to entity indicies
-          relatedEntityIds->Utils.Set.add(entityId)->ignore
-          self->getOrCreateEntityIndices(~entityId)->Utils.Set.add(index)->ignore
-        } else {
-          relatedEntityIds->Utils.Set.delete(entityId)->ignore
-        }
-      })
+    self.filterIndices->Utils.Dict.forEach(((filter, relatedEntityIds)) => {
+      if filter->EntityFilter.matches(~entity=entityAsDict) {
+        //Add entity id to the filter index and the filter to entity filters
+        relatedEntityIds->Utils.Set.add(entityId)->ignore
+        self->getOrCreateEntityFilters(~entityId)->Utils.Set.add(filter)->ignore
+      } else {
+        relatedEntityIds->Utils.Set.delete(entityId)->ignore
+      }
     })
   }
 
   let deleteEntityFromIndices = (self: t, ~entityId: string) =>
-    switch self.indicesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
+    switch self.filtersByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | None => ()
-    | Some(entityIndices) =>
-      entityIndices->Utils.Set.forEach(index => {
-        switch self.fieldNameIndices
-        ->Utils.Dict.dangerouslyGetNonOption(index->TableIndices.Index.getFieldName)
-        ->Option.flatMap(indices =>
-          indices->Utils.Dict.dangerouslyGetNonOption(index->TableIndices.Index.toString)
+    | Some(entityFilters) =>
+      entityFilters->Utils.Set.forEach(filter => {
+        switch self.filterIndices->Utils.Dict.dangerouslyGetNonOption(
+          filter->EntityFilter.toString,
         ) {
-        | Some((_index, relatedEntityIds)) =>
+        | Some((_filter, relatedEntityIds)) =>
           let _wasRemoved = relatedEntityIds->Utils.Set.delete(entityId)
-        | None => () //Unexpected index should exist if it is entityIndices
+        | None => () //Unexpected filter index should exist if it is in entityFilters
         }
-        let _wasRemoved = entityIndices->Utils.Set.delete(index)
+        let _wasRemoved = entityFilters->Utils.Set.delete(filter)
       })
     }
 
@@ -214,84 +196,49 @@ module Entity = {
       ->Dict.getUnsafe(key)
       ->mapChangeToEntity
 
-  let hasIndex = (inMemTable: t, ~fieldName, ~operator: TableIndices.Operator.t) =>
-    fieldValueHash => {
-      switch inMemTable.fieldNameIndices->Utils.Dict.dangerouslyGetNonOption(fieldName) {
-      | None => false
-      | Some(indicesSerializedToValue) => {
-          let key = TableIndices.Index.toStringByParts(~fieldName, ~operator, ~fieldValueHash)
-          indicesSerializedToValue->Utils.Dict.dangerouslyGetNonOption(key) !== None
-        }
-      }
-    }
+  let hasIndex = (inMemTable: t) =>
+    (filterKey: string) =>
+      inMemTable.filterIndices->Utils.Dict.dangerouslyGetNonOption(filterKey) !== None
 
-  let getUnsafeOnIndex = (inMemTable: t, ~fieldName, ~operator: TableIndices.Operator.t) => {
+  let getUnsafeOnIndex = (inMemTable: t) => {
     let getEntity = inMemTable->getUnsafe
-    fieldValueHash => {
-      switch inMemTable.fieldNameIndices->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+    (filterKey: string) => {
+      switch inMemTable.filterIndices->Utils.Dict.dangerouslyGetNonOption(filterKey) {
       | None =>
-        JsError.throwWithMessage(`Unexpected error. Must have an index on field ${fieldName}`)
-      | Some(indicesSerializedToValue) => {
-          let key = TableIndices.Index.toStringByParts(~fieldName, ~operator, ~fieldValueHash)
-          switch indicesSerializedToValue->Utils.Dict.dangerouslyGetNonOption(key) {
-          | None =>
-            JsError.throwWithMessage(
-              `Unexpected error. Must have an index for the value ${fieldValueHash} on field ${fieldName}`,
-            )
-          | Some((_index, relatedEntityIds)) => {
-              let res =
-                relatedEntityIds
-                ->Utils.Set.toArray
-                ->Array.filterMap(entityId => {
-                  switch inMemTable.latestEntityChangeById->Dict.has(entityId) {
-                  | true => getEntity(entityId)
-                  | false => None
-                  }
-                })
-              res
-            }
+        JsError.throwWithMessage(`Unexpected error. Must have an index for the filter ${filterKey}`)
+      | Some((_filter, relatedEntityIds)) =>
+        relatedEntityIds
+        ->Utils.Set.toArray
+        ->Array.filterMap(entityId => {
+          switch inMemTable.latestEntityChangeById->Dict.has(entityId) {
+          | true => getEntity(entityId)
+          | false => None
           }
-        }
+        })
       }
     }
   }
 
-  let addEmptyIndex = (inMemTable: t, ~index) => {
-    let fieldName = index->TableIndices.Index.getFieldName
-    let relatedEntityIds = Utils.Set.make()
-
-    inMemTable.latestEntityChangeById->Utils.Dict.forEach(change => {
-      switch change->mapChangeToEntity {
-      | Some(entity) =>
-        let fieldValue =
-          entity
-          ->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
-          ->Dict.getUnsafe(fieldName)
-        if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
-          let entityId = entity->getEntityIdUnsafe
-          let _ = inMemTable->getOrCreateEntityIndices(~entityId)->Utils.Set.add(index)
-          let _ = relatedEntityIds->Utils.Set.add(entityId)
-        }
-      | None => ()
-      }
-    })
-    switch inMemTable.fieldNameIndices->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+  let addEmptyIndex = (inMemTable: t, ~filter: EntityFilter.t) => {
+    let filterKey = filter->EntityFilter.toString
+    switch inMemTable.filterIndices->Utils.Dict.dangerouslyGetNonOption(filterKey) {
+    | Some(_) => () //Should not happen, this means the index already exists
     | None =>
-      inMemTable.fieldNameIndices->Dict.set(
-        fieldName,
-        makeIndicesSerializedToValue(~index, ~relatedEntityIds),
-      )
-    | Some(indicesSerializedToValue) =>
-      switch indicesSerializedToValue->Utils.Dict.dangerouslyGetNonOption(
-        index->TableIndices.Index.toString,
-      ) {
-      | None =>
-        indicesSerializedToValue->Dict.set(
-          index->TableIndices.Index.toString,
-          (index, relatedEntityIds),
-        )
-      | Some(_) => () //Should not happen, this means the index already exists
-      }
+      let relatedEntityIds = Utils.Set.make()
+      inMemTable.latestEntityChangeById->Utils.Dict.forEach(change => {
+        switch change->mapChangeToEntity {
+        | Some(entity) =>
+          let entityAsDict =
+            entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
+          if filter->EntityFilter.matches(~entity=entityAsDict) {
+            let entityId = entity->getEntityIdUnsafe
+            let _ = inMemTable->getOrCreateEntityFilters(~entityId)->Utils.Set.add(filter)
+            let _ = relatedEntityIds->Utils.Set.add(entityId)
+          }
+        | None => ()
+        }
+      })
+      inMemTable.filterIndices->Dict.set(filterKey, (filter, relatedEntityIds))
     }
   }
 }

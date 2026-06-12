@@ -497,10 +497,7 @@ let injectedActionReducer = (~markBatchProcessed: Ports.MarkBatchProcessed.t) =>
         // Can safely reset rollback state, since overwrite is not possible.
         // If rollback is pending, the EventBatchProcessed will be handled by the invalid action reducer instead.
         rollbackState: NoRollback,
-        chainManager: state.chainManager->ChainManager.updateProgressedChains(
-          ~batch,
-          ~getTimestamp=state.ctx.config.ecosystem.getTimestamp,
-        ),
+        chainManager: state.chainManager->ChainManager.updateProgressedChains(~batch),
       }
 
       let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
@@ -616,10 +613,7 @@ let injectedInvalidatedActionReducer = (
       (
         {
           ...state,
-          chainManager: state.chainManager->ChainManager.updateProgressedChains(
-            ~batch,
-            ~getTimestamp=state.ctx.config.ecosystem.getTimestamp,
-          ),
+          chainManager: state.chainManager->ChainManager.updateProgressedChains(~batch),
         },
         [Rollback],
       )
@@ -883,6 +877,13 @@ let injectedTaskReducer = (
 
         let reorgChainId = reorgChain->ChainMap.Chain.toChainId
 
+        // Finish pending batch writes first: the target checkpoint, the progress
+        // diff and the rollback diff below must all be computed from the same db
+        // state. Otherwise an in-flight batch lands after the progress reads and
+        // its entity changes get reverted without the chain progress being
+        // rolled back, so the events are never reprocessed.
+        await state.ctx.inMemoryStore->InMemoryStore.flush
+
         let rollbackTargetCheckpointId = {
           switch await state.ctx.persistence.storage.getRollbackTargetCheckpoint(
             ~reorgChainId,
@@ -985,16 +986,16 @@ let injectedTaskReducer = (
                 fetchState: cf.fetchState->FetchState.rollback(
                   ~targetBlockNumber=rollbackTargetBlockNumber,
                 ),
+                committedProgressBlockNumber: Pervasives.min(
+                  cf.committedProgressBlockNumber,
+                  rollbackTargetBlockNumber,
+                ),
               }
             } else {
               cf
             }
           }
         })
-
-        // Finish pending writes so committedCheckpointId reflects the db before
-        // computing the rollback diff against it.
-        await state.ctx.inMemoryStore->InMemoryStore.flush
 
         let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(
           ~persistence=state.ctx.persistence,

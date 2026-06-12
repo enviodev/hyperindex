@@ -17,11 +17,15 @@ let loadById = (
     // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
-      await storage.loadByIdsOrThrow(
-        ~table=entityConfig.table,
-        ~rowsSchema=entityConfig.rowsSchema,
-        ~ids=idsToLoad,
-      )
+      (
+        await storage.loadOrThrow(
+          ~table=entityConfig.table,
+          ~filter=EntityFilter.In({
+            fieldName: Table.idFieldName,
+            fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
+          }),
+        )
+      )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
     | Persistence.StorageError({message, reason}) =>
       reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
@@ -264,11 +268,15 @@ let loadEffect = (
       let {table, outputSchema} = effect.storageMeta
 
       let dbEntities = try {
-        await storage.loadByIdsOrThrow(
-          ~table,
-          ~rowsSchema=Internal.effectCacheItemRowsSchema,
-          ~ids=idsToLoad,
-        )
+        (
+          await storage.loadOrThrow(
+            ~table,
+            ~filter=EntityFilter.In({
+              fieldName: Table.idFieldName,
+              fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
+            }),
+          )
+        )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
       } catch {
       | exn =>
         item
@@ -342,60 +350,38 @@ let loadEffect = (
   )
 }
 
-let loadByField = (
+let loadByFilter = (
   ~loadManager,
   ~persistence: Persistence.t,
-  ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
-  ~fieldName,
-  ~fieldValueSchema,
   ~shouldGroup,
   ~item,
-  ~fieldValue,
+  ~filter: EntityFilter.t,
 ) => {
-  let operatorCallName = switch operator {
-  | Eq => "eq"
-  | Gt => "gt"
-  | Lt => "lt"
-  }
-  let key = `${entityConfig.name}.getWhere.${fieldName}.${operatorCallName}`
+  let key = filter->EntityFilter.toOperationKey(~entityName=entityConfig.name)
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
-  let load = async (fieldValues: array<'fieldValue>, ~onError as _) => {
+  let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
 
     let size = ref(0)
 
-    let indiciesToLoad = fieldValues->Array.map((fieldValue): TableIndices.Index.t => {
-      Single({
-        fieldName,
-        fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
-        operator,
-      })
-    })
+    filters->Array.forEach(filter => inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter))
 
-    let _ = await indiciesToLoad
-    ->Array.map(async index => {
-      inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
+    // Loading a superset of rows via a merged query is safe: every loaded
+    // entity is matched against all registered indices, not only the
+    // query's own filter.
+    let queries = filters->EntityFilter.merge
+
+    let _ = await queries
+    ->Array.map(async filter => {
       try {
-        let entities = await storage.loadByFieldOrThrow(
-          ~operator=switch index {
-          | Single({operator: Gt}) => #">"
-          | Single({operator: Eq}) => #"="
-          | Single({operator: Lt}) => #"<"
-          },
-          ~table=entityConfig.table,
-          ~rowsSchema=entityConfig.rowsSchema,
-          ~fieldName=index->TableIndices.Index.getFieldName,
-          ~fieldValue=switch index {
-          | Single({fieldValue}) => fieldValue
-          },
-          ~fieldSchema=fieldValueSchema->(
-            Utils.magic: S.t<'fieldValue> => S.t<TableIndices.FieldValue.t>
-          ),
-        )
+        let entities =
+          (await storage.loadOrThrow(~table=entityConfig.table, ~filter))->(
+            Utils.magic: array<unknown> => array<Internal.entity>
+          )
 
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(
@@ -411,11 +397,13 @@ let loadByField = (
         reason->ErrorHandling.mkLogAndRaise(
           ~logger=Logging.createChildFrom(
             ~logger=item->Logging.getItemLogger,
+            // The executed query might be merged from multiple getWhere
+            // calls, so report it as the operation users write with the
+            // values bound to its placeholders, instead of an internal
+            // filter representation they never constructed.
             ~params={
-              "operator": operatorCallName,
-              "tableName": entityConfig.table.tableName,
-              "fieldName": fieldName,
-              "fieldValue": fieldValue,
+              "operation": key,
+              "params": filter->EntityFilter.getParams,
             },
           ),
           ~msg=message,
@@ -427,7 +415,7 @@ let loadByField = (
     timerRef->Prometheus.StorageLoad.endOperation(
       ~storage=storage.name,
       ~operation=key,
-      ~whereSize=fieldValues->Array.length,
+      ~whereSize=queries->Array.reduce(0, (acc, query) => acc + query->EntityFilter.valuesCount),
       ~size=size.contents,
     )
   }
@@ -435,11 +423,10 @@ let loadByField = (
   loadManager->LoadManager.call(
     ~key,
     ~load,
-    ~input=fieldValue,
+    ~input=filter,
     ~shouldGroup,
-    ~hasher=fieldValue =>
-      fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString,
-    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex(~fieldName, ~operator),
-    ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex(~fieldName, ~operator),
+    ~hasher=EntityFilter.toString,
+    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex,
+    ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex,
   )
 }

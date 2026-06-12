@@ -61,8 +61,7 @@ module Storage = {
     | #initialize
     | #resumeInitialState
     | #dumpEffectCache
-    | #loadByIdsOrThrow
-    | #loadByFieldOrThrow
+    | #loadOrThrow
   ]
 
   type t = {
@@ -77,18 +76,15 @@ module Storage = {
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,
     resolveLoadInitialState: Persistence.initialState => unit,
-    loadByIdsOrThrowCalls: array<{"ids": array<string>, "tableName": string}>,
-    loadByFieldOrThrowCalls: array<{
-      "fieldName": string,
-      "fieldValue": unknown,
+    loadOrThrowCalls: array<{
+      "filter": EntityFilter.t,
       "tableName": string,
-      "operator": Persistence.operator,
     }>,
     dumpEffectCacheCalls: ref<int>,
     storage: Persistence.storage,
   }
 
-  let make = (methods: array<method>) => {
+  let make = (methods: array<method>, ~dbEntities=[]) => {
     let implement = (method: method, fn) => {
       if methods->Array.includes(method) {
         fn
@@ -109,8 +105,7 @@ module Storage = {
     let initializeCalls = []
     let isInitializedResolveFns = []
     let initializeResolveFns = []
-    let loadByIdsOrThrowCalls = []
-    let loadByFieldOrThrowCalls = []
+    let loadOrThrowCalls = []
     let dumpEffectCacheCalls = ref(0)
     let resumeInitialStateCalls = []
     let resumeInitialStateResolveFns = []
@@ -118,8 +113,7 @@ module Storage = {
     {
       isInitializedCalls,
       initializeCalls,
-      loadByIdsOrThrowCalls,
-      loadByFieldOrThrowCalls,
+      loadOrThrowCalls,
       dumpEffectCacheCalls,
       resumeInitialStateCalls,
       resolveLoadInitialState: (initialState: Persistence.initialState) => {
@@ -167,40 +161,27 @@ module Storage = {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
           Promise.resolve()
         }),
-        loadByIdsOrThrow: (
-          type item,
-          ~ids,
-          ~table: Table.table,
-          ~rowsSchema as _: S.t<array<item>>,
-        ): promise<array<item>> => {
-          implementBody(#loadByIdsOrThrow, () => {
-            loadByIdsOrThrowCalls
+        loadOrThrow: (~filter, ~table: Table.table) => {
+          implementBody(#loadOrThrow, () => {
+            loadOrThrowCalls
             ->Array.push({
-              "ids": ids,
+              "filter": filter,
               "tableName": table.tableName,
             })
             ->ignore
-            Promise.resolve([])
-          })
-        },
-        loadByFieldOrThrow: (
-          ~fieldName,
-          ~fieldSchema as _,
-          ~fieldValue,
-          ~operator,
-          ~table: Table.table,
-          ~rowsSchema as _,
-        ) => {
-          implementBody(#loadByFieldOrThrow, () => {
-            loadByFieldOrThrowCalls
-            ->Array.push({
-              "fieldName": fieldName,
-              "fieldValue": fieldValue->Utils.magic,
-              "tableName": table.tableName,
-              "operator": operator,
-            })
-            ->ignore
-            Promise.resolve([])
+            let rows = switch dbEntities->Array.find(((
+              entityConfig: Internal.entityConfig,
+              _,
+            )) => entityConfig.table.tableName === table.tableName) {
+            | Some((_, rows)) =>
+              rows->Array.filter(row =>
+                filter->EntityFilter.matches(
+                  ~entity=row->(Utils.magic: 'entity => dict<EntityFilter.FieldValue.t>),
+                )
+              )
+            | None => []
+            }
+            Promise.resolve(rows->(Utils.magic: array<'entity> => array<unknown>))
           })
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
@@ -296,6 +277,9 @@ module Indexer = {
     ~batchSize=?,
     ~shouldRollbackOnReorg=true,
     ~reducedPollingInterval=?,
+    // Lets a test intercept storage methods, e.g. to stall writeBatch and
+    // exercise races between in-flight writes and the indexer loop.
+    ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
   ) => {
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
@@ -342,11 +326,8 @@ module Indexer = {
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
-    let storage = PgStorage.makeStorageFromEnv(
-      ~config,
-      ~sql,
-      ~pgSchema,
-      ~isHasuraEnabled=enableHasura,
+    let storage = mapStorage(
+      PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=enableHasura),
     )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
@@ -471,9 +452,9 @@ module Indexer = {
         sql
         ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(ec.rowsSchema)
+          items->S.parseOrThrow(ec.table->Table.pgRowsSchema)
         })
-        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+        ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
       queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
@@ -526,9 +507,9 @@ module Indexer = {
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
         )
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(entityConfig.rowsSchema)
+          items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
         })
-        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+        ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
       queryCheckpoints: () => {
         sql
@@ -578,6 +559,7 @@ module Indexer = {
           ~batchSize?,
           ~shouldRollbackOnReorg,
           ~reducedPollingInterval?,
+          ~mapStorage,
         )
       },
       graphql: query => {
@@ -897,6 +879,7 @@ module Source = {
                           timestamp: item.blockNumber,
                           chain,
                           blockNumber: item.blockNumber,
+                          blockHash: `0x${item.blockNumber->Int.toString}`,
                           logIndex: item.logIndex,
                           event: {
                             contractName: "MockContract",
@@ -911,7 +894,7 @@ module Source = {
                               "timestamp": item.blockNumber,
                               "hash": `0x${item.blockNumber->Int.toString}`,
                             }->Utils.magic,
-                          },
+                          }->Internal.fromGenericEvent,
                         })
                       },
                     ),
