@@ -274,6 +274,7 @@ enum ApiTokenInput {
 pub async fn prompt_missing_init_args(
     init_args: InitArgs,
     project_paths: &ProjectPaths,
+    is_non_interactive: bool,
 ) -> Result<InitConfig> {
     let directory: String = match &project_paths.directory {
         Some(args_directory) => {
@@ -297,12 +298,20 @@ pub async fn prompt_missing_init_args(
             }
             args_directory.clone()
         }
-        None => Text::new("Specify a folder name (ENTER to skip): ")
-            .with_default(DEFAULT_PROJECT_ROOT_PATH)
-            .with_validator(is_valid_foldername_inquire_validator)
-            .with_validator(is_directory_new_validator)
-            .with_validator(contains_no_whitespace_validator)
-            .prompt()?,
+        None => {
+            if is_non_interactive {
+                anyhow::bail!(
+                    "Running non-interactively but no project directory was provided. Pass \
+                     `--directory <name>` (or `-d <name>`) to set where the indexer is created."
+                );
+            }
+            Text::new("Specify a folder name (ENTER to skip): ")
+                .with_default(DEFAULT_PROJECT_ROOT_PATH)
+                .with_validator(is_valid_foldername_inquire_validator)
+                .with_validator(is_directory_new_validator)
+                .with_validator(contains_no_whitespace_validator)
+                .prompt()?
+        }
     };
 
     let name: String = match init_args.name {
@@ -328,6 +337,13 @@ pub async fn prompt_missing_init_args(
     let api_token: Option<String> = match init_args.api_token {
         Some(k) => Ok::<_, anyhow::Error>(Some(k)),
         None if ecosystem.uses_hypersync() => {
+            if is_non_interactive {
+                anyhow::bail!(
+                    "Running non-interactively but no HyperSync API token was provided. Pass \
+                     `--api-token <token>` or set the ENVIO_API_TOKEN environment variable. \
+                     Create one at https://envio.dev/app/api-tokens."
+                );
+            }
             let select = Select::new(
                 "Add an API token for HyperSync to your .env file?",
                 ApiTokenInput::iter().collect(),

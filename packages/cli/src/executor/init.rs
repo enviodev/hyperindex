@@ -45,7 +45,8 @@ pub async fn run_init_args(
     // routing it through `anyhow::bail!` would pass it through the JS host's
     // `Logging.error`, which wraps the message in pino's JSON envelope and
     // buries the steps the agent needs to read.
-    if init_args.init_commands.is_none() && is_agentic_init_mode(&AgenticEnv::from_process()) {
+    let is_non_interactive = is_agentic_init_mode(&AgenticEnv::from_process());
+    if init_args.init_commands.is_none() && is_non_interactive {
         let prompt = agentic_init_prompt(init_args.api_token.is_some());
         let mut stderr = std::io::stderr().lock();
         let _ = stderr.write_all(prompt.as_bytes());
@@ -55,7 +56,7 @@ pub async fn run_init_args(
 
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
-    let init_config = prompt_missing_init_args(init_args, project_paths)
+    let init_config = prompt_missing_init_args(init_args, project_paths, is_non_interactive)
         .await
         .context("Failed during interactive input")?;
 
@@ -421,6 +422,25 @@ fn is_agentic_init_mode(env: &AgenticEnv) -> bool {
         _ => {}
     }
     !env.stdout_is_tty || env.claudecode || env.ci || env.term.as_deref() == Some("dumb")
+}
+
+/// `--help` preamble for `envio init`, shown before clap's generated usage.
+/// Agents reflexively probe `--help` before running a command; leading with the
+/// zero-arg quick start (and the same guidance the bare command prints) keeps
+/// them on the supported path instead of the advanced subcommands.
+pub fn init_help_preamble() -> String {
+    let mut out = String::new();
+    out.push_str(
+        "Quick start — the best way to begin for both humans and AI. Run with no subcommand:\n\n  \
+         pnpx envio init\n\n",
+    );
+    out.push_str(
+        "At a terminal this opens an interactive setup; for AI agents and CI it prints \
+         step-by-step instructions to continue. Prefer it over the advanced subcommands below \
+         unless you already know exactly what you want.\n\n",
+    );
+    out.push_str(&agentic_init_prompt(false));
+    out
 }
 
 fn agentic_init_prompt(has_api_token: bool) -> String {

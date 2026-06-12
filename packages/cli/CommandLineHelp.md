@@ -68,12 +68,38 @@ This document contains the help content for the `envio` command-line program.
 
 Initialize an indexer with one of the initialization options
 
+Quick start — the best way to begin for both humans and AI. Run with no subcommand:
+
+  pnpx envio init
+
+At a terminal this opens an interactive setup; for AI agents and CI it prints step-by-step instructions to continue. Prefer it over the advanced subcommands below unless you already know exactly what you want.
+
+Welcome to Envio Indexer! Let's set up an indexer that will become a reliable blockchain backend you trust, love, and own.
+
+Leave the rest to your favorite agent:
+
+  1. ENVIO_API_TOKEN is not set. Ask the user to create one at https://envio.dev/app/api-tokens and provide it to the session before continuing.
+  2. Prompt the user for the project intent if it is missing from context (what should the indexer track and surface?).
+  3. Determine the chain, contract, and addresses needed to produce that result. Use web search or block-explorer tool calls when the user hasn't supplied them.
+  4. To continue, call:
+
+pnpx envio init contract-import explorer \
+  -n ${indexer-name} \
+  -c ${address} \
+  -b ${chainId} \
+  --single-contract \
+  --all-events \
+  -d ${directory}
+
+Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until the user's goal is met.
+
+
 **Usage:** `envio init [OPTIONS] [COMMAND]`
 
 ###### **Subcommands:**
 
-* `contract-import` — Initialize Evm indexer by importing config from a contract for a given chain
-* `template` — Initialize Evm indexer from an example template
+* `contract-import` — [Advanced] Initialize Evm indexer by importing config from a contract for a given chain
+* `template` — [Advanced] Initialize Evm indexer from an example template
 * `svm` — Initialization option for creating Svm indexer
 * `fuel` — Initialization option for creating Fuel indexer
 
@@ -94,7 +120,7 @@ Initialize an indexer with one of the initialization options
 
 ## `envio init contract-import`
 
-Initialize Evm indexer by importing config from a contract for a given chain
+[Advanced] Initialize Evm indexer by importing config from a contract for a given chain
 
 **Usage:** `envio init contract-import [OPTIONS] [COMMAND]`
 
@@ -149,7 +175,7 @@ Initialize from a local json ABI file
 
 ## `envio init template`
 
-Initialize Evm indexer from an example template
+[Advanced] Initialize Evm indexer from an example template
 
 **Usage:** `envio init template [OPTIONS]`
 

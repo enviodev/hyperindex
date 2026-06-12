@@ -39,6 +39,7 @@ pub struct ProjectPaths {
 #[derive(Debug, Subcommand)]
 pub enum CommandType {
     ///Initialize an indexer with one of the initialization options
+    #[command(before_long_help = crate::executor::init::init_help_preamble())]
     Init(InitArgs),
 
     /// Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching.
@@ -213,11 +214,11 @@ pub struct InitArgs {
 #[subenum(EvmInitFlowInteractive)]
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
 pub enum InitFlow {
-    ///Initialize Evm indexer by importing config from a contract for a given chain
+    ///[Advanced] Initialize Evm indexer by importing config from a contract for a given chain
     #[subenum(EvmInitFlowInteractive)]
     #[strum(serialize = "Contract Import")]
     ContractImport(evm::ContractImportArgs),
-    ///Initialize Evm indexer from an example template
+    ///[Advanced] Initialize Evm indexer from an example template
     #[subenum(EvmInitFlowInteractive)]
     Template(evm::TemplateArgs),
     ///Initialize Evm indexer by migrating config from an existing subgraph
@@ -508,6 +509,21 @@ mod test {
     fn envio_help_snapshot() {
         let mut cmd = CommandLineArgs::command().version("0.0.0-test");
         let rendered = cmd.render_help().to_string();
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn envio_init_help_snapshot() {
+        let mut cmd = CommandLineArgs::command();
+        // `--api-token` declares `env = "ENVIO_API_TOKEN"`, so clap renders the
+        // live value into the help when it's set. Hide it to keep the snapshot
+        // stable across machines.
+        let mut init_cmd = cmd
+            .find_subcommand_mut("init")
+            .expect("init subcommand exists")
+            .clone()
+            .mut_arg("api_token", |a| a.hide_env_values(true));
+        let rendered = init_cmd.render_long_help().to_string();
         insta::assert_snapshot!(rendered);
     }
 
