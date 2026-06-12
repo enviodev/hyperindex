@@ -140,6 +140,81 @@ ORDER BY (id, envio_checkpoint_id)`
     )
   })
 
+  describe("makeCreateHistoryTableQuery with nullable arrays", () => {
+    Async.it(
+      "Should render nullable array columns as Array(...), never Nullable(Array(...))",
+      async t => {
+        let entityConfig = MockIndexer.entityConfig(PostgresNumericPrecisionEntityTester)
+        let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
+
+        let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_history_PostgresNumericPrecisionEntityTester\` (
+  \`id\` String,
+  \`exampleBigInt\` Nullable(String),
+  \`exampleBigIntRequired\` String,
+  \`exampleBigIntArray\` Array(String),
+  \`exampleBigIntArrayRequired\` Array(String),
+  \`exampleBigDecimal\` Nullable(String),
+  \`exampleBigDecimalRequired\` String,
+  \`exampleBigDecimalArray\` Array(String),
+  \`exampleBigDecimalArrayRequired\` Array(String),
+  \`exampleBigDecimalOtherOrder\` String,
+  \`envio_checkpoint_id\` UInt64,
+  \`envio_change\` Enum8('SET', 'DELETE')
+)
+ENGINE = MergeTree()
+ORDER BY (id, envio_checkpoint_id)`
+
+        t.expect(query, ~message="Nullable array columns should use plain Array type").toBe(
+          expectedQuery,
+        )
+      },
+    )
+
+    Async.it(
+      "Should serialize a missing nullable array as an empty array",
+      async t => {
+        let entityConfig = MockIndexer.entityConfig(PostgresNumericPrecisionEntityTester)
+        let clickHouseSchema = ClickHouse.makeClickHouseEntitySchema(entityConfig.table)
+
+        let testEntity: Indexer.Entities.PostgresNumericPrecisionEntityTester.t = {
+          id: "test-id",
+          exampleBigInt: None,
+          exampleBigIntRequired: BigInt.fromInt(1),
+          exampleBigIntArray: None,
+          exampleBigIntArrayRequired: [BigInt.fromInt(2)],
+          exampleBigDecimal: None,
+          exampleBigDecimalRequired: BigDecimal.fromFloat(1.0),
+          exampleBigDecimalArray: None,
+          exampleBigDecimalArrayRequired: [BigDecimal.fromFloat(2.0)],
+          exampleBigDecimalOtherOrder: BigDecimal.fromFloat(3.0),
+        }
+
+        let serialized =
+          testEntity
+          ->(Utils.magic: Indexer.Entities.PostgresNumericPrecisionEntityTester.t => Internal.entity)
+          ->S.reverseConvertToJsonOrThrow(clickHouseSchema)
+
+        t.expect(
+          serialized,
+          ~message="Missing nullable arrays should serialize to []",
+        ).toEqual(
+          %raw(`{
+            "id": "test-id",
+            "exampleBigInt": null,
+            "exampleBigIntRequired": "1",
+            "exampleBigIntArray": [],
+            "exampleBigIntArrayRequired": ["2"],
+            "exampleBigDecimal": null,
+            "exampleBigDecimalRequired": "1",
+            "exampleBigDecimalArray": [],
+            "exampleBigDecimalArrayRequired": ["2"],
+            "exampleBigDecimalOtherOrder": "3"
+          }`),
+        )
+      },
+    )
+  })
+
   describe("makeCreateViewQuery", () => {
     Async.it(
       "Should create SQL for A entity view",

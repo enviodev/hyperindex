@@ -94,13 +94,15 @@ let getClickHouseFieldType = (
   | Entity(_) => "String"
   }
 
-  let baseType = if isArray {
+  // ClickHouse forbids Nullable(Array(...)), so array columns are never wrapped
+  // in Nullable. A null array maps to an empty array on insert.
+  if isArray {
     `Array(${baseType})`
+  } else if isNullable {
+    `Nullable(${baseType})`
   } else {
     baseType
   }
-
-  isNullable ? `Nullable(${baseType})` : baseType
 }
 
 // Creates an entity schema from table definition, using clickHouseDate for Date fields.
@@ -142,6 +144,14 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
                 uint52Schema
               }
             }
+          | _ if f.isArray && f.isNullable =>
+            // The ClickHouse column is a non-Nullable Array, so a missing array
+            // must serialize to [] rather than null.
+            f.fieldSchema->S.preprocess(
+              _ => {
+                serializer: value => value === %raw(`null`) ? %raw(`[]`) : value,
+              },
+            )
           | _ => f.fieldSchema
           }
           dict->Dict.set(f->Table.getApiFieldName, s.field(fieldName, fieldSchema))
