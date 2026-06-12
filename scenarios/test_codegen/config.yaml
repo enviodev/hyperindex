@@ -3,8 +3,8 @@ name: test_codegen
 description: Gravatar for Ethereum
 rollback_on_reorg: true
 # Commit one block per batch so a multi-block simulate run splits into multiple
-# batches (as a real multi-block indexer does). Repro_TestIndexerLoad.test.ts
-# relies on this to exercise the cross-batch cached-effect load path.
+# batches (as a real multi-block indexer does). TestIndexer.test.ts relies on
+# this to exercise the cross-batch cached-effect load path.
 full_batch_size: 1
 save_full_history: false
 field_selection:
