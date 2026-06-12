@@ -431,13 +431,13 @@ fn is_agentic_init_mode(env: &AgenticEnv) -> bool {
 pub fn init_help_preamble() -> String {
     let mut out = String::new();
     out.push_str(
-        "Quick start — the best way to begin for both humans and AI. Run with no subcommand:\n\n  \
+        "Quick start — the best way to begin, for both humans and AI. Run with no subcommand:\n\n  \
          pnpx envio init\n\n",
     );
     out.push_str(
-        "At a terminal this opens an interactive setup; for AI agents and CI it prints \
-         step-by-step instructions to continue. Prefer it over the advanced subcommands below \
-         unless you already know exactly what you want.\n\n",
+        "At a terminal it opens an interactive setup. When an AI agent or CI runs it, init prints \
+         the plan below and the exact command to continue with. The subcommands further down are \
+         manual overrides for when you already know precisely what you want.\n\n",
     );
     out.push_str(&agentic_init_prompt(false));
     out

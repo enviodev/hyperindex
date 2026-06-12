@@ -68,11 +68,11 @@ This document contains the help content for the `envio` command-line program.
 
 Initialize an indexer with one of the initialization options
 
-Quick start — the best way to begin for both humans and AI. Run with no subcommand:
+Quick start — the best way to begin, for both humans and AI. Run with no subcommand:
 
   pnpx envio init
 
-At a terminal this opens an interactive setup; for AI agents and CI it prints step-by-step instructions to continue. Prefer it over the advanced subcommands below unless you already know exactly what you want.
+At a terminal it opens an interactive setup. When an AI agent or CI runs it, init prints the plan below and the exact command to continue with. The subcommands further down are manual overrides for when you already know precisely what you want.
 
 Welcome to Envio Indexer! Let's set up an indexer that will become a reliable blockchain backend you trust, love, and own.
 
