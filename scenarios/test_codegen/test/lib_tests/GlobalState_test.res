@@ -1,8 +1,6 @@
 open Vitest
 
-let nextImmediate = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => resolve()))
-
-let makeState = () => {
+let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) => {
   let config = Config.loadWithoutRegistrations()
 
   let chainFetchers = config.chainMap->ChainMap.map(chainConfig => {
@@ -56,96 +54,61 @@ let makeState = () => {
   GlobalState.make(
     ~ctx,
     ~chainManager={
+      // isInReorgThreshold avoids triggering a fetch on the mock source (which
+      // implements no methods) when the processing loop runs to its empty exit.
       chainFetchers,
-      isInReorgThreshold: false,
+      isInReorgThreshold: true,
       isRealtime: false,
     },
-    ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
+    ~onError,
   )
 }
 
-describe("GlobalState scheduling", () => {
-  Async.it("schedule discards work after a state id bump", async t => {
+describe("GlobalState loop", () => {
+  Async.it("launch runs work, then skips it once the state is stopped", async t => {
     let state = makeState()
     let runs = []
 
-    state->GlobalState.schedule(async (~stateId) => runs->Array.push(stateId))
-    state.id = state.id + 1
-    state->GlobalState.schedule(async (~stateId) => runs->Array.push(stateId))
+    state->GlobalState.launch(async () => runs->Array.push(1))
+    state.isStopped = true
+    state->GlobalState.launch(async () => runs->Array.push(2))
 
-    await nextImmediate()
-
-    t.expect(runs, ~message="Only the schedule after the bump should run").toEqual([1])
+    t.expect(runs, ~message="A stopped state must not launch new work").toEqual([1])
   })
 
-  Async.it(
-    "stale eventBatchProcessed during rollback prep releases the processing flag and continues rollback",
-    async t => {
-      let state = makeState()
-      let inMemoryStore = state.ctx.inMemoryStore
-      inMemoryStore.isProcessing = true
-
-      let batch =
-        state.chainManager->ChainManager.createBatch(
-          ~processedCheckpointId=inMemoryStore.processedCheckpointId,
-          ~batchSizeTarget=state.ctx.config.batchSize,
-          ~isRollback=false,
-        )
-
-      let staleId = state.id
-      state.id = state.id + 1
-      // The scheduled rollback continuation is a no-op in this phase,
-      // so the test can observe the flag release in isolation.
-      state.rollbackState = FindingReorgDepth
-
-      state->GlobalState.eventBatchProcessed(~batch, ~stateId=staleId)
-      await nextImmediate()
-
-      t.expect(
-        {
-          "isProcessing": inMemoryStore.isProcessing,
-          "processedBatchesCount": inMemoryStore.processedBatchesCount,
-          "rollbackState": state.rollbackState,
-        },
-        ~message="A discarded batch result must still release the processing flag",
-      ).toEqual({
-        "isProcessing": false,
-        "processedBatchesCount": 1,
-        "rollbackState": GlobalState.FindingReorgDepth,
-      })
-    },
-  )
-
-  Async.it("stale eventBatchProcessed without a pending rollback only releases the flag", async t => {
+  Async.it("startProcessing releases the flag once there is no work", async t => {
     let state = makeState()
-    let inMemoryStore = state.ctx.inMemoryStore
-    inMemoryStore.isProcessing = true
-    let chainManagerBefore = state.chainManager
 
-    let batch =
-      state.chainManager->ChainManager.createBatch(
-        ~processedCheckpointId=inMemoryStore.processedCheckpointId,
-        ~batchSizeTarget=state.ctx.config.batchSize,
-        ~isRollback=false,
-      )
-
-    let staleId = state.id
-    state.id = state.id + 1
-
-    state->GlobalState.eventBatchProcessed(~batch, ~stateId=staleId)
-    await nextImmediate()
+    await state->GlobalState.startProcessing
 
     t.expect(
-      {
-        "isProcessing": inMemoryStore.isProcessing,
-        "processedBatchesCount": inMemoryStore.processedBatchesCount,
-        "chainManagerUntouched": state.chainManager === chainManagerBefore,
-      },
-      ~message="A fully discarded batch result must not advance any state besides the flag",
-    ).toEqual({
-      "isProcessing": false,
-      "processedBatchesCount": 1,
-      "chainManagerUntouched": true,
-    })
+      state.ctx.inMemoryStore.isProcessing,
+      ~message="An idle loop must release the processing flag on exit",
+    ).toEqual(false)
+  })
+
+  Async.it("startProcessing is a no-op while a loop already owns the flag", async t => {
+    let state = makeState()
+    // Simulate an in-flight loop instance.
+    state.ctx.inMemoryStore.isProcessing = true
+
+    await state->GlobalState.startProcessing
+
+    t.expect(
+      state.ctx.inMemoryStore.isProcessing,
+      ~message="A second instance must not steal or clear the existing loop's flag",
+    ).toEqual(true)
+  })
+
+  Async.it("errorExit stops the state and reports through onError", async t => {
+    let reportedErrors = ref(0)
+    let state = makeState(~onError=_ => reportedErrors := reportedErrors.contents + 1, ())
+
+    state->GlobalState.errorExit(ErrorHandling.make(Utils.Error.make("boom")))
+
+    t.expect(
+      {"isStopped": state.isStopped, "reportedErrors": reportedErrors.contents},
+      ~message="errorExit must stop every loop and report exactly once",
+    ).toEqual({"isStopped": true, "reportedErrors": 1})
   })
 })

@@ -422,12 +422,10 @@ module Indexer = {
       },
       getRollbackReadyPromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
-          while (
-            switch state.rollbackState {
-            | RollbackReady(_) => false
-            | _ => true
-            }
-          ) {
+          // Wait for the in-progress rollback to be fully applied. RollbackReady
+          // itself is transient (the reprocessing batch consumes it), so observe
+          // the rollback flag clearing instead.
+          while state.isRollingBack {
             await Utils.delay(1)
           }
           // Skip an extra microtask for indexer to fire actions
@@ -533,8 +531,9 @@ module Indexer = {
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.
         await ctx.inMemoryStore->RealInMemoryStore.flush
-        // Bump the id so any task/action still in flight from this run is discarded.
-        state.id = state.id + 1
+        // Stop the previous run's loops so they don't keep driving the shared db
+        // once the resumed indexer takes over.
+        state.isStopped = true
         await make(
           ~chains,
           ~enableHasura,
