@@ -342,8 +342,7 @@ let makeCreateHistoryTableQuery = (
       ~fieldType=Enum({config: EntityHistory.RowAction.config->Table.fromGenericEnumConfig}),
       ~isNullable=false,
       ~isArray=false,
-    )},
-  INDEX ${EntityHistory.checkpointIdFieldName}_idx \`${EntityHistory.checkpointIdFieldName}\` TYPE minmax GRANULARITY 1
+    )}
 )
 ENGINE = ${tableEngine}
 ORDER BY (${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`

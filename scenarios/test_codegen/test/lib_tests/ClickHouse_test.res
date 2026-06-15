@@ -191,8 +191,7 @@ ORDER BY (id)`
   \`enumField\` Enum8('ADMIN', 'USER'),
   \`optEnumField\` Nullable(Enum8('ADMIN', 'USER')),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE'),
-  INDEX envio_checkpoint_id_idx \`envio_checkpoint_id\` TYPE minmax GRANULARITY 1
+  \`envio_change\` Enum8('SET', 'DELETE')
 )
 ENGINE = MergeTree()
 ORDER BY (id, envio_checkpoint_id)`
