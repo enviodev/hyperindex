@@ -731,6 +731,62 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     Ok(())
 }
 
+// ClickHouse has no `Nullable(Array(T))` type, so a nullable array column on a
+// ClickHouse-backed entity is rejected when its history table is created.
+// Catch it during validation with an actionable message instead.
+pub fn validate_clickhouse_nullable_arrays(
+    storage: &Storage,
+    schema: &Schema,
+) -> anyhow::Result<()> {
+    let Some(clickhouse) = storage.clickhouse else {
+        return Ok(());
+    };
+
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut offending: Vec<String> = vec![];
+    for entity in &entities {
+        // A storage directive's omitted backend resolves to false at runtime
+        // (Config.res `Option.getOr(false)`), so a directive routes to
+        // ClickHouse only when it sets `clickhouse: true`. Without a directive
+        // the entity follows the backend's `default`.
+        let uses_clickhouse = if entity.has_storage_directive() {
+            entity.clickhouse == Some(true)
+        } else {
+            clickhouse.entity_default
+        };
+        if !uses_clickhouse {
+            continue;
+        }
+        for field in entity.get_fields() {
+            if field.field_type.is_array() && field.field_type.is_optional() {
+                offending.push(format!(
+                    "  - `{}.{}` has type `{}`",
+                    entity.name, field.name, field.field_type
+                ));
+            }
+        }
+    }
+
+    if offending.is_empty() {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "Schema validation failed:\n\
+         \n\
+         Nullable array fields are not supported by ClickHouse storage:\n\
+         {}\n\
+         \n\
+         Fixes:\n  \
+         - Make the field required and explicitly set an empty array instead of null. For \
+         example, change the type from `[String!]` to `[String!]!` in schema.graphql, and \
+         assign `[]` instead of `null`/`undefined` in your handlers.",
+        offending.join("\n")
+    ))
+}
+
 //Getter methods for system config
 impl SystemConfig {
     pub fn get_contracts(&self) -> Vec<&Contract> {
@@ -838,6 +894,7 @@ impl SystemConfig {
         let storage = Storage::resolve(base_config.storage.as_ref())?;
         validate_entity_storage(&storage, &schema)?;
         validate_db_column_names(&storage, &schema)?;
+        validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
         let final_project_paths = project_paths.clone();
 
@@ -3829,6 +3886,116 @@ type Token {
                 }),
             };
             assert!(validate_db_column_names(&storage, &schema).is_err());
+        }
+    }
+
+    // --- validate_clickhouse_nullable_arrays: nullable array fields rejected
+    // on ClickHouse-backed entities ---
+
+    mod clickhouse_nullable_array_validation {
+        use super::super::{validate_clickhouse_nullable_arrays, Storage, StorageBackend};
+        use crate::config_parsing::{entity_parsing::Schema, human_config::ColumnNameFormat};
+
+        fn backend(entity_default: bool) -> Option<StorageBackend> {
+            Some(StorageBackend {
+                entity_default,
+                column_name_format: ColumnNameFormat::Original,
+            })
+        }
+
+        fn multi(postgres_default: bool, clickhouse_default: bool) -> Storage {
+            Storage {
+                postgres: backend(postgres_default),
+                clickhouse: backend(clickhouse_default),
+            }
+        }
+
+        #[test]
+        fn nullable_array_on_clickhouse_entity_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Foo @storage(postgres: true, clickhouse: true) {
+  id: ID!
+  tags: [String!]
+}"#,
+            )
+            .unwrap();
+            let err =
+                validate_clickhouse_nullable_arrays(&multi(false, false), &schema).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Schema validation failed:\n\
+                 \n\
+                 Nullable array fields are not supported by ClickHouse storage:\n  \
+                 - `Foo.tags` has type `[String!]`\n\
+                 \n\
+                 Fixes:\n  \
+                 - Make the field required and explicitly set an empty array instead of null. For \
+                 example, change the type from `[String!]` to `[String!]!` in schema.graphql, and \
+                 assign `[]` instead of `null`/`undefined` in your handlers."
+            );
+        }
+
+        #[test]
+        fn required_array_on_clickhouse_entity_ok() {
+            let schema = Schema::from_string(
+                r#"
+type Foo @storage(postgres: true, clickhouse: true) {
+  id: ID!
+  tags: [String!]!
+}"#,
+            )
+            .unwrap();
+            assert!(validate_clickhouse_nullable_arrays(&multi(false, false), &schema).is_ok());
+        }
+
+        // A nullable array is valid on Postgres, so an entity routed only to
+        // Postgres must pass even when ClickHouse is enabled and default.
+        #[test]
+        fn nullable_array_on_postgres_only_entity_ok() {
+            let schema = Schema::from_string(
+                r#"
+type Foo @storage(postgres: true) {
+  id: ID!
+  tags: [String!]
+}"#,
+            )
+            .unwrap();
+            assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_ok());
+        }
+
+        // Without a storage directive the entity follows the backend `default`:
+        // a ClickHouse default routes it there and the nullable array is rejected,
+        // while a Postgres-only default keeps it valid.
+        #[test]
+        fn nullable_array_routed_by_default() {
+            let schema = Schema::from_string(
+                r#"
+type Foo {
+  id: ID!
+  tags: [String!]
+}"#,
+            )
+            .unwrap();
+            assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_err());
+            assert!(validate_clickhouse_nullable_arrays(&multi(true, false), &schema).is_ok());
+        }
+
+        #[test]
+        fn validation_skipped_when_clickhouse_disabled() {
+            let schema = Schema::from_string(
+                r#"
+type Foo {
+  id: ID!
+  tags: [String!]
+}"#,
+            )
+            .unwrap();
+            let storage = Storage {
+                postgres: backend(true),
+                clickhouse: None,
+            };
+            assert!(validate_clickhouse_nullable_arrays(&storage, &schema).is_ok());
         }
     }
 

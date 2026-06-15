@@ -167,14 +167,6 @@ expression: json
           "name": "tags",
           "type": "string",
           "isArray": true
-        },
-        {
-          "name": "optionalTags",
-          "postgresDbName": "optional_tags",
-          "clickhouseDbName": "optional_tags",
-          "type": "string",
-          "isNullable": true,
-          "isArray": true
         }
       ]
     },
