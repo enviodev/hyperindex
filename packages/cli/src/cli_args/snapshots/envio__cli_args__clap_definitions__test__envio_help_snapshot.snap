@@ -5,7 +5,7 @@ expression: rendered
 Usage: envio [OPTIONS] <COMMAND>
 
 Commands:
-  init     Initialize an indexer with one of the initialization options
+  init     Create a new indexer
   dev      Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching
   stop     Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
   codegen  Generate indexing code from user-defined configuration & schema files
