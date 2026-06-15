@@ -226,66 +226,41 @@ WHERE \`envio_change\` = 'SET'`
     )
   })
 
-  describe("makeGetRollbackModifiedIdsQuery", () => {
+  describe("makeGetRollbackDiffQuery", () => {
     Async.it(
-      "Should create SQL returning ids modified after the rollback target",
+      "Should create SQL joining modified ids to their latest state at or before the target",
       async t => {
-        let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
-        let query = ClickHouse.makeGetRollbackModifiedIdsQuery(
+        let entityConfig = MockIndexer.entityConfig(SimpleEntity)
+        let query = ClickHouse.makeGetRollbackDiffQuery(
           ~entityConfig,
           ~database="test_db",
           ~rollbackTargetCheckpointId=100n,
         )
 
-        let expectedQuery = `SELECT DISTINCT \`id\`
-FROM test_db.\`envio_history_EntityWithAllTypes\`
-WHERE \`envio_checkpoint_id\` > 100`
+        let expectedQuery = `SELECT modified.\`id\` AS \`id\`, restored.\`value\` AS \`value\`, restored.\`envio_change\` AS \`envio_change\`
+FROM (SELECT DISTINCT \`id\` FROM test_db.\`envio_history_SimpleEntity\` WHERE \`envio_checkpoint_id\` > 100) AS modified
+LEFT JOIN (
+  SELECT \`id\`, \`value\`, \`envio_change\`
+  FROM test_db.\`envio_history_SimpleEntity\`
+  WHERE \`envio_checkpoint_id\` <= 100
+    AND \`id\` IN (SELECT DISTINCT \`id\` FROM test_db.\`envio_history_SimpleEntity\` WHERE \`envio_checkpoint_id\` > 100)
+  ORDER BY \`envio_checkpoint_id\` DESC
+  LIMIT 1 BY \`id\`
+) AS restored ON modified.\`id\` = restored.\`id\`
+SETTINGS join_use_nulls = 1, output_format_json_quote_decimals = 1`
 
-        t.expect(query, ~message="Modified ids SQL should match exactly").toBe(expectedQuery)
-      },
-    )
-  })
-
-  describe("makeGetRollbackRestoredEntitiesQuery", () => {
-    Async.it(
-      "Should create SQL returning the latest state at or before the rollback target",
-      async t => {
-        let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
-        let query = ClickHouse.makeGetRollbackRestoredEntitiesQuery(
-          ~entityConfig,
-          ~database="test_db",
-          ~rollbackTargetCheckpointId=100n,
-        )
-
-        let expectedQuery = `SELECT \`id\`, \`string\`, \`optString\`, \`arrayOfStrings\`, \`int_\`, \`optInt\`, \`arrayOfInts\`, \`float_\`, \`optFloat\`, \`arrayOfFloats\`, \`bool\`, \`optBool\`, \`bigInt\`, \`optBigInt\`, \`arrayOfBigInts\`, \`bigDecimal\`, \`optBigDecimal\`, \`bigDecimalWithConfig\`, \`arrayOfBigDecimals\`, \`timestamp\`, \`optTimestamp\`, \`json\`, \`enumField\`, \`optEnumField\`, \`envio_change\`
-FROM test_db.\`envio_history_EntityWithAllTypes\`
-WHERE \`envio_checkpoint_id\` <= 100
-  AND \`id\` IN (
-    SELECT DISTINCT \`id\` FROM test_db.\`envio_history_EntityWithAllTypes\`
-    WHERE \`envio_checkpoint_id\` > 100
-  )
-ORDER BY \`envio_checkpoint_id\` DESC
-LIMIT 1 BY \`id\`
-SETTINGS output_format_json_quote_decimals = 1`
-
-        t.expect(query, ~message="Restored entities SQL should match exactly").toBe(expectedQuery)
+        t.expect(query, ~message="Rollback diff SQL should match exactly").toBe(expectedQuery)
       },
     )
   })
 })
 
 describe("Test getRollbackDataOrThrow", () => {
-  let makeFakeClient = (
-    ~modifiedRows: array<dict<unknown>>,
-    ~restoredRows: array<dict<unknown>>,
-  ): ClickHouse.client => {
+  let makeFakeClient = (~rows: array<dict<unknown>>): ClickHouse.client => {
     {
-      "query": (params: ClickHouse.queryParams) =>
+      "query": (_params: ClickHouse.queryParams) =>
         Promise.resolve({
-          "json": () =>
-            Promise.resolve({
-              "data": params.query->String.includes("LIMIT 1 BY") ? restoredRows : modifiedRows,
-            }),
+          "json": () => Promise.resolve({"data": rows}),
         }),
     }->(Utils.magic: 'a => ClickHouse.client)
   }
@@ -293,17 +268,14 @@ describe("Test getRollbackDataOrThrow", () => {
   Async.it("Should split modified ids into removed and restored", async t => {
     let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
 
+    // One joined row per modified id: a SET match is restored, a DELETE match
+    // (deleted then re-created after the target) and an unmatched id (created
+    // after the target, NULL change from the LEFT JOIN) are both removed.
     let client = makeFakeClient(
-      ~modifiedRows=[
-        %raw(`{"id": "restored-id"}`),
-        %raw(`{"id": "deleted-at-target-id"}`),
-        %raw(`{"id": "created-after-target-id"}`),
-      ],
-      ~restoredRows=[
+      ~rows=[
         makeClickHouseRow("restored-id"),
-        // The latest change at or before the target is a DELETE, so the
-        // entity didn't exist at the rollback point
         %raw(`{"id": "deleted-at-target-id", "envio_change": "DELETE"}`),
+        %raw(`{"id": "created-after-target-id", "envio_change": null}`),
       ],
     )
 

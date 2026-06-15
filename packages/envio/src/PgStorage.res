@@ -1161,6 +1161,9 @@ let rec writeBatch = async (
 
 // Returns the most recent entity state for IDs that need to be restored during rollback.
 // For each ID modified after the rollback target, retrieves its latest state at or before the target.
+// When that latest row is a DELETE (entity deleted then re-created after the target) the id is a
+// removal, not a restore — and the DELETE row carries NULL data — so it's filtered out here;
+// makeGetRollbackRemovedIdsQuery picks it up instead.
 let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
   let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
@@ -1177,20 +1180,25 @@ let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig
     ~entityIndex=entityConfig.index,
   )
 
-  `SELECT DISTINCT ON (${Table.idFieldName}) ${dataFieldsCommaSeparated}
-FROM "${pgSchema}"."${historyTableName}"
-WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
-  AND EXISTS (
-    SELECT 1
-    FROM "${pgSchema}"."${historyTableName}" h
-    WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
-      AND h."${EntityHistory.checkpointIdFieldName}" > $1
-  )
-ORDER BY ${Table.idFieldName}, "${EntityHistory.checkpointIdFieldName}" DESC`
+  `SELECT ${dataFieldsCommaSeparated}
+FROM (
+  SELECT DISTINCT ON (${Table.idFieldName}) ${dataFieldsCommaSeparated}, "${EntityHistory.changeFieldName}"
+  FROM "${pgSchema}"."${historyTableName}"
+  WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
+    AND EXISTS (
+      SELECT 1
+      FROM "${pgSchema}"."${historyTableName}" h
+      WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
+        AND h."${EntityHistory.checkpointIdFieldName}" > $1
+    )
+  ORDER BY ${Table.idFieldName}, "${EntityHistory.checkpointIdFieldName}" DESC
+) sub
+WHERE "${EntityHistory.changeFieldName}"::text = '${(EntityHistory.RowAction.SET :> string)}'`
 }
 
-// Returns entity IDs that were created after the rollback target and have no history before it.
-// These entities should be deleted during rollback.
+// Returns entity IDs that must be deleted during rollback: those whose latest state at or before
+// the target is absent (created after the target) or a DELETE (deleted then re-created after the
+// target). COALESCE maps "no row at or before target" to DELETE so both cases are caught.
 let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
@@ -1199,12 +1207,14 @@ let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgS
   `SELECT DISTINCT ${Table.idFieldName}
 FROM "${pgSchema}"."${historyTableName}"
 WHERE "${EntityHistory.checkpointIdFieldName}" > $1
-AND NOT EXISTS (
-  SELECT 1
+AND COALESCE((
+  SELECT h."${EntityHistory.changeFieldName}"::text
   FROM "${pgSchema}"."${historyTableName}" h
   WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
     AND h."${EntityHistory.checkpointIdFieldName}" <= $1
-)`
+  ORDER BY h."${EntityHistory.checkpointIdFieldName}" DESC
+  LIMIT 1
+), '${(EntityHistory.RowAction.DELETE :> string)}') = '${(EntityHistory.RowAction.DELETE :> string)}'`
 }
 
 let make = (

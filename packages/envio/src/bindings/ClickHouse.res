@@ -419,10 +419,18 @@ FROM (
 WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> string)}'`
 }
 
-// Returns the ids of entities with history rows after the rollback target.
-// resume finalizes its cleanup synchronously, so no row above the committed
-// checkpoint can exist here — the target is the only bound needed.
-let makeGetRollbackModifiedIdsQuery = (
+// Computes the rollback diff for an entity from its ClickHouse history table.
+// resume finalizes its cleanup synchronously, so no history row above the
+// committed checkpoint can exist — the rollback target is the only bound.
+//
+// One row per modified id (checkpoint > target), LEFT JOINed to that id's
+// latest row at or before the target. join_use_nulls makes the unmatched side
+// NULL, so a missing match (id created after the target) and a DELETE match
+// both read as "not SET" and become removals; only SET matches are restored.
+// The id is always taken from the modified side, so removals are identified
+// even when there is no matching row. output_format_json_quote_decimals makes
+// Decimal values come back as strings the BigDecimal schema can parse.
+let makeGetRollbackDiffQuery = (
   ~entityConfig: Internal.entityConfig,
   ~database: string,
   ~rollbackTargetCheckpointId: Internal.checkpointId,
@@ -431,49 +439,40 @@ let makeGetRollbackModifiedIdsQuery = (
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
     )}\``
+  let target = rollbackTargetCheckpointId->BigInt.toString
 
-  `SELECT DISTINCT \`${Table.idFieldName}\`
-FROM ${historyTableRef}
-WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${rollbackTargetCheckpointId->BigInt.toString}`
-}
-
-// Returns the most recent history row at or before the rollback target for every
-// modified id that has one. The row still carries the change action: a DELETE
-// row means the entity didn't exist at the target. Modified ids without a row
-// here were created after the target — the removed/restored split happens on
-// the client, which avoids an anti-join over the ids of the whole table.
-// The SETTINGS clause makes Decimal values come back as strings the
-// BigDecimal schema can parse.
-let makeGetRollbackRestoredEntitiesQuery = (
-  ~entityConfig: Internal.entityConfig,
-  ~database: string,
-  ~rollbackTargetCheckpointId: Internal.checkpointId,
-) => {
-  let historyTableRef = `${database}.\`${EntityHistory.historyTableName(
-      ~entityName=entityConfig.name,
-      ~entityIndex=entityConfig.index,
-    )}\``
-
-  let dataFieldsCommaSeparated =
-    entityConfig.table.fields
-    ->Array.filterMap(field => {
-      switch field {
-      | Field(field) => Some(`\`${field->Table.getDbFieldName}\``)
-      | DerivedFrom(_) => None
-      }
-    })
+  let dataFields = entityConfig.table.fields->Array.filterMap(field =>
+    switch field {
+    | Field(field) => Some(field->Table.getDbFieldName)
+    | DerivedFrom(_) => None
+    }
+  )
+  let snapshotFields = dataFields->Array.map(f => `\`${f}\``)->Array.joinUnsafe(", ")
+  let selectColumns =
+    [`modified.\`${Table.idFieldName}\` AS \`${Table.idFieldName}\``]
+    ->Array.concat(
+      dataFields->Array.filterMap(f =>
+        f === Table.idFieldName ? None : Some(`restored.\`${f}\` AS \`${f}\``)
+      ),
+    )
+    ->Array.concat([
+      `restored.\`${EntityHistory.changeFieldName}\` AS \`${EntityHistory.changeFieldName}\``,
+    ])
     ->Array.joinUnsafe(", ")
 
-  `SELECT ${dataFieldsCommaSeparated}, \`${EntityHistory.changeFieldName}\`
-FROM ${historyTableRef}
-WHERE \`${EntityHistory.checkpointIdFieldName}\` <= ${rollbackTargetCheckpointId->BigInt.toString}
-  AND \`${Table.idFieldName}\` IN (
-    SELECT DISTINCT \`${Table.idFieldName}\` FROM ${historyTableRef}
-    WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${rollbackTargetCheckpointId->BigInt.toString}
-  )
-ORDER BY \`${EntityHistory.checkpointIdFieldName}\` DESC
-LIMIT 1 BY \`${Table.idFieldName}\`
-SETTINGS output_format_json_quote_decimals = 1`
+  let modifiedIds = `SELECT DISTINCT \`${Table.idFieldName}\` FROM ${historyTableRef} WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${target}`
+
+  `SELECT ${selectColumns}
+FROM (${modifiedIds}) AS modified
+LEFT JOIN (
+  SELECT ${snapshotFields}, \`${EntityHistory.changeFieldName}\`
+  FROM ${historyTableRef}
+  WHERE \`${EntityHistory.checkpointIdFieldName}\` <= ${target}
+    AND \`${Table.idFieldName}\` IN (${modifiedIds})
+  ORDER BY \`${EntityHistory.checkpointIdFieldName}\` DESC
+  LIMIT 1 BY \`${Table.idFieldName}\`
+) AS restored ON modified.\`${Table.idFieldName}\` = restored.\`${Table.idFieldName}\`
+SETTINGS join_use_nulls = 1, output_format_json_quote_decimals = 1`
 }
 
 // Computes the rollback diff from the ClickHouse history table. Used for
@@ -486,41 +485,25 @@ let getRollbackDataOrThrow = async (
   ~rollbackTargetCheckpointId: Internal.checkpointId,
 ): (array<{"id": string}>, array<Internal.entity>) => {
   try {
-    let fetchRows = async (queryString): array<dict<unknown>> => {
-      let result = await client->query({query: queryString})
-      (await result->json)["data"]
-    }
-
-    let (modifiedRows, restoredRows) = await Promise.all2((
-      fetchRows(
-        makeGetRollbackModifiedIdsQuery(~entityConfig, ~database, ~rollbackTargetCheckpointId),
-      ),
-      fetchRows(
-        makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~database, ~rollbackTargetCheckpointId),
-      ),
-    ))
+    let result = await client->query({
+      query: makeGetRollbackDiffQuery(~entityConfig, ~database, ~rollbackTargetCheckpointId),
+    })
+    let rows = (await result->json)["data"]
 
     let removedIds = []
     let setRows = []
-    let restoredIds = Utils.Set.make()
-    restoredRows->Array.forEach(row => {
-      let id = row->Dict.getUnsafe(Table.idFieldName)->(Utils.magic: unknown => string)
-      let _ = restoredIds->Utils.Set.add(id)
+    rows->Array.forEach(row => {
       if (
         row->Dict.getUnsafe(EntityHistory.changeFieldName)->(Utils.magic: unknown => string) ===
-          (EntityHistory.RowAction.DELETE :> string)
+          (EntityHistory.RowAction.SET :> string)
       ) {
-        removedIds->Array.push({"id": id})->ignore
-      } else {
         setRows->Array.push(row)->ignore
-      }
-    })
-    // Modified ids with no history at or before the target didn't exist at
-    // the rollback point
-    modifiedRows->Array.forEach(row => {
-      let id = row->Dict.getUnsafe(Table.idFieldName)->(Utils.magic: unknown => string)
-      if !(restoredIds->Utils.Set.has(id)) {
-        removedIds->Array.push({"id": id})->ignore
+      } else {
+        removedIds
+        ->Array.push({
+          "id": row->Dict.getUnsafe(Table.idFieldName)->(Utils.magic: unknown => string),
+        })
+        ->ignore
       }
     })
 
