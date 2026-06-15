@@ -95,7 +95,7 @@ Guided step-by-step for humans and AI agents. Reach for the subcommands below on
 
   Possible values: `pnpm`, `npm`, `yarn`, `bun`
 
-* `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file. Falls back to the `ENVIO_API_TOKEN` environment variable
+* `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file. Falls back to the `ENVIO_API_TOKEN` environment variable. Create one at https://envio.dev/app/api-tokens
 
 
 
