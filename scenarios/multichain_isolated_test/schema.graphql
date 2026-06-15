@@ -1,0 +1,7 @@
+# A single shared id ("singleton") is written on every chain. In isolated
+# multichain mode each chain keeps its own row, so the per-chain counts never
+# merge.
+type Counter {
+  id: ID!
+  count: Int!
+}

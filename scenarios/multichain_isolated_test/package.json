@@ -1,0 +1,26 @@
+{
+  "name": "multichain_isolated_test",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "rescript",
+    "codegen": "envio codegen",
+    "test": "rescript && vitest run"
+  },
+  "devDependencies": {
+    "@glennsl/rescript-jest": "^0.9.2",
+    "@types/node": "24.12.2",
+    "rescript": "12.2.0",
+    "@rescript/runtime": "12.2.0",
+    "rescript-schema": "9.5.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.0"
+  },
+  "dependencies": {
+    "envio": "file:../../packages/envio",
+    "viem": "2.46.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
