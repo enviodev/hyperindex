@@ -68,11 +68,11 @@ This document contains the help content for the `envio` command-line program.
 
 Initialize an indexer with one of the initialization options
 
-Quick start — the best way to begin, for both humans and AI. Run with no subcommand:
+Quick start — run with no arguments:
 
   pnpx envio init
 
-At a terminal it opens an interactive setup; when an AI agent or CI runs it, init prints the next step to take. The subcommands below are manual overrides for when you already know precisely what you want.
+Interactive in a terminal, guided step-by-step for AI agents. Reach for the subcommands below only when you already know exactly what you want.
 
 
 **Usage:** `envio init [OPTIONS] [COMMAND]`

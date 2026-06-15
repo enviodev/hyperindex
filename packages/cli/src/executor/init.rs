@@ -431,14 +431,10 @@ fn is_agentic_init_mode(env: &AgenticEnv) -> bool {
 /// prints it once the agent actually runs `envio init`.
 pub fn init_help_preamble() -> String {
     let mut out = String::new();
+    out.push_str("Quick start — run with no arguments:\n\n  pnpx envio init\n\n");
     out.push_str(
-        "Quick start — the best way to begin, for both humans and AI. Run with no subcommand:\n\n  \
-         pnpx envio init\n\n",
-    );
-    out.push_str(
-        "At a terminal it opens an interactive setup; when an AI agent or CI runs it, init prints \
-         the next step to take. The subcommands below are manual overrides for when you already \
-         know precisely what you want.\n",
+        "Interactive in a terminal, guided step-by-step for AI agents. Reach for the subcommands \
+         below only when you already know exactly what you want.\n",
     );
     out
 }
