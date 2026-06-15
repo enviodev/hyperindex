@@ -190,7 +190,6 @@ pub mod evm {
     #[derive(Clone, Debug, Display)]
     pub enum InitFlow {
         Template(Template),
-        SubgraphID(String),
         ContractImport(ContractImportSelection),
     }
 
@@ -199,7 +198,6 @@ pub mod evm {
             match self {
                 Self::Template(_) => true,
                 Self::ContractImport(selection) => selection.uses_hypersync(),
-                Self::SubgraphID(_) => todo!("Subgraph migration not yet handled"),
             }
         }
     }

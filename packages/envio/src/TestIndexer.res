@@ -44,35 +44,42 @@ let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingA
 }
 
 let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFilter.t): JSON.t => {
-  let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
-  let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
-  let results = []
+  // Loads for non-entity tables (e.g. effect caches `envio_effect_<name>`) reach
+  // here too. TestIndexer never persists those, so there's nothing to return —
+  // an empty result makes the effect recompute instead of crashing on a missing
+  // entityConfig.
+  switch state.entityConfigs->Dict.get(tableName) {
+  | None => []->JSON.Encode.array
+  | Some(entityConfig) =>
+    let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
+    let results = []
 
-  // Field values arrive as JSON from the worker boundary, so parse them
-  // with the field's schema before comparing. This properly handles
-  // bigint and BigDecimal comparisons
-  let parseLeaf = (~fieldName, ~fieldValue: unknown, ~isArray): unknown => {
-    let queryField = switch entityConfig.table->Table.queryFields->Dict.get(fieldName) {
-    | Some(queryField) => queryField
-    | None => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
+    // Field values arrive as JSON from the worker boundary, so parse them
+    // with the field's schema before comparing. This properly handles
+    // bigint and BigDecimal comparisons
+    let parseLeaf = (~fieldName, ~fieldValue: unknown, ~isArray): unknown => {
+      let queryField = switch entityConfig.table->Table.queryFields->Dict.get(fieldName) {
+      | Some(queryField) => queryField
+      | None => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
+      }
+      fieldValue->S.convertOrThrow(isArray ? queryField.arrayFieldSchema : queryField.fieldSchema)
     }
-    fieldValue->S.convertOrThrow(isArray ? queryField.arrayFieldSchema : queryField.fieldSchema)
+    let filter = filter->EntityFilter.mapValues(~mapValue=parseLeaf)
+
+    entityDict
+    ->Dict.valuesToArray
+    ->Array.forEach(entity => {
+      // Cast entity to dict of field values (same approach as InMemoryTable)
+      let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
+      if filter->EntityFilter.matches(~entity=entityAsDict) {
+        // Serialize entity back to JSON for worker thread
+        let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
+        results->Array.push(jsonEntity)->ignore
+      }
+    })
+
+    results->JSON.Encode.array
   }
-  let filter = filter->EntityFilter.mapValues(~mapValue=parseLeaf)
-
-  entityDict
-  ->Dict.valuesToArray
-  ->Array.forEach(entity => {
-    // Cast entity to dict of field values (same approach as InMemoryTable)
-    let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
-    if filter->EntityFilter.matches(~entity=entityAsDict) {
-      // Serialize entity back to JSON for worker thread
-      let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
-      results->Array.push(jsonEntity)->ignore
-    }
-  })
-
-  results->JSON.Encode.array
 }
 
 let handleWriteBatch = (

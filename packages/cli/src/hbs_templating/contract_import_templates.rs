@@ -841,30 +841,6 @@ impl AutoSchemaHandlerTemplate {
 
         Ok(())
     }
-
-    pub fn generate_subgraph_migration_templates(
-        &self,
-        lang: &Language,
-        project_root: &Path,
-    ) -> Result<()> {
-        let template_dirs = TemplateDirs::new();
-
-        let lang_dir = template_dirs
-            .get_subgraph_migration_lang_dir(lang)
-            .context(format!(
-                "Failed getting {} subgraph migration templates",
-                lang
-            ))?;
-
-        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, project_root);
-
-        hbs.generate_hbs_templates().context(format!(
-            "Failed generating {} subgraph migration templates",
-            lang
-        ))?;
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
