@@ -205,10 +205,12 @@ pub struct InitArgs {
     #[clap(value_enum)]
     pub package_manager: Option<init_config::PackageManager>,
 
-    ///The hypersync API key to be initialized in your templates .env file.
+    ///The HyperSync API token to be initialized in your templates .env file.
     ///Falls back to the `ENVIO_API_TOKEN` environment variable. Create one at
     ///https://envio.dev/app/api-tokens
-    #[arg(global = true, long, env = "ENVIO_API_TOKEN")]
+    // The token is a secret, so render `[env: ENVIO_API_TOKEN]` in --help
+    // without leaking its current value.
+    #[arg(global = true, long, env = "ENVIO_API_TOKEN", hide_env_values = true)]
     pub api_token: Option<String>,
 }
 
@@ -516,18 +518,9 @@ mod test {
     #[test]
     fn envio_init_help_snapshot() {
         let mut cmd = CommandLineArgs::command();
-        // For an env-backed arg, clap prints the var's *current value* into
-        // `--help`, e.g. `[env: ENVIO_API_TOKEN=abc123]` when it's set. Whoever
-        // runs this test may have ENVIO_API_TOKEN exported, which would bake
-        // that machine-specific (and secret) value into the committed snapshot
-        // and fail the test for everyone else. `hide_env_values(true)` makes
-        // clap print just `[env: ENVIO_API_TOKEN]`, so the rendered help is
-        // identical whether or not the var is set.
-        let mut init_cmd = cmd
+        let init_cmd = cmd
             .find_subcommand_mut("init")
-            .expect("init subcommand exists")
-            .clone()
-            .mut_arg("api_token", |a| a.hide_env_values(true));
+            .expect("init subcommand exists");
         let rendered = init_cmd.render_long_help().to_string();
         insta::assert_snapshot!(rendered);
     }
