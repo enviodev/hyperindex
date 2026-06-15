@@ -203,6 +203,10 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
               ...field,
               isNullable: true, //All entity fields are nullable in the case
               isIndex: false, //No need to index any additional entity data fields in entity history
+              // History rows are keyed by (id, checkpoint); the checkpoint id
+              // is globally unique across chains, so the isolated chain id
+              // column stays a plain data column here, not part of the pk.
+              isPrimaryKey: false,
             }
             ->Field
             ->Some

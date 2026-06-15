@@ -135,8 +135,15 @@ module EnvioAddresses = {
       Table.mkField("registration_log_index", Int32, ~fieldSchema=S.int),
       Table.mkField("contract_name", String, ~fieldSchema=S.string),
       // The isolated chain id column. Named to match the write path's
-      // "chainId" key, mapped to the chain_id db column.
-      Table.mkField("chainId", Int32, ~fieldSchema=S.int, ~postgresDbName="chain_id"),
+      // "chainId" key, mapped to the chain_id db column. Part of the composite
+      // primary key (id, chain_id).
+      Table.mkField(
+        "chainId",
+        Int32,
+        ~fieldSchema=S.int,
+        ~isPrimaryKey=true,
+        ~postgresDbName="chain_id",
+      ),
     ],
   )
 
@@ -986,6 +993,9 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     "chainId",
     Int32,
     ~fieldSchema=S.int,
+    // Part of the composite primary key (id, chainId) so the same entity id
+    // can exist independently per chain.
+    ~isPrimaryKey=true,
     ~postgresDbName=?chainIdDbName(publicConfig["storage"]["postgresColumnNameFormat"]),
     ~clickhouseDbName=?chainIdDbName(publicConfig["storage"]["clickhouseColumnNameFormat"]),
   )

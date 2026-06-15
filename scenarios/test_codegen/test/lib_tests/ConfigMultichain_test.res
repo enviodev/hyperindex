@@ -30,7 +30,7 @@ describe("Multichain entity chain id column", () => {
         ClickHouse.makeCreateViewQuery(~entityConfig=isolated, ~database="d"),
         PgStorage.makeCreateTableQuery(shared.table, ~pgSchema="s", ~isNumericArrayAsText=false),
       )).toEqual((
-        `CREATE TABLE IF NOT EXISTS "s"."IsolatedEntity"("id" TEXT NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id"));`,
+        `CREATE TABLE IF NOT EXISTS "s"."IsolatedEntity"("id" TEXT NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id", "chain_id"));`,
         `CREATE TABLE IF NOT EXISTS d.\`envio_history_IsolatedEntity\` (
   \`id\` String,
   \`chainId\` Int32,
@@ -66,7 +66,7 @@ WHERE \`envio_change\` = 'SET'`,
         PgStorage.makeCreateTableQuery(isolated.table, ~pgSchema="s", ~isNumericArrayAsText=false),
         ClickHouse.makeCreateHistoryTableQuery(~entityConfig=isolated, ~database="d"),
       )).toEqual((
-        `CREATE TABLE IF NOT EXISTS "s"."IsolatedEntity"("id" TEXT NOT NULL, "chainId" INTEGER NOT NULL, PRIMARY KEY("id"));`,
+        `CREATE TABLE IF NOT EXISTS "s"."IsolatedEntity"("id" TEXT NOT NULL, "chainId" INTEGER NOT NULL, PRIMARY KEY("id", "chainId"));`,
         `CREATE TABLE IF NOT EXISTS d.\`envio_history_IsolatedEntity\` (
   \`id\` String,
   \`chain_id\` Int32,
@@ -96,11 +96,13 @@ ORDER BY (id, envio_checkpoint_id)`,
         )
       }
 
+      // id and chain_id are both primary key columns, so there are no
+      // non-primary columns left to update on conflict.
       t.expect((makeInsertQuery(snakeCase), makeInsertQuery(original))).toEqual((
         `INSERT INTO "s"."IsolatedEntity" ("id", "chain_id")
-SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id") DO UPDATE SET "chain_id" = EXCLUDED."chain_id";`,
+SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chain_id") DO NOTHING;`,
         `INSERT INTO "s"."IsolatedEntity" ("id", "chainId")
-SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id") DO UPDATE SET "chainId" = EXCLUDED."chainId";`,
+SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOTHING;`,
       ))
     },
   )
@@ -165,6 +167,73 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id") DO UPDATE SET "c
         rows,
         ~message="Rows should carry the chain id of the checkpoint their change was made at",
       ).toEqual(%raw(`[{id: "a", chain_id: 1}, {id: "b", chain_id: 137}]`))
+    },
+  )
+
+  Async.it(
+    "Keeps the same entity id on different chains as separate rows (composite primary key)",
+    async t => {
+      let config = makePublicConfig(
+        ~storage=%raw(`{postgres: true, postgresColumnNameFormat: "snake_case"}`),
+      )
+      let isolated = config.userEntitiesByName->Dict.getUnsafe("IsolatedEntity")
+      let pgSchema = "multichain_composite_key_test"
+      let sql = PgStorage.makeClient()
+      let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
+
+      let _ = await storage.initialize(
+        ~entities=[isolated],
+        ~enums=[EntityHistory.RowAction.config->Table.fromGenericEnumConfig],
+        ~envioInfo=%raw(`{}`),
+      )
+
+      let entity = id =>
+        Dict.fromArray([("id", id->(Utils.magic: string => unknown))])->(
+          Utils.magic: dict<unknown> => Internal.entity
+        )
+
+      // The same entity id "shared" is written on two chains in separate
+      // batches. The batch path dedups by id, so a single batch can't exercise
+      // this — but across batches the composite (id, chain_id) key keeps both
+      // rows instead of the second upserting over the first.
+      let writeOnChain = (~chainId, ~checkpointId) =>
+        storage.writeBatch(
+          ~batch={
+            totalBatchSize: 1,
+            items: [],
+            progressedChainsById: Dict.make(),
+            isInReorgThreshold: false,
+            checkpointIds: [checkpointId],
+            checkpointChainIds: [chainId],
+            checkpointBlockNumbers: [10],
+            checkpointBlockHashes: [Null.null],
+            checkpointEventsProcessed: [1],
+          },
+          ~rollback=None,
+          ~isInReorgThreshold=false,
+          ~config,
+          ~allEntities=[isolated],
+          ~updatedEffectsCache=[],
+          ~updatedEntities=[
+            {
+              entityConfig: isolated,
+              changes: [Set({entityId: "shared", entity: entity("shared"), checkpointId})],
+            },
+          ],
+          ~chainMetaData=None,
+        )
+
+      await writeOnChain(~chainId=1, ~checkpointId=1n)
+      await writeOnChain(~chainId=137, ~checkpointId=2n)
+
+      let rows = await sql->Postgres.unsafe(
+        `SELECT * FROM "${pgSchema}"."IsolatedEntity" ORDER BY "chain_id";`,
+      )
+
+      t.expect(
+        rows,
+        ~message="Same id on two chains should yield two rows keyed by (id, chain_id)",
+      ).toEqual(%raw(`[{id: "shared", chain_id: 1}, {id: "shared", chain_id: 137}]`))
     },
   )
 })
