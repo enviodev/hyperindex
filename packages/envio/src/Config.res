@@ -96,7 +96,7 @@ module EnvioAddresses = {
 
   type t = {
     id: string,
-    chainId: int,
+    @as("chain_id") chainId: int,
     @as("registration_block") registrationBlock: int,
     // -1 when the address was registered from a block handler (no log index)
     @as("registration_log_index") registrationLogIndex: int,
@@ -113,37 +113,23 @@ module EnvioAddresses = {
     ->Address.unsafeFromString
   }
 
-  // chainId is excluded: it's the isolated chain id column, stamped on write
-  // from the change's checkpoint rather than carried in the entity schema.
-  // Object syntax (not a `t` record literal) so the schema isn't forced to
-  // declare chainId; locations are the db column names.
-  let schema = S.schema(s =>
-    {
-      "id": s.matches(S.string),
-      "registration_block": s.matches(S.int),
-      "registration_log_index": s.matches(S.int),
-      "contract_name": s.matches(S.string),
-    }
-  )
+  let schema = S.schema(s => {
+    id: s.matches(S.string),
+    chainId: s.matches(S.int),
+    registrationBlock: s.matches(S.int),
+    registrationLogIndex: s.matches(S.int),
+    contractName: s.matches(S.string),
+  })
 
   let table = Table.mkTable(
     name,
     ~fields=[
       Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+      Table.mkField("chain_id", Int32, ~fieldSchema=S.int),
       Table.mkField("registration_block", Int32, ~fieldSchema=S.int),
       // -1 sentinel when registered from a block handler (no log index)
       Table.mkField("registration_log_index", Int32, ~fieldSchema=S.int),
       Table.mkField("contract_name", String, ~fieldSchema=S.string),
-      // The isolated chain id column. Named to match the write path's
-      // "chainId" key, mapped to the chain_id db column. Part of the composite
-      // primary key (id, chain_id).
-      Table.mkField(
-        "chainId",
-        Int32,
-        ~fieldSchema=S.int,
-        ~isPrimaryKey=true,
-        ~postgresDbName="chain_id",
-      ),
     ],
   )
 
@@ -158,10 +144,10 @@ module EnvioAddresses = {
     // always required to have Postgres enabled (Storage::resolve forbids
     // a Postgres-disabled global), so this is safe regardless of mode.
     storage: {postgres: true, clickhouse: false},
-    // Addresses are chain-scoped: the chain id is the isolated chain id
-    // column, stamped on write from the change's checkpoint, rather than an
-    // explicit entity field.
-    crossChain: false,
+    // The chain id is carried as an explicit field (the id is already
+    // {chainId}-{address}), so this internal table stays cross-chain and gets
+    // no implicit chain id column.
+    crossChain: true,
   }->Internal.fromGenericEntityConfig
 }
 
