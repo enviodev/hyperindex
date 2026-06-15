@@ -224,10 +224,6 @@ pub enum InitFlow {
     ///[Advanced] Initialize Evm indexer from an example template
     #[subenum(EvmInitFlowInteractive)]
     Template(evm::TemplateArgs),
-    ///Initialize Evm indexer by migrating config from an existing subgraph
-    #[clap(hide = true)] //hiding for now until this is more stable
-    #[strum(serialize = "Subgraph Migration (Experimental)")]
-    SubgraphMigration(evm::SubgraphMigrationArgs),
     ///Initialization option for creating Svm indexer
     Svm {
         #[command(subcommand)]
@@ -277,14 +273,6 @@ pub mod evm {
         #[arg(short, long)]
         #[clap(value_enum)]
         pub template: Option<init_config::evm::Template>,
-    }
-
-    type SubgraphMigrationID = String;
-    #[derive(Args, Debug, Default, Clone)]
-    pub struct SubgraphMigrationArgs {
-        ///Subgraph ID to start a migration from
-        #[arg(short, long)]
-        pub subgraph_id: Option<SubgraphMigrationID>,
     }
 
     #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
