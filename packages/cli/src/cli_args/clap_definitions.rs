@@ -38,7 +38,8 @@ pub struct ProjectPaths {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandType {
-    ///Initialize an indexer with one of the initialization options
+    ///Create a new indexer
+    #[command(before_long_help = crate::executor::init::init_help_preamble())]
     Init(InitArgs),
 
     /// Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching.
@@ -204,20 +205,23 @@ pub struct InitArgs {
     #[clap(value_enum)]
     pub package_manager: Option<init_config::PackageManager>,
 
-    ///The hypersync API key to be initialized in your templates .env file.
-    ///Falls back to the `ENVIO_API_TOKEN` environment variable.
-    #[arg(global = true, long, env = "ENVIO_API_TOKEN")]
+    ///The Envio API token to be initialized in your templates .env file.
+    ///Falls back to the `ENVIO_API_TOKEN` environment variable. Create one at
+    ///https://envio.dev/app/api-tokens
+    // The token is a secret, so render `[env: ENVIO_API_TOKEN]` in --help
+    // without leaking its current value.
+    #[arg(global = true, long, env = "ENVIO_API_TOKEN", hide_env_values = true)]
     pub api_token: Option<String>,
 }
 
 #[subenum(EvmInitFlowInteractive)]
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
 pub enum InitFlow {
-    ///Initialize Evm indexer by importing config from a contract for a given chain
+    ///[Advanced] Initialize Evm indexer by importing config from a contract for a given chain
     #[subenum(EvmInitFlowInteractive)]
     #[strum(serialize = "Contract Import")]
     ContractImport(evm::ContractImportArgs),
-    ///Initialize Evm indexer from an example template
+    ///[Advanced] Initialize Evm indexer from an example template
     #[subenum(EvmInitFlowInteractive)]
     Template(evm::TemplateArgs),
     ///Initialize Evm indexer by migrating config from an existing subgraph
@@ -508,6 +512,16 @@ mod test {
     fn envio_help_snapshot() {
         let mut cmd = CommandLineArgs::command().version("0.0.0-test");
         let rendered = cmd.render_help().to_string();
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn envio_init_help_snapshot() {
+        let mut cmd = CommandLineArgs::command();
+        let init_cmd = cmd
+            .find_subcommand_mut("init")
+            .expect("init subcommand exists");
+        let rendered = init_cmd.render_long_help().to_string();
         insta::assert_snapshot!(rendered);
     }
 

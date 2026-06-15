@@ -167,9 +167,9 @@ let make = (
   let apiToken = switch apiToken {
   | Some(token) => token
   | None =>
-    JsError.throwWithMessage(`An API token is required for using HyperSync as a data-source.
+    JsError.throwWithMessage(`An Envio API token is required for using HyperSync as a data-source.
 Set the ENVIO_API_TOKEN environment variable in your .env file.
-Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
+Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   }
 
   let client = switch HyperSyncClient.make(
