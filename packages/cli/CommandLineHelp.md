@@ -72,7 +72,7 @@ Quick start — run with no arguments:
 
   pnpx envio init
 
-Interactive in a terminal, guided step-by-step for AI agents. Reach for the subcommands below only when you already know exactly what you want.
+Guided step-by-step for humans and AI agents. Reach for the subcommands below only when you already know exactly what you want.
 
 
 **Usage:** `envio init [OPTIONS] [COMMAND]`

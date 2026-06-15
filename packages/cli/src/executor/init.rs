@@ -433,8 +433,8 @@ pub fn init_help_preamble() -> String {
     let mut out = String::new();
     out.push_str("Quick start — run with no arguments:\n\n  pnpx envio init\n\n");
     out.push_str(
-        "Interactive in a terminal, guided step-by-step for AI agents. Reach for the subcommands \
-         below only when you already know exactly what you want.\n",
+        "Guided step-by-step for humans and AI agents. Reach for the subcommands below only when \
+         you already know exactly what you want.\n",
     );
     out
 }
