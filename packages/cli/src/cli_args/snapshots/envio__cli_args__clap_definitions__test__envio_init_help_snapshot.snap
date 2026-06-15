@@ -9,7 +9,7 @@ Quick start — run with no arguments:
 Interactive in a terminal, guided step-by-step for AI agents. Reach for the subcommands below only when you already know exactly what you want.
 
 
-Initialize an indexer with one of the initialization options
+Create a new indexer
 
 Usage: init [OPTIONS] [COMMAND]
 

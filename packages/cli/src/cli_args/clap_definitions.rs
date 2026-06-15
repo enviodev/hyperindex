@@ -38,7 +38,7 @@ pub struct ProjectPaths {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandType {
-    ///Initialize an indexer with one of the initialization options
+    ///Create a new indexer
     #[command(before_long_help = crate::executor::init::init_help_preamble())]
     Init(InitArgs),
 

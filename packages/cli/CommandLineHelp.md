@@ -44,7 +44,7 @@ This document contains the help content for the `envio` command-line program.
 
 ###### **Subcommands:**
 
-* `init` — Initialize an indexer with one of the initialization options
+* `init` — Create a new indexer
 * `dev` — Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching
 * `stop` — Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
 * `codegen` — Generate indexing code from user-defined configuration & schema files
@@ -66,7 +66,7 @@ This document contains the help content for the `envio` command-line program.
 
 ## `envio init`
 
-Initialize an indexer with one of the initialization options
+Create a new indexer
 
 Quick start — run with no arguments:
 
