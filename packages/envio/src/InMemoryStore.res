@@ -535,7 +535,6 @@ let prepareRollbackDiff = async (
     let (removedIdsResult, restoredEntities) = await persistence.storage.getRollbackData(
       ~entityConfig,
       ~rollbackTargetCheckpointId,
-      ~progressCheckpointId=inMemoryStore.committedCheckpointId,
     )
 
     removedIdsResult->Array.forEach(data => {

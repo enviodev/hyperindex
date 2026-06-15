@@ -186,11 +186,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
       "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
     )
   },
-  getRollbackData: async (
-    ~entityConfig as _,
-    ~rollbackTargetCheckpointId as _,
-    ~progressCheckpointId as _,
-  ) => {
+  getRollbackData: async (~entityConfig as _, ~rollbackTargetCheckpointId as _) => {
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
     )

@@ -213,11 +213,8 @@ module Storage = {
           JsError.throwWithMessage("Not implemented"),
         getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
           JsError.throwWithMessage("Not implemented"),
-        getRollbackData: (
-          ~entityConfig as _,
-          ~rollbackTargetCheckpointId as _,
-          ~progressCheckpointId as _,
-        ) => JsError.throwWithMessage("Not implemented"),
+        getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
+          JsError.throwWithMessage("Not implemented"),
         writeBatch: (
           ~batch as _,
           ~rollback as _,

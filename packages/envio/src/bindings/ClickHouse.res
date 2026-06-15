@@ -421,14 +421,12 @@ WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> 
 }
 
 // Returns the ids of entities with history rows after the rollback target.
-// Bounded by the progress checkpoint: rows above it can exist when a previous
-// run crashed before the Postgres commit and the cleanup mutation issued by
-// resume hasn't materialized yet — they must not contribute to the diff.
+// resume finalizes its cleanup synchronously, so no row above the committed
+// checkpoint can exist here — the target is the only bound needed.
 let makeGetRollbackModifiedIdsQuery = (
   ~entityConfig: Internal.entityConfig,
   ~database: string,
   ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ~progressCheckpointId: Internal.checkpointId,
 ) => {
   let historyTableRef = `${database}.\`${EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
@@ -437,8 +435,7 @@ let makeGetRollbackModifiedIdsQuery = (
 
   `SELECT DISTINCT \`${Table.idFieldName}\`
 FROM ${historyTableRef}
-WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${rollbackTargetCheckpointId->BigInt.toString}
-  AND \`${EntityHistory.checkpointIdFieldName}\` <= ${progressCheckpointId->BigInt.toString}`
+WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${rollbackTargetCheckpointId->BigInt.toString}`
 }
 
 // Returns the most recent history row at or before the rollback target for every
@@ -452,7 +449,6 @@ let makeGetRollbackRestoredEntitiesQuery = (
   ~entityConfig: Internal.entityConfig,
   ~database: string,
   ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ~progressCheckpointId: Internal.checkpointId,
 ) => {
   let historyTableRef = `${database}.\`${EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
@@ -475,7 +471,6 @@ WHERE \`${EntityHistory.checkpointIdFieldName}\` <= ${rollbackTargetCheckpointId
   AND \`${Table.idFieldName}\` IN (
     SELECT DISTINCT \`${Table.idFieldName}\` FROM ${historyTableRef}
     WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${rollbackTargetCheckpointId->BigInt.toString}
-      AND \`${EntityHistory.checkpointIdFieldName}\` <= ${progressCheckpointId->BigInt.toString}
   )
 ORDER BY \`${EntityHistory.checkpointIdFieldName}\` DESC
 LIMIT 1 BY \`${Table.idFieldName}\`
@@ -490,7 +485,6 @@ let getRollbackDataOrThrow = async (
   ~database: string,
   ~entityConfig: Internal.entityConfig,
   ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ~progressCheckpointId: Internal.checkpointId,
 ): (array<{"id": string}>, array<Internal.entity>) => {
   try {
     let fetchRows = async (queryString): array<dict<unknown>> => {
@@ -500,20 +494,10 @@ let getRollbackDataOrThrow = async (
 
     let (modifiedRows, restoredRows) = await Promise.all2((
       fetchRows(
-        makeGetRollbackModifiedIdsQuery(
-          ~entityConfig,
-          ~database,
-          ~rollbackTargetCheckpointId,
-          ~progressCheckpointId,
-        ),
+        makeGetRollbackModifiedIdsQuery(~entityConfig, ~database, ~rollbackTargetCheckpointId),
       ),
       fetchRows(
-        makeGetRollbackRestoredEntitiesQuery(
-          ~entityConfig,
-          ~database,
-          ~rollbackTargetCheckpointId,
-          ~progressCheckpointId,
-        ),
+        makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~database, ~rollbackTargetCheckpointId),
       ),
     ))
 
@@ -642,12 +626,16 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
     })
     let tables = (await tablesResult->json)["data"]
 
-    // Delete rows with checkpoint IDs higher than the target for each history table
+    // Delete rows with checkpoint IDs higher than the target for each history
+    // table. mutations_sync = 2 blocks until the delete is finalized on every
+    // replica, so once resume returns no history row above the committed
+    // checkpoint can survive — a later rollback diff never sees stale rows from
+    // a crashed run.
     await Promise.all(
       tables->Array.map(table => {
         let tableName = table["name"]
         client->exec({
-          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString}`,
+          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString} SETTINGS mutations_sync = 2`,
         })
       }),
     )->Utils.Promise.ignoreValue

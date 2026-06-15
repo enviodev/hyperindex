@@ -236,13 +236,11 @@ WHERE \`envio_change\` = 'SET'`
           ~entityConfig,
           ~database="test_db",
           ~rollbackTargetCheckpointId=100n,
-          ~progressCheckpointId=150n,
         )
 
         let expectedQuery = `SELECT DISTINCT \`id\`
 FROM test_db.\`envio_history_EntityWithAllTypes\`
-WHERE \`envio_checkpoint_id\` > 100
-  AND \`envio_checkpoint_id\` <= 150`
+WHERE \`envio_checkpoint_id\` > 100`
 
         t.expect(query, ~message="Modified ids SQL should match exactly").toBe(expectedQuery)
       },
@@ -258,7 +256,6 @@ WHERE \`envio_checkpoint_id\` > 100
           ~entityConfig,
           ~database="test_db",
           ~rollbackTargetCheckpointId=100n,
-          ~progressCheckpointId=150n,
         )
 
         let expectedQuery = `SELECT \`id\`, \`string\`, \`optString\`, \`arrayOfStrings\`, \`int_\`, \`optInt\`, \`arrayOfInts\`, \`float_\`, \`optFloat\`, \`arrayOfFloats\`, \`bool\`, \`optBool\`, \`bigInt\`, \`optBigInt\`, \`arrayOfBigInts\`, \`bigDecimal\`, \`optBigDecimal\`, \`bigDecimalWithConfig\`, \`arrayOfBigDecimals\`, \`timestamp\`, \`optTimestamp\`, \`json\`, \`enumField\`, \`optEnumField\`, \`envio_change\`
@@ -267,7 +264,6 @@ WHERE \`envio_checkpoint_id\` <= 100
   AND \`id\` IN (
     SELECT DISTINCT \`id\` FROM test_db.\`envio_history_EntityWithAllTypes\`
     WHERE \`envio_checkpoint_id\` > 100
-      AND \`envio_checkpoint_id\` <= 150
   )
 ORDER BY \`envio_checkpoint_id\` DESC
 LIMIT 1 BY \`id\`
@@ -317,7 +313,6 @@ describe("Test getRollbackDataOrThrow", () => {
       ~database="test_db",
       ~entityConfig,
       ~rollbackTargetCheckpointId=100n,
-      ~progressCheckpointId=150n,
     )
 
     t.expect(
