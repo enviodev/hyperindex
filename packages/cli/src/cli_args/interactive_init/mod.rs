@@ -339,13 +339,13 @@ pub async fn prompt_missing_init_args(
         None if ecosystem.uses_hypersync() => {
             if is_non_interactive {
                 anyhow::bail!(
-                    "Running non-interactively but no HyperSync API token was provided. Pass \
+                    "Running non-interactively but no Envio API token was provided. Pass \
                      `--api-token <token>` or set the ENVIO_API_TOKEN environment variable. \
                      Create one at https://envio.dev/app/api-tokens."
                 );
             }
             let select = Select::new(
-                "Add an API token for HyperSync to your .env file?",
+                "Add an Envio API token to your .env file?",
                 ApiTokenInput::iter().collect(),
             )
             .prompt()

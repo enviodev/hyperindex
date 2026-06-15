@@ -205,7 +205,7 @@ pub struct InitArgs {
     #[clap(value_enum)]
     pub package_manager: Option<init_config::PackageManager>,
 
-    ///The HyperSync API token to be initialized in your templates .env file.
+    ///The Envio API token to be initialized in your templates .env file.
     ///Falls back to the `ENVIO_API_TOKEN` environment variable. Create one at
     ///https://envio.dev/app/api-tokens
     // The token is a secret, so render `[env: ENVIO_API_TOKEN]` in --help
