@@ -129,17 +129,6 @@ async fn get_ecosystem_from_cli(init_flow: InitFlow, language: &Language) -> Res
         InitFlow::Template(args) => Ok(Ecosystem::Evm {
             init_flow: evm::InitFlow::Template(args.template.unwrap_or(evm::Template::Greeter)),
         }),
-        InitFlow::SubgraphMigration(args) => {
-            let subgraph_id = match args.subgraph_id {
-                Some(id) => id,
-                None => Text::new("[BETA VERSION] What is the subgraph ID?")
-                    .prompt()
-                    .context("Prompting user for subgraph id")?,
-            };
-            Ok(Ecosystem::Evm {
-                init_flow: evm::InitFlow::SubgraphID(subgraph_id),
-            })
-        }
         InitFlow::ContractImport(args) => Ok(Ecosystem::Evm {
             init_flow: evm_prompts::prompt_contract_import_init_flow(args).await?,
         }),

@@ -7,7 +7,6 @@ use crate::{
     commands,
     config_parsing::{
         entity_parsing::Schema,
-        graph_migration::generate_config_from_subgraph_id,
         human_config::HumanConfig,
         system_config::{get_envio_version, SystemConfig},
     },
@@ -108,48 +107,6 @@ pub async fn run_init_args(
                     &template, &parsed_project_paths.project_root,
                 ))?;
         }
-        Ecosystem::Evm {
-            init_flow: init_config::evm::InitFlow::SubgraphID(cid),
-        } => {
-            template_dirs
-                .get_and_extract_blank_template(
-                    &init_config.language,
-                    &parsed_project_paths.project_root,
-                )
-                .context(format!(
-                    "Failed initializing blank template for Subgraph Migration with language {} \
-                     at path {:?}",
-                    &init_config.language, &parsed_project_paths.project_root,
-                ))?;
-
-            let evm_config =
-                generate_config_from_subgraph_id(&parsed_project_paths.project_root, cid)
-                    .await
-                    .context("Failed generating config from subgraph")?;
-
-            let system_config = SystemConfig::from_human_config(
-                HumanConfig::Evm(evm_config),
-                Schema::empty(),
-                &parsed_project_paths,
-            )
-            .context("Failed parsing config")?;
-
-            let auto_schema_handler_template =
-                contract_import_templates::AutoSchemaHandlerTemplate::try_from(
-                    system_config,
-                    &init_config.language,
-                    init_config.api_token.clone(),
-                )
-                .context("Failed converting config to auto auto_schema_handler_template")?;
-
-            auto_schema_handler_template
-                .generate_subgraph_migration_templates(
-                    &init_config.language,
-                    &parsed_project_paths.project_root,
-                )
-                .context("Failed generating subgraph migration templates for event handlers.")?;
-        }
-
         Ecosystem::Fuel {
             init_flow: init_config::fuel::InitFlow::ContractImport(contract_import_selection),
         } => {
