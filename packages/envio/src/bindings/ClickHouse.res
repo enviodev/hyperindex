@@ -409,6 +409,15 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
     })
     ->Array.joinUnsafe(", ")
 
+  // Isolated entities are identified by (id, chain_id), so the current state is
+  // taken per pair; cross-chain entities dedup by id alone.
+  let limitByFields = switch entityConfig.crossChain
+    ? None
+    : entityConfig.table->Table.getFieldByName("chainId") {
+  | Some(Field(field)) => `\`${Table.idFieldName}\`, \`${field->Table.getClickHouseDbFieldName}\``
+  | _ => `\`${Table.idFieldName}\``
+  }
+
   `CREATE VIEW IF NOT EXISTS ${database}.\`${entityConfig.name}\` AS
 SELECT ${entityFields}
 FROM (
@@ -416,7 +425,7 @@ FROM (
   FROM ${database}.\`${historyTableName}\`
   WHERE \`${EntityHistory.checkpointIdFieldName}\` <= (SELECT max(${checkpointIdField}) FROM ${database}.\`${checkpointsTableName}\`)
   ORDER BY \`${EntityHistory.checkpointIdFieldName}\` DESC
-  LIMIT 1 BY \`${Table.idFieldName}\`
+  LIMIT 1 BY ${limitByFields}
 )
 WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> string)}'`
 }

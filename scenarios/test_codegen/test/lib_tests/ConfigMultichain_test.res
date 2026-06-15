@@ -29,6 +29,7 @@ describe("Multichain entity chain id column", () => {
         ClickHouse.makeCreateHistoryTableQuery(~entityConfig=isolated, ~database="d"),
         ClickHouse.makeCreateViewQuery(~entityConfig=isolated, ~database="d"),
         PgStorage.makeCreateTableQuery(shared.table, ~pgSchema="s", ~isNumericArrayAsText=false),
+        ClickHouse.makeCreateViewQuery(~entityConfig=shared, ~database="d"),
       )).toEqual((
         `CREATE TABLE IF NOT EXISTS "s"."IsolatedEntity"("id" TEXT NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id", "chain_id"));`,
         `CREATE TABLE IF NOT EXISTS d.\`envio_history_IsolatedEntity\` (
@@ -46,10 +47,21 @@ FROM (
   FROM d.\`envio_history_IsolatedEntity\`
   WHERE \`envio_checkpoint_id\` <= (SELECT max(id) FROM d.\`envio_checkpoints\`)
   ORDER BY \`envio_checkpoint_id\` DESC
-  LIMIT 1 BY \`id\`
+  LIMIT 1 BY \`id\`, \`chainId\`
 )
 WHERE \`envio_change\` = 'SET'`,
         `CREATE TABLE IF NOT EXISTS "s"."SharedEntity"("id" TEXT NOT NULL, PRIMARY KEY("id"));`,
+        // Cross-chain entity: one current row per id, deduped by id alone.
+        `CREATE VIEW IF NOT EXISTS d.\`SharedEntity\` AS
+SELECT \`id\`
+FROM (
+  SELECT \`id\`, \`envio_change\`
+  FROM d.\`envio_history_SharedEntity\`
+  WHERE \`envio_checkpoint_id\` <= (SELECT max(id) FROM d.\`envio_checkpoints\`)
+  ORDER BY \`envio_checkpoint_id\` DESC
+  LIMIT 1 BY \`id\`
+)
+WHERE \`envio_change\` = 'SET'`,
       ))
     },
   )
