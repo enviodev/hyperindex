@@ -48,7 +48,7 @@ rpc:
 
 **"rate limited" or timeout errors:** See `indexer-performance` skill for RPC tuning parameters.
 
-**Missing `ENVIO_API_TOKEN`:** Required for HyperSync. Get a token at https://envio.dev/app/api-tokens, then set it in `.env` or shell environment.
+**Missing `ENVIO_API_TOKEN`:** Required for HyperSync. Get an Envio API token at https://envio.dev/app/api-tokens, then set it in `.env` or shell environment.
 
 ## Common Runtime Errors
 
