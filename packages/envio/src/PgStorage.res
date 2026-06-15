@@ -137,49 +137,27 @@ let withChainId = (entity: Internal.entity, ~chainId: int): Internal.entity => {
   copy->(Utils.magic: dict<unknown> => Internal.entity)
 }
 
-// Stamps the chain id onto Set changes of isolated entities, resolved from
-// the checkpoint the change was made at. Rollback-restored changes reference
-// a checkpoint outside of the batch — their entities already carry the chain
-// id from the history row, so they pass through unchanged.
-let stampIsolatedChainIds = (
-  ~updatedEntities: array<Persistence.updatedEntity>,
-  ~batch: Batch.t,
-): array<Persistence.updatedEntity> => {
-  let hasIsolated =
-    updatedEntities->Array.some(({entityConfig}: Persistence.updatedEntity) =>
-      !entityConfig.crossChain
-    )
-  if !hasIsolated {
-    updatedEntities
-  } else {
-    let chainIdByCheckpointId = Dict.make()
-    for idx in 0 to batch.checkpointIds->Array.length - 1 {
-      chainIdByCheckpointId->Dict.set(
-        batch.checkpointIds->Array.getUnsafe(idx)->BigInt.toString,
-        batch.checkpointChainIds->Array.getUnsafe(idx),
-      )
-    }
-    updatedEntities->Array.map(({entityConfig, changes} as update: Persistence.updatedEntity) =>
-      if entityConfig.crossChain {
-        update
-      } else {
-        {
-          entityConfig,
-          changes: changes->Array.map(change =>
-            switch change {
-            | Set({entityId, entity, checkpointId}) =>
-              switch chainIdByCheckpointId->Dict.get(checkpointId->BigInt.toString) {
-              | Some(chainId) =>
-                Change.Set({entityId, checkpointId, entity: entity->withChainId(~chainId)})
-              | None => change
-              }
-            | Delete(_) => change
-            }
-          ),
-        }
+// Stamps the chain id onto Set changes of isolated entities. The flush groups
+// isolated changes per chain, so the chain id is carried on the group and
+// applied to every Set entity (Delete changes need no entity stamping).
+let stampIsolatedChainIds = (~updatedEntities: array<Persistence.updatedEntity>): array<
+  Persistence.updatedEntity,
+> => {
+  updatedEntities->Array.map((update: Persistence.updatedEntity) =>
+    switch update.chainId {
+    | Some(chainId) => {
+        ...update,
+        changes: update.changes->Array.map(change =>
+          switch change {
+          | Set({entityId, entity, checkpointId}) =>
+            Change.Set({entityId, checkpointId, entity: entity->withChainId(~chainId)})
+          | Delete(_) => change
+          }
+        ),
       }
-    )
-  }
+    | None => update
+    }
+  )
 }
 
 let entityHistoryCache = Utils.WeakMap.make()
@@ -448,6 +426,12 @@ let rec makeFilterCondition = (
 
 let makeDeleteByIdQuery = (~pgSchema, ~tableName) => {
   `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = $1;`
+}
+
+// Scopes the delete to one chain for isolated entities, so deleting an id on
+// one chain leaves the same id on other chains untouched.
+let makeDeleteByIdsAndChainQuery = (~pgSchema, ~tableName, ~chainIdColumn) => {
+  `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::text[]) AND "${chainIdColumn}" = $2;`
 }
 
 let makeDeleteByIdsQuery = (~pgSchema, ~tableName) => {
@@ -818,19 +802,32 @@ let getConnectedPsqlExec = {
   }
 }
 
-let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids, ~table: Table.table) => {
+let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids, ~table: Table.table, ~chainId=?) => {
+  let chainIdColumn = switch table->Table.getFieldByName("chainId") {
+  | Some(Field(field)) => Some(field->Table.getPgDbFieldName)
+  | _ => None
+  }
   switch await (
-    switch ids {
-    | [_] =>
+    switch (chainId, chainIdColumn) {
+    // Isolated entity: scope the delete to this chain.
+    | (Some(chainId), Some(chainIdColumn)) =>
       sql->Postgres.preparedUnsafe(
-        makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName),
-        ids->Obj.magic,
+        makeDeleteByIdsAndChainQuery(~pgSchema, ~tableName=table.tableName, ~chainIdColumn),
+        (ids, chainId)->Obj.magic,
       )
     | _ =>
-      sql->Postgres.preparedUnsafe(
-        makeDeleteByIdsQuery(~pgSchema, ~tableName=table.tableName),
-        [ids]->Obj.magic,
-      )
+      switch ids {
+      | [_] =>
+        sql->Postgres.preparedUnsafe(
+          makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName),
+          ids->Obj.magic,
+        )
+      | _ =>
+        sql->Postgres.preparedUnsafe(
+          makeDeleteByIdsQuery(~pgSchema, ~tableName=table.tableName),
+          [ids]->Obj.magic,
+        )
+      }
     }
   ) {
   | exception exn =>
@@ -1022,7 +1019,7 @@ let rec writeBatch = async (
       }
     }
 
-    let setEntities = updatedEntities->Array.map(({entityConfig, changes}) => {
+    let setEntities = updatedEntities->Array.map(({entityConfig, changes, chainId}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
@@ -1150,7 +1147,12 @@ let rec writeBatch = async (
           }
           if idsToDelete->Utils.Array.notEmpty {
             promises->Array.push(
-              sql->deleteByIdsOrThrow(~pgSchema, ~ids=idsToDelete, ~table=entityConfig.table),
+              sql->deleteByIdsOrThrow(
+                ~pgSchema,
+                ~ids=idsToDelete,
+                ~table=entityConfig.table,
+                ~chainId?,
+              ),
             )
           }
 
@@ -1307,6 +1309,13 @@ let rec writeBatch = async (
   }
 }
 
+// The chain_id db column for isolated entities (None for cross-chain).
+let chainIdColumn = (entityConfig: Internal.entityConfig) =>
+  switch entityConfig.table->Table.getFieldByName("chainId") {
+  | Some(Field(field)) if !entityConfig.crossChain => Some(field->Table.getPgDbFieldName)
+  | _ => None
+  }
+
 // Returns the most recent entity state for IDs that need to be restored during rollback.
 // For each ID modified after the rollback target, retrieves its latest state at or before the target.
 let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
@@ -1325,7 +1334,14 @@ let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig
     ~entityIndex=entityConfig.index,
   )
 
-  `SELECT DISTINCT ON (${Table.idFieldName}) ${dataFieldsCommaSeparated}
+  // Isolated entities are identified by (id, chain_id), so the latest state is
+  // taken per pair rather than per id alone.
+  let distinctKey = switch chainIdColumn(entityConfig) {
+  | Some(column) => `${Table.idFieldName}, "${column}"`
+  | None => Table.idFieldName
+  }
+
+  `SELECT DISTINCT ON (${distinctKey}) ${dataFieldsCommaSeparated}
 FROM "${pgSchema}"."${historyTableName}"
 WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
   AND EXISTS (
@@ -1334,17 +1350,22 @@ WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
     WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
       AND h."${EntityHistory.checkpointIdFieldName}" > $1
   )
-ORDER BY ${Table.idFieldName}, "${EntityHistory.checkpointIdFieldName}" DESC`
+ORDER BY ${distinctKey}, "${EntityHistory.checkpointIdFieldName}" DESC`
 }
 
 // Returns entity IDs that were created after the rollback target and have no history before it.
-// These entities should be deleted during rollback.
+// These entities should be deleted during rollback. Isolated entities also
+// return their chain id so the diff can route the deletion to the right chain.
 let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
   )
-  `SELECT DISTINCT ${Table.idFieldName}
+  let selected = switch chainIdColumn(entityConfig) {
+  | Some(column) => `${Table.idFieldName}, "${column}" as "chainId"`
+  | None => Table.idFieldName
+  }
+  `SELECT DISTINCT ${selected}
 FROM "${pgSchema}"."${historyTableName}"
 WHERE "${EntityHistory.checkpointIdFieldName}" > $1
 AND NOT EXISTS (
@@ -1820,7 +1841,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
         [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
-      ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
+      ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "chainId": option<int>}>>),
       // Get entities that should be restored to their state at or before rollback target
       sql
       ->Postgres.preparedUnsafe(
@@ -1843,7 +1864,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   ) => {
     // Before the storage split, so the ClickHouse sink gets stamped
     // entities as well.
-    let updatedEntities = stampIsolatedChainIds(~updatedEntities, ~batch)
+    let updatedEntities = stampIsolatedChainIds(~updatedEntities)
 
     let pgUpdates = []
     let chUpdates = []

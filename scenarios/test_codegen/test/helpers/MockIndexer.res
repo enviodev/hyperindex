@@ -22,8 +22,8 @@ let defaultPersistence = PgStorage.makePersistenceFromConfig(
 )
 
 module InMemoryStore = {
-  let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
-    let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+  let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, ~chainId=0, entity) => {
+    let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig, ~chainId)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
       ~committedCheckpointId=inMemoryStore.committedCheckpointId,

@@ -20,6 +20,8 @@ module EntityTables = {
   }
 }
 
+type chainState = {entities: EntityTables.t}
+
 type effectCacheInMemTable = {
   // Cache keys whose handler output is persisted on the next write. Drained
   // each write; eviction is driven by the per-entry checkpointId instead.
@@ -35,7 +37,12 @@ type effectCacheInMemTable = {
 
 type t = {
   allEntities: array<Internal.entityConfig>,
-  mutable entities: dict<InMemoryTable.Entity.t>,
+  // Cross-chain (unordered) entities are shared across chains: one logical row
+  // keyed by id.
+  mutable crossChainEntities: EntityTables.t,
+  // Isolated entities are partitioned by chain, so the same id on different
+  // chains stays distinct without key mangling. Chain states are created lazily.
+  mutable chains: dict<chainState>,
   mutable effects: dict<effectCacheInMemTable>,
   mutable rollback: option<Persistence.rollback>,
   // Last checkpoint persisted to the db.
@@ -89,7 +96,8 @@ let make = (
 
   {
     allEntities: entities,
-    entities: EntityTables.make(entities),
+    crossChainEntities: EntityTables.make(entities->Array.filter(e => e.crossChain)),
+    chains: Dict.make(),
     effects: Dict.make(),
     rollback: None,
     committedCheckpointId,
@@ -197,19 +205,76 @@ let dropCommittedEffects = (
   inMemTable.changesCount = inMemTable.changesCount -. keysToDelete->Array.length->Int.toFloat
 }
 
+let getChainState = (inMemoryStore: t, ~chainId: int): chainState => {
+  let key = chainId->Int.toString
+  switch inMemoryStore.chains->Utils.Dict.dangerouslyGetNonOption(key) {
+  | Some(chainState) => chainState
+  | None =>
+    let chainState = {
+      entities: EntityTables.make(inMemoryStore.allEntities->Array.filter(e => !e.crossChain)),
+    }
+    inMemoryStore.chains->Dict.set(key, chainState)
+    chainState
+  }
+}
+
 let getInMemTable = (
   inMemoryStore: t,
   ~entityConfig: Internal.entityConfig,
+  ~chainId: int,
 ): InMemoryTable.Entity.t => {
-  inMemoryStore.entities->EntityTables.get(~entityName=entityConfig.name)
+  if entityConfig.crossChain {
+    inMemoryStore.crossChainEntities->EntityTables.get(~entityName=entityConfig.name)
+  } else {
+    (inMemoryStore->getChainState(~chainId)).entities->EntityTables.get(
+      ~entityName=entityConfig.name,
+    )
+  }
+}
+
+// Every in-memory entity table paired with the chain it belongs to (the chain
+// id is meaningless for cross-chain tables — callers pass 0). Used by the
+// store-wide passes (size, drop, flush) that must fan over all chains.
+let eachEntityTable = (inMemoryStore: t): array<(
+  int,
+  Internal.entityConfig,
+  InMemoryTable.Entity.t,
+)> => {
+  let result = []
+  inMemoryStore.allEntities->Array.forEach(entityConfig => {
+    if entityConfig.crossChain {
+      result
+      ->Array.push((
+        0,
+        entityConfig,
+        inMemoryStore.crossChainEntities->EntityTables.get(~entityName=entityConfig.name),
+      ))
+      ->ignore
+    } else {
+      inMemoryStore.chains
+      ->Dict.toArray
+      ->Array.forEach(((chainKey, chainState)) => {
+        result
+        ->Array.push((
+          chainKey->Int.fromString->Option.getOr(0),
+          entityConfig,
+          chainState.entities->EntityTables.get(~entityName=entityConfig.name),
+        ))
+        ->ignore
+      })
+    }
+  })
+  result
 }
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollback !== None
 
 let getChangesCount = (inMemoryStore: t) => {
   let total = ref(0.)
-  inMemoryStore.allEntities->Array.forEach(entityConfig => {
-    total := total.contents +. (inMemoryStore->getInMemTable(~entityConfig)).changesCount
+  inMemoryStore
+  ->eachEntityTable
+  ->Array.forEach(((_chainId, _entityConfig, table)) => {
+    total := total.contents +. table.changesCount
   })
   inMemoryStore.effects->Utils.Dict.forEach(inMemTable => {
     total := total.contents +. inMemTable.changesCount
@@ -350,16 +415,29 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
     let rollback = inMemoryStore.rollback
     inMemoryStore.rollback = None
 
-    let updatedEntities = persistence.allEntities->Array.filterMap(entityConfig => {
-      let table = inMemoryStore->getInMemTable(~entityConfig)
-      let changes =
-        table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
-      if changes->Utils.Array.isEmpty {
-        None
-      } else {
-        Some(({entityConfig, changes}: Persistence.updatedEntity))
-      }
-    })
+    // Cross-chain entities flush as a single group; isolated entities flush
+    // one group per chain, each carrying its chain id so the write path can
+    // stamp and scope by it.
+    let updatedEntities =
+      inMemoryStore
+      ->eachEntityTable
+      ->Array.filterMap(((chainId, entityConfig, table)) => {
+        let changes =
+          table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
+        if changes->Utils.Array.isEmpty {
+          None
+        } else {
+          Some(
+            (
+              {
+                entityConfig,
+                changes,
+                chainId: entityConfig.crossChain ? None : Some(chainId),
+              }: Persistence.updatedEntity
+            ),
+          )
+        }
+      })
     let updatedEffectsCache = snapshotEffects(inMemoryStore, ~cache)
 
     await persistence.storage.writeBatch(
@@ -457,10 +535,10 @@ let commitBatch = (inMemoryStore: t, ~batch: Batch.t) => {
 // keepLoadedFromDb, entries seeded from a db read are spared.
 let dropCommitted = (inMemoryStore: t, ~keepLoadedFromDb) => {
   let committedCheckpointId = inMemoryStore.committedCheckpointId
-  inMemoryStore.allEntities->Array.forEach(entityConfig =>
-    inMemoryStore
-    ->getInMemTable(~entityConfig)
-    ->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
+  inMemoryStore
+  ->eachEntityTable
+  ->Array.forEach(((_chainId, _entityConfig, table)) =>
+    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
   )
   inMemoryStore.effects->Utils.Dict.forEach(inMemTable =>
     inMemTable->dropCommittedEffects(~committedCheckpointId, ~keepLoadedFromDb)
@@ -517,7 +595,10 @@ let prepareRollbackDiff = async (
   ~rollbackDiffCheckpointId,
   ~progressBlockNumberByChainId,
 ) => {
-  inMemoryStore.entities = EntityTables.make(inMemoryStore.allEntities)
+  inMemoryStore.crossChainEntities = EntityTables.make(
+    inMemoryStore.allEntities->Array.filter(e => e.crossChain),
+  )
+  inMemoryStore.chains = Dict.make()
   inMemoryStore.effects = Dict.make()
   inMemoryStore.rollback = Some({
     targetCheckpointId: rollbackTargetCheckpointId,
@@ -528,10 +609,10 @@ let prepareRollbackDiff = async (
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
 
+  // Isolated entities route per chain (removed rows carry the chain id,
+  // restored rows carry it in the chainId column); cross-chain ones ignore it.
   let _ = await persistence.allEntities
   ->Array.map(async entityConfig => {
-    let entityTable = inMemoryStore->getInMemTable(~entityConfig)
-
     let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
       ~entityConfig,
       ~rollbackTargetCheckpointId,
@@ -539,7 +620,10 @@ let prepareRollbackDiff = async (
 
     removedIdsResult->Array.forEach(data => {
       deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
-      entityTable->InMemoryTable.Entity.set(
+      let chainId = entityConfig.crossChain ? 0 : data["chainId"]->Option.getOr(0)
+      inMemoryStore
+      ->getInMemTable(~entityConfig, ~chainId)
+      ->InMemoryTable.Entity.set(
         ~committedCheckpointId=inMemoryStore.committedCheckpointId,
         Delete({
           entityId: data["id"],
@@ -555,7 +639,12 @@ let prepareRollbackDiff = async (
 
     restoredEntities->Array.forEach((entity: Internal.entity) => {
       setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-      entityTable->InMemoryTable.Entity.set(
+      let chainId = entityConfig.crossChain
+        ? 0
+        : (entity->(Utils.magic: Internal.entity => {"chainId": int}))["chainId"]
+      inMemoryStore
+      ->getInMemTable(~entityConfig, ~chainId)
+      ->InMemoryTable.Entity.set(
         ~committedCheckpointId=inMemoryStore.committedCheckpointId,
         Set({
           entityId: entity.id,
@@ -574,15 +663,19 @@ let prepareRollbackDiff = async (
 }
 
 let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t) => {
-  let inMemTable =
-    inMemoryStore->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
-
   let itemIdx = ref(0)
 
   for checkpoint in 0 to batch.checkpointIds->Array.length - 1 {
     let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpoint)
     let chainId = batch.checkpointChainIds->Array.getUnsafe(checkpoint)
     let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpoint)
+
+    // envio_addresses is isolated, so its table lives per chain.
+    let inMemTable =
+      inMemoryStore->getInMemTable(
+        ~entityConfig=InternalTable.EnvioAddresses.entityConfig,
+        ~chainId,
+      )
 
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)

@@ -57,6 +57,9 @@ type rollback = {
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
   changes: array<Change.t<Internal.entity>>,
+  // Set for isolated entities (the chain all changes in this group belong to);
+  // None for cross-chain entities. Drives chain id stamping and scoping.
+  chainId: option<int>,
 }
 
 type storage = {
@@ -109,10 +112,12 @@ type storage = {
     }>,
   >,
   // Get rollback data for entity
+  // Removed rows carry "chainId" for isolated entities so the rollback diff
+  // can route them to the right per-chain in-memory table.
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => promise<(array<{"id": string}>, array<unknown>)>,
+  ) => promise<(array<{"id": string, "chainId": option<int>}>, array<unknown>)>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,

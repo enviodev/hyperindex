@@ -140,6 +140,8 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
           Utils.magic: dict<unknown> => Internal.entity
         )
 
+      // Isolated changes are flushed per chain, so each group carries its chain
+      // id and the write stamps every entity in the group with it.
       await storage.writeBatch(
         ~batch,
         ~rollback=None,
@@ -150,10 +152,13 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
         ~updatedEntities=[
           {
             entityConfig: isolated,
-            changes: [
-              Set({entityId: "a", entity: entity("a"), checkpointId: 1n}),
-              Set({entityId: "b", entity: entity("b"), checkpointId: 2n}),
-            ],
+            chainId: Some(1),
+            changes: [Set({entityId: "a", entity: entity("a"), checkpointId: 1n})],
+          },
+          {
+            entityConfig: isolated,
+            chainId: Some(137),
+            changes: [Set({entityId: "b", entity: entity("b"), checkpointId: 2n})],
           },
         ],
         ~chainMetaData=None,
@@ -165,7 +170,7 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
 
       t.expect(
         rows,
-        ~message="Rows should carry the chain id of the checkpoint their change was made at",
+        ~message="Rows should carry the chain id of the group they were written in",
       ).toEqual(%raw(`[{id: "a", chain_id: 1}, {id: "b", chain_id: 137}]`))
     },
   )
@@ -192,39 +197,40 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
           Utils.magic: dict<unknown> => Internal.entity
         )
 
-      // The same entity id "shared" is written on two chains in separate
-      // batches. The batch path dedups by id, so a single batch can't exercise
-      // this — but across batches the composite (id, chain_id) key keeps both
-      // rows instead of the second upserting over the first.
-      let writeOnChain = (~chainId, ~checkpointId) =>
-        storage.writeBatch(
-          ~batch={
-            totalBatchSize: 1,
-            items: [],
-            progressedChainsById: Dict.make(),
-            isInReorgThreshold: false,
-            checkpointIds: [checkpointId],
-            checkpointChainIds: [chainId],
-            checkpointBlockNumbers: [10],
-            checkpointBlockHashes: [Null.null],
-            checkpointEventsProcessed: [1],
+      // The same entity id "shared" is written on two chains in a single batch
+      // as two per-chain groups. The composite (id, chain_id) key keeps both
+      // rows instead of one upserting over the other.
+      await storage.writeBatch(
+        ~batch={
+          totalBatchSize: 2,
+          items: [],
+          progressedChainsById: Dict.make(),
+          isInReorgThreshold: false,
+          checkpointIds: [1n, 2n],
+          checkpointChainIds: [1, 137],
+          checkpointBlockNumbers: [10, 20],
+          checkpointBlockHashes: [Null.null, Null.null],
+          checkpointEventsProcessed: [1, 1],
+        },
+        ~rollback=None,
+        ~isInReorgThreshold=false,
+        ~config,
+        ~allEntities=[isolated],
+        ~updatedEffectsCache=[],
+        ~updatedEntities=[
+          {
+            entityConfig: isolated,
+            chainId: Some(1),
+            changes: [Set({entityId: "shared", entity: entity("shared"), checkpointId: 1n})],
           },
-          ~rollback=None,
-          ~isInReorgThreshold=false,
-          ~config,
-          ~allEntities=[isolated],
-          ~updatedEffectsCache=[],
-          ~updatedEntities=[
-            {
-              entityConfig: isolated,
-              changes: [Set({entityId: "shared", entity: entity("shared"), checkpointId})],
-            },
-          ],
-          ~chainMetaData=None,
-        )
-
-      await writeOnChain(~chainId=1, ~checkpointId=1n)
-      await writeOnChain(~chainId=137, ~checkpointId=2n)
+          {
+            entityConfig: isolated,
+            chainId: Some(137),
+            changes: [Set({entityId: "shared", entity: entity("shared"), checkpointId: 2n})],
+          },
+        ],
+        ~chainMetaData=None,
+      )
 
       let rows = await sql->Postgres.unsafe(
         `SELECT * FROM "${pgSchema}"."IsolatedEntity" ORDER BY "chain_id";`,
