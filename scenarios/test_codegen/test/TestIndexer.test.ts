@@ -2,6 +2,8 @@ import assert from "assert";
 import { it, describe } from "vitest";
 import { createTestIndexer } from "envio";
 
+const dc = "0x1234567890123456789012345678901234567890";
+
 describe("TestIndexer", () => {
   // Reproduction for the crash reported against envio 3.2.0:
   //
@@ -18,38 +20,37 @@ describe("TestIndexer", () => {
   // tableName `envio_effect_<EffectName>`). That table is absent from
   // `entityConfigs`, so the lookup is `undefined` and `.table` throws.
   //
-  // The load only fires once the effect cache has been committed by an earlier
-  // batch and a LATER batch requests a not-yet-in-memory cache key — i.e. a
-  // multi-batch run with a cached effect. Single-batch simulate runs never hit
-  // it, which matches the report ("single-event tests pass"). This project sets
-  // `full_batch_size: 1` so a two-block simulate splits into two batches, the way
-  // a real multi-block indexer does.
-  it("does not crash when a cached effect is loaded back in a later batch", async () => {
+  // It only fires across batches: an effect cached & committed in one batch,
+  // then re-requested with a fresh key in a LATER batch, whose preload loads the
+  // cache from storage. Registering a dynamic contract at a later block than a
+  // prior event is enough to split a single simulate run into two batches (the
+  // earlier blocks commit first) — the same shape the reporter hit with
+  // SafeSetup at block N then ProxyCreation's contractRegister at block N+1.
+  it("does not crash when a cached effect is loaded back in a batch split off by a later contract registration", async () => {
     const indexer = createTestIndexer();
-    const dc = "0x1234567890123456789012345678901234567890";
 
-    // Block 1 caches effect key "1" and commits it (registers the effect in the
-    // worker's persistence cache). Block 2 requests a fresh effect key "2",
-    // which is not in the in-memory effect table, so the runtime issues a
-    // storage load of the effect cache table -> handleLoad("envio_effect_...").
+    // Block 2 caches effect key "1" and commits it (batch 1). Block 3 registers
+    // a dynamic contract — which splits it into a second batch — and re-calls
+    // the cached effect with a fresh key, so batch 2's preload loads the effect
+    // cache table -> handleLoad("envio_effect_testEffectWithCache").
     await assert.doesNotReject(
       indexer.process({
         chains: {
           1337: {
             startBlock: 1,
-            endBlock: 2,
+            endBlock: 10,
             simulate: [
               {
                 contract: "Gravatar",
                 event: "FactoryEvent",
                 params: { contract: dc, testCase: "testEffectWithCache" },
-                block: { number: 1 },
+                block: { number: 2 },
               },
               {
                 contract: "Gravatar",
                 event: "FactoryEvent",
-                params: { contract: dc, testCase: "testEffectWithCache2" },
-                block: { number: 2 },
+                params: { contract: dc, testCase: "registerAndCachedEffect" },
+                block: { number: 3 },
               },
             ],
           },
