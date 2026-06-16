@@ -836,15 +836,29 @@ impl SystemConfig {
     pub fn to_view_json(&self) -> Result<String> {
         let view = ConfigView {
             version: system_config::VERSION,
-            storage: (&self.storage).into(),
+            storage: ViewStorageConfig {
+                postgres: self.storage.postgres.is_some(),
+                clickhouse: self.storage.clickhouse.is_some(),
+            },
         };
         Ok(serde_json::to_string_pretty(&view)?)
     }
+}
+
+// `config view` surfaces only which backends are enabled; the per-backend
+// column_name_format is an internal detail for the runtime, kept out of this
+// user-facing output.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewStorageConfig {
+    postgres: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    clickhouse: bool,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConfigView<'a> {
     version: &'a str,
-    storage: StorageConfig,
+    storage: ViewStorageConfig,
 }
