@@ -7,9 +7,6 @@ let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   ->Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
   ->Option.getOrThrow
 
-// Handle to the real module before the local shadow below.
-module RealInMemoryStore = InMemoryStore
-
 // The store requires a persistence/config even when the cycle never runs; reuse one.
 let defaultPersistence = PgStorage.makePersistenceFromConfig(
   ~config,
@@ -381,7 +378,7 @@ module Indexer = {
           // also stop once the indexer has fully settled.
           let idleChecks = ref(0)
           let rec wait = async () => {
-            await state->RealInMemoryStore.flush
+            await state->Writing.flush
             let store = state
             let isIdle =
               !store.isProcessing &&
@@ -522,7 +519,7 @@ module Indexer = {
       },
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.
-        await state->RealInMemoryStore.flush
+        await state->Writing.flush
         // Stop the previous run's loops so they don't keep driving the shared db
         // once the resumed indexer takes over.
         state->IndexerState.stop

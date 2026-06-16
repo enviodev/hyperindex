@@ -308,7 +308,7 @@ let processEventBatch = async (
 
   try {
     // Backpressure: keep processing within keepLatestChangesLimit of the cycle.
-    await inMemoryStore->InMemoryStore.awaitCapacity
+    await inMemoryStore->Writing.awaitCapacity
 
     let timeRef = Hrtime.makeTimer()
 
@@ -330,7 +330,7 @@ let processEventBatch = async (
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    inMemoryStore->InMemoryStore.commitBatch(~batch)
+    inMemoryStore->Writing.commitBatch(~batch)
 
     let loaderDuration = elapsedTimeAfterLoaders
     let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration

@@ -82,7 +82,7 @@ and executeRollback = async (
   // state. Otherwise an in-flight batch lands after the progress reads and
   // its entity changes get reverted without the chain progress being
   // rolled back, so the events are never reprocessed.
-  await state->InMemoryStore.flush
+  await state->Writing.flush
 
   let rollbackTargetCheckpointId = {
     switch await state.persistence.storage.getRollbackTargetCheckpoint(
