@@ -344,22 +344,18 @@ let parseEventFiltersOrThrow = {
         // `startBlock` (from `where.block`) for this chain — a second
         // invocation would risk observing different state for callbacks
         // that close over mutable references.
+        // A misused Proxy (or any throw from the callback) propagates as-is —
+        // the Proxy's guidance message surfaces without wrapping.
         let addressesProbe = makeAddressesProbe(contractName)
-        let probedResult = try {
-          let chain = makeDetectionChainArg(
-            ~contractName,
-            ~chainId=probeChainId,
-            ~getAddresses=() => {
-              filterByAddresses := true
-              addressesProbe
-            },
-          )
-          fn({chain: chain->Obj.magic})
-        } catch {
-        // Surface the Proxy's guidance message (and any other probe failure)
-        // unwrapped, rather than as a ReScript-wrapped exn.
-        | exn => exn->Utils.prettifyExn->raise
-        }
+        let chain = makeDetectionChainArg(
+          ~contractName,
+          ~chainId=probeChainId,
+          ~getAddresses=() => {
+            filterByAddresses := true
+            addressesProbe
+          },
+        )
+        let probedResult = fn({chain: chain->Obj.magic})
         if filterByAddresses.contents {
           addressFilterParamGroups :=
             extractAddressFilterGroups(probedResult, ~probe=addressesProbe)
