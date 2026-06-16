@@ -333,8 +333,8 @@ let buildAddressFilterBody = (groups: array<array<string>>): option<string> => {
           JSON.String(name),
         )}]]) !== undefined && ic.effectiveStartBlock <= blockNumber`
     let groupExprs =
-      groups->Array.map(group => "(" ++ group->Array.map(leaf)->Array.joinWith(" && ") ++ ")")
-    Some("var p = event.params, ic; return " ++ groupExprs->Array.joinWith(" || ") ++ ";")
+      groups->Array.map(group => "(" ++ group->Array.map(leaf)->Array.join(" && ") ++ ")")
+    Some("var p = event.params, ic; return " ++ groupExprs->Array.join(" || ") ++ ";")
   }
 }
 
