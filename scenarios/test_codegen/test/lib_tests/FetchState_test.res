@@ -532,7 +532,7 @@ describe("FetchState.make", () => {
     )
 
     // Phase 1: ContractA partition (block -1), ContractB partition (block 19_998)
-    // Phase 2: not too far, not filterByAddresses -> push ContractB addresses into ContractA partition
+    // Phase 2: not too far -> push ContractB addresses into ContractA partition
     let closePartitions = closeFetchState.optimizedPartitions
     t.expect(
       closePartitions.idsInAscOrder,
@@ -700,7 +700,7 @@ describe("FetchState.make", () => {
     },
   )
 
-  it("Different contracts with filterByAddresses keeps separate partitions per startBlock", t => {
+  it("Different contracts with filterByAddresses merge into a single partition", t => {
     let contractAEventConfig = (MockIndexer.evmEventConfig(
       ~id="0",
       ~contractName="ContractA",
@@ -735,99 +735,28 @@ describe("FetchState.make", () => {
       ~knownHeight,
     )
 
-    // Phase 1: filterByAddresses=true -> separate partitions per effectiveStartBlock
-    // Phase 2: hasFilterByAddresses -> mergeBlock on earlier, merge addresses into later
+    // filterByAddresses no longer forces a partition per startBlock: the two
+    // contracts merge into one partition and the client-side address filter
+    // drops events before each address's effectiveStartBlock.
     let partitions = fetchState.optimizedPartitions
     t.expect(
       partitions.idsInAscOrder,
-      ~message="filterByAddresses: should create separate partitions per startBlock",
-    ).toEqual(["0", "1"])
+      ~message="filterByAddresses: contracts merge into a single partition",
+    ).toEqual(["0"])
     t.expect(
       (partitions.entities->Dict.getUnsafe("0")).addressesByContractName,
-      ~message="filterByAddresses: first partition has only ContractA address",
-    ).toEqual(Dict.fromArray([("ContractA", [mockAddress0])]))
+      ~message="filterByAddresses: single partition holds both contracts' addresses",
+    ).toEqual(Dict.fromArray([("ContractB", [mockAddress1]), ("ContractA", [mockAddress0])]))
     t.expect(
       (partitions.entities->Dict.getUnsafe("0")).latestFetchedBlock.blockNumber,
-      ~message="filterByAddresses: first partition starts at block -1",
+      ~message="filterByAddresses: merged partition starts at the earliest block",
     ).toEqual(-1)
     t.expect(
       (partitions.entities->Dict.getUnsafe("0")).mergeBlock,
-      ~message="filterByAddresses: first partition has mergeBlock matching second partition's block",
-    ).toEqual(Some(99))
-    t.expect(
-      (partitions.entities->Dict.getUnsafe("1")).addressesByContractName,
-      ~message="filterByAddresses: second partition has merged addresses from both",
-    ).toEqual(
-      Dict.fromArray([("ContractB", [mockAddress1]), ("ContractA", [mockAddress0])]),
-    )
-    t.expect(
-      (partitions.entities->Dict.getUnsafe("1")).latestFetchedBlock.blockNumber,
-      ~message="filterByAddresses: second partition starts at block 99",
-    ).toEqual(99)
+      ~message="filterByAddresses: merged partition has no mergeBlock",
+    ).toEqual(None)
   })
 
-  it(
-    "Different contracts with filterByAddresses use mergeBlock strategy and merge addresses into later partition",
-    t => {
-      let contractAEventConfig = (MockIndexer.evmEventConfig(
-        ~id="0",
-        ~contractName="ContractA",
-        ~filterByAddresses=true,
-      ) :> Internal.eventConfig)
-      let contractBEventConfig = (MockIndexer.evmEventConfig(
-        ~id="0",
-        ~contractName="ContractB",
-        ~filterByAddresses=true,
-        ~startBlock=100,
-      ) :> Internal.eventConfig)
-
-      let fetchState = FetchState.make(
-        ~eventConfigs=[contractAEventConfig, contractBEventConfig],
-        ~addresses=[
-          {
-            address: mockAddress0,
-            contractName: "ContractA",
-            registrationBlock: -1,
-          },
-          {
-            address: mockAddress1,
-            contractName: "ContractB",
-            registrationBlock: -1,
-          },
-        ],
-        ~startBlock=0,
-        ~endBlock=None,
-        ~maxAddrInPartition=3,
-        ~targetBufferSize,
-        ~chainId,
-        ~knownHeight,
-      )
-
-      // Phase 1: ContractA partition (block -1), ContractB partition (block 99)
-      // Phase 2: hasFilterByAddresses -> mergeBlock on earlier, merge addresses into later
-      let partitions = fetchState.optimizedPartitions
-      t.expect(
-        partitions.idsInAscOrder,
-        ~message="filterByAddresses cross-contract: should have 2 partitions",
-      ).toEqual(["0", "1"])
-      t.expect(
-        (partitions.entities->Dict.getUnsafe("0")).addressesByContractName,
-        ~message="filterByAddresses cross-contract: first partition has only ContractA address",
-      ).toEqual(Dict.fromArray([("ContractA", [mockAddress0])]))
-      t.expect(
-        (partitions.entities->Dict.getUnsafe("0")).mergeBlock,
-        ~message="filterByAddresses cross-contract: first partition has mergeBlock",
-      ).toEqual(Some(99))
-      t.expect(
-        (partitions.entities->Dict.getUnsafe("1")).addressesByContractName,
-        ~message="filterByAddresses cross-contract: second partition has merged addresses from both contracts",
-      ).toEqual(Dict.fromArray([("ContractB", [mockAddress1]), ("ContractA", [mockAddress0])]))
-      t.expect(
-        (partitions.entities->Dict.getUnsafe("1")).latestFetchedBlock.blockNumber,
-        ~message="filterByAddresses cross-contract: second partition starts at block 99",
-      ).toEqual(99)
-    },
-  )
 })
 
 describe("FetchState.registerDynamicContracts", () => {
@@ -1346,8 +1275,9 @@ describe("FetchState.registerDynamicContracts", () => {
   })
 
   it(
-    "Dcs for contract with event filtering using addresses shouldn't be grouped into a single partition to prevent overfetching",
-    // This is because we can't filter events before dc registration block number for this case
+    "Dcs for a contract with event filtering by addresses are grouped like any other contract",
+    // The client-side address filter drops events before each dc's registration
+    // block, so these no longer need a partition per registration block.
     t => {
       let fetchState = FetchState.make(
         ~eventConfigs=[
@@ -1373,9 +1303,9 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(fetchState.contractConfigs).toEqual(
         Dict.fromArray([
-          ("Gravatar", {FetchState.filterByAddresses: false, startBlock: None}),
-          ("NftFactory", {FetchState.filterByAddresses: false, startBlock: None}),
-          ("SimpleNft", {FetchState.filterByAddresses: true, startBlock: None}),
+          ("Gravatar", {FetchState.startBlock: None}),
+          ("NftFactory", {FetchState.startBlock: None}),
+          ("SimpleNft", {FetchState.startBlock: None}),
         ]),
       )
 
@@ -1418,79 +1348,27 @@ describe("FetchState.registerDynamicContracts", () => {
         ])
 
       t.expect(
-        updatedFetchState.optimizedPartitions.entities->Dict.valuesToArray,
-        ~message=`All dcs without filterByAddresses should use the original logic and be grouped into a single partition,
-          while dcs with filterByAddress should be split into partition per every registration block`,
+        updatedFetchState.optimizedPartitions.entities
+        ->Dict.valuesToArray
+        ->Array.map(p => (
+          p.id,
+          p.dynamicContract,
+          p.addressesByContractName,
+          p.mergeBlock,
+          p.latestFetchedBlock.blockNumber,
+        )),
+        ~message="SimpleNft (filterByAddresses) dcs group into a single partition like Gravatar/NftFactory; per-block splitting is no longer needed",
       ).toEqual([
-        {
-          ...fetchState.optimizedPartitions.entities->Dict.getUnsafe("0"),
-          // Immediately merge to the original partition
-          addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0, mockAddress1])]),
-          dynamicContract: Some("Gravatar"),
-        },
-        // Partition to catch up with partition 0
-        {
-          id: "1",
-          latestFetchedBlock: {
-            blockNumber: 2,
-            blockTimestamp: 0,
-          },
-          selection: fetchState.normalSelection,
-          addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1])]),
-          mergeBlock: Some(9),
-          dynamicContract: Some("Gravatar"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
-        },
-        {
-          id: "2",
-          latestFetchedBlock: {
-            blockNumber: 2,
-            blockTimestamp: 0,
-          },
-          mergeBlock: Some(4),
-          selection: fetchState.normalSelection,
-          addressesByContractName: Dict.fromArray([("SimpleNft", [mockAddress2, mockAddress3])]),
-          dynamicContract: Some("SimpleNft"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
-        },
-        {
-          id: "3",
-          latestFetchedBlock: {
-            blockNumber: 4,
-            blockTimestamp: 0,
-          },
-          selection: fetchState.normalSelection,
-          addressesByContractName: Dict.fromArray([
-            ("SimpleNft", [mockAddress4, mockAddress2, mockAddress3]),
-          ]),
-          mergeBlock: None,
-          dynamicContract: Some("SimpleNft"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
-        },
-        {
-          id: "4",
-          latestFetchedBlock: {
-            blockNumber: 5,
-            blockTimestamp: 0,
-          },
-          selection: fetchState.normalSelection,
-          addressesByContractName: Dict.fromArray([("NftFactory", [mockAddress5])]),
-          mergeBlock: None,
-          dynamicContract: Some("NftFactory"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
-        },
+        ("0", Some("Gravatar"), Dict.fromArray([("Gravatar", [mockAddress0, mockAddress1])]), None, 9),
+        ("1", Some("Gravatar"), Dict.fromArray([("Gravatar", [mockAddress1])]), Some(9), 2),
+        (
+          "2",
+          Some("SimpleNft"),
+          Dict.fromArray([("SimpleNft", [mockAddress2, mockAddress3, mockAddress4])]),
+          None,
+          2,
+        ),
+        ("3", Some("NftFactory"), Dict.fromArray([("NftFactory", [mockAddress5])]), None, 5),
       ])
     },
   )

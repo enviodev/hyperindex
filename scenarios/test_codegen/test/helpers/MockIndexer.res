@@ -371,26 +371,14 @@ module Indexer = {
       ~registrations,
       ~reducedPollingInterval?,
     )
-    let globalState = GlobalState.make(
+    let state = IndexerState.make(
       ~ctx,
       ~chainManager,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
       ~onError,
     )
-    let gsManager =
-      globalState->GlobalStateManager.make(
-        ~reducers=GlobalState.makeReducers(
-          ~markBatchProcessed=MarkBatchProcessedAdapter.make(~inMemoryStore=ctx.inMemoryStore),
-        ),
-      )
-    gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
-    /*
-        NOTE:
-          This `ProcessEventBatch` dispatch shouldn't be necessary but we are adding for safety, it should immediately return doing 
-          nothing since there is no events on the queues.
- */
-    gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
+    state->IndexerLoop.start
 
     {
       getBatchWritePromise: () => {
@@ -434,12 +422,10 @@ module Indexer = {
       },
       getRollbackReadyPromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
-          while (
-            switch (gsManager->GlobalStateManager.getState).rollbackState {
-            | RollbackReady(_) => false
-            | _ => true
-            }
-          ) {
+          // Wait for the in-progress rollback to be fully applied. RollbackReady
+          // itself is transient (the reprocessing batch consumes it), so observe
+          // the rollback flag clearing instead.
+          while state->IndexerState.isResolvingReorg {
             await Utils.delay(1)
           }
           // Skip an extra microtask for indexer to fire actions
@@ -545,11 +531,15 @@ module Indexer = {
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.
         await ctx.inMemoryStore->RealInMemoryStore.flush
-        let state = gsManager->GlobalStateManager.getState
-        gsManager->GlobalStateManager.setState({
-          ...gsManager->GlobalStateManager.getState,
-          id: state.id + 1,
-        })
+        // Stop the previous run's loops so they don't keep driving the shared db
+        // once the resumed indexer takes over.
+        state->IndexerState.stop
+        // Let any in-flight batch or write from the stopped run settle before the
+        // resumed indexer takes over the shared persistence, else the two runs
+        // race against the same db.
+        while ctx.inMemoryStore.isProcessing || ctx.inMemoryStore.writeFiber->Option.isSome {
+          await Utils.delay(1)
+        }
         await make(
           ~chains,
           ~enableHasura,

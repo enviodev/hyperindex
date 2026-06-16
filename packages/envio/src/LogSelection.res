@@ -60,6 +60,10 @@ let make = (~addresses, ~topicSelections) => {
 type parsedEventFilters = {
   getEventFiltersOrThrow: ChainMap.Chain.t => Internal.eventFilters,
   filterByAddresses: bool,
+  // Indexed params filtered by `chain.<Contract>.addresses`, in disjunctive
+  // normal form (outer array OR of AND-groups). Empty unless `filterByAddresses`.
+  // Consumed by the codegen of the event's `clientAddressFilter`.
+  addressFilterParamGroups: array<array<string>>,
   // `_gte` from the top-level `block` filter of the user's `where`,
   // resolved at build time (per-chain via the `probeChainId`). The
   // caller uses this to override the per-event `startBlock` — a
@@ -151,6 +155,70 @@ let makeDetectionChainArg = (
   chainObj
 }
 
+// Sentinel returned by `chain.<Contract>.addresses` during detection. A Proxy
+// whose traps throw on any access, so the only non-throwing use is passing it
+// straight through as a param filter value — which `extractAddressFilterGroups`
+// then finds by identity. Misuse (spread/map/index/...) fails loud at the site.
+let makeAddressesProbe: (
+  ~contractName: string,
+) => array<Address.t> = %raw(`function (contractName) {
+  var trap = function () {
+    throw new Error(
+      'Invalid where configuration for "' + contractName +
+      '": chain.' + contractName + '.addresses must be passed directly as an indexed-param ' +
+      'filter value (e.g. { params: { to: chain.' + contractName + '.addresses } }). ' +
+      'It cannot be spread, mapped, indexed, or otherwise transformed.'
+    );
+  };
+  return new Proxy([], {get: trap});
+}`)
+
+// Find which indexed params the probed `where` result assigned the Proxy to
+// (DNF: object => one AND-group, array => OR of groups), neutralizing each match
+// to `[]` so later passes can't touch the throwing Proxy. Throws when the
+// callback read the addresses but didn't use them as a param filter value, since
+// the caller only invokes this once it knows the addresses were read.
+let extractAddressFilterGroupsOrThrow = (
+  result: JSON.t,
+  ~probe: array<Address.t>,
+  ~contractName: string,
+): array<array<string>> => {
+  let groups = []
+  let scanGroup = (paramsObj: dict<JSON.t>) => {
+    let names = []
+    paramsObj->Utils.Dict.forEachWithKey((value, key) => {
+      if value === probe->(Utils.magic: array<Address.t> => JSON.t) {
+        names->Array.push(key)->ignore
+        paramsObj->Dict.set(key, []->(Utils.magic: array<unknown> => JSON.t))
+      }
+    })
+    if names->Utils.Array.isEmpty->not {
+      groups->Array.push(names)->ignore
+    }
+  }
+  switch result {
+  | Object(obj) =>
+    switch obj->Dict.get("params") {
+    | Some(Object(p)) => scanGroup(p)
+    | Some(Array(arr)) =>
+      arr->Array.forEach(item =>
+        switch item {
+        | Object(p) => scanGroup(p)
+        | _ => ()
+        }
+      )
+    | _ => ()
+    }
+  | _ => ()
+  }
+  if groups->Utils.Array.isEmpty {
+    JsError.throwWithMessage(
+      `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
+    )
+  }
+  groups
+}
+
 let parseEventFiltersOrThrow = {
   let emptyTopics = []
   let noopGetter = _ => emptyTopics
@@ -167,6 +235,7 @@ let parseEventFiltersOrThrow = {
     ~topic3=noopGetter,
   ): parsedEventFilters => {
     let filterByAddresses = ref(false)
+    let addressFilterParamGroups = ref([])
     let startBlock = ref(None)
     let topic0 = [sighash->EvmTypes.Hex.fromStringUnsafe]
     let default = {
@@ -286,24 +355,23 @@ let parseEventFiltersOrThrow = {
         // `startBlock` (from `where.block`) for this chain — a second
         // invocation would risk observing different state for callbacks
         // that close over mutable references.
-        let probedResult = try {
-          let chain = makeDetectionChainArg(
-            ~contractName,
-            ~chainId=probeChainId,
-            ~getAddresses=() => {
-              filterByAddresses := true
-              []
-            },
-          )
-          Some(fn({chain: chain->Obj.magic}))
-        } catch {
-        | _ => None
+        // A misused Proxy (or any throw from the callback) propagates as-is —
+        // the Proxy's guidance message surfaces without wrapping.
+        let addressesProbe = makeAddressesProbe(~contractName)
+        let chain = makeDetectionChainArg(
+          ~contractName,
+          ~chainId=probeChainId,
+          ~getAddresses=() => {
+            filterByAddresses := true
+            addressesProbe
+          },
+        )
+        let probedResult = fn({chain: chain->Obj.magic})
+        if filterByAddresses.contents {
+          addressFilterParamGroups :=
+            extractAddressFilterGroupsOrThrow(probedResult, ~probe=addressesProbe, ~contractName)
         }
-        switch probedResult {
-        | Some(result) =>
-          startBlock := extractStartBlock(~onEventBlockFilterSchema, ~contractName, result)
-        | None => ()
-        }
+        startBlock := extractStartBlock(~onEventBlockFilterSchema, ~contractName, probedResult)
         if filterByAddresses.contents {
           chain => Internal.Dynamic(
             addresses => {
@@ -343,6 +411,7 @@ let parseEventFiltersOrThrow = {
     {
       getEventFiltersOrThrow,
       filterByAddresses: filterByAddresses.contents,
+      addressFilterParamGroups: addressFilterParamGroups.contents,
       startBlock: startBlock.contents,
     }
   }
