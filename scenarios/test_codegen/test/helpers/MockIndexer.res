@@ -537,12 +537,9 @@ module Indexer = {
         // Let any in-flight batch or write from the stopped run settle before the
         // resumed indexer takes over the shared persistence, else the two runs
         // race against the same db.
-        let rec waitUntilIdle = async () =>
-          if ctx.inMemoryStore.isProcessing || ctx.inMemoryStore.writeFiber->Option.isSome {
-            await Utils.delay(1)
-            await waitUntilIdle()
-          }
-        await waitUntilIdle()
+        while ctx.inMemoryStore.isProcessing || ctx.inMemoryStore.writeFiber->Option.isSome {
+          await Utils.delay(1)
+        }
         await make(
           ~chains,
           ~enableHasura,

@@ -1048,14 +1048,10 @@ describe("E2E tests", () => {
       // waiter had already parked on the Sync source, so it polls Sync once more
       // before the realtime transition bumps the epoch and a fresh Live-source
       // waiter supersedes it. Wait for the Live source to be polled.
-      let waitLiveHeightCalls = n => {
-        let rec loop = async () =>
-          if liveSource.getHeightOrThrowCalls->Array.length < n {
-            await Utils.delay(0)
-            await loop()
-          }
-        loop()
-      }
+      let waitLiveHeightCalls = async n =>
+        while liveSource.getHeightOrThrowCalls->Array.length < n {
+          await Utils.delay(0)
+        }
       await waitLiveHeightCalls(1)
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,

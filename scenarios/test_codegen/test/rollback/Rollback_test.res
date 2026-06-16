@@ -462,12 +462,9 @@ describe("E2E rollback tests", () => {
 
     // Wait until the processing loop has launched the next fetch — the batch is now
     // in flight, blocked in the handler above.
-    let rec waitForNextFetch = async () =>
-      if sourceMock.getItemsOrThrowCalls->Utils.Array.isEmpty {
-        await Utils.delay(0)
-        await waitForNextFetch()
-      }
-    await waitForNextFetch()
+    while sourceMock.getItemsOrThrowCalls->Utils.Array.isEmpty {
+      await Utils.delay(0)
+    }
 
     // A reorg lands mid-batch: block 101 came back with a different hash.
     sourceMock.resolveGetItemsOrThrow(

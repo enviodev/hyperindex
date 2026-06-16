@@ -73,16 +73,15 @@ describe("E2E blockLag tests", () => {
       // The chain advanced to 301. Answer height polls with 301 until the
       // indexer issues its next fetch (eager processing reaches the poll on its
       // own cadence, so we can't resolve at a fixed tick).
-      let rec driveToFetch = async (~attempt=0) =>
-        if sourceMock.getItemsOrThrowCalls->Utils.Array.isEmpty {
-          if attempt >= 200 {
-            JsError.throwWithMessage("Timed out waiting for the next getItemsOrThrow call")
-          }
-          sourceMock.resolveGetHeightOrThrow(301)
-          await Utils.delay(0)
-          await driveToFetch(~attempt=attempt + 1)
+      let attempt = ref(0)
+      while sourceMock.getItemsOrThrowCalls->Utils.Array.isEmpty {
+        if attempt.contents >= 200 {
+          JsError.throwWithMessage("Timed out waiting for the next getItemsOrThrow call")
         }
-      await driveToFetch()
+        sourceMock.resolveGetHeightOrThrow(301)
+        await Utils.delay(0)
+        attempt := attempt.contents + 1
+      }
 
       // Should request from block 300 up to knownHeight - blockLag = 300.
       t.expect(
