@@ -1,10 +1,9 @@
 // The indexer run loop: the fetch / process / rollback control flow. The state
 // record and its transitions live in IndexerState; leaf effects live in
 // IndexerEffects. This module mutates state only through IndexerState transitions.
-open IndexerState
 
 type partitionQueryResponse = {
-  chain: chain,
+  chain: IndexerState.chain,
   response: Source.blockRangeFetchResponse,
   query: FetchState.query,
 }
@@ -20,17 +19,17 @@ let yieldTick = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => res
 // rollback) owns a try/catch that routes failures to errorExit, so there's no
 // rejection to swallow here.
 @inline
-let launch = (state: t, work: unit => promise<unit>) =>
+let launch = (state: IndexerState.t, work: unit => promise<unit>) =>
   if !state.isStopped {
     work()->Promise.ignore
   }
 
 let rec onQueryResponse = async (
-  state: t,
+  state: IndexerState.t,
   {chain, response, query}: partitionQueryResponse,
   ~stateId,
 ) =>
-  if state->isStale(~stateId) {
+  if state->IndexerState.isStale(~stateId) {
     ()
   } else {
     let originalChainManager = state.chainManager
@@ -121,12 +120,15 @@ let rec onQueryResponse = async (
           fetchState: chainFetcher.fetchState->FetchState.resetPendingQueries,
         }),
       }
-      state->beginReorg(~chain, ~blockNumber=reorgDetectedBlockNumber, ~chainManager)
+      state->IndexerState.beginReorg(~chain, ~blockNumber=reorgDetectedBlockNumber, ~chainManager)
       // Advances synchronously to FindingReorgDepth, so a concurrent rollback
       // kick (eg from the processing loop quiescing) collapses into this one.
       state->launchRollback
     | None =>
-      state->setChainFetcher(~chain, {...chainFetcher, reorgDetection: updatedReorgDetection})
+      state->IndexerState.setChainFetcher(
+        ~chain,
+        {...chainFetcher, reorgDetection: updatedReorgDetection},
+      )
 
       let itemsWithContractRegister = []
       let newItems = []
@@ -144,7 +146,7 @@ let rec onQueryResponse = async (
       // Re-check staleness: contract registration is async, so the chain state
       // may have rolled back by the time we apply the fetched items.
       let proceed = (~newItemsWithDcs) =>
-        if !(state->isStale(~stateId)) {
+        if !(state->IndexerState.isStale(~stateId)) {
           applyQueryResponse(
             state,
             ~chain,
@@ -169,7 +171,7 @@ let rec onQueryResponse = async (
           ~itemsWithContractRegister,
           ~config=state.ctx.config,
         ) {
-        | exception exn => errorExit(state, exn->ErrorHandling.make)
+        | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
         | newItemsWithDcs => proceed(~newItemsWithDcs)
         }
       }
@@ -177,7 +179,7 @@ let rec onQueryResponse = async (
   }
 
 and applyQueryResponse = (
-  state: t,
+  state: IndexerState.t,
   ~chain,
   ~newItems,
   ~newItemsWithDcs,
@@ -219,11 +221,11 @@ and applyQueryResponse = (
     updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
   }
 
-  state->setChainFetcher(~chain, updatedChainFetcher)
+  state->IndexerState.setChainFetcher(~chain, updatedChainFetcher)
 }
 
-and finishWaitingForNewBlock = (state: t, ~chain, ~knownHeight, ~stateId) =>
-  if state->isStale(~stateId) {
+and finishWaitingForNewBlock = (state: IndexerState.t, ~chain, ~knownHeight, ~stateId) =>
+  if state->IndexerState.isStale(~stateId) {
     ()
   } else {
     let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.update(
@@ -251,11 +253,11 @@ and finishWaitingForNewBlock = (state: t, ~chain, ~knownHeight, ~stateId) =>
         chainFetcher.fetchState->FetchState.isReadyToEnterReorgThreshold
       })
 
-    state->setChainFetchers(updatedChainFetchers)
+    state->IndexerState.setChainFetchers(updatedChainFetchers)
 
     // Kick processing in case there are block handlers to run.
     if shouldEnterReorgThreshold {
-      enterReorgThreshold(state)
+      IndexerState.enterReorgThreshold(state)
       state->launchFetchAllChains
     } else {
       state->launchFetchChain(chain)
@@ -263,7 +265,7 @@ and finishWaitingForNewBlock = (state: t, ~chain, ~knownHeight, ~stateId) =>
     state->launchProcessing
   }
 
-and checkAndFetchForChain = async (state: t, chain, ~stateId) => {
+and checkAndFetchForChain = async (state: IndexerState.t, chain, ~stateId) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   if !state.isRollingBack && !state.isStopped {
     let {fetchState} = chainFetcher
@@ -298,18 +300,18 @@ and checkAndFetchForChain = async (state: t, chain, ~stateId) => {
             )
             await onQueryResponse(state, {chain, response, query}, ~stateId)
           } catch {
-          | exn => errorExit(state, exn->ErrorHandling.make)
+          | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
           }
         },
         ~stateId,
       )
     } catch {
-    | exn => errorExit(state, exn->ErrorHandling.make(~msg=unexpectedErrorMsg))
+    | exn => IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=unexpectedErrorMsg))
     }
   }
 }
 
-and checkAndFetchAllChains = async (state: t, ~stateId) => {
+and checkAndFetchAllChains = async (state: IndexerState.t, ~stateId) => {
   //Mapping from the states chainManager so we can construct tests that don't use
   //all chains
   let _ = await state.chainManager.chainFetchers
@@ -321,9 +323,9 @@ and checkAndFetchAllChains = async (state: t, ~stateId) => {
 // The single processing loop. Runs batches back-to-back while there's work and
 // no rollback is pending; exits when idle so producers (fetch, rollback) can
 // re-kick it. `inMemoryStore.isProcessing` guarantees one instance.
-and startProcessing = async (state: t) => {
-  if !(state->isProcessing) && !state.isStopped {
-    state->beginProcessing
+and startProcessing = async (state: IndexerState.t) => {
+  if !(state->IndexerState.isProcessing) && !state.isStopped {
+    state->IndexerState.beginProcessing
     // FIXME: Needed only for test determinism. The mocks resolve several fetch
     // responses synchronously in one tick; this yield lets them all land before
     // the first createBatch so they coalesce into one batch (matching the old
@@ -335,12 +337,12 @@ and startProcessing = async (state: t) => {
     while shouldContinue.contents && !state.isStopped {
       switch await processNextBatch(state) {
       | exception exn =>
-        errorExit(state, exn->ErrorHandling.make(~msg=unexpectedErrorMsg))
+        IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=unexpectedErrorMsg))
         shouldContinue := false
       | didWork => shouldContinue := didWork
       }
     }
-    state->endProcessing
+    state->IndexerState.endProcessing
 
     // A reorg detected mid-batch parks the rollback until the loop is idle.
     // Hand off now that no batch is in flight.
@@ -350,7 +352,7 @@ and startProcessing = async (state: t) => {
   }
 }
 
-and processNextBatch = async (state: t): bool =>
+and processNextBatch = async (state: IndexerState.t): bool =>
   if state.isRollingBack {
     // Park; the loop exit hands off to rollback.
     false
@@ -391,7 +393,7 @@ and processNextBatch = async (state: t): bool =>
       })
 
     if shouldEnterReorgThreshold {
-      enterReorgThreshold(state)
+      IndexerState.enterReorgThreshold(state)
     }
 
     if progressedChainsById->Utils.Dict.isEmpty {
@@ -430,7 +432,7 @@ and processNextBatch = async (state: t): bool =>
         | None => cf
         }
       })
-      state->setChainFetchers(chainFetchers)
+      state->IndexerState.setChainFetchers(chainFetchers)
       // Kick the next fetch round before awaiting the batch. A response that
       // lands mid-batch commits only fetch-frontier fields (buffer, knownHeight)
       // via setChainFetcher(s), while applyBatchProgress below commits only
@@ -450,35 +452,35 @@ and processNextBatch = async (state: t): bool =>
       | exception exn =>
         //All casese should be handled/caught before this with better user messaging.
         //This is just a safety in case something unexpected happens
-        errorExit(
+        IndexerState.errorExit(
           state,
           exn->ErrorHandling.make(~msg="A top level unexpected error occurred during processing"),
         )
         false
       | Error(errHandler) =>
-        errorExit(state, errHandler)
+        IndexerState.errorExit(state, errHandler)
         false
       | Ok() =>
-        state->recordProcessedBatch
+        state->IndexerState.recordProcessedBatch
 
         if state.isRollingBack {
           // A reorg landed while this batch was processing. Apply its progress so
           // the rollback diff is computed against up-to-date chain progress, but
           // don't reset rollback state or evaluate exit. The loop exit hands off
           // to rollback.
-          state->applyBatchProgress(~batch)
+          state->IndexerState.applyBatchProgress(~batch)
           false
         } else {
           // Can safely reset rollback state, since overwrite is not possible.
-          state->clearRollback
-          state->applyBatchProgress(~batch)
+          state->IndexerState.clearRollback
+          state->IndexerState.applyBatchProgress(~batch)
 
           if !chainManagerBeforeUpdate.isRealtime && state.chainManager.isRealtime {
             // Catching up just flipped the chain to realtime, which changes the
             // active source for waitForNewBlock (eg sync -> live). The waiter that
             // parked during backfill is bound to the old source; bump the epoch to
             // invalidate it and kick a fresh fetch that parks on the realtime source.
-            state->invalidateInflight
+            state->IndexerState.invalidateInflight
             state->launchFetchAllChains
           }
 
@@ -500,7 +502,7 @@ and processNextBatch = async (state: t): bool =>
             ->ChainMap.values
             ->Array.every(cf => cf.isProgressAtHead && cf.fetchState.endBlock->Option.isNone)
           ) {
-            errorExit(
+            IndexerState.errorExit(
               state,
               ErrorHandling.make(
                 Utils.Error.make(
@@ -527,7 +529,7 @@ and processNextBatch = async (state: t): bool =>
     }
   }
 
-and rollback = async (state: t) =>
+and rollback = async (state: IndexerState.t) =>
   // Owns its error boundary: launch doesn't catch, so a failure mid-rollback
   // must stop the indexer.
   try {
@@ -537,7 +539,7 @@ and rollback = async (state: t) =>
     | ReorgDetected({chain, blockNumber: reorgBlockNumber}) =>
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
 
-      state->enterFindingReorgDepth
+      state->IndexerState.enterFindingReorgDepth
       let rollbackTargetBlockNumber = await chainFetcher->ChainFetcher.getLastKnownValidBlock(
         ~reorgBlockNumber,
         ~isRealtime=state.chainManager.isRealtime,
@@ -547,7 +549,7 @@ and rollback = async (state: t) =>
         ~rollbackTargetBlock=rollbackTargetBlockNumber,
       )
 
-      state->foundReorgDepth(~chain, ~rollbackTargetBlockNumber)
+      state->IndexerState.foundReorgDepth(~chain, ~rollbackTargetBlockNumber)
       // Rendezvous with the processing loop: whichever of {depth found, loop
       // idle} happens last triggers the rollback; the earlier one finds the
       // other condition unmet and bails here.
@@ -555,16 +557,16 @@ and rollback = async (state: t) =>
     // Reached when a batch finished (loop idle) while the reorg depth wasn't
     // found yet. Wait for the ReorgDetected branch above to find it and re-kick.
     | FindingReorgDepth => ()
-    | FoundReorgDepth(_) if state->isProcessing =>
+    | FoundReorgDepth(_) if state->IndexerState.isProcessing =>
       Logging.info("Waiting for batch to finish processing before executing rollback")
     | FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber}) =>
       await executeRollback(state, ~reorgChain, ~rollbackTargetBlockNumber)
     }
   } catch {
-  | exn => errorExit(state, exn->ErrorHandling.make(~msg=unexpectedErrorMsg))
+  | exn => IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=unexpectedErrorMsg))
   }
 
-and executeRollback = async (state: t, ~reorgChain, ~rollbackTargetBlockNumber) => {
+and executeRollback = async (state: IndexerState.t, ~reorgChain, ~rollbackTargetBlockNumber) => {
   let startTime = Hrtime.makeTimer()
 
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
@@ -730,20 +732,20 @@ and executeRollback = async (state: t, ~reorgChain, ~rollbackTargetBlockNumber) 
     ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
   )
 
-  state->completeRollback(~eventsProcessedDiffByChain, ~chainManager)
+  state->IndexerState.completeRollback(~eventsProcessedDiffByChain, ~chainManager)
   state->launchFetchAllChains
   state->launchProcessing
 }
 
-and launchFetchAllChains = (state: t) =>
+and launchFetchAllChains = (state: IndexerState.t) =>
   launch(state, () => checkAndFetchAllChains(state, ~stateId=state.epoch))
-and launchFetchChain = (state: t, chain) =>
+and launchFetchChain = (state: IndexerState.t, chain) =>
   launch(state, () => checkAndFetchForChain(state, chain, ~stateId=state.epoch))
-and launchProcessing = (state: t) => launch(state, () => startProcessing(state))
-and launchRollback = (state: t) => launch(state, () => rollback(state))
+and launchProcessing = (state: IndexerState.t) => launch(state, () => startProcessing(state))
+and launchRollback = (state: IndexerState.t) => launch(state, () => rollback(state))
 
 // Kick off the indexer loops.
-let start = (state: t) => {
+let start = (state: IndexerState.t) => {
   state->launchFetchAllChains
   state->launchProcessing
 }
