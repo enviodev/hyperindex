@@ -241,5 +241,134 @@ describe("ChainManager", () => {
         ).toBe(numberOfMockEventsCreated)
       },
     )
+
+    // GlobalState launches the next fetch before awaiting processEventBatch, so a
+    // response can advance a chain's fetchState while the batch is in flight.
+    // updateProgressedChains must commit only progress fields and keep that
+    // concurrently-advanced fetch frontier, otherwise the freshly fetched blocks
+    // are silently dropped.
+    it("updateProgressedChains keeps a fetchState that advanced during the batch", t => {
+      let config = Config.loadWithoutRegistrations()
+      let eventConfigs = [
+        (
+          MockIndexer.evmEventConfig(~id="0", ~contractName="Gravatar", ~isWildcard=true) :>
+            Internal.eventConfig
+        ),
+      ]
+
+      let makeFetchState = (~chainId, ~eventBlocks) => {
+        let fetchState = ref(
+          FetchState.make(
+            ~maxAddrInPartition=Env.maxAddrInPartition,
+            ~endBlock=None,
+            ~eventConfigs,
+            ~addresses=[],
+            ~startBlock=0,
+            ~targetBufferSize=5000,
+            ~chainId,
+            ~knownHeight=0,
+          ),
+        )
+        eventBlocks->Array.forEach(blockNumber => {
+          let query: FetchState.query = {
+            partitionId: "0",
+            fromBlock: 0,
+            toBlock: None,
+            isChunk: false,
+            selection: {dependsOnAddresses: false, eventConfigs},
+            addressesByContractName: Dict.make(),
+            indexingAddresses: fetchState.contents.indexingAddresses,
+          }
+          fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
+          fetchState :=
+            fetchState.contents->FetchState.handleQueryResult(
+              ~query,
+              ~latestFetchedBlock={blockNumber, blockTimestamp: blockNumber * 15},
+              ~newItems=[
+                Internal.Event({
+                  timestamp: blockNumber * 15,
+                  chain: ChainMap.Chain.makeUnsafe(~chainId),
+                  blockNumber,
+                  blockHash: `0x${blockNumber->Int.toString}`,
+                  logIndex: 0,
+                  eventConfig: Utils.magic("Mock eventConfig"),
+                  event: Utils.magic("Mock event"),
+                }),
+              ],
+            )
+        })
+        fetchState.contents
+      }
+
+      let makeChainManager = (~eventBlocks): ChainManager.t => {
+        let chainFetchers = config.chainMap->ChainMap.map(chainConfig => {
+          let mockSource = MockIndexer.Source.make([], ~chain=#1)
+          let chainFetcher: ChainFetcher.t = {
+            timestampCaughtUpToHeadOrEndblock: None,
+            committedProgressBlockNumber: -1,
+            numEventsProcessed: 0.,
+            fetchState: makeFetchState(~chainId=chainConfig.id, ~eventBlocks),
+            logger: Logging.getLogger(),
+            sourceManager: SourceManager.make(
+              ~sources=[mockSource.source],
+              ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+              ~isRealtime=false,
+            ),
+            chainConfig,
+            reorgDetection: ReorgDetection.make(
+              ~chainReorgCheckpoints=[],
+              ~maxReorgDepth=200,
+              ~shouldRollbackOnReorg=false,
+            ),
+            safeCheckpointTracking: None,
+            isProgressAtHead: false,
+          }
+          chainFetcher
+        })
+        {chainFetchers, isInReorgThreshold: false, isRealtime: false}
+      }
+
+      // The batch is created while each chain has fetched up to block 5.
+      let atBatchCreation = makeChainManager(~eventBlocks=[5])
+      let batch =
+        atBatchCreation->ChainManager.createBatch(
+          ~processedCheckpointId=Internal.initialCheckpointId,
+          ~batchSizeTarget=10000,
+          ~isRollback=false,
+        )
+
+      let chain = atBatchCreation.chainFetchers->ChainMap.keys->Array.getUnsafe(0)
+      let chainId = chain->ChainMap.Chain.toChainId
+
+      // A fetch lands mid-batch and advances this chain's frontier to block 15.
+      let cf = atBatchCreation.chainFetchers->ChainMap.get(chain)
+      let withConcurrentFetch: ChainManager.t = {
+        ...atBatchCreation,
+        chainFetchers: atBatchCreation.chainFetchers->ChainMap.set(
+          chain,
+          {...cf, fetchState: makeFetchState(~chainId, ~eventBlocks=[5, 15])},
+        ),
+      }
+
+      let result = withConcurrentFetch->ChainManager.updateProgressedChains(~batch)
+      let resultCf = result.chainFetchers->ChainMap.get(chain)
+      let progressed =
+        batch.progressedChainsById
+        ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
+        ->Option.getUnsafe
+
+      t.expect(
+        {
+          "committedProgressBlockNumber": resultCf.committedProgressBlockNumber,
+          // The concurrent fetch buffered 2 events; the batch-time snapshot had 1.
+          // Seeing 2 proves the current (post-fetch) fetchState was kept.
+          "bufferSize": resultCf.fetchState->FetchState.bufferSize,
+        },
+        ~message="must commit the batch's progress while keeping the mid-batch fetch frontier",
+      ).toEqual({
+        "committedProgressBlockNumber": progressed.progressBlockNumber,
+        "bufferSize": 2,
+      })
+    })
   })
 })

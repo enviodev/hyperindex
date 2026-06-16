@@ -510,6 +510,11 @@ and processNextBatch = async (state: t): bool =>
         }
       })
       state->setChainFetchers(chainFetchers)
+      // Kick the next fetch round before awaiting the batch. A response that
+      // lands mid-batch commits only fetch-frontier fields (buffer, knownHeight)
+      // via setChainFetcher(s), while applyBatchProgress below commits only
+      // progress fields, so the two concurrent writes are disjoint and neither
+      // clobbers the other.
       state->launchFetchAllChains
 
       inMemoryStore->InMemoryStore.setBatchDcs(~batch)
