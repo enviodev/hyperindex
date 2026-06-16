@@ -37,10 +37,6 @@ type t = {
   // Set once on any fatal error. Every loop checks it to stop iterating and
   // every launch skips when it's set, so a single failure quiesces the indexer.
   mutable isStopped: bool,
-  // True from the moment a reorg is detected until its rollback is applied.
-  // Fetching and batch processing pause while it's set so they can't act on
-  // chain state that's about to be rolled back.
-  mutable isRollingBack: bool,
   // Bumped when in-flight fetch work must be invalidated: on a reorg (responses
   // requested against pre-reorg state) and on the realtime transition (the
   // waitForNewBlock waiter is bound to the old, pre-realtime source). A fetch
@@ -67,7 +63,6 @@ let make = (
     exitAfterFirstEventBlock,
     onError,
     isStopped: false,
-    isRollingBack: false,
     epoch: 0,
   }
 }
@@ -76,6 +71,16 @@ let make = (
 // epoch moved on (reorg / realtime transition) since the work was scheduled.
 @inline
 let isStale = (state: t, ~stateId) => state.isStopped || stateId !== state.epoch
+
+// True from when a reorg is detected until its rollback target is resolved.
+// Fetching and batch processing pause while it holds so they don't act on chain
+// state that's about to be rolled back. Once RollbackReady, processing resumes to
+// apply the diff, so this reads false there.
+let isResolvingReorg = (state: t) =>
+  switch state.rollbackState {
+  | ReorgDetected(_) | FindingReorgDepth | FoundReorgDepth(_) => true
+  | NoRollback | RollbackReady(_) => false
+  }
 
 // The single fatal-error handler. Stops every loop before reporting, and only
 // reports the first error so redundant handlers (eg an error caught in two
@@ -127,12 +132,11 @@ let enterReorgThreshold = (state: t) => {
 }
 
 // Begin a reorg rollback. Commits the caller-rebuilt manager, invalidates
-// in-flight fetches and marks the rollback in progress as one step, so the epoch
-// bump can never be left out.
+// in-flight fetches and enters the ReorgDetected state as one step, so the epoch
+// bump can never be left out. isResolvingReorg derives from rollbackState.
 let beginReorg = (state: t, ~chain, ~blockNumber, ~chainManager) => {
   state.chainManager = chainManager
   state.epoch = state.epoch + 1
-  state.isRollingBack = true
   state.rollbackState = ReorgDetected({chain, blockNumber})
 }
 
@@ -141,11 +145,11 @@ let enterFindingReorgDepth = (state: t) => state.rollbackState = FindingReorgDep
 let foundReorgDepth = (state: t, ~chain, ~rollbackTargetBlockNumber) =>
   state.rollbackState = FoundReorgDepth({chain, rollbackTargetBlockNumber})
 
-// Finish a rollback. Commits the rolled-back manager, leaves the diff ready for
-// the next batch to consume and clears the in-progress flag as one step.
+// Finish a rollback. Commits the rolled-back manager and leaves the diff ready
+// for the next batch to consume; RollbackReady makes isResolvingReorg false, so
+// processing resumes to apply it.
 let completeRollback = (state: t, ~eventsProcessedDiffByChain, ~chainManager) => {
   state.rollbackState = RollbackReady({eventsProcessedDiffByChain: eventsProcessedDiffByChain})
-  state.isRollingBack = false
   state.chainManager = chainManager
 }
 

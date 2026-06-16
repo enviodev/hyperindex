@@ -425,7 +425,7 @@ module Indexer = {
           // Wait for the in-progress rollback to be fully applied. RollbackReady
           // itself is transient (the reprocessing batch consumes it), so observe
           // the rollback flag clearing instead.
-          while state.isRollingBack {
+          while state->IndexerState.isResolvingReorg {
             await Utils.delay(1)
           }
           // Skip an extra microtask for indexer to fire actions

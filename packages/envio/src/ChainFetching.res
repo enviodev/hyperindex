@@ -270,7 +270,7 @@ and checkAndFetchForChain = async (
   ~scheduleRollback,
 ) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-  if !state.isRollingBack && !state.isStopped {
+  if !(state->IndexerState.isResolvingReorg) && !state.isStopped {
     let {fetchState} = chainFetcher
     let isRealtime = state.chainManager.isRealtime
 
