@@ -319,14 +319,12 @@ let compileAddressFilter: string => (
   return new Function("event", "blockNumber", "indexingAddresses", body);
 }`)
 
-// Precompile the client-side address filter from the DNF of address-filtered
-// param names (OR of AND-groups). The generated function keeps the event only
-// if some group's params are all registered at or before the log's block.
-// The DNF is fixed here, so it's unrolled into one boolean expression — no
-// per-event closure, loop, or array. `None` when there's no address-param filter.
-let buildAddressFilter = (groups: array<array<string>>): option<
-  (Internal.event, int, dict<Internal.indexingContract>) => bool,
-> => {
+// Body of the client-side address filter for a DNF of address-filtered param
+// names (OR of AND-groups): keep the event only if some group's params are all
+// registered at or before the log's block. The DNF is fixed here, so it's
+// unrolled into one boolean expression — no per-event closure, loop, or array.
+// `None` when there's no address-param filter. Exposed for snapshotting.
+let buildAddressFilterBody = (groups: array<array<string>>): option<string> => {
   switch groups {
   | [] => None
   | _ =>
@@ -336,10 +334,13 @@ let buildAddressFilter = (groups: array<array<string>>): option<
         )}]]) !== undefined && ic.effectiveStartBlock <= blockNumber`
     let groupExprs =
       groups->Array.map(group => "(" ++ group->Array.map(leaf)->Array.joinWith(" && ") ++ ")")
-    let body = "var p = event.params, ic; return " ++ groupExprs->Array.joinWith(" || ") ++ ";"
-    Some(compileAddressFilter(body))
+    Some("var p = event.params, ic; return " ++ groupExprs->Array.joinWith(" || ") ++ ";")
   }
 }
+
+let buildAddressFilter = (groups: array<array<string>>): option<
+  (Internal.event, int, dict<Internal.indexingContract>) => bool,
+> => buildAddressFilterBody(groups)->Option.map(compileAddressFilter)
 
 // ============== Build complete EVM event config ==============
 

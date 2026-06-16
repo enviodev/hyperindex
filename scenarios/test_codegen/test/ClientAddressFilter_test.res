@@ -217,3 +217,36 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
     t.expect(updated.buffer->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
   })
 })
+
+// Locks the exact generated predicate source so any codegen change is visible
+// in review. Snapshots the body (what we generate) rather than the compiled
+// function's `.toString()`, which would depend on the JS engine's formatting.
+describe("buildAddressFilterBody — generated predicate source", () => {
+  it("single group, single param", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"]])).toEqual(
+      Some(
+        `var p = event.params, ic; return ((ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber);`,
+      ),
+    )
+  })
+
+  it("OR of single-param groups", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"], ["from"]])).toEqual(
+      Some(
+        `var p = event.params, ic; return ((ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber) || ((ic = indexingAddresses[p["from"]]) !== undefined && ic.effectiveStartBlock <= blockNumber);`,
+      ),
+    )
+  })
+
+  it("AND within a group", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([["from", "to"]])).toEqual(
+      Some(
+        `var p = event.params, ic; return ((ic = indexingAddresses[p["from"]]) !== undefined && ic.effectiveStartBlock <= blockNumber && (ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber);`,
+      ),
+    )
+  })
+
+  it("None when there are no groups", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([])).toEqual(None)
+  })
+})
