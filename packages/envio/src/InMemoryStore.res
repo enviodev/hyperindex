@@ -416,26 +416,18 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
     inMemoryStore.rollback = None
 
     // Cross-chain entities flush as a single group; isolated entities flush
-    // one group per chain, each carrying its chain id so the write path can
-    // stamp and scope by it.
+    // one group per chain. The chain isn't tagged here — the write path derives
+    // it from each change's checkpoint id.
     let updatedEntities =
       inMemoryStore
       ->eachEntityTable
-      ->Array.filterMap(((chainId, entityConfig, table)) => {
+      ->Array.filterMap(((_chainId, entityConfig, table)) => {
         let changes =
           table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
         if changes->Utils.Array.isEmpty {
           None
         } else {
-          Some(
-            (
-              {
-                entityConfig,
-                changes,
-                chainId: entityConfig.crossChain ? None : Some(chainId),
-              }: Persistence.updatedEntity
-            ),
-          )
+          Some(({entityConfig, changes}: Persistence.updatedEntity))
         }
       })
     let updatedEffectsCache = snapshotEffects(inMemoryStore, ~cache)

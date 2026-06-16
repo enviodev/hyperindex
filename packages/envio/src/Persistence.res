@@ -57,9 +57,6 @@ type rollback = {
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
   changes: array<Change.t<Internal.entity>>,
-  // Set for isolated entities (the chain all changes in this group belong to);
-  // None for cross-chain entities. Drives chain id stamping and scoping.
-  chainId: option<int>,
 }
 
 type storage = {

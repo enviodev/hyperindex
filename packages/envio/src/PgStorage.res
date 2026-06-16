@@ -137,25 +137,57 @@ let withChainId = (entity: Internal.entity, ~chainId: int): Internal.entity => {
   copy->(Utils.magic: dict<unknown> => Internal.entity)
 }
 
-// Stamps the chain id onto Set changes of isolated entities. The flush groups
-// isolated changes per chain, so the chain id is carried on the group and
-// applied to every Set entity (Delete changes need no entity stamping).
-let stampIsolatedChainIds = (~updatedEntities: array<Persistence.updatedEntity>): array<
-  Persistence.updatedEntity,
-> => {
+// Maps each checkpoint id to the chain it belongs to (the same data the
+// envio_checkpoints table stores), so the chain id never has to be threaded
+// through the in-memory layer — it's recovered from each change's checkpoint.
+let makeChainIdByCheckpointId = (batch: Batch.t) => {
+  let map = Dict.make()
+  for idx in 0 to batch.checkpointIds->Array.length - 1 {
+    map->Dict.set(
+      batch.checkpointIds->Array.getUnsafe(idx)->BigInt.toString,
+      batch.checkpointChainIds->Array.getUnsafe(idx),
+    )
+  }
+  map
+}
+
+// Reads the chain id a Set entity was stamped with (isolated entities only).
+let entityChainId = (entity: Internal.entity): option<int> =>
+  (entity->(Utils.magic: Internal.entity => {"chainId": option<int>}))["chainId"]
+
+// The chain_id db column for isolated entities (None for cross-chain).
+let chainIdColumn = (entityConfig: Internal.entityConfig) =>
+  switch entityConfig.table->Table.getFieldByName("chainId") {
+  | Some(Field(field)) if !entityConfig.crossChain => Some(field->Table.getPgDbFieldName)
+  | _ => None
+  }
+
+// Stamps the chain id onto Set changes of isolated entities, derived from each
+// change's checkpoint. Rollback-restored changes carry a synthetic checkpoint
+// outside the batch; their entities already hold the chain id from the history
+// row, so they pass through unchanged.
+let stampIsolatedChainIds = (
+  ~updatedEntities: array<Persistence.updatedEntity>,
+  ~chainIdByCheckpointId: dict<int>,
+): array<Persistence.updatedEntity> => {
   updatedEntities->Array.map((update: Persistence.updatedEntity) =>
-    switch update.chainId {
-    | Some(chainId) => {
+    if update.entityConfig.crossChain {
+      update
+    } else {
+      {
         ...update,
         changes: update.changes->Array.map(change =>
           switch change {
           | Set({entityId, entity, checkpointId}) =>
-            Change.Set({entityId, checkpointId, entity: entity->withChainId(~chainId)})
+            switch chainIdByCheckpointId->Dict.get(checkpointId->BigInt.toString) {
+            | Some(chainId) =>
+              Change.Set({entityId, checkpointId, entity: entity->withChainId(~chainId)})
+            | None => change
+            }
           | Delete(_) => change
           }
         ),
       }
-    | None => update
     }
   )
 }
@@ -176,15 +208,16 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
           switch field.fieldName {
           //id is not nullable and should be part of the pk
           | "id" => {...field, fieldName: id, isPrimaryKey: true}->Table.Field->Some
+          // The isolated chain id column is part of the entity's identity, so it
+          // stays a non-nullable part of the history pk: (id, chain_id,
+          // checkpoint). This keeps the checkpoint-0 backfill baseline distinct
+          // per chain when the same id exists on multiple chains.
+          | _ if field.isPrimaryKey => {...field, isIndex: false}->Table.Field->Some
           | _ =>
             {
               ...field,
               isNullable: true, //All entity fields are nullable in the case
               isIndex: false, //No need to index any additional entity data fields in entity history
-              // History rows are keyed by (id, checkpoint); the checkpoint id
-              // is globally unique across chains, so the isolated chain id
-              // column stays a plain data column here, not part of the pk.
-              isPrimaryKey: false,
             }
             ->Field
             ->Some
@@ -860,7 +893,13 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
   let allHistoryFieldNamesStr =
     allHistoryFieldNames->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
 
-  // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
+  // Isolated entities carry a non-nullable chain id in the history pk, so the
+  // delete-update rows take it from unnest (derived from each delete's
+  // checkpoint) rather than NULL.
+  let chainIdCol = chainIdColumn(entityConfig)
+
+  // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest,
+  // chain_id from unnest (isolated), 'DELETE' for action, NULL for all other fields
   let selectParts = allHistoryFieldNames->Array.map(fieldName => {
     switch fieldName {
     | field if field == Table.idFieldName => `u.${Table.idFieldName}`
@@ -868,6 +907,7 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
       `u.${EntityHistory.checkpointIdFieldName}`
     | field if field == EntityHistory.changeFieldName =>
       `'${(EntityHistory.RowAction.DELETE :> string)}'`
+    | field if Some(field) == chainIdCol => `u.chain_id`
     | _ => "NULL"
     }
   })
@@ -882,9 +922,16 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
     ~isNullable=false,
   )
 
+  let unnest = switch chainIdCol {
+  | Some(_) =>
+    `UNNEST($1::text[], $2::${checkpointIdPgType}[], $3::int[]) AS u(${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName}, chain_id)`
+  | None =>
+    `UNNEST($1::text[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
+  }
+
   `INSERT INTO "${pgSchema}"."${historyTableName}" (${allHistoryFieldNamesStr})
 SELECT ${selectPartsStr}
-FROM UNNEST($1::text[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
+FROM ${unnest}`
 }
 
 let executeSet = (
@@ -1019,7 +1066,10 @@ let rec writeBatch = async (
       }
     }
 
-    let setEntities = updatedEntities->Array.map(({entityConfig, changes, chainId}) => {
+    let chainIdByCheckpointId = makeChainIdByCheckpointId(batch)
+
+    let setEntities = updatedEntities->Array.map(({entityConfig, changes}) => {
+      let isIsolated = !entityConfig.crossChain
       let entitiesToSet = []
       let idsToDelete = []
 
@@ -1031,7 +1081,17 @@ let rec writeBatch = async (
       let batchSetUpdates = []
       let batchDeleteEntityIds = []
       let batchDeleteCheckpointIds = []
+      let batchDeleteChainIds = []
       let idsWithDiff = Utils.Set.make()
+
+      // The chain all changes in this group belong to (isolated entities flush
+      // one group per chain). Derived from a stamped Set entity or a change's
+      // checkpoint — used to scope the entity-table delete.
+      let groupChainId = ref(None)
+      let noteChain = chainId =>
+        if groupChainId.contents->Option.isNone {
+          groupChainId := chainId
+        }
 
       // Single pass over the change log: track each id's latest change (the last
       // one seen) and, when saving history, fan every non-diff change out to the
@@ -1044,6 +1104,13 @@ let rec writeBatch = async (
           orderedIds->Array.push(entityId)
         }
         latestChangeById->Dict.set(entityId, change)
+        if isIsolated {
+          switch change {
+          | Set({entity}) => noteChain(entity->entityChainId)
+          | Delete({checkpointId}) =>
+            noteChain(chainIdByCheckpointId->Dict.get(checkpointId->BigInt.toString))
+          }
+        }
         if shouldSaveHistory {
           if Some(change->Change.getCheckpointId) === diffCheckpointId {
             idsWithDiff->Utils.Set.add(entityId)->ignore
@@ -1052,6 +1119,9 @@ let rec writeBatch = async (
             | Delete({entityId, checkpointId}) =>
               batchDeleteEntityIds->Array.push(entityId)->ignore
               batchDeleteCheckpointIds->Array.push(checkpointId)->ignore
+              batchDeleteChainIds
+              ->Array.push(chainIdByCheckpointId->Dict.get(checkpointId->BigInt.toString))
+              ->ignore
             | Set(_) => batchSetUpdates->Array.push(change)->ignore
             }
           }
@@ -1088,19 +1158,33 @@ let rec writeBatch = async (
                 ~pgSchema,
                 ~entityName=entityConfig.name,
                 ~entityIndex=entityConfig.index,
+                ~chainIdColumn=chainIdColumn(entityConfig),
                 ~ids=backfillHistoryIds->Utils.Set.toArray,
               )
             }
 
             if batchDeleteCheckpointIds->Utils.Array.notEmpty {
+              // Isolated entities pass the per-delete chain id (derived from the
+              // checkpoint) so history delete rows carry it; cross-chain ones
+              // bind only id + checkpoint.
+              let params = switch chainIdColumn(entityConfig) {
+              | Some(_) =>
+                (
+                  batchDeleteEntityIds,
+                  batchDeleteCheckpointIds->Utils.BigInt.arrayToStringArray,
+                  batchDeleteChainIds->Array.map(c => c->Option.getOr(0)),
+                )->Obj.magic
+              | None =>
+                (
+                  batchDeleteEntityIds,
+                  batchDeleteCheckpointIds->Utils.BigInt.arrayToStringArray,
+                )->Obj.magic
+              }
               promises->Array.push(
                 sql
                 ->Postgres.preparedUnsafe(
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
-                  (
-                    batchDeleteEntityIds,
-                    batchDeleteCheckpointIds->Utils.BigInt.arrayToStringArray,
-                  )->Obj.magic,
+                  params,
                 )
                 ->Utils.Promise.ignoreValue,
               )
@@ -1151,7 +1235,7 @@ let rec writeBatch = async (
                 ~pgSchema,
                 ~ids=idsToDelete,
                 ~table=entityConfig.table,
-                ~chainId?,
+                ~chainId=?groupChainId.contents,
               ),
             )
           }
@@ -1309,13 +1393,6 @@ let rec writeBatch = async (
   }
 }
 
-// The chain_id db column for isolated entities (None for cross-chain).
-let chainIdColumn = (entityConfig: Internal.entityConfig) =>
-  switch entityConfig.table->Table.getFieldByName("chainId") {
-  | Some(Field(field)) if !entityConfig.crossChain => Some(field->Table.getPgDbFieldName)
-  | _ => None
-  }
-
 // Returns the most recent entity state for IDs that need to be restored during rollback.
 // For each ID modified after the rollback target, retrieves its latest state at or before the target.
 let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
@@ -1335,10 +1412,14 @@ let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig
   )
 
   // Isolated entities are identified by (id, chain_id), so the latest state is
-  // taken per pair rather than per id alone.
-  let distinctKey = switch chainIdColumn(entityConfig) {
-  | Some(column) => `${Table.idFieldName}, "${column}"`
-  | None => Table.idFieldName
+  // taken per pair rather than per id alone — both the distinct key and the
+  // "modified after target" existence check are scoped by chain.
+  let (distinctKey, chainMatch) = switch chainIdColumn(entityConfig) {
+  | Some(column) => (
+      `${Table.idFieldName}, "${column}"`,
+      `      AND h."${column}" = "${historyTableName}"."${column}"\n`,
+    )
+  | None => (Table.idFieldName, "")
   }
 
   `SELECT DISTINCT ON (${distinctKey}) ${dataFieldsCommaSeparated}
@@ -1348,7 +1429,7 @@ WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
     SELECT 1
     FROM "${pgSchema}"."${historyTableName}" h
     WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
-      AND h."${EntityHistory.checkpointIdFieldName}" > $1
+${chainMatch}      AND h."${EntityHistory.checkpointIdFieldName}" > $1
   )
 ORDER BY ${distinctKey}, "${EntityHistory.checkpointIdFieldName}" DESC`
 }
@@ -1361,9 +1442,12 @@ let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgS
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
   )
-  let selected = switch chainIdColumn(entityConfig) {
-  | Some(column) => `${Table.idFieldName}, "${column}" as "chainId"`
-  | None => Table.idFieldName
+  let (selected, chainMatch) = switch chainIdColumn(entityConfig) {
+  | Some(column) => (
+      `${Table.idFieldName}, "${column}" as "chainId"`,
+      `    AND h."${column}" = "${historyTableName}"."${column}"\n`,
+    )
+  | None => (Table.idFieldName, "")
   }
   `SELECT DISTINCT ${selected}
 FROM "${pgSchema}"."${historyTableName}"
@@ -1372,7 +1456,7 @@ AND NOT EXISTS (
   SELECT 1
   FROM "${pgSchema}"."${historyTableName}" h
   WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
-    AND h."${EntityHistory.checkpointIdFieldName}" <= $1
+${chainMatch}    AND h."${EntityHistory.checkpointIdFieldName}" <= $1
 )`
 }
 
@@ -1864,7 +1948,10 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   ) => {
     // Before the storage split, so the ClickHouse sink gets stamped
     // entities as well.
-    let updatedEntities = stampIsolatedChainIds(~updatedEntities)
+    let updatedEntities = stampIsolatedChainIds(
+      ~updatedEntities,
+      ~chainIdByCheckpointId=makeChainIdByCheckpointId(batch),
+    )
 
     let pgUpdates = []
     let chUpdates = []

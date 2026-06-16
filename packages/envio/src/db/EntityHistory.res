@@ -117,9 +117,16 @@ let pruneStaleEntityHistory = (
 }
 
 // If an entity doesn't have a history before the update
-// we create it automatically with envio_checkpoint_id 0
-let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex) => {
+// we create it automatically with envio_checkpoint_id 0.
+// For isolated entities the entity table holds one row per (id, chain_id), so
+// the "missing history" check is scoped by chain too — otherwise one chain's
+// baseline would mask another's, and the checkpoint-0 rows would collide.
+let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex, ~chainIdColumn) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
+  let historyJoin = switch chainIdColumn {
+  | Some(column) => `h.id = e.id AND h."${column}" = e."${column}"`
+  | None => `h.id = e.id`
+  }
   `WITH target_ids AS (
   SELECT UNNEST($1::${(Text: Postgres.columnType :> string)}[]) AS id
 ),
@@ -127,7 +134,7 @@ missing_history AS (
   SELECT e.*
   FROM "${pgSchema}"."${entityName}" e
   JOIN target_ids t ON e.id = t.id
-  LEFT JOIN ${historyTableRef} h ON h.id = e.id
+  LEFT JOIN ${historyTableRef} h ON ${historyJoin}
   WHERE h.id IS NULL
 )
 INSERT INTO ${historyTableRef}
@@ -135,10 +142,17 @@ SELECT *, 0 AS ${checkpointIdFieldName}, '${(RowAction.SET :> string)}' as ${cha
 FROM missing_history;`
 }
 
-let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<string>) => {
+let backfillHistory = (
+  sql,
+  ~pgSchema,
+  ~entityName,
+  ~entityIndex,
+  ~chainIdColumn,
+  ~ids: array<string>,
+) => {
   sql
   ->Postgres.preparedUnsafe(
-    makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
+    makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn),
     [ids]->Obj.magic,
   )
   ->Utils.Promise.ignoreValue

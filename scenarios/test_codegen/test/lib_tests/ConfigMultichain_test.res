@@ -152,8 +152,8 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
           Utils.magic: dict<unknown> => Internal.entity
         )
 
-      // Isolated changes are flushed per chain, so each group carries its chain
-      // id and the write stamps every entity in the group with it.
+      // The write derives each change's chain from its checkpoint id (1n -> chain
+      // 1, 2n -> chain 137) and stamps the entity with it.
       await storage.writeBatch(
         ~batch,
         ~rollback=None,
@@ -164,13 +164,10 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
         ~updatedEntities=[
           {
             entityConfig: isolated,
-            chainId: Some(1),
-            changes: [Set({entityId: "a", entity: entity("a"), checkpointId: 1n})],
-          },
-          {
-            entityConfig: isolated,
-            chainId: Some(137),
-            changes: [Set({entityId: "b", entity: entity("b"), checkpointId: 2n})],
+            changes: [
+              Set({entityId: "a", entity: entity("a"), checkpointId: 1n}),
+              Set({entityId: "b", entity: entity("b"), checkpointId: 2n}),
+            ],
           },
         ],
         ~chainMetaData=None,
@@ -209,9 +206,10 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
           Utils.magic: dict<unknown> => Internal.entity
         )
 
-      // The same entity id "shared" is written on two chains in a single batch
-      // as two per-chain groups. The composite (id, chain_id) key keeps both
-      // rows instead of one upserting over the other.
+      // The same entity id "shared" is written on two chains. The flush groups
+      // changes per chain (so the per-id dedup doesn't merge them), and the
+      // chain is derived from each checkpoint. The composite (id, chain_id) key
+      // keeps both rows instead of one upserting over the other.
       await storage.writeBatch(
         ~batch={
           totalBatchSize: 2,
@@ -232,12 +230,10 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
         ~updatedEntities=[
           {
             entityConfig: isolated,
-            chainId: Some(1),
             changes: [Set({entityId: "shared", entity: entity("shared"), checkpointId: 1n})],
           },
           {
             entityConfig: isolated,
-            chainId: Some(137),
             changes: [Set({entityId: "shared", entity: entity("shared"), checkpointId: 2n})],
           },
         ],
@@ -252,6 +248,77 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
         rows,
         ~message="Same id on two chains should yield two rows keyed by (id, chain_id)",
       ).toEqual(%raw(`[{id: "shared", chain_id: 1}, {id: "shared", chain_id: 137}]`))
+    },
+  )
+
+  Async.it(
+    "Rollback restores per (id, chain) so a shared id only reverts the reorged chain",
+    async t => {
+      let config = makePublicConfig(
+        ~storage=%raw(`{postgres: true, postgresColumnNameFormat: "snake_case"}`),
+      )
+      let isolated = config.userEntitiesByName->Dict.getUnsafe("IsolatedEntity")
+      let pgSchema = "multichain_rollback_test"
+      let sql = PgStorage.makeClient()
+      let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
+
+      let _ = await storage.initialize(
+        ~entities=[isolated],
+        ~enums=[EntityHistory.RowAction.config->Table.fromGenericEnumConfig],
+        ~envioInfo=%raw(`{}`),
+      )
+
+      let entity = id =>
+        Dict.fromArray([("id", id->(Utils.magic: string => unknown))])->(
+          Utils.magic: dict<unknown> => Internal.entity
+        )
+
+      // History (saved because we're in the reorg threshold): "shared" exists on
+      // chain 1 (cp 1) and chain 137 (cp 2), then chain 1 updates it again (cp 3).
+      await storage.writeBatch(
+        ~batch={
+          totalBatchSize: 3,
+          items: [],
+          progressedChainsById: Dict.make(),
+          isInReorgThreshold: true,
+          checkpointIds: [1n, 2n, 3n],
+          checkpointChainIds: [1, 137, 1],
+          checkpointBlockNumbers: [10, 20, 30],
+          checkpointBlockHashes: [Null.null, Null.null, Null.null],
+          checkpointEventsProcessed: [1, 1, 1],
+        },
+        ~rollback=None,
+        ~isInReorgThreshold=true,
+        ~config,
+        ~allEntities=[isolated],
+        ~updatedEffectsCache=[],
+        ~updatedEntities=[
+          {
+            entityConfig: isolated,
+            changes: [
+              Set({entityId: "shared", entity: entity("shared"), checkpointId: 1n}),
+              Set({entityId: "shared", entity: entity("shared"), checkpointId: 3n}),
+            ],
+          },
+          {
+            entityConfig: isolated,
+            changes: [Set({entityId: "shared", entity: entity("shared"), checkpointId: 2n})],
+          },
+        ],
+        ~chainMetaData=None,
+      )
+
+      // Roll back to checkpoint 2: only chain 1's "shared" was modified after it
+      // (cp 3), so only chain 1's row should be restored — chain 137's untouched.
+      let (removed, restored) = await storage.getRollbackData(
+        ~entityConfig=isolated,
+        ~rollbackTargetCheckpointId=2n,
+      )
+
+      t.expect(
+        (removed, restored),
+        ~message="Only the reorged chain's row is restored; the shared id on the other chain is left alone",
+      ).toEqual(([], %raw(`[{id: "shared", chain_id: 1}]`)))
     },
   )
 })

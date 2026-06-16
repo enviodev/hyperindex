@@ -10,8 +10,6 @@ type serializableChange =
 type serializableUpdatedEntity = {
   entityName: string,
   changes: array<serializableChange>,
-  // Set for isolated entities so the main-thread mirror keys rows per chain.
-  chainId: option<int>,
 }
 
 // Worker -> Main thread payloads
@@ -143,7 +141,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
   ) => {
     // Encode entities to JSON for serialization across worker boundary
     let serializableEntities = updatedEntities->Array.map((
-      {entityConfig, changes, chainId}: Persistence.updatedEntity,
+      {entityConfig, changes}: Persistence.updatedEntity,
     ) => {
       let encodeChange = (change: Change.t<Internal.entity>): serializableChange => {
         switch change {
@@ -159,7 +157,6 @@ let makeStorage = (proxy: t): Persistence.storage => {
       {
         entityName: entityConfig.name,
         changes: changes->Array.map(encodeChange),
-        chainId,
       }
     })
     let _ = await proxy->sendRequest(
