@@ -424,6 +424,78 @@ describe("E2E rollback tests", () => {
     await testSingleChainRollback(~t, ~sourceMock, ~indexerMock)
   })
 
+  Async.it("Parks a reorg detected while a batch is still processing", async t => {
+    let sourceMock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+    await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+
+    // Hold the block-101 batch open inside its handler so a reorg can be detected
+    // while the batch is still in flight.
+    let releaseHandler = ref(() => ())
+    let handlerGate = Promise.make((resolve, _) => releaseHandler := () => resolve())
+
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 101,
+          logIndex: 0,
+          handler: async ({context}) => {
+            context.\"SimpleEntity".set({id: "1", value: "from-reorged-block"})
+            await handlerGate
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=101,
+      ~latestFetchedBlockHash="0x101",
+    )
+
+    // Wait until the processing loop has launched the next fetch — the batch is now
+    // in flight, blocked in the handler above.
+    let rec waitForNextFetch = async () =>
+      if sourceMock.getItemsOrThrowCalls->Utils.Array.isEmpty {
+        await Utils.delay(0)
+        await waitForNextFetch()
+      }
+    await waitForNextFetch()
+
+    // A reorg lands mid-batch: block 101 came back with a different hash.
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~latestFetchedBlockNumber=102,
+      ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101-reorged"},
+    )
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    // The rollback starts finding its depth even though the batch hasn't finished.
+    t.expect(
+      sourceMock.getBlockHashesCalls,
+      ~message="a reorg detected mid-batch should start finding the rollback depth",
+    ).toEqual([[100]])
+    sourceMock.resolveGetBlockHashes([{blockNumber: 100, blockHash: "0x100", blockTimestamp: 100}])
+
+    // Releasing the handler lets the batch finish; its progress is applied and the
+    // parked rollback then executes and re-requests from the rolled-back block.
+    releaseHandler.contents()
+    await indexerMock.getRollbackReadyPromise()
+
+    t.expect(
+      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
+      ~message="after the parked rollback executes, the indexer re-requests from the valid block",
+    ).toEqual(Some({"fromBlock": 101, "toBlock": None, "retry": 0, "p": "0"}))
+  })
+
   Async.it("Fires onRollbackCommit per affected chain after the rollback write", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
