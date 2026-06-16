@@ -161,25 +161,14 @@ let makeDetectionChainArg = (
 // then finds by identity. Misuse (spread/map/index/...) fails loud at the site.
 let makeAddressesProbe: string => array<Address.t> = %raw(`function (contractName) {
   var trap = function () {
-    var err = new Error(
+    throw new Error(
       'Invalid where configuration for "' + contractName +
       '": chain.' + contractName + '.addresses must be passed directly as an indexed-param ' +
       'filter value (e.g. { params: { to: chain.' + contractName + '.addresses } }). ' +
       'It cannot be spread, mapped, indexed, or otherwise transformed.'
     );
-    err.envioAddressProbeMisuse = true;
-    throw err;
   };
   return new Proxy([], {get: trap, apply: trap});
-}`)
-
-// Returns the friendly message when the caught value is a probe-misuse error,
-// so the probe can rethrow it instead of swallowing it as a detection failure.
-// ReScript wraps a caught JS error as `{RE_EXN_ID, _1: <jsError>}`, so check
-// both the raw value and the `_1` payload.
-let probeMisuseMessage: exn => option<string> = %raw(`function (e) {
-  var err = e && e.envioAddressProbeMisuse ? e : e && e._1 ? e._1 : undefined;
-  return err && err.envioAddressProbeMisuse ? err.message : undefined;
 }`)
 
 // Find which indexed params the probed `where` result assigned the Proxy to
@@ -365,27 +354,22 @@ let parseEventFiltersOrThrow = {
               addressesProbe
             },
           )
-          Some(fn({chain: chain->Obj.magic}))
+          fn({chain: chain->Obj.magic})
         } catch {
-        | exn =>
-          switch probeMisuseMessage(exn) {
-          | Some(message) => JsError.throwWithMessage(message)
-          | None => None
+        // Surface the Proxy's guidance message (and any other probe failure)
+        // unwrapped, rather than as a ReScript-wrapped exn.
+        | exn => exn->Utils.prettifyExn->raise
+        }
+        if filterByAddresses.contents {
+          addressFilterParamGroups :=
+            extractAddressFilterGroups(probedResult, ~probe=addressesProbe)
+          if addressFilterParamGroups.contents->Utils.Array.isEmpty {
+            JsError.throwWithMessage(
+              `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
+            )
           }
         }
-        switch probedResult {
-        | Some(result) =>
-          if filterByAddresses.contents {
-            addressFilterParamGroups := extractAddressFilterGroups(result, ~probe=addressesProbe)
-            if addressFilterParamGroups.contents->Utils.Array.isEmpty {
-              JsError.throwWithMessage(
-                `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
-              )
-            }
-          }
-          startBlock := extractStartBlock(~onEventBlockFilterSchema, ~contractName, result)
-        | None => ()
-        }
+        startBlock := extractStartBlock(~onEventBlockFilterSchema, ~contractName, probedResult)
         if filterByAddresses.contents {
           chain => Internal.Dynamic(
             addresses => {

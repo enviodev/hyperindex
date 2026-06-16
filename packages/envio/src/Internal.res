@@ -344,6 +344,16 @@ type rec paramMeta = {
   components?: array<paramMeta>,
 }
 
+// Fetch-state registry value for an indexed contract address.
+// `effectiveStartBlock` is derived from the registration block and the
+// contract's configured start block (see `FetchState.deriveEffectiveStartBlock`).
+type indexingContract = {
+  address: Address.t,
+  contractName: string,
+  registrationBlock: int,
+  effectiveStartBlock: int,
+}
+
 // This is private so it's not manually constructed internally
 // The idea is that it can only be coerced from fuel/evmEventConfig
 // and it can include their fields. We prevent manual creation,
@@ -358,6 +368,11 @@ type eventConfig = private {
   // Usually always false for wildcard events
   // But might be true for wildcard event with dynamic event filter by addresses
   dependsOnAddresses: bool,
+  // Precompiled predicate (EVM only) for events that filter an indexed address
+  // param by registered addresses. Drops an event whose param-address isn't
+  // registered at/before the log's block — the param-level analogue of
+  // EventRouter's srcAddress `effectiveStartBlock` check. Absent otherwise.
+  clientAddressFilter?: (event, dict<indexingContract>) => bool,
   handler: option<handler>,
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
@@ -396,24 +411,9 @@ type onEventWhereArgs<'chain> = {chain: 'chain}
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
 
-// Fetch-state registry value for an indexed contract address.
-// `effectiveStartBlock` is derived from the registration block and the
-// contract's configured start block (see `FetchState.deriveEffectiveStartBlock`).
-type indexingContract = {
-  address: Address.t,
-  contractName: string,
-  registrationBlock: int,
-  effectiveStartBlock: int,
-}
-
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
-  // Precompiled predicate for events that filter an indexed address param by
-  // registered addresses. Drops an event whose param-address isn't registered
-  // at/before the log's block — the param-level analogue of EventRouter's
-  // srcAddress `effectiveStartBlock` check. Absent when there's no such filter.
-  clientAddressFilter?: (event, dict<indexingContract>) => bool,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
   selectedTransactionFields: Utils.Set.t<evmTransactionField>,
   sighash: string,

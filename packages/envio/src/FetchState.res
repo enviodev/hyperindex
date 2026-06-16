@@ -1222,6 +1222,20 @@ let handleQueryResult = (
   ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
 ): t => {
+  // Drop events an address-param filter rejects. A merged partition may
+  // over-fetch a wildcard event whose indexed address param references an
+  // address registered after the log's block; `clientAddressFilter` is the
+  // param-level analogue of EventRouter's srcAddress effectiveStartBlock check.
+  let newItems = newItems->Array.filter(item =>
+    switch item {
+    | Internal.Event({eventConfig, event}) =>
+      switch eventConfig.clientAddressFilter {
+      | Some(filter) => filter(event, fetchState.indexingAddresses)
+      | None => true
+      }
+    | _ => true
+    }
+  )
   fetchState->updateInternal(
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,

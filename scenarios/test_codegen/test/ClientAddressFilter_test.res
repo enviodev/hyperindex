@@ -139,3 +139,67 @@ describe("clientAddressFilter — precompiled predicate", () => {
     )).toEqual((true, true))
   })
 })
+
+describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
+  let transferParams: array<EventConfigBuilder.paramMeta> = [
+    {name: "from", abiType: "address", indexed: true},
+    {name: "to", abiType: "address", indexed: true},
+    {name: "value", abiType: "uint256", indexed: false},
+  ]
+
+  // Wildcard Transfer filtering `to` by the registered ERC20 addresses; the
+  // single config address is effective from block 5 (contract startBlock).
+  let registeredAddr = "0x2222222222222222222222222222222222222222"->Address.unsafeFromString
+  let eventConfig = EventConfigBuilder.buildEvmEventConfig(
+    ~contractName="ERC20",
+    ~eventName="Transfer",
+    ~sighash=transferSighash,
+    ~params=transferParams,
+    ~isWildcard=true,
+    ~handler=None,
+    ~contractRegister=None,
+    ~eventFilters=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
+    ~probeChainId=1,
+    ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+    ~startBlock=5,
+  )
+
+  let makeItem = (~to, ~blockNumber): Internal.item =>
+    Internal.Event({
+      timestamp: blockNumber * 15,
+      chain: ChainMap.Chain.makeUnsafe(~chainId=1),
+      blockNumber,
+      blockHash: `0x${blockNumber->Int.toString}`,
+      eventConfig: (eventConfig :> Internal.eventConfig),
+      logIndex: 0,
+      event: {"params": {"to": to}, "block": {"number": blockNumber}}->(
+        Utils.magic: {"params": {"to": Address.t}, "block": {"number": int}} => Internal.event
+      ),
+    })
+
+  it("drops over-fetched events before the param-address's registration block", t => {
+    let fetchState = FetchState.make(
+      ~eventConfigs=[(eventConfig :> Internal.eventConfig)],
+      ~addresses=[{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~targetBufferSize=5000,
+      ~chainId=1,
+      ~knownHeight=1000,
+    )
+    let query = switch fetchState->FetchState.getNextQuery(~concurrencyLimit=10) {
+    | Ready([q]) => q
+    | _ => JsError.throwWithMessage("expected a single ready query")
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
+    let updated =
+      fetchState->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
+        // to=registeredAddr (effectiveStartBlock 5): block 10 kept, block 3 dropped.
+        ~newItems=[makeItem(~to=registeredAddr, ~blockNumber=10), makeItem(~to=registeredAddr, ~blockNumber=3)],
+      )
+    t.expect(updated.buffer->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
+  })
+})

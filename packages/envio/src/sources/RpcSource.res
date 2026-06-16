@@ -1153,18 +1153,7 @@ let make = (
         switch maybeDecodedEvent
         ->Nullable.toOption
         ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
-        | Some(decoded)
-          if eventConfig.clientAddressFilter->Option.mapOr(true, filter =>
-            filter(
-              {"params": decoded, "block": {"number": log.blockNumber}}->(
-                Utils.magic: {
-                  "params": Internal.eventParams,
-                  "block": {"number": int},
-                } => Internal.event
-              ),
-              indexingAddresses,
-            )
-          ) =>
+        | Some(decoded) =>
           Some(
             (
               async () => {
@@ -1225,7 +1214,6 @@ let make = (
               }
             )(),
           )
-        | Some(_) => None // dropped by the event's client-side address filter
         | None => None
         }
       }

@@ -358,20 +358,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         switch item.params
         ->Nullable.toOption
         ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
-        | Some(params)
-          if eventConfig.clientAddressFilter->Option.mapOr(true, filter =>
-            filter(
-              {"params": params, "block": item.block}->(
-                Utils.magic: {
-                  "params": Internal.eventParams,
-                  "block": HyperSyncClient.ResponseTypes.block,
-                } => Internal.event
-              ),
-              indexingAddresses,
-            )
-          ) =>
+        | Some(params) =>
           parsedQueueItems->Array.push(makeEventBatchQueueItem(item, ~params, ~eventConfig))->ignore
-        | Some(_) => () // dropped by the event's client-side address filter
         | None =>
           handleDecodeFailure(
             ~eventConfig,
