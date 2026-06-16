@@ -1,76 +1,11 @@
-type chain = ChainMap.Chain.t
-type rollbackState =
-  | NoRollback
-  | ReorgDetected({chain: chain, blockNumber: int})
-  | FindingReorgDepth
-  | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
-  | RollbackReady({eventsProcessedDiffByChain: dict<float>})
+// State lives in IndexerState: it owns the record and every named state
+// transition. This module keeps only the orchestration (fetch / process /
+// rollback loops) and mutates state exclusively through those transitions.
+open IndexerState
 
-module WriteThrottlers = {
-  type t = {pruneStaleEntityHistory: Throttler.t}
-  let make = (): t => {
-    let pruneStaleEntityHistory = {
-      let intervalMillis = Env.ThrottleWrites.pruneStaleDataIntervalMillis
-      let logger = Logging.createChild(
-        ~params={
-          "context": "Throttler for pruning stale entity history data",
-          "intervalMillis": intervalMillis,
-        },
-      )
-      Throttler.make(~intervalMillis, ~logger)
-    }
-    {pruneStaleEntityHistory: pruneStaleEntityHistory}
-  }
-}
-
-type t = {
-  ctx: Ctx.t,
-  mutable chainManager: ChainManager.t,
-  mutable rollbackState: rollbackState,
-  indexerStartTime: Date.t,
-  writeThrottlers: WriteThrottlers.t,
-  loadManager: LoadManager.t,
-  keepProcessAlive: bool,
-  exitAfterFirstEventBlock: bool,
-  // The single fatal-error handler.
-  onError: ErrorHandling.t => unit,
-  // Set once on any fatal error. Every loop checks it to stop iterating and
-  // every launch skips when it's set, so a single failure quiesces the indexer.
-  mutable isStopped: bool,
-  // True from the moment a reorg is detected until its rollback is applied.
-  // Fetching and batch processing pause while it's set so they can't act on
-  // chain state that's about to be rolled back.
-  mutable isRollingBack: bool,
-  // Bumped when in-flight fetch work must be invalidated: on a reorg (responses
-  // requested against pre-reorg state) and on the realtime transition (the
-  // waitForNewBlock waiter is bound to the old, pre-realtime source). A fetch
-  // response or waiter carrying an older epoch than this is discarded.
-  mutable epoch: int,
-}
-
-let make = (
-  ~ctx: Ctx.t,
-  ~chainManager: ChainManager.t,
-  ~isDevelopmentMode=false,
-  ~shouldUseTui=false,
-  ~exitAfterFirstEventBlock=false,
-  ~onError: ErrorHandling.t => unit,
-) => {
-  {
-    ctx,
-    chainManager,
-    indexerStartTime: Date.make(),
-    rollbackState: NoRollback,
-    writeThrottlers: WriteThrottlers.make(),
-    loadManager: LoadManager.make(),
-    keepProcessAlive: isDevelopmentMode || shouldUseTui,
-    exitAfterFirstEventBlock,
-    onError,
-    isStopped: false,
-    isRollingBack: false,
-    epoch: 0,
-  }
-}
+type t = IndexerState.t
+let make = IndexerState.make
+let stop = IndexerState.stop
 
 type partitionQueryResponse = {
   chain: chain,
@@ -79,16 +14,6 @@ type partitionQueryResponse = {
 }
 
 let unexpectedErrorMsg = "Indexer has failed with an unexpected error"
-
-// The single fatal-error handler. Stops every loop before reporting, and only
-// reports the first error so redundant handlers (eg an error caught in two
-// nested scopes) don't double-report.
-@inline
-let errorExit = (state: t, errHandler) =>
-  if !state.isStopped {
-    state.isStopped = true
-    state.onError(errHandler)
-  }
 
 // Yield to the end of the current tick so fetch responses that resolved this
 // tick land before the processing loop builds its first batch (coalescing).
@@ -123,26 +48,6 @@ let stageChainMetadata = (state: t) => {
 
   // Staged; the cycle folds the stale diff into the next batch write.
   state.ctx.inMemoryStore->InMemoryStore.setChainMeta(chainsData)
-}
-
-let enterReorgThreshold = (state: t) => {
-  Logging.info("Reorg threshold reached")
-  Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
-
-  let chainFetchers = state.chainManager.chainFetchers->ChainMap.map(chainFetcher => {
-    {
-      ...chainFetcher,
-      fetchState: chainFetcher.fetchState->FetchState.updateInternal(
-        ~blockLag=chainFetcher.chainConfig.blockLag,
-      ),
-    }
-  })
-
-  state.chainManager = {
-    ...state.chainManager,
-    chainFetchers,
-    isInReorgThreshold: true,
-  }
 }
 
 // Flush, then exit unless a reorg landed during the flush (which parks a rollback
@@ -204,7 +109,7 @@ let rec onQueryResponse = async (
   {chain, response, query}: partitionQueryResponse,
   ~stateId,
 ) =>
-  if state.isStopped || stateId !== state.epoch {
+  if state->isStale(~stateId) {
     ()
   } else {
     let originalChainManager = state.chainManager
@@ -286,7 +191,7 @@ let rec onQueryResponse = async (
         })
       | _ => originalChainManager.chainFetchers
       }
-      state.chainManager = {
+      let chainManager = {
         ...originalChainManager,
         chainFetchers: restoredChainFetchers->ChainMap.map(chainFetcher => {
           ...chainFetcher,
@@ -295,26 +200,12 @@ let rec onQueryResponse = async (
           fetchState: chainFetcher.fetchState->FetchState.resetPendingQueries,
         }),
       }
-      state.epoch = state.epoch + 1
-      state.isRollingBack = true
-      state.rollbackState = ReorgDetected({
-        chain,
-        blockNumber: reorgDetectedBlockNumber,
-      })
+      state->beginReorg(~chain, ~blockNumber=reorgDetectedBlockNumber, ~chainManager)
       // Advances synchronously to FindingReorgDepth, so a concurrent rollback
       // kick (eg from the processing loop quiescing) collapses into this one.
       state->launchRollback
     | None =>
-      state.chainManager = {
-        ...originalChainManager,
-        chainFetchers: originalChainManager.chainFetchers->ChainMap.set(
-          chain,
-          {
-            ...chainFetcher,
-            reorgDetection: updatedReorgDetection,
-          },
-        ),
-      }
+      state->setChainFetcher(~chain, {...chainFetcher, reorgDetection: updatedReorgDetection})
 
       let itemsWithContractRegister = []
       let newItems = []
@@ -332,7 +223,7 @@ let rec onQueryResponse = async (
       // Re-check staleness: contract registration is async, so the chain state
       // may have rolled back by the time we apply the fetched items.
       let proceed = (~newItemsWithDcs) =>
-        if !state.isStopped && stateId === state.epoch {
+        if !(state->isStale(~stateId)) {
           applyQueryResponse(
             state,
             ~chain,
@@ -407,14 +298,11 @@ and applyQueryResponse = (
     updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
   }
 
-  state.chainManager = {
-    ...state.chainManager,
-    chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
-  }
+  state->setChainFetcher(~chain, updatedChainFetcher)
 }
 
 and finishWaitingForNewBlock = (state: t, ~chain, ~knownHeight, ~stateId) =>
-  if state.isStopped || stateId !== state.epoch {
+  if state->isStale(~stateId) {
     ()
   } else {
     let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.update(
@@ -442,10 +330,7 @@ and finishWaitingForNewBlock = (state: t, ~chain, ~knownHeight, ~stateId) =>
         chainFetcher.fetchState->FetchState.isReadyToEnterReorgThreshold
       })
 
-    state.chainManager = {
-      ...state.chainManager,
-      chainFetchers: updatedChainFetchers,
-    }
+    state->setChainFetchers(updatedChainFetchers)
 
     // Kick processing in case there are block handlers to run.
     if shouldEnterReorgThreshold {
@@ -516,9 +401,8 @@ and checkAndFetchAllChains = async (state: t, ~stateId) => {
 // no rollback is pending; exits when idle so producers (fetch, rollback) can
 // re-kick it. `inMemoryStore.isProcessing` guarantees one instance.
 and startProcessing = async (state: t) => {
-  let store = state.ctx.inMemoryStore
-  if !store.isProcessing && !state.isStopped {
-    store.isProcessing = true
+  if !(state->isProcessing) && !state.isStopped {
+    state->beginProcessing
     // FIXME: Needed only for test determinism. The mocks resolve several fetch
     // responses synchronously in one tick; this yield lets them all land before
     // the first createBatch so they coalesce into one batch (matching the old
@@ -535,7 +419,7 @@ and startProcessing = async (state: t) => {
       | didWork => shouldContinue := didWork
       }
     }
-    store.isProcessing = false
+    state->endProcessing
 
     // A reorg detected mid-batch parks the rollback until the loop is idle.
     // Hand off now that no batch is in flight.
@@ -625,10 +509,7 @@ and processNextBatch = async (state: t): bool =>
         | None => cf
         }
       })
-      state.chainManager = {
-        ...state.chainManager,
-        chainFetchers,
-      }
+      state->setChainFetchers(chainFetchers)
       state->launchFetchAllChains
 
       inMemoryStore->InMemoryStore.setBatchDcs(~batch)
@@ -652,26 +533,26 @@ and processNextBatch = async (state: t): bool =>
         errorExit(state, errHandler)
         false
       | Ok() =>
-        inMemoryStore.processedBatchesCount = inMemoryStore.processedBatchesCount + 1
+        state->recordProcessedBatch
 
         if state.isRollingBack {
           // A reorg landed while this batch was processing. Apply its progress so
           // the rollback diff is computed against up-to-date chain progress, but
           // don't reset rollback state or evaluate exit. The loop exit hands off
           // to rollback.
-          state.chainManager = state.chainManager->ChainManager.updateProgressedChains(~batch)
+          state->applyBatchProgress(~batch)
           false
         } else {
           // Can safely reset rollback state, since overwrite is not possible.
-          state.rollbackState = NoRollback
-          state.chainManager = state.chainManager->ChainManager.updateProgressedChains(~batch)
+          state->clearRollback
+          state->applyBatchProgress(~batch)
 
           if !chainManagerBeforeUpdate.isRealtime && state.chainManager.isRealtime {
             // Catching up just flipped the chain to realtime, which changes the
             // active source for waitForNewBlock (eg sync -> live). The waiter that
             // parked during backfill is bound to the old source; bump the epoch to
             // invalidate it and kick a fresh fetch that parks on the realtime source.
-            state.epoch = state.epoch + 1
+            state->invalidateInflight
             state->launchFetchAllChains
           }
 
@@ -730,7 +611,7 @@ and rollback = async (state: t) =>
     | ReorgDetected({chain, blockNumber: reorgBlockNumber}) =>
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
 
-      state.rollbackState = FindingReorgDepth
+      state->enterFindingReorgDepth
       let rollbackTargetBlockNumber = await chainFetcher->ChainFetcher.getLastKnownValidBlock(
         ~reorgBlockNumber,
         ~isRealtime=state.chainManager.isRealtime,
@@ -740,7 +621,7 @@ and rollback = async (state: t) =>
         ~rollbackTargetBlock=rollbackTargetBlockNumber,
       )
 
-      state.rollbackState = FoundReorgDepth({chain, rollbackTargetBlockNumber})
+      state->foundReorgDepth(~chain, ~rollbackTargetBlockNumber)
       // Rendezvous with the processing loop: whichever of {depth found, loop
       // idle} happens last triggers the rollback; the earlier one finds the
       // other condition unmet and bails here.
@@ -748,7 +629,7 @@ and rollback = async (state: t) =>
     // Reached when a batch finished (loop idle) while the reorg depth wasn't
     // found yet. Wait for the ReorgDetected branch above to find it and re-kick.
     | FindingReorgDepth => ()
-    | FoundReorgDepth(_) if state.ctx.inMemoryStore.isProcessing =>
+    | FoundReorgDepth(_) if state->isProcessing =>
       Logging.info("Waiting for batch to finish processing before executing rollback")
     | FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber}) =>
       await executeRollback(state, ~reorgChain, ~rollbackTargetBlockNumber)
@@ -923,9 +804,7 @@ and executeRollback = async (state: t, ~reorgChain, ~rollbackTargetBlockNumber) 
     ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
   )
 
-  state.rollbackState = RollbackReady({eventsProcessedDiffByChain: eventsProcessedDiffByChain})
-  state.isRollingBack = false
-  state.chainManager = chainManager
+  state->completeRollback(~eventsProcessedDiffByChain, ~chainManager)
   state->launchFetchAllChains
   state->launchProcessing
 }

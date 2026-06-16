@@ -104,7 +104,7 @@ describe("GlobalState loop", () => {
     let reportedErrors = ref(0)
     let state = makeState(~onError=_ => reportedErrors := reportedErrors.contents + 1, ())
 
-    state->GlobalState.errorExit(ErrorHandling.make(Utils.Error.make("boom")))
+    state->IndexerState.errorExit(ErrorHandling.make(Utils.Error.make("boom")))
 
     t.expect(
       {"isStopped": state.isStopped, "reportedErrors": reportedErrors.contents},

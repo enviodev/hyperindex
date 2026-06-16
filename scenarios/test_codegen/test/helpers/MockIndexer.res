@@ -533,7 +533,7 @@ module Indexer = {
         await ctx.inMemoryStore->RealInMemoryStore.flush
         // Stop the previous run's loops so they don't keep driving the shared db
         // once the resumed indexer takes over.
-        state.isStopped = true
+        state->GlobalState.stop
         // Let any in-flight batch or write from the stopped run settle before the
         // resumed indexer takes over the shared persistence, else the two runs
         // race against the same db.
