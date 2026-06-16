@@ -132,6 +132,9 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
 
     inMemoryStore->InMemoryStore.setBatchDcs(~batch)
 
+    // An exception here propagates to startProcessing's catch, the single error
+    // boundary for the loop. The Error case is not an exception, so it's handled
+    // here to preserve the handler's user-facing message.
     switch await EventProcessing.processEventBatch(
       ~batch,
       ~inMemoryStore,
@@ -139,13 +142,6 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
       ~ctx=state.ctx,
       ~chainFetchers=chainManagerBeforeUpdate.chainFetchers,
     ) {
-    | exception exn =>
-      //All casese should be handled/caught before this with better user messaging.
-      //This is just a safety in case something unexpected happens
-      IndexerState.errorExit(
-        state,
-        exn->ErrorHandling.make(~msg="A top level unexpected error occurred during processing"),
-      )
     | Error(errHandler) => IndexerState.errorExit(state, errHandler)
     | Ok() =>
       state->IndexerState.recordProcessedBatch

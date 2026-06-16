@@ -756,8 +756,7 @@ let start = async (
   | Some(patchConfig) => patchConfig(config, registrations)
   | None => config
   }
-  // The single fatal-error handler, shared by the store, ErrorExit, and the
-  // manager's catch.
+  // The single fatal-error handler, invoked once via IndexerState.errorExit.
   let onError = (errHandler: ErrorHandling.t) => {
     errHandler->ErrorHandling.log
     if isTest {

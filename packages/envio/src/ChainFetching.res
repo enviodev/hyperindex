@@ -211,7 +211,7 @@ and applyQueryResponse = (
   state->IndexerState.setChainFetcher(~chain, updatedChainFetcher)
 }
 
-and finishWaitingForNewBlock = (
+let finishWaitingForNewBlock = (
   state: IndexerState.t,
   ~chain,
   ~knownHeight,
@@ -260,7 +260,7 @@ and finishWaitingForNewBlock = (
     scheduleProcessing()
   }
 
-and checkAndFetchForChain = async (
+let checkAndFetchForChain = async (
   state: IndexerState.t,
   chain,
   ~stateId,
@@ -330,7 +330,7 @@ and checkAndFetchForChain = async (
   }
 }
 
-and checkAndFetchAllChains = async (
+let checkAndFetchAllChains = async (
   state: IndexerState.t,
   ~stateId,
   ~scheduleFetchAllChains,

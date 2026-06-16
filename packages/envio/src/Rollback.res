@@ -134,7 +134,9 @@ and executeRollback = async (
         cf.numEventsProcessed -.
         eventsProcessedDiffByChain
         ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
-        ->Option.getUnsafe
+        // Both dicts are populated together per progress-diff row above, so a
+        // chain present in newProgressBlockNumberPerChain always has a diff here.
+        ->Option.getOrThrow(~message="Missing events-processed diff for rolled-back chain")
 
       if cf.committedProgressBlockNumber !== newProgressBlockNumber {
         Prometheus.ProgressBlockNumber.set(
