@@ -34,11 +34,6 @@ type t = {
   exitAfterFirstEventBlock: bool,
   // The single fatal-error handler.
   onError: ErrorHandling.t => unit,
-  // Fatal user-caused errors (eg a throwing contract register). The default
-  // escapes the promise chain on the next tick and crashes with the original
-  // error untouched; the TestIndexer worker relies on the raw error reaching the
-  // worker 'error' event instead of a generic exit code.
-  onUserError: exn => unit,
   // Set once on any fatal error. Every loop checks it to stop iterating and
   // every launch skips when it's set, so a single failure quiesces the indexer.
   mutable isStopped: bool,
@@ -60,7 +55,6 @@ let make = (
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
   ~onError: ErrorHandling.t => unit,
-  ~onUserError=exn => NodeJs.setImmediate(() => exn->Utils.prettifyExn->throw),
 ) => {
   {
     ctx,
@@ -72,7 +66,6 @@ let make = (
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
     onError,
-    onUserError,
     isStopped: false,
     isRollingBack: false,
     epoch: 0,
@@ -361,9 +354,7 @@ let rec onQueryResponse = async (
           ~itemsWithContractRegister,
           ~config=state.ctx.config,
         ) {
-        | exception exn =>
-          state.isStopped = true
-          state.onUserError(exn)
+        | exception exn => errorExit(state, exn->ErrorHandling.make)
         | newItemsWithDcs => proceed(~newItemsWithDcs)
         }
       }

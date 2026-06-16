@@ -760,7 +760,15 @@ let start = async (
   // manager's catch.
   let onError = (errHandler: ErrorHandling.t) => {
     errHandler->ErrorHandling.log
-    NodeJs.process->NodeJs.exitWithCode(Failure)
+    if isTest {
+      // The TestIndexer runs the indexer in a worker thread and reads the
+      // failure off the worker 'error' event. Re-throw the original error
+      // outside the promise chain on the next tick so the test sees its real
+      // message instead of a generic non-zero exit code.
+      NodeJs.setImmediate(() => errHandler->ErrorHandling.raiseExn)
+    } else {
+      NodeJs.process->NodeJs.exitWithCode(Failure)
+    }
   }
   let ctx = {
     Ctx.registrations,
