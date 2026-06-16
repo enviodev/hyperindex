@@ -369,10 +369,11 @@ type eventConfig = private {
   // But might be true for wildcard event with dynamic event filter by addresses
   dependsOnAddresses: bool,
   // Precompiled predicate (EVM only) for events that filter an indexed address
-  // param by registered addresses. Drops an event whose param-address isn't
-  // registered at/before the log's block — the param-level analogue of
-  // EventRouter's srcAddress `effectiveStartBlock` check. Absent otherwise.
-  clientAddressFilter?: (event, dict<indexingContract>) => bool,
+  // param by registered addresses. Given the decoded event and the log's block
+  // number, drops an event whose param-address isn't registered at/before that
+  // block — the param-level analogue of EventRouter's srcAddress
+  // `effectiveStartBlock` check. Absent otherwise.
+  clientAddressFilter?: (event, int, dict<indexingContract>) => bool,
   handler: option<handler>,
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,

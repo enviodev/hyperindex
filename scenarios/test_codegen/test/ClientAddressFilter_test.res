@@ -101,12 +101,9 @@ describe("clientAddressFilter — precompiled predicate", () => {
       ),
     ),
   ])
-  let makeEvent = (~from, ~to, ~blockNumber) =>
-    {"params": {"from": from, "to": to}, "block": {"number": blockNumber}}->(
-      Utils.magic: {
-        "params": {"from": Address.t, "to": Address.t},
-        "block": {"number": int},
-      } => Internal.event
+  let makeEvent = (~from, ~to) =>
+    {"params": {"from": from, "to": to}}->(
+      Utils.magic: {"params": {"from": Address.t, "to": Address.t}} => Internal.event
     )
 
   it("keeps events whose address param is registered at/before the block, drops the rest", t => {
@@ -122,12 +119,29 @@ describe("clientAddressFilter — precompiled predicate", () => {
         }`),
       )->Option.getOrThrow
     t.expect((
-      filter(makeEvent(~from=zero, ~to=addr, ~blockNumber=10), indexingAddresses),
-      filter(makeEvent(~from=zero, ~to=addr, ~blockNumber=5), indexingAddresses),
-      filter(makeEvent(~from=zero, ~to=addr, ~blockNumber=4), indexingAddresses),
-      filter(makeEvent(~from=addr, ~to=zero, ~blockNumber=10), indexingAddresses),
-      filter(makeEvent(~from=zero, ~to=zero, ~blockNumber=10), indexingAddresses),
+      filter(makeEvent(~from=zero, ~to=addr), 10, indexingAddresses),
+      filter(makeEvent(~from=zero, ~to=addr), 5, indexingAddresses),
+      filter(makeEvent(~from=zero, ~to=addr), 4, indexingAddresses),
+      filter(makeEvent(~from=addr, ~to=zero), 10, indexingAddresses),
+      filter(makeEvent(~from=zero, ~to=zero), 10, indexingAddresses),
     )).toEqual((true, true, false, true, false))
+  })
+
+  it("requires every param in an AND-group to be registered", t => {
+    // Single group with two registry-filtered params -> AND.
+    let filter =
+      buildFilter(
+        ~eventFilters=%raw(`({chain}) => {
+          const a = chain.ERC20.addresses;
+          return {params: {from: a, to: a}};
+        }`),
+      )->Option.getOrThrow
+    t.expect((
+      filter(makeEvent(~from=addr, ~to=addr), 10, indexingAddresses),
+      filter(makeEvent(~from=addr, ~to=zero), 10, indexingAddresses),
+      filter(makeEvent(~from=zero, ~to=addr), 10, indexingAddresses),
+      filter(makeEvent(~from=addr, ~to=addr), 4, indexingAddresses),
+    )).toEqual((true, false, false, false))
   })
 
   it("is absent for events without an address-param filter", t => {
@@ -172,8 +186,8 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
       blockHash: `0x${blockNumber->Int.toString}`,
       eventConfig: (eventConfig :> Internal.eventConfig),
       logIndex: 0,
-      event: {"params": {"to": to}, "block": {"number": blockNumber}}->(
-        Utils.magic: {"params": {"to": Address.t}, "block": {"number": int}} => Internal.event
+      event: {"params": {"to": to}}->(
+        Utils.magic: {"params": {"to": Address.t}} => Internal.event
       ),
     })
 

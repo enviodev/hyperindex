@@ -313,33 +313,30 @@ let resolveFieldSelection = (
 
 let compileAddressFilter: string => (
   Internal.event,
+  int,
   dict<Internal.indexingContract>,
 ) => bool = %raw(`function (body) {
-  return new Function("event", "indexingAddresses", body);
+  return new Function("event", "blockNumber", "indexingAddresses", body);
 }`)
 
 // Precompile the client-side address filter from the DNF of address-filtered
-// param names. The generated function reads each decoded param off
-// `event.params` and keeps the event only if the param-address is registered
-// at or before the log's block (`event.block.number`). `None` when there's no
-// address-param filter.
+// param names (OR of AND-groups). The generated function keeps the event only
+// if some group's params are all registered at or before the log's block.
+// The DNF is fixed here, so it's unrolled into one boolean expression — no
+// per-event closure, loop, or array. `None` when there's no address-param filter.
 let buildAddressFilter = (groups: array<array<string>>): option<
-  (Internal.event, dict<Internal.indexingContract>) => bool,
+  (Internal.event, int, dict<Internal.indexingContract>) => bool,
 > => {
   switch groups {
   | [] => None
   | _ =>
-    let groupExprs = groups->Array.map(group =>
-      "(" ++
-      group
-      ->Array.map(name => `chk(p[${JSON.stringify(JSON.String(name))}])`)
-      ->Array.joinWith(" && ") ++ ")"
-    )
-    let body =
-      "var p = event.params; var bn = event.block.number; " ++
-      "var chk = function (a) { var ic = indexingAddresses[a]; return ic !== undefined && ic.effectiveStartBlock <= bn; }; " ++
-      "return " ++
-      groupExprs->Array.joinWith(" || ") ++ ";"
+    let leaf = name =>
+      `(ic = indexingAddresses[p[${JSON.stringify(
+          JSON.String(name),
+        )}]]) !== undefined && ic.effectiveStartBlock <= blockNumber`
+    let groupExprs =
+      groups->Array.map(group => "(" ++ group->Array.map(leaf)->Array.joinWith(" && ") ++ ")")
+    let body = "var p = event.params, ic; return " ++ groupExprs->Array.joinWith(" || ") ++ ";"
     Some(compileAddressFilter(body))
   }
 }

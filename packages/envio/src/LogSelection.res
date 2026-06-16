@@ -159,7 +159,9 @@ let makeDetectionChainArg = (
 // whose traps throw on any access, so the only non-throwing use is passing it
 // straight through as a param filter value — which `extractAddressFilterGroups`
 // then finds by identity. Misuse (spread/map/index/...) fails loud at the site.
-let makeAddressesProbe: string => array<Address.t> = %raw(`function (contractName) {
+let makeAddressesProbe: (
+  ~contractName: string,
+) => array<Address.t> = %raw(`function (contractName) {
   var trap = function () {
     throw new Error(
       'Invalid where configuration for "' + contractName +
@@ -168,7 +170,7 @@ let makeAddressesProbe: string => array<Address.t> = %raw(`function (contractNam
       'It cannot be spread, mapped, indexed, or otherwise transformed.'
     );
   };
-  return new Proxy([], {get: trap, apply: trap});
+  return new Proxy([], {get: trap});
 }`)
 
 // Find which indexed params the probed `where` result assigned the Proxy to
@@ -355,7 +357,7 @@ let parseEventFiltersOrThrow = {
         // that close over mutable references.
         // A misused Proxy (or any throw from the callback) propagates as-is —
         // the Proxy's guidance message surfaces without wrapping.
-        let addressesProbe = makeAddressesProbe(contractName)
+        let addressesProbe = makeAddressesProbe(~contractName)
         let chain = makeDetectionChainArg(
           ~contractName,
           ~chainId=probeChainId,
