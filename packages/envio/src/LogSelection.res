@@ -173,10 +173,14 @@ let makeAddressesProbe: string => array<Address.t> = %raw(`function (contractNam
 
 // Find which indexed params the probed `where` result assigned the Proxy to
 // (DNF: object => one AND-group, array => OR of groups), neutralizing each match
-// to `[]` so later passes can't touch the throwing Proxy.
-let extractAddressFilterGroups = (result: JSON.t, ~probe: array<Address.t>): array<
-  array<string>,
-> => {
+// to `[]` so later passes can't touch the throwing Proxy. Throws when the
+// callback read the addresses but didn't use them as a param filter value, since
+// the caller only invokes this once it knows the addresses were read.
+let extractAddressFilterGroupsOrThrow = (
+  result: JSON.t,
+  ~probe: array<Address.t>,
+  ~contractName: string,
+): array<array<string>> => {
   let groups = []
   let scanGroup = (paramsObj: dict<JSON.t>) => {
     let names = []
@@ -204,6 +208,11 @@ let extractAddressFilterGroups = (result: JSON.t, ~probe: array<Address.t>): arr
     | _ => ()
     }
   | _ => ()
+  }
+  if groups->Utils.Array.isEmpty {
+    JsError.throwWithMessage(
+      `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
+    )
   }
   groups
 }
@@ -358,12 +367,7 @@ let parseEventFiltersOrThrow = {
         let probedResult = fn({chain: chain->Obj.magic})
         if filterByAddresses.contents {
           addressFilterParamGroups :=
-            extractAddressFilterGroups(probedResult, ~probe=addressesProbe)
-          if addressFilterParamGroups.contents->Utils.Array.isEmpty {
-            JsError.throwWithMessage(
-              `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
-            )
-          }
+            extractAddressFilterGroupsOrThrow(probedResult, ~probe=addressesProbe, ~contractName)
         }
         startBlock := extractStartBlock(~onEventBlockFilterSchema, ~contractName, probedResult)
         if filterByAddresses.contents {
