@@ -83,6 +83,7 @@ let unexpectedErrorMsg = "Indexer has failed with an unexpected error"
 // The single fatal-error handler. Stops every loop before reporting, and only
 // reports the first error so redundant handlers (eg an error caught in two
 // nested scopes) don't double-report.
+@inline
 let errorExit = (state: t, errHandler) =>
   if !state.isStopped {
     state.isStopped = true
@@ -91,11 +92,13 @@ let errorExit = (state: t, errHandler) =>
 
 // Yield to the end of the current tick so fetch responses that resolved this
 // tick land before the processing loop builds its first batch (coalescing).
+@inline
 let yieldTick = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => resolve()))
 
 // Fire-and-forget an async step. Every launchable (the processing loop, fetch,
 // rollback) owns a try/catch that routes failures to errorExit, so there's no
 // rejection to swallow here.
+@inline
 let launch = (state: t, work: unit => promise<unit>) =>
   if !state.isStopped {
     work()->Promise.ignore
