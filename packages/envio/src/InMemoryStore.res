@@ -1,124 +1,16 @@
-module EntityTables = {
-  type t = dict<InMemoryTable.Entity.t>
-  exception UndefinedEntity({entityName: string})
-  let make = (entities: array<Internal.entityConfig>): t => {
-    let init = Dict.make()
-    entities->Array.forEach(entityConfig => {
-      init->Dict.set((entityConfig.name :> string), InMemoryTable.Entity.make())
-    })
-    init
-  }
-
-  let get = (self: t, ~entityName: string) => {
-    switch self->Utils.Dict.dangerouslyGetNonOption(entityName) {
-    | Some(table) => table
-    | None =>
-      UndefinedEntity({entityName: entityName})->ErrorHandling.mkLogAndRaise(
-        ~msg="Unexpected, entity InMemoryTable is undefined",
-      )
-    }
-  }
-}
-
-type effectCacheInMemTable = {
-  // Cache keys whose handler output is persisted on the next write. Drained
-  // each write; eviction is driven by the per-entry checkpointId instead.
-  mutable idsToStore: array<string>,
-  mutable invalidationsCount: int,
-  // Each entry is stamped with the checkpoint that referenced it (or
-  // loadedFromDbCheckpointId for db reads), so committed entries can be
-  // dropped once persisted/re-derivable, mirroring entity changes.
-  mutable dict: dict<Change.t<Internal.effectOutput>>,
-  mutable changesCount: float,
-  effect: Internal.effect,
-}
-
-type t = {
-  allEntities: array<Internal.entityConfig>,
-  mutable entities: dict<InMemoryTable.Entity.t>,
-  mutable effects: dict<effectCacheInMemTable>,
-  mutable rollback: option<Persistence.rollback>,
-  // Last checkpoint persisted to the db.
-  mutable committedCheckpointId: Internal.checkpointId,
-  // Processing frontier; runs ahead of committedCheckpointId while writes lag.
-  mutable processedCheckpointId: Internal.checkpointId,
-  // Processed but unwritten. The cycle drains them, splitting each write at a
-  // change in isInReorgThreshold so it never mixes history-saving modes.
-  mutable processedBatches: array<Batch.t>,
-  // True while a batch is being processed; guards ProcessEventBatch re-entry.
-  mutable isProcessing: bool,
-  // Count of processed batches; version-independent progress counter.
-  mutable processedBatchesCount: int,
-  // The single in-flight write loop, None when idle.
-  mutable writeFiber: option<promise<unit>>,
-  // Set once a write throws, to stop the loop. The error itself goes to onError.
-  mutable hasFailedWrite: bool,
-  // Called once on a write failure; the caller decides what to do (exit).
-  onError: exn => unit,
-  // Resolved after every commit so capacity/flush waiters can re-evaluate.
-  mutable commitWaiters: array<unit => unit>,
-  persistence: Persistence.t,
-  config: Config.t,
-  // Latest metadata staged per chain; used to skip unchanged restages.
-  mutable chainMeta: dict<InternalTable.Chains.metaFields>,
-  // Set on a real change. Folded into a batch write, else flushed on the throttle.
-  mutable chainMetaDirty: bool,
-  // Throttles metadata-only writes when no batches flow.
-  chainMetaThrottler: Throttler.t,
-}
-
-let make = (
-  ~entities: array<Internal.entityConfig>,
-  ~committedCheckpointId=Internal.initialCheckpointId,
-  ~persistence: Persistence.t,
-  ~config: Config.t,
-  ~onError: exn => unit,
-): t => {
-  let chainMetaThrottler = {
-    let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
-    Throttler.make(
-      ~intervalMillis,
-      ~logger=Logging.createChild(
-        ~params={
-          "context": "Throttler for chain metadata writes",
-          "intervalMillis": intervalMillis,
-        },
-      ),
-    )
-  }
-
-  {
-    allEntities: entities,
-    entities: EntityTables.make(entities),
-    effects: Dict.make(),
-    rollback: None,
-    committedCheckpointId,
-    processedCheckpointId: committedCheckpointId,
-    processedBatches: [],
-    isProcessing: false,
-    processedBatchesCount: 0,
-    writeFiber: None,
-    hasFailedWrite: false,
-    onError,
-    commitWaiters: [],
-    persistence,
-    config,
-    chainMeta: Dict.make(),
-    chainMetaDirty: false,
-    chainMetaThrottler,
-  }
-}
+// Operations on the in-memory store, whose state now lives on IndexerState:
+// entity/effect tables, the pending-write queue and the write loop.
 
 // Max uncommitted entity/effect changes plus unwritten batch items before
 // processing must wait for the cycle to free capacity.
 let keepLatestChangesLimit = Env.inMemoryObjectsTarget
 
-let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
+let getEffectInMemTable = (inMemoryStore: IndexerState.t, ~effect: Internal.effect) => {
   let key = effect.name
   switch inMemoryStore.effects->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(table) => table
   | None =>
-    let table = {
+    let table: IndexerState.effectCacheInMemTable = {
       idsToStore: [],
       dict: Dict.make(),
       changesCount: 0.,
@@ -130,7 +22,7 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   }
 }
 
-let hasEffectOutput = (inMemTable: effectCacheInMemTable, key) =>
+let hasEffectOutput = (inMemTable: IndexerState.effectCacheInMemTable, key) =>
   switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(Set(_)) => true
   | Some(Delete(_)) | None => false
@@ -139,7 +31,10 @@ let hasEffectOutput = (inMemTable: effectCacheInMemTable, key) =>
 // Returns the raw output. The output is itself an option for effects with an
 // optional output, so it must never be wrapped in another option here: Some(None)
 // is encoded as the nested-option sentinel and would leak to the handler.
-let getEffectOutputUnsafe = (inMemTable: effectCacheInMemTable, key): Internal.effectOutput =>
+let getEffectOutputUnsafe = (
+  inMemTable: IndexerState.effectCacheInMemTable,
+  key,
+): Internal.effectOutput =>
   switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(Set({entity: output})) => output
   | Some(Delete(_)) | None => %raw(`undefined`)
@@ -148,7 +43,7 @@ let getEffectOutputUnsafe = (inMemTable: effectCacheInMemTable, key): Internal.e
 // Records a handler output. Persisted on the next write only when shouldCache;
 // otherwise kept in memory (re-run on a later miss) but never written to the db.
 let setEffectOutput = (
-  inMemTable: effectCacheInMemTable,
+  inMemTable: IndexerState.effectCacheInMemTable,
   ~checkpointId,
   ~cacheKey,
   ~output,
@@ -166,7 +61,7 @@ let setEffectOutput = (
 
 // Seeds an entry from a db read. Stamped with loadedFromDbCheckpointId so it's
 // always droppable (re-readable from the db) and never re-persisted.
-let initEffectOutputFromDb = (inMemTable: effectCacheInMemTable, ~cacheKey, ~output) =>
+let initEffectOutputFromDb = (inMemTable: IndexerState.effectCacheInMemTable, ~cacheKey, ~output) =>
   if inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(cacheKey)->Option.isNone {
     inMemTable.changesCount = inMemTable.changesCount +. 1.
     inMemTable.dict->Dict.set(
@@ -179,7 +74,7 @@ let initEffectOutputFromDb = (inMemTable: effectCacheInMemTable, ~cacheKey, ~out
 // cache:false). Uncommitted entries stay warm. With keepLoadedFromDb, entries
 // seeded from a db read are spared. Mirrors entity dropCommittedChanges.
 let dropCommittedEffects = (
-  inMemTable: effectCacheInMemTable,
+  inMemTable: IndexerState.effectCacheInMemTable,
   ~committedCheckpointId,
   ~keepLoadedFromDb,
 ) => {
@@ -198,15 +93,15 @@ let dropCommittedEffects = (
 }
 
 let getInMemTable = (
-  inMemoryStore: t,
+  inMemoryStore: IndexerState.t,
   ~entityConfig: Internal.entityConfig,
 ): InMemoryTable.Entity.t => {
-  inMemoryStore.entities->EntityTables.get(~entityName=entityConfig.name)
+  inMemoryStore.entities->IndexerState.EntityTables.get(~entityName=entityConfig.name)
 }
 
-let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollback !== None
+let isRollingBack = (inMemoryStore: IndexerState.t) => inMemoryStore.rollback !== None
 
-let getChangesCount = (inMemoryStore: t) => {
+let getChangesCount = (inMemoryStore: IndexerState.t) => {
   let total = ref(0.)
   inMemoryStore.allEntities->Array.forEach(entityConfig => {
     total := total.contents +. (inMemoryStore->getInMemTable(~entityConfig)).changesCount
@@ -220,13 +115,13 @@ let getChangesCount = (inMemoryStore: t) => {
   total.contents
 }
 
-let wakeCommitWaiters = (inMemoryStore: t) => {
+let wakeCommitWaiters = (inMemoryStore: IndexerState.t) => {
   let waiters = inMemoryStore.commitWaiters
   inMemoryStore.commitWaiters = []
   waiters->Array.forEach(resolve => resolve())
 }
 
-let waitForCommit = (inMemoryStore: t): promise<unit> =>
+let waitForCommit = (inMemoryStore: IndexerState.t): promise<unit> =>
   Promise.make((resolve, _) => {
     inMemoryStore.commitWaiters->Array.push(resolve)->ignore
   })
@@ -234,7 +129,7 @@ let waitForCommit = (inMemoryStore: t): promise<unit> =>
 // Merges the leading run of batches sharing isInReorgThreshold into one batch;
 // the rest stay queued for the next write. Caller guarantees processedBatches
 // is non-empty.
-let drainBatchRun = (inMemoryStore: t): Batch.t => {
+let drainBatchRun = (inMemoryStore: IndexerState.t): Batch.t => {
   let all = inMemoryStore.processedBatches
   let isInReorgThreshold = (all->Array.getUnsafe(0)).isInReorgThreshold
 
@@ -281,7 +176,9 @@ let drainBatchRun = (inMemoryStore: t): Batch.t => {
 
 // Captures the cache:true outputs to persist. The dict is left intact — entries
 // stay warm and are reclaimed later by dropCommittedEffects once committed.
-let snapshotEffects = (inMemoryStore: t, ~cache): array<Persistence.updatedEffectCache> => {
+let snapshotEffects = (inMemoryStore: IndexerState.t, ~cache): array<
+  Persistence.updatedEffectCache,
+> => {
   let acc = []
   inMemoryStore.effects->Utils.Dict.forEach(inMemTable => {
     let {idsToStore, dict, effect, invalidationsCount} = inMemTable
@@ -313,7 +210,9 @@ let snapshotEffects = (inMemoryStore: t, ~cache): array<Persistence.updatedEffec
   acc
 }
 
-let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config) => {
+let runOneWrite = async (inMemoryStore: IndexerState.t) => {
+  let persistence = inMemoryStore.persistence
+  let config = inMemoryStore.config
   let cache = switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
@@ -383,29 +282,25 @@ let runOneWrite = async (inMemoryStore: t, ~persistence: Persistence.t, ~config)
   }
 }
 
-let hasPendingWrite = (inMemoryStore: t) =>
+let hasPendingWrite = (inMemoryStore: IndexerState.t) =>
   inMemoryStore.processedBatches->Utils.Array.notEmpty || inMemoryStore.chainMetaDirty
 
-let runWriteLoop = async (inMemoryStore: t) => {
+let runWriteLoop = async (inMemoryStore: IndexerState.t) => {
   while inMemoryStore->hasPendingWrite && !inMemoryStore.hasFailedWrite {
     try {
-      await runOneWrite(
-        inMemoryStore,
-        ~persistence=inMemoryStore.persistence,
-        ~config=inMemoryStore.config,
-      )
+      await runOneWrite(inMemoryStore)
       inMemoryStore->wakeCommitWaiters
     } catch {
     | exn =>
       inMemoryStore.hasFailedWrite = true
-      inMemoryStore.onError(exn)
+      inMemoryStore.onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database"))
     }
   }
   inMemoryStore.writeFiber = None
   inMemoryStore->wakeCommitWaiters
 }
 
-let kick = (inMemoryStore: t) =>
+let kick = (inMemoryStore: IndexerState.t) =>
   if (
     inMemoryStore.writeFiber->Option.isNone &&
     !inMemoryStore.hasFailedWrite &&
@@ -423,7 +318,10 @@ let metaFieldsEqual = (a: InternalTable.Chains.metaFields, b: InternalTable.Chai
     b.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime)
 
 // Stages chain metadata, dirtying only on a real change so restages are no-ops.
-let setChainMeta = (inMemoryStore: t, chainsData: dict<InternalTable.Chains.metaFields>) => {
+let setChainMeta = (
+  inMemoryStore: IndexerState.t,
+  chainsData: dict<InternalTable.Chains.metaFields>,
+) => {
   chainsData->Utils.Dict.forEachWithKey((meta, chainId) => {
     let changed = switch inMemoryStore.chainMeta->Utils.Dict.dangerouslyGetNonOption(chainId) {
     | Some(prev) => !metaFieldsEqual(meta, prev)
@@ -444,7 +342,7 @@ let setChainMeta = (inMemoryStore: t, chainsData: dict<InternalTable.Chains.meta
 
 // Queues a processed batch and kicks the cycle. Returns immediately; the write
 // happens off the processing path.
-let commitBatch = (inMemoryStore: t, ~batch: Batch.t) => {
+let commitBatch = (inMemoryStore: IndexerState.t, ~batch: Batch.t) => {
   inMemoryStore.processedBatches->Array.push(batch)->ignore
   switch batch.checkpointIds->Utils.Array.last {
   | Some(checkpointId) => inMemoryStore.processedCheckpointId = checkpointId
@@ -455,7 +353,7 @@ let commitBatch = (inMemoryStore: t, ~batch: Batch.t) => {
 
 // Drops committed entity and effect entries across all tables. With
 // keepLoadedFromDb, entries seeded from a db read are spared.
-let dropCommitted = (inMemoryStore: t, ~keepLoadedFromDb) => {
+let dropCommitted = (inMemoryStore: IndexerState.t, ~keepLoadedFromDb) => {
   let committedCheckpointId = inMemoryStore.committedCheckpointId
   inMemoryStore.allEntities->Array.forEach(entityConfig =>
     inMemoryStore
@@ -469,7 +367,7 @@ let dropCommitted = (inMemoryStore: t, ~keepLoadedFromDb) => {
 
 // Blocks until the store holds fewer than keepLatestChangesLimit changes,
 // freeing committed changes first and awaiting commits as a last resort.
-let rec awaitCapacity = async (inMemoryStore: t) => {
+let rec awaitCapacity = async (inMemoryStore: IndexerState.t) => {
   // After a failed write nothing will free capacity, so bail instead of waiting
   // on a commit that won't come (the error already went to onError).
   if !inMemoryStore.hasFailedWrite && inMemoryStore->getChangesCount >= keepLatestChangesLimit {
@@ -498,7 +396,7 @@ let rec awaitCapacity = async (inMemoryStore: t) => {
 
 // Awaits until everything processed is persisted. On a failed write we stop
 // draining (onError already surfaced it) rather than throw.
-let rec flush = async (inMemoryStore: t) => {
+let rec flush = async (inMemoryStore: IndexerState.t) => {
   if !inMemoryStore.hasFailedWrite {
     inMemoryStore->kick
     switch inMemoryStore.writeFiber {
@@ -511,13 +409,13 @@ let rec flush = async (inMemoryStore: t) => {
 }
 
 let prepareRollbackDiff = async (
-  inMemoryStore: t,
-  ~persistence: Persistence.t,
+  inMemoryStore: IndexerState.t,
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
   ~progressBlockNumberByChainId,
 ) => {
-  inMemoryStore.entities = EntityTables.make(inMemoryStore.allEntities)
+  let persistence = inMemoryStore.persistence
+  inMemoryStore.entities = IndexerState.EntityTables.make(inMemoryStore.allEntities)
   inMemoryStore.effects = Dict.make()
   inMemoryStore.rollback = Some({
     targetCheckpointId: rollbackTargetCheckpointId,
@@ -573,7 +471,7 @@ let prepareRollbackDiff = async (
   }
 }
 
-let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t) => {
+let setBatchDcs = (inMemoryStore: IndexerState.t, ~batch: Batch.t) => {
   let inMemTable =
     inMemoryStore->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
 

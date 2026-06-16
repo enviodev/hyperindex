@@ -21,6 +21,13 @@ let defaultPersistence = PgStorage.makePersistenceFromConfig(
   ),
 )
 
+// A trivial chain manager for store-only tests that never run the loop.
+let emptyChainManager: ChainManager.t = {
+  chainFetchers: ChainMap.fromArrayUnsafe([]),
+  isInReorgThreshold: false,
+  isRealtime: false,
+}
+
 module InMemoryStore = {
   let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
@@ -36,15 +43,12 @@ module InMemoryStore = {
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = RealInMemoryStore.make(
-      ~entities=config.allEntities,
-      ~persistence=defaultPersistence,
+    let inMemoryStore = IndexerState.make(
       ~config,
+      ~persistence=defaultPersistence,
+      ~chainManager=emptyChainManager,
       // The cycle never runs here, so a write only means a test is wired wrong.
-      ~onError=exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Unexpected persistence write from an in-memory-only test store",
-        ),
+      ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
     )
     entities->Array.forEach(((entityConfig, items)) => {
       items->Array.forEach(entity => {
@@ -336,14 +340,6 @@ module Indexer = {
       NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
     }
 
-    let inMemoryStore = RealInMemoryStore.make(
-      ~entities=config.allEntities,
-      ~persistence,
-      ~config,
-      ~onError=exn =>
-        onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
-    )
-
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
     let graphqlRoute = Rest.route(() => {
       method: Post,
@@ -369,7 +365,6 @@ module Indexer = {
     let state = IndexerState.make(
       ~config,
       ~persistence,
-      ~inMemoryStore,
       ~chainManager,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
@@ -380,14 +375,14 @@ module Indexer = {
     {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
-          let before = inMemoryStore.processedBatchesCount
+          let before = state.processedBatchesCount
           // Wait until a new batch is processed and written. A reorg batch can
           // land before this call (e.g. while the test awaits the rollback), so
           // also stop once the indexer has fully settled.
           let idleChecks = ref(0)
           let rec wait = async () => {
-            await inMemoryStore->RealInMemoryStore.flush
-            let store = inMemoryStore
+            await state->RealInMemoryStore.flush
+            let store = state
             let isIdle =
               !store.isProcessing &&
               store.writeFiber->Option.isNone &&
@@ -527,14 +522,14 @@ module Indexer = {
       },
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.
-        await inMemoryStore->RealInMemoryStore.flush
+        await state->RealInMemoryStore.flush
         // Stop the previous run's loops so they don't keep driving the shared db
         // once the resumed indexer takes over.
         state->IndexerState.stop
         // Let any in-flight batch or write from the stopped run settle before the
         // resumed indexer takes over the shared persistence, else the two runs
         // race against the same db.
-        while inMemoryStore.isProcessing || inMemoryStore.writeFiber->Option.isSome {
+        while state.isProcessing || state.writeFiber->Option.isSome {
           await Utils.delay(1)
         }
         await make(

@@ -23,10 +23,72 @@ module WriteThrottlers = {
   }
 }
 
+module EntityTables = {
+  type t = dict<InMemoryTable.Entity.t>
+  exception UndefinedEntity({entityName: string})
+  let make = (entities: array<Internal.entityConfig>): t => {
+    let init = Dict.make()
+    entities->Array.forEach(entityConfig => {
+      init->Dict.set((entityConfig.name :> string), InMemoryTable.Entity.make())
+    })
+    init
+  }
+
+  let get = (self: t, ~entityName: string) => {
+    switch self->Utils.Dict.dangerouslyGetNonOption(entityName) {
+    | Some(table) => table
+    | None =>
+      UndefinedEntity({entityName: entityName})->ErrorHandling.mkLogAndRaise(
+        ~msg="Unexpected, entity InMemoryTable is undefined",
+      )
+    }
+  }
+}
+
+type effectCacheInMemTable = {
+  // Cache keys whose handler output is persisted on the next write. Drained
+  // each write; eviction is driven by the per-entry checkpointId instead.
+  mutable idsToStore: array<string>,
+  mutable invalidationsCount: int,
+  // Each entry is stamped with the checkpoint that referenced it (or
+  // loadedFromDbCheckpointId for db reads), so committed entries can be
+  // dropped once persisted/re-derivable, mirroring entity changes.
+  mutable dict: dict<Change.t<Internal.effectOutput>>,
+  mutable changesCount: float,
+  effect: Internal.effect,
+}
+
 type t = {
   config: Config.t,
   persistence: Persistence.t,
-  inMemoryStore: InMemoryStore.t,
+  // --- In-memory store: entity/effect tables and the pending-write queue. ---
+  allEntities: array<Internal.entityConfig>,
+  mutable entities: EntityTables.t,
+  mutable effects: dict<effectCacheInMemTable>,
+  mutable rollback: option<Persistence.rollback>,
+  // Last checkpoint persisted to the db.
+  mutable committedCheckpointId: Internal.checkpointId,
+  // Processing frontier; runs ahead of committedCheckpointId while writes lag.
+  mutable processedCheckpointId: Internal.checkpointId,
+  // Processed but unwritten. The cycle drains them, splitting each write at a
+  // change in isInReorgThreshold so it never mixes history-saving modes.
+  mutable processedBatches: array<Batch.t>,
+  // Count of processed batches; version-independent progress counter.
+  mutable processedBatchesCount: int,
+  // The single in-flight write loop, None when idle.
+  mutable writeFiber: option<promise<unit>>,
+  // Set once a write throws, to stop the loop. The error itself goes to onError.
+  mutable hasFailedWrite: bool,
+  // Resolved after every commit so capacity/flush waiters can re-evaluate.
+  mutable commitWaiters: array<unit => unit>,
+  // Latest metadata staged per chain; used to skip unchanged restages.
+  mutable chainMeta: dict<InternalTable.Chains.metaFields>,
+  // Set on a real change. Folded into a batch write, else flushed on the throttle.
+  mutable chainMetaDirty: bool,
+  // Throttles metadata-only writes when no batches flow.
+  chainMetaThrottler: Throttler.t,
+  // True while a batch is being processed; guards ProcessEventBatch re-entry.
+  mutable isProcessing: bool,
   mutable chainManager: ChainManager.t,
   mutable rollbackState: rollbackState,
   indexerStartTime: Date.t,
@@ -49,17 +111,44 @@ type t = {
 let make = (
   ~config: Config.t,
   ~persistence: Persistence.t,
-  ~inMemoryStore: InMemoryStore.t,
   ~chainManager: ChainManager.t,
+  ~committedCheckpointId=Internal.initialCheckpointId,
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
   ~onError: ErrorHandling.t => unit,
 ) => {
+  let chainMetaThrottler = {
+    let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
+    Throttler.make(
+      ~intervalMillis,
+      ~logger=Logging.createChild(
+        ~params={
+          "context": "Throttler for chain metadata writes",
+          "intervalMillis": intervalMillis,
+        },
+      ),
+    )
+  }
+
   {
     config,
     persistence,
-    inMemoryStore,
+    allEntities: persistence.allEntities,
+    entities: EntityTables.make(persistence.allEntities),
+    effects: Dict.make(),
+    rollback: None,
+    committedCheckpointId,
+    processedCheckpointId: committedCheckpointId,
+    processedBatches: [],
+    processedBatchesCount: 0,
+    writeFiber: None,
+    hasFailedWrite: false,
+    commitWaiters: [],
+    chainMeta: Dict.make(),
+    chainMetaDirty: false,
+    chainMetaThrottler,
+    isProcessing: false,
     chainManager,
     indexerStartTime: Date.make(),
     rollbackState: NoRollback,
@@ -170,9 +259,9 @@ let applyBatchProgress = (state: t, ~batch) =>
 
 // Processing-loop mutex. Guards ProcessEventBatch re-entry so only one
 // processing loop runs at a time.
-let isProcessing = (state: t) => state.inMemoryStore.isProcessing
-let beginProcessing = (state: t) => state.inMemoryStore.isProcessing = true
-let endProcessing = (state: t) => state.inMemoryStore.isProcessing = false
+let isProcessing = (state: t) => state.isProcessing
+let beginProcessing = (state: t) => state.isProcessing = true
+let endProcessing = (state: t) => state.isProcessing = false
 
 let recordProcessedBatch = (state: t) =>
-  state.inMemoryStore.processedBatchesCount = state.inMemoryStore.processedBatchesCount + 1
+  state.processedBatchesCount = state.processedBatchesCount + 1

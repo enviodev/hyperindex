@@ -68,7 +68,7 @@ let loadById = (
 let callEffect = (
   ~effect: Internal.effect,
   ~arg: Internal.effectArgs,
-  ~inMemTable: InMemoryStore.effectCacheInMemTable,
+  ~inMemTable: IndexerState.effectCacheInMemTable,
   ~timerRef,
   ~onError,
 ) => {

@@ -32,11 +32,11 @@ let rec startProcessing = async (
     // exits, leaving producers (fetch, rollback) to re-kick it.
     let hasMoreWork = ref(true)
     while hasMoreWork.contents && !state.isStopped && !(state->IndexerState.isResolvingReorg) {
-      let processedBatchesBefore = state.inMemoryStore.processedBatchesCount
+      let processedBatchesBefore = state.processedBatchesCount
       switch await processNextBatch(state, ~scheduleFetchAllChains) {
       | exception exn =>
         IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
-      | () => hasMoreWork := state.inMemoryStore.processedBatchesCount > processedBatchesBefore
+      | () => hasMoreWork := state.processedBatchesCount > processedBatchesBefore
       }
     }
     state->IndexerState.endProcessing
@@ -62,7 +62,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
 
   let batch =
     chainManagerBeforeUpdate->ChainManager.createBatch(
-      ~processedCheckpointId=state.inMemoryStore.processedCheckpointId,
+      ~processedCheckpointId=state.processedCheckpointId,
       ~batchSizeTarget=state.config.batchSize,
       ~isRollback=isRollbackBatch,
     )
@@ -102,8 +102,6 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
       }
     }
   } else {
-    let inMemoryStore = state.inMemoryStore
-
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
         chain->ChainMap.Chain.toChainId,
@@ -130,14 +128,14 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
     // clobbers the other.
     scheduleFetchAllChains()
 
-    inMemoryStore->InMemoryStore.setBatchDcs(~batch)
+    state->InMemoryStore.setBatchDcs(~batch)
 
     // An exception here propagates to startProcessing's catch, the single error
     // boundary for the loop. The Error case is not an exception, so it's handled
     // here to preserve the handler's user-facing message.
     switch await EventProcessing.processEventBatch(
       ~batch,
-      ~inMemoryStore,
+      ~inMemoryStore=state,
       ~loadManager=state.loadManager,
       ~persistence=state.persistence,
       ~config=state.config,

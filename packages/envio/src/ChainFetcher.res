@@ -403,13 +403,13 @@ let runContractRegistersOrThrow = async (
 
     // Catch sync and async errors
     try {
-      let params: UserContext.contractRegisterParams = {
+      let params: ContractRegisterContext.contractRegisterParams = {
         item,
         onRegister,
         config,
         isResolved: false,
       }
-      let result = contractRegister(UserContext.getContractRegisterArgs(params))
+      let result = contractRegister(ContractRegisterContext.getContractRegisterArgs(params))
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.

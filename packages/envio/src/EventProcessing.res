@@ -284,7 +284,7 @@ type logPartitionInfo = {
 
 let processEventBatch = async (
   ~batch: Batch.t,
-  ~inMemoryStore: InMemoryStore.t,
+  ~inMemoryStore: IndexerState.t,
   ~loadManager,
   ~persistence: Persistence.t,
   ~config: Config.t,

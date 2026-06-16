@@ -60,11 +60,11 @@ let makeStore = () => {
       envioInfo: None,
     }),
   }
-  let store = InMemoryStore.make(
-    ~entities=MockIndexer.config.allEntities,
-    ~persistence,
+  let store = IndexerState.make(
     ~config=MockIndexer.config,
-    ~onError=exn => exn->ErrorHandling.mkLogAndRaise(~msg="Unexpected persistence write failure"),
+    ~persistence,
+    ~chainManager=MockIndexer.emptyChainManager,
+    ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
   )
   (store, setChainMetaCalls, writeBatchChainMetaCalls)
 }

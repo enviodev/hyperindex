@@ -769,14 +769,6 @@ let start = async (
       NodeJs.process->NodeJs.exitWithCode(Failure)
     }
   }
-  let inMemoryStore = InMemoryStore.make(
-    ~entities=persistence.allEntities,
-    ~committedCheckpointId=(persistence->Persistence.getInitializedState).checkpointId,
-    ~persistence,
-    ~config,
-    ~onError=exn => onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
-  )
-
   let envioVersion = Utils.EnvioPackage.value.version
   Prometheus.Info.set(~version=envioVersion)
   Prometheus.ProcessStartTimeSeconds.set()
@@ -840,7 +832,7 @@ let start = async (
   let state = IndexerState.make(
     ~config,
     ~persistence,
-    ~inMemoryStore,
+    ~committedCheckpointId=(persistence->Persistence.getInitializedState).checkpointId,
     ~chainManager,
     ~isDevelopmentMode,
     ~shouldUseTui,
