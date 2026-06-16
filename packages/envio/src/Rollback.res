@@ -82,10 +82,10 @@ and executeRollback = async (
   // state. Otherwise an in-flight batch lands after the progress reads and
   // its entity changes get reverted without the chain progress being
   // rolled back, so the events are never reprocessed.
-  await state.ctx.inMemoryStore->InMemoryStore.flush
+  await state.inMemoryStore->InMemoryStore.flush
 
   let rollbackTargetCheckpointId = {
-    switch await state.ctx.persistence.storage.getRollbackTargetCheckpoint(
+    switch await state.persistence.storage.getRollbackTargetCheckpoint(
       ~reorgChainId,
       ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
     ) {
@@ -99,7 +99,7 @@ and executeRollback = async (
   let rollbackedProcessedEvents = ref(0.)
 
   {
-    let rollbackProgressDiff = await state.ctx.persistence.storage.getRollbackProgressDiff(
+    let rollbackProgressDiff = await state.persistence.storage.getRollbackProgressDiff(
       ~rollbackTargetCheckpointId,
     )
     for idx in 0 to rollbackProgressDiff->Array.length - 1 {
@@ -197,10 +197,10 @@ and executeRollback = async (
     }
   })
 
-  let diff = await state.ctx.inMemoryStore->InMemoryStore.prepareRollbackDiff(
-    ~persistence=state.ctx.persistence,
+  let diff = await state.inMemoryStore->InMemoryStore.prepareRollbackDiff(
+    ~persistence=state.persistence,
     ~rollbackTargetCheckpointId,
-    ~rollbackDiffCheckpointId=state.ctx.inMemoryStore.committedCheckpointId->BigInt.add(1n),
+    ~rollbackDiffCheckpointId=state.inMemoryStore.committedCheckpointId->BigInt.add(1n),
     ~progressBlockNumberByChainId=newProgressBlockNumberPerChain,
   )
 
@@ -216,7 +216,7 @@ and executeRollback = async (
       "upserted": diff["setEntities"],
     },
     "rollbackedEvents": rollbackedProcessedEvents.contents,
-    "beforeCheckpointId": state.ctx.inMemoryStore.committedCheckpointId,
+    "beforeCheckpointId": state.inMemoryStore.committedCheckpointId,
     "targetCheckpointId": rollbackTargetCheckpointId,
   })
   Prometheus.RollbackSuccess.increment(

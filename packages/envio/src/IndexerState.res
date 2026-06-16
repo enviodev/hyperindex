@@ -24,7 +24,9 @@ module WriteThrottlers = {
 }
 
 type t = {
-  ctx: Ctx.t,
+  config: Config.t,
+  persistence: Persistence.t,
+  inMemoryStore: InMemoryStore.t,
   mutable chainManager: ChainManager.t,
   mutable rollbackState: rollbackState,
   indexerStartTime: Date.t,
@@ -45,7 +47,9 @@ type t = {
 }
 
 let make = (
-  ~ctx: Ctx.t,
+  ~config: Config.t,
+  ~persistence: Persistence.t,
+  ~inMemoryStore: InMemoryStore.t,
   ~chainManager: ChainManager.t,
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
@@ -53,7 +57,9 @@ let make = (
   ~onError: ErrorHandling.t => unit,
 ) => {
   {
-    ctx,
+    config,
+    persistence,
+    inMemoryStore,
     chainManager,
     indexerStartTime: Date.make(),
     rollbackState: NoRollback,
@@ -162,11 +168,11 @@ let invalidateInflight = (state: t) => state.epoch = state.epoch + 1
 let applyBatchProgress = (state: t, ~batch) =>
   state.chainManager = state.chainManager->ChainManager.updateProgressedChains(~batch)
 
-// Processing-loop mutex, kept on the in-memory store so the store can refuse to
-// flush mid-batch.
-let isProcessing = (state: t) => state.ctx.inMemoryStore.isProcessing
-let beginProcessing = (state: t) => state.ctx.inMemoryStore.isProcessing = true
-let endProcessing = (state: t) => state.ctx.inMemoryStore.isProcessing = false
+// Processing-loop mutex. Guards ProcessEventBatch re-entry so only one
+// processing loop runs at a time.
+let isProcessing = (state: t) => state.inMemoryStore.isProcessing
+let beginProcessing = (state: t) => state.inMemoryStore.isProcessing = true
+let endProcessing = (state: t) => state.inMemoryStore.isProcessing = false
 
 let recordProcessedBatch = (state: t) =>
-  state.ctx.inMemoryStore.processedBatchesCount = state.ctx.inMemoryStore.processedBatchesCount + 1
+  state.inMemoryStore.processedBatchesCount = state.inMemoryStore.processedBatchesCount + 1

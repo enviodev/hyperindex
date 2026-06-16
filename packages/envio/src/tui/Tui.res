@@ -215,7 +215,7 @@ module App = {
             poweredByHyperSync: (
               cf.sourceManager->SourceManager.getActiveSource
             ).poweredByHyperSync,
-            blockUnit: switch state.ctx.config.ecosystem.name {
+            blockUnit: switch state.config.ecosystem.name {
             | Svm => "Slot"
             | Evm | Fuel => "Block"
             },
@@ -315,7 +315,7 @@ module App = {
           }
         }
       </Box>
-      {if state.ctx.config.isDev {
+      {if state.config.isDev {
         <Box flexDirection={Row}>
           <Text> {"Dev Console: "->React.string} </Text>
           <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
@@ -323,7 +323,7 @@ module App = {
       } else {
         React.null
       }}
-      {switch (state.ctx.config.storage.clickhouse, Env.ClickHouse.host()) {
+      {switch (state.config.storage.clickhouse, Env.ClickHouse.host()) {
       | (true, Some(host)) =>
         <Box flexDirection={Row}>
           <Text> {"ClickHouse: "->React.string} </Text>
@@ -331,7 +331,7 @@ module App = {
         </Box>
       | _ => React.null
       }}
-      <Messages config=state.ctx.config />
+      <Messages config=state.config />
     </Box>
   }
 }

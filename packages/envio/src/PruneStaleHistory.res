@@ -4,18 +4,18 @@ let runPrune = async (state: IndexerState.t) => {
   switch state.chainManager->ChainManager.getSafeCheckpointId {
   | None => ()
   | Some(safeCheckpointId) =>
-    await state.ctx.persistence.storage.pruneStaleCheckpoints(~safeCheckpointId)
+    await state.persistence.storage.pruneStaleCheckpoints(~safeCheckpointId)
 
-    for idx in 0 to state.ctx.persistence.allEntities->Array.length - 1 {
+    for idx in 0 to state.persistence.allEntities->Array.length - 1 {
       if idx !== 0 {
         // Add some delay between entities
         // To unblock the pg client if it's needed for something else
         await Utils.delay(1000)
       }
-      let entityConfig = state.ctx.persistence.allEntities->Array.getUnsafe(idx)
+      let entityConfig = state.persistence.allEntities->Array.getUnsafe(idx)
       let timeRef = Hrtime.makeTimer()
       try {
-        let () = await state.ctx.persistence.storage.pruneStaleEntityHistory(
+        let () = await state.persistence.storage.pruneStaleEntityHistory(
           ~entityName=entityConfig.name,
           ~entityIndex=entityConfig.index,
           ~safeCheckpointId,

@@ -17,5 +17,5 @@ let stage = (state: IndexerState.t) => {
     )
   })
 
-  state.ctx.inMemoryStore->InMemoryStore.setChainMeta(chainsData)
+  state.inMemoryStore->InMemoryStore.setChainMeta(chainsData)
 }

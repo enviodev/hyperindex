@@ -336,18 +336,13 @@ module Indexer = {
       NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
     }
 
-    let ctx = {
-      Ctx.registrations,
-      config,
-      persistence,
-      inMemoryStore: RealInMemoryStore.make(
-        ~entities=config.allEntities,
-        ~persistence,
-        ~config,
-        ~onError=exn =>
-          onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
-      ),
-    }
+    let inMemoryStore = RealInMemoryStore.make(
+      ~entities=config.allEntities,
+      ~persistence,
+      ~config,
+      ~onError=exn =>
+        onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
+    )
 
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
     let graphqlRoute = Rest.route(() => {
@@ -372,7 +367,9 @@ module Indexer = {
       ~reducedPollingInterval?,
     )
     let state = IndexerState.make(
-      ~ctx,
+      ~config,
+      ~persistence,
+      ~inMemoryStore,
       ~chainManager,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
@@ -383,14 +380,14 @@ module Indexer = {
     {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
-          let before = ctx.inMemoryStore.processedBatchesCount
+          let before = inMemoryStore.processedBatchesCount
           // Wait until a new batch is processed and written. A reorg batch can
           // land before this call (e.g. while the test awaits the rollback), so
           // also stop once the indexer has fully settled.
           let idleChecks = ref(0)
           let rec wait = async () => {
-            await ctx.inMemoryStore->RealInMemoryStore.flush
-            let store = ctx.inMemoryStore
+            await inMemoryStore->RealInMemoryStore.flush
+            let store = inMemoryStore
             let isIdle =
               !store.isProcessing &&
               store.writeFiber->Option.isNone &&
@@ -530,14 +527,14 @@ module Indexer = {
       },
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.
-        await ctx.inMemoryStore->RealInMemoryStore.flush
+        await inMemoryStore->RealInMemoryStore.flush
         // Stop the previous run's loops so they don't keep driving the shared db
         // once the resumed indexer takes over.
         state->IndexerState.stop
         // Let any in-flight batch or write from the stopped run settle before the
         // resumed indexer takes over the shared persistence, else the two runs
         // race against the same db.
-        while ctx.inMemoryStore.isProcessing || ctx.inMemoryStore.writeFiber->Option.isSome {
+        while inMemoryStore.isProcessing || inMemoryStore.writeFiber->Option.isSome {
           await Utils.delay(1)
         }
         await make(

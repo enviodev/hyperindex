@@ -32,11 +32,11 @@ let rec startProcessing = async (
     // exits, leaving producers (fetch, rollback) to re-kick it.
     let hasMoreWork = ref(true)
     while hasMoreWork.contents && !state.isStopped && !(state->IndexerState.isResolvingReorg) {
-      let processedBatchesBefore = state.ctx.inMemoryStore.processedBatchesCount
+      let processedBatchesBefore = state.inMemoryStore.processedBatchesCount
       switch await processNextBatch(state, ~scheduleFetchAllChains) {
       | exception exn =>
         IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
-      | () => hasMoreWork := state.ctx.inMemoryStore.processedBatchesCount > processedBatchesBefore
+      | () => hasMoreWork := state.inMemoryStore.processedBatchesCount > processedBatchesBefore
       }
     }
     state->IndexerState.endProcessing
@@ -62,15 +62,15 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
 
   let batch =
     chainManagerBeforeUpdate->ChainManager.createBatch(
-      ~processedCheckpointId=state.ctx.inMemoryStore.processedCheckpointId,
-      ~batchSizeTarget=state.ctx.config.batchSize,
+      ~processedCheckpointId=state.inMemoryStore.processedCheckpointId,
+      ~batchSizeTarget=state.config.batchSize,
       ~isRollback=isRollbackBatch,
     )
 
   let progressedChainsById = batch.progressedChainsById
 
   let isBelowReorgThreshold =
-    !chainManagerBeforeUpdate.isInReorgThreshold && state.ctx.config.shouldRollbackOnReorg
+    !chainManagerBeforeUpdate.isInReorgThreshold && state.config.shouldRollbackOnReorg
   let shouldEnterReorgThreshold =
     isBelowReorgThreshold &&
     chainManagerBeforeUpdate.chainFetchers
@@ -102,7 +102,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
       }
     }
   } else {
-    let inMemoryStore = state.ctx.inMemoryStore
+    let inMemoryStore = state.inMemoryStore
 
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
@@ -139,7 +139,8 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
       ~batch,
       ~inMemoryStore,
       ~loadManager=state.loadManager,
-      ~ctx=state.ctx,
+      ~persistence=state.persistence,
+      ~config=state.config,
       ~chainFetchers=chainManagerBeforeUpdate.chainFetchers,
     ) {
     | Error(errHandler) => IndexerState.errorExit(state, errHandler)
@@ -194,7 +195,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
         } else {
           ChainMetadata.stage(state)
           if (
-            state.ctx.config->Config.shouldPruneHistory(
+            state.config->Config.shouldPruneHistory(
               ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
             )
           ) {

@@ -585,7 +585,7 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
+let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: bool) => {
   open Express
 
   let app = make()
@@ -628,7 +628,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
 
   app->post("/console/syncCache", (_req, res) => {
     if isDevelopmentMode {
-      (ctx.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
+      (persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
       ->Promise.thenResolve(_ => res->json(Boolean(true)))
       ->Promise.ignore
     } else {
@@ -769,26 +769,21 @@ let start = async (
       NodeJs.process->NodeJs.exitWithCode(Failure)
     }
   }
-  let ctx = {
-    Ctx.registrations,
-    config,
-    persistence,
-    inMemoryStore: InMemoryStore.make(
-      ~entities=persistence.allEntities,
-      ~committedCheckpointId=(persistence->Persistence.getInitializedState).checkpointId,
-      ~persistence,
-      ~config,
-      ~onError=exn => onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
-    ),
-  }
+  let inMemoryStore = InMemoryStore.make(
+    ~entities=persistence.allEntities,
+    ~committedCheckpointId=(persistence->Persistence.getInitializedState).checkpointId,
+    ~persistence,
+    ~config,
+    ~onError=exn => onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
+  )
 
   let envioVersion = Utils.EnvioPackage.value.version
   Prometheus.Info.set(~version=envioVersion)
   Prometheus.ProcessStartTimeSeconds.set()
-  Prometheus.RollbackEnabled.set(~enabled=ctx.config.shouldRollbackOnReorg)
+  Prometheus.RollbackEnabled.set(~enabled=config.shouldRollbackOnReorg)
 
   if !isTest {
-    startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
+    startServer(~persistence, ~isDevelopmentMode, ~getState=() =>
       switch indexerStateRef.contents {
       | None => Initializing({})
       | Some(state) => {
@@ -830,7 +825,7 @@ let start = async (
             chains,
             indexerStartTime: state.indexerStartTime,
             isPreRegisteringDynamicContracts: false,
-            rollbackOnReorg: ctx.config.shouldRollbackOnReorg,
+            rollbackOnReorg: config.shouldRollbackOnReorg,
           })
         }
       }
@@ -838,12 +833,14 @@ let start = async (
   }
 
   let chainManager = ChainManager.makeFromDbState(
-    ~initialState=ctx.persistence->Persistence.getInitializedState,
-    ~config=ctx.config,
-    ~registrations=ctx.registrations,
+    ~initialState=persistence->Persistence.getInitializedState,
+    ~config,
+    ~registrations,
   )
   let state = IndexerState.make(
-    ~ctx,
+    ~config,
+    ~persistence,
+    ~inMemoryStore,
     ~chainManager,
     ~isDevelopmentMode,
     ~shouldUseTui,

@@ -86,7 +86,8 @@ let runHandlerOrThrow = async (
   ~checkpointId,
   ~inMemoryStore,
   ~loadManager,
-  ~ctx: Ctx.t,
+  ~persistence: Persistence.t,
+  ~config: Config.t,
   ~chains: Internal.chains,
 ) => {
   switch item {
@@ -96,17 +97,17 @@ let runHandlerOrThrow = async (
         item,
         inMemoryStore,
         loadManager,
-        persistence: ctx.persistence,
+        persistence,
         checkpointId,
         isPreload: false,
         chains,
-        config: ctx.config,
+        config,
         isResolved: false,
       }
       await handler(
         Ecosystem.makeOnBlockArgs(
           ~blockNumber,
-          ~ecosystem=ctx.config.ecosystem,
+          ~ecosystem=config.ecosystem,
           ~context=UserContext.getHandlerContext(contextParams),
         ),
       )
@@ -121,16 +122,17 @@ let runHandlerOrThrow = async (
         }),
       )
     }
-  | Event({eventConfig}) => switch eventConfig.handler {
+  | Event({eventConfig}) =>
+    switch eventConfig.handler {
     | Some(handler) =>
       await item->runEventHandlerOrThrow(
         ~handler,
         ~checkpointId,
         ~inMemoryStore,
         ~loadManager,
-        ~persistence=ctx.persistence,
+        ~persistence,
         ~chains,
-        ~config=ctx.config,
+        ~config,
       )
     | None => ()
     }
@@ -236,7 +238,8 @@ let runBatchHandlersOrThrow = async (
   batch: Batch.t,
   ~inMemoryStore,
   ~loadManager,
-  ~ctx,
+  ~persistence,
+  ~config,
   ~chains: Internal.chains,
 ) => {
   let itemIdx = ref(0)
@@ -248,7 +251,15 @@ let runBatchHandlersOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
 
-      await runHandlerOrThrow(item, ~checkpointId, ~inMemoryStore, ~loadManager, ~ctx, ~chains)
+      await runHandlerOrThrow(
+        item,
+        ~checkpointId,
+        ~inMemoryStore,
+        ~loadManager,
+        ~persistence,
+        ~config,
+        ~chains,
+      )
     }
     itemIdx := itemIdx.contents + checkpointEventsProcessed
   }
@@ -275,7 +286,8 @@ let processEventBatch = async (
   ~batch: Batch.t,
   ~inMemoryStore: InMemoryStore.t,
   ~loadManager,
-  ~ctx: Ctx.t,
+  ~persistence: Persistence.t,
+  ~config: Config.t,
   ~chainFetchers: ChainMap.t<ChainFetcher.t>,
 ) => {
   let totalBatchSize = batch.totalBatchSize
@@ -301,19 +313,19 @@ let processEventBatch = async (
     let timeRef = Hrtime.makeTimer()
 
     if batch.items->Utils.Array.notEmpty {
-      await batch->preloadBatchOrThrow(
-        ~loadManager,
-        ~persistence=ctx.persistence,
-        ~inMemoryStore,
-        ~chains,
-        ~config=ctx.config,
-      )
+      await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~inMemoryStore, ~chains, ~config)
     }
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     if batch.items->Utils.Array.notEmpty {
-      await batch->runBatchHandlersOrThrow(~inMemoryStore, ~loadManager, ~ctx, ~chains)
+      await batch->runBatchHandlersOrThrow(
+        ~inMemoryStore,
+        ~loadManager,
+        ~persistence,
+        ~config,
+        ~chains,
+      )
     }
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat

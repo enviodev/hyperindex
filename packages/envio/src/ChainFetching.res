@@ -57,7 +57,7 @@ let rec onQueryResponse = async (
     | ReorgDetected(reorgDetected) => {
         chainFetcher.logger->Logging.childInfo(
           reorgDetected->ReorgDetection.reorgDetectedToLogParams(
-            ~shouldRollbackOnReorg=state.ctx.config.shouldRollbackOnReorg,
+            ~shouldRollbackOnReorg=state.config.shouldRollbackOnReorg,
           ),
         )
         Prometheus.ReorgCount.increment(~chain)
@@ -65,7 +65,7 @@ let rec onQueryResponse = async (
           ~blockNumber=reorgDetected.scannedBlock.blockNumber,
           ~chain,
         )
-        if state.ctx.config.shouldRollbackOnReorg {
+        if state.config.shouldRollbackOnReorg {
           Some(reorgDetected.scannedBlock.blockNumber)
         } else {
           None
@@ -156,7 +156,7 @@ let rec onQueryResponse = async (
       | _ =>
         switch await ChainFetcher.runContractRegistersOrThrow(
           ~itemsWithContractRegister,
-          ~config=state.ctx.config,
+          ~config=state.config,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
         | newItemsWithDcs => proceed(~newItemsWithDcs)
@@ -239,7 +239,7 @@ let finishWaitingForNewBlock = (
     )
 
     let isBelowReorgThreshold =
-      !state.chainManager.isInReorgThreshold && state.ctx.config.shouldRollbackOnReorg
+      !state.chainManager.isInReorgThreshold && state.config.shouldRollbackOnReorg
     let shouldEnterReorgThreshold =
       isBelowReorgThreshold &&
       updatedChainFetchers
