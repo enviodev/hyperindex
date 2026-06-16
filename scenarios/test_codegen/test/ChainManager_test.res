@@ -242,7 +242,7 @@ describe("ChainManager", () => {
       },
     )
 
-    // GlobalState launches the next fetch before awaiting processEventBatch, so a
+    // The loop launches the next fetch before awaiting processEventBatch, so a
     // response can advance a chain's fetchState while the batch is in flight.
     // updateProgressedChains must commit only progress fields and keep that
     // concurrently-advanced fetch frontier, otherwise the freshly fetched blocks

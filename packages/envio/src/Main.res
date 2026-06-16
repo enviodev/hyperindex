@@ -79,7 +79,7 @@ let blockRangeSchema: S.t<blockRange> = S.object(s => {
 
 let defaultBlockRange: blockRange = {_gte: None, _lte: None, _every: 1}
 
-let globalStateRef: ref<option<GlobalState.t>> = ref(None)
+let indexerStateRef: ref<option<IndexerState.t>> = ref(None)
 
 // Persistence is set by Main.start before handler modules load, so that
 // the exported indexer value can lazily expose DB state (startBlock,
@@ -145,7 +145,7 @@ let buildChainsObject = (~config: Config.t) => {
       {
         enumerable: true,
         get: () => {
-          switch globalStateRef.contents {
+          switch indexerStateRef.contents {
           | Some(state) => state.chainManager.isRealtime
           // Before the global state is available (eg during handler
           // module load after resume), derive from persistence: every chain
@@ -179,7 +179,7 @@ let buildChainsObject = (~config: Config.t) => {
         {
           enumerable: true,
           get: () => {
-            switch globalStateRef.contents {
+            switch indexerStateRef.contents {
             | Some(state) => {
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
                 let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
@@ -790,7 +790,7 @@ let start = async (
 
   if !isTest {
     startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
-      switch globalStateRef.contents {
+      switch indexerStateRef.contents {
       | None => Initializing({})
       | Some(state) => {
           let chains =
@@ -843,7 +843,7 @@ let start = async (
     ~config=ctx.config,
     ~registrations=ctx.registrations,
   )
-  let state = GlobalState.make(
+  let state = IndexerState.make(
     ~ctx,
     ~chainManager,
     ~isDevelopmentMode,
@@ -854,6 +854,6 @@ let start = async (
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => state)
   }
-  globalStateRef := Some(state)
-  state->GlobalState.start
+  indexerStateRef := Some(state)
+  state->IndexerLoop.start
 }

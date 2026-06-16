@@ -51,7 +51,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
     inMemoryStore: MockIndexer.InMemoryStore.make(),
   }
 
-  GlobalState.make(
+  IndexerState.make(
     ~ctx,
     ~chainManager={
       // isInReorgThreshold avoids triggering a fetch on the mock source (which
@@ -64,14 +64,14 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
   )
 }
 
-describe("GlobalState loop", () => {
+describe("Indexer loop", () => {
   Async.it("launch runs work, then skips it once the state is stopped", async t => {
     let state = makeState()
     let runs = []
 
-    state->GlobalState.launch(async () => runs->Array.push(1))
+    state->IndexerLoop.launch(async () => runs->Array.push(1))
     state.isStopped = true
-    state->GlobalState.launch(async () => runs->Array.push(2))
+    state->IndexerLoop.launch(async () => runs->Array.push(2))
 
     t.expect(runs, ~message="A stopped state must not launch new work").toEqual([1])
   })
@@ -79,7 +79,7 @@ describe("GlobalState loop", () => {
   Async.it("startProcessing releases the flag once there is no work", async t => {
     let state = makeState()
 
-    await state->GlobalState.startProcessing
+    await state->IndexerLoop.startProcessing
 
     t.expect(
       state.ctx.inMemoryStore.isProcessing,
@@ -92,7 +92,7 @@ describe("GlobalState loop", () => {
     // Simulate an in-flight loop instance.
     state.ctx.inMemoryStore.isProcessing = true
 
-    await state->GlobalState.startProcessing
+    await state->IndexerLoop.startProcessing
 
     t.expect(
       state.ctx.inMemoryStore.isProcessing,

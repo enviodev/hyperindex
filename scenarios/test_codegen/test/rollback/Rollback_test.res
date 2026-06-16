@@ -1960,7 +1960,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // 1. Both chains process events, then chain 1337 detects reorg → rollback to block 100
       // 2. After rollback, chain 1337 detects ANOTHER reorg at block 100 → rollback to block 100 again
       // 3. Second rollback subtracts events that were already rolled back → counter goes negative
-      // The root cause: only the reorg chain's counter is restored (line 412-424 in GlobalState),
+      // The root cause: only the reorg chain's counter is restored (onQueryResponse in IndexerLoop),
       // but the non-reorg chain's counter stays at 0 while DB still has the old checkpoints.
       let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -2116,7 +2116,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       // THE BUG: After second rollback, chain 100's event counter goes negative
       // because the rollback subtracts events that were already rolled back.
-      // Only chain 1337's counter was restored (GlobalState line 412-424),
+      // Only chain 1337's counter was restored (onQueryResponse in IndexerLoop),
       // but chain 100's counter stayed at 0 while DB still had the old checkpoints.
       t.expect(
         {
