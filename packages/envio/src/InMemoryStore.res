@@ -1,9 +1,17 @@
-// Entity and effect table primitives over IndexerState's in-memory store. The
-// write loop and capacity/flush coordination live in Writing.
+// Entity and effect table primitives over IndexerState's in-memory store. State
+// mutations route through IndexerState's domain operations; the write loop and
+// capacity/flush coordination live in Writing.
 
-let getEffectInMemTable = (inMemoryStore: IndexerState.t, ~effect: Internal.effect) => {
+let getInMemTable = (
+  state: IndexerState.t,
+  ~entityConfig: Internal.entityConfig,
+): InMemoryTable.Entity.t =>
+  state->IndexerState.entities->IndexerState.EntityTables.get(~entityName=entityConfig.name)
+
+let getEffectInMemTable = (state: IndexerState.t, ~effect: Internal.effect) => {
   let key = effect.name
-  switch inMemoryStore.effects->Utils.Dict.dangerouslyGetNonOption(key) {
+  let effects = state->IndexerState.effects
+  switch effects->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(table) => table
   | None =>
     let table: IndexerState.effectCacheInMemTable = {
@@ -13,7 +21,7 @@ let getEffectInMemTable = (inMemoryStore: IndexerState.t, ~effect: Internal.effe
       invalidationsCount: 0,
       effect,
     }
-    inMemoryStore.effects->Dict.set(key, table)
+    effects->Dict.set(key, table)
     table
   }
 }
@@ -88,36 +96,26 @@ let dropCommittedEffects = (
   inMemTable.changesCount = inMemTable.changesCount -. keysToDelete->Array.length->Int.toFloat
 }
 
-let getInMemTable = (
-  inMemoryStore: IndexerState.t,
-  ~entityConfig: Internal.entityConfig,
-): InMemoryTable.Entity.t => {
-  inMemoryStore.entities->IndexerState.EntityTables.get(~entityName=entityConfig.name)
-}
-
-let isRollingBack = (inMemoryStore: IndexerState.t) => inMemoryStore.rollback !== None
-
 let prepareRollbackDiff = async (
-  inMemoryStore: IndexerState.t,
+  state: IndexerState.t,
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
   ~progressBlockNumberByChainId,
 ) => {
-  let persistence = inMemoryStore.persistence
-  inMemoryStore.entities = IndexerState.EntityTables.make(inMemoryStore.allEntities)
-  inMemoryStore.effects = Dict.make()
-  inMemoryStore.rollback = Some({
-    targetCheckpointId: rollbackTargetCheckpointId,
-    diffCheckpointId: rollbackDiffCheckpointId,
-    progressBlockNumberByChainId,
-  })
+  state->IndexerState.beginRollbackDiff(
+    ~targetCheckpointId=rollbackTargetCheckpointId,
+    ~diffCheckpointId=rollbackDiffCheckpointId,
+    ~progressBlockNumberByChainId,
+  )
+  let persistence = state->IndexerState.persistence
+  let committedCheckpointId = state->IndexerState.committedCheckpointId
 
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
 
   let _ = await persistence.allEntities
   ->Array.map(async entityConfig => {
-    let entityTable = inMemoryStore->getInMemTable(~entityConfig)
+    let entityTable = state->getInMemTable(~entityConfig)
 
     let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
       ~entityConfig,
@@ -127,7 +125,7 @@ let prepareRollbackDiff = async (
     removedIdsResult->Array.forEach(data => {
       deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
       entityTable->InMemoryTable.Entity.set(
-        ~committedCheckpointId=inMemoryStore.committedCheckpointId,
+        ~committedCheckpointId,
         Delete({
           entityId: data["id"],
           checkpointId: rollbackDiffCheckpointId,
@@ -143,7 +141,7 @@ let prepareRollbackDiff = async (
     restoredEntities->Array.forEach((entity: Internal.entity) => {
       setEntities->Utils.Dict.push(entityConfig.name, entity.id)
       entityTable->InMemoryTable.Entity.set(
-        ~committedCheckpointId=inMemoryStore.committedCheckpointId,
+        ~committedCheckpointId,
         Set({
           entityId: entity.id,
           checkpointId: rollbackDiffCheckpointId,
@@ -160,9 +158,9 @@ let prepareRollbackDiff = async (
   }
 }
 
-let setBatchDcs = (inMemoryStore: IndexerState.t, ~batch: Batch.t) => {
-  let inMemTable =
-    inMemoryStore->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
+let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
+  let inMemTable = state->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
+  let committedCheckpointId = state->IndexerState.committedCheckpointId
 
   let itemIdx = ref(0)
 
@@ -189,7 +187,7 @@ let setBatchDcs = (inMemoryStore: IndexerState.t, ~batch: Batch.t) => {
           }
 
           inMemTable->InMemoryTable.Entity.set(
-            ~committedCheckpointId=inMemoryStore.committedCheckpointId,
+            ~committedCheckpointId,
             Set({
               entityId: entity.id,
               checkpointId,

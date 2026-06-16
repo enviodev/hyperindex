@@ -146,7 +146,7 @@ let buildChainsObject = (~config: Config.t) => {
         enumerable: true,
         get: () => {
           switch indexerStateRef.contents {
-          | Some(state) => state.chainManager.isRealtime
+          | Some(state) => (state->IndexerState.chainManager).isRealtime
           // Before the global state is available (eg during handler
           // module load after resume), derive from persistence: every chain
           // must have previously caught up to head or endBlock. Mirror the
@@ -182,7 +182,8 @@ let buildChainsObject = (~config: Config.t) => {
             switch indexerStateRef.contents {
             | Some(state) => {
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
-                let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+                let chainFetcher =
+                  (state->IndexerState.chainManager).chainFetchers->ChainMap.get(chain)
                 let indexingAddresses = chainFetcher.fetchState.indexingAddresses
 
                 // Collect all addresses for this contract name from indexingAddresses
@@ -780,7 +781,7 @@ let start = async (
       | None => Initializing({})
       | Some(state) => {
           let chains =
-            state.chainManager.chainFetchers
+            (state->IndexerState.chainManager).chainFetchers
             ->ChainMap.values
             ->Array.map(cf => {
               let {fetchState} = cf
@@ -815,7 +816,7 @@ let start = async (
           Active({
             envioVersion,
             chains,
-            indexerStartTime: state.indexerStartTime,
+            indexerStartTime: state->IndexerState.indexerStartTime,
             isPreRegisteringDynamicContracts: false,
             rollbackOnReorg: config.shouldRollbackOnReorg,
           })

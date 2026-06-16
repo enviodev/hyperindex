@@ -3,7 +3,7 @@
 let run = async (state: IndexerState.t) => {
   ChainMetadata.stage(state)
   await state->Writing.flush
-  if !state.isStopped && !(state->IndexerState.isResolvingReorg) {
+  if !(state->IndexerState.isStopped) && !(state->IndexerState.isResolvingReorg) {
     Logging.info("Exiting with success")
     NodeJs.process->NodeJs.exitWithCode(Success)
   }

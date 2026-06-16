@@ -265,3 +265,165 @@ let endProcessing = (state: t) => state.isProcessing = false
 
 let recordProcessedBatch = (state: t) =>
   state.processedBatchesCount = state.processedBatchesCount + 1
+
+// --- Read accessors. The type is abstract in the interface; modules read state
+// through these and change it only through the transitions above and the domain
+// operations below. Accessors returning a mutable dict/array let callers mutate
+// the container in place (eg insert an entity table). ---
+
+let config = (state: t) => state.config
+let persistence = (state: t) => state.persistence
+let allEntities = (state: t) => state.allEntities
+let entities = (state: t) => state.entities
+let effects = (state: t) => state.effects
+let committedCheckpointId = (state: t) => state.committedCheckpointId
+let processedCheckpointId = (state: t) => state.processedCheckpointId
+let processedBatches = (state: t) => state.processedBatches
+let processedBatchesCount = (state: t) => state.processedBatchesCount
+let writeFiber = (state: t) => state.writeFiber
+let hasFailedWrite = (state: t) => state.hasFailedWrite
+let chainMetaDirty = (state: t) => state.chainMetaDirty
+let chainMetaThrottler = (state: t) => state.chainMetaThrottler
+let chainManager = (state: t) => state.chainManager
+let rollbackState = (state: t) => state.rollbackState
+let indexerStartTime = (state: t) => state.indexerStartTime
+let loadManager = (state: t) => state.loadManager
+let keepProcessAlive = (state: t) => state.keepProcessAlive
+let exitAfterFirstEventBlock = (state: t) => state.exitAfterFirstEventBlock
+let isStopped = (state: t) => state.isStopped
+let epoch = (state: t) => state.epoch
+let pruneStaleEntityHistoryThrottler = (state: t) => state.writeThrottlers.pruneStaleEntityHistory
+
+// --- Store domain operations. ---
+
+// Queue a processed batch for writing and advance the processing frontier.
+let queueProcessedBatch = (state: t, ~batch: Batch.t) => {
+  state.processedBatches->Array.push(batch)->ignore
+  switch batch.checkpointIds->Utils.Array.last {
+  | Some(checkpointId) => state.processedCheckpointId = checkpointId
+  | None => ()
+  }
+}
+
+// Take the leading run of queued batches sharing isInReorgThreshold as one merged
+// batch, leaving the rest queued for the next write. Caller guarantees the queue
+// is non-empty.
+let drainBatchRun = (state: t): Batch.t => {
+  let all = state.processedBatches
+  let isInReorgThreshold = (all->Array.getUnsafe(0)).isInReorgThreshold
+
+  let rest = []
+  let progressedChainsById = Dict.make()
+  let totalBatchSize = ref(0)
+  let items = []
+  let checkpointIds = []
+  let checkpointChainIds = []
+  let checkpointBlockNumbers = []
+  let checkpointBlockHashes = []
+  let checkpointEventsProcessed = []
+  all->Array.forEach(batch => {
+    // Once one batch lands in rest, all later ones follow it, preserving order.
+    if rest->Utils.Array.isEmpty && batch.isInReorgThreshold == isInReorgThreshold {
+      batch.progressedChainsById->Utils.Dict.forEachWithKey((chainAfterBatch, key) =>
+        progressedChainsById->Dict.set(key, chainAfterBatch)
+      )
+      totalBatchSize := totalBatchSize.contents + batch.totalBatchSize
+      items->Array.pushMany(batch.items)
+      checkpointIds->Array.pushMany(batch.checkpointIds)
+      checkpointChainIds->Array.pushMany(batch.checkpointChainIds)
+      checkpointBlockNumbers->Array.pushMany(batch.checkpointBlockNumbers)
+      checkpointBlockHashes->Array.pushMany(batch.checkpointBlockHashes)
+      checkpointEventsProcessed->Array.pushMany(batch.checkpointEventsProcessed)
+    } else {
+      rest->Array.push(batch)
+    }
+  })
+  state.processedBatches = rest
+
+  {
+    totalBatchSize: totalBatchSize.contents,
+    items,
+    progressedChainsById,
+    isInReorgThreshold,
+    checkpointIds,
+    checkpointChainIds,
+    checkpointBlockNumbers,
+    checkpointBlockHashes,
+    checkpointEventsProcessed,
+  }
+}
+
+// Take the pending rollback diff to write, clearing it from the store.
+let takeRollback = (state: t): option<Persistence.rollback> => {
+  let rollback = state.rollback
+  state.rollback = None
+  rollback
+}
+
+// Advance the committed (durably persisted) frontier after a successful write.
+let markCommitted = (state: t, ~upToCheckpointId) => state.committedCheckpointId = upToCheckpointId
+
+// Reset the in-memory tables and arm the rollback diff that the next write commits.
+let beginRollbackDiff = (
+  state: t,
+  ~targetCheckpointId,
+  ~diffCheckpointId,
+  ~progressBlockNumberByChainId,
+) => {
+  state.entities = EntityTables.make(state.allEntities)
+  state.effects = Dict.make()
+  state.rollback = Some({
+    targetCheckpointId,
+    diffCheckpointId,
+    progressBlockNumberByChainId,
+  })
+}
+
+// Stop the write loop and surface the failure; the error itself goes to onError.
+let recordWriteFailure = (state: t, exn) => {
+  state.hasFailedWrite = true
+  state.onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database"))
+}
+
+let beginWriteFiber = (state: t, fiber) => state.writeFiber = Some(fiber)
+let endWriteFiber = (state: t) => state.writeFiber = None
+
+// Resolve and clear everyone waiting on a commit so they can re-evaluate.
+let wakeCommitWaiters = (state: t) => {
+  let waiters = state.commitWaiters
+  state.commitWaiters = []
+  waiters->Array.forEach(resolve => resolve())
+}
+
+let addCommitWaiter = (state: t, resolve) => state.commitWaiters->Array.push(resolve)->ignore
+
+let metaFieldsEqual = (a: InternalTable.Chains.metaFields, b: InternalTable.Chains.metaFields) =>
+  a.firstEventBlockNumber == b.firstEventBlockNumber &&
+  a.latestFetchedBlockNumber == b.latestFetchedBlockNumber &&
+  a.isHyperSync == b.isHyperSync &&
+  // Date is boxed; compare epoch ms.
+  a.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime) ==
+    b.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime)
+
+// Stage per-chain metadata, dirtying only on a real change so restages are no-ops.
+let stageChainMeta = (state: t, chainsData: dict<InternalTable.Chains.metaFields>) =>
+  chainsData->Utils.Dict.forEachWithKey((meta, chainId) => {
+    let changed = switch state.chainMeta->Utils.Dict.dangerouslyGetNonOption(chainId) {
+    | Some(prev) => !metaFieldsEqual(meta, prev)
+    | None => true
+    }
+    if changed {
+      state.chainMeta->Dict.set(chainId, meta)
+      state.chainMetaDirty = true
+    }
+  })
+
+// Take a snapshot of staged metadata to write, clearing the dirty flag. A restage
+// during the in-flight write re-dirties it and is rewritten next iteration.
+let takeChainMetaSnapshot = (state: t): option<dict<InternalTable.Chains.metaFields>> =>
+  if state.chainMetaDirty {
+    state.chainMetaDirty = false
+    Some(state.chainMeta->Utils.Dict.shallowCopy)
+  } else {
+    None
+  }

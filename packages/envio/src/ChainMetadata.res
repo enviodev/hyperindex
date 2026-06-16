@@ -3,7 +3,7 @@
 let stage = (state: IndexerState.t) => {
   let chainsData: dict<InternalTable.Chains.metaFields> = Dict.make()
 
-  state.chainManager.chainFetchers
+  (state->IndexerState.chainManager).chainFetchers
   ->ChainMap.values
   ->Array.forEach(cf => {
     chainsData->Dict.set(

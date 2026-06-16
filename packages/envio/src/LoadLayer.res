@@ -40,7 +40,7 @@ let loadById = (
     }
     idsToLoad->Array.forEach(entityId => {
       inMemTable->InMemoryTable.Entity.initValue(
-        ~committedCheckpointId=inMemoryStore.committedCheckpointId,
+        ~committedCheckpointId=inMemoryStore->IndexerState.committedCheckpointId,
         ~key=entityId,
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
       )
@@ -385,7 +385,7 @@ let loadByFilter = (
 
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(
-            ~committedCheckpointId=inMemoryStore.committedCheckpointId,
+            ~committedCheckpointId=inMemoryStore->IndexerState.committedCheckpointId,
             ~key=entity.id,
             ~entity=Some(entity),
           )

@@ -64,7 +64,7 @@ describe("Indexer loop", () => {
     let runs = []
 
     state->IndexerLoop.launch(async () => runs->Array.push(1))
-    state.isStopped = true
+    state->IndexerState.stop
     state->IndexerLoop.launch(async () => runs->Array.push(2))
 
     t.expect(runs, ~message="A stopped state must not launch new work").toEqual([1])
@@ -76,7 +76,7 @@ describe("Indexer loop", () => {
     await BatchProcessing.startProcessing(state, ~scheduleFetchAllChains=() => (), ~scheduleRollback=() => ())
 
     t.expect(
-      state.isProcessing,
+      state->IndexerState.isProcessing,
       ~message="An idle loop must release the processing flag on exit",
     ).toEqual(false)
   })
@@ -84,12 +84,12 @@ describe("Indexer loop", () => {
   Async.it("startProcessing is a no-op while a loop already owns the flag", async t => {
     let state = makeState()
     // Simulate an in-flight loop instance.
-    state.isProcessing = true
+    state->IndexerState.beginProcessing
 
     await BatchProcessing.startProcessing(state, ~scheduleFetchAllChains=() => (), ~scheduleRollback=() => ())
 
     t.expect(
-      state.isProcessing,
+      state->IndexerState.isProcessing,
       ~message="A second instance must not steal or clear the existing loop's flag",
     ).toEqual(true)
   })
@@ -101,7 +101,7 @@ describe("Indexer loop", () => {
     state->IndexerState.errorExit(ErrorHandling.make(Utils.Error.make("boom")))
 
     t.expect(
-      {"isStopped": state.isStopped, "reportedErrors": reportedErrors.contents},
+      {"isStopped": state->IndexerState.isStopped, "reportedErrors": reportedErrors.contents},
       ~message="errorExit must stop every loop and report exactly once",
     ).toEqual({"isStopped": true, "reportedErrors": 1})
   })

@@ -30,7 +30,7 @@ module InMemoryStore = {
     let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
-      ~committedCheckpointId=inMemoryStore.committedCheckpointId,
+      ~committedCheckpointId=inMemoryStore->IndexerState.committedCheckpointId,
       Set({
         entityId: (entity: Internal.entity).id,
         checkpointId: 0n,
@@ -372,19 +372,18 @@ module Indexer = {
     {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
-          let before = state.processedBatchesCount
+          let before = state->IndexerState.processedBatchesCount
           // Wait until a new batch is processed and written. A reorg batch can
           // land before this call (e.g. while the test awaits the rollback), so
           // also stop once the indexer has fully settled.
           let idleChecks = ref(0)
           let rec wait = async () => {
             await state->Writing.flush
-            let store = state
             let isIdle =
-              !store.isProcessing &&
-              store.writeFiber->Option.isNone &&
-              store.committedCheckpointId == store.processedCheckpointId
-            if before < store.processedBatchesCount {
+              !(state->IndexerState.isProcessing) &&
+              state->IndexerState.writeFiber->Option.isNone &&
+              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
+            if before < state->IndexerState.processedBatchesCount {
               ()
             } else if isIdle && idleChecks.contents >= 5 {
               ()
@@ -526,7 +525,7 @@ module Indexer = {
         // Let any in-flight batch or write from the stopped run settle before the
         // resumed indexer takes over the shared persistence, else the two runs
         // race against the same db.
-        while state.isProcessing || state.writeFiber->Option.isSome {
+        while state->IndexerState.isProcessing || state->IndexerState.writeFiber->Option.isSome {
           await Utils.delay(1)
         }
         await make(

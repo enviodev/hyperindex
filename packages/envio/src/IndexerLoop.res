@@ -7,7 +7,7 @@
 // failures to errorExit, so there's no rejection to swallow here.
 @inline
 let launch = (state: IndexerState.t, work: unit => promise<unit>) =>
-  if !state.isStopped {
+  if !(state->IndexerState.isStopped) {
     work()->Promise.ignore
   }
 
@@ -19,7 +19,7 @@ let start = (state: IndexerState.t) => {
     launch(state, () =>
       ChainFetching.checkAndFetchAllChains(
         state,
-        ~stateId=state.epoch,
+        ~stateId=state->IndexerState.epoch,
         ~scheduleFetchAllChains,
         ~scheduleFetchChain,
         ~scheduleProcessing,
@@ -31,7 +31,7 @@ let start = (state: IndexerState.t) => {
       ChainFetching.checkAndFetchForChain(
         state,
         chain,
-        ~stateId=state.epoch,
+        ~stateId=state->IndexerState.epoch,
         ~scheduleFetchAllChains,
         ~scheduleFetchChain,
         ~scheduleProcessing,
