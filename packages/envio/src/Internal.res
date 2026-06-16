@@ -396,9 +396,24 @@ type onEventWhereArgs<'chain> = {chain: 'chain}
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
 
+// Fetch-state registry value for an indexed contract address.
+// `effectiveStartBlock` is derived from the registration block and the
+// contract's configured start block (see `FetchState.deriveEffectiveStartBlock`).
+type indexingContract = {
+  address: Address.t,
+  contractName: string,
+  registrationBlock: int,
+  effectiveStartBlock: int,
+}
+
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
+  // Precompiled predicate for events that filter an indexed address param by
+  // registered addresses. Drops an event whose param-address isn't registered
+  // at/before the log's block — the param-level analogue of EventRouter's
+  // srcAddress `effectiveStartBlock` check. Absent when there's no such filter.
+  clientAddressFilter?: (event, dict<indexingContract>) => bool,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
   selectedTransactionFields: Utils.Set.t<evmTransactionField>,
   sighash: string,

@@ -1,9 +1,6 @@
-type contractConfig = {filterByAddresses: bool, startBlock: option<int>}
+type contractConfig = {startBlock: option<int>}
 
-type indexingAddress = {
-  ...Internal.indexingAddress,
-  effectiveStartBlock: int,
-}
+type indexingAddress = Internal.indexingContract
 
 let deriveEffectiveStartBlock = (~registrationBlock: int, ~contractStartBlock: option<int>) => {
   Pervasives.max(Pervasives.max(registrationBlock, 0), contractStartBlock->Option.getOr(0))
@@ -756,7 +753,6 @@ Returns OptimizedPartitions.t directly.
 */
 let createPartitionsFromIndexingAddresses = (
   ~registeringContractsByContract: dict<dict<indexingAddress>>,
-  ~contractConfigs: dict<contractConfig>,
   ~dynamicContracts: Utils.Set.t<string>,
   ~normalSelection: selection,
   ~maxAddrInPartition: int,
@@ -778,9 +774,6 @@ OptimizedPartitions.t => {
     let addresses =
       registeringContracts->Dict.keysToArray->(Utils.magic: array<string> => array<Address.t>)
 
-    // Can unsafely get it, because we already filtered out the contracts
-    // that don't have any events to fetch
-    let contractConfig = contractConfigs->Dict.getUnsafe(contractName)
     let isDynamic = dynamicContracts->Utils.Set.has(contractName)
     let partitions = isDynamic ? dynamicPartitions : nonDynamicPartitions
 
@@ -802,30 +795,23 @@ OptimizedPartitions.t => {
       let maybeNextStartBlockKey =
         ascKeys->Array.getUnsafe(idx + 1)->(Utils.magic: string => option<string>)
 
-      // For this case we can't filter out events earlier than contract registration
-      // on the client side, so we need to keep the old logic of creating
-      // a partition for every block range, so there are no irrelevant events
-      let shouldAllocateNewPartition = if contractConfig.filterByAddresses {
-        true
-      } else {
-        switch maybeNextStartBlockKey {
-        | None => true
-        | Some(nextStartBlockKey) => {
-            let nextStartBlock = nextStartBlockKey->Int.fromString->Option.getUnsafe
-            let shouldJoinCurrentStartBlock =
-              nextStartBlock - startBlockRef.contents < OptimizedPartitions.tooFarBlockRange
+      let shouldAllocateNewPartition = switch maybeNextStartBlockKey {
+      | None => true
+      | Some(nextStartBlockKey) => {
+          let nextStartBlock = nextStartBlockKey->Int.fromString->Option.getUnsafe
+          let shouldJoinCurrentStartBlock =
+            nextStartBlock - startBlockRef.contents < OptimizedPartitions.tooFarBlockRange
 
-            // If dynamic contract registration are close to eachother
-            // and it's possible to use dc.effectiveStartBlock to filter out events on client side
-            // then we can optimize the number of partitions,
-            // by putting dcs with different startBlocks in the same partition
-            if shouldJoinCurrentStartBlock {
-              addressesRef :=
-                addressesRef.contents->Array.concat(byStartBlock->Dict.getUnsafe(nextStartBlockKey))
-              false
-            } else {
-              true
-            }
+          // Addresses with different start blocks within range share a partition;
+          // events before each address's effectiveStartBlock are dropped on the
+          // client side (EventRouter for the srcAddress, the event's
+          // clientAddressFilter for address-valued params).
+          if shouldJoinCurrentStartBlock {
+            addressesRef :=
+              addressesRef.contents->Array.concat(byStartBlock->Dict.getUnsafe(nextStartBlockKey))
+            false
+          } else {
+            true
           }
         }
       }
@@ -907,15 +893,10 @@ OptimizedPartitions.t => {
           }
         }
 
-        let nextContractName =
-          nextP.addressesByContractName->Dict.keysToArray->Utils.Array.firstUnsafe
-        let hasFilterByAddresses = (
-          contractConfigs->Dict.getUnsafe(nextContractName)
-        ).filterByAddresses
         let isTooFar = currentPBlock + OptimizedPartitions.tooFarBlockRange < nextPBlock
 
-        if isTooFar || hasFilterByAddresses {
-          // Too far or address-filtered: mergeBlock on current, merge addresses into next
+        if isTooFar {
+          // Too far: mergeBlock on current, merge addresses into next
           mergedNonDynamic
           ->Array.push({
             ...currentP,
@@ -927,7 +908,7 @@ OptimizedPartitions.t => {
               addressesByContractName: mergedAddresses,
             }
         } else {
-          // Close and not address-filtered: push next's addresses into current
+          // Close: push next's addresses into current
           currentPRef := {
               ...currentP,
               addressesByContractName: mergedAddresses,
@@ -968,7 +949,6 @@ let registerDynamicContracts = (
   let indexingAddresses = fetchState.indexingAddresses
   let registeringContractsByContract: dict<dict<indexingAddress>> = Dict.make()
   let earliestRegisteringEventBlockNumber = ref(%raw(`Infinity`))
-  let hasDCWithFilterByAddresses = ref(false)
   // Addresses registered for contracts without matching events. These are not
   // added to partitions, but they are tracked on fetchState.indexingAddresses
   // so that later conflicting registrations are detected, and are persisted
@@ -991,7 +971,7 @@ let registerDynamicContracts = (
         let shouldRemove = ref(false)
 
         switch fetchState.contractConfigs->Utils.Dict.dangerouslyGetNonOption(dc.contractName) {
-        | Some({filterByAddresses, startBlock: contractStartBlock}) =>
+        | Some({startBlock: contractStartBlock}) =>
           let dcWithStartBlock: indexingAddress = {
             address: dc.address,
             contractName: dc.contractName,
@@ -1038,9 +1018,7 @@ let registerDynamicContracts = (
               // FIXME: This unsafely relies on the asc order of the items
               // which is 99% true, but there were cases when the source ordering was wrong
               false
-            | None =>
-              hasDCWithFilterByAddresses := hasDCWithFilterByAddresses.contents || filterByAddresses
-              true
+            | None => true
             }
             if shouldUpdate {
               earliestRegisteringEventBlockNumber :=
@@ -1218,7 +1196,6 @@ let registerDynamicContracts = (
 
       let optimizedPartitions = createPartitionsFromIndexingAddresses(
         ~registeringContractsByContract,
-        ~contractConfigs=fetchState.contractConfigs,
         ~dynamicContracts=dynamicContractsRef.contents,
         ~normalSelection=fetchState.normalSelection,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
@@ -1572,15 +1549,14 @@ let make = (
   let normalEventConfigs = []
   let contractNamesWithNormalEvents = Utils.Set.make()
   let indexingAddresses = Dict.make()
-  let contractConfigs = Dict.make()
+  let contractConfigs: dict<contractConfig> = Dict.make()
 
   eventConfigs->Array.forEach(ec => {
     switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(ec.contractName) {
-    | Some({filterByAddresses, startBlock}) =>
+    | Some({startBlock}) =>
       contractConfigs->Dict.set(
         ec.contractName,
         {
-          filterByAddresses: filterByAddresses || ec.filterByAddresses,
           startBlock: switch (startBlock, ec.startBlock) {
           | (Some(a), Some(b)) => Some(Pervasives.min(a, b))
           | (Some(_) as s, None) | (None, Some(_) as s) => s
@@ -1592,7 +1568,6 @@ let make = (
       contractConfigs->Dict.set(
         ec.contractName,
         {
-          filterByAddresses: ec.filterByAddresses,
           startBlock: ec.startBlock,
         },
       )
@@ -1672,7 +1647,6 @@ let make = (
 
   let optimizedPartitions = createPartitionsFromIndexingAddresses(
     ~registeringContractsByContract,
-    ~contractConfigs,
     ~dynamicContracts,
     ~normalSelection,
     ~maxAddrInPartition,
@@ -1875,7 +1849,6 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   // Step 3: Recreate partitions from deleted partition addresses
   let optimizedPartitions = createPartitionsFromIndexingAddresses(
     ~registeringContractsByContract,
-    ~contractConfigs=fetchState.contractConfigs,
     ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
     ~normalSelection=fetchState.normalSelection,
     ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,

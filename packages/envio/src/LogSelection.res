@@ -60,6 +60,10 @@ let make = (~addresses, ~topicSelections) => {
 type parsedEventFilters = {
   getEventFiltersOrThrow: ChainMap.Chain.t => Internal.eventFilters,
   filterByAddresses: bool,
+  // Indexed params filtered by `chain.<Contract>.addresses`, in disjunctive
+  // normal form (outer array OR of AND-groups). Empty unless `filterByAddresses`.
+  // Consumed by the codegen of the event's `clientAddressFilter`.
+  addressFilterParamGroups: array<array<string>>,
   // `_gte` from the top-level `block` filter of the user's `where`,
   // resolved at build time (per-chain via the `probeChainId`). The
   // caller uses this to override the per-event `startBlock` — a
@@ -151,6 +155,70 @@ let makeDetectionChainArg = (
   chainObj
 }
 
+// Sentinel returned by `chain.<Contract>.addresses` during detection. A Proxy
+// whose traps throw on any access, so the only non-throwing use is passing it
+// straight through as a param filter value — which `extractAddressFilterGroups`
+// then finds by identity. Misuse (spread/map/index/...) fails loud at the site.
+let makeAddressesProbe: string => array<Address.t> = %raw(`function (contractName) {
+  var trap = function () {
+    var err = new Error(
+      'Invalid where configuration for "' + contractName +
+      '": chain.' + contractName + '.addresses must be passed directly as an indexed-param ' +
+      'filter value (e.g. { params: { to: chain.' + contractName + '.addresses } }). ' +
+      'It cannot be spread, mapped, indexed, or otherwise transformed.'
+    );
+    err.envioAddressProbeMisuse = true;
+    throw err;
+  };
+  return new Proxy([], {get: trap, apply: trap});
+}`)
+
+// Returns the friendly message when the caught value is a probe-misuse error,
+// so the probe can rethrow it instead of swallowing it as a detection failure.
+// ReScript wraps a caught JS error as `{RE_EXN_ID, _1: <jsError>}`, so check
+// both the raw value and the `_1` payload.
+let probeMisuseMessage: exn => option<string> = %raw(`function (e) {
+  var err = e && e.envioAddressProbeMisuse ? e : e && e._1 ? e._1 : undefined;
+  return err && err.envioAddressProbeMisuse ? err.message : undefined;
+}`)
+
+// Find which indexed params the probed `where` result assigned the Proxy to
+// (DNF: object => one AND-group, array => OR of groups), neutralizing each match
+// to `[]` so later passes can't touch the throwing Proxy.
+let extractAddressFilterGroups = (result: JSON.t, ~probe: array<Address.t>): array<
+  array<string>,
+> => {
+  let groups = []
+  let scanGroup = (paramsObj: dict<JSON.t>) => {
+    let names = []
+    paramsObj->Utils.Dict.forEachWithKey((value, key) => {
+      if value === probe->(Utils.magic: array<Address.t> => JSON.t) {
+        names->Array.push(key)->ignore
+        paramsObj->Dict.set(key, []->(Utils.magic: array<unknown> => JSON.t))
+      }
+    })
+    if names->Utils.Array.isEmpty->not {
+      groups->Array.push(names)->ignore
+    }
+  }
+  switch result {
+  | Object(obj) =>
+    switch obj->Dict.get("params") {
+    | Some(Object(p)) => scanGroup(p)
+    | Some(Array(arr)) =>
+      arr->Array.forEach(item =>
+        switch item {
+        | Object(p) => scanGroup(p)
+        | _ => ()
+        }
+      )
+    | _ => ()
+    }
+  | _ => ()
+  }
+  groups
+}
+
 let parseEventFiltersOrThrow = {
   let emptyTopics = []
   let noopGetter = _ => emptyTopics
@@ -167,6 +235,7 @@ let parseEventFiltersOrThrow = {
     ~topic3=noopGetter,
   ): parsedEventFilters => {
     let filterByAddresses = ref(false)
+    let addressFilterParamGroups = ref([])
     let startBlock = ref(None)
     let topic0 = [sighash->EvmTypes.Hex.fromStringUnsafe]
     let default = {
@@ -286,21 +355,34 @@ let parseEventFiltersOrThrow = {
         // `startBlock` (from `where.block`) for this chain — a second
         // invocation would risk observing different state for callbacks
         // that close over mutable references.
+        let addressesProbe = makeAddressesProbe(contractName)
         let probedResult = try {
           let chain = makeDetectionChainArg(
             ~contractName,
             ~chainId=probeChainId,
             ~getAddresses=() => {
               filterByAddresses := true
-              []
+              addressesProbe
             },
           )
           Some(fn({chain: chain->Obj.magic}))
         } catch {
-        | _ => None
+        | exn =>
+          switch probeMisuseMessage(exn) {
+          | Some(message) => JsError.throwWithMessage(message)
+          | None => None
+          }
         }
         switch probedResult {
         | Some(result) =>
+          if filterByAddresses.contents {
+            addressFilterParamGroups := extractAddressFilterGroups(result, ~probe=addressesProbe)
+            if addressFilterParamGroups.contents->Utils.Array.isEmpty {
+              JsError.throwWithMessage(
+                `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
+              )
+            }
+          }
           startBlock := extractStartBlock(~onEventBlockFilterSchema, ~contractName, result)
         | None => ()
         }
@@ -343,6 +425,7 @@ let parseEventFiltersOrThrow = {
     {
       getEventFiltersOrThrow,
       filterByAddresses: filterByAddresses.contents,
+      addressFilterParamGroups: addressFilterParamGroups.contents,
       startBlock: startBlock.contents,
     }
   }

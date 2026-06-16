@@ -309,6 +309,41 @@ let resolveFieldSelection = (
   (selectedBlockFields, selectedTransactionFields)
 }
 
+// ============== Client-side address filter ==============
+
+let compileAddressFilter: string => (
+  Internal.event,
+  dict<Internal.indexingContract>,
+) => bool = %raw(`function (body) {
+  return new Function("event", "indexingAddresses", body);
+}`)
+
+// Precompile the client-side address filter from the DNF of address-filtered
+// param names. The generated function reads each decoded param off
+// `event.params` and keeps the event only if the param-address is registered
+// at or before the log's block (`event.block.number`). `None` when there's no
+// address-param filter.
+let buildAddressFilter = (groups: array<array<string>>): option<
+  (Internal.event, dict<Internal.indexingContract>) => bool,
+> => {
+  switch groups {
+  | [] => None
+  | _ =>
+    let groupExprs = groups->Array.map(group =>
+      "(" ++
+      group
+      ->Array.map(name => `chk(p[${JSON.stringify(JSON.String(name))}])`)
+      ->Array.joinWith(" && ") ++ ")"
+    )
+    let body =
+      "var p = event.params; var bn = event.block.number; " ++
+      "var chk = function (a) { var ic = indexingAddresses[a]; return ic !== undefined && ic.effectiveStartBlock <= bn; }; " ++
+      "return " ++
+      groupExprs->Array.joinWith(" || ") ++ ";"
+    Some(compileAddressFilter(body))
+  }
+}
+
 // ============== Build complete EVM event config ==============
 
 let buildEvmEventConfig = (
@@ -334,6 +369,7 @@ let buildEvmEventConfig = (
   let {
     getEventFiltersOrThrow,
     filterByAddresses,
+    addressFilterParamGroups,
     startBlock: whereStartBlock,
   } = LogSelection.parseEventFiltersOrThrow(
     ~eventFilters,
@@ -374,6 +410,7 @@ let buildEvmEventConfig = (
     simulateParamsSchema: buildSimulateParamsSchema(params),
     getEventFiltersOrThrow,
     filterByAddresses,
+    clientAddressFilter: ?buildAddressFilter(addressFilterParamGroups),
     dependsOnAddresses: !isWildcard || filterByAddresses,
     startBlock: resolvedStartBlock,
     selectedBlockFields,
