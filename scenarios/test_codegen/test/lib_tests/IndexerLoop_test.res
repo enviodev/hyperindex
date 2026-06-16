@@ -79,7 +79,7 @@ describe("Indexer loop", () => {
   Async.it("startProcessing releases the flag once there is no work", async t => {
     let state = makeState()
 
-    await state->IndexerLoop.startProcessing
+    await BatchProcessing.startProcessing(state, ~scheduleFetchAllChains=() => (), ~scheduleRollback=() => ())
 
     t.expect(
       state.ctx.inMemoryStore.isProcessing,
@@ -92,7 +92,7 @@ describe("Indexer loop", () => {
     // Simulate an in-flight loop instance.
     state.ctx.inMemoryStore.isProcessing = true
 
-    await state->IndexerLoop.startProcessing
+    await BatchProcessing.startProcessing(state, ~scheduleFetchAllChains=() => (), ~scheduleRollback=() => ())
 
     t.expect(
       state.ctx.inMemoryStore.isProcessing,

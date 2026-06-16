@@ -87,6 +87,8 @@ let errorExit = (state: t, errHandler) =>
     state.onError(errHandler)
   }
 
+let unexpectedErrorMsg = "Indexer has failed with an unexpected error"
+
 // Halt the loops without reporting an error, eg to hand the shared db over to a
 // resumed indexer in tests.
 let stop = (state: t) => state.isStopped = true
