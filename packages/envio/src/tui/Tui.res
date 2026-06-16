@@ -134,11 +134,11 @@ module App = {
   @react.component
   let make = (~getState) => {
     let stdoutColumns = Hooks.useStdoutColumns()
-    // GlobalState is mutated in place — passing the same ref to useState
+    // IndexerState is mutated in place — passing the same ref to useState
     // would bail out via Object.is and skip the re-render. Tick a counter
     // instead and read state freshly from getState() on every render.
     let (tick, setTick) = React.useState(() => 0)
-    let state: GlobalState.t = getState()
+    let state: IndexerState.t = getState()
 
     React.useEffect(() => {
       let intervalId = setInterval(() => {

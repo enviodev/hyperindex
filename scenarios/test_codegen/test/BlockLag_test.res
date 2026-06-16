@@ -16,6 +16,10 @@ describe("E2E blockLag tests", () => {
             blockLag: 1,
           },
         ],
+        // The processing loop reaches the post-catch-up height poll on its own
+        // cadence, so the test answers polls as they come (see driveToFetch
+        // below) rather than at a fixed tick. Keep the re-poll fast.
+        ~reducedPollingInterval=1,
       )
       await Utils.delay(0)
 
@@ -66,13 +70,18 @@ describe("E2E blockLag tests", () => {
         ~message="Chain with blockLag=1 should be synced to head because progress (299) >= knownHeight (300) - blockLag (1)",
       ).toEqual([{value: "1", labels: Dict.make()}])
 
-      // Wait for next query dispatch
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      sourceMock.resolveGetHeightOrThrow(301)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      // The chain advanced to 301. Answer height polls with 301 until the
+      // indexer issues its next fetch (eager processing reaches the poll on its
+      // own cadence, so we can't resolve at a fixed tick).
+      let attempt = ref(0)
+      while sourceMock.getItemsOrThrowCalls->Utils.Array.isEmpty {
+        if attempt.contents >= 200 {
+          JsError.throwWithMessage("Timed out waiting for the next getItemsOrThrow call")
+        }
+        sourceMock.resolveGetHeightOrThrow(301)
+        await Utils.delay(0)
+        attempt := attempt.contents + 1
+      }
 
       // Should request from block 300 up to knownHeight - blockLag = 300.
       t.expect(

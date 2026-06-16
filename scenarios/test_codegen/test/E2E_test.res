@@ -1044,16 +1044,23 @@ describe("E2E tests", () => {
       syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexerMock.getBatchWritePromise()
 
-      // EventBatchProcessed marks the chain caught up before the first
-      // waitForNewBlock, so the race is already realtime: Live=Primary, Sync=Secondary.
+      // On catch-up the chain flips to realtime (Live=Primary). The backfill
+      // waiter had already parked on the Sync source, so it polls Sync once more
+      // before the realtime transition bumps the epoch and a fresh Live-source
+      // waiter supersedes it. Wait for the Live source to be polled.
+      let waitLiveHeightCalls = async n =>
+        while liveSource.getHeightOrThrowCalls->Array.length < n {
+          await Utils.delay(0)
+        }
+      await waitLiveHeightCalls(1)
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
         ~message="Live source should participate in the first waitForNewBlock (realtime)",
       ).toEqual(1)
       t.expect(
         syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should stay at 1 (Secondary, not racing)",
-      ).toEqual(1)
+        ~message="Sync polled once more at the realtime transition, then superseded by Live",
+      ).toEqual(2)
 
       // Resolve the first waitForNewBlock via the Live (Primary) source
       liveSource.resolveGetHeightOrThrow(301)
@@ -1068,11 +1075,13 @@ describe("E2E tests", () => {
       liveSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
       await indexerMock.getBatchWritePromise()
 
-      // Second waitForNewBlock: Live=Primary races again, Sync=Secondary (stays).
+      // Second waitForNewBlock: Live=Primary races again, Sync=Secondary (stays
+      // at its post-transition count of 2, the superseded backfill poll).
+      await waitLiveHeightCalls(2)
       t.expect(
         syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should stay at 1 (Secondary, not racing)",
-      ).toEqual(1)
+        ~message="Sync source should not be polled again (Secondary, not racing)",
+      ).toEqual(2)
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
         ~message="Live source should keep racing in realtime mode",
