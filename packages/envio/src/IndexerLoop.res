@@ -1,6 +1,7 @@
 // The indexer run loop: the fetch / process / rollback control flow. The state
-// record and its transitions live in IndexerState; leaf effects live in
-// IndexerEffects. This module mutates state only through IndexerState transitions.
+// record and its transitions live in IndexerState; leaf effects live in their own
+// modules (ChainMetadata, PruneStaleHistory, ExitOnCaughtUp). This module mutates
+// state only through IndexerState transitions.
 
 type partitionQueryResponse = {
   chain: IndexerState.chain,
@@ -159,7 +160,7 @@ let rec onQueryResponse = async (
             },
             ~query,
           )
-          IndexerEffects.stageChainMetadata(state)
+          ChainMetadata.stage(state)
           state->launchFetchChain(chain)
           state->launchProcessing
         }
@@ -407,7 +408,7 @@ and processNextBatch = async (state: IndexerState.t): bool =>
       ) {
         Logging.info("All chains are caught up to end blocks.")
         if !state.keepProcessAlive {
-          await IndexerEffects.exitOnCaughtUp(state)
+          await ExitOnCaughtUp.run(state)
         }
       }
       false
@@ -492,7 +493,7 @@ and processNextBatch = async (state: IndexerState.t): bool =>
           }
 
           if allCaughtUp && !state.keepProcessAlive {
-            await IndexerEffects.exitOnCaughtUp(state)
+            await ExitOnCaughtUp.run(state)
             false
           } else if (
             // In auto-exit mode, error if all chains reached head with no events found
@@ -512,13 +513,13 @@ and processNextBatch = async (state: IndexerState.t): bool =>
             )
             false
           } else {
-            IndexerEffects.stageChainMetadata(state)
+            ChainMetadata.stage(state)
             if (
               state.ctx.config->Config.shouldPruneHistory(
                 ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
               )
             ) {
-              state->IndexerEffects.pruneStaleEntityHistory
+              state->PruneStaleHistory.schedule
             }
 
             // Keep looping unless we're staying alive while fully caught up.
