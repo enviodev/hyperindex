@@ -2,8 +2,8 @@
 // rollback to recover instead).
 let run = async (state: IndexerState.t) => {
   ChainMetadata.stage(state)
-  await state.ctx.inMemoryStore->InMemoryStore.flush
-  if !state.isStopped && !(state->IndexerState.isResolvingReorg) {
+  await state->Writing.flush
+  if !(state->IndexerState.isStopped) && !(state->IndexerState.isResolvingReorg) {
     Logging.info("Exiting with success")
     NodeJs.process->NodeJs.exitWithCode(Success)
   }

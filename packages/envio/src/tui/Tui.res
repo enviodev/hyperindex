@@ -153,7 +153,7 @@ module App = {
     }, [getState])
 
     let chains =
-      state.chainManager.chainFetchers
+      (state->IndexerState.chainManager).chainFetchers
       ->ChainMap.values
       ->Array.map(cf => {
         let {numEventsProcessed, fetchState} = cf
@@ -215,7 +215,7 @@ module App = {
             poweredByHyperSync: (
               cf.sourceManager->SourceManager.getActiveSource
             ).poweredByHyperSync,
-            blockUnit: switch state.ctx.config.ecosystem.name {
+            blockUnit: switch (state->IndexerState.config).ecosystem.name {
             | Svm => "Slot"
             | Evm | Fuel => "Block"
             },
@@ -269,7 +269,7 @@ module App = {
         totalEventsProcessed
         eventsPerSecond={SyncETA.isIndexerFullySynced(chains) ? None : eventsPerSecond}
       />
-      <SyncETA chains indexerStartTime=state.indexerStartTime />
+      <SyncETA chains indexerStartTime={state->IndexerState.indexerStartTime} />
       {
         let maxRateLimitTimeMs =
           chains->Array.reduce(0., (acc, chain) => Pervasives.max(acc, chain.rateLimitTimeMs))
@@ -315,7 +315,7 @@ module App = {
           }
         }
       </Box>
-      {if state.ctx.config.isDev {
+      {if (state->IndexerState.config).isDev {
         <Box flexDirection={Row}>
           <Text> {"Dev Console: "->React.string} </Text>
           <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
@@ -323,7 +323,7 @@ module App = {
       } else {
         React.null
       }}
-      {switch (state.ctx.config.storage.clickhouse, Env.ClickHouse.host()) {
+      {switch ((state->IndexerState.config).storage.clickhouse, Env.ClickHouse.host()) {
       | (true, Some(host)) =>
         <Box flexDirection={Row}>
           <Text> {"ClickHouse: "->React.string} </Text>
@@ -331,7 +331,7 @@ module App = {
         </Box>
       | _ => React.null
       }}
-      <Messages config=state.ctx.config />
+      <Messages config={state->IndexerState.config} />
     </Box>
   }
 }

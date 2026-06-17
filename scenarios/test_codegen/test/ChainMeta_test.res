@@ -60,11 +60,11 @@ let makeStore = () => {
       envioInfo: None,
     }),
   }
-  let store = InMemoryStore.make(
-    ~entities=MockIndexer.config.allEntities,
-    ~persistence,
+  let store = IndexerState.make(
     ~config=MockIndexer.config,
-    ~onError=exn => exn->ErrorHandling.mkLogAndRaise(~msg="Unexpected persistence write failure"),
+    ~persistence,
+    ~chainManager=MockIndexer.emptyChainManager,
+    ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
   )
   (store, setChainMetaCalls, writeBatchChainMetaCalls)
 }
@@ -74,9 +74,9 @@ describe("InMemoryStore chain metadata", () => {
     let (store, setChainMetaCalls, writeBatchChainMetaCalls) = makeStore()
     let meta = metaFields(~buffer=10)
 
-    store->InMemoryStore.setChainMeta(Dict.fromArray([("1", meta)]))
-    store->InMemoryStore.commitBatch(~batch=emptyBatch(~checkpointId=1n))
-    await store->InMemoryStore.flush
+    store->Writing.setChainMeta(Dict.fromArray([("1", meta)]))
+    store->Writing.commitBatch(~batch=emptyBatch(~checkpointId=1n))
+    await store->Writing.flush
 
     t.expect((setChainMetaCalls, writeBatchChainMetaCalls)).toEqual((
       [],
@@ -88,8 +88,8 @@ describe("InMemoryStore chain metadata", () => {
     let (store, setChainMetaCalls, writeBatchChainMetaCalls) = makeStore()
     let meta = metaFields(~buffer=10, ~firstEvent=3, ~isHyperSync=true)
 
-    store->InMemoryStore.setChainMeta(Dict.fromArray([("1", meta)]))
-    await store->InMemoryStore.flush
+    store->Writing.setChainMeta(Dict.fromArray([("1", meta)]))
+    await store->Writing.flush
 
     t.expect((setChainMetaCalls, writeBatchChainMetaCalls)).toEqual((
       [Dict.fromArray([("1", meta)])],
@@ -101,11 +101,11 @@ describe("InMemoryStore chain metadata", () => {
     let (store, setChainMetaCalls, _) = makeStore()
     let meta = metaFields(~buffer=10)
 
-    store->InMemoryStore.setChainMeta(Dict.fromArray([("1", meta)]))
-    await store->InMemoryStore.flush
+    store->Writing.setChainMeta(Dict.fromArray([("1", meta)]))
+    await store->Writing.flush
     // Identical value restaged, so no further write.
-    store->InMemoryStore.setChainMeta(Dict.fromArray([("1", metaFields(~buffer=10))]))
-    await store->InMemoryStore.flush
+    store->Writing.setChainMeta(Dict.fromArray([("1", metaFields(~buffer=10))]))
+    await store->Writing.flush
 
     t.expect(setChainMetaCalls).toEqual([Dict.fromArray([("1", meta)])])
   })
@@ -115,14 +115,14 @@ describe("InMemoryStore chain metadata", () => {
     let chain1 = metaFields(~buffer=10)
     let chain2 = metaFields(~buffer=20)
 
-    store->InMemoryStore.setChainMeta(Dict.fromArray([("1", chain1), ("2", chain2)]))
-    await store->InMemoryStore.flush
+    store->Writing.setChainMeta(Dict.fromArray([("1", chain1), ("2", chain2)]))
+    await store->Writing.flush
     // Only chain 2 advances, but the write carries the whole snapshot (one upsert).
     let chain2Next = metaFields(~buffer=25)
-    store->InMemoryStore.setChainMeta(
+    store->Writing.setChainMeta(
       Dict.fromArray([("1", metaFields(~buffer=10)), ("2", chain2Next)]),
     )
-    await store->InMemoryStore.flush
+    await store->Writing.flush
 
     t.expect(setChainMetaCalls).toEqual([
       Dict.fromArray([("1", chain1), ("2", chain2)]),

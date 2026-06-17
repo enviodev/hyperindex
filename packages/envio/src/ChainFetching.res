@@ -19,7 +19,7 @@ let rec onQueryResponse = async (
   if state->IndexerState.isStale(~stateId) {
     ()
   } else {
-    let originalChainManager = state.chainManager
+    let originalChainManager = state->IndexerState.chainManager
     let chainFetcher = originalChainManager.chainFetchers->ChainMap.get(chain)
     let {
       parsedQueueItems,
@@ -57,7 +57,7 @@ let rec onQueryResponse = async (
     | ReorgDetected(reorgDetected) => {
         chainFetcher.logger->Logging.childInfo(
           reorgDetected->ReorgDetection.reorgDetectedToLogParams(
-            ~shouldRollbackOnReorg=state.ctx.config.shouldRollbackOnReorg,
+            ~shouldRollbackOnReorg=(state->IndexerState.config).shouldRollbackOnReorg,
           ),
         )
         Prometheus.ReorgCount.increment(~chain)
@@ -65,7 +65,7 @@ let rec onQueryResponse = async (
           ~blockNumber=reorgDetected.scannedBlock.blockNumber,
           ~chain,
         )
-        if state.ctx.config.shouldRollbackOnReorg {
+        if (state->IndexerState.config).shouldRollbackOnReorg {
           Some(reorgDetected.scannedBlock.blockNumber)
         } else {
           None
@@ -76,7 +76,7 @@ let rec onQueryResponse = async (
 
     switch rollbackWithReorgDetectedBlockNumber {
     | Some(reorgDetectedBlockNumber) =>
-      let restoredChainFetchers = switch state.rollbackState {
+      let restoredChainFetchers = switch state->IndexerState.rollbackState {
       | RollbackReady({eventsProcessedDiffByChain}) =>
         // Restore event counters for ALL chains, not just the reorg chain.
         // The previous rollback subtracted from all chains' counters,
@@ -156,7 +156,7 @@ let rec onQueryResponse = async (
       | _ =>
         switch await ChainFetcher.runContractRegistersOrThrow(
           ~itemsWithContractRegister,
-          ~config=state.ctx.config,
+          ~config=state->IndexerState.config,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
         | newItemsWithDcs => proceed(~newItemsWithDcs)
@@ -174,7 +174,7 @@ and applyQueryResponse = (
   ~latestFetchedBlock,
   ~query,
 ) => {
-  let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+  let chainFetcher = (state->IndexerState.chainManager).chainFetchers->ChainMap.get(chain)
 
   let updatedChainFetcher =
     chainFetcher->ChainFetcher.handleQueryResult(
@@ -187,7 +187,9 @@ and applyQueryResponse = (
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
   // Also update if a partition returns events at an earlier block than current endBlock.
-  let updatedChainFetcher = if state.exitAfterFirstEventBlock && newItems->Array.length > 0 {
+  let updatedChainFetcher = if (
+    state->IndexerState.exitAfterFirstEventBlock && newItems->Array.length > 0
+  ) {
     let firstEventBlock = newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber
     switch updatedChainFetcher.fetchState.endBlock {
     | None => {
@@ -223,23 +225,23 @@ let finishWaitingForNewBlock = (
   if state->IndexerState.isStale(~stateId) {
     ()
   } else {
-    let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.update(
-      chain,
-      chainFetcher => {
-        let updatedFetchState = chainFetcher.fetchState->FetchState.updateKnownHeight(~knownHeight)
-        if updatedFetchState !== chainFetcher.fetchState {
-          {
-            ...chainFetcher,
-            fetchState: updatedFetchState,
-          }
-        } else {
-          chainFetcher
+    let updatedChainFetchers = (
+      state->IndexerState.chainManager
+    ).chainFetchers->ChainMap.update(chain, chainFetcher => {
+      let updatedFetchState = chainFetcher.fetchState->FetchState.updateKnownHeight(~knownHeight)
+      if updatedFetchState !== chainFetcher.fetchState {
+        {
+          ...chainFetcher,
+          fetchState: updatedFetchState,
         }
-      },
-    )
+      } else {
+        chainFetcher
+      }
+    })
 
     let isBelowReorgThreshold =
-      !state.chainManager.isInReorgThreshold && state.ctx.config.shouldRollbackOnReorg
+      !(state->IndexerState.chainManager).isInReorgThreshold &&
+      (state->IndexerState.config).shouldRollbackOnReorg
     let shouldEnterReorgThreshold =
       isBelowReorgThreshold &&
       updatedChainFetchers
@@ -269,10 +271,10 @@ let checkAndFetchForChain = async (
   ~scheduleProcessing,
   ~scheduleRollback,
 ) => {
-  let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-  if !(state->IndexerState.isResolvingReorg) && !state.isStopped {
+  let chainFetcher = (state->IndexerState.chainManager).chainFetchers->ChainMap.get(chain)
+  if !(state->IndexerState.isResolvingReorg) && !(state->IndexerState.isStopped) {
     let {fetchState} = chainFetcher
-    let isRealtime = state.chainManager.isRealtime
+    let isRealtime = (state->IndexerState.chainManager).isRealtime
 
     // Only affects the WaitingForNewBlock branch of fetchNext, where
     // there's nothing to fetch. During backfill any such chain is idle.
@@ -340,7 +342,7 @@ let checkAndFetchAllChains = async (
 ) => {
   //Mapping from the states chainManager so we can construct tests that don't use
   //all chains
-  let _ = await state.chainManager.chainFetchers
+  let _ = await (state->IndexerState.chainManager).chainFetchers
   ->ChainMap.keys
   ->Array.map(chain =>
     checkAndFetchForChain(
