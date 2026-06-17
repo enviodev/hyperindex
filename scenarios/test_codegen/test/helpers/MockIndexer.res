@@ -19,7 +19,19 @@ let defaultPersistence = PgStorage.makePersistenceFromConfig(
 )
 
 module InMemoryStore = {
-  let setEntity = (indexerState, ~entityConfig: Internal.entityConfig, ~chainId=0, entity) => {
+  let setEntity = (indexerState, ~entityConfig: Internal.entityConfig, ~chainId=?, entity) => {
+    // Isolated entities live per chain, so a chain id is required; defaulting to
+    // chain 0 would silently seed the wrong partition and hide the fixture from
+    // chain-scoped reads. Cross-chain entities ignore it.
+    let chainId = switch chainId {
+    | Some(id) => id
+    | None =>
+      entityConfig.crossChain
+        ? 0
+        : JsError.throwWithMessage(
+            `MockIndexer.InMemoryStore.setEntity requires ~chainId for isolated entity "${entityConfig.name}"`,
+          )
+    }
     let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~chainId)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
