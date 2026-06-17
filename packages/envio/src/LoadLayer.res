@@ -2,19 +2,19 @@ let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
-  ~inMemoryStore,
+  ~indexerState,
   ~shouldGroup,
   ~item,
   ~entityId,
 ) => {
   let key = `${entityConfig.name}.get`
-  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (idsToLoad, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
 
-    // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
+    // Since LoadManager.call prevents registering entities already in the in-memory store,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
       (
@@ -40,7 +40,7 @@ let loadById = (
     }
     idsToLoad->Array.forEach(entityId => {
       inMemTable->InMemoryTable.Entity.initValue(
-        ~committedCheckpointId=inMemoryStore->IndexerState.committedCheckpointId,
+        ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
         ~key=entityId,
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
       )
@@ -245,13 +245,13 @@ let loadEffect = (
   ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs,
-  ~inMemoryStore,
+  ~indexerState,
   ~shouldGroup,
   ~item,
 ) => {
   let effectName = effect.name
   let key = `${effectName}.effect`
-  let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
+  let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect)
 
   let load = async (args, ~onError) => {
     let idsToLoad = args->Array.map((arg: Internal.effectArgs) => arg.cacheKey)
@@ -354,13 +354,13 @@ let loadByFilter = (
   ~loadManager,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
-  ~inMemoryStore,
+  ~indexerState,
   ~shouldGroup,
   ~item,
   ~filter: EntityFilter.t,
 ) => {
   let key = filter->EntityFilter.toOperationKey(~entityName=entityConfig.name)
-  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
@@ -385,7 +385,7 @@ let loadByFilter = (
 
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(
-            ~committedCheckpointId=inMemoryStore->IndexerState.committedCheckpointId,
+            ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
             ~key=entity.id,
             ~entity=Some(entity),
           )

@@ -26,11 +26,11 @@ let emptyChainManager: ChainManager.t = {
 }
 
 module InMemoryStore = {
-  let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
-    let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+  let setEntity = (indexerState, ~entityConfig: Internal.entityConfig, entity) => {
+    let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
-      ~committedCheckpointId=inMemoryStore->IndexerState.committedCheckpointId,
+      ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
       Set({
         entityId: (entity: Internal.entity).id,
         checkpointId: 0n,
@@ -40,7 +40,7 @@ module InMemoryStore = {
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = IndexerState.make(
+    let indexerState = IndexerState.make(
       ~config,
       ~persistence=defaultPersistence,
       ~chainManager=emptyChainManager,
@@ -49,10 +49,10 @@ module InMemoryStore = {
     )
     entities->Array.forEach(((entityConfig, items)) => {
       items->Array.forEach(entity => {
-        inMemoryStore->setEntity(~entityConfig, entity)
+        indexerState->setEntity(~entityConfig, entity)
       })
     })
-    inMemoryStore
+    indexerState
   }
 }
 
