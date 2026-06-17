@@ -1018,23 +1018,13 @@ impl ProjectTemplate {
                 if selected_names.contains(f.name.camel.as_str()) {
                     format!("{}{}: {},", indent, f.res_name, f.res_type)
                 } else {
-                    let guidance = match event_name {
-                        Some(event) => format!(
-                            "events:\\n  - event: {event}\\n    field_selection:\\n      {kind}:\\n        - {field}",
-                            event = event,
-                            kind = field_kind,
-                            field = f.name.camel,
-                        ),
-                        None => format!(
-                            "field_selection:\\n  {kind}:\\n    - {field}",
-                            kind = field_kind,
-                            field = f.name.camel,
-                        ),
-                    };
+                    let event = event_name.unwrap_or("<EventName>");
                     format!(
-                        "{i}@deprecated(\"Not selected for this event. To enable, add to config.yaml:\\n{guidance}\")\n{i}{res_name}?: unit,",
+                        "{i}@deprecated(\"Not selected for this event. To enable, add to config.yaml:\\nevents:\\n  - event: {event}\\n    field_selection:\\n      {kind}:\\n        - {field}\")\n{i}{res_name}?: unit,",
                         i = indent,
-                        guidance = guidance,
+                        event = event,
+                        kind = field_kind,
+                        field = f.name.camel,
                         res_name = f.res_name,
                     )
                 }
@@ -1067,33 +1057,12 @@ impl ProjectTemplate {
                         Self::to_envio_dts_type(&f.ts_type)
                     )
                 } else {
-                    let (guidance, message) = match event_name {
-                        Some(event) => (
-                            format!(
-                                "events:\n{i} *   - event: {event}\n{i} *     field_selection:\n{i} *       {kind}:\n{i} *         - {field}",
-                                i = indent, event = event, kind = field_kind, field = ts_name,
-                            ),
-                            format!(
-                                "Field '{field}' is not selected for the '{event}' event. Add it under field_selection.{kind} in config.yaml.",
-                                field = ts_name, event = event, kind = field_kind,
-                            ),
-                        ),
-                        None => (
-                            format!(
-                                "field_selection:\n{i} *   {kind}:\n{i} *     - {field}",
-                                i = indent, kind = field_kind, field = ts_name,
-                            ),
-                            format!(
-                                "Field '{field}' is not selected. Add it under field_selection.{kind} in config.yaml.",
-                                field = ts_name, kind = field_kind,
-                            ),
-                        ),
-                    };
+                    let event = event_name.unwrap_or("<EventName>");
                     format!(
-                        "{i}/**\n{i} * @deprecated Not selected for this event. To enable, add to config.yaml:\n{i} * ```yaml\n{i} * {guidance}\n{i} * ```\n{i} */\n{i}readonly {field}: FieldNotSelected<\"{message}\">;",
+                        "{i}/**\n{i} * @deprecated Not selected for this event. To enable, add to config.yaml:\n{i} * ```yaml\n{i} * events:\n{i} *   - event: {event}\n{i} *     field_selection:\n{i} *       {kind}:\n{i} *         - {field}\n{i} * ```\n{i} */\n{i}readonly {field}: FieldNotSelected<\"Field '{field}' is not selected for the '{event}' event. Add it under field_selection.{kind} in config.yaml.\">;",
                         i = indent,
-                        guidance = guidance,
-                        message = message,
+                        event = event,
+                        kind = field_kind,
                         field = ts_name,
                     )
                 }
