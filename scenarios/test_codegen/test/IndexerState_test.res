@@ -61,8 +61,12 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           blockNumber: currentBlockNumber.contents,
           blockHash: `0x${currentBlockNumber.contents->Int.toString}`,
           logIndex,
-          eventConfig: Utils.magic("Mock eventConfig in IndexerState test"),
-          event: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->Utils.magic,
+          eventConfig: ("Mock eventConfig in IndexerState test")->(
+            Utils.magic: string => Internal.eventConfig
+          ),
+          event: (`mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`)->(
+            Utils.magic: string => Internal.event
+          ),
         })
         allEvents->Array.push(batchItem)->ignore
 
@@ -162,8 +166,10 @@ describe("IndexerState", () => {
           blockNumber: 0,
           blockHash: "0x0",
           logIndex: 0,
-          eventConfig: Utils.magic("Mock eventConfig in IndexerState test"),
-          event: `mock initial event`->Utils.magic,
+          eventConfig: ("Mock eventConfig in IndexerState test")->(
+            Utils.magic: string => Internal.eventConfig
+          ),
+          event: (`mock initial event`)->(Utils.magic: string => Internal.event),
         })
 
         let numberOfMockEventsReadFromQueues = ref(0)
@@ -259,8 +265,8 @@ describe("IndexerState", () => {
                   blockNumber,
                   blockHash: `0x${blockNumber->Int.toString}`,
                   logIndex: 0,
-                  eventConfig: Utils.magic("Mock eventConfig"),
-                  event: Utils.magic("Mock event"),
+                  eventConfig: ("Mock eventConfig")->(Utils.magic: string => Internal.eventConfig),
+                  event: ("Mock event")->(Utils.magic: string => Internal.event),
                 }),
               ],
             )
@@ -339,8 +345,8 @@ describe("IndexerState", () => {
             blockNumber: 15,
             blockHash: "0x15",
             logIndex: 0,
-            eventConfig: Utils.magic("Mock eventConfig"),
-            event: Utils.magic("Mock event"),
+            eventConfig: ("Mock eventConfig")->(Utils.magic: string => Internal.eventConfig),
+            event: ("Mock event")->(Utils.magic: string => Internal.event),
           }),
         ],
         ~knownHeight=concurrentFetchState.knownHeight,
