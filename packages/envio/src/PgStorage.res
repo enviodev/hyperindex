@@ -1685,7 +1685,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
-        indexingAddresses: ChainFetcher.configAddresses(chainConfig),
+        indexingAddresses: ChainState.configAddresses(chainConfig),
         sourceBlockNumber: 0,
       }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,

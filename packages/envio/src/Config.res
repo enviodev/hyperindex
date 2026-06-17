@@ -17,7 +17,7 @@ type contract = {
   startBlock: option<int>,
 }
 
-// Sources are instantiated lazily in ChainFetcher from this config.
+// Sources are instantiated lazily in ChainState from this config.
 type evmRpcConfig = {
   url: string,
   sourceFor: Source.sourceFor,

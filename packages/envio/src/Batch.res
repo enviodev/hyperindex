@@ -34,10 +34,8 @@ type t = {
   checkpointEventsProcessed: array<int>,
 }
 
-let hasReadyItem = (fetchStates: ChainMap.t<FetchState.t>) => {
-  fetchStates
-  ->ChainMap.values
-  ->Array.some(fetchState => {
+let hasReadyItem = (fetchStates: array<FetchState.t>) => {
+  fetchStates->Array.some(fetchState => {
     fetchState->FetchState.isActivelyIndexing && fetchState->FetchState.hasReadyItem
   })
 }
@@ -72,7 +70,7 @@ let getProgressedChainsById = {
   }
 
   (
-    ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
+    ~chainsBeforeBatch: dict<chainBeforeBatch>,
     ~batchSizePerChain: dict<int>,
     ~progressBlockNumberPerChain: dict<int>,
   ) => {
@@ -83,7 +81,7 @@ let getProgressedChainsById = {
     // - Accumulate registered dynamic contracts to store in the db
     // - Trigger onBlock pointer update
     chainsBeforeBatch
-    ->ChainMap.values
+    ->Dict.valuesToArray
     ->Array.forEach(chainBeforeBatch => {
       let fetchState = chainBeforeBatch.fetchState
 
@@ -166,13 +164,13 @@ let addReorgCheckpoints = (
 
 let prepareBatch = (
   ~checkpointIdBeforeBatch,
-  ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
+  ~chainsBeforeBatch: dict<chainBeforeBatch>,
   ~batchSizeTarget,
   ~isInReorgThreshold,
 ) => {
   let preparedFetchStates =
     chainsBeforeBatch
-    ->ChainMap.values
+    ->Dict.valuesToArray
     ->Array.map(chainBeforeBatch => chainBeforeBatch.fetchState)
     ->FetchState.sortForUnorderedBatch(~batchSizeTarget)
 
@@ -202,7 +200,9 @@ let prepareBatch = (
         ~fromItem=0,
       )
     let chainBeforeBatch =
-      chainsBeforeBatch->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId=fetchState.chainId))
+      chainsBeforeBatch
+      ->Utils.Dict.dangerouslyGetByIntNonOption(fetchState.chainId)
+      ->Option.getUnsafe
 
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
     if chainBatchSize > 0 {
@@ -243,10 +243,7 @@ let prepareBatch = (
         } else {
           let lastIndex = checkpointEventsProcessed->Array.length - 1
           checkpointEventsProcessed
-          ->Array.setUnsafe(
-            lastIndex,
-            checkpointEventsProcessed->Array.getUnsafe(lastIndex) + 1,
-          )
+          ->Array.setUnsafe(lastIndex, checkpointEventsProcessed->Array.getUnsafe(lastIndex) + 1)
           ->ignore
         }
 
@@ -301,7 +298,7 @@ let prepareBatch = (
 
 let make = (
   ~checkpointIdBeforeBatch,
-  ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
+  ~chainsBeforeBatch: dict<chainBeforeBatch>,
   ~batchSizeTarget,
   ~isInReorgThreshold,
 ) => {

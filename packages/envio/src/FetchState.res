@@ -1935,6 +1935,18 @@ let isActivelyIndexing = ({endBlock} as fetchState: t) => {
   }
 }
 
+// True once the fetch frontier has reached the (lagged) head or endBlock,
+// regardless of whether the buffer has been consumed yet. Unlike
+// isReadyToEnterReorgThreshold, fetched-but-unprocessed items still count.
+let isFetchingAtHead = ({endBlock, blockLag, knownHeight} as fetchState: t) => {
+  let bufferBlockNumber = fetchState->bufferBlockNumber
+  knownHeight !== 0 &&
+    switch endBlock {
+    | Some(endBlock) if bufferBlockNumber >= endBlock => true
+    | _ => bufferBlockNumber >= knownHeight - blockLag
+    }
+}
+
 let isReadyToEnterReorgThreshold = ({endBlock, blockLag, buffer, knownHeight} as fetchState: t) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
   knownHeight !== 0 &&

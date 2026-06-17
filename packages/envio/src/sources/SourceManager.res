@@ -11,10 +11,7 @@ type sourceState = {
   mutable lastFailedAt: option<float>,
 }
 
-// Ideally the ChainFetcher name suits this better
-// But currently the ChainFetcher module is immutable
-// and handles both processing and fetching.
-// So this module is to encapsulate the fetching logic only
+// Encapsulates the fetching logic for a chain's sources.
 // with a mutable state for easier reasoning and testing.
 type t = {
   sourcesState: array<sourceState>,

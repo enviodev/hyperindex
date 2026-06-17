@@ -1,7 +1,7 @@
 type contextParams = {
   item: Internal.item,
   checkpointId: Internal.checkpointId,
-  inMemoryStore: InMemoryStore.t,
+  indexerState: IndexerState.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
   isPreload: bool,
@@ -60,7 +60,7 @@ let initEffect = (params: contextParams) => {
       ~persistence=params.persistence,
       ~effect,
       ~effectArgs,
-      ~inMemoryStore=params.inMemoryStore,
+      ~indexerState=params.indexerState,
       ~shouldGroup=params.isPreload,
       ~item=params.item,
     )
@@ -82,7 +82,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
       ~entityConfig,
-      ~inMemoryStore=params.inMemoryStore,
+      ~indexerState=params.indexerState,
       ~shouldGroup=params.isPreload,
       ~item=params.item,
       ~filter,
@@ -125,10 +125,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     let set = params.isPreload
       ? noopSet
       : (entity: Internal.entity) => {
-          params.inMemoryStore
+          params.indexerState
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~chainId)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.inMemoryStore.committedCheckpointId,
+            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Set({
               entityId: entity.id,
               checkpointId: params.checkpointId,
@@ -150,7 +150,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
-              ~inMemoryStore=params.inMemoryStore,
+              ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId,
@@ -181,7 +181,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
-              ~inMemoryStore=params.inMemoryStore,
+              ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId,
@@ -210,7 +210,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
-              ~inMemoryStore=params.inMemoryStore,
+              ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId=entity.id,
@@ -231,10 +231,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         noopDeleteUnsafe
       } else {
         entityId => {
-          params.inMemoryStore
+          params.indexerState
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~chainId)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.inMemoryStore.committedCheckpointId,
+            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Delete({
               entityId,
               checkpointId: params.checkpointId,
@@ -281,7 +281,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         {
           item: params.item,
           isPreload: params.isPreload,
-          inMemoryStore: params.inMemoryStore,
+          indexerState: params.indexerState,
           loadManager: params.loadManager,
           persistence: params.persistence,
           checkpointId: params.checkpointId,
@@ -303,102 +303,4 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
 
 let getHandlerContext = (params: contextParams): Internal.handlerContext => {
   params->Utils.Proxy.make(handlerTraps)->(Utils.magic: contextParams => Internal.handlerContext)
-}
-
-// Contract register context creation
-type contractRegisterParams = {
-  item: Internal.item,
-  onRegister: (~item: Internal.item, ~contractAddress: Address.t, ~contractName: string) => unit,
-  config: Config.t,
-  mutable isResolved: bool,
-}
-
-// Helper to create a validated add function for contract registration.
-// The isResolved check has to live inside the returned closure (not just in the
-// outer proxy trap) because users can capture `const add = context.chain.X.add`
-// before awaiting — a later call would otherwise bypass the resolved guard.
-let makeAddFunction = (~params: contractRegisterParams, ~contractName: string): (
-  Address.t => unit
-) => {
-  (contractAddress: Address.t) => {
-    if params.isResolved {
-      Utils.Error.make(`Impossible to access context.chain after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->ErrorHandling.mkLogAndRaise(
-        ~logger=params.item->Logging.getItemLogger,
-      )
-    }
-    let validatedAddress = if params.config.ecosystem.name === Evm {
-      // The value is passed from the user-land,
-      // so we need to validate and checksum/lowercase the address.
-      if params.config.lowercaseAddresses {
-        contractAddress->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        contractAddress->Address.Evm.fromAddressOrThrow
-      }
-    } else {
-      // TODO: Ideally we should do the same for other ecosystems
-      contractAddress
-    }
-
-    params.onRegister(~item=params.item, ~contractAddress=validatedAddress, ~contractName)
-  }
-}
-
-// Chain proxy for contractRegister context: context.chain.ContractName.add(address)
-let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
-    switch prop {
-    | "id" =>
-      let eventItem = params.item->Internal.castUnsafeEventItem
-      eventItem.chain->ChainMap.Chain.toChainId->(Utils.magic: int => unknown)
-    | _ =>
-      // Look up the contract name directly in config contracts across all chains.
-      let contractName = prop
-      let isValidContract =
-        params.config.chainMap
-        ->ChainMap.values
-        ->Array.some(chain => chain.contracts->Array.some(c => c.name === contractName))
-      if isValidContract {
-        let addFn = makeAddFunction(~params, ~contractName)
-        {"add": addFn}->(Utils.magic: {"add": Address.t => unit} => unknown)
-      } else {
-        JsError.throwWithMessage(
-          `Invalid contract name '${prop}' on context.chain. ${EntityFilter.codegenHelpMessage}`,
-        )
-      }
-    }
-  },
-}
-
-let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
-    if params.isResolved {
-      Utils.Error.make(
-        `Impossible to access context.${prop} after the contract register is resolved. Make sure you didn't miss an await in the handler.`,
-      )->ErrorHandling.mkLogAndRaise(~logger=params.item->Logging.getItemLogger)
-    }
-    switch prop {
-    | "log" => params.item->Logging.getUserLogger->(Utils.magic: Envio.logger => unknown)
-    | "chain" =>
-      params
-      ->Utils.Proxy.make(contractRegisterChainTraps)
-      ->(Utils.magic: contractRegisterParams => unknown)
-    | _ =>
-      JsError.throwWithMessage(
-        `Invalid context access by '${prop}' property. Use context.chain.ContractName.add(address) to register contracts. ${EntityFilter.codegenHelpMessage}`,
-      )
-    }
-  },
-}
-
-let getContractRegisterContext = (params: contractRegisterParams) => {
-  params
-  ->Utils.Proxy.make(contractRegisterTraps)
-  ->(Utils.magic: contractRegisterParams => Internal.contractRegisterContext)
-}
-
-let getContractRegisterArgs = (params: contractRegisterParams): Internal.contractRegisterArgs => {
-  event: (params.item->Internal.castUnsafeEventItem).event,
-  context: getContractRegisterContext(params),
 }

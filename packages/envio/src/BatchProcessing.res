@@ -8,7 +8,7 @@ let yieldTick = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => res
 
 // The single processing loop. Runs batches back-to-back while there's work and
 // no reorg is being resolved; exits when idle so producers (fetch, rollback) can
-// re-kick it. `inMemoryStore.isProcessing` guarantees one instance. The loop
+// re-kick it. `state.isProcessing` guarantees one instance. The loop
 // decides whether to keep going by inspecting state after each batch, rather than
 // from a return value of processNextBatch.
 let rec startProcessing = async (
@@ -16,7 +16,7 @@ let rec startProcessing = async (
   ~scheduleFetchAllChains,
   ~scheduleRollback,
 ) => {
-  if !(state->IndexerState.isProcessing) && !state.isStopped {
+  if !(state->IndexerState.isProcessing) && !(state->IndexerState.isStopped) {
     state->IndexerState.beginProcessing
     // FIXME: Needed only for test determinism. The mocks resolve several fetch
     // responses synchronously in one tick; this yield lets them all land before
@@ -31,12 +31,16 @@ let rec startProcessing = async (
     // empty/idle batch records nothing, so the counter stays put and the loop
     // exits, leaving producers (fetch, rollback) to re-kick it.
     let hasMoreWork = ref(true)
-    while hasMoreWork.contents && !state.isStopped && !(state->IndexerState.isResolvingReorg) {
-      let processedBatchesBefore = state.ctx.inMemoryStore.processedBatchesCount
+    while (
+      hasMoreWork.contents &&
+      !(state->IndexerState.isStopped) &&
+      !(state->IndexerState.isResolvingReorg)
+    ) {
+      let processedBatchesBefore = state->IndexerState.processedBatchesCount
       switch await processNextBatch(state, ~scheduleFetchAllChains) {
       | exception exn =>
         IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
-      | () => hasMoreWork := state.ctx.inMemoryStore.processedBatchesCount > processedBatchesBefore
+      | () => hasMoreWork := state->IndexerState.processedBatchesCount > processedBatchesBefore
       }
     }
     state->IndexerState.endProcessing
@@ -50,37 +54,39 @@ let rec startProcessing = async (
 }
 
 and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): unit => {
-  // The reorg-threshold and queue updates below advance chainManager for the
-  // next round, but the current batch is created and processed against the
-  // fetchers as they are now.
-  let chainManagerBeforeUpdate = state.chainManager
+  // The reorg-threshold and queue updates below advance the chain states for the
+  // next round, but the current batch is created and processed against the chain
+  // states as they are now.
+  let isInReorgThresholdBeforeUpdate = state->IndexerState.isInReorgThreshold
+  let isRealtimeBeforeUpdate = state->IndexerState.isRealtime
 
-  let isRollbackBatch = switch state.rollbackState {
+  let isRollbackBatch = switch state->IndexerState.rollbackState {
   | RollbackReady(_) => true
   | _ => false
   }
 
   let batch =
-    chainManagerBeforeUpdate->ChainManager.createBatch(
-      ~processedCheckpointId=state.ctx.inMemoryStore.processedCheckpointId,
-      ~batchSizeTarget=state.ctx.config.batchSize,
+    state->IndexerState.createBatch(
+      ~processedCheckpointId=state->IndexerState.processedCheckpointId,
+      ~batchSizeTarget=(state->IndexerState.config).batchSize,
       ~isRollback=isRollbackBatch,
     )
 
   let progressedChainsById = batch.progressedChainsById
 
   let isBelowReorgThreshold =
-    !chainManagerBeforeUpdate.isInReorgThreshold && state.ctx.config.shouldRollbackOnReorg
+    !isInReorgThresholdBeforeUpdate && (state->IndexerState.config).shouldRollbackOnReorg
   let shouldEnterReorgThreshold =
     isBelowReorgThreshold &&
-    chainManagerBeforeUpdate.chainFetchers
-    ->ChainMap.values
-    ->Array.every(chainFetcher => {
+    state
+    ->IndexerState.chainStates
+    ->Dict.valuesToArray
+    ->Array.every(cs => {
       let fetchState = switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
-        chainFetcher.fetchState.chainId,
+        (cs->ChainState.fetchState).chainId,
       ) {
       | Some(chainAfterBatch) => chainAfterBatch.fetchState
-      | None => chainFetcher.fetchState
+      | None => cs->ChainState.fetchState
       }
       fetchState->FetchState.isReadyToEnterReorgThreshold
     })
@@ -95,52 +101,39 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
     }
 
     // When resuming from persisted state, all events may already be processed.
-    if EventProcessing.allChainsEventsProcessedToEndblock(chainManagerBeforeUpdate.chainFetchers) {
+    if EventProcessing.allChainsEventsProcessedToEndblock(state->IndexerState.chainStates) {
       Logging.info("All chains are caught up to end blocks.")
-      if !state.keepProcessAlive {
+      if !(state->IndexerState.keepProcessAlive) {
         await ExitOnCaughtUp.run(state)
       }
     }
   } else {
-    let inMemoryStore = state.ctx.inMemoryStore
-
-    let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
-      switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
-        chain->ChainMap.Chain.toChainId,
-      ) {
-      | Some(chainAfterBatch) => {
-          ...cf,
-          // The batch was created from pre-threshold fetch states, so blockLag
-          // is applied here; enterReorgThreshold already covered the
-          // non-progressed fetchers.
-          fetchState: shouldEnterReorgThreshold
-            ? chainAfterBatch.fetchState->FetchState.updateInternal(
-                ~blockLag=cf.chainConfig.blockLag,
-              )
-            : chainAfterBatch.fetchState,
-        }
-      | None => cf
-      }
-    })
-    state->IndexerState.setChainFetchers(chainFetchers)
+    // The batch was created from pre-threshold fetch states, so advanceAfterBatch
+    // applies blockLag when crossing the threshold; enterReorgThreshold already
+    // covered the non-progressed chain states.
+    state
+    ->IndexerState.chainStates
+    ->Utils.Dict.forEach(cs =>
+      cs->ChainState.advanceAfterBatch(~batch, ~enteringReorgThreshold=shouldEnterReorgThreshold)
+    )
     // Kick the next fetch round before awaiting the batch. A response that
-    // lands mid-batch commits only fetch-frontier fields (buffer, knownHeight)
-    // via setChainFetcher(s), while applyBatchProgress below commits only
-    // progress fields, so the two concurrent writes are disjoint and neither
-    // clobbers the other.
+    // lands mid-batch commits only fetch-frontier fields (buffer, knownHeight),
+    // while applyBatchProgress below commits only progress fields, so the two
+    // concurrent writes are disjoint and neither clobbers the other.
     scheduleFetchAllChains()
 
-    inMemoryStore->InMemoryStore.setBatchDcs(~batch)
+    state->InMemoryStore.setBatchDcs(~batch)
 
     // An exception here propagates to startProcessing's catch, the single error
     // boundary for the loop. The Error case is not an exception, so it's handled
     // here to preserve the handler's user-facing message.
     switch await EventProcessing.processEventBatch(
       ~batch,
-      ~inMemoryStore,
-      ~loadManager=state.loadManager,
-      ~ctx=state.ctx,
-      ~chainFetchers=chainManagerBeforeUpdate.chainFetchers,
+      ~indexerState=state,
+      ~loadManager=state->IndexerState.loadManager,
+      ~persistence=state->IndexerState.persistence,
+      ~config=state->IndexerState.config,
+      ~chainStates=state->IndexerState.chainStates,
     ) {
     | Error(errHandler) => IndexerState.errorExit(state, errHandler)
     | Ok() =>
@@ -157,7 +150,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
         state->IndexerState.clearRollback
         state->IndexerState.applyBatchProgress(~batch)
 
-        if !chainManagerBeforeUpdate.isRealtime && state.chainManager.isRealtime {
+        if !isRealtimeBeforeUpdate && state->IndexerState.isRealtime {
           // Catching up just flipped the chain to realtime, which changes the
           // active source for waitForNewBlock (eg sync -> live). The waiter that
           // parked during backfill is bound to the old source; bump the epoch to
@@ -167,21 +160,24 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
         }
 
         let allCaughtUp = EventProcessing.allChainsEventsProcessedToEndblock(
-          state.chainManager.chainFetchers,
+          state->IndexerState.chainStates,
         )
         if allCaughtUp {
           Logging.info("All chains are caught up to end blocks.")
         }
 
-        if allCaughtUp && !state.keepProcessAlive {
+        if allCaughtUp && !(state->IndexerState.keepProcessAlive) {
           await ExitOnCaughtUp.run(state)
         } else if (
           // In auto-exit mode, error if all chains reached head with no events found
           !allCaughtUp &&
-          state.exitAfterFirstEventBlock &&
-          state.chainManager.chainFetchers
-          ->ChainMap.values
-          ->Array.every(cf => cf.isProgressAtHead && cf.fetchState.endBlock->Option.isNone)
+          state->IndexerState.exitAfterFirstEventBlock &&
+          state
+          ->IndexerState.chainStates
+          ->Dict.valuesToArray
+          ->Array.every(cs =>
+            cs->ChainState.isProgressAtHead && (cs->ChainState.fetchState).endBlock->Option.isNone
+          )
         ) {
           IndexerState.errorExit(
             state,
@@ -194,9 +190,9 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
         } else {
           ChainMetadata.stage(state)
           if (
-            state.ctx.config->Config.shouldPruneHistory(
-              ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
-            )
+            state
+            ->IndexerState.config
+            ->Config.shouldPruneHistory(~isInReorgThreshold=state->IndexerState.isInReorgThreshold)
           ) {
             state->PruneStaleHistory.schedule
           }
