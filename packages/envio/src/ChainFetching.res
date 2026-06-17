@@ -127,10 +127,7 @@ let rec onQueryResponse = async (
       ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
     )
 
-    let (updatedReorgDetection, reorgResult: ReorgDetection.reorgResult) =
-      chainState
-      ->ChainState.reorgDetection
-      ->ReorgDetection.registerReorgGuard(~blockHashes, ~knownHeight)
+    let reorgResult = chainState->ChainState.registerReorgGuard(~blockHashes, ~knownHeight)
 
     let rollbackWithReorgDetectedBlockNumber = switch reorgResult {
     | ReorgDetected(reorgDetected) => {
@@ -157,44 +154,30 @@ let rec onQueryResponse = async (
 
     switch rollbackWithReorgDetectedBlockNumber {
     | Some(reorgDetectedBlockNumber) =>
-      switch state->IndexerState.rollbackState {
-      | RollbackReady({eventsProcessedDiffByChain}) =>
-        // Restore event counters for ALL chains, not just the reorg chain.
-        // The previous rollback subtracted from all chains' counters,
-        // but was never committed to DB. So we must undo the subtraction
-        // for every chain before the new rollback subtracts again.
-        state
-        ->IndexerState.chainStates
-        ->Utils.Dict.forEach(cs => {
-          switch eventsProcessedDiffByChain->Utils.Dict.dangerouslyGetByIntNonOption(
-            (cs->ChainState.chainConfig).id,
-          ) {
-          | Some(eventsProcessedDiff) =>
-            // Since we detected a reorg, until rollback wasn't completed in the db
-            // We return the events processed counter to the pre-rollback value,
-            // to decrease it once more for the new rollback.
-            cs->ChainState.setNumEventsProcessed(
-              cs->ChainState.numEventsProcessed +. eventsProcessedDiff,
-            )
-          | None => ()
-          }
-        })
-      | _ => ()
+      // Prepare every chain for the rollback: restore each events-processed
+      // counter (the previous, uncommitted rollback subtracted from all chains,
+      // so undo that before the new rollback subtracts again) and drop pending
+      // queries requested against the about-to-be-invalidated chain state.
+      let eventsProcessedDiffByChain = switch state->IndexerState.rollbackState {
+      | RollbackReady({eventsProcessedDiffByChain}) => Some(eventsProcessedDiffByChain)
+      | _ => None
       }
-      // TODO: It's not optimal to abort pending queries for all chains,
-      // this is how it always worked, but we should consider a better approach.
       state
       ->IndexerState.chainStates
-      ->Utils.Dict.forEach(cs => {
-        cs->ChainState.setFetchState(cs->ChainState.fetchState->FetchState.resetPendingQueries)
-      })
+      ->Utils.Dict.forEach(cs =>
+        cs->ChainState.prepareReorg(
+          ~eventsProcessedDiff=switch eventsProcessedDiffByChain {
+          | Some(byChain) =>
+            byChain->Utils.Dict.dangerouslyGetByIntNonOption((cs->ChainState.chainConfig).id)
+          | None => None
+          },
+        )
+      )
       state->IndexerState.beginReorg(~chain, ~blockNumber=reorgDetectedBlockNumber)
       // Advances synchronously to FindingReorgDepth, so a concurrent rollback
       // kick (eg from the processing loop quiescing) collapses into this one.
       scheduleRollback()
     | None =>
-      chainState->ChainState.setReorgDetection(updatedReorgDetection)
-
       let itemsWithContractRegister = []
       let newItems = []
       for idx in 0 to parsedQueueItems->Array.length - 1 {
@@ -253,7 +236,7 @@ and applyQueryResponse = (
   ~query,
 ) => {
   let chainState = state->IndexerState.getChainState(~chain)
-  let wasFetchingAtHead = chainState->ChainState.fetchState->FetchState.isFetchingAtHead
+  let wasFetchingAtHead = chainState->ChainState.isFetchingAtHead
 
   chainState->ChainState.handleQueryResult(
     ~query,
@@ -264,16 +247,10 @@ and applyQueryResponse = (
   )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
-  // Also update if a partition returns events at an earlier block than current endBlock.
   if state->IndexerState.exitAfterFirstEventBlock && newItems->Array.length > 0 {
-    let firstEventBlock = newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber
-    let fetchState = chainState->ChainState.fetchState
-    switch fetchState.endBlock {
-    | None => chainState->ChainState.setFetchState({...fetchState, endBlock: Some(firstEventBlock)})
-    | Some(currentEndBlock) if firstEventBlock < currentEndBlock =>
-      chainState->ChainState.setFetchState({...fetchState, endBlock: Some(firstEventBlock)})
-    | Some(_) => ()
-    }
+    chainState->ChainState.setEndBlockToFirstEvent(
+      ~blockNumber=newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
+    )
   }
 
   // Log the backfill→head transition once: this response brought the fetch
@@ -282,7 +259,7 @@ and applyQueryResponse = (
   if (
     !wasFetchingAtHead &&
     !(chainState->ChainState.isReady) &&
-    chainState->ChainState.fetchState->FetchState.isFetchingAtHead
+    chainState->ChainState.isFetchingAtHead
   ) {
     chainState->ChainState.logger->Logging.childInfo("All events have been fetched")
   }
@@ -301,11 +278,7 @@ let finishWaitingForNewBlock = (
     ()
   } else {
     let chainState = state->IndexerState.getChainState(~chain)
-    let updatedFetchState =
-      chainState->ChainState.fetchState->FetchState.updateKnownHeight(~knownHeight)
-    if updatedFetchState !== chainState->ChainState.fetchState {
-      chainState->ChainState.setFetchState(updatedFetchState)
-    }
+    chainState->ChainState.updateKnownHeight(~knownHeight)
 
     let isBelowReorgThreshold =
       !(state->IndexerState.isInReorgThreshold) &&

@@ -50,14 +50,15 @@ let committedProgressBlockNumber: t => int
 let numEventsProcessed: t => float
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
-// Mutators.
-let setFetchState: (t, FetchState.t) => unit
-let setReorgDetection: (t, ReorgDetection.t) => unit
-let setSafeCheckpointTracking: (t, option<SafeCheckpointTracking.t>) => unit
-let setIsProgressAtHead: (t, bool) => unit
-let setCommittedProgressBlockNumber: (t, int) => unit
-let setNumEventsProcessed: (t, float) => unit
-let setTimestampCaughtUpToHeadOrEndblock: (t, option<Date.t>) => unit
+// Derived (pure).
+let hasProcessedToEndblock: t => bool
+let hasNoMoreEventsToProcess: t => bool
+let getHighestBlockBelowThreshold: t => int
+let isActivelyIndexing: t => bool
+let isReady: t => bool
+let isFetchingAtHead: t => bool
+
+// State transitions. The chain state is mutated only through these.
 let handleQueryResult: (
   t,
   ~query: FetchState.query,
@@ -66,10 +67,26 @@ let handleQueryResult: (
   ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight: int,
 ) => unit
-
-// Derived (pure).
-let hasProcessedToEndblock: t => bool
-let hasNoMoreEventsToProcess: t => bool
-let getHighestBlockBelowThreshold: t => int
-let isActivelyIndexing: t => bool
-let isReady: t => bool
+let registerReorgGuard: (
+  t,
+  ~blockHashes: array<ReorgDetection.blockData>,
+  ~knownHeight: int,
+) => ReorgDetection.reorgResult
+let prepareReorg: (t, ~eventsProcessedDiff: option<float>) => unit
+let updateKnownHeight: (t, ~knownHeight: int) => unit
+let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
+let enterReorgThreshold: t => unit
+let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
+let applyBatchProgress: (
+  t,
+  ~batch: Batch.t,
+  ~allChainsAtHead: bool,
+  ~nextQueueItemIsNone: bool,
+) => unit
+let rollback: (
+  t,
+  ~newProgressBlockNumber: option<int>,
+  ~eventsProcessedDiff: option<float>,
+  ~rollbackTargetBlockNumber: int,
+  ~isReorgChain: bool,
+) => unit

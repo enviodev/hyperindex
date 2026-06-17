@@ -165,68 +165,16 @@ and executeRollback = async (
   ->IndexerState.chainStates
   ->Utils.Dict.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
-    switch newProgressBlockNumberPerChain->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
-    | Some(newProgressBlockNumber) =>
-      let fetchState =
-        cs->ChainState.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
-      let newTotalEventsProcessed =
-        cs->ChainState.numEventsProcessed -.
-          eventsProcessedDiffByChain
-          ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
-          // Both dicts are populated together per progress-diff row above, so a
-          // chain present in newProgressBlockNumberPerChain always has a diff here.
-          ->Option.getOrThrow(~message="Missing events-processed diff for rolled-back chain")
-
-      if cs->ChainState.committedProgressBlockNumber !== newProgressBlockNumber {
-        Prometheus.ProgressBlockNumber.set(~blockNumber=newProgressBlockNumber, ~chainId)
-      }
-      if cs->ChainState.numEventsProcessed !== newTotalEventsProcessed {
-        Prometheus.ProgressEventsCount.set(~processedCount=newTotalEventsProcessed, ~chainId)
-      }
-
-      if chainId === reorgChainId {
-        cs->ChainState.setReorgDetection(
-          cs
-          ->ChainState.reorgDetection
-          ->ReorgDetection.rollbackToValidBlockNumber(~blockNumber=rollbackTargetBlockNumber),
-        )
-      }
-      switch cs->ChainState.safeCheckpointTracking {
-      | Some(safeCheckpointTracking) =>
-        cs->ChainState.setSafeCheckpointTracking(
-          Some(
-            safeCheckpointTracking->SafeCheckpointTracking.rollback(
-              ~targetBlockNumber=newProgressBlockNumber,
-            ),
-          ),
-        )
-      | None => ()
-      }
-      cs->ChainState.setFetchState(fetchState)
-      cs->ChainState.setCommittedProgressBlockNumber(newProgressBlockNumber)
-      cs->ChainState.setNumEventsProcessed(newTotalEventsProcessed)
-
-    | None =>
-      // Even without a progress diff entry, the reorg chain must have its
-      // reorgDetection and fetchState rolled back. Otherwise the stale block hash
-      // stays in dataByBlockNumber and the same reorg is re-detected on the next
-      // fetch, causing an infinite reorg→rollback loop.
-      if chainId === reorgChainId {
-        cs->ChainState.setReorgDetection(
-          cs
-          ->ChainState.reorgDetection
-          ->ReorgDetection.rollbackToValidBlockNumber(~blockNumber=rollbackTargetBlockNumber),
-        )
-        cs->ChainState.setFetchState(
-          cs
-          ->ChainState.fetchState
-          ->FetchState.rollback(~targetBlockNumber=rollbackTargetBlockNumber),
-        )
-        cs->ChainState.setCommittedProgressBlockNumber(
-          Pervasives.min(cs->ChainState.committedProgressBlockNumber, rollbackTargetBlockNumber),
-        )
-      }
-    }
+    cs->ChainState.rollback(
+      ~newProgressBlockNumber=newProgressBlockNumberPerChain->Utils.Dict.dangerouslyGetByIntNonOption(
+        chainId,
+      ),
+      ~eventsProcessedDiff=eventsProcessedDiffByChain->Utils.Dict.dangerouslyGetByIntNonOption(
+        chainId,
+      ),
+      ~rollbackTargetBlockNumber,
+      ~isReorgChain=chainId === reorgChainId,
+    )
   })
 
   let diff = await state->InMemoryStore.prepareRollbackDiff(

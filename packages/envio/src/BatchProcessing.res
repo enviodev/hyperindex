@@ -108,26 +108,14 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
       }
     }
   } else {
+    // The batch was created from pre-threshold fetch states, so advanceAfterBatch
+    // applies blockLag when crossing the threshold; enterReorgThreshold already
+    // covered the non-progressed chain states.
     state
     ->IndexerState.chainStates
-    ->Utils.Dict.forEach(cs => {
-      switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
-        (cs->ChainState.fetchState).chainId,
-      ) {
-      | Some(chainAfterBatch) =>
-        // The batch was created from pre-threshold fetch states, so blockLag
-        // is applied here; enterReorgThreshold already covered the
-        // non-progressed chain states.
-        cs->ChainState.setFetchState(
-          shouldEnterReorgThreshold
-            ? chainAfterBatch.fetchState->FetchState.updateInternal(
-                ~blockLag=(cs->ChainState.chainConfig).blockLag,
-              )
-            : chainAfterBatch.fetchState,
-        )
-      | None => ()
-      }
-    })
+    ->Utils.Dict.forEach(cs =>
+      cs->ChainState.advanceAfterBatch(~batch, ~enteringReorgThreshold=shouldEnterReorgThreshold)
+    )
     // Kick the next fetch round before awaiting the batch. A response that
     // lands mid-batch commits only fetch-frontier fields (buffer, knownHeight),
     // while applyBatchProgress below commits only progress fields, so the two

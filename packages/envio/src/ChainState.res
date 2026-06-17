@@ -395,38 +395,7 @@ let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
 
-// --- Mutators. ---
-
-let setFetchState = (cs: t, fetchState) => cs.fetchState = fetchState
-let setReorgDetection = (cs: t, reorgDetection) => cs.reorgDetection = reorgDetection
-let setSafeCheckpointTracking = (cs: t, safeCheckpointTracking) =>
-  cs.safeCheckpointTracking = safeCheckpointTracking
-let setIsProgressAtHead = (cs: t, isProgressAtHead) => cs.isProgressAtHead = isProgressAtHead
-let setCommittedProgressBlockNumber = (cs: t, committedProgressBlockNumber) =>
-  cs.committedProgressBlockNumber = committedProgressBlockNumber
-let setNumEventsProcessed = (cs: t, numEventsProcessed) =>
-  cs.numEventsProcessed = numEventsProcessed
-let setTimestampCaughtUpToHeadOrEndblock = (cs: t, timestampCaughtUpToHeadOrEndblock) =>
-  cs.timestampCaughtUpToHeadOrEndblock = timestampCaughtUpToHeadOrEndblock
-
-let handleQueryResult = (
-  cs: t,
-  ~query: FetchState.query,
-  ~newItems,
-  ~newItemsWithDcs,
-  ~latestFetchedBlock,
-  ~knownHeight,
-) => {
-  let fs = switch newItemsWithDcs {
-  | [] => cs.fetchState
-  | _ => cs.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
-  }
-
-  cs.fetchState =
-    fs
-    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
-    ->FetchState.updateKnownHeight(~knownHeight)
-}
+// --- Derived (pure). ---
 
 let hasProcessedToEndblock = (cs: t) => {
   let {committedProgressBlockNumber, fetchState} = cs
@@ -448,3 +417,251 @@ let getHighestBlockBelowThreshold = (cs: t): int => {
 let isActivelyIndexing = (cs: t) => cs.fetchState->FetchState.isActivelyIndexing
 
 let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None
+
+// True once the fetch frontier has reached the head/endBlock for this chain.
+let isFetchingAtHead = (cs: t) => cs.fetchState->FetchState.isFetchingAtHead
+
+// --- State transitions. The chain state is mutated only through these; each
+// owns a cohesive update so callers don't juggle individual fields. ---
+
+// Apply a fetch response: register any new dynamic contracts, append the items
+// to the buffer and advance the known head.
+let handleQueryResult = (
+  cs: t,
+  ~query: FetchState.query,
+  ~newItems,
+  ~newItemsWithDcs,
+  ~latestFetchedBlock,
+  ~knownHeight,
+) => {
+  let fs = switch newItemsWithDcs {
+  | [] => cs.fetchState
+  | _ => cs.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
+  }
+
+  cs.fetchState =
+    fs
+    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
+    ->FetchState.updateKnownHeight(~knownHeight)
+}
+
+// Run reorg detection against a fetch response and commit the updated guard.
+// Returns the result so the caller can decide whether to roll back; on the
+// rollback path registerReorgGuard returns the guard unchanged, so committing
+// here is a no-op there.
+let registerReorgGuard = (cs: t, ~blockHashes, ~knownHeight): ReorgDetection.reorgResult => {
+  let (updatedReorgDetection, reorgResult) =
+    cs.reorgDetection->ReorgDetection.registerReorgGuard(~blockHashes, ~knownHeight)
+  cs.reorgDetection = updatedReorgDetection
+  reorgResult
+}
+
+// Prepare for a reorg rollback: restore the events-processed counter to its
+// pre-rollback value when an uncommitted rollback diff is being redone, and drop
+// pending queries bound to the about-to-be-invalidated chain state.
+let prepareReorg = (cs: t, ~eventsProcessedDiff) => {
+  switch eventsProcessedDiff {
+  | Some(diff) => cs.numEventsProcessed = cs.numEventsProcessed +. diff
+  | None => ()
+  }
+  cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
+}
+
+let updateKnownHeight = (cs: t, ~knownHeight) =>
+  cs.fetchState = cs.fetchState->FetchState.updateKnownHeight(~knownHeight)
+
+// In auto-exit mode, pin the endBlock to the earliest observed event block.
+let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
+  switch cs.fetchState.endBlock {
+  | None => cs.fetchState = {...cs.fetchState, endBlock: Some(blockNumber)}
+  | Some(currentEndBlock) if blockNumber < currentEndBlock =>
+    cs.fetchState = {...cs.fetchState, endBlock: Some(blockNumber)}
+  | Some(_) => ()
+  }
+
+// Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
+let enterReorgThreshold = (cs: t) =>
+  cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
+
+// Commit the post-batch fetch frontier for a chain that progressed in the batch,
+// applying blockLag when this batch also crosses into the reorg threshold.
+let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
+  switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+    cs.fetchState.chainId,
+  ) {
+  | Some(chainAfterBatch) =>
+    cs.fetchState = enteringReorgThreshold
+      ? chainAfterBatch.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
+      : chainAfterBatch.fetchState
+  | None => ()
+  }
+
+// Commit a processed batch's progress for this chain (progress block, events
+// processed, head/safe-checkpoint tracking, first event block) and update its
+// caught-up timestamp. `allChainsAtHead`/`nextQueueItemIsNone` are whole-indexer
+// conditions the caller computes once. Emits the per-chain progress metrics.
+let applyBatchProgress = (cs: t, ~batch: Batch.t, ~allChainsAtHead, ~nextQueueItemIsNone) => {
+  let chainId = cs.chainConfig.id
+  let wasReady = cs->isReady
+
+  switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
+  | Some(chainAfterBatch) => {
+      if cs.committedProgressBlockNumber !== chainAfterBatch.progressBlockNumber {
+        Prometheus.ProgressBlockNumber.set(
+          ~blockNumber=chainAfterBatch.progressBlockNumber,
+          ~chainId,
+        )
+      }
+      if cs.numEventsProcessed !== chainAfterBatch.totalEventsProcessed {
+        Prometheus.ProgressEventsCount.set(
+          ~processedCount=chainAfterBatch.totalEventsProcessed,
+          ~chainId,
+        )
+      }
+
+      // Calculate and set latency metrics
+      switch batch->Batch.findLastEventItem(~chainId) {
+      | Some(eventItem) => {
+          let blockTimestampMs = eventItem.timestamp * 1000
+          Prometheus.ProgressLatency.set(
+            ~latencyMs=Date.now()->Float.toInt - blockTimestampMs,
+            ~chainId,
+          )
+        }
+      | None => ()
+      }
+
+      // Since we process per chain always in order, calculate firstEventBlock
+      // once, from the first item in a batch.
+      switch cs.fetchState.firstEventBlock {
+      | Some(_) => ()
+      | None =>
+        switch batch->Batch.findFirstEventBlockNumber(~chainId) {
+        | Some(_) as firstEventBlock => cs.fetchState = {...cs.fetchState, firstEventBlock}
+        | None => ()
+        }
+      }
+
+      cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber
+      cs.numEventsProcessed = chainAfterBatch.totalEventsProcessed
+      cs.isProgressAtHead = cs.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated
+      switch cs.safeCheckpointTracking {
+      | Some(safeCheckpointTracking) =>
+        cs.safeCheckpointTracking = Some(
+          safeCheckpointTracking->SafeCheckpointTracking.updateOnNewBatch(
+            ~sourceBlockNumber=cs.fetchState.knownHeight,
+            ~chainId,
+            ~batchCheckpointIds=batch.checkpointIds,
+            ~batchCheckpointBlockNumbers=batch.checkpointBlockNumbers,
+            ~batchCheckpointChainIds=batch.checkpointChainIds,
+          ),
+        )
+      | None => ()
+      }
+    }
+  | None => ()
+  }
+
+  /* strategy for TUI synced status:
+   * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
+   *
+   * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
+   *
+   * New conditions for valid synced:
+   *
+   * CASE 1 (chains are being synchronised at the head)
+   *
+   * All chain fetchers are fetching at the head AND
+   * No events that can be processed on the queue (even if events still exist on the individual queues)
+   * CASE 2 (chain finishes earlier than any other chain)
+   *
+   * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
+   *
+   * The given chain fetcher is fetching at the head or latest processed block >= endblock
+   * The given chain has processed all events on the queue
+   * see https://github.com/Float-Capital/indexer/pull/1388 */
+  if cs->hasProcessedToEndblock {
+    // in the case this is already set, don't reset and instead propagate the existing value
+    if !(cs->isReady) {
+      cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
+    }
+  } else if !(cs->isReady) && cs.isProgressAtHead {
+    // CASE1: all chains are caught up to head and the queue returns None,
+    // meaning we are busy synchronizing chains at the head.
+    if nextQueueItemIsNone && allChainsAtHead {
+      cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
+    } else if cs->hasNoMoreEventsToProcess {
+      // CASE2: all events on this chain's queue have been processed; other
+      // chains may still be syncing.
+      cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
+    }
+  }
+
+  // Set envio_progress_ready per-chain when it first becomes ready
+  if cs->isReady && !wasReady {
+    Prometheus.ProgressReady.set(~chainId)
+  }
+}
+
+// Roll a chain back to a reorg target. With a progress diff, restore fetch/
+// safe-checkpoint/progress state to `newProgressBlockNumber`; the reorg chain
+// additionally rewinds its reorg-detection guard. A reorg chain with no diff
+// entry still rewinds guard + fetch state to the target — otherwise the stale
+// block hash stays in the guard and re-triggers the same reorg.
+let rollback = (
+  cs: t,
+  ~newProgressBlockNumber,
+  ~eventsProcessedDiff,
+  ~rollbackTargetBlockNumber,
+  ~isReorgChain,
+) => {
+  let chainId = cs.chainConfig.id
+  switch newProgressBlockNumber {
+  | Some(newProgressBlockNumber) =>
+    let newTotalEventsProcessed =
+      cs.numEventsProcessed -.
+      // Both dicts are populated together per progress-diff row, so a chain with
+      // a progress diff always has an events-processed diff too.
+      eventsProcessedDiff->Option.getOrThrow(
+        ~message="Missing events-processed diff for rolled-back chain",
+      )
+
+    if cs.committedProgressBlockNumber !== newProgressBlockNumber {
+      Prometheus.ProgressBlockNumber.set(~blockNumber=newProgressBlockNumber, ~chainId)
+    }
+    if cs.numEventsProcessed !== newTotalEventsProcessed {
+      Prometheus.ProgressEventsCount.set(~processedCount=newTotalEventsProcessed, ~chainId)
+    }
+    if isReorgChain {
+      cs.reorgDetection =
+        cs.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(
+          ~blockNumber=rollbackTargetBlockNumber,
+        )
+    }
+    switch cs.safeCheckpointTracking {
+    | Some(safeCheckpointTracking) =>
+      cs.safeCheckpointTracking = Some(
+        safeCheckpointTracking->SafeCheckpointTracking.rollback(
+          ~targetBlockNumber=newProgressBlockNumber,
+        ),
+      )
+    | None => ()
+    }
+    cs.fetchState = cs.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
+    cs.committedProgressBlockNumber = newProgressBlockNumber
+    cs.numEventsProcessed = newTotalEventsProcessed
+  | None =>
+    if isReorgChain {
+      cs.reorgDetection =
+        cs.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(
+          ~blockNumber=rollbackTargetBlockNumber,
+        )
+      cs.fetchState =
+        cs.fetchState->FetchState.rollback(~targetBlockNumber=rollbackTargetBlockNumber)
+      cs.committedProgressBlockNumber = Pervasives.min(
+        cs.committedProgressBlockNumber,
+        rollbackTargetBlockNumber,
+      )
+    }
+  }
+}

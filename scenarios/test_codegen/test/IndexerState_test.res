@@ -143,15 +143,10 @@ let getItemKey = (item: Internal.item) =>
 
 // Advance each chain's fetchState to its post-batch state, simulating the loop
 // committing a processed batch.
-let advanceChains = (state: IndexerState.t, ~progressedChainsById) =>
-  state->IndexerState.chainStates->Utils.Dict.forEach(cs => {
-    switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
-      (cs->ChainState.fetchState).chainId,
-    ) {
-    | Some(chainAfterBatch: Batch.chainAfterBatch) => cs->ChainState.setFetchState(chainAfterBatch.fetchState)
-    | None => ()
-    }
-  })
+let advanceChains = (state: IndexerState.t, ~batch) =>
+  state
+  ->IndexerState.chainStates
+  ->Utils.Dict.forEach(cs => cs->ChainState.advanceAfterBatch(~batch, ~enteringReorgThreshold=false))
 
 describe("IndexerState", () => {
   //Test was previously popBlockBatchItems
@@ -175,12 +170,13 @@ describe("IndexerState", () => {
         let allEventsRead = []
         let continue = ref(true)
         while continue.contents {
-          let {items, totalBatchSize, progressedChainsById} =
+          let batch =
             state->IndexerState.createBatch(
               ~processedCheckpointId=Internal.initialCheckpointId,
               ~batchSizeTarget=10000,
               ~isRollback=false,
             )
+          let {items, totalBatchSize} = batch
 
           // ensure that the events are ordered correctly
           if totalBatchSize === 0 {
@@ -197,7 +193,7 @@ describe("IndexerState", () => {
               ~message="Check that first event in this block group is AFTER the last event before this block group",
             ).toBe(true)
 
-            state->advanceChains(~progressedChainsById)
+            state->advanceChains(~batch)
           }
         }
 
@@ -318,9 +314,37 @@ describe("IndexerState", () => {
       let chain = config.chainMap->ChainMap.keys->Array.getUnsafe(0)
       let chainId = chain->ChainMap.Chain.toChainId
 
-      // A fetch lands mid-batch and advances this chain's frontier to block 15.
+      // A fetch lands mid-batch and appends block 15 to this chain's buffer
+      // (its batch-time snapshot held only block 5).
       let cs = state->IndexerState.getChainState(~chain)
-      cs->ChainState.setFetchState(makeFetchState(~chainId, ~eventBlocks=[5, 15]))
+      let concurrentFetchState = cs->ChainState.fetchState
+      let concurrentQuery: FetchState.query = {
+        partitionId: "0",
+        fromBlock: 0,
+        toBlock: None,
+        isChunk: false,
+        selection: {dependsOnAddresses: false, eventConfigs},
+        addressesByContractName: Dict.make(),
+        indexingAddresses: concurrentFetchState.indexingAddresses,
+      }
+      concurrentFetchState->FetchState.startFetchingQueries(~queries=[concurrentQuery])
+      cs->ChainState.handleQueryResult(
+        ~query=concurrentQuery,
+        ~newItemsWithDcs=[],
+        ~latestFetchedBlock={blockNumber: 15, blockTimestamp: 15 * 15},
+        ~newItems=[
+          Internal.Event({
+            timestamp: 15 * 15,
+            chain,
+            blockNumber: 15,
+            blockHash: "0x15",
+            logIndex: 0,
+            eventConfig: Utils.magic("Mock eventConfig"),
+            event: Utils.magic("Mock event"),
+          }),
+        ],
+        ~knownHeight=concurrentFetchState.knownHeight,
+      )
 
       state->IndexerState.applyBatchProgress(~batch)
       let resultCs = state->IndexerState.getChainState(~chain)

@@ -396,13 +396,7 @@ let enterReorgThreshold = (state: t) => {
   Logging.info("Reorg threshold reached")
   Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
 
-  state.chainStates->Utils.Dict.forEach(cs => {
-    cs->ChainState.setFetchState(
-      cs
-      ->ChainState.fetchState
-      ->FetchState.updateInternal(~blockLag=(cs->ChainState.chainConfig).blockLag),
-    )
-  })
+  state.chainStates->Utils.Dict.forEach(ChainState.enterReorgThreshold)
 
   state.isInReorgThreshold = true
 }
@@ -444,118 +438,8 @@ let applyBatchProgress = (state: t, ~batch: Batch.t) => {
   let allChainsReady = ref(true)
 
   state.chainStates->Utils.Dict.forEach(cs => {
-    let chainId = (cs->ChainState.chainConfig).id
-    let wasReady = cs->ChainState.isReady
-
-    switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
-    | Some(chainAfterBatch) => {
-        if cs->ChainState.committedProgressBlockNumber !== chainAfterBatch.progressBlockNumber {
-          Prometheus.ProgressBlockNumber.set(
-            ~blockNumber=chainAfterBatch.progressBlockNumber,
-            ~chainId,
-          )
-        }
-        if cs->ChainState.numEventsProcessed !== chainAfterBatch.totalEventsProcessed {
-          Prometheus.ProgressEventsCount.set(
-            ~processedCount=chainAfterBatch.totalEventsProcessed,
-            ~chainId,
-          )
-        }
-
-        // Calculate and set latency metrics
-        switch batch->Batch.findLastEventItem(~chainId) {
-        | Some(eventItem) => {
-            let blockTimestamp = eventItem.timestamp
-            let currentTimeMs = Date.now()->Float.toInt
-            let blockTimestampMs = blockTimestamp * 1000
-            let latencyMs = currentTimeMs - blockTimestampMs
-
-            Prometheus.ProgressLatency.set(~latencyMs, ~chainId)
-          }
-        | None => ()
-        }
-
-        // Since we process per chain always in order,
-        // we need to calculate it once, by using the first item in a batch
-        switch (cs->ChainState.fetchState).firstEventBlock {
-        | Some(_) => ()
-        | None =>
-          switch batch->Batch.findFirstEventBlockNumber(~chainId) {
-          | Some(_) as firstEventBlock =>
-            cs->ChainState.setFetchState({...cs->ChainState.fetchState, firstEventBlock})
-          | None => ()
-          }
-        }
-
-        cs->ChainState.setCommittedProgressBlockNumber(chainAfterBatch.progressBlockNumber)
-        cs->ChainState.setNumEventsProcessed(chainAfterBatch.totalEventsProcessed)
-        cs->ChainState.setIsProgressAtHead(
-          cs->ChainState.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated,
-        )
-        switch cs->ChainState.safeCheckpointTracking {
-        | Some(safeCheckpointTracking) =>
-          cs->ChainState.setSafeCheckpointTracking(
-            Some(
-              safeCheckpointTracking->SafeCheckpointTracking.updateOnNewBatch(
-                ~sourceBlockNumber=(cs->ChainState.fetchState).knownHeight,
-                ~chainId,
-                ~batchCheckpointIds=batch.checkpointIds,
-                ~batchCheckpointBlockNumbers=batch.checkpointBlockNumbers,
-                ~batchCheckpointChainIds=batch.checkpointChainIds,
-              ),
-            ),
-          )
-        | None => ()
-        }
-      }
-    | None => ()
-    }
-
-    /* strategy for TUI synced status:
-     * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
-     *
-     * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
-     *
-     * New conditions for valid synced:
-     *
-     * CASE 1 (chains are being synchronised at the head)
-     *
-     * All chain fetchers are fetching at the head AND
-     * No events that can be processed on the queue (even if events still exist on the individual queues)
-     * CASE 2 (chain finishes earlier than any other chain)
-     *
-     * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
-     *
-     * The given chain fetcher is fetching at the head or latest processed block >= endblock
-     * The given chain has processed all events on the queue
-     * see https://github.com/Float-Capital/indexer/pull/1388 */
-    if cs->ChainState.hasProcessedToEndblock {
-      // in the case this is already set, don't reset and instead propagate the existing value
-      if !(cs->ChainState.isReady) {
-        cs->ChainState.setTimestampCaughtUpToHeadOrEndblock(Date.make()->Some)
-      }
-    } else if !(cs->ChainState.isReady) && cs->ChainState.isProgressAtHead {
-      //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
-      //its not already set
-      //CASE1
-      //All chains are caught up to head chainManager queue returns None
-      //Meaning we are busy synchronizing chains at the head
-      if nextQueueItemIsNone && allChainsAtHead {
-        cs->ChainState.setTimestampCaughtUpToHeadOrEndblock(Date.make()->Some)
-      } else if cs->ChainState.hasNoMoreEventsToProcess {
-        //CASE2 -> Only calculate if case1 fails
-        //All events have been processed on the chain fetchers queue
-        //Other chains may be busy syncing
-        cs->ChainState.setTimestampCaughtUpToHeadOrEndblock(Date.make()->Some)
-      }
-    }
-
-    // Set envio_progress_ready per-chain when it first becomes ready
-    if cs->ChainState.isReady {
-      if !wasReady {
-        Prometheus.ProgressReady.set(~chainId)
-      }
-    } else {
+    cs->ChainState.applyBatchProgress(~batch, ~allChainsAtHead, ~nextQueueItemIsNone)
+    if !(cs->ChainState.isReady) {
       allChainsReady := false
     }
   })
