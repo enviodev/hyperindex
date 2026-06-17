@@ -8,7 +8,7 @@ let yieldTick = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => res
 
 // The single processing loop. Runs batches back-to-back while there's work and
 // no reorg is being resolved; exits when idle so producers (fetch, rollback) can
-// re-kick it. `inMemoryStore.isProcessing` guarantees one instance. The loop
+// re-kick it. `state.isProcessing` guarantees one instance. The loop
 // decides whether to keep going by inspecting state after each batch, rather than
 // from a return value of processNextBatch.
 let rec startProcessing = async (
@@ -142,7 +142,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
     // here to preserve the handler's user-facing message.
     switch await EventProcessing.processEventBatch(
       ~batch,
-      ~inMemoryStore=state,
+      ~indexerState=state,
       ~loadManager=state->IndexerState.loadManager,
       ~persistence=state->IndexerState.persistence,
       ~config=state->IndexerState.config,

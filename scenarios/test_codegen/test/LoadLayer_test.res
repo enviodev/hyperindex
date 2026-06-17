@@ -3,7 +3,7 @@ open Vitest
 describe("LoadLayer", () => {
   Async.it("Trys to load non existing entity from db", async t => {
     let storageMock = MockIndexer.Storage.make([#loadOrThrow])
-    let inMemoryStore = MockIndexer.InMemoryStore.make()
+    let indexerState = MockIndexer.InMemoryStore.make()
     let loadManager = LoadManager.make()
 
     let getUser = entityId =>
@@ -11,7 +11,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
         ~shouldGroup=true,
@@ -31,14 +31,14 @@ describe("LoadLayer", () => {
   Async.it("Does two round trips to db when requesting non existing entity one by one", async t => {
     let storageMock = MockIndexer.Storage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let inMemoryStore = MockIndexer.InMemoryStore.make()
+    let indexerState = MockIndexer.InMemoryStore.make()
 
     let getUser = entityId =>
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
         ~shouldGroup=true,
@@ -66,13 +66,13 @@ describe("LoadLayer", () => {
     async t => {
       let storageMock = MockIndexer.Storage.make([#loadOrThrow])
       let loadManager = LoadManager.make()
-      let inMemoryStore = MockIndexer.InMemoryStore.make()
+      let indexerState = MockIndexer.InMemoryStore.make()
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig(User),
-          ~inMemoryStore,
+          ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
           ~shouldGroup=true,
@@ -95,13 +95,13 @@ describe("LoadLayer", () => {
   Async.it("Doesn't stack with an await in between of loader calls", async t => {
     let storageMock = MockIndexer.Storage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let inMemoryStore = MockIndexer.InMemoryStore.make()
+    let indexerState = MockIndexer.InMemoryStore.make()
     let getUser = entityId =>
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
         ~shouldGroup=true,
@@ -139,13 +139,13 @@ describe("LoadLayer", () => {
   Async.it("Batches requests to db when requesting non existing entity in Promise.all", async t => {
     let storageMock = MockIndexer.Storage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let inMemoryStore = MockIndexer.InMemoryStore.make()
+    let indexerState = MockIndexer.InMemoryStore.make()
     let getUser = entityId =>
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
         ~shouldGroup=true,
@@ -178,7 +178,7 @@ describe("LoadLayer", () => {
         }: Indexer.Entities.User.t
       )
 
-      let inMemoryStore = MockIndexer.InMemoryStore.make(
+      let indexerState = MockIndexer.InMemoryStore.make(
         ~entities=[(MockIndexer.entityConfig(User), [user1])],
       )
       let getUser = entityId =>
@@ -186,7 +186,7 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig(User),
-          ~inMemoryStore,
+          ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
           ~shouldGroup=true,
@@ -212,7 +212,7 @@ describe("LoadLayer", () => {
     async t => {
       let storageMock = MockIndexer.Storage.make([#loadOrThrow])
       let loadManager = LoadManager.make()
-      let inMemoryStore = MockIndexer.InMemoryStore.make()
+      let indexerState = MockIndexer.InMemoryStore.make()
 
       let user1 = (
         {
@@ -229,7 +229,7 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig(User),
-          ~inMemoryStore,
+          ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
           ~shouldGroup=true,
@@ -242,7 +242,7 @@ describe("LoadLayer", () => {
       // So skip a microtask to bypass the check
       await Promise.resolve()
 
-      inMemoryStore->MockIndexer.InMemoryStore.setEntity(
+      indexerState->MockIndexer.InMemoryStore.setEntity(
         ~entityConfig=MockIndexer.entityConfig(User),
         user1,
       )
@@ -276,7 +276,7 @@ describe("LoadLayer", () => {
         }: Indexer.Entities.User.t
       )
 
-      let inMemoryStore = MockIndexer.InMemoryStore.make(
+      let indexerState = MockIndexer.InMemoryStore.make(
         ~entities=[(MockIndexer.entityConfig(User), [user1])],
       )
 
@@ -285,7 +285,7 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig(User),
-          ~inMemoryStore,
+          ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
           ~shouldGroup=true,
@@ -320,7 +320,7 @@ describe("LoadLayer", () => {
   Async.it("Trys to load non existing entities from db by field", async t => {
     let storageMock = MockIndexer.Storage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let inMemoryStore = MockIndexer.InMemoryStore.make()
+    let indexerState = MockIndexer.InMemoryStore.make()
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
     let getUsersWithId = fieldValue =>
@@ -328,7 +328,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~item,
         ~filter=EntityFilter.Eq({
           fieldName: "id",
@@ -341,7 +341,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~item,
         ~filter=EntityFilter.Gt({
           fieldName: "updatesCountOnUserForTesting",
@@ -372,7 +372,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~item,
         ~filter=EntityFilter.Lt({
           fieldName: "updatesCountOnUserForTesting",
@@ -407,7 +407,7 @@ describe("LoadLayer", () => {
       updatesCountOnUserForTesting: 0,
     }
 
-    let inMemoryStore = MockIndexer.InMemoryStore.make(
+    let indexerState = MockIndexer.InMemoryStore.make(
       ~entities=[(MockIndexer.entityConfig(User), [user1])],
     )
 
@@ -417,7 +417,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~item,
         ~filter=EntityFilter.Eq({
           fieldName: "address",
@@ -460,7 +460,7 @@ describe("LoadLayer", () => {
         ~dbEntities=[(MockIndexer.entityConfig(User), [user1, user2, user("3", "0x3")])],
       )
       let loadManager = LoadManager.make()
-      let inMemoryStore = MockIndexer.InMemoryStore.make()
+      let indexerState = MockIndexer.InMemoryStore.make()
 
       let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
       let getUsersWithAddress = fieldValue =>
@@ -468,7 +468,7 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig(User),
-          ~inMemoryStore,
+          ~indexerState,
           ~item,
           ~filter=EntityFilter.Eq({
             fieldName: "address",
@@ -500,7 +500,7 @@ describe("LoadLayer", () => {
   Async.it("Merges concurrent In filters on the same field into a single In query", async t => {
     let storageMock = MockIndexer.Storage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let inMemoryStore = MockIndexer.InMemoryStore.make()
+    let indexerState = MockIndexer.InMemoryStore.make()
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
     let getUsersWithAddresses = fieldValues =>
@@ -508,7 +508,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~item,
         ~filter=EntityFilter.In({
           fieldName: "address",
@@ -539,7 +539,7 @@ describe("LoadLayer", () => {
   Async.it("Doesn't merge concurrent Gt filters", async t => {
     let storageMock = MockIndexer.Storage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let inMemoryStore = MockIndexer.InMemoryStore.make()
+    let indexerState = MockIndexer.InMemoryStore.make()
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
     let getUsersWithUpdates = fieldValue =>
@@ -547,7 +547,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~item,
         ~filter=EntityFilter.Gt({
           fieldName: "updatesCountOnUserForTesting",
@@ -598,7 +598,7 @@ describe("LoadLayer", () => {
       updatesCountOnUserForTesting: 1,
     }
 
-    let inMemoryStore = MockIndexer.InMemoryStore.make(
+    let indexerState = MockIndexer.InMemoryStore.make(
       ~entities=[(MockIndexer.entityConfig(User), [user1, user2])],
     )
 
@@ -608,7 +608,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~item,
         ~filter=EntityFilter.Eq({
           fieldName: "id",
@@ -622,7 +622,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig(User),
-        ~inMemoryStore,
+        ~indexerState,
         ~item,
         ~filter=EntityFilter.Gt({
           fieldName: "updatesCountOnUserForTesting",
@@ -660,7 +660,7 @@ describe("LoadLayer", () => {
       ~message=`Shouldn't add more calls to the db`,
     ).toEqual(2)
 
-    inMemoryStore->MockIndexer.InMemoryStore.setEntity(
+    indexerState->MockIndexer.InMemoryStore.setEntity(
       ~entityConfig=MockIndexer.entityConfig(User),
       {...user2, updatesCountOnUserForTesting: 0},
     )
@@ -680,7 +680,7 @@ describe("LoadLayer", () => {
     async t => {
       let storageMock = MockIndexer.Storage.make([#loadOrThrow])
       let loadManager = LoadManager.make()
-      let inMemoryStore = MockIndexer.InMemoryStore.make()
+      let indexerState = MockIndexer.InMemoryStore.make()
 
       let user1 = (
         {
@@ -698,7 +698,7 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig(User),
-          ~inMemoryStore,
+          ~indexerState,
           ~item,
           ~filter=EntityFilter.Eq({
             fieldName: "id",
@@ -718,7 +718,7 @@ describe("LoadLayer", () => {
       t.expect(users).toEqual([])
       t.expect(storageMock.loadOrThrowCalls).toEqual(loadEntitiesByFieldSingleDbCall)
 
-      inMemoryStore->MockIndexer.InMemoryStore.setEntity(
+      indexerState->MockIndexer.InMemoryStore.setEntity(
         ~entityConfig=MockIndexer.entityConfig(User),
         user1,
       )
@@ -743,7 +743,7 @@ describe("LoadLayer effect cache", () => {
     async t => {
       let storageMock = MockIndexer.Storage.make([#loadOrThrow])
       let loadManager = LoadManager.make()
-      let inMemoryStore = MockIndexer.InMemoryStore.make()
+      let indexerState = MockIndexer.InMemoryStore.make()
 
       let callCount = ref(0)
       let effect =
@@ -772,7 +772,7 @@ describe("LoadLayer effect cache", () => {
             cacheKey: "test",
             checkpointId: 0n,
           },
-          ~inMemoryStore,
+          ~indexerState,
           ~shouldGroup=true,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
         )->(Utils.magic: promise<Internal.effectOutput> => promise<option<bigint>>)

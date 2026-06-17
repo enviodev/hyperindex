@@ -31,7 +31,7 @@ let runEventHandlerOrThrow = async (
   item: Internal.item,
   ~checkpointId,
   ~handler,
-  ~inMemoryStore,
+  ~indexerState,
   ~loadManager,
   ~persistence,
   ~chains: Internal.chains,
@@ -46,7 +46,7 @@ let runEventHandlerOrThrow = async (
     let contextParams: UserContext.contextParams = {
       item,
       checkpointId,
-      inMemoryStore,
+      indexerState,
       loadManager,
       persistence,
       isPreload: false,
@@ -84,7 +84,7 @@ let runEventHandlerOrThrow = async (
 let runHandlerOrThrow = async (
   item: Internal.item,
   ~checkpointId,
-  ~inMemoryStore,
+  ~indexerState,
   ~loadManager,
   ~persistence: Persistence.t,
   ~config: Config.t,
@@ -95,7 +95,7 @@ let runHandlerOrThrow = async (
     try {
       let contextParams: UserContext.contextParams = {
         item,
-        inMemoryStore,
+        indexerState,
         loadManager,
         persistence,
         checkpointId,
@@ -128,7 +128,7 @@ let runHandlerOrThrow = async (
       await item->runEventHandlerOrThrow(
         ~handler,
         ~checkpointId,
-        ~inMemoryStore,
+        ~indexerState,
         ~loadManager,
         ~persistence,
         ~chains,
@@ -144,7 +144,7 @@ let preloadBatchOrThrow = async (
   ~loadManager,
   ~persistence,
   ~config: Config.t,
-  ~inMemoryStore,
+  ~indexerState,
   ~chains: Internal.chains,
 ) => {
   // On the first run of loaders, we don't care about the result,
@@ -176,7 +176,7 @@ let preloadBatchOrThrow = async (
                 event,
                 context: UserContext.getHandlerContext({
                   item,
-                  inMemoryStore,
+                  indexerState,
                   loadManager,
                   persistence,
                   checkpointId,
@@ -210,7 +210,7 @@ let preloadBatchOrThrow = async (
                 ~ecosystem=config.ecosystem,
                 ~context=UserContext.getHandlerContext({
                   item,
-                  inMemoryStore,
+                  indexerState,
                   loadManager,
                   persistence,
                   checkpointId,
@@ -236,7 +236,7 @@ let preloadBatchOrThrow = async (
 
 let runBatchHandlersOrThrow = async (
   batch: Batch.t,
-  ~inMemoryStore,
+  ~indexerState,
   ~loadManager,
   ~persistence,
   ~config,
@@ -254,7 +254,7 @@ let runBatchHandlersOrThrow = async (
       await runHandlerOrThrow(
         item,
         ~checkpointId,
-        ~inMemoryStore,
+        ~indexerState,
         ~loadManager,
         ~persistence,
         ~config,
@@ -284,7 +284,7 @@ type logPartitionInfo = {
 
 let processEventBatch = async (
   ~batch: Batch.t,
-  ~inMemoryStore: IndexerState.t,
+  ~indexerState: IndexerState.t,
   ~loadManager,
   ~persistence: Persistence.t,
   ~config: Config.t,
@@ -308,19 +308,19 @@ let processEventBatch = async (
 
   try {
     // Backpressure: keep processing within keepLatestChangesLimit of the cycle.
-    await inMemoryStore->Writing.awaitCapacity
+    await indexerState->Writing.awaitCapacity
 
     let timeRef = Hrtime.makeTimer()
 
     if batch.items->Utils.Array.notEmpty {
-      await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~inMemoryStore, ~chains, ~config)
+      await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
     }
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     if batch.items->Utils.Array.notEmpty {
       await batch->runBatchHandlersOrThrow(
-        ~inMemoryStore,
+        ~indexerState,
         ~loadManager,
         ~persistence,
         ~config,
@@ -330,7 +330,7 @@ let processEventBatch = async (
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    inMemoryStore->Writing.commitBatch(~batch)
+    indexerState->Writing.commitBatch(~batch)
 
     let loaderDuration = elapsedTimeAfterLoaders
     let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
