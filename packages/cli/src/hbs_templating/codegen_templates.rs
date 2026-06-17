@@ -352,7 +352,7 @@ type onEventWhere = onEventWhereArgs => onEventWhereResult",
         };
 
         // ReScript block/transaction types only include selected fields
-        // (deprecated never fields only in TypeScript EvmBlock/EvmTransaction)
+        // (deprecated FieldNotSelected fields only in TypeScript EvmBlock/EvmTransaction)
         let (block_type, transaction_type) =
             match (&self.custom_field_selection, &self.all_ecosystem_fields) {
                 (Some(ref custom_fs), Some(ref all_fields)) => {
@@ -1033,7 +1033,7 @@ impl ProjectTemplate {
     }
 
     /// Generate a TypeScript record type with all fields for envio.d.ts.
-    /// Selected fields get their actual TS type, unselected get `never` with @deprecated.
+    /// Selected fields get their actual TS type, unselected get `FieldNotSelected<...>` with @deprecated.
     fn generate_ts_all_fields_record(
         selected: &[SelectedFieldTemplate],
         all_fields: &[SelectedFieldTemplate],
@@ -1056,7 +1056,7 @@ impl ProjectTemplate {
                     )
                 } else {
                     format!(
-                        "{i}/**\n{i} * @deprecated Not selected for this event. To enable, add to config.yaml:\n{i} * ```yaml\n{i} * events:\n{i} *   - event: {event}\n{i} *     field_selection:\n{i} *       {kind}:\n{i} *         - {field}\n{i} * ```\n{i} */\n{i}readonly {field}: never;",
+                        "{i}/**\n{i} * @deprecated Not selected for this event. To enable, add to config.yaml:\n{i} * ```yaml\n{i} * events:\n{i} *   - event: {event}\n{i} *     field_selection:\n{i} *       {kind}:\n{i} *         - {field}\n{i} * ```\n{i} */\n{i}readonly {field}: FieldNotSelected<\"Field '{field}' is not selected for the '{event}' event. Add it under field_selection.{kind} in config.yaml.\">;",
                         i = indent,
                         event = event_name,
                         kind = field_kind,
@@ -1087,7 +1087,7 @@ impl ProjectTemplate {
 
     /// Generate a full TypeScript event type for use in EvmContracts/FuelContracts.
     /// Produces a type with contractName, eventName, params, block, transaction, etc.
-    /// Unselected block/transaction fields are typed as `never` with @deprecated guidance.
+    /// Unselected block/transaction fields are typed as `FieldNotSelected<...>` with @deprecated guidance.
     fn generate_contract_event_ts_type(
         contract_name: &str,
         event: &system_config::Event,
@@ -2426,6 +2426,11 @@ type testIndexer = {{
              */\n\
              \n\
              import type {{ Address, BigDecimal, SingleOrMultiple }} from \"envio\";\n\
+             \n\
+             /** Type of a block/transaction field that wasn't requested in `field_selection`.\n \
+             * Reading it is a type error so a dropped field fails `tsc` rather than silently\n \
+             * passing as `never`. The message names the field and how to enable it. */\n\
+             type FieldNotSelected<Message extends string> = {{ readonly __fieldNotSelected: Message }};\n\
              \n\
              {file_level_types}\n\
              \n\

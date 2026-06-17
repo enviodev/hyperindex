@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3051
 expression: project_template.envio_types_dts
 ---
 /**
@@ -10,6 +11,11 @@ expression: project_template.envio_types_dts
  */
 
 import type { Address, BigDecimal, SingleOrMultiple } from "envio";
+
+/** Type of a block/transaction field that wasn't requested in `field_selection`.
+ * Reading it is a type error so a dropped field fails `tsc` rather than silently
+ * passing as `never`. The message names the field and how to enable it. */
+type FieldNotSelected<Message extends string> = { readonly __fieldNotSelected: Message };
 
 type EvmBlock = {
   /** The number field. */
@@ -28,7 +34,7 @@ type EvmBlock = {
    *         - parentHash
    * ```
    */
-  readonly parentHash: never;
+  readonly parentHash: FieldNotSelected<"Field 'parentHash' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -39,7 +45,7 @@ type EvmBlock = {
    *         - nonce
    * ```
    */
-  readonly nonce: never;
+  readonly nonce: FieldNotSelected<"Field 'nonce' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -50,7 +56,7 @@ type EvmBlock = {
    *         - sha3Uncles
    * ```
    */
-  readonly sha3Uncles: never;
+  readonly sha3Uncles: FieldNotSelected<"Field 'sha3Uncles' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -61,7 +67,7 @@ type EvmBlock = {
    *         - logsBloom
    * ```
    */
-  readonly logsBloom: never;
+  readonly logsBloom: FieldNotSelected<"Field 'logsBloom' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -72,7 +78,7 @@ type EvmBlock = {
    *         - transactionsRoot
    * ```
    */
-  readonly transactionsRoot: never;
+  readonly transactionsRoot: FieldNotSelected<"Field 'transactionsRoot' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -83,7 +89,7 @@ type EvmBlock = {
    *         - stateRoot
    * ```
    */
-  readonly stateRoot: never;
+  readonly stateRoot: FieldNotSelected<"Field 'stateRoot' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -94,7 +100,7 @@ type EvmBlock = {
    *         - receiptsRoot
    * ```
    */
-  readonly receiptsRoot: never;
+  readonly receiptsRoot: FieldNotSelected<"Field 'receiptsRoot' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -105,7 +111,7 @@ type EvmBlock = {
    *         - miner
    * ```
    */
-  readonly miner: never;
+  readonly miner: FieldNotSelected<"Field 'miner' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -116,7 +122,7 @@ type EvmBlock = {
    *         - difficulty
    * ```
    */
-  readonly difficulty: never;
+  readonly difficulty: FieldNotSelected<"Field 'difficulty' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -127,7 +133,7 @@ type EvmBlock = {
    *         - totalDifficulty
    * ```
    */
-  readonly totalDifficulty: never;
+  readonly totalDifficulty: FieldNotSelected<"Field 'totalDifficulty' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -138,7 +144,7 @@ type EvmBlock = {
    *         - extraData
    * ```
    */
-  readonly extraData: never;
+  readonly extraData: FieldNotSelected<"Field 'extraData' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -149,7 +155,7 @@ type EvmBlock = {
    *         - size
    * ```
    */
-  readonly size: never;
+  readonly size: FieldNotSelected<"Field 'size' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -160,7 +166,7 @@ type EvmBlock = {
    *         - gasLimit
    * ```
    */
-  readonly gasLimit: never;
+  readonly gasLimit: FieldNotSelected<"Field 'gasLimit' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -171,7 +177,7 @@ type EvmBlock = {
    *         - gasUsed
    * ```
    */
-  readonly gasUsed: never;
+  readonly gasUsed: FieldNotSelected<"Field 'gasUsed' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -182,7 +188,7 @@ type EvmBlock = {
    *         - uncles
    * ```
    */
-  readonly uncles: never;
+  readonly uncles: FieldNotSelected<"Field 'uncles' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -193,7 +199,7 @@ type EvmBlock = {
    *         - baseFeePerGas
    * ```
    */
-  readonly baseFeePerGas: never;
+  readonly baseFeePerGas: FieldNotSelected<"Field 'baseFeePerGas' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -204,7 +210,7 @@ type EvmBlock = {
    *         - blobGasUsed
    * ```
    */
-  readonly blobGasUsed: never;
+  readonly blobGasUsed: FieldNotSelected<"Field 'blobGasUsed' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -215,7 +221,7 @@ type EvmBlock = {
    *         - excessBlobGas
    * ```
    */
-  readonly excessBlobGas: never;
+  readonly excessBlobGas: FieldNotSelected<"Field 'excessBlobGas' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -226,7 +232,7 @@ type EvmBlock = {
    *         - parentBeaconBlockRoot
    * ```
    */
-  readonly parentBeaconBlockRoot: never;
+  readonly parentBeaconBlockRoot: FieldNotSelected<"Field 'parentBeaconBlockRoot' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -237,7 +243,7 @@ type EvmBlock = {
    *         - withdrawalsRoot
    * ```
    */
-  readonly withdrawalsRoot: never;
+  readonly withdrawalsRoot: FieldNotSelected<"Field 'withdrawalsRoot' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -248,7 +254,7 @@ type EvmBlock = {
    *         - l1BlockNumber
    * ```
    */
-  readonly l1BlockNumber: never;
+  readonly l1BlockNumber: FieldNotSelected<"Field 'l1BlockNumber' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -259,7 +265,7 @@ type EvmBlock = {
    *         - sendCount
    * ```
    */
-  readonly sendCount: never;
+  readonly sendCount: FieldNotSelected<"Field 'sendCount' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -270,7 +276,7 @@ type EvmBlock = {
    *         - sendRoot
    * ```
    */
-  readonly sendRoot: never;
+  readonly sendRoot: FieldNotSelected<"Field 'sendRoot' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -281,7 +287,7 @@ type EvmBlock = {
    *         - mixHash
    * ```
    */
-  readonly mixHash: never;
+  readonly mixHash: FieldNotSelected<"Field 'mixHash' is not selected for the 'global' event. Add it under field_selection.block_fields in config.yaml.">;
 };
 type EvmTransaction = {
   /**
@@ -294,7 +300,7 @@ type EvmTransaction = {
    *         - transactionIndex
    * ```
    */
-  readonly transactionIndex: never;
+  readonly transactionIndex: FieldNotSelected<"Field 'transactionIndex' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -305,7 +311,7 @@ type EvmTransaction = {
    *         - hash
    * ```
    */
-  readonly hash: never;
+  readonly hash: FieldNotSelected<"Field 'hash' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -316,7 +322,7 @@ type EvmTransaction = {
    *         - from
    * ```
    */
-  readonly from: never;
+  readonly from: FieldNotSelected<"Field 'from' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -327,7 +333,7 @@ type EvmTransaction = {
    *         - to
    * ```
    */
-  readonly to: never;
+  readonly to: FieldNotSelected<"Field 'to' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -338,7 +344,7 @@ type EvmTransaction = {
    *         - gas
    * ```
    */
-  readonly gas: never;
+  readonly gas: FieldNotSelected<"Field 'gas' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -349,7 +355,7 @@ type EvmTransaction = {
    *         - gasPrice
    * ```
    */
-  readonly gasPrice: never;
+  readonly gasPrice: FieldNotSelected<"Field 'gasPrice' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -360,7 +366,7 @@ type EvmTransaction = {
    *         - maxPriorityFeePerGas
    * ```
    */
-  readonly maxPriorityFeePerGas: never;
+  readonly maxPriorityFeePerGas: FieldNotSelected<"Field 'maxPriorityFeePerGas' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -371,7 +377,7 @@ type EvmTransaction = {
    *         - maxFeePerGas
    * ```
    */
-  readonly maxFeePerGas: never;
+  readonly maxFeePerGas: FieldNotSelected<"Field 'maxFeePerGas' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -382,7 +388,7 @@ type EvmTransaction = {
    *         - cumulativeGasUsed
    * ```
    */
-  readonly cumulativeGasUsed: never;
+  readonly cumulativeGasUsed: FieldNotSelected<"Field 'cumulativeGasUsed' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -393,7 +399,7 @@ type EvmTransaction = {
    *         - effectiveGasPrice
    * ```
    */
-  readonly effectiveGasPrice: never;
+  readonly effectiveGasPrice: FieldNotSelected<"Field 'effectiveGasPrice' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -404,7 +410,7 @@ type EvmTransaction = {
    *         - gasUsed
    * ```
    */
-  readonly gasUsed: never;
+  readonly gasUsed: FieldNotSelected<"Field 'gasUsed' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -415,7 +421,7 @@ type EvmTransaction = {
    *         - input
    * ```
    */
-  readonly input: never;
+  readonly input: FieldNotSelected<"Field 'input' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -426,7 +432,7 @@ type EvmTransaction = {
    *         - nonce
    * ```
    */
-  readonly nonce: never;
+  readonly nonce: FieldNotSelected<"Field 'nonce' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -437,7 +443,7 @@ type EvmTransaction = {
    *         - value
    * ```
    */
-  readonly value: never;
+  readonly value: FieldNotSelected<"Field 'value' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -448,7 +454,7 @@ type EvmTransaction = {
    *         - v
    * ```
    */
-  readonly v: never;
+  readonly v: FieldNotSelected<"Field 'v' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -459,7 +465,7 @@ type EvmTransaction = {
    *         - r
    * ```
    */
-  readonly r: never;
+  readonly r: FieldNotSelected<"Field 'r' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -470,7 +476,7 @@ type EvmTransaction = {
    *         - s
    * ```
    */
-  readonly s: never;
+  readonly s: FieldNotSelected<"Field 's' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -481,7 +487,7 @@ type EvmTransaction = {
    *         - contractAddress
    * ```
    */
-  readonly contractAddress: never;
+  readonly contractAddress: FieldNotSelected<"Field 'contractAddress' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -492,7 +498,7 @@ type EvmTransaction = {
    *         - logsBloom
    * ```
    */
-  readonly logsBloom: never;
+  readonly logsBloom: FieldNotSelected<"Field 'logsBloom' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -503,7 +509,7 @@ type EvmTransaction = {
    *         - root
    * ```
    */
-  readonly root: never;
+  readonly root: FieldNotSelected<"Field 'root' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -514,7 +520,7 @@ type EvmTransaction = {
    *         - status
    * ```
    */
-  readonly status: never;
+  readonly status: FieldNotSelected<"Field 'status' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -525,7 +531,7 @@ type EvmTransaction = {
    *         - yParity
    * ```
    */
-  readonly yParity: never;
+  readonly yParity: FieldNotSelected<"Field 'yParity' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -536,7 +542,7 @@ type EvmTransaction = {
    *         - accessList
    * ```
    */
-  readonly accessList: never;
+  readonly accessList: FieldNotSelected<"Field 'accessList' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -547,7 +553,7 @@ type EvmTransaction = {
    *         - maxFeePerBlobGas
    * ```
    */
-  readonly maxFeePerBlobGas: never;
+  readonly maxFeePerBlobGas: FieldNotSelected<"Field 'maxFeePerBlobGas' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -558,7 +564,7 @@ type EvmTransaction = {
    *         - blobVersionedHashes
    * ```
    */
-  readonly blobVersionedHashes: never;
+  readonly blobVersionedHashes: FieldNotSelected<"Field 'blobVersionedHashes' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -569,7 +575,7 @@ type EvmTransaction = {
    *         - type
    * ```
    */
-  readonly type: never;
+  readonly type: FieldNotSelected<"Field 'type' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -580,7 +586,7 @@ type EvmTransaction = {
    *         - l1Fee
    * ```
    */
-  readonly l1Fee: never;
+  readonly l1Fee: FieldNotSelected<"Field 'l1Fee' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -591,7 +597,7 @@ type EvmTransaction = {
    *         - l1GasPrice
    * ```
    */
-  readonly l1GasPrice: never;
+  readonly l1GasPrice: FieldNotSelected<"Field 'l1GasPrice' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -602,7 +608,7 @@ type EvmTransaction = {
    *         - l1GasUsed
    * ```
    */
-  readonly l1GasUsed: never;
+  readonly l1GasUsed: FieldNotSelected<"Field 'l1GasUsed' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -613,7 +619,7 @@ type EvmTransaction = {
    *         - l1FeeScalar
    * ```
    */
-  readonly l1FeeScalar: never;
+  readonly l1FeeScalar: FieldNotSelected<"Field 'l1FeeScalar' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -624,7 +630,7 @@ type EvmTransaction = {
    *         - gasUsedForL1
    * ```
    */
-  readonly gasUsedForL1: never;
+  readonly gasUsedForL1: FieldNotSelected<"Field 'gasUsedForL1' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
@@ -635,7 +641,7 @@ type EvmTransaction = {
    *         - authorizationList
    * ```
    */
-  readonly authorizationList: never;
+  readonly authorizationList: FieldNotSelected<"Field 'authorizationList' is not selected for the 'global' event. Add it under field_selection.transaction_fields in config.yaml.">;
 };
 declare namespace FuelTypes {}
 type Enums = {
