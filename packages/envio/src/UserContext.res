@@ -1,7 +1,7 @@
 type contextParams = {
   item: Internal.item,
   checkpointId: Internal.checkpointId,
-  inMemoryStore: IndexerState.t,
+  indexerState: IndexerState.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
   isPreload: bool,
@@ -60,7 +60,7 @@ let initEffect = (params: contextParams) => {
       ~persistence=params.persistence,
       ~effect,
       ~effectArgs,
-      ~inMemoryStore=params.inMemoryStore,
+      ~indexerState=params.indexerState,
       ~shouldGroup=params.isPreload,
       ~item=params.item,
     )
@@ -82,7 +82,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
       ~entityConfig,
-      ~inMemoryStore=params.inMemoryStore,
+      ~indexerState=params.indexerState,
       ~shouldGroup=params.isPreload,
       ~item=params.item,
       ~filter,
@@ -121,10 +121,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     let set = params.isPreload
       ? noopSet
       : (entity: Internal.entity) => {
-          params.inMemoryStore
+          params.indexerState
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.inMemoryStore->IndexerState.committedCheckpointId,
+            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Set({
               entityId: entity.id,
               checkpointId: params.checkpointId,
@@ -146,7 +146,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
-              ~inMemoryStore=params.inMemoryStore,
+              ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId,
@@ -177,7 +177,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
-              ~inMemoryStore=params.inMemoryStore,
+              ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId,
@@ -206,7 +206,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
-              ~inMemoryStore=params.inMemoryStore,
+              ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
               ~entityId=entity.id,
@@ -227,10 +227,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         noopDeleteUnsafe
       } else {
         entityId => {
-          params.inMemoryStore
+          params.indexerState
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.inMemoryStore->IndexerState.committedCheckpointId,
+            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Delete({
               entityId,
               checkpointId: params.checkpointId,
@@ -277,7 +277,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         {
           item: params.item,
           isPreload: params.isPreload,
-          inMemoryStore: params.inMemoryStore,
+          indexerState: params.indexerState,
           loadManager: params.loadManager,
           persistence: params.persistence,
           checkpointId: params.checkpointId,

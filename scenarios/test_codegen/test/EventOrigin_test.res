@@ -39,7 +39,7 @@ describe("Chains State", () => {
       async t => {
         // This test verifies that the chain field is accessible
         // The actual integration test is in EventHandlers.res with the EmptyEvent handler
-        let inMemoryStore = MockIndexer.InMemoryStore.make()
+        let indexerState = MockIndexer.InMemoryStore.make()
         let loadManager = LoadManager.make()
 
         let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
@@ -53,7 +53,7 @@ describe("Chains State", () => {
           persistence: PgStorage.makePersistenceFromConfig(
             ~config=Config.loadWithoutRegistrations(),
           ),
-          inMemoryStore,
+          indexerState,
           isPreload: false,
           checkpointId: 0n,
           chains,
