@@ -16,11 +16,7 @@ let runPrune = async (state: IndexerState.t) => {
       let entityConfig = persistence.allEntities->Array.getUnsafe(idx)
       let timeRef = Hrtime.makeTimer()
       try {
-        let () = await persistence.storage.pruneStaleEntityHistory(
-          ~entityName=entityConfig.name,
-          ~entityIndex=entityConfig.index,
-          ~safeCheckpointId,
-        )
+        let () = await persistence.storage.pruneStaleEntityHistory(~entityConfig, ~safeCheckpointId)
       } catch {
       | exn =>
         exn->ErrorHandling.mkLogAndRaise(

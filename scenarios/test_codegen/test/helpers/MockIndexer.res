@@ -185,7 +185,7 @@ module Storage = {
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
         pruneStaleCheckpoints: (~safeCheckpointId as _) =>
           JsError.throwWithMessage("Not implemented"),
-        pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
+        pruneStaleEntityHistory: (~entityConfig as _, ~safeCheckpointId as _) =>
           JsError.throwWithMessage("Not implemented"),
         getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
           JsError.throwWithMessage("Not implemented"),

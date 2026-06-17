@@ -12,7 +12,7 @@ let getChangesCount = (state: IndexerState.t) => {
   let total = ref(0.)
   state
   ->InMemoryStore.eachEntityTable
-  ->Array.forEach(((_entityConfig, table)) => {
+  ->Array.forEach(((_chainId, _entityConfig, table)) => {
     total := total.contents +. table.changesCount
   })
   state
@@ -107,13 +107,13 @@ let runOneWrite = async (state: IndexerState.t) => {
     let updatedEntities =
       state
       ->InMemoryStore.eachEntityTable
-      ->Array.filterMap(((entityConfig, table)) => {
+      ->Array.filterMap(((chainId, entityConfig, table)) => {
         let changes =
           table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
         if changes->Utils.Array.isEmpty {
           None
         } else {
-          Some(({entityConfig, changes}: Persistence.updatedEntity))
+          Some(({entityConfig, changes, chainId}: Persistence.updatedEntity))
         }
       })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
@@ -191,7 +191,7 @@ let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
   let committedCheckpointId = state->IndexerState.committedCheckpointId
   state
   ->InMemoryStore.eachEntityTable
-  ->Array.forEach(((_entityConfig, table)) =>
+  ->Array.forEach(((_chainId, _entityConfig, table)) =>
     table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
   )
   state

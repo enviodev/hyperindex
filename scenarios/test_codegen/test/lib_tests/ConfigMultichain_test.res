@@ -120,7 +120,7 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
   )
 
   Async.it(
-    "Stamps the chain id from the change's checkpoint when writing isolated entities",
+    "Stamps the group's chain id onto isolated entity rows",
     async t => {
       let config = makePublicConfig(
         ~storage=%raw(`{postgres: true, postgresColumnNameFormat: "snake_case"}`),
@@ -152,8 +152,8 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
           Utils.magic: dict<unknown> => Internal.entity
         )
 
-      // The write derives each change's chain from its checkpoint id (1n -> chain
-      // 1, 2n -> chain 137) and stamps the entity with it.
+      // Isolated entities flush one group per chain; each row is stamped with the
+      // group's chain id.
       await storage.writeBatch(
         ~batch,
         ~rollback=None,
@@ -164,10 +164,13 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
         ~updatedEntities=[
           {
             entityConfig: isolated,
-            changes: [
-              Set({entityId: "a", entity: entity("a"), checkpointId: 1n}),
-              Set({entityId: "b", entity: entity("b"), checkpointId: 2n}),
-            ],
+            chainId: Some(1),
+            changes: [Set({entityId: "a", entity: entity("a"), checkpointId: 1n})],
+          },
+          {
+            entityConfig: isolated,
+            chainId: Some(137),
+            changes: [Set({entityId: "b", entity: entity("b"), checkpointId: 2n})],
           },
         ],
         ~chainMetaData=None,
@@ -207,9 +210,9 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
         )
 
       // The same entity id "shared" is written on two chains. The flush groups
-      // changes per chain (so the per-id dedup doesn't merge them), and the
-      // chain is derived from each checkpoint. The composite (id, chain_id) key
-      // keeps both rows instead of one upserting over the other.
+      // changes per chain (so the per-id dedup doesn't merge them), each tagged
+      // with its chain id. The composite (id, chain_id) key keeps both rows
+      // instead of one upserting over the other.
       await storage.writeBatch(
         ~batch={
           totalBatchSize: 2,
@@ -230,10 +233,12 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
         ~updatedEntities=[
           {
             entityConfig: isolated,
+            chainId: Some(1),
             changes: [Set({entityId: "shared", entity: entity("shared"), checkpointId: 1n})],
           },
           {
             entityConfig: isolated,
+            chainId: Some(137),
             changes: [Set({entityId: "shared", entity: entity("shared"), checkpointId: 2n})],
           },
         ],
@@ -295,6 +300,7 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
         ~updatedEntities=[
           {
             entityConfig: isolated,
+            chainId: Some(1),
             changes: [
               Set({entityId: "shared", entity: entity("shared"), checkpointId: 1n}),
               Set({entityId: "shared", entity: entity("shared"), checkpointId: 3n}),
@@ -302,6 +308,7 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
           },
           {
             entityConfig: isolated,
+            chainId: Some(137),
             changes: [Set({entityId: "shared", entity: entity("shared"), checkpointId: 2n})],
           },
         ],

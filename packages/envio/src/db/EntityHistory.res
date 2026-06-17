@@ -80,25 +80,37 @@ type safeReorgBlocks = {
 // - Rollbacks will not cross the safe checkpoint id, so rows older than the anchor can never be referenced again.
 // - If nothing changed in reorg threshold (after the safe checkpoint), the current state for that id can be reconstructed from the
 //   origin table; we do not need a pre-safe anchor for it.
-let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema) => {
+let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
 
+  // Isolated entities key history by (id, chain_id), so the anchor and every
+  // join must be chain-scoped — otherwise one chain's anchor would mask another
+  // chain's still-relevant history for the same id.
+  let (keyCols, joinCond, psScope) = switch chainIdColumn {
+  | Some(col) => (
+      `t.id, t.${col}`,
+      `d.id = a.id AND d.${col} = a.${col}`,
+      `ps.id = d.id AND ps.${col} = d.${col}`,
+    )
+  | None => (`t.id`, `d.id = a.id`, `ps.id = d.id`)
+  }
+
   `WITH anchors AS (
-  SELECT t.id, MAX(t.${checkpointIdFieldName}) AS keep_checkpoint_id
+  SELECT ${keyCols}, MAX(t.${checkpointIdFieldName}) AS keep_checkpoint_id
   FROM ${historyTableRef} t WHERE t.${checkpointIdFieldName} <= $1
-  GROUP BY t.id
+  GROUP BY ${keyCols}
 )
 DELETE FROM ${historyTableRef} d
 USING anchors a
-WHERE d.id = a.id
+WHERE ${joinCond}
   AND (
     d.${checkpointIdFieldName} < a.keep_checkpoint_id
     OR (
       d.${checkpointIdFieldName} = a.keep_checkpoint_id AND
       NOT EXISTS (
-        SELECT 1 FROM ${historyTableRef} ps 
-        WHERE ps.id = d.id AND ps.${checkpointIdFieldName} > $1
-      ) 
+        SELECT 1 FROM ${historyTableRef} ps
+        WHERE ${psScope} AND ps.${checkpointIdFieldName} > $1
+      )
     )
   );`
 }
@@ -108,10 +120,11 @@ let pruneStaleEntityHistory = (
   ~entityName,
   ~entityIndex,
   ~pgSchema,
+  ~chainIdColumn,
   ~safeCheckpointId,
 ): promise<unit> => {
   sql->Postgres.preparedUnsafe(
-    makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
+    makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn),
     [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
 }

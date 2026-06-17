@@ -174,8 +174,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
   pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
-  pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
-    (),
+  pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpointId as _) => (),
   getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) => {
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",

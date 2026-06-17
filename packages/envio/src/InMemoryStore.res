@@ -18,11 +18,11 @@ let getInMemTable = (
     ->EntityTables.get(~entityName=entityConfig.name)
   }
 
-// Every in-memory entity table: cross-chain tables once, isolated tables once
-// per chain. Used by the store-wide passes (size, drop, flush) that must fan
-// over all chains. The chain isn't returned — the write path derives it from
-// each change's checkpoint id, and the other passes don't need it.
+// Every in-memory entity table, tagged with the chain it belongs to: cross-chain
+// tables once (chain None), isolated tables once per chain. Used by the
+// store-wide passes (size, drop, flush) that must fan over all chains.
 let eachEntityTable = (state: IndexerState.t): array<(
+  option<int>,
   Internal.entityConfig,
   InMemoryTable.Entity.t,
 )> => {
@@ -33,6 +33,7 @@ let eachEntityTable = (state: IndexerState.t): array<(
     if entityConfig.crossChain {
       result
       ->Array.push((
+        None,
         entityConfig,
         state->IndexerState.entities->EntityTables.get(~entityName=entityConfig.name),
       ))
@@ -43,6 +44,7 @@ let eachEntityTable = (state: IndexerState.t): array<(
       ->Utils.Dict.forEach(cs => {
         result
         ->Array.push((
+          Some((cs->ChainState.chainConfig).id),
           entityConfig,
           cs->ChainState.entities->EntityTables.get(~entityName=entityConfig.name),
         ))
