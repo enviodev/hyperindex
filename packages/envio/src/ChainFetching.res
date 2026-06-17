@@ -253,7 +253,7 @@ and applyQueryResponse = (
   ~query,
 ) => {
   let chainState = state->IndexerState.getChainState(~chain)
-  let wasProgressAtHead = chainState->ChainState.isProgressAtHead
+  let wasFetchingAtHead = chainState->ChainState.fetchState->FetchState.isFetchingAtHead
 
   chainState->ChainState.handleQueryResult(
     ~query,
@@ -276,7 +276,14 @@ and applyQueryResponse = (
     }
   }
 
-  if !wasProgressAtHead && chainState->ChainState.isProgressAtHead {
+  // Log the backfill→head transition once: this response brought the fetch
+  // frontier to the head. Gated on !isReady so realtime re-catch-ups (a new
+  // block arrives, gets fetched) don't spam the log after the chain is synced.
+  if (
+    !wasFetchingAtHead &&
+    !(chainState->ChainState.isReady) &&
+    chainState->ChainState.fetchState->FetchState.isFetchingAtHead
+  ) {
     chainState->ChainState.logger->Logging.childInfo("All events have been fetched")
   }
 }
