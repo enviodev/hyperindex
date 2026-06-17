@@ -1,18 +1,17 @@
-let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {
-  chainFetchers
-  ->ChainMap.values
-  ->Array.every(cf => cf->ChainFetcher.hasProcessedToEndblock)
+let allChainsEventsProcessedToEndblock = (chainStates: dict<ChainState.t>) => {
+  chainStates
+  ->Dict.valuesToArray
+  ->Array.every(cs => cs->ChainState.hasProcessedToEndblock)
 }
 
-let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.chains => {
+let computeChainsState = (chainStates: dict<ChainState.t>): Internal.chains => {
   let chains = Dict.make()
 
-  let isRealtime = chainFetchers->ChainMap.values->Array.every(cf => cf->ChainFetcher.isReady)
+  let values = chainStates->Dict.valuesToArray
+  let isRealtime = values->Array.every(cs => cs->ChainState.isReady)
 
-  chainFetchers
-  ->ChainMap.keys
-  ->Array.forEach(chain => {
-    let chainId = chain->ChainMap.Chain.toChainId
+  values->Array.forEach(cs => {
+    let chainId = (cs->ChainState.chainConfig).id
     chains->Dict.set(
       chainId->Int.toString,
       {
@@ -288,11 +287,11 @@ let processEventBatch = async (
   ~loadManager,
   ~persistence: Persistence.t,
   ~config: Config.t,
-  ~chainFetchers: ChainMap.t<ChainFetcher.t>,
+  ~chainStates: dict<ChainState.t>,
 ) => {
   let totalBatchSize = batch.totalBatchSize
   // Compute chains state for this batch
-  let chains: Internal.chains = chainFetchers->computeChainsState
+  let chains: Internal.chains = chainStates->computeChainsState
 
   let logger = Logging.getLogger()
   logger->Logging.childTrace({

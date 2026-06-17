@@ -29,11 +29,25 @@ type t
 let make: (
   ~config: Config.t,
   ~persistence: Persistence.t,
-  ~chainManager: ChainManager.t,
+  ~chainStates: dict<ChainState.t>,
+  ~isInReorgThreshold: bool,
+  ~isRealtime: bool,
   ~committedCheckpointId: Internal.checkpointId=?,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
+  ~onError: ErrorHandling.t => unit,
+) => t
+
+let makeFromDbState: (
+  ~config: Config.t,
+  ~persistence: Persistence.t,
+  ~initialState: Persistence.initialState,
+  ~registrations: HandlerRegister.registrations,
+  ~isDevelopmentMode: bool=?,
+  ~shouldUseTui: bool=?,
+  ~exitAfterFirstEventBlock: bool=?,
+  ~reducedPollingInterval: int=?,
   ~onError: ErrorHandling.t => unit,
 ) => t
 
@@ -44,18 +58,12 @@ let isStale: (t, ~stateId: int) => bool
 let isResolvingReorg: t => bool
 let errorExit: (t, ErrorHandling.t) => unit
 let stop: t => unit
-let setChainManager: (t, ChainManager.t) => unit
-let setChainFetchers: (t, ChainMap.t<ChainFetcher.t>) => unit
-let setChainFetcher: (t, ~chain: chain, ChainFetcher.t) => unit
+let getChainState: (t, ~chain: chain) => ChainState.t
 let enterReorgThreshold: t => unit
-let beginReorg: (t, ~chain: chain, ~blockNumber: int, ~chainManager: ChainManager.t) => unit
+let beginReorg: (t, ~chain: chain, ~blockNumber: int) => unit
 let enterFindingReorgDepth: t => unit
 let foundReorgDepth: (t, ~chain: chain, ~rollbackTargetBlockNumber: int) => unit
-let completeRollback: (
-  t,
-  ~eventsProcessedDiffByChain: dict<float>,
-  ~chainManager: ChainManager.t,
-) => unit
+let completeRollback: (t, ~eventsProcessedDiffByChain: dict<float>) => unit
 let clearRollback: t => unit
 let invalidateInflight: t => unit
 let applyBatchProgress: (t, ~batch: Batch.t) => unit
@@ -63,6 +71,13 @@ let isProcessing: t => bool
 let beginProcessing: t => unit
 let endProcessing: t => unit
 let recordProcessedBatch: t => unit
+let createBatch: (
+  t,
+  ~processedCheckpointId: Internal.checkpointId,
+  ~batchSizeTarget: int,
+  ~isRollback: bool,
+) => Batch.t
+let getSafeCheckpointId: t => option<Internal.checkpointId>
 
 // Accessors.
 let config: t => Config.t
@@ -78,7 +93,9 @@ let writeFiber: t => option<promise<unit>>
 let hasFailedWrite: t => bool
 let chainMetaDirty: t => bool
 let chainMetaThrottler: t => Throttler.t
-let chainManager: t => ChainManager.t
+let chainStates: t => dict<ChainState.t>
+let isInReorgThreshold: t => bool
+let isRealtime: t => bool
 let rollbackState: t => rollbackState
 let indexerStartTime: t => Date.t
 let loadManager: t => LoadManager.t

@@ -949,7 +949,7 @@ indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, co
 //
 // All non-skip-all predicates pin to chain 137 (configured in config.yaml
 // but not used by any existing simulate/process test) so the handlers
-// register without crashing the per-chain validation in `ChainFetcher.res`
+// register without crashing the per-chain validation in `ChainState.res`
 // and don't fire on existing test runs (which would pollute the
 // `result.changes` array). Handlers are no-ops — the value here is
 // validating the registration paths (`where` evaluated per chain, range

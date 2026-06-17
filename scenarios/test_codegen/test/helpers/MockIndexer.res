@@ -18,13 +18,6 @@ let defaultPersistence = PgStorage.makePersistenceFromConfig(
   ),
 )
 
-// A trivial chain manager for store-only tests that never run the loop.
-let emptyChainManager: ChainManager.t = {
-  chainFetchers: ChainMap.fromArrayUnsafe([]),
-  isInReorgThreshold: false,
-  isRealtime: false,
-}
-
 module InMemoryStore = {
   let setEntity = (indexerState, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
@@ -43,7 +36,10 @@ module InMemoryStore = {
     let indexerState = IndexerState.make(
       ~config,
       ~persistence=defaultPersistence,
-      ~chainManager=emptyChainManager,
+      // A trivial chain state map for store-only tests that never run the loop.
+      ~chainStates=Dict.make(),
+      ~isInReorgThreshold=false,
+      ~isRealtime=false,
       // The cycle never runs here, so a write only means a test is wired wrong.
       ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
     )
@@ -353,16 +349,12 @@ module Indexer = {
       ~reset,
     )
 
-    let chainManager = ChainManager.makeFromDbState(
+    let state = IndexerState.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
+      ~persistence,
       ~registrations,
       ~reducedPollingInterval?,
-    )
-    let state = IndexerState.make(
-      ~config,
-      ~persistence,
-      ~chainManager,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
       ~onError,

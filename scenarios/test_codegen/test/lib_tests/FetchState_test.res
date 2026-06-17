@@ -2930,6 +2930,45 @@ describe("FetchState unit tests for specific cases", () => {
     ).toEqual(true)
   })
 
+  it("isFetchingAtHead", t => {
+    let fetchToHead = (fetchState: FetchState.t, ~latestFetchedBlockNumber) => {
+      let query: FetchState.query = {
+        partitionId: "0",
+        fromBlock: 0,
+        toBlock: None,
+        isChunk: false,
+        selection: fetchState.normalSelection,
+        addressesByContractName: Dict.make(),
+        indexingAddresses: fetchState.indexingAddresses,
+      }
+      fetchState->FetchState.startFetchingQueries(~queries=[query])
+      fetchState->FetchState.handleQueryResult(
+        ~query,
+        ~newItems=[],
+        ~latestFetchedBlock={blockNumber: latestFetchedBlockNumber, blockTimestamp: 0},
+      )
+    }
+
+    let atHead = makeInitial(~knownHeight=10)->fetchToHead(~latestFetchedBlockNumber=10)
+    let endBlockReached =
+      {...makeInitial(~knownHeight=100), endBlock: Some(5)}->fetchToHead(~latestFetchedBlockNumber=5)
+
+    t.expect(
+      {
+        "knownHeightZero": makeInitial()->FetchState.isFetchingAtHead,
+        "belowHead": makeInitial(~knownHeight=10)->FetchState.isFetchingAtHead,
+        "atHead": atHead->FetchState.isFetchingAtHead,
+        "endBlockReachedBelowHead": endBlockReached->FetchState.isFetchingAtHead,
+      },
+      ~message="true once the fetch frontier reaches the head or endBlock, false before",
+    ).toEqual({
+      "knownHeightZero": false,
+      "belowHead": false,
+      "atHead": true,
+      "endBlockReachedBelowHead": true,
+    })
+  })
+
   it(
     "Adding dc between two partitions while query is mid flight does no result in early merged partitinons",
     t => {

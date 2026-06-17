@@ -1,7 +1,7 @@
 // Throttled prune of stale entity-history rows below the safe checkpoint.
 
 let runPrune = async (state: IndexerState.t) => {
-  switch state->IndexerState.chainManager->ChainManager.getSafeCheckpointId {
+  switch state->IndexerState.getSafeCheckpointId {
   | None => ()
   | Some(safeCheckpointId) =>
     let persistence = state->IndexerState.persistence

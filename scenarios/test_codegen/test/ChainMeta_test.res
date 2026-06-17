@@ -63,7 +63,9 @@ let makeStore = () => {
   let store = IndexerState.make(
     ~config=MockIndexer.config,
     ~persistence,
-    ~chainManager=MockIndexer.emptyChainManager,
+    ~chainStates=Dict.make(),
+    ~isInReorgThreshold=false,
+    ~isRealtime=false,
     ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
   )
   (store, setChainMetaCalls, writeBatchChainMetaCalls)

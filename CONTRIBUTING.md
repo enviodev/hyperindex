@@ -140,8 +140,7 @@ Persistence layer:
 
 Data sourcing (fetch side):
 
-- `ChainManager.res` – picks the next chain / block range to fetch. (manages multiple chain buffers)
-- `ChainFetcher.res` – per-chain data source progress. (should be refactored in favor `FetchState.res` and `SourceManager.res`)
+- `ChainState.res` – per-chain runtime state (buffer/progress); mutated in place through its setters. (the chain collection now lives on `IndexerState.res`)
 - `FetchState.res` – in-memory buffer and query bookkeeping. (per-chain)
 - `SourceManager.res` – selects data source & handles fallbacks. (per-chain)
 

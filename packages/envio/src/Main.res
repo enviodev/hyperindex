@@ -146,11 +146,11 @@ let buildChainsObject = (~config: Config.t) => {
         enumerable: true,
         get: () => {
           switch indexerStateRef.contents {
-          | Some(state) => (state->IndexerState.chainManager).isRealtime
+          | Some(state) => state->IndexerState.isRealtime
           // Before the global state is available (eg during handler
           // module load after resume), derive from persistence: every chain
           // must have previously caught up to head or endBlock. Mirror the
-          // ChainManager.makeFromDbState path: updateSyncTimeOnRestart wipes
+          // IndexerState.makeFromDbState path: updateSyncTimeOnRestart wipes
           // the saved timestamps so a restart re-enters backfill.
           | None if Env.updateSyncTimeOnRestart => false
           | None =>
@@ -182,9 +182,8 @@ let buildChainsObject = (~config: Config.t) => {
             switch indexerStateRef.contents {
             | Some(state) => {
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
-                let chainFetcher =
-                  (state->IndexerState.chainManager).chainFetchers->ChainMap.get(chain)
-                let indexingAddresses = chainFetcher.fetchState.indexingAddresses
+                let chainState = state->IndexerState.getChainState(~chain)
+                let indexingAddresses = (chainState->ChainState.fetchState).indexingAddresses
 
                 // Collect all addresses for this contract name from indexingAddresses
                 let addresses = []
@@ -781,36 +780,37 @@ let start = async (
       | None => Initializing({})
       | Some(state) => {
           let chains =
-            (state->IndexerState.chainManager).chainFetchers
-            ->ChainMap.values
-            ->Array.map(cf => {
-              let {fetchState} = cf
+            state
+            ->IndexerState.chainStates
+            ->Dict.valuesToArray
+            ->Array.map(cs => {
+              let fetchState = cs->ChainState.fetchState
               let latestFetchedBlockNumber = Pervasives.max(
                 FetchState.bufferBlockNumber(fetchState),
                 0,
               )
               let knownHeight =
-                cf->ChainFetcher.hasProcessedToEndblock
-                  ? cf.fetchState.endBlock->Option.getOr(cf.fetchState.knownHeight)
-                  : cf.fetchState.knownHeight
+                cs->ChainState.hasProcessedToEndblock
+                  ? fetchState.endBlock->Option.getOr(fetchState.knownHeight)
+                  : fetchState.knownHeight
 
               {
-                chainId: cf.chainConfig.id->Int.toFloat,
+                chainId: (cs->ChainState.chainConfig).id->Int.toFloat,
                 poweredByHyperSync: (
-                  cf.sourceManager->SourceManager.getActiveSource
+                  cs->ChainState.sourceManager->SourceManager.getActiveSource
                 ).poweredByHyperSync,
                 latestFetchedBlockNumber,
                 knownHeight,
                 numBatchesFetched: 0,
-                startBlock: cf.fetchState.startBlock,
-                endBlock: cf.fetchState.endBlock,
-                firstEventBlockNumber: cf.fetchState.firstEventBlock,
-                latestProcessedBlock: cf.committedProgressBlockNumber === -1
+                startBlock: fetchState.startBlock,
+                endBlock: fetchState.endBlock,
+                firstEventBlockNumber: fetchState.firstEventBlock,
+                latestProcessedBlock: cs->ChainState.committedProgressBlockNumber === -1
                   ? None
-                  : Some(cf.committedProgressBlockNumber),
-                timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock,
-                numEventsProcessed: cf.numEventsProcessed,
-                numAddresses: cf.fetchState->FetchState.numAddresses,
+                  : Some(cs->ChainState.committedProgressBlockNumber),
+                timestampCaughtUpToHeadOrEndblock: cs->ChainState.timestampCaughtUpToHeadOrEndblock,
+                numEventsProcessed: cs->ChainState.numEventsProcessed,
+                numAddresses: fetchState->FetchState.numAddresses,
               }
             })
           Active({
@@ -825,16 +825,11 @@ let start = async (
     )
   }
 
-  let chainManager = ChainManager.makeFromDbState(
-    ~initialState=persistence->Persistence.getInitializedState,
-    ~config,
-    ~registrations,
-  )
-  let state = IndexerState.make(
+  let state = IndexerState.makeFromDbState(
     ~config,
     ~persistence,
-    ~committedCheckpointId=(persistence->Persistence.getInitializedState).checkpointId,
-    ~chainManager,
+    ~initialState=persistence->Persistence.getInitializedState,
+    ~registrations,
     ~isDevelopmentMode,
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,

@@ -8,6 +8,84 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
+let runContractRegistersOrThrow = async (
+  ~itemsWithContractRegister: array<Internal.item>,
+  ~config: Config.t,
+) => {
+  let itemsWithDcs = []
+
+  let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
+    let eventItem = item->Internal.castUnsafeEventItem
+    let {blockNumber} = eventItem
+
+    let dc: Internal.indexingAddress = {
+      address: contractAddress,
+      contractName,
+      registrationBlock: blockNumber,
+    }
+
+    switch item->Internal.getItemDcs {
+    | None => {
+        item->Internal.setItemDcs([dc])
+        itemsWithDcs->Array.push(item)
+      }
+    | Some(dcs) => dcs->Array.push(dc)
+    }
+  }
+
+  let promises = []
+  for idx in 0 to itemsWithContractRegister->Array.length - 1 {
+    let item = itemsWithContractRegister->Array.getUnsafe(idx)
+    let eventItem = item->Internal.castUnsafeEventItem
+    let contractRegister = switch eventItem {
+    | {eventConfig: {contractRegister: Some(contractRegister)}} => contractRegister
+    | {eventConfig: {contractRegister: None, name: eventName}} =>
+      // Unexpected case, since we should pass only events with contract register to this function
+      JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
+    }
+
+    let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
+
+    // Catch sync and async errors
+    try {
+      let params: ContractRegisterContext.contractRegisterParams = {
+        item,
+        onRegister,
+        config,
+        isResolved: false,
+      }
+      let result = contractRegister(ContractRegisterContext.getContractRegisterArgs(params))
+
+      // Even though `contractRegister` always returns a promise,
+      // in the ReScript type, but it might return a non-promise value for TS API.
+      if result->Utils.Promise.isCatchable {
+        promises->Array.push(
+          result
+          ->Promise.thenResolve(r => {
+            params.isResolved = true
+            r
+          })
+          ->Promise.catch(exn => {
+            params.isResolved = true
+            exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
+          }),
+        )
+      } else {
+        params.isResolved = true
+      }
+    } catch {
+    | exn =>
+      exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
+    }
+  }
+
+  if promises->Utils.Array.notEmpty {
+    let _ = await Promise.all(promises)
+  }
+
+  itemsWithDcs
+}
+
 let rec onQueryResponse = async (
   state: IndexerState.t,
   {chain, response, query}: partitionQueryResponse,
@@ -19,8 +97,7 @@ let rec onQueryResponse = async (
   if state->IndexerState.isStale(~stateId) {
     ()
   } else {
-    let originalChainManager = state->IndexerState.chainManager
-    let chainFetcher = originalChainManager.chainFetchers->ChainMap.get(chain)
+    let chainState = state->IndexerState.getChainState(~chain)
     let {
       parsedQueueItems,
       latestFetchedBlockNumber,
@@ -31,14 +108,14 @@ let rec onQueryResponse = async (
       fromBlockQueried,
     } = response
 
-    if knownHeight > chainFetcher.fetchState.knownHeight {
+    if knownHeight > (chainState->ChainState.fetchState).knownHeight {
       Prometheus.SourceHeight.set(
         ~blockNumber=knownHeight,
-        ~chainId=chainFetcher.chainConfig.id,
+        ~chainId=(chainState->ChainState.chainConfig).id,
         // The knownHeight from response won't necessarily
         // belong to the currently active source.
         // But for simplicity, assume it does.
-        ~sourceName=(chainFetcher.sourceManager->SourceManager.getActiveSource).name,
+        ~sourceName=(chainState->ChainState.sourceManager->SourceManager.getActiveSource).name,
       )
     }
 
@@ -50,12 +127,13 @@ let rec onQueryResponse = async (
       ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
     )
 
-    let (updatedReorgDetection, reorgResult: ReorgDetection.reorgResult) =
-      chainFetcher.reorgDetection->ReorgDetection.registerReorgGuard(~blockHashes, ~knownHeight)
+    let reorgResult = chainState->ChainState.registerReorgGuard(~blockHashes, ~knownHeight)
 
     let rollbackWithReorgDetectedBlockNumber = switch reorgResult {
     | ReorgDetected(reorgDetected) => {
-        chainFetcher.logger->Logging.childInfo(
+        chainState
+        ->ChainState.logger
+        ->Logging.childInfo(
           reorgDetected->ReorgDetection.reorgDetectedToLogParams(
             ~shouldRollbackOnReorg=(state->IndexerState.config).shouldRollbackOnReorg,
           ),
@@ -76,47 +154,30 @@ let rec onQueryResponse = async (
 
     switch rollbackWithReorgDetectedBlockNumber {
     | Some(reorgDetectedBlockNumber) =>
-      let restoredChainFetchers = switch state->IndexerState.rollbackState {
-      | RollbackReady({eventsProcessedDiffByChain}) =>
-        // Restore event counters for ALL chains, not just the reorg chain.
-        // The previous rollback subtracted from all chains' counters,
-        // but was never committed to DB. So we must undo the subtraction
-        // for every chain before the new rollback subtracts again.
-        originalChainManager.chainFetchers->ChainMap.mapWithKey((c, chainFetcher) => {
-          switch eventsProcessedDiffByChain->Utils.Dict.dangerouslyGetByIntNonOption(
-            c->ChainMap.Chain.toChainId,
-          ) {
-          | Some(eventsProcessedDiff) => {
-              ...chainFetcher,
-              // Since we detected a reorg, until rollback wasn't completed in the db
-              // We return the events processed counter to the pre-rollback value,
-              // to decrease it once more for the new rollback.
-              numEventsProcessed: chainFetcher.numEventsProcessed +. eventsProcessedDiff,
-            }
-          | None => chainFetcher
-          }
-        })
-      | _ => originalChainManager.chainFetchers
+      // Prepare every chain for the rollback: restore each events-processed
+      // counter (the previous, uncommitted rollback subtracted from all chains,
+      // so undo that before the new rollback subtracts again) and drop pending
+      // queries requested against the about-to-be-invalidated chain state.
+      let eventsProcessedDiffByChain = switch state->IndexerState.rollbackState {
+      | RollbackReady({eventsProcessedDiffByChain}) => Some(eventsProcessedDiffByChain)
+      | _ => None
       }
-      let chainManager = {
-        ...originalChainManager,
-        chainFetchers: restoredChainFetchers->ChainMap.map(chainFetcher => {
-          ...chainFetcher,
-          // TODO: It's not optimal to abort pending queries for all chains,
-          // this is how it always worked, but we should consider a better approach.
-          fetchState: chainFetcher.fetchState->FetchState.resetPendingQueries,
-        }),
-      }
-      state->IndexerState.beginReorg(~chain, ~blockNumber=reorgDetectedBlockNumber, ~chainManager)
+      state
+      ->IndexerState.chainStates
+      ->Utils.Dict.forEach(cs =>
+        cs->ChainState.prepareReorg(
+          ~eventsProcessedDiff=switch eventsProcessedDiffByChain {
+          | Some(byChain) =>
+            byChain->Utils.Dict.dangerouslyGetByIntNonOption((cs->ChainState.chainConfig).id)
+          | None => None
+          },
+        )
+      )
+      state->IndexerState.beginReorg(~chain, ~blockNumber=reorgDetectedBlockNumber)
       // Advances synchronously to FindingReorgDepth, so a concurrent rollback
       // kick (eg from the processing loop quiescing) collapses into this one.
       scheduleRollback()
     | None =>
-      state->IndexerState.setChainFetcher(
-        ~chain,
-        {...chainFetcher, reorgDetection: updatedReorgDetection},
-      )
-
       let itemsWithContractRegister = []
       let newItems = []
       for idx in 0 to parsedQueueItems->Array.length - 1 {
@@ -154,7 +215,7 @@ let rec onQueryResponse = async (
       switch itemsWithContractRegister {
       | [] => proceed(~newItemsWithDcs=[])
       | _ =>
-        switch await ChainFetcher.runContractRegistersOrThrow(
+        switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
         ) {
@@ -174,43 +235,34 @@ and applyQueryResponse = (
   ~latestFetchedBlock,
   ~query,
 ) => {
-  let chainFetcher = (state->IndexerState.chainManager).chainFetchers->ChainMap.get(chain)
+  let chainState = state->IndexerState.getChainState(~chain)
+  let wasFetchingAtHead = chainState->ChainState.isFetchingAtHead
 
-  let updatedChainFetcher =
-    chainFetcher->ChainFetcher.handleQueryResult(
-      ~query,
-      ~latestFetchedBlock,
-      ~newItems,
-      ~newItemsWithDcs,
-      ~knownHeight,
-    )
+  chainState->ChainState.handleQueryResult(
+    ~query,
+    ~latestFetchedBlock,
+    ~newItems,
+    ~newItemsWithDcs,
+    ~knownHeight,
+  )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
-  // Also update if a partition returns events at an earlier block than current endBlock.
-  let updatedChainFetcher = if (
-    state->IndexerState.exitAfterFirstEventBlock && newItems->Array.length > 0
+  if state->IndexerState.exitAfterFirstEventBlock && newItems->Array.length > 0 {
+    chainState->ChainState.setEndBlockToFirstEvent(
+      ~blockNumber=newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
+    )
+  }
+
+  // Log the backfill→head transition once: this response brought the fetch
+  // frontier to the head. Gated on !isReady so realtime re-catch-ups (a new
+  // block arrives, gets fetched) don't spam the log after the chain is synced.
+  if (
+    !wasFetchingAtHead &&
+    !(chainState->ChainState.isReady) &&
+    chainState->ChainState.isFetchingAtHead
   ) {
-    let firstEventBlock = newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber
-    switch updatedChainFetcher.fetchState.endBlock {
-    | None => {
-        ...updatedChainFetcher,
-        fetchState: {...updatedChainFetcher.fetchState, endBlock: Some(firstEventBlock)},
-      }
-    | Some(currentEndBlock) if firstEventBlock < currentEndBlock => {
-        ...updatedChainFetcher,
-        fetchState: {...updatedChainFetcher.fetchState, endBlock: Some(firstEventBlock)},
-      }
-    | Some(_) => updatedChainFetcher
-    }
-  } else {
-    updatedChainFetcher
+    chainState->ChainState.logger->Logging.childInfo("All events have been fetched")
   }
-
-  if !chainFetcher.isProgressAtHead && updatedChainFetcher.isProgressAtHead {
-    updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
-  }
-
-  state->IndexerState.setChainFetcher(~chain, updatedChainFetcher)
 }
 
 let finishWaitingForNewBlock = (
@@ -225,32 +277,20 @@ let finishWaitingForNewBlock = (
   if state->IndexerState.isStale(~stateId) {
     ()
   } else {
-    let updatedChainFetchers = (
-      state->IndexerState.chainManager
-    ).chainFetchers->ChainMap.update(chain, chainFetcher => {
-      let updatedFetchState = chainFetcher.fetchState->FetchState.updateKnownHeight(~knownHeight)
-      if updatedFetchState !== chainFetcher.fetchState {
-        {
-          ...chainFetcher,
-          fetchState: updatedFetchState,
-        }
-      } else {
-        chainFetcher
-      }
-    })
+    let chainState = state->IndexerState.getChainState(~chain)
+    chainState->ChainState.updateKnownHeight(~knownHeight)
 
     let isBelowReorgThreshold =
-      !(state->IndexerState.chainManager).isInReorgThreshold &&
+      !(state->IndexerState.isInReorgThreshold) &&
       (state->IndexerState.config).shouldRollbackOnReorg
     let shouldEnterReorgThreshold =
       isBelowReorgThreshold &&
-      updatedChainFetchers
-      ->ChainMap.values
-      ->Array.every(chainFetcher => {
-        chainFetcher.fetchState->FetchState.isReadyToEnterReorgThreshold
+      state
+      ->IndexerState.chainStates
+      ->Dict.valuesToArray
+      ->Array.every(cs => {
+        cs->ChainState.fetchState->FetchState.isReadyToEnterReorgThreshold
       })
-
-    state->IndexerState.setChainFetchers(updatedChainFetchers)
 
     // Kick processing in case there are block handlers to run.
     if shouldEnterReorgThreshold {
@@ -271,10 +311,11 @@ let checkAndFetchForChain = async (
   ~scheduleProcessing,
   ~scheduleRollback,
 ) => {
-  let chainFetcher = (state->IndexerState.chainManager).chainFetchers->ChainMap.get(chain)
+  let chainState = state->IndexerState.getChainState(~chain)
   if !(state->IndexerState.isResolvingReorg) && !(state->IndexerState.isStopped) {
-    let {fetchState} = chainFetcher
-    let isRealtime = (state->IndexerState.chainManager).isRealtime
+    let fetchState = chainState->ChainState.fetchState
+    let isRealtime = state->IndexerState.isRealtime
+    let sourceManager = chainState->ChainState.sourceManager
 
     // Only affects the WaitingForNewBlock branch of fetchNext, where
     // there's nothing to fetch. During backfill any such chain is idle.
@@ -283,14 +324,10 @@ let checkAndFetchForChain = async (
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or fetchNext itself) must stop the indexer.
     try {
-      await chainFetcher.sourceManager->SourceManager.fetchNext(
+      await sourceManager->SourceManager.fetchNext(
         ~fetchState,
         ~waitForNewBlock=(~knownHeight) =>
-          chainFetcher.sourceManager->SourceManager.waitForNewBlock(
-            ~knownHeight,
-            ~isRealtime,
-            ~reducedPolling,
-          ),
+          sourceManager->SourceManager.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling),
         ~onNewBlock=(~knownHeight) =>
           finishWaitingForNewBlock(
             state,
@@ -306,7 +343,7 @@ let checkAndFetchForChain = async (
           // rejects: fetchNext spins a side-chain off it that would otherwise
           // become an unhandled rejection.
           try {
-            let response = await chainFetcher.sourceManager->SourceManager.executeQuery(
+            let response = await sourceManager->SourceManager.executeQuery(
               ~query,
               ~knownHeight=fetchState.knownHeight,
               ~isRealtime,
@@ -340,14 +377,15 @@ let checkAndFetchAllChains = async (
   ~scheduleProcessing,
   ~scheduleRollback,
 ) => {
-  //Mapping from the states chainManager so we can construct tests that don't use
-  //all chains
-  let _ = await (state->IndexerState.chainManager).chainFetchers
-  ->ChainMap.keys
-  ->Array.map(chain =>
+  // Iterate the state's chain states so we can construct tests that don't use
+  // all chains
+  let _ = await state
+  ->IndexerState.chainStates
+  ->Dict.valuesToArray
+  ->Array.map(cs =>
     checkAndFetchForChain(
       state,
-      chain,
+      ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id),
       ~stateId,
       ~scheduleFetchAllChains,
       ~scheduleFetchChain,

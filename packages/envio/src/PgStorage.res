@@ -308,7 +308,12 @@ let rec makeFilterCondition = (
         }),
       )
     }
-  let serializeParamOrThrow = (~queryField: Table.queryField, ~fieldName, ~fieldValue: unknown, ~isArray) => {
+  let serializeParamOrThrow = (
+    ~queryField: Table.queryField,
+    ~fieldName,
+    ~fieldValue: unknown,
+    ~isArray,
+  ) => {
     let param = try fieldValue->S.reverseConvertToJsonOrThrow(
       isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
     ) catch {
@@ -1493,7 +1498,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
-        indexingAddresses: ChainFetcher.configAddresses(chainConfig),
+        indexingAddresses: ChainState.configAddresses(chainConfig),
         sourceBlockNumber: 0,
       }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,
