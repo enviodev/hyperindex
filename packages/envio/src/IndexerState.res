@@ -89,7 +89,12 @@ type t = {
   chainMetaThrottler: Throttler.t,
   // True while a batch is being processed; guards ProcessEventBatch re-entry.
   mutable isProcessing: bool,
-  mutable chainManager: ChainManager.t,
+  // --- Chain state: per-chain runtime state plus the run-wide flags that were
+  // the chain manager. Each chain state is mutated in place through ChainState. ---
+  mutable chainStates: dict<ChainState.t>,
+  // True once every chain has caught up to head/endBlock. Monotonic during a run.
+  mutable isRealtime: bool,
+  mutable isInReorgThreshold: bool,
   mutable rollbackState: rollbackState,
   indexerStartTime: Date.t,
   writeThrottlers: WriteThrottlers.t,
@@ -111,7 +116,9 @@ type t = {
 let make = (
   ~config: Config.t,
   ~persistence: Persistence.t,
-  ~chainManager: ChainManager.t,
+  ~chainStates: dict<ChainState.t>,
+  ~isInReorgThreshold: bool,
+  ~isRealtime: bool,
   ~committedCheckpointId=Internal.initialCheckpointId,
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
@@ -149,7 +156,9 @@ let make = (
     chainMetaDirty: false,
     chainMetaThrottler,
     isProcessing: false,
-    chainManager,
+    chainStates,
+    isInReorgThreshold,
+    isRealtime,
     indexerStartTime: Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(),
@@ -160,6 +169,124 @@ let make = (
     isStopped: false,
     epoch: 0,
   }
+}
+
+// Check if progress is past the reorg threshold (safe block).
+// A chain is in reorg threshold when progressBlockNumber > sourceBlockNumber - maxReorgDepth.
+// This matches the logic in InternalTable.Checkpoints.makeGetReorgCheckpointsQuery.
+let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~maxReorgDepth) => {
+  maxReorgDepth > 0 &&
+  sourceBlockNumber > 0 &&
+  progressBlockNumber > sourceBlockNumber - maxReorgDepth
+}
+
+let calculateTargetBufferSize = (~activeChainsCount) => {
+  switch Env.targetBufferSize {
+  | Some(size) => size
+  | None =>
+    switch activeChainsCount {
+    | 1 => 60_000
+    | 2 => 30_000
+    | 3 => 20_000
+    | 4 => 15_000
+    | 5 => 10_000
+    | _ => 5_000
+    }
+  }
+}
+
+let makeFromDbState = (
+  ~config: Config.t,
+  ~persistence: Persistence.t,
+  ~initialState: Persistence.initialState,
+  ~registrations,
+  ~isDevelopmentMode=false,
+  ~shouldUseTui=false,
+  ~exitAfterFirstEventBlock=false,
+  ~reducedPollingInterval=?,
+  ~onError,
+) => {
+  let isInReorgThreshold = if initialState.cleanRun {
+    false
+  } else {
+    // Check if any chain is in reorg threshold by comparing progress with sourceBlock - maxReorgDepth.
+    initialState.chains->Array.some(chain =>
+      isProgressInReorgThreshold(
+        ~progressBlockNumber=chain.progressBlockNumber,
+        ~sourceBlockNumber=chain.sourceBlockNumber,
+        ~maxReorgDepth=chain.maxReorgDepth,
+      )
+    )
+  }
+
+  let targetBufferSize = calculateTargetBufferSize(
+    ~activeChainsCount=initialState.chains->Array.length,
+  )
+  Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
+  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
+  Prometheus.ReorgThreshold.set(~isInReorgThreshold)
+  initialState.cache->Utils.Dict.forEach(({effectName, count}) => {
+    Prometheus.EffectCacheCount.set(~count, ~effectName)
+  })
+
+  // updateSyncTimeOnRestart wipes the saved timestamp so a restart re-enters
+  // backfill mode for all chains.
+  let isRealtime =
+    !Env.updateSyncTimeOnRestart &&
+    initialState.chains->Array.length > 0 &&
+    initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
+
+  let chainStates = Dict.make()
+  initialState.chains->Array.forEach((resumedChainState: Persistence.initialChainState) => {
+    let chain = Config.getChain(config, ~chainId=resumedChainState.id)
+    let chainConfig = config.chainMap->ChainMap.get(chain)
+    chainStates->Utils.Dict.setByInt(
+      resumedChainState.id,
+      chainConfig->ChainState.makeFromDbState(
+        ~resumedChainState,
+        ~reorgCheckpoints=initialState.reorgCheckpoints,
+        ~isInReorgThreshold,
+        ~isRealtime,
+        ~targetBufferSize,
+        ~config,
+        ~registrations,
+        ~reducedPollingInterval?,
+      ),
+    )
+  })
+
+  // Set initial progress metrics from DB state so dashboards reflect
+  // the persisted state immediately on restart
+  let allChainsReady = ref(initialState.chains->Array.length > 0)
+  chainStates->Utils.Dict.forEach(cs => {
+    let chainId = (cs->ChainState.chainConfig).id
+    Prometheus.ProgressBlockNumber.set(
+      ~blockNumber=cs->ChainState.committedProgressBlockNumber,
+      ~chainId,
+    )
+    Prometheus.ProgressReady.init(~chainId)
+    if cs->ChainState.isReady {
+      Prometheus.ProgressReady.set(~chainId)
+    } else {
+      allChainsReady := false
+    }
+  })
+  if allChainsReady.contents {
+    Prometheus.ProgressReady.setAllReady()
+  }
+
+  make(
+    ~config,
+    ~persistence,
+    ~chainStates,
+    ~isInReorgThreshold,
+    ~isRealtime,
+    ~committedCheckpointId=initialState.checkpointId,
+    ~isDevelopmentMode,
+    ~shouldUseTui,
+    ~exitAfterFirstEventBlock,
+    ~onError,
+  )
 }
 
 // A fetch response or new-block waiter is stale once the indexer stopped or the
@@ -193,44 +320,98 @@ let unexpectedErrorMsg = "Indexer has failed with an unexpected error"
 // resumed indexer in tests.
 let stop = (state: t) => state.isStopped = true
 
-let setChainManager = (state: t, chainManager) => state.chainManager = chainManager
-
-let setChainFetchers = (state: t, chainFetchers) =>
-  state.chainManager = {...state.chainManager, chainFetchers}
-
-let setChainFetcher = (state: t, ~chain, chainFetcher) =>
-  state.chainManager = {
-    ...state.chainManager,
-    chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, chainFetcher),
+let getChainState = (state: t, ~chain: chain): ChainState.t =>
+  switch state.chainStates->Utils.Dict.dangerouslyGetByIntNonOption(
+    chain->ChainMap.Chain.toChainId,
+  ) {
+  | Some(cs) => cs
+  | None =>
+    // Should be unreachable, since we validate on Chain.t creation
+    JsError.throwWithMessage(
+      "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in chain states",
+    )
   }
 
-// Enter the reorg threshold: shrink each fetcher's buffer by its configured
-// blockLag and flip the manager flag.
+let nextItemIsNone = (state: t): bool =>
+  !Batch.hasReadyItem(state.chainStates->Dict.valuesToArray->Array.map(ChainState.fetchState))
+
+let isProgressAtHead = (state: t) =>
+  state.chainStates->Dict.valuesToArray->Array.every(ChainState.isProgressAtHead)
+
+let getSafeCheckpointId = (state: t) => {
+  let result: ref<option<bigint>> = ref(None)
+
+  state.chainStates->Utils.Dict.forEach(cs => {
+    switch cs->ChainState.safeCheckpointTracking {
+    | None => () // Skip chains with maxReorgDepth = 0
+    | Some(safeCheckpointTracking) => {
+        let safeCheckpointId =
+          safeCheckpointTracking->SafeCheckpointTracking.getSafeCheckpointId(
+            ~sourceBlockNumber=(cs->ChainState.fetchState).knownHeight,
+          )
+        switch result.contents {
+        | None => result := Some(safeCheckpointId)
+        | Some(current) if safeCheckpointId < current => result := Some(safeCheckpointId)
+        | _ => ()
+        }
+      }
+    }
+  })
+
+  switch result.contents {
+  | Some(id) if id > 0n => Some(id)
+  | _ => None // No safe checkpoint found
+  }
+}
+
+let createBatch = (
+  state: t,
+  ~processedCheckpointId,
+  ~batchSizeTarget: int,
+  ~isRollback: bool,
+): Batch.t => {
+  Batch.make(
+    ~isInReorgThreshold=state.isInReorgThreshold,
+    ~checkpointIdBeforeBatch=processedCheckpointId->BigInt.add(
+      // Since for rollback we have a diff checkpoint id.
+      // This is needed to currectly overwrite old state
+      // in an append-only ClickHouse insert.
+      isRollback ? 1n : 0n,
+    ),
+    ~chainsBeforeBatch=state.chainStates->Utils.Dict.mapValues((cs): Batch.chainBeforeBatch => {
+      fetchState: cs->ChainState.fetchState,
+      progressBlockNumber: cs->ChainState.committedProgressBlockNumber,
+      totalEventsProcessed: cs->ChainState.numEventsProcessed,
+      sourceBlockNumber: (cs->ChainState.fetchState).knownHeight,
+      reorgDetection: cs->ChainState.reorgDetection,
+      chainConfig: cs->ChainState.chainConfig,
+    }),
+    ~batchSizeTarget,
+  )
+}
+
+// Enter the reorg threshold: shrink each chain's buffer by its configured
+// blockLag and flip the flag.
 let enterReorgThreshold = (state: t) => {
   Logging.info("Reorg threshold reached")
   Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
 
-  let chainFetchers = state.chainManager.chainFetchers->ChainMap.map(chainFetcher => {
-    {
-      ...chainFetcher,
-      fetchState: chainFetcher.fetchState->FetchState.updateInternal(
-        ~blockLag=chainFetcher.chainConfig.blockLag,
-      ),
-    }
+  state.chainStates->Utils.Dict.forEach(cs => {
+    cs->ChainState.setFetchState(
+      cs
+      ->ChainState.fetchState
+      ->FetchState.updateInternal(~blockLag=(cs->ChainState.chainConfig).blockLag),
+    )
   })
 
-  state.chainManager = {
-    ...state.chainManager,
-    chainFetchers,
-    isInReorgThreshold: true,
-  }
+  state.isInReorgThreshold = true
 }
 
-// Begin a reorg rollback. Commits the caller-rebuilt manager, invalidates
-// in-flight fetches and enters the ReorgDetected state as one step, so the epoch
-// bump can never be left out. isResolvingReorg derives from rollbackState.
-let beginReorg = (state: t, ~chain, ~blockNumber, ~chainManager) => {
-  state.chainManager = chainManager
+// Begin a reorg rollback. Invalidates in-flight fetches and enters the
+// ReorgDetected state as one step, so the epoch bump can never be left out. The
+// caller has already mutated the chain states (restored counters, reset pending
+// queries). isResolvingReorg derives from rollbackState.
+let beginReorg = (state: t, ~chain, ~blockNumber) => {
   state.epoch = state.epoch + 1
   state.rollbackState = ReorgDetected({chain, blockNumber})
 }
@@ -240,12 +421,11 @@ let enterFindingReorgDepth = (state: t) => state.rollbackState = FindingReorgDep
 let foundReorgDepth = (state: t, ~chain, ~rollbackTargetBlockNumber) =>
   state.rollbackState = FoundReorgDepth({chain, rollbackTargetBlockNumber})
 
-// Finish a rollback. Commits the rolled-back manager and leaves the diff ready
-// for the next batch to consume; RollbackReady makes isResolvingReorg false, so
-// processing resumes to apply it.
-let completeRollback = (state: t, ~eventsProcessedDiffByChain, ~chainManager) => {
+// Finish a rollback. The caller has already rolled the chain states back in
+// place; this leaves the diff ready for the next batch to consume.
+// RollbackReady makes isResolvingReorg false, so processing resumes to apply it.
+let completeRollback = (state: t, ~eventsProcessedDiffByChain) => {
   state.rollbackState = RollbackReady({eventsProcessedDiffByChain: eventsProcessedDiffByChain})
-  state.chainManager = chainManager
 }
 
 let clearRollback = (state: t) => state.rollbackState = NoRollback
@@ -254,8 +434,138 @@ let clearRollback = (state: t) => state.rollbackState = NoRollback
 // realtime transition where the parked waiter is bound to the pre-realtime source.
 let invalidateInflight = (state: t) => state.epoch = state.epoch + 1
 
-let applyBatchProgress = (state: t, ~batch) =>
-  state.chainManager = state.chainManager->ChainManager.updateProgressedChains(~batch)
+/**
+Sets all chains' timestampCaughtUpToHeadOrEndblock when valid state lines up, and
+commits each progressed chain's batch progress, mutating the chain states in place.
+*/
+let applyBatchProgress = (state: t, ~batch: Batch.t) => {
+  let nextQueueItemIsNone = state->nextItemIsNone
+  let allChainsAtHead = state->isProgressAtHead
+  let allChainsReady = ref(true)
+
+  state.chainStates->Utils.Dict.forEach(cs => {
+    let chainId = (cs->ChainState.chainConfig).id
+    let wasReady = cs->ChainState.isReady
+
+    switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
+    | Some(chainAfterBatch) => {
+        if cs->ChainState.committedProgressBlockNumber !== chainAfterBatch.progressBlockNumber {
+          Prometheus.ProgressBlockNumber.set(
+            ~blockNumber=chainAfterBatch.progressBlockNumber,
+            ~chainId,
+          )
+        }
+        if cs->ChainState.numEventsProcessed !== chainAfterBatch.totalEventsProcessed {
+          Prometheus.ProgressEventsCount.set(
+            ~processedCount=chainAfterBatch.totalEventsProcessed,
+            ~chainId,
+          )
+        }
+
+        // Calculate and set latency metrics
+        switch batch->Batch.findLastEventItem(~chainId) {
+        | Some(eventItem) => {
+            let blockTimestamp = eventItem.timestamp
+            let currentTimeMs = Date.now()->Float.toInt
+            let blockTimestampMs = blockTimestamp * 1000
+            let latencyMs = currentTimeMs - blockTimestampMs
+
+            Prometheus.ProgressLatency.set(~latencyMs, ~chainId)
+          }
+        | None => ()
+        }
+
+        // Since we process per chain always in order,
+        // we need to calculate it once, by using the first item in a batch
+        switch (cs->ChainState.fetchState).firstEventBlock {
+        | Some(_) => ()
+        | None =>
+          switch batch->Batch.findFirstEventBlockNumber(~chainId) {
+          | Some(_) as firstEventBlock =>
+            cs->ChainState.setFetchState({...cs->ChainState.fetchState, firstEventBlock})
+          | None => ()
+          }
+        }
+
+        cs->ChainState.setCommittedProgressBlockNumber(chainAfterBatch.progressBlockNumber)
+        cs->ChainState.setNumEventsProcessed(chainAfterBatch.totalEventsProcessed)
+        cs->ChainState.setIsProgressAtHead(
+          cs->ChainState.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated,
+        )
+        switch cs->ChainState.safeCheckpointTracking {
+        | Some(safeCheckpointTracking) =>
+          cs->ChainState.setSafeCheckpointTracking(
+            Some(
+              safeCheckpointTracking->SafeCheckpointTracking.updateOnNewBatch(
+                ~sourceBlockNumber=(cs->ChainState.fetchState).knownHeight,
+                ~chainId,
+                ~batchCheckpointIds=batch.checkpointIds,
+                ~batchCheckpointBlockNumbers=batch.checkpointBlockNumbers,
+                ~batchCheckpointChainIds=batch.checkpointChainIds,
+              ),
+            ),
+          )
+        | None => ()
+        }
+      }
+    | None => ()
+    }
+
+    /* strategy for TUI synced status:
+     * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
+     *
+     * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
+     *
+     * New conditions for valid synced:
+     *
+     * CASE 1 (chains are being synchronised at the head)
+     *
+     * All chain fetchers are fetching at the head AND
+     * No events that can be processed on the queue (even if events still exist on the individual queues)
+     * CASE 2 (chain finishes earlier than any other chain)
+     *
+     * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
+     *
+     * The given chain fetcher is fetching at the head or latest processed block >= endblock
+     * The given chain has processed all events on the queue
+     * see https://github.com/Float-Capital/indexer/pull/1388 */
+    if cs->ChainState.hasProcessedToEndblock {
+      // in the case this is already set, don't reset and instead propagate the existing value
+      if !(cs->ChainState.isReady) {
+        cs->ChainState.setTimestampCaughtUpToHeadOrEndblock(Date.make()->Some)
+      }
+    } else if !(cs->ChainState.isReady) && cs->ChainState.isProgressAtHead {
+      //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
+      //its not already set
+      //CASE1
+      //All chains are caught up to head chainManager queue returns None
+      //Meaning we are busy synchronizing chains at the head
+      if nextQueueItemIsNone && allChainsAtHead {
+        cs->ChainState.setTimestampCaughtUpToHeadOrEndblock(Date.make()->Some)
+      } else if cs->ChainState.hasNoMoreEventsToProcess {
+        //CASE2 -> Only calculate if case1 fails
+        //All events have been processed on the chain fetchers queue
+        //Other chains may be busy syncing
+        cs->ChainState.setTimestampCaughtUpToHeadOrEndblock(Date.make()->Some)
+      }
+    }
+
+    // Set envio_progress_ready per-chain when it first becomes ready
+    if cs->ChainState.isReady {
+      if !wasReady {
+        Prometheus.ProgressReady.set(~chainId)
+      }
+    } else {
+      allChainsReady := false
+    }
+  })
+
+  if allChainsReady.contents {
+    Prometheus.ProgressReady.setAllReady()
+  }
+
+  state.isRealtime = state.isRealtime || allChainsReady.contents
+}
 
 // Processing-loop mutex. Guards ProcessEventBatch re-entry so only one
 // processing loop runs at a time.
@@ -284,7 +594,9 @@ let writeFiber = (state: t) => state.writeFiber
 let hasFailedWrite = (state: t) => state.hasFailedWrite
 let chainMetaDirty = (state: t) => state.chainMetaDirty
 let chainMetaThrottler = (state: t) => state.chainMetaThrottler
-let chainManager = (state: t) => state.chainManager
+let chainStates = (state: t) => state.chainStates
+let isInReorgThreshold = (state: t) => state.isInReorgThreshold
+let isRealtime = (state: t) => state.isRealtime
 let rollbackState = (state: t) => state.rollbackState
 let indexerStartTime = (state: t) => state.indexerStartTime
 let loadManager = (state: t) => state.loadManager

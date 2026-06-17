@@ -1,24 +1,20 @@
-//A filter should return true if the event should be kept and isValid should return
-//false when the filter should be removed/cleaned up
-type processingFilter = {
-  filter: Internal.item => bool,
-  isValid: (~fetchState: FetchState.t) => bool,
-}
+// Per-chain runtime state. `t` is mutated in place through the setters below;
+// the type is opaque in the interface so callers can read fields but can only
+// change them through the sanctioned mutators.
 
 type t = {
   logger: Pino.t,
-  fetchState: FetchState.t,
+  mutable fetchState: FetchState.t,
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
-  isProgressAtHead: bool,
-  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  committedProgressBlockNumber: int,
-  numEventsProcessed: float,
-  reorgDetection: ReorgDetection.t,
-  safeCheckpointTracking: option<SafeCheckpointTracking.t>,
+  mutable isProgressAtHead: bool,
+  mutable timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  mutable committedProgressBlockNumber: int,
+  mutable numEventsProcessed: float,
+  mutable reorgDetection: ReorgDetection.t,
+  mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
 }
 
-//CONSTRUCTION
 let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
   let addresses = []
   chainConfig.contracts->Array.forEach(contract => {
@@ -34,6 +30,30 @@ let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddres
 }
 
 let make = (
+  ~chainConfig: Config.chain,
+  ~fetchState: FetchState.t,
+  ~sourceManager: SourceManager.t,
+  ~reorgDetection: ReorgDetection.t,
+  ~committedProgressBlockNumber: int,
+  ~safeCheckpointTracking=None,
+  ~numEventsProcessed=0.,
+  ~timestampCaughtUpToHeadOrEndblock=None,
+  ~isProgressAtHead=false,
+  ~logger: Pino.t,
+): t => {
+  logger,
+  fetchState,
+  sourceManager,
+  chainConfig,
+  isProgressAtHead,
+  timestampCaughtUpToHeadOrEndblock,
+  committedProgressBlockNumber,
+  numEventsProcessed,
+  reorgDetection,
+  safeCheckpointTracking,
+}
+
+let makeInternal = (
   ~chainConfig: Config.chain,
   ~indexingAddresses: array<Internal.indexingAddress>,
   ~startBlock,
@@ -258,31 +278,30 @@ let make = (
   | Config.CustomSources(sources) => sources
   }
 
-  {
-    logger,
-    chainConfig,
-    sourceManager: SourceManager.make(
+  make(
+    ~chainConfig,
+    ~fetchState,
+    ~sourceManager=SourceManager.make(
       ~sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
       ~isRealtime,
       ~reducedPollingInterval?,
     ),
-    reorgDetection: ReorgDetection.make(
+    ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints,
       ~maxReorgDepth,
       ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
     ),
-    safeCheckpointTracking: SafeCheckpointTracking.make(
+    ~safeCheckpointTracking=SafeCheckpointTracking.make(
       ~maxReorgDepth,
       ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
       ~chainReorgCheckpoints,
     ),
-    isProgressAtHead: false,
-    fetchState,
-    committedProgressBlockNumber: progressBlockNumber,
-    timestampCaughtUpToHeadOrEndblock,
-    numEventsProcessed,
-  }
+    ~committedProgressBlockNumber=progressBlockNumber,
+    ~timestampCaughtUpToHeadOrEndblock,
+    ~numEventsProcessed,
+    ~logger,
+  )
 }
 
 let makeFromConfig = (
@@ -294,7 +313,7 @@ let makeFromConfig = (
 ) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
 
-  make(
+  makeInternal(
     ~chainConfig,
     ~config,
     ~registrations,
@@ -315,7 +334,7 @@ let makeFromConfig = (
 }
 
 /**
- * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
+ * This function allows a chain state to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
 let makeFromDbState = (
   chainConfig: Config.chain,
@@ -339,7 +358,7 @@ let makeFromDbState = (
       ? resumedChainState.progressBlockNumber
       : resumedChainState.startBlock - 1
 
-  make(
+  makeInternal(
     ~indexingAddresses=resumedChainState.indexingAddresses,
     ~chainConfig,
     ~startBlock=resumedChainState.startBlock,
@@ -363,86 +382,35 @@ let makeFromDbState = (
   )
 }
 
-let runContractRegistersOrThrow = async (
-  ~itemsWithContractRegister: array<Internal.item>,
-  ~config: Config.t,
-) => {
-  let itemsWithDcs = []
+// --- Read accessors. ---
 
-  let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
-    let eventItem = item->Internal.castUnsafeEventItem
-    let {blockNumber} = eventItem
+let logger = (cs: t) => cs.logger
+let fetchState = (cs: t) => cs.fetchState
+let sourceManager = (cs: t) => cs.sourceManager
+let chainConfig = (cs: t) => cs.chainConfig
+let reorgDetection = (cs: t) => cs.reorgDetection
+let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
+let isProgressAtHead = (cs: t) => cs.isProgressAtHead
+let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
+let numEventsProcessed = (cs: t) => cs.numEventsProcessed
+let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
 
-    let dc: Internal.indexingAddress = {
-      address: contractAddress,
-      contractName,
-      registrationBlock: blockNumber,
-    }
+// --- Mutators. ---
 
-    switch item->Internal.getItemDcs {
-    | None => {
-        item->Internal.setItemDcs([dc])
-        itemsWithDcs->Array.push(item)
-      }
-    | Some(dcs) => dcs->Array.push(dc)
-    }
-  }
-
-  let promises = []
-  for idx in 0 to itemsWithContractRegister->Array.length - 1 {
-    let item = itemsWithContractRegister->Array.getUnsafe(idx)
-    let eventItem = item->Internal.castUnsafeEventItem
-    let contractRegister = switch eventItem {
-    | {eventConfig: {contractRegister: Some(contractRegister)}} => contractRegister
-    | {eventConfig: {contractRegister: None, name: eventName}} =>
-      // Unexpected case, since we should pass only events with contract register to this function
-      JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
-    }
-
-    let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
-
-    // Catch sync and async errors
-    try {
-      let params: ContractRegisterContext.contractRegisterParams = {
-        item,
-        onRegister,
-        config,
-        isResolved: false,
-      }
-      let result = contractRegister(ContractRegisterContext.getContractRegisterArgs(params))
-
-      // Even though `contractRegister` always returns a promise,
-      // in the ReScript type, but it might return a non-promise value for TS API.
-      if result->Utils.Promise.isCatchable {
-        promises->Array.push(
-          result
-          ->Promise.thenResolve(r => {
-            params.isResolved = true
-            r
-          })
-          ->Promise.catch(exn => {
-            params.isResolved = true
-            exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
-          }),
-        )
-      } else {
-        params.isResolved = true
-      }
-    } catch {
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
-    }
-  }
-
-  if promises->Utils.Array.notEmpty {
-    let _ = await Promise.all(promises)
-  }
-
-  itemsWithDcs
-}
+let setFetchState = (cs: t, fetchState) => cs.fetchState = fetchState
+let setReorgDetection = (cs: t, reorgDetection) => cs.reorgDetection = reorgDetection
+let setSafeCheckpointTracking = (cs: t, safeCheckpointTracking) =>
+  cs.safeCheckpointTracking = safeCheckpointTracking
+let setIsProgressAtHead = (cs: t, isProgressAtHead) => cs.isProgressAtHead = isProgressAtHead
+let setCommittedProgressBlockNumber = (cs: t, committedProgressBlockNumber) =>
+  cs.committedProgressBlockNumber = committedProgressBlockNumber
+let setNumEventsProcessed = (cs: t, numEventsProcessed) =>
+  cs.numEventsProcessed = numEventsProcessed
+let setTimestampCaughtUpToHeadOrEndblock = (cs: t, timestampCaughtUpToHeadOrEndblock) =>
+  cs.timestampCaughtUpToHeadOrEndblock = timestampCaughtUpToHeadOrEndblock
 
 let handleQueryResult = (
-  chainFetcher: t,
+  cs: t,
   ~query: FetchState.query,
   ~newItems,
   ~newItemsWithDcs,
@@ -450,70 +418,33 @@ let handleQueryResult = (
   ~knownHeight,
 ) => {
   let fs = switch newItemsWithDcs {
-  | [] => chainFetcher.fetchState
-  | _ => chainFetcher.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
+  | [] => cs.fetchState
+  | _ => cs.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
   }
 
-  {
-    ...chainFetcher,
-    fetchState: fs
+  cs.fetchState =
+    fs
     ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
-    ->FetchState.updateKnownHeight(~knownHeight),
-  }
+    ->FetchState.updateKnownHeight(~knownHeight)
 }
 
-/**
-Gets the latest item on the front of the queue and returns updated fetcher
-*/
-let hasProcessedToEndblock = (self: t) => {
-  let {committedProgressBlockNumber, fetchState} = self
+let hasProcessedToEndblock = (cs: t) => {
+  let {committedProgressBlockNumber, fetchState} = cs
   switch fetchState.endBlock {
   | Some(endBlock) => committedProgressBlockNumber >= endBlock
   | None => false
   }
 }
 
-let hasNoMoreEventsToProcess = (self: t) => {
-  self.fetchState->FetchState.bufferSize === 0
+let hasNoMoreEventsToProcess = (cs: t) => {
+  cs.fetchState->FetchState.bufferSize === 0
 }
 
-let getHighestBlockBelowThreshold = (cf: t): int => {
-  let highestBlockBelowThreshold = cf.fetchState.knownHeight - cf.chainConfig.maxReorgDepth
+let getHighestBlockBelowThreshold = (cs: t): int => {
+  let highestBlockBelowThreshold = cs.fetchState.knownHeight - cs.chainConfig.maxReorgDepth
   highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
 }
 
-/**
-Finds the last known valid block number below the reorg block
-If not found, returns the highest block below threshold
-*/
-let getLastKnownValidBlock = async (chainFetcher: t, ~reorgBlockNumber: int, ~isRealtime: bool) => {
-  // Don't include the reorg block itself — different source instances
-  // may have mismatching hashes at the head, so we always rollback
-  // the block where we detected the reorg.
-  let scannedBlockNumbers =
-    chainFetcher.reorgDetection->ReorgDetection.getThresholdBlockNumbersBelowBlock(
-      ~blockNumber=reorgBlockNumber,
-      ~knownHeight=chainFetcher.fetchState.knownHeight,
-    )
+let isActivelyIndexing = (cs: t) => cs.fetchState->FetchState.isActivelyIndexing
 
-  switch scannedBlockNumbers {
-  | [] => chainFetcher->getHighestBlockBelowThreshold
-  | _ => {
-      let blockNumbersAndHashes = await chainFetcher.sourceManager->SourceManager.getBlockHashes(
-        ~blockNumbers=scannedBlockNumbers,
-        ~isRealtime,
-      )
-
-      switch chainFetcher.reorgDetection->ReorgDetection.getLatestValidScannedBlock(
-        ~blockNumbersAndHashes,
-      ) {
-      | Some(blockNumber) => blockNumber
-      | None => chainFetcher->getHighestBlockBelowThreshold
-      }
-    }
-  }
-}
-
-let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing
-
-let isReady = (chainFetcher: t) => chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
+let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None

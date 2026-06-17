@@ -5,7 +5,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
   let allEvents = []
   let numberOfMockEventsCreated = ref(0)
 
-  let chainFetchers = config.chainMap->ChainMap.map(({id}) => {
+  let chainStates = Dict.make()
+  config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(({id}) => {
     let getCurrentTimestamp = () => {
       let timestampMillis = Date.now()
       // Convert milliseconds to seconds
@@ -58,7 +61,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           blockNumber: currentBlockNumber.contents,
           blockHash: `0x${currentBlockNumber.contents->Int.toString}`,
           logIndex,
-          eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
+          eventConfig: Utils.magic("Mock eventConfig in IndexerState test"),
           event: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->Utils.magic,
         })
         allEvents->Array.push(batchItem)->ignore
@@ -96,57 +99,67 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     }
 
     let chainConfig = config.defaultChain->Option.getUnsafe
-    // For this test we don't need real sources - just testing ChainManager event ordering
+    // For this test we don't need real sources - just testing event ordering
     // Create a mock source that satisfies SourceManager requirements (chain ID doesn't matter here)
     let mockSource = MockIndexer.Source.make([], ~chain=#1)
-    let sources = [mockSource.source]
-    let mockChainFetcher: ChainFetcher.t = {
-      timestampCaughtUpToHeadOrEndblock: None,
-      committedProgressBlockNumber: -1,
-      numEventsProcessed: 0.,
-      fetchState: fetchState.contents,
-      logger: Logging.getLogger(),
-      sourceManager: SourceManager.make(
-        ~sources,
+    let mockChainState = ChainState.make(
+      ~chainConfig,
+      ~fetchState=fetchState.contents,
+      ~sourceManager=SourceManager.make(
+        ~sources=[mockSource.source],
         ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
         ~isRealtime=false,
       ),
-      chainConfig,
       // This is quite a hack - but it works!
-      reorgDetection: ReorgDetection.make(
+      ~reorgDetection=ReorgDetection.make(
         ~chainReorgCheckpoints=[],
         ~maxReorgDepth=200,
         ~shouldRollbackOnReorg=false,
       ),
-      safeCheckpointTracking: None,
-      isProgressAtHead: false,
-    }
+      ~committedProgressBlockNumber=-1,
+      ~logger=Logging.getLogger(),
+    )
 
-    mockChainFetcher
+    chainStates->Utils.Dict.setByInt(id, mockChainState)
   })
 
-  (
-    {
-      ChainManager.chainFetchers,
-      isInReorgThreshold: false,
-      isRealtime: false,
-    },
-    numberOfMockEventsCreated.contents,
-    allEvents,
+  let state = IndexerState.make(
+    ~config,
+    ~persistence=MockIndexer.defaultPersistence,
+    ~chainStates,
+    ~isInReorgThreshold=false,
+    ~isRealtime=false,
+    ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
   )
+
+  (state, numberOfMockEventsCreated.contents, allEvents)
 }
 
-describe("ChainManager", () => {
+let getItemKey = (item: Internal.item) =>
+  switch item {
+  | Event({chain, blockNumber, logIndex}) => (chain->ChainMap.Chain.toChainId, blockNumber, logIndex)
+  | Block({onBlockConfig: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
+  }
+
+// Advance each chain's fetchState to its post-batch state, simulating the loop
+// committing a processed batch.
+let advanceChains = (state: IndexerState.t, ~progressedChainsById) =>
+  state->IndexerState.chainStates->Utils.Dict.forEach(cs => {
+    switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+      (cs->ChainState.fetchState).chainId,
+    ) {
+    | Some(chainAfterBatch: Batch.chainAfterBatch) => cs->ChainState.setFetchState(chainAfterBatch.fetchState)
+    | None => ()
+    }
+  })
+
+describe("IndexerState", () => {
   //Test was previously popBlockBatchItems
   describe("createBatch", () => {
     it(
       "when processing through many randomly generated events on different queues, the grouping and ordering is correct",
       t => {
-        let (
-          mockChainManager,
-          numberOfMockEventsCreated,
-          _allEvents,
-        ) = populateChainQueuesWithRandomEvents()
+        let (state, numberOfMockEventsCreated, _allEvents) = populateChainQueuesWithRandomEvents()
 
         let defaultFirstEvent = Internal.Event({
           timestamp: 0,
@@ -154,86 +167,45 @@ describe("ChainManager", () => {
           blockNumber: 0,
           blockHash: "0x0",
           logIndex: 0,
-          eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
+          eventConfig: Utils.magic("Mock eventConfig in IndexerState test"),
           event: `mock initial event`->Utils.magic,
         })
 
         let numberOfMockEventsReadFromQueues = ref(0)
         let allEventsRead = []
-        let rec testThatCreatedEventsAreOrderedCorrectly = (chainManager, lastEvent) => {
-          let {items, totalBatchSize, progressedChainsById} = ChainManager.createBatch(
-            chainManager,
-            ~processedCheckpointId=Internal.initialCheckpointId,
-            ~batchSizeTarget=10000,
-            ~isRollback=false,
-          )
+        let continue = ref(true)
+        while continue.contents {
+          let {items, totalBatchSize, progressedChainsById} =
+            state->IndexerState.createBatch(
+              ~processedCheckpointId=Internal.initialCheckpointId,
+              ~batchSizeTarget=10000,
+              ~isRollback=false,
+            )
 
           // ensure that the events are ordered correctly
           if totalBatchSize === 0 {
-            chainManager
+            continue := false
           } else {
-            items->Array.forEach(
-              item => {
-                allEventsRead->Array.push(item)->ignore
-              },
-            )
+            items->Array.forEach(item => allEventsRead->Array.push(item)->ignore)
             numberOfMockEventsReadFromQueues :=
               numberOfMockEventsReadFromQueues.contents + totalBatchSize
 
             let firstEventInBlock = items[0]->Option.getOrThrow
 
-            let getItemKey = (item: Internal.item) =>
-              switch item {
-              | Event({chain, blockNumber, logIndex}) => (
-                  chain->ChainMap.Chain.toChainId,
-                  blockNumber,
-                  logIndex,
-                )
-              | Block({onBlockConfig: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
-              }
             t.expect(
-              firstEventInBlock->getItemKey > lastEvent->getItemKey,
+              firstEventInBlock->getItemKey > defaultFirstEvent->getItemKey,
               ~message="Check that first event in this block group is AFTER the last event before this block group",
             ).toBe(true)
 
-            let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
-              (chain, fetcher) => {
-                let fetchState = switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
-                  chain->ChainMap.Chain.toChainId,
-                ) {
-                | Some(chainAfterBatch) => chainAfterBatch.fetchState
-                | None => fetcher.fetchState
-                }
-                {
-                  ...fetcher,
-                  fetchState,
-                }
-              },
-            )
-
-            let nextChainManager: ChainManager.t = {
-              ...chainManager,
-              chainFetchers: nextChainFetchers,
-            }
-            testThatCreatedEventsAreOrderedCorrectly(nextChainManager, lastEvent)
+            state->advanceChains(~progressedChainsById)
           }
         }
 
-        let finalChainManager = testThatCreatedEventsAreOrderedCorrectly(
-          mockChainManager,
-          defaultFirstEvent,
-        )
-
         // Test that no events were missed
         let amountStillOnQueues =
-          finalChainManager.chainFetchers
-          ->ChainMap.values
-          ->Array.reduce(
-            0,
-            (accum, val) => {
-              accum + val.fetchState->FetchState.bufferSize
-            },
-          )
+          state->IndexerState.chainStates
+          ->Dict.valuesToArray
+          ->Array.reduce(0, (accum, cs) => accum + (cs->ChainState.fetchState)->FetchState.bufferSize)
 
         t.expect(
           amountStillOnQueues + numberOfMockEventsReadFromQueues.contents,
@@ -244,10 +216,10 @@ describe("ChainManager", () => {
 
     // The loop launches the next fetch before awaiting processEventBatch, so a
     // response can advance a chain's fetchState while the batch is in flight.
-    // updateProgressedChains must commit only progress fields and keep that
+    // applyBatchProgress must commit only progress fields and keep that
     // concurrently-advanced fetch frontier, otherwise the freshly fetched blocks
     // are silently dropped.
-    it("updateProgressedChains keeps a fetchState that advanced during the batch", t => {
+    it("applyBatchProgress keeps a fetchState that advanced during the batch", t => {
       let config = Config.loadWithoutRegistrations()
       let eventConfigs = [
         (
@@ -300,58 +272,58 @@ describe("ChainManager", () => {
         fetchState.contents
       }
 
-      let makeChainManager = (~eventBlocks): ChainManager.t => {
-        let chainFetchers = config.chainMap->ChainMap.map(chainConfig => {
+      let makeState = (~eventBlocks): IndexerState.t => {
+        let chainStates = Dict.make()
+        config.chainMap
+        ->ChainMap.values
+        ->Array.forEach(chainConfig => {
           let mockSource = MockIndexer.Source.make([], ~chain=#1)
-          let chainFetcher: ChainFetcher.t = {
-            timestampCaughtUpToHeadOrEndblock: None,
-            committedProgressBlockNumber: -1,
-            numEventsProcessed: 0.,
-            fetchState: makeFetchState(~chainId=chainConfig.id, ~eventBlocks),
-            logger: Logging.getLogger(),
-            sourceManager: SourceManager.make(
+          let chainState = ChainState.make(
+            ~chainConfig,
+            ~fetchState=makeFetchState(~chainId=chainConfig.id, ~eventBlocks),
+            ~sourceManager=SourceManager.make(
               ~sources=[mockSource.source],
               ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
               ~isRealtime=false,
             ),
-            chainConfig,
-            reorgDetection: ReorgDetection.make(
+            ~reorgDetection=ReorgDetection.make(
               ~chainReorgCheckpoints=[],
               ~maxReorgDepth=200,
               ~shouldRollbackOnReorg=false,
             ),
-            safeCheckpointTracking: None,
-            isProgressAtHead: false,
-          }
-          chainFetcher
+            ~committedProgressBlockNumber=-1,
+            ~logger=Logging.getLogger(),
+          )
+          chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
         })
-        {chainFetchers, isInReorgThreshold: false, isRealtime: false}
+        IndexerState.make(
+          ~config,
+          ~persistence=MockIndexer.defaultPersistence,
+          ~chainStates,
+          ~isInReorgThreshold=false,
+          ~isRealtime=false,
+          ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
+        )
       }
 
       // The batch is created while each chain has fetched up to block 5.
-      let atBatchCreation = makeChainManager(~eventBlocks=[5])
+      let state = makeState(~eventBlocks=[5])
       let batch =
-        atBatchCreation->ChainManager.createBatch(
+        state->IndexerState.createBatch(
           ~processedCheckpointId=Internal.initialCheckpointId,
           ~batchSizeTarget=10000,
           ~isRollback=false,
         )
 
-      let chain = atBatchCreation.chainFetchers->ChainMap.keys->Array.getUnsafe(0)
+      let chain = config.chainMap->ChainMap.keys->Array.getUnsafe(0)
       let chainId = chain->ChainMap.Chain.toChainId
 
       // A fetch lands mid-batch and advances this chain's frontier to block 15.
-      let cf = atBatchCreation.chainFetchers->ChainMap.get(chain)
-      let withConcurrentFetch: ChainManager.t = {
-        ...atBatchCreation,
-        chainFetchers: atBatchCreation.chainFetchers->ChainMap.set(
-          chain,
-          {...cf, fetchState: makeFetchState(~chainId, ~eventBlocks=[5, 15])},
-        ),
-      }
+      let cs = state->IndexerState.getChainState(~chain)
+      cs->ChainState.setFetchState(makeFetchState(~chainId, ~eventBlocks=[5, 15]))
 
-      let result = withConcurrentFetch->ChainManager.updateProgressedChains(~batch)
-      let resultCf = result.chainFetchers->ChainMap.get(chain)
+      state->IndexerState.applyBatchProgress(~batch)
+      let resultCs = state->IndexerState.getChainState(~chain)
       let progressed =
         batch.progressedChainsById
         ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
@@ -359,10 +331,10 @@ describe("ChainManager", () => {
 
       t.expect(
         {
-          "committedProgressBlockNumber": resultCf.committedProgressBlockNumber,
+          "committedProgressBlockNumber": resultCs->ChainState.committedProgressBlockNumber,
           // The concurrent fetch buffered 2 events; the batch-time snapshot had 1.
           // Seeing 2 proves the current (post-fetch) fetchState was kept.
-          "bufferSize": resultCf.fetchState->FetchState.bufferSize,
+          "bufferSize": (resultCs->ChainState.fetchState)->FetchState.bufferSize,
         },
         ~message="must commit the batch's progress while keeping the mid-batch fetch frontier",
       ).toEqual({

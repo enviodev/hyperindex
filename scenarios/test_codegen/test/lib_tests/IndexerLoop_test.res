@@ -3,7 +3,10 @@ open Vitest
 let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) => {
   let config = Config.loadWithoutRegistrations()
 
-  let chainFetchers = config.chainMap->ChainMap.map(chainConfig => {
+  let chainStates = Dict.make()
+  config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(chainConfig => {
     let fetchState = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
@@ -21,39 +24,33 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~knownHeight=0,
     )
     let mockSource = MockIndexer.Source.make([], ~chain=#1)
-    let chainFetcher: ChainFetcher.t = {
-      timestampCaughtUpToHeadOrEndblock: None,
-      committedProgressBlockNumber: -1,
-      numEventsProcessed: 0.,
-      fetchState,
-      logger: Logging.getLogger(),
-      sourceManager: SourceManager.make(
+    let chainState = ChainState.make(
+      ~chainConfig,
+      ~fetchState,
+      ~sourceManager=SourceManager.make(
         ~sources=[mockSource.source],
         ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
         ~isRealtime=false,
       ),
-      chainConfig,
-      reorgDetection: ReorgDetection.make(
+      ~reorgDetection=ReorgDetection.make(
         ~chainReorgCheckpoints=[],
         ~maxReorgDepth=200,
         ~shouldRollbackOnReorg=false,
       ),
-      safeCheckpointTracking: None,
-      isProgressAtHead: false,
-    }
-    chainFetcher
+      ~committedProgressBlockNumber=-1,
+      ~logger=Logging.getLogger(),
+    )
+    chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
   })
 
   IndexerState.make(
     ~config,
     ~persistence=MockIndexer.defaultPersistence,
-    ~chainManager={
-      // isInReorgThreshold avoids triggering a fetch on the mock source (which
-      // implements no methods) when the processing loop runs to its empty exit.
-      chainFetchers,
-      isInReorgThreshold: true,
-      isRealtime: false,
-    },
+    ~chainStates,
+    // isInReorgThreshold avoids triggering a fetch on the mock source (which
+    // implements no methods) when the processing loop runs to its empty exit.
+    ~isInReorgThreshold=true,
+    ~isRealtime=false,
     ~onError,
   )
 }

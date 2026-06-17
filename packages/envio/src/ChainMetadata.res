@@ -3,16 +3,22 @@
 let stage = (state: IndexerState.t) => {
   let chainsData: dict<InternalTable.Chains.metaFields> = Dict.make()
 
-  (state->IndexerState.chainManager).chainFetchers
-  ->ChainMap.values
-  ->Array.forEach(cf => {
+  state
+  ->IndexerState.chainStates
+  ->Dict.valuesToArray
+  ->Array.forEach(cs => {
+    let fetchState = cs->ChainState.fetchState
     chainsData->Dict.set(
-      cf.chainConfig.id->Int.toString,
+      (cs->ChainState.chainConfig).id->Int.toString,
       {
-        firstEventBlockNumber: cf.fetchState.firstEventBlock->Null.fromOption,
-        isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
-        latestFetchedBlockNumber: cf.fetchState->FetchState.bufferBlockNumber,
-        timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Null.fromOption,
+        firstEventBlockNumber: fetchState.firstEventBlock->Null.fromOption,
+        isHyperSync: (
+          cs->ChainState.sourceManager->SourceManager.getActiveSource
+        ).poweredByHyperSync,
+        latestFetchedBlockNumber: fetchState->FetchState.bufferBlockNumber,
+        timestampCaughtUpToHeadOrEndblock: cs
+        ->ChainState.timestampCaughtUpToHeadOrEndblock
+        ->Null.fromOption,
       },
     )
   })

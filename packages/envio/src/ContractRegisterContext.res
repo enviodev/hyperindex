@@ -1,6 +1,6 @@
 // The contractRegister handler context: context.chain.ContractName.add(address).
 // Independent of the in-memory store, so it stays off IndexerState and the
-// fetch-time contract registration in ChainFetcher doesn't pull the state in.
+// fetch-time contract registration in ChainState doesn't pull the state in.
 
 type contractRegisterParams = {
   item: Internal.item,
