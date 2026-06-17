@@ -1,6 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 3057
+assertion_line: 3090
 expression: project_template.envio_types_dts
 ---
 /**
@@ -12,9 +12,9 @@ expression: project_template.envio_types_dts
 
 import type { Address, BigDecimal, SingleOrMultiple } from "envio";
 
-/** Type of a block/transaction field that wasn't requested in `field_selection`.
- * Reading it is a type error so a dropped field fails `tsc` rather than silently
- * passing as `never`. The message names the field and how to enable it. */
+/** Marks a block/transaction field that this event's `field_selection` doesn't include.
+ * Reading such a field is a type error; the message tells you which field to add to
+ * `field_selection` in config.yaml to make it available. */
 type FieldNotSelected<Message extends string> = { readonly __fieldNotSelected: Message };
 
 type FuelBlock = { id: string; height: number; time: number };
