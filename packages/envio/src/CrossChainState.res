@@ -156,10 +156,35 @@ let applyBatchProgress = (cm: t, ~batch: Batch.t) => {
 
 // --- Fetch control. ---
 
-// Dispatch a fetch tick across every chain, drawing from the shared concurrency
-// and buffer pools. Chains are visited in turn; fetchChain bumps the in-flight
-// count synchronously before it suspends, so a later chain sees the slots an
-// earlier one already claimed and the budget is honored indexer-wide.
+// Some chain still has backfill work — its fetch frontier hasn't reached head.
+let anyChainBackfilling = (cm: t) =>
+  cm.chainStates->Dict.valuesToArray->Array.some(cs => !(cs->ChainState.isFetchingAtHead))
+
+// During backfill a chain that has fetched up to its head is paused while some
+// other chain is still backfilling: it yields all fetch resources to the chains
+// with real work and resumes once they catch up (and the indexer goes realtime).
+// Never pause when nothing is backfilling (all chains converging to head) or in
+// realtime — every chain follows the head, bounded only by the shared budget.
+let shouldPauseFetch = (cs: ChainState.t, ~isRealtime, ~anyChainBackfilling) =>
+  !isRealtime && anyChainBackfilling && cs->ChainState.isFetchingAtHead
+
+// Chains ordered furthest-behind first, so the shared concurrency and buffer
+// pools go to the chains with the most backfill work before the rest.
+let priorityOrder = (cm: t) =>
+  cm.chainStates
+  ->Dict.valuesToArray
+  ->Array.toSorted((a, b) =>
+    Float.compare(
+      a->ChainState.fetchState->FetchState.getProgressPercentage,
+      b->ChainState.fetchState->FetchState.getProgressPercentage,
+    )
+  )
+
+// Dispatch a fetch tick across every chain in priority order, drawing from the
+// shared concurrency and buffer pools. Chains are visited in turn; fetchChain
+// bumps the in-flight count synchronously before it suspends, so a later chain
+// sees the slots an earlier one already claimed and the budget is honored
+// indexer-wide.
 //
 // bufferLimit is each chain's slice of the shared pool: it may grow its buffer
 // into whatever the other chains leave free, so a lone backfilling chain can use
@@ -172,15 +197,21 @@ let checkAndFetch = async (
     ~bufferLimit: int,
   ) => promise<unit>,
 ) => {
+  let isRealtime = cm.isRealtime
+  let anyChainBackfilling = cm->anyChainBackfilling
   let totalBuffer = cm->totalBufferSize
-  let _ = await cm.chainStates
-  ->Dict.valuesToArray
-  ->Array.map(cs => {
-    let chain = ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id)
-    let concurrencyLimit = Pervasives.max(0, cm.maxConcurrency - cm->inFlight)
-    let bufferLimit =
-      cm.targetBufferSize - (totalBuffer - cs->ChainState.fetchState->FetchState.bufferSize)
-    fetchChain(~chain, ~concurrencyLimit, ~bufferLimit)
-  })
+  let _ = await cm
+  ->priorityOrder
+  ->Array.filterMap(cs =>
+    if cs->shouldPauseFetch(~isRealtime, ~anyChainBackfilling) {
+      None
+    } else {
+      let chain = ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id)
+      let concurrencyLimit = Pervasives.max(0, cm.maxConcurrency - cm->inFlight)
+      let bufferLimit =
+        cm.targetBufferSize - (totalBuffer - cs->ChainState.fetchState->FetchState.bufferSize)
+      Some(fetchChain(~chain, ~concurrencyLimit, ~bufferLimit))
+    }
+  )
   ->Promise.all
 }

@@ -35,6 +35,8 @@ let enterReorgThreshold: t => unit
 let applyBatchProgress: (t, ~batch: Batch.t) => unit
 
 // Fetch control.
+let shouldPauseFetch: (ChainState.t, ~isRealtime: bool, ~anyChainBackfilling: bool) => bool
+let priorityOrder: t => array<ChainState.t>
 let checkAndFetch: (
   t,
   ~fetchChain: (

@@ -1961,29 +1961,30 @@ let isReadyToEnterReorgThreshold = ({endBlock, blockLag, buffer, knownHeight} as
   buffer->Utils.Array.isEmpty
 }
 
+// Lower progress percentage = further behind = higher priority. Shared by the
+// unordered-batch ordering and the cross-chain fetch priority.
+let getProgressPercentage = (fetchState: t) => {
+  switch fetchState.firstEventBlock {
+  | None => 0.
+  | Some(firstEventBlock) =>
+    let totalRange = fetchState.knownHeight - firstEventBlock
+    if totalRange <= 0 {
+      0.
+    } else {
+      let progress = switch fetchState.buffer->Array.get(0) {
+      | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
+      | None => fetchState->bufferBlockNumber - firstEventBlock
+      }
+      progress->Int.toFloat /. totalRange->Int.toFloat
+    }
+  }
+}
+
 let sortForUnorderedBatch = {
   let hasFullBatch = ({buffer} as fetchState: t, ~batchSizeTarget) => {
     switch buffer->Array.get(batchSizeTarget - 1) {
     | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
     | None => false
-    }
-  }
-
-  // Lower progress percentage = further behind = higher priority
-  let getProgressPercentage = (fetchState: t) => {
-    switch fetchState.firstEventBlock {
-    | None => 0.
-    | Some(firstEventBlock) =>
-      let totalRange = fetchState.knownHeight - firstEventBlock
-      if totalRange <= 0 {
-        0.
-      } else {
-        let progress = switch fetchState.buffer->Array.get(0) {
-        | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
-        | None => fetchState->bufferBlockNumber - firstEventBlock
-        }
-        progress->Int.toFloat /. totalRange->Int.toFloat
-      }
     }
   }
 
