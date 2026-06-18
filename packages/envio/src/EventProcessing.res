@@ -56,7 +56,7 @@ let runEventHandlerOrThrow = async (
     await handler(
       (
         {
-          event: config.ecosystem.toEvent(eventItem),
+          event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
           context: UserContext.getHandlerContext(contextParams),
         }: Internal.handlerArgs
       ),
@@ -172,7 +172,7 @@ let preloadBatchOrThrow = async (
             )
             promises->Array.push(
               handler({
-                event: config.ecosystem.toEvent(item->Internal.castUnsafeEventItem),
+                event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
                 context: UserContext.getHandlerContext({
                   item,
                   indexerState,
@@ -340,7 +340,10 @@ let processEventBatch = async (
     reason->ErrorHandling.make(~msg=message, ~logger)->Error
   | ProcessingError({message, exn, item}) =>
     exn
-    ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
+    ->ErrorHandling.make(
+      ~msg=message,
+      ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+    )
     ->Error
   | exn => exn->ErrorHandling.make(~msg="Failed processing batch", ~logger)->Error
   }

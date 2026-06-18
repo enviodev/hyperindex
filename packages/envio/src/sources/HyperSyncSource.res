@@ -211,11 +211,13 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         eventName: eventConfig.name,
         chainId,
         params,
-        transaction,
+        transaction: transaction->(
+          Utils.magic: HyperSyncClient.ResponseTypes.transaction => Internal.eventTransaction
+        ),
         block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
         srcAddress,
         logIndex,
-      }->Internal.fromGenericEventPayload,
+      }->Internal.fromEvmEventPayload,
     })
   }
 

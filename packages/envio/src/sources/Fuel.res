@@ -25,6 +25,7 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   onEventBlockFilterSchema: S.object(s =>
     s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))))
   ),
+  logger,
   toEvent: eventItem => eventItem.payload->Internal.payloadToEvent,
   toEventLogger: eventItem =>
     Logging.createChildFrom(
@@ -35,8 +36,17 @@ let make = (~logger: Pino.t): Ecosystem.t => {
         "chainId": eventItem.chain->ChainMap.Chain.toChainId,
         "block": eventItem.blockNumber,
         "logIndex": eventItem.logIndex,
-        "address": (eventItem.payload->Internal.payloadToGenericEvent).srcAddress,
+        "address": (eventItem.payload->Internal.toFuelEventPayload).srcAddress,
       },
     ),
-  toRawEvent: eventItem => eventItem->RawEvent.make(~cleanUpRawEventFieldsInPlace),
+  toRawEvent: eventItem => {
+    let payload = eventItem.payload->Internal.toFuelEventPayload
+    eventItem->RawEvent.make(
+      ~block=payload.block,
+      ~transaction=payload.transaction,
+      ~params=payload.params,
+      ~srcAddress=payload.srcAddress,
+      ~cleanUpRawEventFieldsInPlace,
+    )
+  },
 }

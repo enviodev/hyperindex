@@ -19,7 +19,7 @@ let makeAddFunction = (~params: contractRegisterParams, ~contractName: string): 
   (contractAddress: Address.t) => {
     if params.isResolved {
       Utils.Error.make(`Impossible to access context.chain after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->ErrorHandling.mkLogAndRaise(
-        ~logger=params.item->Logging.getItemLogger,
+        ~logger=Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem),
       )
     }
     let validatedAddress = if params.config.ecosystem.name === Evm {
@@ -72,10 +72,16 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
     if params.isResolved {
       Utils.Error.make(
         `Impossible to access context.${prop} after the contract register is resolved. Make sure you didn't miss an await in the handler.`,
-      )->ErrorHandling.mkLogAndRaise(~logger=params.item->Logging.getItemLogger)
+      )->ErrorHandling.mkLogAndRaise(
+        ~logger=Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem),
+      )
     }
     switch prop {
-    | "log" => params.item->Logging.getUserLogger->(Utils.magic: Envio.logger => unknown)
+    | "log" =>
+      Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)->(
+        Utils.magic: Envio.logger => unknown
+      )
+
     | "chain" =>
       params
       ->Utils.Proxy.make(contractRegisterChainTraps)
@@ -95,6 +101,6 @@ let getContractRegisterContext = (params: contractRegisterParams) => {
 }
 
 let getContractRegisterArgs = (params: contractRegisterParams): Internal.contractRegisterArgs => {
-  event: params.config.ecosystem.toEvent(params.item->Internal.castUnsafeEventItem),
+  event: params.item->Ecosystem.getItemEvent(~ecosystem=params.config.ecosystem),
   context: getContractRegisterContext(params),
 }

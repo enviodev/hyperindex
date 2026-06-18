@@ -1230,8 +1230,7 @@ let handleQueryResult = (
     switch item {
     | Internal.Event({eventConfig, payload, blockNumber}) =>
       switch eventConfig.clientAddressFilter {
-      | Some(filter) =>
-        filter(payload->Internal.payloadToEvent, blockNumber, fetchState.indexingAddresses)
+      | Some(filter) => filter(payload, blockNumber, fetchState.indexingAddresses)
       | None => true
       }
     | _ => true

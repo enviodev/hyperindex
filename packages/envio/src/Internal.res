@@ -269,19 +269,42 @@ type genericEvent<'params, 'block, 'transaction> = {
 // (blockNumber, timestamp, blockHash) live on the item instead.
 type event
 
-// Opaque payload an item carries. Same runtime shape as a generic event
-// today, but a distinct type so a source can later hand back a compact or
-// lazy representation. Consumers never read it directly — the ecosystem
-// turns a payload into the user-facing `event`, a logger, or a raw event.
+// Opaque payload an item carries. Same runtime shape as the ecosystem's
+// concrete payload today, but a distinct type so a source can later hand
+// back a compact or lazy representation. Consumers never read it directly —
+// the ecosystem turns a payload into the user-facing `event`, a logger, or a
+// raw event, after converting it to its own concrete payload type.
 type eventPayload
 
-external fromGenericEventPayload: genericEvent<'a, 'b, 'c> => eventPayload = "%identity"
 external payloadToEvent: eventPayload => event = "%identity"
-external payloadToGenericEvent: eventPayload => genericEvent<
-  eventParams,
-  eventBlock,
-  eventTransaction,
-> = "%identity"
+
+// Per-ecosystem concrete payloads. There is deliberately no shared "generic"
+// payload across ecosystems — EVM, Fuel and SVM payloads are distinct types.
+type evmEventPayload = {
+  contractName: string,
+  eventName: string,
+  params: eventParams,
+  chainId: int,
+  srcAddress: Address.t,
+  logIndex: int,
+  transaction: eventTransaction,
+  block: eventBlock,
+}
+external fromEvmEventPayload: evmEventPayload => eventPayload = "%identity"
+external toEvmEventPayload: eventPayload => evmEventPayload = "%identity"
+
+type fuelEventPayload = {
+  contractName: string,
+  eventName: string,
+  params: eventParams,
+  chainId: int,
+  srcAddress: Address.t,
+  logIndex: int,
+  transaction: eventTransaction,
+  block: eventBlock,
+}
+external fromFuelEventPayload: fuelEventPayload => eventPayload = "%identity"
+external toFuelEventPayload: eventPayload => fuelEventPayload = "%identity"
 
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
@@ -380,7 +403,7 @@ type eventConfig = private {
   // number, drops an event whose param-address isn't registered at/before that
   // block — the param-level analogue of EventRouter's srcAddress
   // `effectiveStartBlock` check. Absent otherwise.
-  clientAddressFilter?: (event, int, dict<indexingContract>) => bool,
+  clientAddressFilter?: (eventPayload, int, dict<indexingContract>) => bool,
   handler: option<handler>,
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
@@ -513,17 +536,17 @@ type eventItem = private {
 // `InternalTable`) so the ecosystem's `toRawEvent` can reference it without
 // pulling in `InternalTable`'s dependency on `Config`.
 type rawEvent = {
-  @as("chain_id") chainId: int,
-  @as("event_id") eventId: bigint,
-  @as("event_name") eventName: string,
-  @as("contract_name") contractName: string,
-  @as("block_number") blockNumber: int,
-  @as("log_index") logIndex: int,
-  @as("src_address") srcAddress: Address.t,
-  @as("block_hash") blockHash: string,
-  @as("block_timestamp") blockTimestamp: int,
-  @as("block_fields") blockFields: JSON.t,
-  @as("transaction_fields") transactionFields: JSON.t,
+  chain_id: int,
+  event_id: bigint,
+  event_name: string,
+  contract_name: string,
+  block_number: int,
+  log_index: int,
+  src_address: Address.t,
+  block_hash: string,
+  block_timestamp: int,
+  block_fields: JSON.t,
+  transaction_fields: JSON.t,
   params: JSON.t,
 }
 

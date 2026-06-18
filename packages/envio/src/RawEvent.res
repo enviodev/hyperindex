@@ -17,21 +17,27 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   }
 }
 
+// Block and transaction are passed already extracted from the ecosystem's
+// concrete payload (EVM or Fuel) — `RawEvent` stays payload-shape-agnostic and
+// only needs them as opaque field bags to serialise.
 let make = (
   eventItem: Internal.eventItem,
+  ~block,
+  ~transaction,
+  ~params: Internal.eventParams,
+  ~srcAddress: Address.t,
   ~cleanUpRawEventFieldsInPlace: JSON.t => unit,
 ): Internal.rawEvent => {
-  let {eventConfig, chain, blockNumber, blockHash, timestamp: blockTimestamp, payload} = eventItem
-  let {block, transaction, params, logIndex, srcAddress} = payload->Internal.payloadToGenericEvent
+  let {eventConfig, chain, blockNumber, blockHash, timestamp: blockTimestamp, logIndex} = eventItem
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =
     block
-    ->(Utils.magic: Internal.eventBlock => option<dict<unknown>>)
+    ->(Utils.magic: 'block => option<dict<unknown>>)
     ->convertFieldsToJson
   let transactionFields =
     transaction
-    ->(Utils.magic: Internal.eventTransaction => option<dict<unknown>>)
+    ->(Utils.magic: 'transaction => option<dict<unknown>>)
     ->convertFieldsToJson
 
   blockFields->cleanUpRawEventFieldsInPlace
@@ -51,17 +57,17 @@ let make = (
   }
 
   {
-    chainId,
-    eventId,
-    eventName: eventConfig.name,
-    contractName: eventConfig.contractName,
-    blockNumber,
-    logIndex,
-    srcAddress,
-    blockHash,
-    blockTimestamp,
-    blockFields,
-    transactionFields,
+    chain_id: chainId,
+    event_id: eventId,
+    event_name: eventConfig.name,
+    contract_name: eventConfig.contractName,
+    block_number: blockNumber,
+    log_index: logIndex,
+    src_address: srcAddress,
+    block_hash: blockHash,
+    block_timestamp: blockTimestamp,
+    block_fields: blockFields,
+    transaction_fields: transactionFields,
     params,
   }
 }

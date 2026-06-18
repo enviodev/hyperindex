@@ -1076,17 +1076,17 @@ describe("ecosystem.toRawEvent", () => {
         })->Internal.castUnsafeEventItem
 
       t.expect(MockIndexer.config.ecosystem.toRawEvent(eventItem)).toEqual({
-        chainId: 137,
-        eventId: EventUtils.packEventIndex(~logIndex, ~blockNumber),
-        eventName: "EventWithoutFields",
-        contractName: "ERC20",
-        blockNumber,
-        logIndex,
-        srcAddress,
-        blockHash: "0xblockhash",
-        blockTimestamp: 1234,
-        blockFields: %raw(`{"gasUsed": "99", "miner": "0xminer"}`),
-        transactionFields: %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+        chain_id: 137,
+        event_id: EventUtils.packEventIndex(~logIndex, ~blockNumber),
+        event_name: "EventWithoutFields",
+        contract_name: "ERC20",
+        block_number: blockNumber,
+        log_index: logIndex,
+        src_address: srcAddress,
+        block_hash: "0xblockhash",
+        block_timestamp: 1234,
+        block_fields: %raw(`{"gasUsed": "99", "miner": "0xminer"}`),
+        transaction_fields: %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
         params: %raw(`"null"`),
       })
     },
@@ -1098,38 +1098,38 @@ describe("PgStorage.removeInvalidUtf8InPlace", () => {
     "Strips NUL bytes from raw event rows, including deep inside jsonb params and field selections",
     async t => {
       let rawEvent: InternalTable.RawEvents.t = {
-        chainId: 1,
-        eventId: 42n,
-        eventName: "Name\x00Changed",
-        contractName: "Resolver",
-        blockNumber: 5,
-        logIndex: 3,
-        srcAddress: "0x00000000000000000000000000000000000000ab"->(
+        chain_id: 1,
+        event_id: 42n,
+        event_name: "Name\x00Changed",
+        contract_name: "Resolver",
+        block_number: 5,
+        log_index: 3,
+        src_address: "0x00000000000000000000000000000000000000ab"->(
           Utils.magic: string => Address.t
         ),
-        blockHash: "0xhash",
-        blockTimestamp: 100,
-        blockFields: %raw(`{"extraData": "0x00\x00ff"}`),
-        transactionFields: %raw(`{"hash": "0xtx"}`),
+        block_hash: "0xhash",
+        block_timestamp: 100,
+        block_fields: %raw(`{"extraData": "0x00\x00ff"}`),
+        transaction_fields: %raw(`{"hash": "0xtx"}`),
         params: %raw(`{"node": "0xnode", "name": "Muscle-window.eth\x00tail", "labels": ["a\x00b", "c"]}`),
       }
 
       [rawEvent]->PgStorage.removeInvalidUtf8InPlace
 
       t.expect(rawEvent).toEqual({
-        chainId: 1,
-        eventId: 42n,
-        eventName: "NameChanged",
-        contractName: "Resolver",
-        blockNumber: 5,
-        logIndex: 3,
-        srcAddress: "0x00000000000000000000000000000000000000ab"->(
+        chain_id: 1,
+        event_id: 42n,
+        event_name: "NameChanged",
+        contract_name: "Resolver",
+        block_number: 5,
+        log_index: 3,
+        src_address: "0x00000000000000000000000000000000000000ab"->(
           Utils.magic: string => Address.t
         ),
-        blockHash: "0xhash",
-        blockTimestamp: 100,
-        blockFields: %raw(`{"extraData": "0x00ff"}`),
-        transactionFields: %raw(`{"hash": "0xtx"}`),
+        block_hash: "0xhash",
+        block_timestamp: 100,
+        block_fields: %raw(`{"extraData": "0x00ff"}`),
+        transaction_fields: %raw(`{"hash": "0xtx"}`),
         params: %raw(`{"node": "0xnode", "name": "Muscle-window.ethtail", "labels": ["ab", "c"]}`),
       })
     },

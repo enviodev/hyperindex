@@ -19,6 +19,7 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // SVM has no event handlers, so there is no `onEvent` `where` value to
   // parse. The schema is a no-op object that always surfaces `None`.
   onEventBlockFilterSchema: S.object(_ => None),
+  logger,
   toEvent: eventItem => eventItem.payload->Internal.payloadToEvent,
   toEventLogger: eventItem => {
     let instruction =

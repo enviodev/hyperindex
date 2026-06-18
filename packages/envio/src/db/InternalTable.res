@@ -574,17 +574,17 @@ module RawEvents = {
   type t = Internal.rawEvent
 
   let schema = S.schema((s): t => {
-    chainId: s.matches(S.int),
-    eventId: s.matches(S.bigint),
-    eventName: s.matches(S.string),
-    contractName: s.matches(S.string),
-    blockNumber: s.matches(S.int),
-    logIndex: s.matches(S.int),
-    srcAddress: s.matches(Address.schema),
-    blockHash: s.matches(S.string),
-    blockTimestamp: s.matches(S.int),
-    blockFields: s.matches(S.json(~validate=false)),
-    transactionFields: s.matches(S.json(~validate=false)),
+    chain_id: s.matches(S.int),
+    event_id: s.matches(S.bigint),
+    event_name: s.matches(S.string),
+    contract_name: s.matches(S.string),
+    block_number: s.matches(S.int),
+    log_index: s.matches(S.int),
+    src_address: s.matches(Address.schema),
+    block_hash: s.matches(S.string),
+    block_timestamp: s.matches(S.int),
+    block_fields: s.matches(S.json(~validate=false)),
+    transaction_fields: s.matches(S.json(~validate=false)),
     params: s.matches(S.json(~validate=false)),
   })
 

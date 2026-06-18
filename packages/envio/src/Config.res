@@ -552,7 +552,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | Ecosystem.Fuel => Fuel.make(~logger)
   | Ecosystem.Svm => Svm.make(~logger)
   }
-  Logging.setEventLoggerMaker(ecosystem.toEventLogger)
 
   // Extract EVM-specific options with defaults
   let lowercaseAddresses = switch publicConfig["evm"] {

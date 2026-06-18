@@ -1209,7 +1209,7 @@ let make = (
                     block,
                     srcAddress: routedAddress,
                     logIndex: log.logIndex,
-                  }->Internal.fromGenericEventPayload,
+                  }->Internal.fromEvmEventPayload,
                 })
               }
             )(),

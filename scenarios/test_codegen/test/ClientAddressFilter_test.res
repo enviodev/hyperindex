@@ -103,7 +103,7 @@ describe("clientAddressFilter — precompiled predicate", () => {
   ])
   let makeEvent = (~from, ~to) =>
     {"params": {"from": from, "to": to}}->(
-      Utils.magic: {"params": {"from": Address.t, "to": Address.t}} => Internal.event
+      Utils.magic: {"params": {"from": Address.t, "to": Address.t}} => Internal.eventPayload
     )
 
   it("keeps events whose address param is registered at/before the block, drops the rest", t => {
