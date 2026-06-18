@@ -274,7 +274,8 @@ module Indexer = {
     ~batchSize=?,
     ~shouldRollbackOnReorg=true,
     ~reducedPollingInterval=?,
-    ~maxConcurrency=?,
+    ~maxBackfillConcurrency=?,
+    ~maxRealtimeConcurrency=?,
     ~targetBufferSize=?,
     // Lets a test intercept storage methods, e.g. to stall writeBatch and
     // exercise races between in-flight writes and the indexer loop.
@@ -357,7 +358,8 @@ module Indexer = {
       ~persistence,
       ~registrations,
       ~reducedPollingInterval?,
-      ~maxConcurrency?,
+      ~maxBackfillConcurrency?,
+      ~maxRealtimeConcurrency?,
       ~targetBufferSize?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
@@ -533,7 +535,8 @@ module Indexer = {
           ~batchSize?,
           ~shouldRollbackOnReorg,
           ~reducedPollingInterval?,
-          ~maxConcurrency?,
+          ~maxBackfillConcurrency?,
+          ~maxRealtimeConcurrency?,
           ~targetBufferSize?,
           ~mapStorage,
         )

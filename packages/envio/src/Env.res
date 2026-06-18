@@ -8,9 +8,13 @@ let updateSyncTimeOnRestart =
   envSafe->EnvSafe.get("UPDATE_SYNC_TIME_ON_RESTART", S.bool, ~fallback=true)
 let targetBufferSize = envSafe->EnvSafe.get("ENVIO_INDEXING_MAX_BUFFER_SIZE", S.option(S.int))
 let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
-// Global cap on concurrent data-source queries across the whole indexer
-// (all chains share this budget), not per chain.
-let maxConcurrency = envSafe->EnvSafe.get("ENVIO_MAX_CONCURRENCY", S.int, ~fallback=30)
+// Global caps on concurrent data-source queries across the whole indexer (all
+// chains share the budget), not per chain. Realtime allows far more since head
+// queries are small and many chains follow the head at once.
+let maxBackfillConcurrency =
+  envSafe->EnvSafe.get("ENVIO_MAX_BACKFILL_CONCURRENCY", S.int, ~fallback=30)
+let maxRealtimeConcurrency =
+  envSafe->EnvSafe.get("ENVIO_MAX_REALTIME_CONCURRENCY", S.int, ~fallback=200)
 
 // Target number of in-memory objects (uncommitted entity/effect changes plus
 // unwritten batch items) the store holds before processing waits for the write

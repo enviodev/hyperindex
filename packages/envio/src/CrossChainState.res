@@ -8,8 +8,10 @@ type t = {
   // True once every chain has caught up to head/endBlock. Monotonic during a run.
   mutable isRealtime: bool,
   mutable isInReorgThreshold: bool,
-  // Indexer-wide cap on concurrent data-source queries, shared across all chains.
-  maxConcurrency: int,
+  // Indexer-wide caps on concurrent data-source queries, shared across all
+  // chains. The realtime budget applies once every chain is at head.
+  maxBackfillConcurrency: int,
+  maxRealtimeConcurrency: int,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
 }
@@ -21,22 +23,29 @@ let calculateTargetBufferSize = () =>
   | None => 100_000
   }
 
+// The concurrency budget in force for the current phase.
+let maxConcurrency = (cm: t) =>
+  cm.isRealtime ? cm.maxRealtimeConcurrency : cm.maxBackfillConcurrency
+
 let make = (
   ~chainStates,
   ~isInReorgThreshold,
   ~isRealtime,
-  ~maxConcurrency=Env.maxConcurrency,
+  ~maxBackfillConcurrency=Env.maxBackfillConcurrency,
+  ~maxRealtimeConcurrency=Env.maxRealtimeConcurrency,
   ~targetBufferSize=calculateTargetBufferSize(),
 ): t => {
-  Prometheus.IndexingMaxConcurrency.set(~maxConcurrency)
-  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
-  {
+  let cm = {
     chainStates,
     isRealtime,
     isInReorgThreshold,
-    maxConcurrency,
+    maxBackfillConcurrency,
+    maxRealtimeConcurrency,
     targetBufferSize,
   }
+  Prometheus.IndexingMaxConcurrency.set(~maxConcurrency=cm->maxConcurrency)
+  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
+  cm
 }
 
 // --- Accessors. ---
@@ -151,7 +160,12 @@ let applyBatchProgress = (cm: t, ~batch: Batch.t) => {
     Prometheus.ProgressReady.setAllReady()
   }
 
+  let wasRealtime = cm.isRealtime
   cm.isRealtime = cm.isRealtime || allChainsReady.contents
+  if !wasRealtime && cm.isRealtime {
+    // The realtime budget takes over now that every chain is at head.
+    Prometheus.IndexingMaxConcurrency.set(~maxConcurrency=cm->maxConcurrency)
+  }
 }
 
 // --- Fetch control. ---
@@ -198,6 +212,7 @@ let checkAndFetch = async (
   ) => promise<unit>,
 ) => {
   let isRealtime = cm.isRealtime
+  let maxConcurrency = cm->maxConcurrency
   let anyChainBackfilling = cm->anyChainBackfilling
   let totalBuffer = cm->totalBufferSize
   let _ = await cm
@@ -207,7 +222,7 @@ let checkAndFetch = async (
       None
     } else {
       let chain = ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id)
-      let concurrencyLimit = Pervasives.max(0, cm.maxConcurrency - cm->inFlight)
+      let concurrencyLimit = Pervasives.max(0, maxConcurrency - cm->inFlight)
       let bufferLimit =
         cm.targetBufferSize - (totalBuffer - cs->ChainState.fetchState->FetchState.bufferSize)
       Some(fetchChain(~chain, ~concurrencyLimit, ~bufferLimit))

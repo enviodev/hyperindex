@@ -61,7 +61,13 @@ let makeChainState = (~chainId, ~knownHeight, ~frontier, ~firstEventBlock, ~buff
   )
 }
 
-let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~maxConcurrency=30, ~targetBufferSize=100) => {
+let makeCrossChainState = (
+  ~chainStatesList,
+  ~isRealtime=false,
+  ~maxBackfillConcurrency=30,
+  ~maxRealtimeConcurrency=200,
+  ~targetBufferSize=100,
+) => {
   let chainStates = Dict.make()
   chainStatesList->Array.forEach(cs =>
     chainStates->Utils.Dict.setByInt((cs->ChainState.chainConfig).id, cs)
@@ -70,7 +76,8 @@ let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~maxConcurrency=
     ~chainStates,
     ~isInReorgThreshold=false,
     ~isRealtime,
-    ~maxConcurrency,
+    ~maxBackfillConcurrency,
+    ~maxRealtimeConcurrency,
     ~targetBufferSize,
   )
 }
@@ -144,7 +151,7 @@ describe("CrossChainState fetch control", () => {
 
       let cm = makeCrossChainState(
         ~chainStatesList=[cHead, a, b],
-        ~maxConcurrency=30,
+        ~maxBackfillConcurrency=30,
         ~targetBufferSize=100,
       )
 
@@ -196,7 +203,7 @@ describe("CrossChainState shared concurrency (end to end)", () => {
         {MockIndexer.Indexer.chain: #1337, sourceConfig: Config.CustomSources([sourceMockA.source])},
         {MockIndexer.Indexer.chain: #100, sourceConfig: Config.CustomSources([sourceMockB.source])},
       ],
-      ~maxConcurrency=1,
+      ~maxBackfillConcurrency=1,
       ~shouldRollbackOnReorg=false,
     )
     await Utils.delay(0)

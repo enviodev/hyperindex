@@ -9,7 +9,8 @@ let make: (
   ~chainStates: dict<ChainState.t>,
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
-  ~maxConcurrency: int=?,
+  ~maxBackfillConcurrency: int=?,
+  ~maxRealtimeConcurrency: int=?,
   ~targetBufferSize: int=?,
 ) => t
 
@@ -17,6 +18,7 @@ let make: (
 let chainStates: t => dict<ChainState.t>
 let isRealtime: t => bool
 let isInReorgThreshold: t => bool
+let maxConcurrency: t => int
 let inFlight: t => int
 
 // Derived (pure).
