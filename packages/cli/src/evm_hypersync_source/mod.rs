@@ -7,7 +7,7 @@ use napi_derive::napi;
 mod config;
 mod decode;
 mod query;
-mod types;
+pub(crate) mod types;
 
 use config::ClientConfig;
 use decode::DecoderCore;

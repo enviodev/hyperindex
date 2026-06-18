@@ -225,7 +225,10 @@ fn encode_prefix_hex(bytes: &[u8]) -> String {
     format!("0x{}", faster_hex::hex_string(bytes))
 }
 
-fn map_address_string(v: &Option<FixedSizeData<20>>, should_checksum: bool) -> Option<String> {
+pub(crate) fn map_address_string(
+    v: &Option<FixedSizeData<20>>,
+    should_checksum: bool,
+) -> Option<String> {
     v.as_ref().map(|v| encode_address(v, should_checksum))
 }
 
@@ -237,11 +240,12 @@ pub(crate) fn encode_address(addr: &FixedSizeData<20>, should_checksum: bool) ->
     }
 }
 
-fn map_hex_string<T: Hex>(v: &Option<T>) -> Option<String> {
+pub(crate) fn map_hex_string<T: Hex>(v: &Option<T>) -> Option<String> {
     v.as_ref().map(|v| v.encode_hex())
 }
 
-fn map_i64<T: AsRef<[u8]>>(opt: &Option<T>) -> Result<Option<i64>> {
+#[allow(dead_code)]
+pub(crate) fn map_i64<T: AsRef<[u8]>>(opt: &Option<T>) -> Result<Option<i64>> {
     opt.as_ref()
         .map(|v| {
             i64::try_from(ruint::aliases::U256::from_be_slice(v.as_ref()))
@@ -250,7 +254,7 @@ fn map_i64<T: AsRef<[u8]>>(opt: &Option<T>) -> Result<Option<i64>> {
         .transpose()
 }
 
-fn map_bigint<T: AsRef<[u8]>>(opt: &Option<T>) -> Option<BigInt> {
+pub(crate) fn map_bigint<T: AsRef<[u8]>>(opt: &Option<T>) -> Option<BigInt> {
     opt.as_ref()
         .map(|v| convert_bigint_unsigned(ruint::aliases::U256::from_be_slice(v.as_ref())))
 }
