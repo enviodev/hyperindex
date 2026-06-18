@@ -96,7 +96,7 @@ module Make = () => {
         block,
         transaction: makeTransaction(~transactionIndex, ~transactionHash),
         logIndex,
-      }->Internal.fromEvmEventPayload
+      }->Evm.fromPayload
     }
 
     {

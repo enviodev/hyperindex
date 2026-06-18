@@ -298,8 +298,8 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
               logIndex,
               transaction,
               block,
-            }: Internal.evmEventPayload
-          )->Internal.fromEvmEventPayload,
+            }: Evm.payload
+          )->Evm.fromPayload,
         }),
       )
       ->ignore

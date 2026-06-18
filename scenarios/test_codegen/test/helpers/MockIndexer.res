@@ -864,7 +864,7 @@ module Source = {
                               "timestamp": item.blockNumber,
                               "hash": `0x${item.blockNumber->Int.toString}`,
                             }->Utils.magic,
-                          }->Internal.fromEvmEventPayload,
+                          }->Evm.fromPayload,
                         })
                       },
                     ),

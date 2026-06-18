@@ -408,7 +408,7 @@ let make = ({chain, endpointUrl}: options): t => {
           block: block->Obj.magic,
           srcAddress: contractAddress,
           logIndex: receiptIndex,
-        }->Internal.fromFuelEventPayload,
+        }->Fuel.fromPayload,
       })
     })
 

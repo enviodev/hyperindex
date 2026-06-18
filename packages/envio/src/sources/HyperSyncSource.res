@@ -217,7 +217,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
         srcAddress,
         logIndex,
-      }->Internal.fromEvmEventPayload,
+      }->Evm.fromPayload,
     })
   }
 

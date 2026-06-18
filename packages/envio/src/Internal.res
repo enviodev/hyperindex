@@ -269,42 +269,15 @@ type genericEvent<'params, 'block, 'transaction> = {
 // (blockNumber, timestamp, blockHash) live on the item instead.
 type event
 
-// Opaque payload an item carries. Same runtime shape as the ecosystem's
-// concrete payload today, but a distinct type so a source can later hand
-// back a compact or lazy representation. Consumers never read it directly —
-// the ecosystem turns a payload into the user-facing `event`, a logger, or a
-// raw event, after converting it to its own concrete payload type.
+// Opaque payload an item carries. A source builds an ecosystem-specific
+// concrete payload (see `Evm.payload` / `Fuel.payload`) and erases it to this
+// type; consumers never read it directly — the ecosystem converts it back to
+// its own payload to produce the user-facing `event`, a logger, or a raw
+// event. The concrete payload types deliberately live in the ecosystem
+// modules, not here, and are distinct per ecosystem.
 type eventPayload
 
 external payloadToEvent: eventPayload => event = "%identity"
-
-// Per-ecosystem concrete payloads. There is deliberately no shared "generic"
-// payload across ecosystems — EVM, Fuel and SVM payloads are distinct types.
-type evmEventPayload = {
-  contractName: string,
-  eventName: string,
-  params: eventParams,
-  chainId: int,
-  srcAddress: Address.t,
-  logIndex: int,
-  transaction: eventTransaction,
-  block: eventBlock,
-}
-external fromEvmEventPayload: evmEventPayload => eventPayload = "%identity"
-external toEvmEventPayload: eventPayload => evmEventPayload = "%identity"
-
-type fuelEventPayload = {
-  contractName: string,
-  eventName: string,
-  params: eventParams,
-  chainId: int,
-  srcAddress: Address.t,
-  logIndex: int,
-  transaction: eventTransaction,
-  block: eventBlock,
-}
-external fromFuelEventPayload: fuelEventPayload => eventPayload = "%identity"
-external toFuelEventPayload: eventPayload => fuelEventPayload = "%identity"
 
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
