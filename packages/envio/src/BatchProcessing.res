@@ -11,11 +11,7 @@ let yieldTick = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => res
 // re-kick it. `state.isProcessing` guarantees one instance. The loop
 // decides whether to keep going by inspecting state after each batch, rather than
 // from a return value of processNextBatch.
-let rec startProcessing = async (
-  state: IndexerState.t,
-  ~scheduleFetchAllChains,
-  ~scheduleRollback,
-) => {
+let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~scheduleRollback) => {
   if !(state->IndexerState.isProcessing) && !(state->IndexerState.isStopped) {
     state->IndexerState.beginProcessing
     // FIXME: Needed only for test determinism. The mocks resolve several fetch
@@ -37,7 +33,7 @@ let rec startProcessing = async (
       !(state->IndexerState.isResolvingReorg)
     ) {
       let processedBatchesBefore = state->IndexerState.processedBatchesCount
-      switch await processNextBatch(state, ~scheduleFetchAllChains) {
+      switch await processNextBatch(state, ~scheduleFetch) {
       | exception exn =>
         IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
       | () => hasMoreWork := state->IndexerState.processedBatchesCount > processedBatchesBefore
@@ -53,7 +49,7 @@ let rec startProcessing = async (
   }
 }
 
-and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): unit => {
+and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
   // The reorg-threshold and queue updates below advance the chain states for the
   // next round, but the current batch is created and processed against the chain
   // states as they are now.
@@ -97,7 +93,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
 
   if progressedChainsById->Utils.Dict.isEmpty {
     if shouldEnterReorgThreshold {
-      scheduleFetchAllChains()
+      scheduleFetch()
     }
 
     // When resuming from persisted state, all events may already be processed.
@@ -120,7 +116,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
     // lands mid-batch commits only fetch-frontier fields (buffer, knownHeight),
     // while applyBatchProgress below commits only progress fields, so the two
     // concurrent writes are disjoint and neither clobbers the other.
-    scheduleFetchAllChains()
+    scheduleFetch()
 
     state->InMemoryStore.setBatchDcs(~batch)
 
@@ -156,7 +152,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetchAllChains): u
           // parked during backfill is bound to the old source; bump the epoch to
           // invalidate it and kick a fresh fetch that parks on the realtime source.
           state->IndexerState.invalidateInflight
-          scheduleFetchAllChains()
+          scheduleFetch()
         }
 
         let allCaughtUp = EventProcessing.allChainsEventsProcessedToEndblock(

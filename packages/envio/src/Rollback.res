@@ -40,7 +40,7 @@ let getLastKnownValidBlock = async (
 
 let rec rollback = async (
   state: IndexerState.t,
-  ~scheduleFetchAllChains,
+  ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
 ) =>
@@ -78,7 +78,7 @@ let rec rollback = async (
         state,
         ~reorgChain,
         ~rollbackTargetBlockNumber,
-        ~scheduleFetchAllChains,
+        ~scheduleFetch,
         ~scheduleProcessing,
       )
     }
@@ -91,7 +91,7 @@ and executeRollback = async (
   state: IndexerState.t,
   ~reorgChain,
   ~rollbackTargetBlockNumber,
-  ~scheduleFetchAllChains,
+  ~scheduleFetch,
   ~scheduleProcessing,
 ) => {
   let startTime = Hrtime.makeTimer()
@@ -199,6 +199,6 @@ and executeRollback = async (
   )
 
   state->IndexerState.completeRollback(~eventsProcessedDiffByChain)
-  scheduleFetchAllChains()
+  scheduleFetch()
   scheduleProcessing()
 }
