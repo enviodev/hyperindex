@@ -5,7 +5,7 @@
 //! fetch responses are merged in, and entries are pruned/rolled back by block.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use hypersync_client::format::Hex;
@@ -130,7 +130,9 @@ impl EvmTxField {
         EvmTxField::ALL.get(code as usize).copied()
     }
 
-    /// The JS property name. Must match `Evm.res` `transactionFields`.
+    /// The JS property name. Must match `Evm.res` `transactionFields`. Used by
+    /// the order-contract test; kept as the documented field↔name mapping.
+    #[allow(dead_code)]
     pub fn name(self) -> &'static str {
         use EvmTxField::*;
         match self {
@@ -243,7 +245,7 @@ fn evm_get_field(
 /// wired in.
 enum StoredTx {
     EvmRaw {
-        tx: simple_types::Transaction,
+        tx: Arc<simple_types::Transaction>,
         checksum: bool,
     },
 }
@@ -344,7 +346,7 @@ impl TransactionStore {
         &self,
         block_number: u64,
         transaction_id: String,
-        tx: simple_types::Transaction,
+        tx: Arc<simple_types::Transaction>,
         checksum: bool,
     ) {
         let mut inner = self.inner.lock().unwrap();
@@ -378,7 +380,7 @@ mod tests {
     #[test]
     fn store_returns_requested_field_only() {
         let store = TransactionStore::new();
-        store.insert_evm_raw(100, "3".to_string(), raw_tx(), false);
+        store.insert_evm_raw(100, "3".to_string(), Arc::new(raw_tx()), false);
 
         match store
             .get_transaction_field(100, "3".to_string(), EvmTxField::Input as i32)
@@ -409,19 +411,19 @@ mod tests {
         store.insert_evm_raw(
             10,
             "0".to_string(),
-            simple_types::Transaction::default(),
+            Arc::new(simple_types::Transaction::default()),
             false,
         );
         store.insert_evm_raw(
             20,
             "0".to_string(),
-            simple_types::Transaction::default(),
+            Arc::new(simple_types::Transaction::default()),
             false,
         );
         store.insert_evm_raw(
             30,
             "0".to_string(),
-            simple_types::Transaction::default(),
+            Arc::new(simple_types::Transaction::default()),
             false,
         );
 
