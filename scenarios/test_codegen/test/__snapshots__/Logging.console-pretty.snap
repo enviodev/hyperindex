@@ -43,8 +43,8 @@
 [HH:MM:SS.mmm] [41mFATAL[49m: [36mThis is a fatal message.[39m
 
 [HH:MM:SS.mmm] [44mUDEBUG[49m: [36mThis is a user debug message.[39m
-    [35mcontractName[39m: "Gravatar"
-    [35meventName[39m: "NewGravatar"
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
     [35mchainId[39m: 1337
     [35mblock[39m: 1
     [35mlogIndex[39m: 11
@@ -52,8 +52,8 @@
     [35mchild[39m: "userLogs debug"
 
 [HH:MM:SS.mmm] [42mUINFO[49m: [36mThis is a user info message.[39m
-    [35mcontractName[39m: "Gravatar"
-    [35meventName[39m: "NewGravatar"
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
     [35mchainId[39m: 1337
     [35mblock[39m: 1
     [35mlogIndex[39m: 11
@@ -61,8 +61,8 @@
     [35mchild[39m: "userLogs debug"
 
 [HH:MM:SS.mmm] [43mUWARN[49m: [36mThis is a user warn message.[39m
-    [35mcontractName[39m: "Gravatar"
-    [35meventName[39m: "NewGravatar"
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
     [35mchainId[39m: 1337
     [35mblock[39m: 1
     [35mlogIndex[39m: 11
@@ -70,8 +70,8 @@
     [35mchild[39m: "userLogs debug"
 
 [HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error message.[39m
-    [35mcontractName[39m: "Gravatar"
-    [35meventName[39m: "NewGravatar"
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
     [35mchainId[39m: 1337
     [35mblock[39m: 1
     [35mlogIndex[39m: 11
@@ -79,8 +79,8 @@
     [35mchild[39m: "userLogs debug"
 
 [HH:MM:SS.mmm] [42mUINFO[49m: [36mThis is a user info message.[39m
-    [35mcontractName[39m: "Gravatar"
-    [35meventName[39m: "NewGravatar"
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
     [35mchainId[39m: 1337
     [35mblock[39m: 1
     [35mlogIndex[39m: 11
@@ -88,8 +88,8 @@
     [35mchild[39m: "userLogs info"
 
 [HH:MM:SS.mmm] [43mUWARN[49m: [36mThis is a user warn message.[39m
-    [35mcontractName[39m: "Gravatar"
-    [35meventName[39m: "NewGravatar"
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
     [35mchainId[39m: 1337
     [35mblock[39m: 1
     [35mlogIndex[39m: 11
@@ -101,8 +101,8 @@
     }
 
 [HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error message.[39m
-    [35mcontractName[39m: "Gravatar"
-    [35meventName[39m: "NewGravatar"
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
     [35mchainId[39m: 1337
     [35mblock[39m: 1
     [35mlogIndex[39m: 11
@@ -110,8 +110,8 @@
     [35mchild[39m: "userLogs info"
 
 [HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error with exception.[39m
-    [35mcontractName[39m: "Gravatar"
-    [35meventName[39m: "NewGravatar"
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
     [35mchainId[39m: 1337
     [35mblock[39m: 1
     [35mlogIndex[39m: 11
@@ -122,8 +122,8 @@
     }
 
 [HH:MM:SS.mmm] [43mUWARN[49m: [36mThis is a user warn message.[39m
-    [35mcontractName[39m: "Gravatar"
-    [35meventName[39m: "NewGravatar"
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
     [35mchainId[39m: 1337
     [35mblock[39m: 1
     [35mlogIndex[39m: 11
@@ -131,8 +131,8 @@
     [35mchild[39m: "userLogs warn"
 
 [HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error message.[39m
-    [35mcontractName[39m: "Gravatar"
-    [35meventName[39m: "NewGravatar"
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
     [35mchainId[39m: 1337
     [35mblock[39m: 1
     [35mlogIndex[39m: 11
@@ -140,8 +140,8 @@
     [35mchild[39m: "userLogs warn"
 
 [HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error message.[39m
-    [35mcontractName[39m: "Gravatar"
-    [35meventName[39m: "NewGravatar"
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
     [35mchainId[39m: 1337
     [35mblock[39m: 1
     [35mlogIndex[39m: 11

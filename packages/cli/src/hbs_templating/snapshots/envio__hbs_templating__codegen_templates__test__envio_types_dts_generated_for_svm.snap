@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3167
 expression: project_template.envio_types_dts
 ---
 /**
@@ -10,6 +11,11 @@ expression: project_template.envio_types_dts
  */
 
 import type { Address, BigDecimal, SingleOrMultiple } from "envio";
+
+/** Marks a block/transaction field that this event's `field_selection` doesn't include.
+ * Reading such a field is a type error; the message tells you which field to add to
+ * `field_selection` in config.yaml to make it available. */
+type FieldNotSelected<Message extends string> = { readonly __fieldNotSelected: Message };
 
 declare namespace FuelTypes {}
 type Enums = {};

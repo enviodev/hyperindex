@@ -507,6 +507,13 @@ indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async 
     case "syncRegistration":
       context.chain.SimpleNft.add(event.params.contract);
       break;
+    // Registering a dynamic contract at a later block than a prior event
+    // splits processing into two batches (the prior blocks commit first).
+    // Used by TestIndexer.test.ts to reproduce the cross-batch cached-effect
+    // load without any batch-size config.
+    case "registerAndCachedEffect":
+      context.chain.SimpleNft.add(event.params.contract);
+      break;
     case "validatesAddress":
       // This should throw because the address is invalid
       // @ts-expect-error
@@ -787,6 +794,18 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
       break;
     }
 
+    // Calls the cached effect with a fresh key. Paired with the contractRegister
+    // branch of the same testCase: when this event sits a block after an event
+    // that already cached the effect, it runs in a split-off second batch whose
+    // preload loads the effect cache from storage.
+    case "registerAndCachedEffect": {
+      const result = await context.effect(testEffectWithCache, {
+        id: "3",
+      });
+      deepEqual(result, "test-3");
+      break;
+    }
+
     case "throwingEffect": {
       await context.effect(throwingEffect, {
         id: "1",
@@ -930,7 +949,7 @@ indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, co
 //
 // All non-skip-all predicates pin to chain 137 (configured in config.yaml
 // but not used by any existing simulate/process test) so the handlers
-// register without crashing the per-chain validation in `ChainFetcher.res`
+// register without crashing the per-chain validation in `ChainState.res`
 // and don't fire on existing test runs (which would pollute the
 // `result.changes` array). Handlers are no-ops — the value here is
 // validating the registration paths (`where` evaluated per chain, range

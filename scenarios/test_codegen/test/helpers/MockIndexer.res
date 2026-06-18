@@ -7,9 +7,6 @@ let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   ->Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
   ->Option.getOrThrow
 
-// Handle to the real module before the local shadow below.
-module RealInMemoryStore = InMemoryStore
-
 // The store requires a persistence/config even when the cycle never runs; reuse one.
 let defaultPersistence = PgStorage.makePersistenceFromConfig(
   ~config,
@@ -22,11 +19,11 @@ let defaultPersistence = PgStorage.makePersistenceFromConfig(
 )
 
 module InMemoryStore = {
-  let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
-    let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+  let setEntity = (indexerState, ~entityConfig: Internal.entityConfig, entity) => {
+    let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
-      ~committedCheckpointId=inMemoryStore.committedCheckpointId,
+      ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
       Set({
         entityId: (entity: Internal.entity).id,
         checkpointId: 0n,
@@ -36,22 +33,22 @@ module InMemoryStore = {
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = RealInMemoryStore.make(
-      ~entities=config.allEntities,
-      ~persistence=defaultPersistence,
+    let indexerState = IndexerState.make(
       ~config,
+      ~persistence=defaultPersistence,
+      // A trivial chain state map for store-only tests that never run the loop.
+      ~chainStates=Dict.make(),
+      ~isInReorgThreshold=false,
+      ~isRealtime=false,
       // The cycle never runs here, so a write only means a test is wired wrong.
-      ~onError=exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Unexpected persistence write from an in-memory-only test store",
-        ),
+      ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
     )
     entities->Array.forEach(((entityConfig, items)) => {
       items->Array.forEach(entity => {
-        inMemoryStore->setEntity(~entityConfig, entity)
+        indexerState->setEntity(~entityConfig, entity)
       })
     })
-    inMemoryStore
+    indexerState
   }
 }
 
@@ -84,7 +81,7 @@ module Storage = {
     storage: Persistence.storage,
   }
 
-  let make = (methods: array<method>) => {
+  let make = (methods: array<method>, ~dbEntities=[]) => {
     let implement = (method: method, fn) => {
       if methods->Array.includes(method) {
         fn
@@ -169,7 +166,19 @@ module Storage = {
               "tableName": table.tableName,
             })
             ->ignore
-            Promise.resolve([])
+            let rows = switch dbEntities->Array.find(((
+              entityConfig: Internal.entityConfig,
+              _,
+            )) => entityConfig.table.tableName === table.tableName) {
+            | Some((_, rows)) =>
+              rows->Array.filter(row =>
+                filter->EntityFilter.matches(
+                  ~entity=row->(Utils.magic: 'entity => dict<EntityFilter.FieldValue.t>),
+                )
+              )
+            | None => []
+            }
+            Promise.resolve(rows->(Utils.magic: array<'entity> => array<unknown>))
           })
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
@@ -324,19 +333,6 @@ module Indexer = {
       NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
     }
 
-    let ctx = {
-      Ctx.registrations,
-      config,
-      persistence,
-      inMemoryStore: RealInMemoryStore.make(
-        ~entities=config.allEntities,
-        ~persistence,
-        ~config,
-        ~onError=exn =>
-          onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
-      ),
-    }
-
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
     let graphqlRoute = Rest.route(() => {
       method: Post,
@@ -353,49 +349,33 @@ module Indexer = {
       ~reset,
     )
 
-    let chainManager = ChainManager.makeFromDbState(
+    let state = IndexerState.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
+      ~persistence,
       ~registrations,
       ~reducedPollingInterval?,
-    )
-    let globalState = GlobalState.make(
-      ~ctx,
-      ~chainManager,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
       ~onError,
     )
-    let gsManager =
-      globalState->GlobalStateManager.make(
-        ~reducers=GlobalState.makeReducers(
-          ~markBatchProcessed=MarkBatchProcessedAdapter.make(~inMemoryStore=ctx.inMemoryStore),
-        ),
-      )
-    gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
-    /*
-        NOTE:
-          This `ProcessEventBatch` dispatch shouldn't be necessary but we are adding for safety, it should immediately return doing 
-          nothing since there is no events on the queues.
- */
-    gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
+    state->IndexerLoop.start
 
     {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
-          let before = ctx.inMemoryStore.processedBatchesCount
+          let before = state->IndexerState.processedBatchesCount
           // Wait until a new batch is processed and written. A reorg batch can
           // land before this call (e.g. while the test awaits the rollback), so
           // also stop once the indexer has fully settled.
           let idleChecks = ref(0)
           let rec wait = async () => {
-            await ctx.inMemoryStore->RealInMemoryStore.flush
-            let store = ctx.inMemoryStore
+            await state->Writing.flush
             let isIdle =
-              !store.isProcessing &&
-              store.writeFiber->Option.isNone &&
-              store.committedCheckpointId == store.processedCheckpointId
-            if before < store.processedBatchesCount {
+              !(state->IndexerState.isProcessing) &&
+              state->IndexerState.writeFiber->Option.isNone &&
+              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
+            if before < state->IndexerState.processedBatchesCount {
               ()
             } else if isIdle && idleChecks.contents >= 5 {
               ()
@@ -422,12 +402,10 @@ module Indexer = {
       },
       getRollbackReadyPromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
-          while (
-            switch (gsManager->GlobalStateManager.getState).rollbackState {
-            | RollbackReady(_) => false
-            | _ => true
-            }
-          ) {
+          // Wait for the in-progress rollback to be fully applied. RollbackReady
+          // itself is transient (the reprocessing batch consumes it), so observe
+          // the rollback flag clearing instead.
+          while state->IndexerState.isResolvingReorg {
             await Utils.delay(1)
           }
           // Skip an extra microtask for indexer to fire actions
@@ -532,12 +510,16 @@ module Indexer = {
       },
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.
-        await ctx.inMemoryStore->RealInMemoryStore.flush
-        let state = gsManager->GlobalStateManager.getState
-        gsManager->GlobalStateManager.setState({
-          ...gsManager->GlobalStateManager.getState,
-          id: state.id + 1,
-        })
+        await state->Writing.flush
+        // Stop the previous run's loops so they don't keep driving the shared db
+        // once the resumed indexer takes over.
+        state->IndexerState.stop
+        // Let any in-flight batch or write from the stopped run settle before the
+        // resumed indexer takes over the shared persistence, else the two runs
+        // race against the same db.
+        while state->IndexerState.isProcessing || state->IndexerState.writeFiber->Option.isSome {
+          await Utils.delay(1)
+        }
         await make(
           ~chains,
           ~enableHasura,
@@ -869,7 +851,7 @@ module Source = {
                           blockNumber: item.blockNumber,
                           blockHash: `0x${item.blockNumber->Int.toString}`,
                           logIndex: item.logIndex,
-                          event: {
+                          payload: {
                             contractName: "MockContract",
                             eventName: "MockEvent",
                             params: %raw(`{}`),
@@ -882,7 +864,7 @@ module Source = {
                               "timestamp": item.blockNumber,
                               "hash": `0x${item.blockNumber->Int.toString}`,
                             }->Utils.magic,
-                          }->Internal.fromGenericEvent,
+                          }->Evm.fromPayload,
                         })
                       },
                     ),
@@ -944,17 +926,17 @@ module Helper = {
 }
 
 let mockRawEventRow: InternalTable.RawEvents.t = {
-  chainId: 1,
-  eventId: 1234567890n,
-  contractName: "NftFactory",
-  eventName: "SimpleNftCreated",
-  blockNumber: 1000,
-  logIndex: 10,
-  transactionFields: %raw(`{"transactionIndex": 20, "hash": "0x1234567890abcdef"}`),
-  srcAddress: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
-  blockHash: "0x9876543210fedcba9876543210fedcba987654321",
-  blockTimestamp: 1620720000,
-  blockFields: %raw(`{}`),
+  chain_id: 1,
+  event_id: 1234567890n,
+  contract_name: "NftFactory",
+  event_name: "SimpleNftCreated",
+  block_number: 1000,
+  log_index: 10,
+  transaction_fields: %raw(`{"transactionIndex": 20, "hash": "0x1234567890abcdef"}`),
+  src_address: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
+  block_hash: "0x9876543210fedcba9876543210fedcba987654321",
+  block_timestamp: 1620720000,
+  block_fields: %raw(`{}`),
   params: {
     "foo": "bar",
     "baz": 42,

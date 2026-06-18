@@ -1,18 +1,17 @@
-let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {
-  chainFetchers
-  ->ChainMap.values
-  ->Array.every(cf => cf->ChainFetcher.hasProcessedToEndblock)
+let allChainsEventsProcessedToEndblock = (chainStates: dict<ChainState.t>) => {
+  chainStates
+  ->Dict.valuesToArray
+  ->Array.every(cs => cs->ChainState.hasProcessedToEndblock)
 }
 
-let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.chains => {
+let computeChainsState = (chainStates: dict<ChainState.t>): Internal.chains => {
   let chains = Dict.make()
 
-  let isRealtime = chainFetchers->ChainMap.values->Array.every(cf => cf->ChainFetcher.isReady)
+  let values = chainStates->Dict.valuesToArray
+  let isRealtime = values->Array.every(cs => cs->ChainState.isReady)
 
-  chainFetchers
-  ->ChainMap.keys
-  ->Array.forEach(chain => {
-    let chainId = chain->ChainMap.Chain.toChainId
+  values->Array.forEach(cs => {
+    let chainId = (cs->ChainState.chainConfig).id
     chains->Dict.set(
       chainId->Int.toString,
       {
@@ -31,7 +30,7 @@ let runEventHandlerOrThrow = async (
   item: Internal.item,
   ~checkpointId,
   ~handler,
-  ~inMemoryStore,
+  ~indexerState,
   ~loadManager,
   ~persistence,
   ~chains: Internal.chains,
@@ -46,7 +45,7 @@ let runEventHandlerOrThrow = async (
     let contextParams: UserContext.contextParams = {
       item,
       checkpointId,
-      inMemoryStore,
+      indexerState,
       loadManager,
       persistence,
       isPreload: false,
@@ -57,7 +56,7 @@ let runEventHandlerOrThrow = async (
     await handler(
       (
         {
-          event: eventItem.event,
+          event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
           context: UserContext.getHandlerContext(contextParams),
         }: Internal.handlerArgs
       ),
@@ -84,9 +83,10 @@ let runEventHandlerOrThrow = async (
 let runHandlerOrThrow = async (
   item: Internal.item,
   ~checkpointId,
-  ~inMemoryStore,
+  ~indexerState,
   ~loadManager,
-  ~ctx: Ctx.t,
+  ~persistence: Persistence.t,
+  ~config: Config.t,
   ~chains: Internal.chains,
 ) => {
   switch item {
@@ -94,19 +94,19 @@ let runHandlerOrThrow = async (
     try {
       let contextParams: UserContext.contextParams = {
         item,
-        inMemoryStore,
+        indexerState,
         loadManager,
-        persistence: ctx.persistence,
+        persistence,
         checkpointId,
         isPreload: false,
         chains,
-        config: ctx.config,
+        config,
         isResolved: false,
       }
       await handler(
         Ecosystem.makeOnBlockArgs(
           ~blockNumber,
-          ~ecosystem=ctx.config.ecosystem,
+          ~ecosystem=config.ecosystem,
           ~context=UserContext.getHandlerContext(contextParams),
         ),
       )
@@ -121,16 +121,17 @@ let runHandlerOrThrow = async (
         }),
       )
     }
-  | Event({eventConfig}) => switch eventConfig.handler {
+  | Event({eventConfig}) =>
+    switch eventConfig.handler {
     | Some(handler) =>
       await item->runEventHandlerOrThrow(
         ~handler,
         ~checkpointId,
-        ~inMemoryStore,
+        ~indexerState,
         ~loadManager,
-        ~persistence=ctx.persistence,
+        ~persistence,
         ~chains,
-        ~config=ctx.config,
+        ~config,
       )
     | None => ()
     }
@@ -142,7 +143,7 @@ let preloadBatchOrThrow = async (
   ~loadManager,
   ~persistence,
   ~config: Config.t,
-  ~inMemoryStore,
+  ~indexerState,
   ~chains: Internal.chains,
 ) => {
   // On the first run of loaders, we don't care about the result,
@@ -160,7 +161,7 @@ let preloadBatchOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
-      | Event({eventConfig: {handler, contractName, name: eventName}, event}) =>
+      | Event({eventConfig: {handler, contractName, name: eventName}}) =>
         switch handler {
         | None => ()
         | Some(handler) =>
@@ -171,10 +172,10 @@ let preloadBatchOrThrow = async (
             )
             promises->Array.push(
               handler({
-                event,
+                event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
                 context: UserContext.getHandlerContext({
                   item,
-                  inMemoryStore,
+                  indexerState,
                   loadManager,
                   persistence,
                   checkpointId,
@@ -208,7 +209,7 @@ let preloadBatchOrThrow = async (
                 ~ecosystem=config.ecosystem,
                 ~context=UserContext.getHandlerContext({
                   item,
-                  inMemoryStore,
+                  indexerState,
                   loadManager,
                   persistence,
                   checkpointId,
@@ -234,9 +235,10 @@ let preloadBatchOrThrow = async (
 
 let runBatchHandlersOrThrow = async (
   batch: Batch.t,
-  ~inMemoryStore,
+  ~indexerState,
   ~loadManager,
-  ~ctx,
+  ~persistence,
+  ~config,
   ~chains: Internal.chains,
 ) => {
   let itemIdx = ref(0)
@@ -248,7 +250,15 @@ let runBatchHandlersOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
 
-      await runHandlerOrThrow(item, ~checkpointId, ~inMemoryStore, ~loadManager, ~ctx, ~chains)
+      await runHandlerOrThrow(
+        item,
+        ~checkpointId,
+        ~indexerState,
+        ~loadManager,
+        ~persistence,
+        ~config,
+        ~chains,
+      )
     }
     itemIdx := itemIdx.contents + checkpointEventsProcessed
   }
@@ -273,14 +283,15 @@ type logPartitionInfo = {
 
 let processEventBatch = async (
   ~batch: Batch.t,
-  ~inMemoryStore: InMemoryStore.t,
+  ~indexerState: IndexerState.t,
   ~loadManager,
-  ~ctx: Ctx.t,
-  ~chainFetchers: ChainMap.t<ChainFetcher.t>,
+  ~persistence: Persistence.t,
+  ~config: Config.t,
+  ~chainStates: dict<ChainState.t>,
 ) => {
   let totalBatchSize = batch.totalBatchSize
   // Compute chains state for this batch
-  let chains: Internal.chains = chainFetchers->computeChainsState
+  let chains: Internal.chains = chainStates->computeChainsState
 
   let logger = Logging.getLogger()
   logger->Logging.childTrace({
@@ -296,29 +307,29 @@ let processEventBatch = async (
 
   try {
     // Backpressure: keep processing within keepLatestChangesLimit of the cycle.
-    await inMemoryStore->InMemoryStore.awaitCapacity
+    await indexerState->Writing.awaitCapacity
 
     let timeRef = Hrtime.makeTimer()
 
     if batch.items->Utils.Array.notEmpty {
-      await batch->preloadBatchOrThrow(
-        ~loadManager,
-        ~persistence=ctx.persistence,
-        ~inMemoryStore,
-        ~chains,
-        ~config=ctx.config,
-      )
+      await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
     }
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     if batch.items->Utils.Array.notEmpty {
-      await batch->runBatchHandlersOrThrow(~inMemoryStore, ~loadManager, ~ctx, ~chains)
+      await batch->runBatchHandlersOrThrow(
+        ~indexerState,
+        ~loadManager,
+        ~persistence,
+        ~config,
+        ~chains,
+      )
     }
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    inMemoryStore->InMemoryStore.commitBatch(~batch)
+    indexerState->Writing.commitBatch(~batch)
 
     let loaderDuration = elapsedTimeAfterLoaders
     let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
@@ -329,7 +340,10 @@ let processEventBatch = async (
     reason->ErrorHandling.make(~msg=message, ~logger)->Error
   | ProcessingError({message, exn, item}) =>
     exn
-    ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
+    ->ErrorHandling.make(
+      ~msg=message,
+      ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+    )
     ->Error
   | exn => exn->ErrorHandling.make(~msg="Failed processing batch", ~logger)->Error
   }

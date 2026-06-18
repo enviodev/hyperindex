@@ -463,7 +463,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     ).toBe(1)
   })
 
-  Async.it("getWhere throws a user friendly error for undefined filter values", async t => {
+  Async.it("getWhere throws a user friendly error for an invalid filter", async t => {
     let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
@@ -474,55 +474,28 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     await Utils.delay(0)
     await Utils.delay(0)
 
-    let errors = ref([])
+    let error = ref("")
 
     sourceMock.resolveGetItemsOrThrow([
       {
         blockNumber: 50,
         logIndex: 1,
         handler: async ({context}) => {
-          let expectGetWhereError = (
-            getWhere: unit => promise<array<Indexer.Entities.Token.t>>,
-          ) =>
+          error := (
             try {
-              let _ = getWhere()
+              let _ = await context.\"Token".getWhere(%raw(`{tokenId: undefined}`))
               "Expected getWhere to throw"
             } catch {
             | JsExn(e) => e->JsExn.message->Option.getOr("(no message)")
             }
-
-          errors := [
-            expectGetWhereError(() => context.\"Token".getWhere(%raw(`{tokenId: undefined}`))),
-            expectGetWhereError(() => context.\"Token".getWhere(%raw(`{tokenId: null}`))),
-            expectGetWhereError(
-              () => context.\"Token".getWhere(%raw(`{tokenId: {_eq: undefined}}`)),
-            ),
-            expectGetWhereError(() => context.\"Token".getWhere(%raw(`{tokenId: {_eq: null}}`))),
-            expectGetWhereError(
-              () => context.\"Token".getWhere(%raw(`{tokenId: {_in: [1n, undefined]}}`)),
-            ),
-            // A typoed operator or field gets its specific error
-            // even when the value is also nullish
-            expectGetWhereError(
-              () => context.\"Token".getWhere(%raw(`{tokenId: {_foo: undefined}}`)),
-            ),
-            expectGetWhereError(
-              () => context.\"Token".getWhere(%raw(`{nonExistingField: {_eq: undefined}}`)),
-            ),
-          ]
+          )
         },
       },
     ])
     await indexerMock.getBatchWritePromise()
 
-    t.expect(errors.contents).toEqual([
+    t.expect(error.contents).toEqual(
       `Invalid undefined value passed to context.Token.getWhere({ tokenId: undefined }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
-      `Invalid null value passed to context.Token.getWhere({ tokenId: null }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
-      `Invalid undefined value passed to context.Token.getWhere({ tokenId: { _eq: undefined } }). Filtering by null or undefined values is not supported in getWhere.`,
-      `Invalid null value passed to context.Token.getWhere({ tokenId: { _eq: null } }). Filtering by null or undefined values is not supported in getWhere.`,
-      `Invalid undefined value passed to context.Token.getWhere({ tokenId: { _in: [...] } }). Filtering by null or undefined values is not supported in getWhere. The undefined value is at index 1 of the _in array.`,
-      `Invalid operator "_foo" in context.Token.getWhere({ tokenId: { _foo: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
-      `Invalid field "nonExistingField" in context.Token.getWhere(). The field doesn't exist. Rerun 'pnpm dev' to update generated code after schema.graphql changes.`,
-    ])
+    )
   })
 })

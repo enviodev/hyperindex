@@ -27,7 +27,7 @@
 
 Prefer Public module API for testing.
 
-Verify that tests pass by running a compiler `pnpm rescript` and tests `pnpm vitest run`.
+Verify your change by compiling with `pnpm rescript` and running only the tests relevant to it — pass the test file or a name filter to vitest (e.g. `pnpm vitest run path/to/File_test.res` or `pnpm vitest run -t "name"`). Don't run the full `pnpm vitest run` suite locally; CI runs it on push, so rely on the CI result for full coverage.
 
 ## ReScript
 

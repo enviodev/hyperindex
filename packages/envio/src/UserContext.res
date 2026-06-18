@@ -1,9 +1,7 @@
-let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema.graphql changes.`
-
 type contextParams = {
   item: Internal.item,
   checkpointId: Internal.checkpointId,
-  inMemoryStore: InMemoryStore.t,
+  indexerState: IndexerState.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
   isPreload: bool,
@@ -24,7 +22,8 @@ Utils.Object.defineProperty(
   {
     // Wrap with toMethod so `this` binds to the EffectContext instance.
     get: Utils.toMethod(() => {
-      (paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))).item->Logging.getUserLogger
+      let params = paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))
+      Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)
     }),
   },
 )
@@ -62,9 +61,10 @@ let initEffect = (params: contextParams) => {
       ~persistence=params.persistence,
       ~effect,
       ~effectArgs,
-      ~inMemoryStore=params.inMemoryStore,
+      ~indexerState=params.indexerState,
       ~shouldGroup=params.isPreload,
       ~item=params.item,
+      ~ecosystem=params.config.ecosystem,
     )
   }
   callEffect
@@ -75,109 +75,8 @@ type entityContextParams = {
   entityConfig: Internal.entityConfig,
 }
 
-let getUndefinedOrNullName = (value: 'a) =>
-  if value === %raw(`undefined`) {
-    Some("undefined")
-  } else if value === %raw(`null`) {
-    Some("null")
-  } else {
-    None
-  }
-
-// Nullish values would otherwise turn into a "= NULL" query
-// silently matching nothing.
-let throwUnsupportedGetWhereValue = (~valueName, ~entityName, ~filterDisplay, ~hint="") =>
-  JsError.throwWithMessage(
-    `Invalid ${valueName} value passed to context.${entityName}.getWhere(${filterDisplay}). Filtering by null or undefined values is not supported in getWhere.${hint}`,
-  )
-
 let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
   let entityConfig = params.entityConfig
-  let filterKeys = filter->Dict.keysToArray
-
-  if filterKeys->Array.length === 0 {
-    JsError.throwWithMessage(
-      `Empty filter passed to context.${entityConfig.name}.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
-    )
-  }
-  if filterKeys->Array.length > 1 {
-    JsError.throwWithMessage(
-      `Multiple filter fields passed to context.${entityConfig.name}.getWhere(). Currently only one filter field per call is supported. Received fields: ${filterKeys->Array.joinUnsafe(
-          ", ",
-        )}.`,
-    )
-  }
-
-  let apiFieldName = filterKeys->Array.getUnsafe(0)
-  let operatorObj = filter->Dict.getUnsafe(apiFieldName)
-
-  switch operatorObj->getUndefinedOrNullName {
-  | Some(valueName) =>
-    throwUnsupportedGetWhereValue(
-      ~valueName,
-      ~entityName=entityConfig.name,
-      ~filterDisplay=`{ ${apiFieldName}: ${valueName} }`,
-      ~hint=` Please provide an operator like { _eq: value }.`,
-    )
-  | None => ()
-  }
-
-  let operatorKeys = operatorObj->Dict.keysToArray
-
-  if operatorKeys->Array.length === 0 {
-    JsError.throwWithMessage(
-      `Empty operator passed to context.${entityConfig.name}.getWhere({ ${apiFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
-    )
-  }
-  if operatorKeys->Array.length > 1 {
-    JsError.throwWithMessage(
-      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${apiFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Array.joinUnsafe(
-          ", ",
-        )}.`,
-    )
-  }
-
-  let operatorKey = operatorKeys->Array.getUnsafe(0)
-
-  let throwInvalidOperator = () =>
-    JsError.throwWithMessage(
-      `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${apiFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
-    )
-
-  // Validate the operator and the field before the value, so a typoed
-  // operator or field gets the more specific error even when the value
-  // is also nullish
-  switch operatorKey {
-  | "_eq" | "_gt" | "_lt" | "_gte" | "_lte" | "_in" => ()
-  | _ => throwInvalidOperator()
-  }
-
-  switch entityConfig.table->Table.getFieldByApiName(apiFieldName) {
-  | None =>
-    JsError.throwWithMessage(
-      `Invalid field "${apiFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
-    )
-  | Some(DerivedFrom(_)) =>
-    JsError.throwWithMessage(
-      `The field "${apiFieldName}" on entity "${entityConfig.name}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
-    )
-  | Some(Field({isIndex: false, linkedEntity: None})) =>
-    JsError.throwWithMessage(
-      `The field "${apiFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${apiFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
-    )
-  | Some(Field(_)) => ()
-  }
-
-  let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
-  switch fieldValue->getUndefinedOrNullName {
-  | Some(valueName) =>
-    throwUnsupportedGetWhereValue(
-      ~valueName,
-      ~entityName=entityConfig.name,
-      ~filterDisplay=`{ ${apiFieldName}: { ${operatorKey}: ${valueName} } }`,
-    )
-  | None => ()
-  }
 
   @inline
   let loadWithFilter = filter =>
@@ -185,58 +84,23 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
       ~entityConfig,
-      ~inMemoryStore=params.inMemoryStore,
+      ~indexerState=params.indexerState,
       ~shouldGroup=params.isPreload,
       ~item=params.item,
+      ~ecosystem=params.config.ecosystem,
       ~filter,
     )
 
-  if operatorKey === "_in" {
-    let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
-
-    // Load each value as a separate Eq filter to memoize
-    // them in memory on the per-value level.
-    // A nullish value throws mid-map and leaves the loads of earlier
-    // values running unawaited, which is fine since the whole
-    // getWhere call rejects
-    fieldValues
-    ->Array.mapWithIndex((fieldValue, index) => {
-      switch fieldValue->getUndefinedOrNullName {
-      | Some(valueName) =>
-        throwUnsupportedGetWhereValue(
-          ~valueName,
-          ~entityName=entityConfig.name,
-          ~filterDisplay=`{ ${apiFieldName}: { _in: [...] } }`,
-          ~hint=` The ${valueName} value is at index ${index->Int.toString} of the _in array.`,
-        )
-      | None => ()
-      }
-      loadWithFilter(EntityFilter.Eq({fieldName: apiFieldName, fieldValue}))
-    })
+  switch filter->EntityFilter.parseGetWhereOrThrow(
+    ~entityName=entityConfig.name,
+    ~table=entityConfig.table,
+  ) {
+  | [single] => loadWithFilter(single)
+  | filters =>
+    filters
+    ->Array.map(filter => loadWithFilter(filter))
     ->Promise.all
     ->Promise.thenResolve(results => results->Array.flat)
-  } else if operatorKey === "_gte" || operatorKey === "_lte" {
-    // _gte and _lte are composed from Eq + Gt/Lt
-    let rangeFilter =
-      operatorKey === "_gte"
-        ? EntityFilter.Gt({fieldName: apiFieldName, fieldValue})
-        : EntityFilter.Lt({fieldName: apiFieldName, fieldValue})
-
-    [
-      loadWithFilter(EntityFilter.Eq({fieldName: apiFieldName, fieldValue})),
-      loadWithFilter(rangeFilter),
-    ]
-    ->Promise.all
-    ->Promise.thenResolve(results => results->Array.flat)
-  } else {
-    let filter = switch operatorKey {
-    | "_eq" => EntityFilter.Eq({fieldName: apiFieldName, fieldValue})
-    | "_gt" => EntityFilter.Gt({fieldName: apiFieldName, fieldValue})
-    | "_lt" => EntityFilter.Lt({fieldName: apiFieldName, fieldValue})
-    | _ => throwInvalidOperator()
-    }
-
-    loadWithFilter(filter)
   }
 }
 
@@ -260,10 +124,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     let set = params.isPreload
       ? noopSet
       : (entity: Internal.entity) => {
-          params.inMemoryStore
+          params.indexerState
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.inMemoryStore.committedCheckpointId,
+            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Set({
               entityId: entity.id,
               checkpointId: params.checkpointId,
@@ -285,9 +149,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
-              ~inMemoryStore=params.inMemoryStore,
+              ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
+              ~ecosystem=params.config.ecosystem,
               ~entityId,
             )
         )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
@@ -316,9 +181,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
-              ~inMemoryStore=params.inMemoryStore,
+              ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
+              ~ecosystem=params.config.ecosystem,
               ~entityId,
             )->Promise.thenResolve(entity => {
               switch entity {
@@ -345,9 +211,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
-              ~inMemoryStore=params.inMemoryStore,
+              ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
+              ~ecosystem=params.config.ecosystem,
               ~entityId=entity.id,
             )->Promise.thenResolve(storageEntity => {
               switch storageEntity {
@@ -366,10 +233,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         noopDeleteUnsafe
       } else {
         entityId => {
-          params.inMemoryStore
+          params.indexerState
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.inMemoryStore.committedCheckpointId,
+            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Delete({
               entityId,
               checkpointId: params.checkpointId,
@@ -389,13 +256,17 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
     if params.isResolved {
       Utils.Error.make(
         `Impossible to access context.${prop} after the handler is resolved. Make sure you didn't miss an await in the handler.`,
-      )->ErrorHandling.mkLogAndRaise(~logger=params.item->Logging.getItemLogger)
+      )->ErrorHandling.mkLogAndRaise(
+        ~logger=Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem),
+      )
     }
     switch prop {
     | "log" =>
-      (params.isPreload ? Logging.noopLogger : params.item->Logging.getUserLogger)->(
-        Utils.magic: Envio.logger => unknown
-      )
+      (
+        params.isPreload
+          ? Logging.noopLogger
+          : Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)
+      )->(Utils.magic: Envio.logger => unknown)
 
     | "effect" =>
       initEffect((params :> contextParams))->(
@@ -416,7 +287,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         {
           item: params.item,
           isPreload: params.isPreload,
-          inMemoryStore: params.inMemoryStore,
+          indexerState: params.indexerState,
           loadManager: params.loadManager,
           persistence: params.persistence,
           checkpointId: params.checkpointId,
@@ -429,7 +300,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         ->(Utils.magic: entityContextParams => unknown)
       | None =>
         JsError.throwWithMessage(
-          `Invalid context access by '${prop}' property. ${codegenHelpMessage}`,
+          `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
         )
       }
     }
@@ -438,102 +309,4 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
 
 let getHandlerContext = (params: contextParams): Internal.handlerContext => {
   params->Utils.Proxy.make(handlerTraps)->(Utils.magic: contextParams => Internal.handlerContext)
-}
-
-// Contract register context creation
-type contractRegisterParams = {
-  item: Internal.item,
-  onRegister: (~item: Internal.item, ~contractAddress: Address.t, ~contractName: string) => unit,
-  config: Config.t,
-  mutable isResolved: bool,
-}
-
-// Helper to create a validated add function for contract registration.
-// The isResolved check has to live inside the returned closure (not just in the
-// outer proxy trap) because users can capture `const add = context.chain.X.add`
-// before awaiting — a later call would otherwise bypass the resolved guard.
-let makeAddFunction = (~params: contractRegisterParams, ~contractName: string): (
-  Address.t => unit
-) => {
-  (contractAddress: Address.t) => {
-    if params.isResolved {
-      Utils.Error.make(`Impossible to access context.chain after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->ErrorHandling.mkLogAndRaise(
-        ~logger=params.item->Logging.getItemLogger,
-      )
-    }
-    let validatedAddress = if params.config.ecosystem.name === Evm {
-      // The value is passed from the user-land,
-      // so we need to validate and checksum/lowercase the address.
-      if params.config.lowercaseAddresses {
-        contractAddress->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        contractAddress->Address.Evm.fromAddressOrThrow
-      }
-    } else {
-      // TODO: Ideally we should do the same for other ecosystems
-      contractAddress
-    }
-
-    params.onRegister(~item=params.item, ~contractAddress=validatedAddress, ~contractName)
-  }
-}
-
-// Chain proxy for contractRegister context: context.chain.ContractName.add(address)
-let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
-    switch prop {
-    | "id" =>
-      let eventItem = params.item->Internal.castUnsafeEventItem
-      eventItem.chain->ChainMap.Chain.toChainId->(Utils.magic: int => unknown)
-    | _ =>
-      // Look up the contract name directly in config contracts across all chains.
-      let contractName = prop
-      let isValidContract =
-        params.config.chainMap
-        ->ChainMap.values
-        ->Array.some(chain => chain.contracts->Array.some(c => c.name === contractName))
-      if isValidContract {
-        let addFn = makeAddFunction(~params, ~contractName)
-        {"add": addFn}->(Utils.magic: {"add": Address.t => unit} => unknown)
-      } else {
-        JsError.throwWithMessage(
-          `Invalid contract name '${prop}' on context.chain. ${codegenHelpMessage}`,
-        )
-      }
-    }
-  },
-}
-
-let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
-    if params.isResolved {
-      Utils.Error.make(
-        `Impossible to access context.${prop} after the contract register is resolved. Make sure you didn't miss an await in the handler.`,
-      )->ErrorHandling.mkLogAndRaise(~logger=params.item->Logging.getItemLogger)
-    }
-    switch prop {
-    | "log" => params.item->Logging.getUserLogger->(Utils.magic: Envio.logger => unknown)
-    | "chain" =>
-      params
-      ->Utils.Proxy.make(contractRegisterChainTraps)
-      ->(Utils.magic: contractRegisterParams => unknown)
-    | _ =>
-      JsError.throwWithMessage(
-        `Invalid context access by '${prop}' property. Use context.chain.ContractName.add(address) to register contracts. ${codegenHelpMessage}`,
-      )
-    }
-  },
-}
-
-let getContractRegisterContext = (params: contractRegisterParams) => {
-  params
-  ->Utils.Proxy.make(contractRegisterTraps)
-  ->(Utils.magic: contractRegisterParams => Internal.contractRegisterContext)
-}
-
-let getContractRegisterArgs = (params: contractRegisterParams): Internal.contractRegisterArgs => {
-  event: (params.item->Internal.castUnsafeEventItem).event,
-  context: getContractRegisterContext(params),
 }

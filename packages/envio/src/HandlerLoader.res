@@ -115,7 +115,11 @@ let applyRegistrations = (~config: Config.t): Config.t => {
               ~eventName=ev.name,
             )
             let indexedParams = evmEv.paramsMetadata->Array.filter(p => p.indexed)
-            let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(
+            let {
+              getEventFiltersOrThrow,
+              filterByAddresses,
+              addressFilterParamGroups,
+            } = LogSelection.parseEventFiltersOrThrow(
               ~eventFilters,
               ~sighash=evmEv.sighash,
               ~params=indexedParams->Array.map(p => p.name),
@@ -140,6 +144,7 @@ let applyRegistrations = (~config: Config.t): Config.t => {
               contractRegister,
               getEventFiltersOrThrow,
               filterByAddresses,
+              clientAddressFilter: ?EventConfigBuilder.buildAddressFilter(addressFilterParamGroups),
               dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
             } :> Internal.eventConfig)
           | Svm =>

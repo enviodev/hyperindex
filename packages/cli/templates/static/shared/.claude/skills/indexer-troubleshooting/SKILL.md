@@ -48,11 +48,11 @@ rpc:
 
 **"rate limited" or timeout errors:** See `indexer-performance` skill for RPC tuning parameters.
 
-**Missing `ENVIO_API_TOKEN`:** Required for HyperSync. Get a token at https://envio.dev/app/api-tokens, then set it in `.env` or shell environment.
+**Missing `ENVIO_API_TOKEN`:** Required for HyperSync. Get an Envio API token at https://envio.dev/app/api-tokens, then set it in `.env` or shell environment.
 
 ## Common Runtime Errors
 
-**"field not indexed"** — `getWhere` only works on fields with `@index` in `schema.graphql`.
+**"field not indexed"** — `getWhere` only works on `id` and fields with `@index` in `schema.graphql`.
 
 **"entity is read-only"** — Entities from `context.Entity.get()` are frozen. Spread to update: `context.Entity.set({ ...entity, field: newValue })`.
 

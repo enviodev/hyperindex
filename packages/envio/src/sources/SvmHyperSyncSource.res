@@ -510,7 +510,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
             blockNumber: instr.slot,
             blockHash: "",
             logIndex: synthLogIndex(instr),
-            event: payload->(Utils.magic: Envio.svmInstruction => Internal.event),
+            payload: payload->(Utils.magic: Envio.svmInstruction => Internal.eventPayload),
           }),
         )
         ->ignore

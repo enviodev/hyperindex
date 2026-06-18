@@ -1,10 +1,25 @@
+// EVM's concrete item payload. Erased to `Internal.eventPayload` on the item
+// and recovered here via `toPayload`.
+type payload = {
+  contractName: string,
+  eventName: string,
+  params: Internal.eventParams,
+  chainId: int,
+  srcAddress: Address.t,
+  logIndex: int,
+  transaction: Internal.eventTransaction,
+  block: Internal.eventBlock,
+}
+external fromPayload: payload => Internal.eventPayload = "%identity"
+external toPayload: Internal.eventPayload => payload = "%identity"
+
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
     delete fields.number
     delete fields.timestamp
   }`)
 
-let ecosystem: Ecosystem.t = {
+let make = (~logger: Pino.t): Ecosystem.t => {
   name: Evm,
   blockFields: [
     "number",
@@ -90,4 +105,28 @@ let ecosystem: Ecosystem.t = {
   onEventBlockFilterSchema: S.object(s =>
     s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))))
   ),
+  logger,
+  toEvent: eventItem => eventItem.payload->Internal.payloadToEvent,
+  toEventLogger: eventItem =>
+    Logging.createChildFrom(
+      ~logger,
+      ~params={
+        "contract": eventItem.eventConfig.contractName,
+        "event": eventItem.eventConfig.name,
+        "chainId": eventItem.chain->ChainMap.Chain.toChainId,
+        "block": eventItem.blockNumber,
+        "logIndex": eventItem.logIndex,
+        "address": (eventItem.payload->toPayload).srcAddress,
+      },
+    ),
+  toRawEvent: eventItem => {
+    let payload = eventItem.payload->toPayload
+    eventItem->RawEvent.make(
+      ~block=payload.block,
+      ~transaction=payload.transaction,
+      ~params=payload.params,
+      ~srcAddress=payload.srcAddress,
+      ~cleanUpRawEventFieldsInPlace,
+    )
+  },
 }

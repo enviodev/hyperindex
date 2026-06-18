@@ -79,7 +79,7 @@ let blockRangeSchema: S.t<blockRange> = S.object(s => {
 
 let defaultBlockRange: blockRange = {_gte: None, _lte: None, _every: 1}
 
-let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
+let indexerStateRef: ref<option<IndexerState.t>> = ref(None)
 
 // Persistence is set by Main.start before handler modules load, so that
 // the exported indexer value can lazily expose DB state (startBlock,
@@ -145,12 +145,12 @@ let buildChainsObject = (~config: Config.t) => {
       {
         enumerable: true,
         get: () => {
-          switch globalGsManagerRef.contents {
-          | Some(gsManager) => (gsManager->GlobalStateManager.getState).chainManager.isRealtime
-          // Before the GlobalStateManager is available (eg during handler
+          switch indexerStateRef.contents {
+          | Some(state) => state->IndexerState.isRealtime
+          // Before the global state is available (eg during handler
           // module load after resume), derive from persistence: every chain
           // must have previously caught up to head or endBlock. Mirror the
-          // ChainManager.makeFromDbState path: updateSyncTimeOnRestart wipes
+          // IndexerState.makeFromDbState path: updateSyncTimeOnRestart wipes
           // the saved timestamps so a restart re-enters backfill.
           | None if Env.updateSyncTimeOnRestart => false
           | None =>
@@ -179,12 +179,11 @@ let buildChainsObject = (~config: Config.t) => {
         {
           enumerable: true,
           get: () => {
-            switch globalGsManagerRef.contents {
-            | Some(gsManager) => {
-                let state = gsManager->GlobalStateManager.getState
+            switch indexerStateRef.contents {
+            | Some(state) => {
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
-                let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-                let indexingAddresses = chainFetcher.fetchState.indexingAddresses
+                let chainState = state->IndexerState.getChainState(~chain)
+                let indexingAddresses = (chainState->ChainState.fetchState).indexingAddresses
 
                 // Collect all addresses for this contract name from indexingAddresses
                 let addresses = []
@@ -197,7 +196,7 @@ let buildChainsObject = (~config: Config.t) => {
                 }
                 addresses
               }
-            // Before the GlobalStateManager is available (eg during handler
+            // Before the global state is available (eg during handler
             // module load after resume), combine static addresses from config
             // with dynamic contracts persisted in the database.
             | None =>
@@ -586,7 +585,7 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
+let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: bool) => {
   open Express
 
   let app = make()
@@ -629,7 +628,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
 
   app->post("/console/syncCache", (_req, res) => {
     if isDevelopmentMode {
-      (ctx.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
+      (persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
       ->Promise.thenResolve(_ => res->json(Boolean(true)))
       ->Promise.ignore
     } else {
@@ -757,112 +756,88 @@ let start = async (
   | Some(patchConfig) => patchConfig(config, registrations)
   | None => config
   }
-  // The single fatal-error handler, shared by the store, ErrorExit, and the
-  // manager's catch.
+  // The single fatal-error handler, invoked once via IndexerState.errorExit.
   let onError = (errHandler: ErrorHandling.t) => {
     errHandler->ErrorHandling.log
-    NodeJs.process->NodeJs.exitWithCode(Failure)
+    if isTest {
+      // The TestIndexer runs the indexer in a worker thread and reads the
+      // failure off the worker 'error' event. Re-throw the original error
+      // outside the promise chain on the next tick so the test sees its real
+      // message instead of a generic non-zero exit code.
+      NodeJs.setImmediate(() => errHandler->ErrorHandling.raiseExn)
+    } else {
+      NodeJs.process->NodeJs.exitWithCode(Failure)
+    }
   }
-  let ctx = {
-    Ctx.registrations,
-    config,
-    persistence,
-    inMemoryStore: InMemoryStore.make(
-      ~entities=persistence.allEntities,
-      ~committedCheckpointId=(persistence->Persistence.getInitializedState).checkpointId,
-      ~persistence,
-      ~config,
-      ~onError=exn => onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database")),
-    ),
-  }
-
   let envioVersion = Utils.EnvioPackage.value.version
   Prometheus.Info.set(~version=envioVersion)
   Prometheus.ProcessStartTimeSeconds.set()
-  Prometheus.RollbackEnabled.set(~enabled=ctx.config.shouldRollbackOnReorg)
+  Prometheus.RollbackEnabled.set(~enabled=config.shouldRollbackOnReorg)
 
   if !isTest {
-    startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
-      switch globalGsManagerRef.contents {
+    startServer(~persistence, ~isDevelopmentMode, ~getState=() =>
+      switch indexerStateRef.contents {
       | None => Initializing({})
-      | Some(gsManager) => {
-          let state = gsManager->GlobalStateManager.getState
+      | Some(state) => {
           let chains =
-            state.chainManager.chainFetchers
-            ->ChainMap.values
-            ->Array.map(cf => {
-              let {fetchState} = cf
+            state
+            ->IndexerState.chainStates
+            ->Dict.valuesToArray
+            ->Array.map(cs => {
+              let fetchState = cs->ChainState.fetchState
               let latestFetchedBlockNumber = Pervasives.max(
                 FetchState.bufferBlockNumber(fetchState),
                 0,
               )
               let knownHeight =
-                cf->ChainFetcher.hasProcessedToEndblock
-                  ? cf.fetchState.endBlock->Option.getOr(cf.fetchState.knownHeight)
-                  : cf.fetchState.knownHeight
+                cs->ChainState.hasProcessedToEndblock
+                  ? fetchState.endBlock->Option.getOr(fetchState.knownHeight)
+                  : fetchState.knownHeight
 
               {
-                chainId: cf.chainConfig.id->Int.toFloat,
+                chainId: (cs->ChainState.chainConfig).id->Int.toFloat,
                 poweredByHyperSync: (
-                  cf.sourceManager->SourceManager.getActiveSource
+                  cs->ChainState.sourceManager->SourceManager.getActiveSource
                 ).poweredByHyperSync,
                 latestFetchedBlockNumber,
                 knownHeight,
                 numBatchesFetched: 0,
-                startBlock: cf.fetchState.startBlock,
-                endBlock: cf.fetchState.endBlock,
-                firstEventBlockNumber: cf.fetchState.firstEventBlock,
-                latestProcessedBlock: cf.committedProgressBlockNumber === -1
+                startBlock: fetchState.startBlock,
+                endBlock: fetchState.endBlock,
+                firstEventBlockNumber: fetchState.firstEventBlock,
+                latestProcessedBlock: cs->ChainState.committedProgressBlockNumber === -1
                   ? None
-                  : Some(cf.committedProgressBlockNumber),
-                timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock,
-                numEventsProcessed: cf.numEventsProcessed,
-                numAddresses: cf.fetchState->FetchState.numAddresses,
+                  : Some(cs->ChainState.committedProgressBlockNumber),
+                timestampCaughtUpToHeadOrEndblock: cs->ChainState.timestampCaughtUpToHeadOrEndblock,
+                numEventsProcessed: cs->ChainState.numEventsProcessed,
+                numAddresses: fetchState->FetchState.numAddresses,
               }
             })
           Active({
             envioVersion,
             chains,
-            indexerStartTime: state.indexerStartTime,
+            indexerStartTime: state->IndexerState.indexerStartTime,
             isPreRegisteringDynamicContracts: false,
-            rollbackOnReorg: ctx.config.shouldRollbackOnReorg,
+            rollbackOnReorg: config.shouldRollbackOnReorg,
           })
         }
       }
     )
   }
 
-  let chainManager = ChainManager.makeFromDbState(
-    ~initialState=ctx.persistence->Persistence.getInitializedState,
-    ~config=ctx.config,
-    ~registrations=ctx.registrations,
-  )
-  let globalState = GlobalState.make(
-    ~ctx,
-    ~chainManager,
+  let state = IndexerState.makeFromDbState(
+    ~config,
+    ~persistence,
+    ~initialState=persistence->Persistence.getInitializedState,
+    ~registrations,
     ~isDevelopmentMode,
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,
     ~onError,
   )
-  let gsManager =
-    globalState->GlobalStateManager.make(
-      ~reducers=GlobalState.makeReducers(
-        ~markBatchProcessed=MarkBatchProcessedAdapter.make(~inMemoryStore=ctx.inMemoryStore),
-      ),
-      ~onError=exn =>
-        onError(exn->ErrorHandling.make(~msg="Indexer has failed with an unexpected error")),
-    )
   if shouldUseTui {
-    let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)
+    let _rerender = Tui.start(~getState=() => state)
   }
-  globalGsManagerRef := Some(gsManager)
-  gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
-  /*
-    NOTE:
-      This `ProcessEventBatch` dispatch shouldn't be necessary but we are adding for safety, it should immediately return doing 
-      nothing since there is no events on the queues.
- */
-
-  gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
+  indexerStateRef := Some(state)
+  state->IndexerLoop.start
 }

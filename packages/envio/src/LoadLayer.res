@@ -2,19 +2,20 @@ let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
-  ~inMemoryStore,
+  ~indexerState,
   ~shouldGroup,
   ~item,
+  ~ecosystem,
   ~entityId,
 ) => {
   let key = `${entityConfig.name}.get`
-  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (idsToLoad, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
 
-    // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
+    // Since LoadManager.call prevents registering entities already in the in-memory store,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
       (
@@ -28,7 +29,10 @@ let loadById = (
       )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
     | Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
+      reason->ErrorHandling.mkLogAndRaise(
+        ~logger=Ecosystem.getItemLogger(item, ~ecosystem),
+        ~msg=message,
+      )
     }
 
     let entitiesMap = Dict.make()
@@ -40,7 +44,7 @@ let loadById = (
     }
     idsToLoad->Array.forEach(entityId => {
       inMemTable->InMemoryTable.Entity.initValue(
-        ~committedCheckpointId=inMemoryStore.committedCheckpointId,
+        ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
         ~key=entityId,
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
       )
@@ -68,7 +72,7 @@ let loadById = (
 let callEffect = (
   ~effect: Internal.effect,
   ~arg: Internal.effectArgs,
-  ~inMemTable: InMemoryStore.effectCacheInMemTable,
+  ~inMemTable: IndexerState.effectCacheInMemTable,
   ~timerRef,
   ~onError,
 ) => {
@@ -245,13 +249,14 @@ let loadEffect = (
   ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs,
-  ~inMemoryStore,
+  ~indexerState,
   ~shouldGroup,
   ~item,
+  ~ecosystem,
 ) => {
   let effectName = effect.name
   let key = `${effectName}.effect`
-  let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
+  let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect)
 
   let load = async (args, ~onError) => {
     let idsToLoad = args->Array.map((arg: Internal.effectArgs) => arg.cacheKey)
@@ -279,9 +284,7 @@ let loadEffect = (
         )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
       } catch {
       | exn =>
-        item
-        ->Logging.getItemLogger
-        ->Logging.childWarn({
+        Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childWarn({
           "msg": `Failed to load cache effect cache. The indexer will continue working, but the effect will not be able to use the cache.`,
           "err": exn->Utils.prettifyExn,
           "effect": effectName,
@@ -298,9 +301,7 @@ let loadEffect = (
         | S.Raised(error) =>
           inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
           Prometheus.EffectCacheInvalidationsCount.increment(~effectName)
-          item
-          ->Logging.getItemLogger
-          ->Logging.childTrace({
+          Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childTrace({
             "msg": "Invalidated effect cache",
             "input": dbEntity.id,
             "effect": effectName,
@@ -354,13 +355,14 @@ let loadByFilter = (
   ~loadManager,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
-  ~inMemoryStore,
+  ~indexerState,
   ~shouldGroup,
   ~item,
+  ~ecosystem,
   ~filter: EntityFilter.t,
 ) => {
   let key = filter->EntityFilter.toOperationKey(~entityName=entityConfig.name)
-  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
@@ -368,9 +370,15 @@ let loadByFilter = (
 
     let size = ref(0)
 
-    let _ = await filters
+    filters->Array.forEach(filter => inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter))
+
+    // Loading a superset of rows via a merged query is safe: every loaded
+    // entity is matched against all registered indices, not only the
+    // query's own filter.
+    let queries = filters->EntityFilter.merge
+
+    let _ = await queries
     ->Array.map(async filter => {
-      inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter)
       try {
         let entities =
           (await storage.loadOrThrow(~table=entityConfig.table, ~filter))->(
@@ -379,7 +387,7 @@ let loadByFilter = (
 
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(
-            ~committedCheckpointId=inMemoryStore.committedCheckpointId,
+            ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
             ~key=entity.id,
             ~entity=Some(entity),
           )
@@ -390,10 +398,14 @@ let loadByFilter = (
       | Persistence.StorageError({message, reason}) =>
         reason->ErrorHandling.mkLogAndRaise(
           ~logger=Logging.createChildFrom(
-            ~logger=item->Logging.getItemLogger,
+            ~logger=Ecosystem.getItemLogger(item, ~ecosystem),
+            // The executed query might be merged from multiple getWhere
+            // calls, so report it as the operation users write with the
+            // values bound to its placeholders, instead of an internal
+            // filter representation they never constructed.
             ~params={
-              "tableName": entityConfig.table.tableName,
-              "filter": filter,
+              "operation": key,
+              "params": filter->EntityFilter.getParams,
             },
           ),
           ~msg=message,
@@ -405,7 +417,7 @@ let loadByFilter = (
     timerRef->Prometheus.StorageLoad.endOperation(
       ~storage=storage.name,
       ~operation=key,
-      ~whereSize=filters->Array.length,
+      ~whereSize=queries->Array.reduce(0, (acc, query) => acc + query->EntityFilter.valuesCount),
       ~size=size.contents,
     )
   }

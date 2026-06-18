@@ -2,9 +2,10 @@ let loadById: (
   ~loadManager: LoadManager.t,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
-  ~inMemoryStore: InMemoryStore.t,
+  ~indexerState: IndexerState.t,
   ~shouldGroup: bool,
   ~item: Internal.item,
+  ~ecosystem: Ecosystem.t,
   ~entityId: string,
 ) => promise<option<Internal.entity>>
 
@@ -12,9 +13,10 @@ let loadByFilter: (
   ~loadManager: LoadManager.t,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
-  ~inMemoryStore: InMemoryStore.t,
+  ~indexerState: IndexerState.t,
   ~shouldGroup: bool,
   ~item: Internal.item,
+  ~ecosystem: Ecosystem.t,
   ~filter: EntityFilter.t,
 ) => promise<array<Internal.entity>>
 
@@ -23,7 +25,8 @@ let loadEffect: (
   ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs: Internal.effectArgs,
-  ~inMemoryStore: InMemoryStore.t,
+  ~indexerState: IndexerState.t,
   ~shouldGroup: bool,
   ~item: Internal.item,
+  ~ecosystem: Ecosystem.t,
 ) => promise<Internal.effectOutput>

@@ -875,6 +875,43 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
+  // Regression: handleLoad crashed with "Cannot read properties of undefined
+  // (reading 'table')" when a cached effect's cache was loaded back in a later
+  // batch. The load passes the effect-cache table (envio_effect_<name>), which
+  // isn't in entityConfigs. A contractRegister at a later block splits the run
+  // into two batches: block 2 caches the effect; block 3 re-calls it with a
+  // fresh key and its preload loads the effect cache. Mirrors safe-analysis-
+  // indexer's SafeSetup→ProxyCreation case.
+  it("does not crash loading a cached effect in a batch split off by a later contract registration", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    await assert.doesNotReject(
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 10,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "testEffectWithCache" },
+                block: { number: 2 },
+              },
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "registerAndCachedEffect" },
+                block: { number: 3 },
+              },
+            ],
+          },
+        },
+      }),
+    );
+  });
+
   it("Should throw when effect throws", async () => {
     const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";

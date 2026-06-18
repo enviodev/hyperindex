@@ -154,8 +154,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     )
 
     let item = switch response.parsedQueueItems {
-    | [Internal.Event({timestamp, blockNumber, event})] =>
-      let instruction = event->(Utils.magic: Internal.event => Envio.svmInstruction)
+    | [Internal.Event({timestamp, blockNumber, payload})] =>
+      let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
       Some({
         "timestamp": timestamp,
         "blockNumber": blockNumber,

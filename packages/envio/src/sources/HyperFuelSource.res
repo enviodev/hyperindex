@@ -409,7 +409,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         blockNumber: block.height,
         blockHash: block.id,
         logIndex: receiptIndex,
-        event: {
+        payload: {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,
           chainId,
@@ -420,7 +420,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           block: block->Obj.magic,
           srcAddress: contractAddress,
           logIndex: receiptIndex,
-        }->Internal.fromGenericEvent,
+        }->Fuel.fromPayload,
       })
     })
 

@@ -167,9 +167,9 @@ let make = (
   let apiToken = switch apiToken {
   | Some(token) => token
   | None =>
-    JsError.throwWithMessage(`An API token is required for using HyperSync as a data-source.
+    JsError.throwWithMessage(`An Envio API token is required for using HyperSync as a data-source.
 Set the ENVIO_API_TOKEN environment variable in your .env file.
-Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
+Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   }
 
   let client = switch HyperSyncClient.make(
@@ -206,16 +206,18 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       blockNumber: block.number->Option.getUnsafe,
       blockHash: block.hash->Option.getUnsafe,
       logIndex,
-      event: {
+      payload: {
         contractName: eventConfig.contractName,
         eventName: eventConfig.name,
         chainId,
         params,
-        transaction,
+        transaction: transaction->(
+          Utils.magic: HyperSyncClient.ResponseTypes.transaction => Internal.eventTransaction
+        ),
         block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
         srcAddress,
         logIndex,
-      }->Internal.fromGenericEvent,
+      }->Evm.fromPayload,
     })
   }
 

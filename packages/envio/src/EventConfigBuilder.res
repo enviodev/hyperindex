@@ -309,6 +309,39 @@ let resolveFieldSelection = (
   (selectedBlockFields, selectedTransactionFields)
 }
 
+// ============== Client-side address filter ==============
+
+let compileAddressFilter: string => (
+  Internal.eventPayload,
+  int,
+  dict<Internal.indexingContract>,
+) => bool = %raw(`function (body) {
+  return new Function("event", "blockNumber", "indexingAddresses", body);
+}`)
+
+// Body of the client-side address filter for a DNF of address-filtered param
+// names (OR of AND-groups): keep the event only if some group's params are all
+// registered at or before the log's block. The DNF is fixed here, so it's
+// unrolled into one boolean expression — no per-event closure, loop, or array.
+// `None` when there's no address-param filter. Exposed for snapshotting.
+let buildAddressFilterBody = (groups: array<array<string>>): option<string> => {
+  switch groups {
+  | [] => None
+  | _ =>
+    let leaf = name =>
+      `(ic = indexingAddresses[p[${JSON.stringify(
+          JSON.String(name),
+        )}]]) !== undefined && ic.effectiveStartBlock <= blockNumber`
+    let groupExprs =
+      groups->Array.map(group => "(" ++ group->Array.map(leaf)->Array.join(" && ") ++ ")")
+    Some("var p = event.params, ic; return " ++ groupExprs->Array.join(" || ") ++ ";")
+  }
+}
+
+let buildAddressFilter = (groups: array<array<string>>): option<
+  (Internal.eventPayload, int, dict<Internal.indexingContract>) => bool,
+> => buildAddressFilterBody(groups)->Option.map(compileAddressFilter)
+
 // ============== Build complete EVM event config ==============
 
 let buildEvmEventConfig = (
@@ -334,6 +367,7 @@ let buildEvmEventConfig = (
   let {
     getEventFiltersOrThrow,
     filterByAddresses,
+    addressFilterParamGroups,
     startBlock: whereStartBlock,
   } = LogSelection.parseEventFiltersOrThrow(
     ~eventFilters,
@@ -374,6 +408,7 @@ let buildEvmEventConfig = (
     simulateParamsSchema: buildSimulateParamsSchema(params),
     getEventFiltersOrThrow,
     filterByAddresses,
+    clientAddressFilter: ?buildAddressFilter(addressFilterParamGroups),
     dependsOnAddresses: !isWildcard || filterByAddresses,
     startBlock: resolvedStartBlock,
     selectedBlockFields,
