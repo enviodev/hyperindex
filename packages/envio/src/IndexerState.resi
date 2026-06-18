@@ -33,6 +33,7 @@ let make: (
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~maxConcurrency: int=?,
+  ~targetBufferSize: int=?,
   ~committedCheckpointId: Internal.checkpointId=?,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
@@ -50,6 +51,7 @@ let makeFromDbState: (
   ~exitAfterFirstEventBlock: bool=?,
   ~reducedPollingInterval: int=?,
   ~maxConcurrency: int=?,
+  ~targetBufferSize: int=?,
   ~onError: ErrorHandling.t => unit,
 ) => t
 

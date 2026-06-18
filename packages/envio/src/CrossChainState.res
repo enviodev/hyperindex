@@ -10,20 +10,32 @@ type t = {
   mutable isInReorgThreshold: bool,
   // Indexer-wide cap on concurrent data-source queries, shared across all chains.
   maxConcurrency: int,
+  // Indexer-wide fetch buffer pool (item count), shared across all chains.
+  targetBufferSize: int,
 }
+
+// The whole-indexer fetch buffer pool, independent of chain count.
+let calculateTargetBufferSize = () =>
+  switch Env.targetBufferSize {
+  | Some(size) => size
+  | None => 100_000
+  }
 
 let make = (
   ~chainStates,
   ~isInReorgThreshold,
   ~isRealtime,
   ~maxConcurrency=Env.maxConcurrency,
+  ~targetBufferSize=calculateTargetBufferSize(),
 ): t => {
   Prometheus.IndexingMaxConcurrency.set(~maxConcurrency)
+  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
   {
     chainStates,
     isRealtime,
     isInReorgThreshold,
     maxConcurrency,
+    targetBufferSize,
   }
 }
 
@@ -39,6 +51,12 @@ let inFlight = (cm: t) =>
   cm.chainStates
   ->Dict.valuesToArray
   ->Array.reduce(0, (acc, cs) => acc + cs->ChainState.sourceManager->SourceManager.inFlightCount)
+
+// Buffered items across every chain — the live draw against targetBufferSize.
+let totalBufferSize = (cm: t) =>
+  cm.chainStates
+  ->Dict.valuesToArray
+  ->Array.reduce(0, (acc, cs) => acc + cs->ChainState.fetchState->FetchState.bufferSize)
 
 // --- Derived (pure). ---
 
@@ -139,19 +157,30 @@ let applyBatchProgress = (cm: t, ~batch: Batch.t) => {
 // --- Fetch control. ---
 
 // Dispatch a fetch tick across every chain, drawing from the shared concurrency
-// budget. Chains are visited in turn; fetchChain bumps the in-flight count
-// synchronously before it suspends, so a later chain sees the slots an earlier
-// one already claimed and the budget is honored indexer-wide.
+// and buffer pools. Chains are visited in turn; fetchChain bumps the in-flight
+// count synchronously before it suspends, so a later chain sees the slots an
+// earlier one already claimed and the budget is honored indexer-wide.
+//
+// bufferLimit is each chain's slice of the shared pool: it may grow its buffer
+// into whatever the other chains leave free, so a lone backfilling chain can use
+// the whole pool while head-following chains stay shallow.
 let checkAndFetch = async (
   cm: t,
-  ~fetchChain: (~chain: ChainMap.Chain.t, ~concurrencyLimit: int) => promise<unit>,
+  ~fetchChain: (
+    ~chain: ChainMap.Chain.t,
+    ~concurrencyLimit: int,
+    ~bufferLimit: int,
+  ) => promise<unit>,
 ) => {
+  let totalBuffer = cm->totalBufferSize
   let _ = await cm.chainStates
   ->Dict.valuesToArray
   ->Array.map(cs => {
     let chain = ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id)
     let concurrencyLimit = Pervasives.max(0, cm.maxConcurrency - cm->inFlight)
-    fetchChain(~chain, ~concurrencyLimit)
+    let bufferLimit =
+      cm.targetBufferSize - (totalBuffer - cs->ChainState.fetchState->FetchState.bufferSize)
+    fetchChain(~chain, ~concurrencyLimit, ~bufferLimit)
   })
   ->Promise.all
 }

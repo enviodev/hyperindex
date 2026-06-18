@@ -32,6 +32,7 @@ let fetchNext: (
   ~waitForNewBlock: (~knownHeight: int) => promise<int>,
   ~onNewBlock: (~knownHeight: int) => unit,
   ~concurrencyLimit: int,
+  ~bufferLimit: int,
   ~stateId: int,
 ) => promise<unit>
 

@@ -3,11 +3,14 @@
 
 type t
 
+let calculateTargetBufferSize: unit => int
+
 let make: (
   ~chainStates: dict<ChainState.t>,
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~maxConcurrency: int=?,
+  ~targetBufferSize: int=?,
 ) => t
 
 // Accessors.
@@ -34,5 +37,9 @@ let applyBatchProgress: (t, ~batch: Batch.t) => unit
 // Fetch control.
 let checkAndFetch: (
   t,
-  ~fetchChain: (~chain: ChainMap.Chain.t, ~concurrencyLimit: int) => promise<unit>,
+  ~fetchChain: (
+    ~chain: ChainMap.Chain.t,
+    ~concurrencyLimit: int,
+    ~bufferLimit: int,
+  ) => promise<unit>,
 ) => promise<unit>

@@ -468,6 +468,7 @@ describe("SourceManager fetchNext", () => {
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
+          ~bufferLimit=5000,
           ~concurrencyLimit=10,
           ~stateId=0,
         )
@@ -538,6 +539,7 @@ describe("SourceManager fetchNext", () => {
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
+          ~bufferLimit=5000,
           ~concurrencyLimit=2,
           ~stateId=0,
         )
@@ -595,6 +597,7 @@ describe("SourceManager fetchNext", () => {
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
+          ~bufferLimit=5000,
           ~concurrencyLimit=10,
           ~stateId=0,
         )
@@ -630,6 +633,7 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
+        ~bufferLimit=5000,
         ~concurrencyLimit=10,
         ~stateId=0,
       )
@@ -651,6 +655,7 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
+        ~bufferLimit=5000,
         ~concurrencyLimit=10,
         ~stateId=0,
       )
@@ -682,6 +687,7 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
+        ~bufferLimit=5000,
         ~concurrencyLimit=10,
         ~stateId=0,
       )
@@ -712,6 +718,7 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
+        ~bufferLimit=5000,
         ~concurrencyLimit=10,
         ~stateId=0,
       )
@@ -724,6 +731,7 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
       ~concurrencyLimit=10,
       ~stateId=0,
     )
@@ -757,6 +765,7 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=neverOnNewBlock,
+        ~bufferLimit=5000,
         ~concurrencyLimit=10,
         ~stateId=0,
       )
@@ -769,6 +778,7 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
       ~concurrencyLimit=10,
       ~stateId=0,
     )
@@ -783,6 +793,7 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
+        ~bufferLimit=5000,
         ~concurrencyLimit=10,
         ~stateId=1,
       )
@@ -822,6 +833,7 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
+        ~bufferLimit=5000,
         ~concurrencyLimit=3,
         ~stateId=0,
       )
@@ -836,6 +848,7 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
+        ~bufferLimit=5000,
         ~concurrencyLimit=1,
         ~stateId=0,
       )
@@ -853,6 +866,7 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
       ~concurrencyLimit=0,
       ~stateId=0,
     )
@@ -864,6 +878,7 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
       ~concurrencyLimit=0,
       ~stateId=1,
     )
@@ -879,6 +894,7 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
       ~concurrencyLimit=0,
       ~stateId=0,
     )
@@ -893,6 +909,7 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
+        ~bufferLimit=5000,
         ~concurrencyLimit=2,
         ~stateId=1,
       )
@@ -921,6 +938,7 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
       ~concurrencyLimit=0,
       ~stateId=0,
     )
@@ -966,6 +984,7 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
+        ~bufferLimit=4,
         ~concurrencyLimit=10,
         ~stateId=0,
       )
@@ -1004,6 +1023,7 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=executeQueryMock.fn,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
       ~concurrencyLimit=1,
       ~stateId=0,
     )

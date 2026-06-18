@@ -117,6 +117,7 @@ let make = (
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~maxConcurrency=Env.maxConcurrency,
+  ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
   ~committedCheckpointId=Internal.initialCheckpointId,
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
@@ -159,6 +160,7 @@ let make = (
       ~isInReorgThreshold,
       ~isRealtime,
       ~maxConcurrency,
+      ~targetBufferSize,
     ),
     indexerStartTime: Date.make(),
     rollbackState: NoRollback,
@@ -181,21 +183,6 @@ let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~max
   progressBlockNumber > sourceBlockNumber - maxReorgDepth
 }
 
-let calculateTargetBufferSize = (~activeChainsCount) => {
-  switch Env.targetBufferSize {
-  | Some(size) => size
-  | None =>
-    switch activeChainsCount {
-    | 1 => 60_000
-    | 2 => 30_000
-    | 3 => 20_000
-    | 4 => 15_000
-    | 5 => 10_000
-    | _ => 5_000
-    }
-  }
-}
-
 let makeFromDbState = (
   ~config: Config.t,
   ~persistence: Persistence.t,
@@ -206,6 +193,7 @@ let makeFromDbState = (
   ~exitAfterFirstEventBlock=false,
   ~reducedPollingInterval=?,
   ~maxConcurrency=Env.maxConcurrency,
+  ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
   ~onError,
 ) => {
   let isInReorgThreshold = if initialState.cleanRun {
@@ -221,11 +209,7 @@ let makeFromDbState = (
     )
   }
 
-  let targetBufferSize = calculateTargetBufferSize(
-    ~activeChainsCount=initialState.chains->Array.length,
-  )
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
-  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
   Prometheus.ReorgThreshold.set(~isInReorgThreshold)
   initialState.cache->Utils.Dict.forEach(({effectName, count}) => {
     Prometheus.EffectCacheCount.set(~count, ~effectName)
@@ -249,7 +233,6 @@ let makeFromDbState = (
         ~reorgCheckpoints=initialState.reorgCheckpoints,
         ~isInReorgThreshold,
         ~isRealtime,
-        ~targetBufferSize,
         ~config,
         ~registrations,
         ~reducedPollingInterval?,
@@ -284,6 +267,7 @@ let makeFromDbState = (
     ~isInReorgThreshold,
     ~isRealtime,
     ~maxConcurrency,
+    ~targetBufferSize,
     ~committedCheckpointId=initialState.checkpointId,
     ~isDevelopmentMode,
     ~shouldUseTui,

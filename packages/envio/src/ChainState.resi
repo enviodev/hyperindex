@@ -22,7 +22,6 @@ let makeFromConfig: (
   Config.chain,
   ~config: Config.t,
   ~registrations: HandlerRegister.registrations,
-  ~targetBufferSize: int,
   ~knownHeight: int,
 ) => t
 
@@ -34,7 +33,6 @@ let makeFromDbState: (
   ~isRealtime: bool,
   ~config: Config.t,
   ~registrations: HandlerRegister.registrations,
-  ~targetBufferSize: int,
   ~reducedPollingInterval: int=?,
 ) => t
 

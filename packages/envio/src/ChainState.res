@@ -62,7 +62,6 @@ let makeInternal = (
   ~progressBlockNumber,
   ~config: Config.t,
   ~registrations: HandlerRegister.registrations,
-  ~targetBufferSize,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
@@ -196,7 +195,10 @@ let makeInternal = (
     ~startBlock,
     ~endBlock,
     ~eventConfigs,
-    ~targetBufferSize,
+    // Bounds onBlock item pre-generation only (see FetchState.targetBufferSize);
+    // fetch depth is the indexer-wide buffer pool, allocated per tick by
+    // CrossChainState via getNextQuery's bufferLimit.
+    ~targetBufferSize=2 * config.batchSize,
     ~knownHeight,
     ~chainId=chainConfig.id,
     // FIXME: Shouldn't set with full history
@@ -299,13 +301,7 @@ let makeInternal = (
   )
 }
 
-let makeFromConfig = (
-  chainConfig: Config.chain,
-  ~config,
-  ~registrations,
-  ~targetBufferSize,
-  ~knownHeight,
-) => {
+let makeFromConfig = (chainConfig: Config.chain, ~config, ~registrations, ~knownHeight) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
 
   makeInternal(
@@ -319,7 +315,6 @@ let makeFromConfig = (
     ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0.,
-    ~targetBufferSize,
     ~logger,
     ~indexingAddresses=configAddresses(chainConfig),
     ~isInReorgThreshold=false,
@@ -339,7 +334,6 @@ let makeFromDbState = (
   ~isRealtime,
   ~config,
   ~registrations,
-  ~targetBufferSize,
   ~reducedPollingInterval=?,
 ) => {
   let chainId = chainConfig.id
@@ -369,7 +363,6 @@ let makeFromDbState = (
       : resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
     ~logger,
-    ~targetBufferSize,
     ~isInReorgThreshold,
     ~isRealtime,
     ~knownHeight=resumedChainState.sourceBlockNumber,

@@ -303,6 +303,7 @@ let fetchChain = async (
   state: IndexerState.t,
   chain,
   ~concurrencyLimit,
+  ~bufferLimit,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
@@ -357,6 +358,7 @@ let fetchChain = async (
           }
         },
         ~concurrencyLimit,
+        ~bufferLimit,
         ~stateId,
       )
     } catch {

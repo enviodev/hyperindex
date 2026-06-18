@@ -19,11 +19,12 @@ let start = (state: IndexerState.t) => {
     launch(state, () =>
       state
       ->IndexerState.crossChainState
-      ->CrossChainState.checkAndFetch(~fetchChain=(~chain, ~concurrencyLimit) =>
+      ->CrossChainState.checkAndFetch(~fetchChain=(~chain, ~concurrencyLimit, ~bufferLimit) =>
         ChainFetching.fetchChain(
           state,
           chain,
           ~concurrencyLimit,
+          ~bufferLimit,
           ~stateId=state->IndexerState.epoch,
           ~scheduleFetch,
           ~scheduleProcessing,

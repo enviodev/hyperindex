@@ -496,8 +496,9 @@ type t = {
   blockLag: int,
   // Buffer of items ordered from earliest to latest
   buffer: array<Internal.item>,
-  // How many items we should aim to have in the buffer
-  // ready for processing
+  // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
+  // size). Fetch depth is bounded separately by getNextQuery's bufferLimit, the
+  // chain's per-tick slice of the indexer-wide pool.
   targetBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
   knownHeight: int,
@@ -1360,19 +1361,23 @@ let getNextQuery = (
   {
     buffer,
     optimizedPartitions,
-    targetBufferSize,
     indexingAddresses,
     blockLag,
     latestOnBlockBlockNumber,
     knownHeight,
   } as fetchState: t,
   ~concurrencyLimit,
+  ~bufferLimit,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
     WaitingForNewBlock
   } else if concurrencyLimit === 0 {
     ReachedMaxConcurrency
+  } else if bufferLimit <= 0 {
+    // No room left in the shared buffer pool for this chain; wait for processing
+    // to drain before fetching more.
+    NothingToQuery
   } else {
     let isOnBlockBehindTheHead = latestOnBlockBlockNumber < headBlockNumber
     let shouldWaitForNewBlock = ref(
@@ -1383,13 +1388,12 @@ let getNextQuery = (
       !isOnBlockBehindTheHead,
     )
 
-    // We want to limit the buffer size to targetBufferSize (usually 3 * batchSize)
-    // To make sure the processing always has some buffer
-    // and not increase the memory usage too much
-    // If a partition fetched further
-    // it should be skipped until the buffer is consumed
+    // Limit how far ahead we fetch to bufferLimit items (this chain's share of
+    // the indexer-wide buffer pool) so processing always has buffer without
+    // ballooning memory. A partition that fetched further is skipped until the
+    // buffer drains.
     let maxQueryBlockNumber = {
-      switch buffer->Array.get(targetBufferSize - 1) {
+      switch buffer->Array.get(bufferLimit - 1) {
       | Some(item) =>
         // Just in case check that we don't query beyond the current block
         Pervasives.min(item->Internal.getItemBlockNumber, knownHeight)
