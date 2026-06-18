@@ -115,37 +115,8 @@ describe("CrossChainState fetch control", () => {
     ).toEqual([1, 2, 3])
   })
 
-  it("shouldPauseFetch only pauses an at-head chain while another is backfilling", t => {
-    let atHead = makeChainState(~chainId=1, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0)
-    let behind = makeChainState(~chainId=2, ~knownHeight=1000, ~frontier=100, ~firstEventBlock=0)
-
-    t.expect({
-      "atHeadBackfillContention": atHead->CrossChainState.shouldPauseFetch(
-        ~isRealtime=false,
-        ~anyChainBackfilling=true,
-      ),
-      "atHeadNothingBackfilling": atHead->CrossChainState.shouldPauseFetch(
-        ~isRealtime=false,
-        ~anyChainBackfilling=false,
-      ),
-      "atHeadRealtime": atHead->CrossChainState.shouldPauseFetch(
-        ~isRealtime=true,
-        ~anyChainBackfilling=true,
-      ),
-      "behindBackfillContention": behind->CrossChainState.shouldPauseFetch(
-        ~isRealtime=false,
-        ~anyChainBackfilling=true,
-      ),
-    }).toEqual({
-      "atHeadBackfillContention": true,
-      "atHeadNothingBackfilling": false,
-      "atHeadRealtime": false,
-      "behindBackfillContention": false,
-    })
-  })
-
   Async.it(
-    "checkAndFetch skips the paused chain and shares the buffer pool by priority",
+    "checkAndFetch dispatches every chain in priority order, sharing the buffer pool",
     async t => {
       let a = makeChainState(
         ~chainId=1,
@@ -187,12 +158,13 @@ describe("CrossChainState fetch control", () => {
         Promise.resolve()
       })
 
-      // Total buffered = 10 + 20 + 5 = 35. Chain 3 is at head while 1 and 2
-      // backfill, so it is paused. The rest run furthest-behind first, each
-      // allowed to grow into the pool the others leave free (100 - (35 - own)).
+      // Total buffered = 10 + 20 + 5 = 35. Every chain is dispatched
+      // furthest-behind first, each allowed to grow into the pool the others
+      // leave free (100 - (35 - own)).
       t.expect(calls).toEqual([
         {"chainId": 1, "concurrencyLimit": 30, "bufferLimit": 75},
         {"chainId": 2, "concurrencyLimit": 30, "bufferLimit": 85},
+        {"chainId": 3, "concurrencyLimit": 30, "bufferLimit": 70},
       ])
     },
   )

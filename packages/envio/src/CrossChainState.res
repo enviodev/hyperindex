@@ -176,18 +176,6 @@ let applyBatchProgress = (cm: t, ~batch: Batch.t) => {
 
 // --- Fetch control. ---
 
-// Some chain still has backfill work — its fetch frontier hasn't reached head.
-let anyChainBackfilling = (cm: t) =>
-  cm.chainStates->Dict.valuesToArray->Array.some(cs => !(cs->ChainState.isFetchingAtHead))
-
-// During backfill a chain that has fetched up to its head is paused while some
-// other chain is still backfilling: it yields all fetch resources to the chains
-// with real work and resumes once they catch up (and the indexer goes realtime).
-// Never pause when nothing is backfilling (all chains converging to head) or in
-// realtime — every chain follows the head, bounded only by the shared budget.
-let shouldPauseFetch = (cs: ChainState.t, ~isRealtime, ~anyChainBackfilling) =>
-  !isRealtime && anyChainBackfilling && cs->ChainState.isFetchingAtHead
-
 // Chains ordered furthest-behind first, so the shared concurrency and buffer
 // pools go to the chains with the most backfill work before the rest.
 let priorityOrder = (cm: t) =>
@@ -217,9 +205,7 @@ let checkAndFetch = async (
     ~bufferLimit: int,
   ) => promise<unit>,
 ) => {
-  let isRealtime = cm.isRealtime
   let maxConcurrency = cm->maxConcurrency
-  let anyChainBackfilling = cm->anyChainBackfilling
   // Pool is a budget of ready-to-process items, but the cap fed to getNextQuery
   // is still a buffer position (it tracks the sorted buffer, ready items first),
   // so add this chain's own buffer size back rather than its ready count. A chain
@@ -233,20 +219,16 @@ let checkAndFetch = async (
   let inFlight = ref(cm->inFlight)
   let _ = await cm
   ->priorityOrder
-  ->Array.filterMap(cs =>
-    if cs->shouldPauseFetch(~isRealtime, ~anyChainBackfilling) {
-      None
-    } else {
-      let chain = ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id)
-      let sourceManager = cs->ChainState.sourceManager
-      let concurrencyLimit = Pervasives.max(0, maxConcurrency - inFlight.contents)
-      let bufferLimit =
-        cm.targetBufferSize - (totalReady - cs->ChainState.fetchState->FetchState.bufferSize)
-      let inFlightBefore = sourceManager->SourceManager.inFlightCount
-      let promise = fetchChain(~chain, ~concurrencyLimit, ~bufferLimit)
-      inFlight := inFlight.contents + (sourceManager->SourceManager.inFlightCount - inFlightBefore)
-      Some(promise)
-    }
-  )
+  ->Array.map(cs => {
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id)
+    let sourceManager = cs->ChainState.sourceManager
+    let concurrencyLimit = Pervasives.max(0, maxConcurrency - inFlight.contents)
+    let bufferLimit =
+      cm.targetBufferSize - (totalReady - cs->ChainState.fetchState->FetchState.bufferSize)
+    let inFlightBefore = sourceManager->SourceManager.inFlightCount
+    let promise = fetchChain(~chain, ~concurrencyLimit, ~bufferLimit)
+    inFlight := inFlight.contents + (sourceManager->SourceManager.inFlightCount - inFlightBefore)
+    promise
+  })
   ->Promise.all
 }
