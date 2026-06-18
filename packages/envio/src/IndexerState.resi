@@ -93,6 +93,7 @@ let writeFiber: t => option<promise<unit>>
 let hasFailedWrite: t => bool
 let chainMetaDirty: t => bool
 let chainMetaThrottler: t => Throttler.t
+let crossChainState: t => CrossChainState.t
 let chainStates: t => dict<ChainState.t>
 let isInReorgThreshold: t => bool
 let isRealtime: t => bool
