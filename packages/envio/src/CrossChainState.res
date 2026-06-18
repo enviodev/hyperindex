@@ -61,11 +61,13 @@ let inFlight = (cm: t) =>
   ->Dict.valuesToArray
   ->Array.reduce(0, (acc, cs) => acc + cs->ChainState.sourceManager->SourceManager.inFlightCount)
 
-// Buffered items across every chain — the live draw against targetBufferSize.
-let totalBufferSize = (cm: t) =>
+// Ready-to-process items across every chain — the live draw against
+// targetBufferSize, which is a budget of processable events (items stuck behind
+// a gap don't count toward the goal of keeping ~targetBufferSize ready).
+let totalReadyCount = (cm: t) =>
   cm.chainStates
   ->Dict.valuesToArray
-  ->Array.reduce(0, (acc, cs) => acc + cs->ChainState.fetchState->FetchState.bufferSize)
+  ->Array.reduce(0, (acc, cs) => acc + cs->ChainState.fetchState->FetchState.bufferReadyCount)
 
 // --- Derived (pure). ---
 
@@ -218,7 +220,12 @@ let checkAndFetch = async (
   let isRealtime = cm.isRealtime
   let maxConcurrency = cm->maxConcurrency
   let anyChainBackfilling = cm->anyChainBackfilling
-  let totalBuffer = cm->totalBufferSize
+  // Pool is a budget of ready-to-process items, but the cap fed to getNextQuery
+  // is still a buffer position (it tracks the sorted buffer, ready items first),
+  // so add this chain's own buffer size back rather than its ready count. A chain
+  // with a gap therefore gets extra headroom to fetch the not-ready overhang
+  // while still aiming for its share of ~targetBufferSize ready events.
+  let totalReady = cm->totalReadyCount
   // Track the in-flight total as a running counter (summed once up front, then
   // adjusted by each chain's delta) instead of re-summing every chain — O(chains)
   // per tick rather than O(chains^2). fetchChain bumps the chain's count
@@ -234,7 +241,7 @@ let checkAndFetch = async (
       let sourceManager = cs->ChainState.sourceManager
       let concurrencyLimit = Pervasives.max(0, maxConcurrency - inFlight.contents)
       let bufferLimit =
-        cm.targetBufferSize - (totalBuffer - cs->ChainState.fetchState->FetchState.bufferSize)
+        cm.targetBufferSize - (totalReady - cs->ChainState.fetchState->FetchState.bufferSize)
       let inFlightBefore = sourceManager->SourceManager.inFlightCount
       let promise = fetchChain(~chain, ~concurrencyLimit, ~bufferLimit)
       inFlight := inFlight.contents + (sourceManager->SourceManager.inFlightCount - inFlightBefore)

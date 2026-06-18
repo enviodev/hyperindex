@@ -197,6 +197,44 @@ describe("CrossChainState fetch control", () => {
     },
   )
 
+  Async.it(
+    "checkAndFetch counts only ready items against the pool, leaving overhang headroom",
+    async t => {
+      // Chain 1 has a gap: blocks 50,100 are ready (<= frontier 100) but 200,300
+      // are stuck behind it. Only the 2 ready items count against the pool, so it
+      // gets extra headroom to fetch the not-ready overhang. Chain 2 is gap-free.
+      let gapped = makeChainState(
+        ~chainId=1,
+        ~knownHeight=1000,
+        ~frontier=100,
+        ~firstEventBlock=0,
+        ~bufferBlocks=[50, 100, 200, 300],
+      )
+      let gapFree = makeChainState(
+        ~chainId=2,
+        ~knownHeight=1000,
+        ~frontier=500,
+        ~firstEventBlock=0,
+        ~bufferBlocks=[500],
+      )
+      let cm = makeCrossChainState(~chainStatesList=[gapFree, gapped], ~targetBufferSize=100)
+
+      let calls = []
+      await cm->CrossChainState.checkAndFetch(~fetchChain=(~chain, ~concurrencyLimit as _, ~bufferLimit) => {
+        calls->Array.push({"chainId": chain->ChainMap.Chain.toChainId, "bufferLimit": bufferLimit})->ignore
+        Promise.resolve()
+      })
+
+      // totalReady = 2 (chain 1) + 1 (chain 2) = 3, not 5 buffered.
+      // chain 1: 100 - (3 - bufferSize 4) = 101 (room to fetch past the gap).
+      // chain 2: 100 - (3 - bufferSize 1) = 98.
+      t.expect(calls).toEqual([
+        {"chainId": 1, "bufferLimit": 101},
+        {"chainId": 2, "bufferLimit": 98},
+      ])
+    },
+  )
+
   Async.it("checkAndFetch follows the head on every chain once realtime", async t => {
     let a = makeChainState(~chainId=1, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0, ~bufferBlocks=[1000])
     let b = makeChainState(~chainId=2, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0, ~bufferBlocks=[1000])
