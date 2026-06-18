@@ -1358,7 +1358,7 @@ let pushQueriesForRange = (
 }
 
 // Most parallel in-flight chunk queries a single partition may have at once.
-let maxPendingChunksPerPartition = 8
+let maxPendingChunksPerPartition = 10
 
 let getNextQuery = (
   {

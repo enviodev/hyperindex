@@ -446,7 +446,7 @@ describe("SourceManager fetchNext", () => {
 
   let source: Source.t = MockIndexer.Source.make([]).source
 
-  it("getNextQuery caps a partition at 8 pending chunks", t => {
+  it("getNextQuery caps a partition at 10 pending chunks", t => {
     let pendingChunk = (idx): FetchState.pendingQuery => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
@@ -470,12 +470,12 @@ describe("SourceManager fetchNext", () => {
       }
 
     t.expect({
-      // 8 already pending: no new chunk is issued.
-      "atCap": withPending(8)
+      // 10 already pending: no new chunk is issued.
+      "atCap": withPending(10)
       ->FetchState.getNextQuery(~concurrencyLimit=30, ~bufferLimit=5000)
       ->newQueryCount,
-      // 7 pending: the two-chunk tail is trimmed down to the one remaining slot.
-      "oneSlotLeft": withPending(7)
+      // 9 pending: the two-chunk tail is trimmed down to the one remaining slot.
+      "oneSlotLeft": withPending(9)
       ->FetchState.getNextQuery(~concurrencyLimit=30, ~bufferLimit=5000)
       ->newQueryCount,
     }).toEqual({"atCap": 0, "oneSlotLeft": 1})
