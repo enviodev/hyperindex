@@ -15,7 +15,14 @@ let mockEvent = (~blockNumber): Internal.item =>
 
 // A chain state with no partitions, so bufferBlockNumber is latestOnBlockBlockNumber
 // (the fetch frontier) and every derived value used by the scheduler is set directly.
-let makeChainState = (~chainId, ~knownHeight, ~frontier, ~firstEventBlock, ~bufferBlocks=[]) => {
+let makeChainState = (
+  ~chainId,
+  ~knownHeight,
+  ~frontier,
+  ~firstEventBlock,
+  ~bufferBlocks=[],
+  ~isProgressAtHead=false,
+) => {
   let base = FetchState.make(
     // An onBlock config (no address partition) satisfies "something to fetch"
     // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
@@ -57,8 +64,21 @@ let makeChainState = (~chainId, ~knownHeight, ~frontier, ~firstEventBlock, ~buff
       ~shouldRollbackOnReorg=false,
     ),
     ~committedProgressBlockNumber=-1,
+    ~isProgressAtHead,
     ~logger=Logging.getLogger(),
   )
+}
+
+let emptyBatch: Batch.t = {
+  totalBatchSize: 0,
+  items: [],
+  progressedChainsById: Dict.make(),
+  isInReorgThreshold: false,
+  checkpointIds: [],
+  checkpointChainIds: [],
+  checkpointBlockNumbers: [],
+  checkpointBlockHashes: [],
+  checkpointEventsProcessed: [],
 }
 
 let makeCrossChainState = (
@@ -190,6 +210,81 @@ describe("CrossChainState fetch control", () => {
     })
 
     t.expect(dispatchedChainIds->Array.toSorted(Int.compare)).toEqual([1, 2])
+  })
+
+  Async.it("checkAndFetch uses the realtime concurrency budget once realtime", async t => {
+    let a = makeChainState(~chainId=1, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0)
+
+    let cm = makeCrossChainState(
+      ~chainStatesList=[a],
+      ~isRealtime=true,
+      ~maxBackfillConcurrency=5,
+      ~maxRealtimeConcurrency=50,
+    )
+
+    let seenConcurrencyLimit = ref(-1)
+    await cm->CrossChainState.checkAndFetch(~fetchChain=(~chain as _, ~concurrencyLimit, ~bufferLimit as _) => {
+      seenConcurrencyLimit := concurrencyLimit
+      Promise.resolve()
+    })
+
+    t.expect(seenConcurrencyLimit.contents).toEqual(50)
+  })
+})
+
+describe("CrossChainState readiness", () => {
+  it("does not mark a chain ready while another is still backfilling", t => {
+    // Chain 1 reached head with an empty buffer; chain 2 is mid-backfill with
+    // ready events left to process.
+    let atHead = makeChainState(
+      ~chainId=1,
+      ~knownHeight=1000,
+      ~frontier=1000,
+      ~firstEventBlock=0,
+      ~isProgressAtHead=true,
+    )
+    let backfilling = makeChainState(
+      ~chainId=2,
+      ~knownHeight=1000,
+      ~frontier=300,
+      ~firstEventBlock=0,
+      ~bufferBlocks=[300],
+    )
+    let cm = makeCrossChainState(~chainStatesList=[atHead, backfilling])
+
+    cm->CrossChainState.applyBatchProgress(~batch=emptyBatch)
+
+    t.expect({
+      "atHeadReady": atHead->ChainState.isReady,
+      "backfillingReady": backfilling->ChainState.isReady,
+      "isRealtime": cm->CrossChainState.isRealtime,
+    }).toEqual({"atHeadReady": false, "backfillingReady": false, "isRealtime": false})
+  })
+
+  it("marks every chain ready together once the whole indexer is caught up", t => {
+    let a = makeChainState(
+      ~chainId=1,
+      ~knownHeight=1000,
+      ~frontier=1000,
+      ~firstEventBlock=0,
+      ~isProgressAtHead=true,
+    )
+    let b = makeChainState(
+      ~chainId=2,
+      ~knownHeight=1000,
+      ~frontier=1000,
+      ~firstEventBlock=0,
+      ~isProgressAtHead=true,
+    )
+    let cm = makeCrossChainState(~chainStatesList=[a, b])
+
+    cm->CrossChainState.applyBatchProgress(~batch=emptyBatch)
+
+    t.expect({
+      "aReady": a->ChainState.isReady,
+      "bReady": b->ChainState.isReady,
+      "isRealtime": cm->CrossChainState.isRealtime,
+    }).toEqual({"aReady": true, "bReady": true, "isRealtime": true})
   })
 })
 

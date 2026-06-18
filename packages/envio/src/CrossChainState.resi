@@ -23,7 +23,6 @@ let inFlight: t => int
 
 // Derived (pure).
 let nextItemIsNone: t => bool
-let isProgressAtHead: t => bool
 let getSafeCheckpointId: t => option<Internal.checkpointId>
 
 // Cross-chain transitions.

@@ -393,10 +393,6 @@ let hasProcessedToEndblock = (cs: t) => {
   }
 }
 
-let hasNoMoreEventsToProcess = (cs: t) => {
-  cs.fetchState->FetchState.bufferSize === 0
-}
-
 let getHighestBlockBelowThreshold = (cs: t): int => {
   let highestBlockBelowThreshold = cs.fetchState.knownHeight - cs.chainConfig.maxReorgDepth
   highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
@@ -485,12 +481,11 @@ let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
   }
 
 // Commit a processed batch's progress for this chain (progress block, events
-// processed, head/safe-checkpoint tracking, first event block) and update its
-// caught-up timestamp. `allChainsAtHead`/`nextQueueItemIsNone` are whole-indexer
-// conditions the caller computes once. Emits the per-chain progress metrics.
-let applyBatchProgress = (cs: t, ~batch: Batch.t, ~allChainsAtHead, ~nextQueueItemIsNone) => {
+// processed, head/safe-checkpoint tracking, first event block). Emits the
+// per-chain progress metrics. Readiness is decided by CrossChainState once every
+// chain is caught up (see markReady).
+let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
   let chainId = cs.chainConfig.id
-  let wasReady = cs->isReady
 
   switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
   | Some(chainAfterBatch) => {
@@ -549,47 +544,16 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~allChainsAtHead, ~nextQueueIt
     }
   | None => ()
   }
-
-  /* strategy for TUI synced status:
-   * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
-   *
-   * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
-   *
-   * New conditions for valid synced:
-   *
-   * CASE 1 (chains are being synchronised at the head)
-   *
-   * All chain fetchers are fetching at the head AND
-   * No events that can be processed on the queue (even if events still exist on the individual queues)
-   * CASE 2 (chain finishes earlier than any other chain)
-   *
-   * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
-   *
-   * The given chain fetcher is fetching at the head or latest processed block >= endblock
-   * The given chain has processed all events on the queue
-   * see https://github.com/Float-Capital/indexer/pull/1388 */
-  if cs->hasProcessedToEndblock {
-    // in the case this is already set, don't reset and instead propagate the existing value
-    if !(cs->isReady) {
-      cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
-    }
-  } else if !(cs->isReady) && cs.isProgressAtHead {
-    // CASE1: all chains are caught up to head and the queue returns None,
-    // meaning we are busy synchronizing chains at the head.
-    if nextQueueItemIsNone && allChainsAtHead {
-      cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
-    } else if cs->hasNoMoreEventsToProcess {
-      // CASE2: all events on this chain's queue have been processed; other
-      // chains may still be syncing.
-      cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
-    }
-  }
-
-  // Set envio_progress_ready per-chain when it first becomes ready
-  if cs->isReady && !wasReady {
-    Prometheus.ProgressReady.set(~chainId)
-  }
 }
+
+// Mark the chain caught up to head/endblock. Called by CrossChainState only once
+// every chain in the indexer is caught up, so no chain flips to ready while
+// another is still backfilling. Sticky: a chain stays ready once set.
+let markReady = (cs: t) =>
+  if !(cs->isReady) {
+    cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
+    Prometheus.ProgressReady.set(~chainId=cs.chainConfig.id)
+  }
 
 // Roll a chain back to a reorg target. With a progress diff, restore fetch/
 // safe-checkpoint/progress state to `newProgressBlockNumber`; the reorg chain

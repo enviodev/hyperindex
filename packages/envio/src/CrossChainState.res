@@ -72,9 +72,6 @@ let totalBufferSize = (cm: t) =>
 let nextItemIsNone = (cm: t): bool =>
   !Batch.hasReadyItem(cm.chainStates->Dict.valuesToArray->Array.map(ChainState.fetchState))
 
-let isProgressAtHead = (cm: t) =>
-  cm.chainStates->Dict.valuesToArray->Array.every(ChainState.isProgressAtHead)
-
 let getSafeCheckpointId = (cm: t) => {
   let result: ref<option<bigint>> = ref(None)
 
@@ -140,17 +137,24 @@ let enterReorgThreshold = (cm: t) => {
   cm.isInReorgThreshold = true
 }
 
-/**
-Sets all chains' timestampCaughtUpToHeadOrEndblock when valid state lines up, and
-commits each progressed chain's batch progress, mutating the chain states in place.
-*/
+// Commit each progressed chain's batch progress, then decide readiness for the
+// whole indexer. A chain is marked caught up only once EVERY chain is caught up
+// (reached endblock or fetched/processed to head) with no processable events
+// left — so no chain flips to ready while another is still backfilling.
 let applyBatchProgress = (cm: t, ~batch: Batch.t) => {
-  let nextQueueItemIsNone = cm->nextItemIsNone
-  let allChainsAtHead = cm->isProgressAtHead
-  let allChainsReady = ref(true)
+  cm.chainStates->Utils.Dict.forEach(cs => cs->ChainState.applyBatchProgress(~batch))
 
+  let indexerCaughtUp =
+    cm->nextItemIsNone &&
+      cm.chainStates
+      ->Dict.valuesToArray
+      ->Array.every(cs => cs->ChainState.hasProcessedToEndblock || cs->ChainState.isProgressAtHead)
+
+  let allChainsReady = ref(true)
   cm.chainStates->Utils.Dict.forEach(cs => {
-    cs->ChainState.applyBatchProgress(~batch, ~allChainsAtHead, ~nextQueueItemIsNone)
+    if indexerCaughtUp {
+      cs->ChainState.markReady
+    }
     if !(cs->ChainState.isReady) {
       allChainsReady := false
     }
@@ -215,6 +219,11 @@ let checkAndFetch = async (
   let maxConcurrency = cm->maxConcurrency
   let anyChainBackfilling = cm->anyChainBackfilling
   let totalBuffer = cm->totalBufferSize
+  // Track the in-flight total as a running counter (summed once up front, then
+  // adjusted by each chain's delta) instead of re-summing every chain — O(chains)
+  // per tick rather than O(chains^2). fetchChain bumps the chain's count
+  // synchronously, so the delta is observable right after the call.
+  let inFlight = ref(cm->inFlight)
   let _ = await cm
   ->priorityOrder
   ->Array.filterMap(cs =>
@@ -222,10 +231,14 @@ let checkAndFetch = async (
       None
     } else {
       let chain = ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id)
-      let concurrencyLimit = Pervasives.max(0, maxConcurrency - cm->inFlight)
+      let sourceManager = cs->ChainState.sourceManager
+      let concurrencyLimit = Pervasives.max(0, maxConcurrency - inFlight.contents)
       let bufferLimit =
         cm.targetBufferSize - (totalBuffer - cs->ChainState.fetchState->FetchState.bufferSize)
-      Some(fetchChain(~chain, ~concurrencyLimit, ~bufferLimit))
+      let inFlightBefore = sourceManager->SourceManager.inFlightCount
+      let promise = fetchChain(~chain, ~concurrencyLimit, ~bufferLimit)
+      inFlight := inFlight.contents + (sourceManager->SourceManager.inFlightCount - inFlightBefore)
+      Some(promise)
     }
   )
   ->Promise.all
