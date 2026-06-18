@@ -41,7 +41,7 @@ module Make = () => {
     transactionHash: string,
   }
 
-  type makeEvent = (~blockHash: string) => Internal.event
+  type makeEvent = (~blockHash: string) => Internal.eventPayload
 
   type logConstructor = {
     transactionHash: string,
@@ -96,7 +96,7 @@ module Make = () => {
         block,
         transaction: makeTransaction(~transactionIndex, ~transactionHash),
         logIndex,
-      }->Internal.fromGenericEvent
+      }->Internal.fromGenericEventPayload
     }
 
     {
@@ -169,7 +169,7 @@ module Make = () => {
     }): log => {
       let log = Internal.Event({
         eventConfig: (eventConfig :> Internal.eventConfig),
-        event: makeEvent(~blockHash),
+        payload: makeEvent(~blockHash),
         chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
         timestamp: blockTimestamp,
         blockNumber,

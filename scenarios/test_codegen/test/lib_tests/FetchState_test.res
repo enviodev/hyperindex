@@ -68,7 +68,7 @@ let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.item => Intern
   blockHash: `0x${blockNumber->Int.toString}`,
   eventConfig: Utils.magic("Mock eventConfig in fetchstate test"),
   logIndex,
-  event: Utils.magic("Mock event in fetchstate test"),
+  payload: Utils.magic("Mock event in fetchstate test"),
 })
 
 let dcToItem = (dc: Internal.indexingAddress) => {

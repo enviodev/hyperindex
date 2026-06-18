@@ -206,7 +206,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       blockNumber: block.number->Option.getUnsafe,
       blockHash: block.hash->Option.getUnsafe,
       logIndex,
-      event: {
+      payload: {
         contractName: eventConfig.contractName,
         eventName: eventConfig.name,
         chainId,
@@ -215,7 +215,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
         srcAddress,
         logIndex,
-      }->Internal.fromGenericEvent,
+      }->Internal.fromGenericEventPayload,
     })
   }
 

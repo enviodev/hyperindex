@@ -13,6 +13,10 @@ open Logging
 // For Logging.setLogger call
 let _ = Env.logStrategy
 
+// Event-item loggers are built by the ecosystem; Config.make wires this up at
+// runtime, but this standalone fixture sets it directly.
+Logging.setEventLoggerMaker(Evm.make(~logger=Logging.getLogger()).toEventLogger)
+
 // Testing usage:
 trace("By default - This trace message should only be seen in the log file.")
 debug("By default - This debug message should only be seen in the log file.")

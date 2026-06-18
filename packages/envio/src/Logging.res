@@ -94,6 +94,13 @@ let getLogger = () => {
   }
 }
 
+// Indirection to the ecosystem's per-item logger builder. Held as a bare
+// function (not the whole `Ecosystem.t`) so `Logging` doesn't depend on
+// `Ecosystem` — the function closes over the logger injected when the
+// ecosystem is constructed, which is the seam for dropping this global later.
+%%private(let eventLoggerMaker = ref(None))
+let setEventLoggerMaker = (make: Internal.eventItem => Pino.t) => eventLoggerMaker := Some(make)
+
 let setLogLevel = (level: Pino.logLevel) => {
   getLogger()->setLevel(level)
 }
@@ -163,25 +170,21 @@ let getItemLogger = {
     ->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
     | Some(l) => l
     | None => {
-        let l = getLogger()->child(
-          switch item {
-          | Event({eventConfig, chain, blockNumber, logIndex, event}) =>
-            {
-              "contractName": eventConfig.contractName,
-              "eventName": eventConfig.name,
-              "chainId": chain->ChainMap.Chain.toChainId,
-              "block": blockNumber,
-              "logIndex": logIndex,
-              "address": (event->Internal.toGenericEvent).srcAddress,
-            }->createChildParams
-          | Block({blockNumber, onBlockConfig}) =>
+        let l = switch item {
+        | Event(_) =>
+          switch eventLoggerMaker.contents {
+          | Some(make) => make(item->Internal.castUnsafeEventItem)
+          | None => JsError.throwWithMessage("Unreachable code. Event logger maker not initialized")
+          }
+        | Block({blockNumber, onBlockConfig}) =>
+          getLogger()->child(
             {
               "onBlock": onBlockConfig.name,
               "chainId": onBlockConfig.chainId,
               "block": blockNumber,
-            }->createChildParams
-          },
-        )
+            }->createChildParams,
+          )
+        }
         item->(Utils.magic: Internal.item => dict<Pino.t>)->Dict.set(cacheKey, l)
         l
       }

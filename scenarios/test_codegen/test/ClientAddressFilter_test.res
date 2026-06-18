@@ -13,7 +13,7 @@ let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
     ~params=["from", "to"],
     ~contractName="ERC20",
     ~probeChainId,
-    ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
   )
 
 describe("parseEventFiltersOrThrow — address-param detection", () => {
@@ -83,7 +83,7 @@ describe("clientAddressFilter — precompiled predicate", () => {
       ~contractRegister=None,
       ~eventFilters=Some(eventFilters),
       ~probeChainId=1,
-      ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ).clientAddressFilter
 
   let addr = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
@@ -174,7 +174,7 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
     ~contractRegister=None,
     ~eventFilters=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
     ~probeChainId=1,
-    ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ~startBlock=5,
   )
 
@@ -186,8 +186,8 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
       blockHash: `0x${blockNumber->Int.toString}`,
       eventConfig: (eventConfig :> Internal.eventConfig),
       logIndex: 0,
-      event: {"params": {"to": to}}->(
-        Utils.magic: {"params": {"to": Address.t}} => Internal.event
+      payload: {"params": {"to": to}}->(
+        Utils.magic: {"params": {"to": Address.t}} => Internal.eventPayload
       ),
     })
 

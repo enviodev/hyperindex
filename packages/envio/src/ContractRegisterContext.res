@@ -95,6 +95,6 @@ let getContractRegisterContext = (params: contractRegisterParams) => {
 }
 
 let getContractRegisterArgs = (params: contractRegisterParams): Internal.contractRegisterArgs => {
-  event: (params.item->Internal.castUnsafeEventItem).event,
+  event: params.config.ecosystem.toEvent(params.item->Internal.castUnsafeEventItem),
   context: getContractRegisterContext(params),
 }

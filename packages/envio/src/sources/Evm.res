@@ -4,7 +4,7 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.timestamp
   }`)
 
-let ecosystem: Ecosystem.t = {
+let make = (~logger: Pino.t): Ecosystem.t => {
   name: Evm,
   blockFields: [
     "number",
@@ -90,4 +90,18 @@ let ecosystem: Ecosystem.t = {
   onEventBlockFilterSchema: S.object(s =>
     s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))))
   ),
+  toEvent: eventItem => eventItem.payload->Internal.payloadToEvent,
+  toEventLogger: eventItem =>
+    Logging.createChildFrom(
+      ~logger,
+      ~params={
+        "contract": eventItem.eventConfig.contractName,
+        "event": eventItem.eventConfig.name,
+        "chainId": eventItem.chain->ChainMap.Chain.toChainId,
+        "block": eventItem.blockNumber,
+        "logIndex": eventItem.logIndex,
+        "address": (eventItem.payload->Internal.payloadToGenericEvent).srcAddress,
+      },
+    ),
+  toRawEvent: eventItem => eventItem->RawEvent.make(~cleanUpRawEventFieldsInPlace),
 }

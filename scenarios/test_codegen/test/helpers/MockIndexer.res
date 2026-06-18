@@ -851,7 +851,7 @@ module Source = {
                           blockNumber: item.blockNumber,
                           blockHash: `0x${item.blockNumber->Int.toString}`,
                           logIndex: item.logIndex,
-                          event: {
+                          payload: {
                             contractName: "MockContract",
                             eventName: "MockEvent",
                             params: %raw(`{}`),
@@ -864,7 +864,7 @@ module Source = {
                               "timestamp": item.blockNumber,
                               "hash": `0x${item.blockNumber->Int.toString}`,
                             }->Utils.magic,
-                          }->Internal.fromGenericEvent,
+                          }->Internal.fromGenericEventPayload,
                         })
                       },
                     ),

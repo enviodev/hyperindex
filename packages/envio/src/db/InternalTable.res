@@ -571,22 +571,9 @@ GROUP BY "${(#chain_id: field :> string)}";`
 }
 
 module RawEvents = {
-  type t = {
-    @as("chain_id") chainId: int,
-    @as("event_id") eventId: bigint,
-    @as("event_name") eventName: string,
-    @as("contract_name") contractName: string,
-    @as("block_number") blockNumber: int,
-    @as("log_index") logIndex: int,
-    @as("src_address") srcAddress: Address.t,
-    @as("block_hash") blockHash: string,
-    @as("block_timestamp") blockTimestamp: int,
-    @as("block_fields") blockFields: JSON.t,
-    @as("transaction_fields") transactionFields: JSON.t,
-    params: JSON.t,
-  }
+  type t = Internal.rawEvent
 
-  let schema = S.schema(s => {
+  let schema = S.schema((s): t => {
     chainId: s.matches(S.int),
     eventId: s.matches(S.bigint),
     eventName: s.matches(S.string),

@@ -269,12 +269,19 @@ type genericEvent<'params, 'block, 'transaction> = {
 // (blockNumber, timestamp, blockHash) live on the item instead.
 type event
 
-external fromGenericEvent: genericEvent<'a, 'b, 'c> => event = "%identity"
+// Opaque payload an item carries. Same runtime shape as a generic event
+// today, but a distinct type so a source can later hand back a compact or
+// lazy representation. Consumers never read it directly — the ecosystem
+// turns a payload into the user-facing `event`, a logger, or a raw event.
+type eventPayload
 
-// Escape hatch for serialization boundaries (raw events, logging)
-// which genuinely need the runtime shape.
-external toGenericEvent: event => genericEvent<eventParams, eventBlock, eventTransaction> =
-  "%identity"
+external fromGenericEventPayload: genericEvent<'a, 'b, 'c> => eventPayload = "%identity"
+external payloadToEvent: eventPayload => event = "%identity"
+external payloadToGenericEvent: eventPayload => genericEvent<
+  eventParams,
+  eventBlock,
+  eventTransaction,
+> = "%identity"
 
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
@@ -499,7 +506,25 @@ type eventItem = private {
   blockNumber: int,
   blockHash: string,
   logIndex: int,
-  event: event,
+  payload: eventPayload,
+}
+
+// Row shape for the `raw_events` table. Defined here (rather than in
+// `InternalTable`) so the ecosystem's `toRawEvent` can reference it without
+// pulling in `InternalTable`'s dependency on `Config`.
+type rawEvent = {
+  @as("chain_id") chainId: int,
+  @as("event_id") eventId: bigint,
+  @as("event_name") eventName: string,
+  @as("contract_name") contractName: string,
+  @as("block_number") blockNumber: int,
+  @as("log_index") logIndex: int,
+  @as("src_address") srcAddress: Address.t,
+  @as("block_hash") blockHash: string,
+  @as("block_timestamp") blockTimestamp: int,
+  @as("block_fields") blockFields: JSON.t,
+  @as("transaction_fields") transactionFields: JSON.t,
+  params: JSON.t,
 }
 
 // Opaque type to support both EVM and other ecosystems
@@ -533,7 +558,7 @@ type item =
       blockNumber: int,
       blockHash: string,
       logIndex: int,
-      event: event,
+      payload: eventPayload,
     })
   | @as(1) Block({onBlockConfig: onBlockConfig, blockNumber: int, logIndex: int})
 

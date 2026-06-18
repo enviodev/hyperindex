@@ -1228,9 +1228,10 @@ let handleQueryResult = (
   // param-level analogue of EventRouter's srcAddress effectiveStartBlock check.
   let newItems = newItems->Array.filter(item =>
     switch item {
-    | Internal.Event({eventConfig, event, blockNumber}) =>
+    | Internal.Event({eventConfig, payload, blockNumber}) =>
       switch eventConfig.clientAddressFilter {
-      | Some(filter) => filter(event, blockNumber, fetchState.indexingAddresses)
+      | Some(filter) =>
+        filter(payload->Internal.payloadToEvent, blockNumber, fetchState.indexingAddresses)
       | None => true
       }
     | _ => true

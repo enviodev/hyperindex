@@ -29,6 +29,16 @@ type t = {
       `LogSelection.res`. SVM does not support event handlers, so its
       schema always surfaces `None`. */
   onEventBlockFilterSchema: S.t<option<unknown>>,
+  /** Materialise the user-facing event handed to handlers and contract
+      registration from an item's opaque payload. */
+  toEvent: Internal.eventItem => Internal.event,
+  /** Build the per-item child logger, with ecosystem-specific log fields
+      (EVM/Fuel: contract/event/address; SVM: program/instruction/programId).
+      Closes over the logger injected at construction. */
+  toEventLogger: Internal.eventItem => Pino.t,
+  /** Build a raw event row for the `raw_events` table. Unsupported on SVM,
+      where the implementation throws. */
+  toRawEvent: Internal.eventItem => Internal.rawEvent,
 }
 
 let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {

@@ -1044,7 +1044,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
   )
 })
 
-describe("PgStorage.makeRawEvent", () => {
+describe("ecosystem.toRawEvent", () => {
   Async.it(
     "Derives a raw event row from a batch item, taking block hash from the item and stringifying bigint block fields",
     async t => {
@@ -1062,7 +1062,7 @@ describe("PgStorage.makeRawEvent", () => {
           "chainId": 137,
           "contractName": "ERC20",
           "eventName": "EventWithoutFields",
-        }->(Utils.magic: _ => Internal.event)
+        }->(Utils.magic: _ => Internal.eventPayload)
 
       let eventItem =
         Internal.Event({
@@ -1072,10 +1072,10 @@ describe("PgStorage.makeRawEvent", () => {
           blockNumber,
           blockHash: "0xblockhash",
           logIndex,
-          event,
+          payload: event,
         })->Internal.castUnsafeEventItem
 
-      t.expect(eventItem->PgStorage.makeRawEvent(~config=MockIndexer.config)).toEqual({
+      t.expect(MockIndexer.config.ecosystem.toRawEvent(eventItem)).toEqual({
         chainId: 137,
         eventId: EventUtils.packEventIndex(~logIndex, ~blockNumber),
         eventName: "EventWithoutFields",
