@@ -620,8 +620,7 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
                     // but an empty identifier would silently break CREATE
                     // TABLE, so guard against future boundary changes.
                     if column.is_empty() {
-                        let line =
-                            format!("  - `{}.{}`", entity.name, pg_field.field_name);
+                        let line = format!("  - `{}.{}`", entity.name, pg_field.field_name);
                         if !empty.contains(&line) {
                             empty.push(line);
                         }
@@ -3749,8 +3748,9 @@ type Token {
             let err = validate_db_column_names(&storage(ColumnNameFormat::Original), &schema)
                 .unwrap_err();
             assert!(
-                err.to_string()
-                    .contains("- `Token.envio_checkpoint_id` maps to the \"envio_checkpoint_id\" column."),
+                err.to_string().contains(
+                    "- `Token.envio_checkpoint_id` maps to the \"envio_checkpoint_id\" column."
+                ),
                 "Unexpected error: {err}"
             );
         }

@@ -352,7 +352,7 @@ type onEventWhere = onEventWhereArgs => onEventWhereResult",
         };
 
         // ReScript block/transaction types only include selected fields
-        // (deprecated never fields only in TypeScript EvmBlock/EvmTransaction)
+        // (deprecated FieldNotSelected fields only in TypeScript EvmBlock/EvmTransaction)
         let (block_type, transaction_type) =
             match (&self.custom_field_selection, &self.all_ecosystem_fields) {
                 (Some(ref custom_fs), Some(ref all_fields)) => {
@@ -365,14 +365,14 @@ type onEventWhere = onEventWhereArgs => onEventWhereResult",
                             &selected.block_fields,
                             &all_fields.block_fields,
                             "block_fields",
-                            event_name,
+                            Some(event_name),
                             "    ",
                         ),
                         ProjectTemplate::generate_rescript_all_fields_record(
                             &selected.transaction_fields,
                             &all_fields.transaction_fields,
                             "transaction_fields",
-                            event_name,
+                            Some(event_name),
                             "    ",
                         ),
                     )
@@ -1000,12 +1000,13 @@ impl ProjectTemplate {
     }
 
     /// Generate a ReScript record type with all fields. Selected fields get their actual type,
-    /// unselected fields get `@deprecated("...") fieldName?: S.never` (optional so records can omit them).
+    /// unselected fields get `@deprecated("...") fieldName?: unit` (optional so records can omit them).
+    /// `event_name` is `None` for the shared block/transaction types that aren't tied to one event.
     fn generate_rescript_all_fields_record(
         selected: &[SelectedFieldTemplate],
         all_fields: &[SelectedFieldTemplate],
         field_kind: &str,
-        event_name: &str,
+        event_name: Option<&str>,
         indent: &str,
     ) -> String {
         let selected_names: std::collections::HashSet<&str> =
@@ -1017,10 +1018,11 @@ impl ProjectTemplate {
                 if selected_names.contains(f.name.camel.as_str()) {
                     format!("{}{}: {},", indent, f.res_name, f.res_type)
                 } else {
+                    let event = event_name.unwrap_or("<EventName>");
                     format!(
                         "{i}@deprecated(\"Not selected for this event. To enable, add to config.yaml:\\nevents:\\n  - event: {event}\\n    field_selection:\\n      {kind}:\\n        - {field}\")\n{i}{res_name}?: unit,",
                         i = indent,
-                        event = event_name,
+                        event = event,
                         kind = field_kind,
                         field = f.name.camel,
                         res_name = f.res_name,
@@ -1033,12 +1035,12 @@ impl ProjectTemplate {
     }
 
     /// Generate a TypeScript record type with all fields for envio.d.ts.
-    /// Selected fields get their actual TS type, unselected get `never` with @deprecated.
+    /// Selected fields get their actual TS type, unselected get `FieldNotSelected<...>` with @deprecated.
     fn generate_ts_all_fields_record(
         selected: &[SelectedFieldTemplate],
         all_fields: &[SelectedFieldTemplate],
         field_kind: &str,
-        event_name: &str,
+        event_name: Option<&str>,
         indent: &str,
     ) -> String {
         let selected_names: std::collections::HashSet<&str> =
@@ -1055,10 +1057,11 @@ impl ProjectTemplate {
                         Self::to_envio_dts_type(&f.ts_type)
                     )
                 } else {
+                    let event = event_name.unwrap_or("<EventName>");
                     format!(
-                        "{i}/**\n{i} * @deprecated Not selected for this event. To enable, add to config.yaml:\n{i} * ```yaml\n{i} * events:\n{i} *   - event: {event}\n{i} *     field_selection:\n{i} *       {kind}:\n{i} *         - {field}\n{i} * ```\n{i} */\n{i}readonly {field}: never;",
+                        "{i}/**\n{i} * @deprecated Not selected for this event. To enable, add to config.yaml:\n{i} * ```yaml\n{i} * events:\n{i} *   - event: {event}\n{i} *     field_selection:\n{i} *       {kind}:\n{i} *         - {field}\n{i} * ```\n{i} */\n{i}readonly {field}: FieldNotSelected<\"Field '{field}' is not selected for the '{event}' event. Add it under field_selection.{kind} in config.yaml.\">;",
                         i = indent,
-                        event = event_name,
+                        event = event,
                         kind = field_kind,
                         field = ts_name,
                     )
@@ -1087,7 +1090,7 @@ impl ProjectTemplate {
 
     /// Generate a full TypeScript event type for use in EvmContracts/FuelContracts.
     /// Produces a type with contractName, eventName, params, block, transaction, etc.
-    /// Unselected block/transaction fields are typed as `never` with @deprecated guidance.
+    /// Unselected block/transaction fields are typed as `FieldNotSelected<...>` with @deprecated guidance.
     fn generate_contract_event_ts_type(
         contract_name: &str,
         event: &system_config::Event,
@@ -1140,7 +1143,7 @@ impl ProjectTemplate {
                 .block_fields,
                 &aggregated.block_fields,
                 "block_fields",
-                &event.name,
+                Some(&event.name),
                 "        ",
             );
             let tx_ts = Self::generate_ts_all_fields_record(
@@ -1151,7 +1154,7 @@ impl ProjectTemplate {
                 .transaction_fields,
                 &aggregated.transaction_fields,
                 "transaction_fields",
-                &event.name,
+                Some(&event.name),
                 "        ",
             );
             (block_ts, tx_ts)
@@ -1654,7 +1657,7 @@ type handlerContext = {{
                 &global_field_selection.block_fields,
                 &all_fs.block_fields,
                 "block_fields",
-                "global",
+                None,
                 "    ",
             )
         } else {
@@ -1666,7 +1669,7 @@ type handlerContext = {{
                 &global_field_selection.transaction_fields,
                 &all_fs.transaction_fields,
                 "transaction_fields",
-                "global",
+                None,
                 "    ",
             )
         } else {
@@ -1949,7 +1952,7 @@ type testIndexer = {{
                         &global_field_selection.block_fields,
                         &all_fs.block_fields,
                         "block_fields",
-                        "global",
+                        None,
                         "  ",
                     );
                     parts.push(format!("type EvmBlock = {};", evm_block_type));
@@ -1957,7 +1960,7 @@ type testIndexer = {{
                         &global_field_selection.transaction_fields,
                         &all_fs.transaction_fields,
                         "transaction_fields",
-                        "global",
+                        None,
                         "  ",
                     );
                     parts.push(format!("type EvmTransaction = {};", evm_tx_type));
@@ -2426,6 +2429,11 @@ type testIndexer = {{
              */\n\
              \n\
              import type {{ Address, BigDecimal, SingleOrMultiple }} from \"envio\";\n\
+             \n\
+             /** Marks a block/transaction field that this event's `field_selection` doesn't include.\n \
+             * Reading such a field is a type error; the message tells you which field to add to\n \
+             * `field_selection` in config.yaml to make it available. */\n\
+             type FieldNotSelected<Message extends string> = {{ readonly __fieldNotSelected: Message }};\n\
              \n\
              {file_level_types}\n\
              \n\

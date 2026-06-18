@@ -99,8 +99,12 @@ impl Field {
 // splitting before a word that starts after a digit: erc20Balance ->
 // erc20_balance.
 pub fn to_snake_case(name: &str) -> String {
-    name.with_boundaries(&[Boundary::LowerUpper, Boundary::Acronym, Boundary::DigitUpper])
-        .to_case(Case::Snake)
+    name.with_boundaries(&[
+        Boundary::LowerUpper,
+        Boundary::Acronym,
+        Boundary::DigitUpper,
+    ])
+    .to_case(Case::Snake)
 }
 
 #[cfg(test)]

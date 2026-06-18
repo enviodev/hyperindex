@@ -96,7 +96,7 @@ let rec onQueryResponse = async (
   state: IndexerState.t,
   {chain, response, query}: partitionQueryResponse,
   ~stateId,
-  ~scheduleFetchChain,
+  ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
 ) =>
@@ -214,7 +214,7 @@ let rec onQueryResponse = async (
             ~query,
           )
           ChainMetadata.stage(state)
-          scheduleFetchChain(chain)
+          scheduleFetch()
           scheduleProcessing()
         }
 
@@ -276,8 +276,7 @@ let finishWaitingForNewBlock = (
   ~chain,
   ~knownHeight,
   ~stateId,
-  ~scheduleFetchAllChains,
-  ~scheduleFetchChain,
+  ~scheduleFetch,
   ~scheduleProcessing,
 ) =>
   if state->IndexerState.isStale(~stateId) {
@@ -301,10 +300,8 @@ let finishWaitingForNewBlock = (
     // Kick processing in case there are block handlers to run.
     if shouldEnterReorgThreshold {
       IndexerState.enterReorgThreshold(state)
-      scheduleFetchAllChains()
-    } else {
-      scheduleFetchChain(chain)
     }
+    scheduleFetch()
     scheduleProcessing()
   }
 
@@ -312,8 +309,7 @@ let checkAndFetchForChain = async (
   state: IndexerState.t,
   chain,
   ~stateId,
-  ~scheduleFetchAllChains,
-  ~scheduleFetchChain,
+  ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
 ) => {
@@ -340,8 +336,7 @@ let checkAndFetchForChain = async (
             ~chain,
             ~knownHeight,
             ~stateId,
-            ~scheduleFetchAllChains,
-            ~scheduleFetchChain,
+            ~scheduleFetch,
             ~scheduleProcessing,
           ),
         ~executeQuery=async query => {
@@ -358,7 +353,7 @@ let checkAndFetchForChain = async (
               state,
               {chain, response, query},
               ~stateId,
-              ~scheduleFetchChain,
+              ~scheduleFetch,
               ~scheduleProcessing,
               ~scheduleRollback,
             )
@@ -378,8 +373,7 @@ let checkAndFetchForChain = async (
 let checkAndFetchAllChains = async (
   state: IndexerState.t,
   ~stateId,
-  ~scheduleFetchAllChains,
-  ~scheduleFetchChain,
+  ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
 ) => {
@@ -393,8 +387,7 @@ let checkAndFetchAllChains = async (
       state,
       ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id),
       ~stateId,
-      ~scheduleFetchAllChains,
-      ~scheduleFetchChain,
+      ~scheduleFetch,
       ~scheduleProcessing,
       ~scheduleRollback,
     )

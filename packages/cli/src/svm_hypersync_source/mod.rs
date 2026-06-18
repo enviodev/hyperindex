@@ -47,10 +47,7 @@ pub struct SvmHypersyncClient {
 #[napi]
 impl SvmHypersyncClient {
     #[napi(constructor)]
-    pub fn new(
-        cfg: SvmClientConfig,
-        user_agent: String,
-    ) -> napi::Result<SvmHypersyncClient> {
+    pub fn new(cfg: SvmClientConfig, user_agent: String) -> napi::Result<SvmHypersyncClient> {
         Self::from_config(cfg, user_agent)
     }
 
