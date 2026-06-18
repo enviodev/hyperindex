@@ -27,7 +27,7 @@ let makeContract = (~name, ~params): Internal.evmContractConfig => {
       ~contractRegister=None,
       ~eventFilters=None,
       ~probeChainId=1,
-      ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ),
   ],
 }

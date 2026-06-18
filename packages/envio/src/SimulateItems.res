@@ -288,16 +288,18 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
           blockNumber,
           blockHash,
           logIndex,
-          event: {
-            contractName: eventConfig.contractName,
-            eventName: eventConfig.name,
-            params,
-            chainId,
-            srcAddress,
-            logIndex,
-            transaction,
-            block,
-          }->Internal.fromGenericEvent,
+          payload: (
+            {
+              contractName: eventConfig.contractName,
+              eventName: eventConfig.name,
+              params,
+              chainId,
+              srcAddress,
+              logIndex,
+              transaction,
+              block,
+            }: Evm.payload
+          )->Evm.fromPayload,
         }),
       )
       ->ignore

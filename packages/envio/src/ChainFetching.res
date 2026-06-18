@@ -67,7 +67,10 @@ let runContractRegistersOrThrow = async (
           })
           ->Promise.catch(exn => {
             params.isResolved = true
-            exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
+            exn->ErrorHandling.mkLogAndRaise(
+              ~msg=errorMessage,
+              ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+            )
           }),
         )
       } else {
@@ -75,7 +78,10 @@ let runContractRegistersOrThrow = async (
       }
     } catch {
     | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg=errorMessage,
+        ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+      )
     }
   }
 

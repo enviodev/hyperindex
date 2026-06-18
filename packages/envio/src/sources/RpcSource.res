@@ -1200,7 +1200,7 @@ let make = (
                   blockHash: block->getBlockHash,
                   chain,
                   logIndex: log.logIndex,
-                  event: {
+                  payload: {
                     contractName: eventConfig.contractName,
                     eventName: eventConfig.name,
                     chainId: chain->ChainMap.Chain.toChainId,
@@ -1209,7 +1209,7 @@ let make = (
                     block,
                     srcAddress: routedAddress,
                     logIndex: log.logIndex,
-                  }->Internal.fromGenericEvent,
+                  }->Evm.fromPayload,
                 })
               }
             )(),
