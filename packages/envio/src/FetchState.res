@@ -1357,6 +1357,9 @@ let pushQueriesForRange = (
   }
 }
 
+// Most parallel in-flight chunk queries a single partition may have at once.
+let maxPendingChunksPerPartition = 8
+
 let getNextQuery = (
   {
     buffer,
@@ -1410,8 +1413,9 @@ let getNextQuery = (
       let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
       let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
 
+      let pendingCount = p.mutPendingQueries->Array.length
       let isBehindTheHead = p.latestFetchedBlock.blockNumber < headBlockNumber
-      let hasPendingQueries = p.mutPendingQueries->Utils.Array.notEmpty
+      let hasPendingQueries = pendingCount > 0
 
       if hasPendingQueries || isBehindTheHead {
         // Even if there are some partitions waiting for the new block
@@ -1421,6 +1425,8 @@ let getNextQuery = (
         // and we don't want to poll the head for a few small partitions
         shouldWaitForNewBlock := false
       }
+
+      let partitionQueriesStart = queries->Array.length
 
       // Compute queryEndBlock for this partition
       let queryEndBlock = Utils.Math.minOptInt(fetchState.endBlock, p.mergeBlock)
@@ -1487,6 +1493,22 @@ let getNextQuery = (
           ~addressesByContractName=p.addressesByContractName,
           ~indexingAddresses,
         )
+      }
+
+      // Cap parallel in-flight chunks per partition so a single partition can't
+      // drain the whole concurrency budget (especially the high realtime one).
+      // Keep the earliest new chunks; the furthest-ahead ones wait for the next
+      // round once these resolve.
+      let maxNewChunks = Pervasives.max(0, maxPendingChunksPerPartition - pendingCount)
+      let generatedCount = queries->Array.length - partitionQueriesStart
+      if generatedCount > maxNewChunks {
+        queries
+        ->Array.splice(
+          ~start=partitionQueriesStart + maxNewChunks,
+          ~remove=generatedCount - maxNewChunks,
+          ~insert=[],
+        )
+        ->ignore
       }
 
       idxRef := idxRef.contents + 1

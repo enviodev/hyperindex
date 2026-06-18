@@ -446,6 +446,41 @@ describe("SourceManager fetchNext", () => {
 
   let source: Source.t = MockIndexer.Source.make([]).source
 
+  it("getNextQuery caps a partition at 8 pending chunks", t => {
+    let pendingChunk = (idx): FetchState.pendingQuery => {
+      fromBlock: idx * 10 + 1,
+      toBlock: Some(idx * 10 + 10),
+      isChunk: true,
+      fetchedBlock: None,
+    }
+    // Chunking on (prevQueryRange set) so the tail wants two chunks per round.
+    let withPending = count => {
+      let p = {
+        ...mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
+        mutPendingQueries: Array.fromInitializer(~length=count, pendingChunk),
+        prevQueryRange: 10,
+        prevPrevQueryRange: 10,
+      }
+      mockFetchState([p], ~knownHeight=1000)
+    }
+    let newQueryCount = nextQuery =>
+      switch nextQuery {
+      | FetchState.Ready(queries) => queries->Array.length
+      | _ => 0
+      }
+
+    t.expect({
+      // 8 already pending: no new chunk is issued.
+      "atCap": withPending(8)
+      ->FetchState.getNextQuery(~concurrencyLimit=30, ~bufferLimit=5000)
+      ->newQueryCount,
+      // 7 pending: the two-chunk tail is trimmed down to the one remaining slot.
+      "oneSlotLeft": withPending(7)
+      ->FetchState.getNextQuery(~concurrencyLimit=30, ~bufferLimit=5000)
+      ->newQueryCount,
+    }).toEqual({"atCap": 0, "oneSlotLeft": 1})
+  })
+
   Async.it(
     "Executes full partitions in any order when we didn't reach concurency limit",
     async t => {
