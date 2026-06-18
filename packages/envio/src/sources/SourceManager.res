@@ -17,7 +17,6 @@ type t = {
   sourcesState: array<sourceState>,
   mutable statusStart: Hrtime.timeRef,
   mutable status: sourceManagerStatus,
-  maxPartitionConcurrency: int,
   newBlockStallTimeout: int,
   newBlockStallTimeoutRealtime: int,
   stalledPollingInterval: int,
@@ -42,6 +41,10 @@ type t = {
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
+
+// Partition queries currently in flight on this chain's sources. Summed across
+// chains by CrossChainState to enforce the indexer-wide concurrency budget.
+let inFlightCount = sourceManager => sourceManager.fetchingPartitionsCount
 
 let getRateLimitTimeMs = sourceManager =>
   sourceManager.committedRateLimitTimeMs +.
@@ -148,7 +151,6 @@ let makeGetHeightRetryInterval = (
 
 let make = (
   ~sources: array<Source.t>,
-  ~maxPartitionConcurrency,
   ~isRealtime,
   ~newBlockStallTimeout=60_000,
   ~newBlockStallTimeoutRealtime=20_000,
@@ -169,16 +171,11 @@ let make = (
   | None =>
     JsError.throwWithMessage("Invalid configuration, no data-source for historical sync provided")
   }
-  Prometheus.IndexingMaxConcurrency.set(
-    ~maxConcurrency=maxPartitionConcurrency,
-    ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
-  )
   Prometheus.IndexingConcurrency.set(
     ~concurrency=0,
     ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
   )
   {
-    maxPartitionConcurrency,
     sourcesState: sources->Array.map(source => {
       source,
       knownHeight: 0,
@@ -226,15 +223,10 @@ let fetchNext = async (
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
+  ~concurrencyLimit,
   ~stateId,
 ) => {
-  let {maxPartitionConcurrency} = sourceManager
-
-  let nextQuery = fetchState->FetchState.getNextQuery(
-    ~concurrencyLimit={
-      maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
-    },
-  )
+  let nextQuery = fetchState->FetchState.getNextQuery(~concurrencyLimit)
 
   switch nextQuery {
   | ReachedMaxConcurrency

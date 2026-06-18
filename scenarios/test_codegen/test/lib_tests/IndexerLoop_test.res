@@ -29,7 +29,6 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~fetchState,
       ~sourceManager=SourceManager.make(
         ~sources=[mockSource.source],
-        ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
         ~isRealtime=false,
       ),
       ~reorgDetection=ReorgDetection.make(

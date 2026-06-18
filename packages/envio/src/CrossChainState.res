@@ -8,12 +8,23 @@ type t = {
   // True once every chain has caught up to head/endBlock. Monotonic during a run.
   mutable isRealtime: bool,
   mutable isInReorgThreshold: bool,
+  // Indexer-wide cap on concurrent data-source queries, shared across all chains.
+  maxConcurrency: int,
 }
 
-let make = (~chainStates, ~isInReorgThreshold, ~isRealtime): t => {
-  chainStates,
-  isRealtime,
-  isInReorgThreshold,
+let make = (
+  ~chainStates,
+  ~isInReorgThreshold,
+  ~isRealtime,
+  ~maxConcurrency=Env.maxConcurrency,
+): t => {
+  Prometheus.IndexingMaxConcurrency.set(~maxConcurrency)
+  {
+    chainStates,
+    isRealtime,
+    isInReorgThreshold,
+    maxConcurrency,
+  }
 }
 
 // --- Accessors. ---
@@ -21,6 +32,13 @@ let make = (~chainStates, ~isInReorgThreshold, ~isRealtime): t => {
 let chainStates = (cm: t) => cm.chainStates
 let isRealtime = (cm: t) => cm.isRealtime
 let isInReorgThreshold = (cm: t) => cm.isInReorgThreshold
+
+// Partition queries in flight across every chain — the live draw against
+// maxConcurrency.
+let inFlight = (cm: t) =>
+  cm.chainStates
+  ->Dict.valuesToArray
+  ->Array.reduce(0, (acc, cs) => acc + cs->ChainState.sourceManager->SourceManager.inFlightCount)
 
 // --- Derived (pure). ---
 
@@ -116,4 +134,24 @@ let applyBatchProgress = (cm: t, ~batch: Batch.t) => {
   }
 
   cm.isRealtime = cm.isRealtime || allChainsReady.contents
+}
+
+// --- Fetch control. ---
+
+// Dispatch a fetch tick across every chain, drawing from the shared concurrency
+// budget. Chains are visited in turn; fetchChain bumps the in-flight count
+// synchronously before it suspends, so a later chain sees the slots an earlier
+// one already claimed and the budget is honored indexer-wide.
+let checkAndFetch = async (
+  cm: t,
+  ~fetchChain: (~chain: ChainMap.Chain.t, ~concurrencyLimit: int) => promise<unit>,
+) => {
+  let _ = await cm.chainStates
+  ->Dict.valuesToArray
+  ->Array.map(cs => {
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id)
+    let concurrencyLimit = Pervasives.max(0, cm.maxConcurrency - cm->inFlight)
+    fetchChain(~chain, ~concurrencyLimit)
+  })
+  ->Promise.all
 }

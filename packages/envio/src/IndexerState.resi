@@ -32,6 +32,7 @@ let make: (
   ~chainStates: dict<ChainState.t>,
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
+  ~maxConcurrency: int=?,
   ~committedCheckpointId: Internal.checkpointId=?,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
@@ -48,6 +49,7 @@ let makeFromDbState: (
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
   ~reducedPollingInterval: int=?,
+  ~maxConcurrency: int=?,
   ~onError: ErrorHandling.t => unit,
 ) => t
 

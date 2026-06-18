@@ -50,7 +50,6 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
     let source = makeMockSource(~rateLimitedCalls=2, ~resetMs=500)
     let sourceManager = SourceManager.make(
       ~sources=[source],
-      ~maxPartitionConcurrency=1,
       ~isRealtime=false,
     )
 
@@ -69,7 +68,6 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
     let source = makeMockSource(~rateLimitedCalls=0, ~resetMs=100)
     let sourceManager = SourceManager.make(
       ~sources=[source],
-      ~maxPartitionConcurrency=1,
       ~isRealtime=false,
     )
 
@@ -88,7 +86,6 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
       let source = makeMockSource(~rateLimitedCalls=4, ~resetMs=500)
       let sourceManager = SourceManager.make(
         ~sources=[source],
-        ~maxPartitionConcurrency=2,
         ~isRealtime=false,
       )
 

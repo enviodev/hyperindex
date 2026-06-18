@@ -281,12 +281,7 @@ let makeInternal = (
   make(
     ~chainConfig,
     ~fetchState,
-    ~sourceManager=SourceManager.make(
-      ~sources,
-      ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
-      ~isRealtime,
-      ~reducedPollingInterval?,
-    ),
+    ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints,
       ~maxReorgDepth,

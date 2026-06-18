@@ -116,6 +116,7 @@ let make = (
   ~chainStates: dict<ChainState.t>,
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
+  ~maxConcurrency=Env.maxConcurrency,
   ~committedCheckpointId=Internal.initialCheckpointId,
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
@@ -153,7 +154,12 @@ let make = (
     chainMetaDirty: false,
     chainMetaThrottler,
     isProcessing: false,
-    crossChainState: CrossChainState.make(~chainStates, ~isInReorgThreshold, ~isRealtime),
+    crossChainState: CrossChainState.make(
+      ~chainStates,
+      ~isInReorgThreshold,
+      ~isRealtime,
+      ~maxConcurrency,
+    ),
     indexerStartTime: Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(),
@@ -199,6 +205,7 @@ let makeFromDbState = (
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
   ~reducedPollingInterval=?,
+  ~maxConcurrency=Env.maxConcurrency,
   ~onError,
 ) => {
   let isInReorgThreshold = if initialState.cleanRun {
@@ -276,6 +283,7 @@ let makeFromDbState = (
     ~chainStates,
     ~isInReorgThreshold,
     ~isRealtime,
+    ~maxConcurrency,
     ~committedCheckpointId=initialState.checkpointId,
     ~isDevelopmentMode,
     ~shouldUseTui,
