@@ -59,7 +59,7 @@ let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
   blockHash: `0x${blockNumber->Int.toString}`,
   eventConfig: Utils.magic("Mock eventConfig in fetchstate test"),
   logIndex,
-  payload: Utils.magic("Mock event in fetchstate test"),
+  payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),
 })
 
 describe("FetchState onBlock functionality", () => {

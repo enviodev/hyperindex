@@ -1062,7 +1062,18 @@ describe("ecosystem.toRawEvent", () => {
           "chainId": 137,
           "contractName": "ERC20",
           "eventName": "EventWithoutFields",
-        }->(Utils.magic: _ => Internal.eventPayload)
+        }->(
+          Utils.magic: {
+            "block": JSON.t,
+            "transaction": JSON.t,
+            "params": unit,
+            "logIndex": int,
+            "srcAddress": Address.t,
+            "chainId": int,
+            "contractName": string,
+            "eventName": string,
+          } => Internal.eventPayload
+        )
 
       let eventItem =
         Internal.Event({

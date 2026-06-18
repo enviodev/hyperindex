@@ -553,6 +553,14 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | Ecosystem.Svm => Svm.make(~logger)
   }
 
+  // SVM has no raw-events representation (`Svm.toRawEvent` throws), so reject
+  // it at config time instead of failing mid-indexing.
+  if ecosystemName === Ecosystem.Svm && publicConfig["rawEvents"]->Option.getOr(false) {
+    JsError.throwWithMessage(
+      "Invalid indexer config: rawEvents is not supported for the SVM ecosystem",
+    )
+  }
+
   // Extract EVM-specific options with defaults
   let lowercaseAddresses = switch publicConfig["evm"] {
   | Some(evm) => evm["addressFormat"]->Option.getOr(Checksum) == Lowercase
