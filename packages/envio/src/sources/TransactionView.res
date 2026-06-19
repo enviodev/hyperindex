@@ -23,6 +23,9 @@ let make: (
         configurable: true,
         get: function () {
           var v = this.__store.getTransactionField(this.__block, this.__txId, i);
+          // napi returns null for an absent field (Rust None); ReScript options
+          // expect undefined.
+          if (v === null) v = undefined;
           // Memoise: replace the prototype getter with an own value.
           Object.defineProperty(this, name, {
             value: v,
