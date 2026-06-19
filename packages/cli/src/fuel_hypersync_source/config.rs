@@ -6,7 +6,7 @@ use napi_derive::napi;
 #[derive(Default, Clone)]
 pub struct ClientConfig {
     pub url: String,
-    pub api_token: Option<String>,
+    pub api_token: String,
 }
 
 impl TryFrom<ClientConfig> for hyperfuel_client::ClientConfig {
@@ -18,7 +18,7 @@ impl TryFrom<ClientConfig> for hyperfuel_client::ClientConfig {
         // dependency on the url crate.
         let json = serde_json::json!({
             "url": config.url,
-            "api_token": config.api_token.unwrap_or_default(),
+            "api_token": config.api_token,
             // Retries are handled by the indexer, not the binary client.
             "max_num_retries": 0,
         });

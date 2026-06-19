@@ -28,12 +28,9 @@ module GetLogs: {
   exception Error(error)
 
   let query: (
-    ~serverUrl: string,
-    ~apiToken: string,
+    ~client: HyperFuelClient.t,
     ~fromBlock: int,
     ~toBlock: option<int>,
     ~recieptsSelection: array<HyperFuelClient.QueryTypes.receiptSelection>,
   ) => promise<logsQueryPage>
 }
-
-let getHeight: (~serverUrl: string, ~apiToken: string) => promise<int>

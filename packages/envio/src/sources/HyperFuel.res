@@ -1,21 +1,3 @@
-//Manage clients in cache so we don't need to reinstantiate each time
-//Ideally client should be passed in as a param to the functions but
-//we are still sharing the same signature with eth archive query builder
-
-module CachedClients = {
-  let cache: dict<HyperFuelClient.t> = Dict.make()
-
-  let getClient = (~serverUrl, ~apiToken) => {
-    switch cache->Utils.Dict.dangerouslyGetNonOption(serverUrl) {
-    | Some(client) => client
-    | None =>
-      let newClient = HyperFuelClient.make({url: serverUrl, apiToken})
-      cache->Dict.set(serverUrl, newClient)
-      newClient
-    }
-  }
-}
-
 type hyperSyncPage<'item> = {
   items: array<'item>,
   nextBlock: int,
@@ -169,8 +151,7 @@ module GetLogs = {
   }
 
   let query = async (
-    ~serverUrl,
-    ~apiToken,
+    ~client: HyperFuelClient.t,
     ~fromBlock,
     ~toBlock,
     ~recieptsSelection,
@@ -181,9 +162,7 @@ module GetLogs = {
       ~recieptsSelection,
     )
 
-    let hyperFuelClient = CachedClients.getClient(~serverUrl, ~apiToken)
-
-    let res = switch await hyperFuelClient->HyperFuelClient.getSelectedData(query) {
+    let res = switch await client->HyperFuelClient.getSelectedData(query) {
     | res => res
     | exception exn =>
       switch exn->extractMissingParams {
@@ -192,12 +171,9 @@ module GetLogs = {
       }
     }
     if res.nextBlock <= fromBlock {
-      // Might happen when /height response was from another instance of HyperSync
+      // Might happen when /height response was from another instance of HyperFuel
       throw(Error(WrongInstance))
     }
     res->convertResponse
   }
 }
-
-let getHeight = (~serverUrl, ~apiToken) =>
-  CachedClients.getClient(~serverUrl, ~apiToken)->HyperFuelClient.getHeight

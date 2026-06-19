@@ -218,9 +218,15 @@ let make = ({chain, endpointUrl, apiToken}: options): t => {
   let apiToken = switch apiToken {
   | Some(token) => token
   | None =>
-    JsError.throwWithMessage(`An API token is required for using HyperFuel as a data-source.
+    JsError.throwWithMessage(`An Envio API token is required for using HyperFuel as a data-source.
 Set the ENVIO_API_TOKEN environment variable in your .env file.
-Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
+Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
+  }
+
+  let client = switch HyperFuelClient.make({url: endpointUrl, apiToken}) {
+  | client => client
+  | exception exn =>
+    exn->ErrorHandling.mkLogAndRaise(~msg="Failed to instantiate the HyperFuel client")
   }
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
@@ -250,8 +256,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~method="getLogs",
     )
     let pageUnsafe = try await HyperFuel.GetLogs.query(
-      ~serverUrl=endpointUrl,
-      ~apiToken,
+      ~client,
       ~fromBlock,
       ~toBlock,
       ~recieptsSelection,
@@ -471,7 +476,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     poweredByHyperSync: true,
     getHeightOrThrow: async () => {
       let timerRef = Hrtime.makeTimer()
-      let height = try await HyperFuel.getHeight(~serverUrl=endpointUrl, ~apiToken) catch {
+      let height = try await client->HyperFuelClient.getHeight catch {
       | JsExn(e) =>
         switch e->JsExn.message {
         | Some(message) if message->isUnauthorizedError =>

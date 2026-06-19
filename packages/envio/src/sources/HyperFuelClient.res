@@ -2,7 +2,7 @@ type t
 
 type cfg = {
   url: string,
-  apiToken?: string,
+  apiToken: string,
 }
 module QueryTypes = {
   type blockFieldOptions =
