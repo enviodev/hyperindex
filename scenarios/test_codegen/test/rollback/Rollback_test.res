@@ -636,7 +636,7 @@ describe("E2E rollback tests", () => {
   })
 
   Async.it(
-    "Single chain rollback should also work for unordered multichain indexer when another chains are stale",
+    "Single chain rollback should also work for multichain indexer when another chains are stale",
     async t => {
       let sourceMock1 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -925,7 +925,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     ).toEqual([("2", 105, None), ("0", 105, None)])
   })
 
-  Async.it("Rollback of unordered multichain indexer (single entity id change)", async t => {
+  Async.it("Rollback of multichain indexer (single entity id change)", async t => {
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -1376,7 +1376,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
   // Fixes duplicate history bug before 2.31
   Async.it(
-    "Rollback of unordered multichain indexer (single entity id change + another entity on non-reorg chain)",
+    "Rollback of multichain indexer (single entity id change + another entity on non-reorg chain)",
     async t => {
       let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -2632,7 +2632,7 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
         ~chain=#100,
       )
       // batchSize=1 ensures that chain 100's single event fills the batch,
-      // causing chain 1337 to be SKIPPED in prepareUnorderedBatch.
+      // causing chain 1337 to be SKIPPED during batch preparation.
       // This means chain 1337 gets no checkpoint at block 101.
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[

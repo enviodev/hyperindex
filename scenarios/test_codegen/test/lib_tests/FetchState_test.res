@@ -3084,7 +3084,7 @@ describe("FetchState unit tests for specific cases", () => {
   )
 })
 
-describe("FetchState.sortForUnorderedBatch", () => {
+describe("FetchState.sortForBatch", () => {
   let mkQuery = (fetchState: FetchState.t) => {
     {
       FetchState.partitionId: "0",
@@ -3119,7 +3119,7 @@ describe("FetchState.sortForUnorderedBatch", () => {
     // High progress: first item at block 8, knownHeight=10 → 80% progress
     let fsHigh = makeFsWith(~latestBlock=10, ~queueBlocks=[8])
 
-    let prepared = FetchState.sortForUnorderedBatch([fsHigh, fsLow, fsMid], ~batchSizeTarget=3)
+    let prepared = FetchState.sortForBatch([fsHigh, fsLow, fsMid], ~batchSizeTarget=3)
 
     t.expect(
       prepared->Array.map(fs => fs.buffer->Array.getUnsafe(0)->Internal.getItemBlockNumber),
@@ -3132,7 +3132,7 @@ describe("FetchState.sortForUnorderedBatch", () => {
     // Half-full batch (1 item) but earlier earliest item (block 1)
     let fsHalfEarlier = makeFsWith(~latestBlock=10, ~queueBlocks=[1])
 
-    let prepared = FetchState.sortForUnorderedBatch(
+    let prepared = FetchState.sortForBatch(
       [fsHalfEarlier, fsFullLater],
       ~batchSizeTarget=2,
     )
@@ -3148,7 +3148,7 @@ describe("FetchState.sortForUnorderedBatch", () => {
     // Half-full (1 item) but earlier earliest item
     let fsHalfEarlier = makeFsWith(~latestBlock=10, ~queueBlocks=[1])
 
-    let prepared = FetchState.sortForUnorderedBatch(
+    let prepared = FetchState.sortForBatch(
       [fsHalfEarlier, fsExactFull],
       ~batchSizeTarget=2,
     )
