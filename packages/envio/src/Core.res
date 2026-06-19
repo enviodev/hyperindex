@@ -8,6 +8,7 @@ type evmHypersyncClientCtor
 type evmRpcClientCtor
 type evmDecoderCtor
 type svmHypersyncClientCtor
+type transactionStoreCtor
 
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
@@ -20,6 +21,8 @@ type addon = {
   evmDecoder: evmDecoderCtor,
   @as("SvmHypersyncClient")
   svmHypersyncClient: svmHypersyncClientCtor,
+  @as("TransactionStore")
+  transactionStore: transactionStoreCtor,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"

@@ -196,7 +196,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~params: Internal.eventParams,
     ~eventConfig: Internal.evmEventConfig,
   ): Internal.item => {
-    let {block, transaction, logIndex, srcAddress} = item
+    let {block, transactionIndex, logIndex, srcAddress} = item
     let chainId = chain->ChainMap.Chain.toChainId
 
     Internal.Event({
@@ -206,14 +206,12 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       blockNumber: block.number->Option.getUnsafe,
       blockHash: block.hash->Option.getUnsafe,
       logIndex,
+      transactionId: transactionIndex->Int.toString,
       payload: {
         contractName: eventConfig.contractName,
         eventName: eventConfig.name,
         chainId,
         params,
-        transaction: transaction->(
-          Utils.magic: HyperSyncClient.ResponseTypes.transaction => Internal.eventTransaction
-        ),
         block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
         srcAddress,
         logIndex,
@@ -426,6 +424,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     {
       latestFetchedBlockTimestamp,
       parsedQueueItems,
+      transactionStore: pageUnsafe.transactionStore,
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,

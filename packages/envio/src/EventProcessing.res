@@ -56,7 +56,12 @@ let runEventHandlerOrThrow = async (
     await handler(
       (
         {
-          event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
+          event: item->Ecosystem.getItemEvent(
+            ~ecosystem=config.ecosystem,
+            ~transactionStore=indexerState
+            ->IndexerState.getChainState(~chain=eventItem.chain)
+            ->ChainState.transactionStore,
+          ),
           context: UserContext.getHandlerContext(contextParams),
         }: Internal.handlerArgs
       ),
@@ -172,7 +177,12 @@ let preloadBatchOrThrow = async (
             )
             promises->Array.push(
               handler({
-                event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
+                event: item->Ecosystem.getItemEvent(
+                  ~ecosystem=config.ecosystem,
+                  ~transactionStore=indexerState
+                  ->IndexerState.getChainState(~chain=(item->Internal.castUnsafeEventItem).chain)
+                  ->ChainState.transactionStore,
+                ),
                 context: UserContext.getHandlerContext({
                   item,
                   indexerState,

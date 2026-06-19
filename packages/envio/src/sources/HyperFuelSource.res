@@ -397,6 +397,8 @@ let make = ({chain, endpointUrl}: options): t => {
         blockNumber: block.height,
         blockHash: block.id,
         logIndex: receiptIndex,
+        // Fuel keeps the transaction on the payload for now; the store is unused.
+        transactionId: item.transactionId,
         payload: {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,
@@ -439,6 +441,8 @@ let make = ({chain, endpointUrl}: options): t => {
     {
       latestFetchedBlockTimestamp,
       parsedQueueItems,
+      // Fuel keeps transaction on the payload; no store page this pass.
+      transactionStore: TransactionStore.make(),
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,

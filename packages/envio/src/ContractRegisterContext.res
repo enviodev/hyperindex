@@ -6,6 +6,9 @@ type contractRegisterParams = {
   item: Internal.item,
   onRegister: (~item: Internal.item, ~contractAddress: Address.t, ~contractName: string) => unit,
   config: Config.t,
+  // The fetch-response page store backing this item's `event.transaction`
+  // (the chain store hasn't merged it yet at contract-register time).
+  transactionStore: TransactionStore.t,
   mutable isResolved: bool,
 }
 
@@ -101,6 +104,9 @@ let getContractRegisterContext = (params: contractRegisterParams) => {
 }
 
 let getContractRegisterArgs = (params: contractRegisterParams): Internal.contractRegisterArgs => {
-  event: params.item->Ecosystem.getItemEvent(~ecosystem=params.config.ecosystem),
+  event: params.item->Ecosystem.getItemEvent(
+    ~ecosystem=params.config.ecosystem,
+    ~transactionStore=params.transactionStore,
+  ),
   context: getContractRegisterContext(params),
 }

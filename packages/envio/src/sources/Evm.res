@@ -1,5 +1,6 @@
 // EVM's concrete item payload. Erased to `Internal.eventPayload` on the item
-// and recovered here via `toPayload`.
+// and recovered here via `toPayload`. The transaction is not carried here — it
+// lives in the per-chain transaction store and is resolved on demand.
 type payload = {
   contractName: string,
   eventName: string,
@@ -7,11 +8,56 @@ type payload = {
   chainId: int,
   srcAddress: Address.t,
   logIndex: int,
-  transaction: Internal.eventTransaction,
   block: Internal.eventBlock,
 }
 external fromPayload: payload => Internal.eventPayload = "%identity"
 external toPayload: Internal.eventPayload => payload = "%identity"
+
+// The event handed to handlers is the payload with a lazily-resolved
+// `transaction` getter attached.
+@set
+external setEventTransaction: (Internal.event, Internal.eventTransaction) => unit = "transaction"
+// The transaction store is stamped on the item by `ChainState` so `toRawEvent`
+// (no store in its signature) can resolve transaction fields.
+@get external itemTransactionStore: Internal.eventItem => TransactionStore.t = "_txStore"
+
+// Ordered transaction field names. The index of each is the field code shared
+// with the Rust store (`EvmTxField`) — keep this order in sync.
+let transactionFields = [
+  "transactionIndex",
+  "hash",
+  "from",
+  "to",
+  "gas",
+  "gasPrice",
+  "maxPriorityFeePerGas",
+  "maxFeePerGas",
+  "cumulativeGasUsed",
+  "effectiveGasPrice",
+  "gasUsed",
+  "input",
+  "nonce",
+  "value",
+  "v",
+  "r",
+  "s",
+  "contractAddress",
+  "logsBloom",
+  "root",
+  "status",
+  "yParity",
+  "chainId",
+  "maxFeePerBlobGas",
+  "blobVersionedHashes",
+  "type",
+  "l1Fee",
+  "l1GasPrice",
+  "l1GasUsed",
+  "l1FeeScalar",
+  "gasUsedForL1",
+  "accessList",
+  "authorizationList",
+]
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
@@ -50,41 +96,7 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     "sendRoot",
     "mixHash",
   ],
-  transactionFields: [
-    "transactionIndex",
-    "hash",
-    "from",
-    "to",
-    "gas",
-    "gasPrice",
-    "maxPriorityFeePerGas",
-    "maxFeePerGas",
-    "cumulativeGasUsed",
-    "effectiveGasPrice",
-    "gasUsed",
-    "input",
-    "nonce",
-    "value",
-    "v",
-    "r",
-    "s",
-    "contractAddress",
-    "logsBloom",
-    "root",
-    "status",
-    "yParity",
-    "chainId",
-    "maxFeePerBlobGas",
-    "blobVersionedHashes",
-    "type",
-    "l1Fee",
-    "l1GasPrice",
-    "l1GasUsed",
-    "l1FeeScalar",
-    "gasUsedForL1",
-    "accessList",
-    "authorizationList",
-  ],
+  transactionFields,
   blockNumberName: "number",
   blockTimestampName: "timestamp",
   blockHashName: "hash",
@@ -106,7 +118,18 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))))
   ),
   logger,
-  toEvent: eventItem => eventItem.payload->Internal.payloadToEvent,
+  toEvent: (eventItem, ~transactionStore) => {
+    let event = eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event)
+    event->setEventTransaction(
+      TransactionView.make(
+        transactionFields,
+        transactionStore,
+        eventItem.blockNumber,
+        eventItem.transactionId,
+      ),
+    )
+    event
+  },
   toEventLogger: eventItem =>
     Logging.createChildFrom(
       ~logger,
@@ -121,9 +144,15 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     ),
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
+    let transaction = TransactionView.toDict(
+      transactionFields,
+      eventItem->itemTransactionStore,
+      eventItem.blockNumber,
+      eventItem.transactionId,
+    )
     eventItem->RawEvent.make(
       ~block=payload.block,
-      ~transaction=payload.transaction,
+      ~transaction,
       ~params=payload.params,
       ~srcAddress=payload.srcAddress,
       ~cleanUpRawEventFieldsInPlace,

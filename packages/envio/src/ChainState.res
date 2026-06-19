@@ -13,7 +13,16 @@ type t = {
   mutable numEventsProcessed: float,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
+  // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
+  // transactionId). Fetch responses merge their page in; entries are pruned as
+  // the chain progresses and dropped above the target on rollback.
+  transactionStore: TransactionStore.t,
 }
+
+// Stamped on each item so `toRawEvent` (which has no store in its signature) can
+// resolve transaction fields for the raw_events table.
+@set
+external setItemTransactionStore: (Internal.item, TransactionStore.t) => unit = "_txStore"
 
 let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
   let addresses = []
@@ -51,6 +60,7 @@ let make = (
   numEventsProcessed,
   reorgDetection,
   safeCheckpointTracking,
+  transactionStore: TransactionStore.make(),
 }
 
 let makeInternal = (
@@ -390,6 +400,7 @@ let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
 let reorgDetection = (cs: t) => cs.reorgDetection
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
+let transactionStore = (cs: t) => cs.transactionStore
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
@@ -433,7 +444,13 @@ let handleQueryResult = (
   ~newItemsWithDcs,
   ~latestFetchedBlock,
   ~knownHeight,
+  ~transactionStore as page: TransactionStore.t,
 ) => {
+  // Merge this response's page into the chain store in lockstep with appending
+  // its items to the buffer; stamp the chain store on each item for toRawEvent.
+  cs.transactionStore->TransactionStore.merge(page)
+  newItems->Array.forEach(item => item->setItemTransactionStore(cs.transactionStore))
+
   let fs = switch newItemsWithDcs {
   | [] => cs.fetchState
   | _ => cs.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
@@ -544,6 +561,8 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~allChainsAtHead, ~nextQueueIt
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber
       cs.numEventsProcessed = chainAfterBatch.totalEventsProcessed
+      // Processed blocks' transactions are no longer needed.
+      cs.transactionStore->TransactionStore.prune(chainAfterBatch.progressBlockNumber)
       cs.isProgressAtHead = cs.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated
       switch cs.safeCheckpointTracking {
       | Some(safeCheckpointTracking) =>
@@ -648,6 +667,7 @@ let rollback = (
     | None => ()
     }
     cs.fetchState = cs.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
+    cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
   | None =>
@@ -658,6 +678,7 @@ let rollback = (
         )
       cs.fetchState =
         cs.fetchState->FetchState.rollback(~targetBlockNumber=rollbackTargetBlockNumber)
+      cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,

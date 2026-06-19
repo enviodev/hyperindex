@@ -33,8 +33,9 @@ type t = {
       loggers (see `getItemLogger`). */
   logger: Pino.t,
   /** Materialise the user-facing event handed to handlers and contract
-      registration from an item's opaque payload. */
-  toEvent: Internal.eventItem => Internal.event,
+      registration from an item's opaque payload. The transaction store backs
+      the lazily-resolved `event.transaction`. */
+  toEvent: (Internal.eventItem, ~transactionStore: TransactionStore.t) => Internal.event,
   /** Build the per-item child logger for an event item, with
       ecosystem-specific log fields (EVM/Fuel: contract/event/address; SVM:
       program/instruction/programId). Closes over the injected logger. */
@@ -49,12 +50,12 @@ type t = {
 // from several places). Hidden keys mirror each other.
 let getItemEvent = {
   let cacheKey = "_event"
-  (item: Internal.item, ~ecosystem: t): Internal.event => {
+  (item: Internal.item, ~ecosystem: t, ~transactionStore: TransactionStore.t): Internal.event => {
     let cache = item->(Utils.magic: Internal.item => dict<Internal.event>)
     switch cache->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
     | Some(event) => event
     | None =>
-      let event = ecosystem.toEvent(item->Internal.castUnsafeEventItem)
+      let event = ecosystem.toEvent(item->Internal.castUnsafeEventItem, ~transactionStore)
       cache->Dict.set(cacheKey, event)
       event
     }

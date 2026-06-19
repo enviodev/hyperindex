@@ -1,4 +1,9 @@
-let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain.t): Source.t => {
+let make = (
+  ~items: array<Internal.item>,
+  ~transactionStore: TransactionStore.t,
+  ~endBlock: int,
+  ~chain: ChainMap.Chain.t,
+): Source.t => {
   // getItemsOrThrow might be called multiple times with different partition ids.
   // Return all items on the first call and empty on subsequent calls to prevent
   // duplicate event processing.
@@ -28,12 +33,12 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       ~retry as _,
       ~logger as _,
     ) => {
-      // Return all items on first call, empty on subsequent calls
-      let result = if delivered.contents {
-        []
+      // Return all items + the store page on first call, empty on subsequent.
+      let (result, page) = if delivered.contents {
+        ([], TransactionStore.make())
       } else {
         delivered := true
-        items
+        (items, transactionStore)
       }
 
       let reportedHeight = max(endBlock, 1)
@@ -41,6 +46,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
         Source.knownHeight: reportedHeight,
         blockHashes: [],
         parsedQueueItems: result,
+        transactionStore: page,
         fromBlockQueried: 0,
         latestFetchedBlockNumber: reportedHeight,
         latestFetchedBlockTimestamp: 0,

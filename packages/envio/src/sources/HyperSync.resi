@@ -3,6 +3,7 @@ type logsQueryPage = {
   nextBlock: int,
   archiveHeight: int,
   rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
+  transactionStore: TransactionStore.t,
 }
 
 type missingParams = {

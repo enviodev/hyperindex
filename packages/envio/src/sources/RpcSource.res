@@ -1129,6 +1129,8 @@ let make = (
       )
     }
 
+    let transactionStore = TransactionStore.make()
+
     let parsedQueueItems = await logs
     ->Array.zip(parsedEvents)
     ->Array.filterMap(((
@@ -1193,6 +1195,12 @@ let make = (
                   )
                 }
 
+                let transactionId = log.transactionIndex->Int.toString
+                transactionStore->TransactionStore.pushEvm(
+                  ~blockNumber=block->getBlockNumber,
+                  ~transactionId,
+                  ~tx=transaction,
+                )
                 Internal.Event({
                   eventConfig: (eventConfig :> Internal.eventConfig),
                   timestamp: block->getBlockTimestamp,
@@ -1200,12 +1208,12 @@ let make = (
                   blockHash: block->getBlockHash,
                   chain,
                   logIndex: log.logIndex,
+                  transactionId,
                   payload: {
                     contractName: eventConfig.contractName,
                     eventName: eventConfig.name,
                     chainId: chain->ChainMap.Chain.toChainId,
                     params: decoded,
-                    transaction,
                     block,
                     srcAddress: routedAddress,
                     logIndex: log.logIndex,
@@ -1250,6 +1258,7 @@ let make = (
       latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
+      transactionStore,
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },

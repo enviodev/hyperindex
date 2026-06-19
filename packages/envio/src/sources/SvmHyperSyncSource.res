@@ -510,6 +510,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
             blockNumber: instr.slot,
             blockHash: "",
             logIndex: synthLogIndex(instr),
+            // SVM keeps the transaction on the payload for now; the store is unused.
+            transactionId: instr.transactionIndex->Int.toString,
             payload: payload->(Utils.magic: Envio.svmInstruction => Internal.eventPayload),
           }),
         )
@@ -539,6 +541,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     {
       latestFetchedBlockTimestamp: latestBlockTime,
       parsedQueueItems,
+      // SVM keeps transaction on the payload; no store page this pass.
+      transactionStore: TransactionStore.make(),
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,

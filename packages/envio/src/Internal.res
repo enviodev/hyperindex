@@ -277,8 +277,6 @@ type event
 // modules, not here, and are distinct per ecosystem.
 type eventPayload
 
-external payloadToEvent: eventPayload => event = "%identity"
-
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
@@ -502,6 +500,9 @@ type eventItem = private {
   blockNumber: int,
   blockHash: string,
   logIndex: int,
+  // Within-block transaction key into the per-chain transaction store
+  // (stringified transactionIndex for EVM/SVM, tx id for Fuel).
+  transactionId: string,
   payload: eventPayload,
 }
 
@@ -554,6 +555,7 @@ type item =
       blockNumber: int,
       blockHash: string,
       logIndex: int,
+      transactionId: string,
       payload: eventPayload,
     })
   | @as(1) Block({onBlockConfig: onBlockConfig, blockNumber: int, logIndex: int})

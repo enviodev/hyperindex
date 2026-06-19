@@ -353,7 +353,9 @@ module EventItems = {
     topic0: EvmTypes.Hex.t,
     topicCount: int,
     block: ResponseTypes.block,
-    transaction: ResponseTypes.transaction,
+    // Key (with the block number) into the transaction store; the transaction
+    // is resolved from the store on demand.
+    transactionIndex: int,
     params: Nullable.t<dict<Internal.eventParams>>,
   }
 
@@ -367,7 +369,8 @@ module EventItems = {
 
 type t = {
   get: (~query: query) => promise<queryResponse>,
-  getEventItems: (~query: query) => promise<EventItems.response>,
+  // Returns the response plus a page store owning this page's raw transactions.
+  getEventItems: (~query: query) => promise<(EventItems.response, TransactionStore.t)>,
   getHeight: unit => promise<int>,
 }
 
