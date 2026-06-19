@@ -9,7 +9,7 @@ module CachedClients = {
     switch cache->Utils.Dict.dangerouslyGetNonOption(serverUrl) {
     | Some(client) => client
     | None =>
-      let newClient = HyperFuelClient.make({url: serverUrl, bearerToken: apiToken})
+      let newClient = HyperFuelClient.make({url: serverUrl, apiToken})
       cache->Dict.set(serverUrl, newClient)
       newClient
     }

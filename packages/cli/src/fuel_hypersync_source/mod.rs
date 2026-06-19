@@ -28,13 +28,11 @@ impl HyperfuelClient {
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let height = self.inner.get_height().await.map_err(|e| {
-            // The client embeds a `{:?}` debug dump in its error message; keep
-            // only the first line so it stays readable on retries.
-            let message = format!("{e}");
-            let summary = message.lines().next().unwrap_or(message.as_str());
-            napi::Error::from_reason(format!("Failed to get HyperFuel height: {summary}"))
-        })?;
+        let height = self
+            .inner
+            .get_height()
+            .await
+            .map_err(|e| request_err("Failed to get HyperFuel height", e))?;
         height.try_into().context("convert height").map_err(map_err)
     }
 
@@ -42,13 +40,21 @@ impl HyperfuelClient {
     pub async fn get_selected_data(&self, query: Query) -> napi::Result<QueryResponse> {
         let query: hyperfuel_client::net_types::Query =
             query.try_into().context("parse query").map_err(map_err)?;
-        let res = self.inner.get_arrow(&query).await.map_err(|e| {
-            let message = format!("{e}");
-            let summary = message.lines().next().unwrap_or(message.as_str());
-            napi::Error::from_reason(format!("Failed to get data from HyperFuel: {summary}"))
-        })?;
+        let res = self
+            .inner
+            .get_arrow(&query)
+            .await
+            .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
         convert_response(res).map_err(convert_error_to_napi)
     }
+}
+
+/// The client embeds a `{:?}` debug dump in its error message; keep only the
+/// first line so it stays readable when the indexer surfaces it on retries.
+fn request_err(prefix: &str, e: anyhow::Error) -> napi::Error {
+    let message = format!("{e}");
+    let summary = message.lines().next().unwrap_or(message.as_str());
+    napi::Error::from_reason(format!("{prefix}: {summary}"))
 }
 
 /// Encodes `ConvertError::MissingFields` as a JSON payload in the napi
