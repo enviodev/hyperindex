@@ -42,7 +42,7 @@ let makeChainState = (
     ~startBlock=0,
     ~endBlock=None,
     ~maxAddrInPartition=3,
-    ~targetBufferSize=10000,
+    ~maxOnBlockBufferSize=10000,
     ~chainId,
     ~knownHeight=0,
   )

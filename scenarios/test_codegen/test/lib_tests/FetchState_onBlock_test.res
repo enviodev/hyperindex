@@ -45,7 +45,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
     ~startBlock,
     ~endBlock=None,
     ~maxAddrInPartition=3,
-    ~targetBufferSize=5000,
+    ~maxOnBlockBufferSize=5000,
     ~chainId,
     ~onBlockConfigs?,
     ~knownHeight=0,

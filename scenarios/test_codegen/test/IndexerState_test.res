@@ -32,7 +32,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~eventConfigs,
       ~addresses=[],
       ~startBlock=0,
-      ~targetBufferSize=5000,
+      ~maxOnBlockBufferSize=5000,
       ~chainId=1,
       ~knownHeight=0,
     )
@@ -237,7 +237,7 @@ describe("IndexerState", () => {
             ~eventConfigs,
             ~addresses=[],
             ~startBlock=0,
-            ~targetBufferSize=5000,
+            ~maxOnBlockBufferSize=5000,
             ~chainId,
             ~knownHeight=0,
           ),

@@ -198,7 +198,7 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=10,
-      ~targetBufferSize=5000,
+      ~maxOnBlockBufferSize=5000,
       ~chainId=1,
       ~knownHeight=1000,
     )

@@ -341,7 +341,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=3,
-      ~targetBufferSize=5000,
+      ~maxOnBlockBufferSize=5000,
       ~chainId=1,
       ~knownHeight=10000,
     )

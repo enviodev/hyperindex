@@ -1573,7 +1573,7 @@ let make = (
   ~addresses: array<Internal.indexingAddress>,
   ~maxAddrInPartition,
   ~chainId,
-  ~targetBufferSize,
+  ~maxOnBlockBufferSize,
   ~knownHeight,
   ~progressBlockNumber=startBlock - 1,
   ~onBlockConfigs=[],
@@ -1722,7 +1722,7 @@ let make = (
       ~indexerStartBlock=startBlock,
       ~fromBlock=progressBlockNumber,
       ~maxBlockNumber,
-      ~targetBufferSize,
+      ~targetBufferSize=maxOnBlockBufferSize,
     )
   } else {
     progressBlockNumber
@@ -1739,7 +1739,7 @@ let make = (
     indexingAddresses,
     blockLag,
     onBlockConfigs,
-    targetBufferSize,
+    targetBufferSize: maxOnBlockBufferSize,
     knownHeight,
     buffer,
     firstEventBlock,

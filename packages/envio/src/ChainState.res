@@ -195,10 +195,7 @@ let makeInternal = (
     ~startBlock,
     ~endBlock,
     ~eventConfigs,
-    // Bounds onBlock item pre-generation only (see FetchState.targetBufferSize);
-    // fetch depth is the indexer-wide buffer pool, allocated per tick by
-    // CrossChainState via getNextQuery's bufferLimit.
-    ~targetBufferSize=2 * config.batchSize,
+    ~maxOnBlockBufferSize=2 * config.batchSize,
     ~knownHeight,
     ~chainId=chainConfig.id,
     // FIXME: Shouldn't set with full history
