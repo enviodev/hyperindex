@@ -15,7 +15,7 @@ use napi_derive::napi;
 
 use crate::evm_hypersync_source::types::{
     map_address_string, map_bigint, map_hex_string, AccessList as AccessListItem,
-    Authorization as AuthorizationItem,
+    Authorization as AuthorizationItem, Transaction as EvmReadyTx,
 };
 
 /// A single transaction field materialised on demand. Variants cover exactly the
@@ -244,20 +244,67 @@ fn evm_get_field(
 /// (SVM raw, pre-built JS for RPC/Fuel/Simulate) are added as those sources are
 /// wired in.
 enum StoredTx {
+    /// HyperSync: raw upstream transaction, fields materialised on demand.
     EvmRaw {
         tx: Arc<simple_types::Transaction>,
         checksum: bool,
     },
+    /// RPC / simulate: the transaction was assembled in JS and handed over
+    /// already in final form. Kept owned (Send) so the store can be returned
+    /// across the async boundary; fields are read back on demand.
+    EvmReady(Box<EvmReadyTx>),
 }
 
 impl StoredTx {
     fn get_field(&self, field: i32) -> Result<Option<FieldValue>> {
+        let f = match EvmTxField::from_i32(field) {
+            Some(f) => f,
+            None => return Ok(None),
+        };
         match self {
-            StoredTx::EvmRaw { tx, checksum } => match EvmTxField::from_i32(field) {
-                Some(f) => evm_get_field(tx, f, *checksum),
-                None => Ok(None),
-            },
+            StoredTx::EvmRaw { tx, checksum } => evm_get_field(tx, f, *checksum),
+            StoredTx::EvmReady(tx) => Ok(evm_ready_get_field(tx, f)),
         }
+    }
+}
+
+/// Read a single field off an already-materialised EVM transaction.
+fn evm_ready_get_field(tx: &EvmReadyTx, field: EvmTxField) -> Option<FieldValue> {
+    use EvmTxField::*;
+    match field {
+        TransactionIndex => tx.transaction_index.map(FieldValue::Int),
+        Hash => tx.hash.clone().map(FieldValue::Str),
+        From => tx.from.clone().map(FieldValue::Str),
+        To => tx.to.clone().map(FieldValue::Str),
+        Gas => tx.gas.clone().map(FieldValue::Big),
+        GasPrice => tx.gas_price.clone().map(FieldValue::Big),
+        MaxPriorityFeePerGas => tx.max_priority_fee_per_gas.clone().map(FieldValue::Big),
+        MaxFeePerGas => tx.max_fee_per_gas.clone().map(FieldValue::Big),
+        CumulativeGasUsed => tx.cumulative_gas_used.clone().map(FieldValue::Big),
+        EffectiveGasPrice => tx.effective_gas_price.clone().map(FieldValue::Big),
+        GasUsed => tx.gas_used.clone().map(FieldValue::Big),
+        Input => tx.input.clone().map(FieldValue::Str),
+        Nonce => tx.nonce.clone().map(FieldValue::Big),
+        Value => tx.value.clone().map(FieldValue::Big),
+        V => tx.v.clone().map(FieldValue::Str),
+        R => tx.r.clone().map(FieldValue::Str),
+        S => tx.s.clone().map(FieldValue::Str),
+        ContractAddress => tx.contract_address.clone().map(FieldValue::Str),
+        LogsBloom => tx.logs_bloom.clone().map(FieldValue::Str),
+        Root => tx.root.clone().map(FieldValue::Str),
+        Status => tx.status.map(FieldValue::Int),
+        YParity => tx.y_parity.clone().map(FieldValue::Str),
+        ChainId => tx.chain_id.map(FieldValue::Int),
+        MaxFeePerBlobGas => tx.max_fee_per_blob_gas.clone().map(FieldValue::Big),
+        BlobVersionedHashes => tx.blob_versioned_hashes.clone().map(FieldValue::StrVec),
+        Type => tx.type_.map(FieldValue::Int),
+        L1Fee => tx.l1_fee.clone().map(FieldValue::Big),
+        L1GasPrice => tx.l1_gas_price.clone().map(FieldValue::Big),
+        L1GasUsed => tx.l1_gas_used.clone().map(FieldValue::Big),
+        L1FeeScalar => tx.l1_fee_scalar.map(FieldValue::Float),
+        GasUsedForL1 => tx.gas_used_for_l1.clone().map(FieldValue::Big),
+        AccessList => tx.access_list.clone().map(FieldValue::AccessList),
+        AuthorizationList => tx.authorization_list.clone().map(FieldValue::AuthList),
     }
 }
 
@@ -316,6 +363,21 @@ impl TransactionStore {
                 .map_err(crate::evm_hypersync_source::map_err),
             None => Ok(None),
         }
+    }
+
+    /// Store a transaction assembled in JS (RPC / simulate). Multiple logs in
+    /// the same tx pass the same key and collapse to one entry.
+    #[napi]
+    pub fn push_evm(&self, block_number: i64, transaction_id: String, tx: EvmReadyTx) {
+        let block = match u64::try_from(block_number) {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        let mut inner = self.inner.lock().unwrap();
+        inner
+            .entry(block)
+            .or_default()
+            .insert(transaction_id, StoredTx::EvmReady(Box::new(tx)));
     }
 
     /// Drop transactions for blocks at or below `up_to_block` (already processed).
