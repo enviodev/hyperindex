@@ -470,15 +470,13 @@ describe("SourceManager fetchNext", () => {
       }
 
     t.expect({
-      // 10 already pending: no new chunk is issued.
-      "atCap": withPending(10)
-      ->FetchState.getNextQuery(~concurrencyLimit=30, ~bufferLimit=5000)
-      ->newQueryCount,
+      // 10 already pending: the partition is capped, so the scheduler issues nothing.
+      "atCap": withPending(10)->FetchState.getNextQuery(~concurrencyLimit=30, ~bufferLimit=5000),
       // 9 pending: the two-chunk tail is trimmed down to the one remaining slot.
       "oneSlotLeft": withPending(9)
       ->FetchState.getNextQuery(~concurrencyLimit=30, ~bufferLimit=5000)
       ->newQueryCount,
-    }).toEqual({"atCap": 0, "oneSlotLeft": 1})
+    }).toEqual({"atCap": FetchState.NothingToQuery, "oneSlotLeft": 1})
   })
 
   Async.it(

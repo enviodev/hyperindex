@@ -8,9 +8,9 @@ let mockEvent = (~blockNumber): Internal.item =>
     chain: ChainMap.Chain.makeUnsafe(~chainId=1),
     blockNumber,
     blockHash: `0x${blockNumber->Int.toString}`,
-    eventConfig: Utils.magic("Mock eventConfig in CrossChainState test"),
+    eventConfig: "Mock eventConfig in CrossChainState test"->(Utils.magic: string => Internal.eventConfig),
     logIndex: 0,
-    payload: Utils.magic("Mock event in CrossChainState test"),
+    payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
   })
 
 // A chain state with no partitions, so bufferBlockNumber is latestOnBlockBlockNumber
@@ -36,7 +36,7 @@ let makeChainState = (
         startBlock: None,
         endBlock: None,
         interval: 1,
-        handler: Utils.magic("mock onBlock handler"),
+        handler: "mock onBlock handler"->(Utils.magic: string => Internal.onBlockArgs => promise<unit>),
       },
     ],
     ~startBlock=0,
