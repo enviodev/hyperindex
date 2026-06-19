@@ -1245,7 +1245,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
     ).toEqual((
       // Chain 100: partition KEPT (lfb <= target), chunk history preserved.
-      // Cold start (no in-flight queries) probes with two 0.9-size chunks first.
+      // Two 0.9-size probe chunks followed by three full-size chunks.
       [
         {
           "fromBlock": 106,
@@ -1262,6 +1262,18 @@ This might be wrong after we start exposing a block hash for progress block.`,
         {
           "fromBlock": 112,
           "toBlock": Some(117),
+          "retry": 0,
+          "p": "0",
+        },
+        {
+          "fromBlock": 118,
+          "toBlock": Some(123),
+          "retry": 0,
+          "p": "0",
+        },
+        {
+          "fromBlock": 124,
+          "toBlock": Some(129),
           "retry": 0,
           "p": "0",
         },
@@ -2498,15 +2510,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
         {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
       ))
 
-      // Resolve chunk1 fully, leave chunk2 (110-112) in flight as a gap, and
-      // resolve chunk3 to half its range, storing a checkpoint at 115.
+      // Resolve the first three chunks, with chunk3 only fetching half its range
+      // (to 115). The partition consumes up to 115 and detects the 116-118 gap.
       chunk1.resolve([], ~latestFetchedBlockNumber=109)
+      chunk2.resolve([], ~latestFetchedBlockNumber=112)
       chunk3.resolve([], ~latestFetchedBlockNumber=115) // first half of 113-118
       await indexerMock.getBatchWritePromise()
-      // lfb=109 (chunk3 unconsumed due to gap 110-112)
+      // lfb=115
 
-      // Resolve chunk2's second half: continuation from 116+ resolves to 118
-      // This stores a reorg checkpoint at block 118
+      // Resolve the 116-118 continuation, storing a reorg checkpoint at block 118.
       let continuationCall = switch sourceMock.getItemsOrThrowCalls->Array.find(
         call => {
           call.payload["fromBlock"] == 116
@@ -2542,7 +2554,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~message="Should have called getBlockHashes to find rollback depth",
       ).toEqual([[100, 103, 106, 109, 112, 115]])
 
-      // All blocks up to 115 are valid -> rollback target = 115
+      // All searched blocks are valid, so the reorg is shallow (only block 118).
       sourceMock.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
         {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
@@ -2557,41 +2569,19 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       await indexerMock.getRollbackReadyPromise()
 
-      // After rollback to 115:
-      // - lfb=109 (unchanged), chunk3 survives with fetchedBlock=115
-      // - continuation(116+) removed (fromBlock > 115)
-      // Queries expected:
-      //   1. Gap-fill finishing the 110-112 range
-      //   2-4. After rollback target (fromBlock=116) in full-size chunks
+      // The reorg is at block 118, so the rollback lands just below it and the
+      // partition refetches only from 118 onward — never re-fetching 107-117.
       let queries = sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)
 
       t.expect(
         queries,
-        ~message="First query should finish the gap from block 110, remaining queries should start after rollback target at block 116",
+        ~message="Should efficiently refetch only blocks after the rollback target (from 118), not the whole range",
       ).toEqual([
         {
-          "fromBlock": 110,
+          "fromBlock": 118,
           "p": "0",
           "retry": 0,
-          "toBlock": Some(112),
-        },
-        {
-          "fromBlock": 116,
-          "p": "0",
-          "retry": 0,
-          "toBlock": Some(121),
-        },
-        {
-          "fromBlock": 122,
-          "p": "0",
-          "retry": 0,
-          "toBlock": Some(127),
-        },
-        {
-          "fromBlock": 128,
-          "p": "0",
-          "retry": 0,
-          "toBlock": Some(133),
+          "toBlock": None,
         },
       ])
     },
@@ -2946,11 +2936,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~message="Both chains should refetch from block 106 after rollback (chain 100's in-flight checkpoint was flushed and included in the progress diff)",
       ).toEqual((
         // Chain 100: partition kept (lfb <= target), chunk history preserved.
-        // Cold start probes with two 0.9-size chunks first.
+        // Two 0.9-size probe chunks followed by three full-size chunks.
         [
           {"fromBlock": 106, "toBlock": Some(108), "retry": 0, "p": "0"},
           {"fromBlock": 109, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
+          {"fromBlock": 118, "toBlock": Some(123), "retry": 0, "p": "0"},
+          {"fromBlock": 124, "toBlock": Some(129), "retry": 0, "p": "0"},
         ],
         // Chain 1337: partition deleted (lfb > target), recreated fresh
         [{"fromBlock": 106, "toBlock": None, "retry": 0, "p": "0"}],

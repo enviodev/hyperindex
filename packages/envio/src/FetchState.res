@@ -1295,7 +1295,6 @@ let pushQueriesForRange = (
   ~rangeEndBlock: option<int>,
   ~maxQueryBlockNumber: int,
   ~maybeChunkRange: option<int>,
-  ~hasEarlierPending: bool,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
   ~indexingAddresses: dict<indexingAddress>,
@@ -1321,18 +1320,15 @@ let pushQueriesForRange = (
         | None => maxQueryBlockNumber
         }
         let chunkSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 1.8)
-        // When nothing is in flight ahead of this range, probe with two smaller
-        // chunks first so their responses come back quickly and refresh the
-        // chunking heuristic before committing to full-size chunks.
-        let firstChunkSize = hasEarlierPending
-          ? chunkSize
-          : Js.Math.ceil_int(chunkRange->Int.toFloat *. 0.9)
-        let getChunkSize = chunkIdx => chunkIdx < 2 ? firstChunkSize : chunkSize
+        // Probe with two smaller chunks first so their responses come back
+        // quickly and refresh the chunking heuristic, then three full-size chunks.
+        let probeSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 0.9)
+        let getChunkSize = chunkIdx => chunkIdx < 2 ? probeSize : chunkSize
         if rangeFromBlock + getChunkSize(0) + getChunkSize(1) - 1 <= maxBlock {
           let chunkFromBlock = ref(rangeFromBlock)
           let chunkIdx = ref(0)
           while (
-            chunkIdx.contents < 3 &&
+            chunkIdx.contents < 5 &&
               chunkFromBlock.contents + getChunkSize(chunkIdx.contents) - 1 <= maxBlock
           ) {
             let chunkToBlock = chunkFromBlock.contents + getChunkSize(chunkIdx.contents) - 1
@@ -1473,7 +1469,6 @@ let getNextQuery = (
             ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
             ~maxQueryBlockNumber,
             ~maybeChunkRange,
-            ~hasEarlierPending=pqIdx.contents > 0,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
             ~indexingAddresses,
@@ -1498,7 +1493,6 @@ let getNextQuery = (
           ~rangeEndBlock=queryEndBlock,
           ~maxQueryBlockNumber,
           ~maybeChunkRange,
-          ~hasEarlierPending=p.mutPendingQueries->Array.length > 0,
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
           ~indexingAddresses,

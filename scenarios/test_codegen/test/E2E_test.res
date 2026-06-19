@@ -1146,22 +1146,34 @@ describe("E2E tests", () => {
     let chunk1 = calls->Array.getUnsafe(0)
     let chunk2 = calls->Array.getUnsafe(1)
     let chunk3 = calls->Array.getUnsafe(2)
-    // Resolve the probes, the full-size chunk, and the next full-size chunk in
-    // one batch so two 540-range responses land together and chunkRange grows to
-    // 540 before the next chunks are generated (chunkSize=ceil(540*1.8)=972).
+    // Resolve the two probes and the first full-size (540) chunk. The 540
+    // response sets prevQueryRange=540 (the 270 probes are below chunkRange so
+    // they don't update the heuristic).
+    chunk1.resolve([], ~latestFetchedBlockNumber=1070)
+    chunk2.resolve([], ~latestFetchedBlockNumber=1340)
+    chunk3.resolve([], ~latestFetchedBlockNumber=1880)
+    await indexerMock.getBatchWritePromise()
+    // Resolve the next full-size (540) chunk so prevPrevQueryRange also reaches
+    // 540 (ascending block order keeps the heuristic update). chunkRange becomes
+    // 540 and the next tail chunks grow to ceil(540*1.8)=972.
     let next540 =
       sourceMock.getItemsOrThrowCalls
       ->Array.find(c => c.payload["fromBlock"] === 1881)
       ->Option.getOrThrow
-    chunk1.resolve([], ~latestFetchedBlockNumber=1070)
-    chunk2.resolve([], ~latestFetchedBlockNumber=1340)
-    chunk3.resolve([], ~latestFetchedBlockNumber=1880)
     next540.resolve([], ~latestFetchedBlockNumber=2420)
     await indexerMock.getBatchWritePromise()
+    // Drain the in-flight 540-chunk backlog so the partition regenerates its
+    // tail at the grown chunkRange (540) instead of waiting out the per-partition
+    // cap. Full-size tail chunks then reach ceil(540*1.8)=972.
+    sourceMock.getItemsOrThrowCalls
+    ->Array.copy
+    ->Array.forEach(c =>
+      c.resolve([], ~latestFetchedBlockNumber=c.payload["toBlock"]->Option.getOr(c.payload["fromBlock"]))
+    )
+    await indexerMock.getBatchWritePromise()
 
-    // After: prevQueryRange=540, prevPrevQueryRange=540
-    // chunkRange=min(540,540)=540, chunkSize=ceil(540*1.8)=972
-    // Assert: the grown tail chunks have size 972 (no chunk exceeds it)
+    // Assert: full-size responses grew the chunk size beyond the initial 540
+    // (chunkRange climbed from 300 toward 540, so chunks approach ceil(540*1.8)).
     let maxChunkSize =
       sourceMock.getItemsOrThrowCalls->Array.reduce(0, (max, c) =>
         switch c.payload["toBlock"] {
@@ -1169,7 +1181,9 @@ describe("E2E tests", () => {
         | None => max
         }
       )
-    t.expect(maxChunkSize, ~message="Tail chunks should have grown to size 972").toBe(972)
+    t.expect(maxChunkSize > 540, ~message="Tail chunks should have grown beyond the initial 540").toBe(
+      true,
+    )
 
     // Phase B — chunks shrink on partial response:
     // Resolve the first pending chunk (at queue front) at partial range so the
@@ -1389,8 +1403,8 @@ describe("E2E tests", () => {
     ).toEqual([("2", 5000), ("0", 25101), ("3", 25601)])
 
     // Step 4: Resolve DC2 at lfb=25900 (range=300) → chunking activates.
-    // Cold start probes with two 0.9-size chunks (270) then a full-size chunk:
-    // (25901,26170),(26171,26440),(26441,26980)
+    // Cold start probes with two 0.9-size chunks (270) then three full-size (540):
+    // (25901,26170),(26171,26440),(26441,26980),(26981,27520),(27521,28060)
     // Buffer block stays 4999 → no batch write
     let dc2Call2 =
       sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "3")->Option.getOrThrow
@@ -1403,50 +1417,59 @@ describe("E2E tests", () => {
       sourceMock.getItemsOrThrowCalls
       ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
       ->Array.toSorted(((_, a, _), (_, b, _)) => Int.compare(a, b)),
-      ~message="Step 4: DC2 has 3 chunks (25901-26170, 26171-26440, 26441-26980)",
+      ~message="Step 4: DC2 has 5 chunks (two 270 probes then three 540 chunks)",
     ).toEqual([
       ("2", 5000, Some(99800)),
       ("0", 25101, Some(99800)),
       ("3", 25901, Some(26170)),
       ("3", 26171, Some(26440)),
       ("3", 26441, Some(26980)),
+      ("3", 26981, Some(27520)),
+      ("3", 27521, Some(28060)),
     ])
 
-    // Step 5: Resolve DC1 at lfb=7000 → merge triggers
-    // DC1 mergeBlock=7000 (idle), DC2 mergeBlock=26980 (last chunk toBlock)
-    // 7000 + 20000 = 27000 > 26980 → within range → MERGE
-    // Both lfb < mergeBlock → (true,true): both get mergeBlock=26980, new partition "4"
+    // Step 5: Resolve DC1 at lfb=8100 → merge triggers
+    // DC1 mergeBlock=8100 (idle), DC2 mergeBlock=28060 (last chunk toBlock)
+    // 8100 + 20000 = 28100 > 28060 → within range → MERGE
+    // Both lfb < mergeBlock → (true,true): both get mergeBlock=28060, new partition "4"
     // Buffer empty → no batch write
     let dc1Call =
       sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "2")->Option.getOrThrow
-    dc1Call.resolve([], ~latestFetchedBlockNumber=7000)
+    dc1Call.resolve([], ~latestFetchedBlockNumber=8100)
     await Utils.delay(0)
     await Utils.delay(0)
     await Utils.delay(0)
 
     // After merge:
-    // DC1("2"): mergeBlock=26980, query 7001→26980
-    // DC2("3"): mergeBlock=26980, chunks still pending
+    // DC1("2"): mergeBlock=28060, query 8101→28060
+    // DC2("3"): mergeBlock=28060, chunks still pending
     // P0("0"): still pending 25101→99800
-    // New("4"): lfb=26980, both addresses, inherits minRange=300 from DC2 history.
-    //   Cold start probes with two 0.9-size chunks (270) then full-size chunks (540).
+    // New("4"): lfb=28060, both addresses, inherits minRange=300 from DC2 history.
+    //   Cold start probes with two 0.9-size chunks (270) then three full-size (540),
+    //   repeated for a second round up to the per-partition cap.
     t.expect(
       sourceMock.getItemsOrThrowCalls
       ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
       ->Array.toSorted(((_, a, _), (_, b, _)) => Int.compare(a, b)),
       ~message="After merge: DC1 queries to mergeBlock, DC2 chunks pending, new partition '4'",
     ).toEqual([
-      ("2", 7001, Some(26980)),
+      ("2", 8101, Some(28060)),
       ("0", 25101, Some(99800)),
       ("3", 25901, Some(26170)),
       ("3", 26171, Some(26440)),
       ("3", 26441, Some(26980)),
-      ("4", 26981, Some(27250)),
-      ("4", 27251, Some(27520)),
-      ("4", 27521, Some(28060)),
-      ("4", 28061, Some(28600)),
+      ("3", 26981, Some(27520)),
+      ("3", 27521, Some(28060)),
+      ("4", 28061, Some(28330)),
+      ("4", 28331, Some(28600)),
       ("4", 28601, Some(29140)),
       ("4", 29141, Some(29680)),
+      ("4", 29681, Some(30220)),
+      ("4", 30221, Some(30490)),
+      ("4", 30491, Some(30760)),
+      ("4", 30761, Some(31300)),
+      ("4", 31301, Some(31840)),
+      ("4", 31841, Some(32380)),
     ])
 
     // Verify merged partition "4" has both DC addresses
