@@ -5,6 +5,9 @@
 
 type t = {
   chainStates: dict<ChainState.t>,
+  // Chain ids in a stable order, so the cross-chain loops iterate the chains
+  // without allocating a values array on every tick.
+  chainIds: array<int>,
   // True once every chain has caught up to head/endBlock. Monotonic during a run.
   mutable isRealtime: bool,
   mutable isInReorgThreshold: bool,
@@ -24,8 +27,10 @@ let calculateTargetBufferSize = () =>
   }
 
 // The concurrency budget in force for the current phase.
-let maxConcurrency = (cm: t) =>
-  cm.isRealtime ? cm.maxRealtimeConcurrency : cm.maxBackfillConcurrency
+let maxConcurrency = (crossChainState: t) =>
+  crossChainState.isRealtime
+    ? crossChainState.maxRealtimeConcurrency
+    : crossChainState.maxBackfillConcurrency
 
 let make = (
   ~chainStates,
@@ -35,64 +40,80 @@ let make = (
   ~maxRealtimeConcurrency=Env.maxRealtimeConcurrency,
   ~targetBufferSize=calculateTargetBufferSize(),
 ): t => {
-  let cm = {
+  let crossChainState = {
     chainStates,
+    chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
     isInReorgThreshold,
     maxBackfillConcurrency,
     maxRealtimeConcurrency,
     targetBufferSize,
   }
-  Prometheus.IndexingMaxConcurrency.set(~maxConcurrency=cm->maxConcurrency)
+  Prometheus.IndexingMaxConcurrency.set(~maxConcurrency=crossChainState->maxConcurrency)
   Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
-  cm
+  crossChainState
 }
+
+// Resolve a chain's state by id. The id always comes from `chainIds`, which is
+// derived from `chainStates`, so the entry is guaranteed present.
+let getChainState = (crossChainState: t, chainId) =>
+  crossChainState.chainStates->Utils.Dict.dangerouslyGetByIntNonOption(chainId)->Option.getUnsafe
 
 // --- Accessors. ---
 
-let chainStates = (cm: t) => cm.chainStates
-let isRealtime = (cm: t) => cm.isRealtime
-let isInReorgThreshold = (cm: t) => cm.isInReorgThreshold
+let chainStates = (crossChainState: t) => crossChainState.chainStates
+let isRealtime = (crossChainState: t) => crossChainState.isRealtime
+let isInReorgThreshold = (crossChainState: t) => crossChainState.isInReorgThreshold
 
 // Partition queries in flight across every chain — the live draw against
 // maxConcurrency.
-let inFlight = (cm: t) =>
-  cm.chainStates
-  ->Dict.valuesToArray
-  ->Array.reduce(0, (acc, cs) => acc + cs->ChainState.sourceManager->SourceManager.inFlightCount)
+let inFlight = (crossChainState: t) => {
+  let total = ref(0)
+  for i in 0 to crossChainState.chainIds->Array.length - 1 {
+    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    total := total.contents + cs->ChainState.sourceManager->SourceManager.inFlightCount
+  }
+  total.contents
+}
 
 // Ready-to-process items across every chain — the live draw against
 // targetBufferSize, which is a budget of processable events (items stuck behind
 // a gap don't count toward the goal of keeping ~targetBufferSize ready).
-let totalReadyCount = (cm: t) =>
-  cm.chainStates
-  ->Dict.valuesToArray
-  ->Array.reduce(0, (acc, cs) => acc + cs->ChainState.fetchState->FetchState.bufferReadyCount)
+let totalReadyCount = (crossChainState: t) => {
+  let total = ref(0)
+  for i in 0 to crossChainState.chainIds->Array.length - 1 {
+    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    total := total.contents + cs->ChainState.fetchState->FetchState.bufferReadyCount
+  }
+  total.contents
+}
 
 // --- Derived (pure). ---
 
-let nextItemIsNone = (cm: t): bool =>
-  !Batch.hasReadyItem(cm.chainStates->Dict.valuesToArray->Array.map(ChainState.fetchState))
+let nextItemIsNone = (crossChainState: t): bool =>
+  !Batch.hasReadyItem(
+    crossChainState.chainStates->Dict.valuesToArray->Array.map(ChainState.fetchState),
+  )
 
-let getSafeCheckpointId = (cm: t) => {
+let getSafeCheckpointId = (crossChainState: t) => {
   let result: ref<option<bigint>> = ref(None)
 
-  cm.chainStates->Utils.Dict.forEach(cs => {
+  for i in 0 to crossChainState.chainIds->Array.length - 1 {
+    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
     switch cs->ChainState.safeCheckpointTracking {
     | None => () // Skip chains with maxReorgDepth = 0
-    | Some(safeCheckpointTracking) => {
-        let safeCheckpointId =
-          safeCheckpointTracking->SafeCheckpointTracking.getSafeCheckpointId(
-            ~sourceBlockNumber=(cs->ChainState.fetchState).knownHeight,
-          )
-        switch result.contents {
-        | None => result := Some(safeCheckpointId)
-        | Some(current) if safeCheckpointId < current => result := Some(safeCheckpointId)
-        | _ => ()
-        }
+    | Some(safeCheckpointTracking) =>
+      let safeCheckpointId =
+        safeCheckpointTracking->SafeCheckpointTracking.getSafeCheckpointId(
+          ~sourceBlockNumber=(cs->ChainState.fetchState).knownHeight,
+        )
+      switch result.contents {
+      | None => result := Some(safeCheckpointId)
+      | Some(current) if safeCheckpointId < current => result := Some(safeCheckpointId)
+      | _ => ()
       }
     }
-  })
+  }
 
   switch result.contents {
   | Some(id) if id > 0n => Some(id)
@@ -103,20 +124,22 @@ let getSafeCheckpointId = (cm: t) => {
 // --- Cross-chain transitions. ---
 
 let createBatch = (
-  cm: t,
+  crossChainState: t,
   ~processedCheckpointId,
   ~batchSizeTarget: int,
   ~isRollback: bool,
 ): Batch.t => {
   Batch.make(
-    ~isInReorgThreshold=cm.isInReorgThreshold,
+    ~isInReorgThreshold=crossChainState.isInReorgThreshold,
     ~checkpointIdBeforeBatch=processedCheckpointId->BigInt.add(
       // Since for rollback we have a diff checkpoint id.
       // This is needed to currectly overwrite old state
       // in an append-only ClickHouse insert.
       isRollback ? 1n : 0n,
     ),
-    ~chainsBeforeBatch=cm.chainStates->Utils.Dict.mapValues((cs): Batch.chainBeforeBatch => {
+    ~chainsBeforeBatch=crossChainState.chainStates->Utils.Dict.mapValues((
+      cs
+    ): Batch.chainBeforeBatch => {
       fetchState: cs->ChainState.fetchState,
       progressBlockNumber: cs->ChainState.committedProgressBlockNumber,
       totalEventsProcessed: cs->ChainState.numEventsProcessed,
@@ -130,47 +153,57 @@ let createBatch = (
 
 // Enter the reorg threshold: shrink each chain's buffer by its configured
 // blockLag and flip the flag.
-let enterReorgThreshold = (cm: t) => {
+let enterReorgThreshold = (crossChainState: t) => {
   Logging.info("Reorg threshold reached")
   Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
 
-  cm.chainStates->Utils.Dict.forEach(ChainState.enterReorgThreshold)
+  for i in 0 to crossChainState.chainIds->Array.length - 1 {
+    crossChainState
+    ->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    ->ChainState.enterReorgThreshold
+  }
 
-  cm.isInReorgThreshold = true
+  crossChainState.isInReorgThreshold = true
 }
 
 // Commit each progressed chain's batch progress, then decide readiness for the
 // whole indexer. A chain is marked caught up only once EVERY chain is caught up
 // (reached endblock or fetched/processed to head) with no processable events
 // left — so no chain flips to ready while another is still backfilling.
-let applyBatchProgress = (cm: t, ~batch: Batch.t) => {
-  cm.chainStates->Utils.Dict.forEach(cs => cs->ChainState.applyBatchProgress(~batch))
+let applyBatchProgress = (crossChainState: t, ~batch: Batch.t) => {
+  let chainIds = crossChainState.chainIds
 
-  let indexerCaughtUp =
-    cm->nextItemIsNone &&
-      cm.chainStates
-      ->Dict.valuesToArray
-      ->Array.every(cs => cs->ChainState.hasProcessedToEndblock || cs->ChainState.isProgressAtHead)
+  let everyChainCaughtUp = ref(true)
+  for i in 0 to chainIds->Array.length - 1 {
+    let cs = crossChainState->getChainState(chainIds->Array.getUnsafe(i))
+    cs->ChainState.applyBatchProgress(~batch)
+    if !(cs->ChainState.hasProcessedToEndblock || cs->ChainState.isProgressAtHead) {
+      everyChainCaughtUp := false
+    }
+  }
+
+  let indexerCaughtUp = crossChainState->nextItemIsNone && everyChainCaughtUp.contents
 
   let allChainsReady = ref(true)
-  cm.chainStates->Utils.Dict.forEach(cs => {
+  for i in 0 to chainIds->Array.length - 1 {
+    let cs = crossChainState->getChainState(chainIds->Array.getUnsafe(i))
     if indexerCaughtUp {
       cs->ChainState.markReady
     }
     if !(cs->ChainState.isReady) {
       allChainsReady := false
     }
-  })
+  }
 
   if allChainsReady.contents {
     Prometheus.ProgressReady.setAllReady()
   }
 
-  let wasRealtime = cm.isRealtime
-  cm.isRealtime = cm.isRealtime || allChainsReady.contents
-  if !wasRealtime && cm.isRealtime {
+  let wasRealtime = crossChainState.isRealtime
+  crossChainState.isRealtime = crossChainState.isRealtime || allChainsReady.contents
+  if !wasRealtime && crossChainState.isRealtime {
     // The realtime budget takes over now that every chain is at head.
-    Prometheus.IndexingMaxConcurrency.set(~maxConcurrency=cm->maxConcurrency)
+    Prometheus.IndexingMaxConcurrency.set(~maxConcurrency=crossChainState->maxConcurrency)
   }
 }
 
@@ -178,8 +211,8 @@ let applyBatchProgress = (cm: t, ~batch: Batch.t) => {
 
 // Chains ordered furthest-behind first, so the shared concurrency and buffer
 // pools go to the chains with the most backfill work before the rest.
-let priorityOrder = (cm: t) =>
-  cm.chainStates
+let priorityOrder = (crossChainState: t) =>
+  crossChainState.chainStates
   ->Dict.valuesToArray
   ->Array.toSorted((a, b) =>
     Float.compare(
@@ -198,37 +231,39 @@ let priorityOrder = (cm: t) =>
 // into whatever the other chains leave free, so a lone backfilling chain can use
 // the whole pool while head-following chains stay shallow.
 let checkAndFetch = async (
-  cm: t,
+  crossChainState: t,
   ~fetchChain: (
     ~chain: ChainMap.Chain.t,
     ~concurrencyLimit: int,
     ~bufferLimit: int,
   ) => promise<unit>,
 ) => {
-  let maxConcurrency = cm->maxConcurrency
+  let maxConcurrency = crossChainState->maxConcurrency
   // Pool is a budget of ready-to-process items, but the cap fed to getNextQuery
   // is still a buffer position (it tracks the sorted buffer, ready items first),
   // so add this chain's own buffer size back rather than its ready count. A chain
   // with a gap therefore gets extra headroom to fetch the not-ready overhang
   // while still aiming for its share of ~targetBufferSize ready events.
-  let totalReady = cm->totalReadyCount
+  let totalReady = crossChainState->totalReadyCount
   // Track the in-flight total as a running counter (summed once up front, then
   // adjusted by each chain's delta) instead of re-summing every chain — O(chains)
   // per tick rather than O(chains^2). fetchChain bumps the chain's count
   // synchronously, so the delta is observable right after the call.
-  let inFlight = ref(cm->inFlight)
-  let _ = await cm
-  ->priorityOrder
-  ->Array.map(cs => {
+  let inFlight = ref(crossChainState->inFlight)
+  let priorityOrdered = crossChainState->priorityOrder
+  let promises = []
+  for i in 0 to priorityOrdered->Array.length - 1 {
+    let cs = priorityOrdered->Array.getUnsafe(i)
     let chain = ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id)
     let sourceManager = cs->ChainState.sourceManager
     let concurrencyLimit = Pervasives.max(0, maxConcurrency - inFlight.contents)
     let bufferLimit =
-      cm.targetBufferSize - (totalReady - cs->ChainState.fetchState->FetchState.bufferSize)
+      crossChainState.targetBufferSize -
+      (totalReady -
+      cs->ChainState.fetchState->FetchState.bufferSize)
     let inFlightBefore = sourceManager->SourceManager.inFlightCount
-    let promise = fetchChain(~chain, ~concurrencyLimit, ~bufferLimit)
+    promises->Array.push(fetchChain(~chain, ~concurrencyLimit, ~bufferLimit))
     inFlight := inFlight.contents + (sourceManager->SourceManager.inFlightCount - inFlightBefore)
-    promise
-  })
-  ->Promise.all
+  }
+  let _ = await promises->Promise.all
 }
