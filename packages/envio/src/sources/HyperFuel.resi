@@ -18,22 +18,7 @@ type item = {
   block: block,
 }
 
-type blockNumberAndHash = {
-  blockNumber: int,
-  hash: string,
-}
-
 type logsQueryPage = hyperSyncPage<item>
-
-type missingParams = {
-  queryName: string,
-  missingParams: array<string>,
-}
-type queryError = UnexpectedMissingParams(missingParams)
-
-let queryErrorToMsq: queryError => string
-
-type queryResponse<'a> = result<'a, queryError>
 
 module GetLogs: {
   type error =
@@ -43,17 +28,9 @@ module GetLogs: {
   exception Error(error)
 
   let query: (
-    ~serverUrl: string,
+    ~client: HyperFuelClient.t,
     ~fromBlock: int,
     ~toBlock: option<int>,
     ~recieptsSelection: array<HyperFuelClient.QueryTypes.receiptSelection>,
   ) => promise<logsQueryPage>
 }
-
-let queryBlockData: (
-  ~serverUrl: string,
-  ~blockNumber: int,
-  ~logger: Pino.t,
-) => promise<option<ReorgDetection.blockDataWithTimestamp>>
-
-let heightRoute: Rest.route<unit, int>
