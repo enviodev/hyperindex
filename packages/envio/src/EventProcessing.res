@@ -56,12 +56,7 @@ let runEventHandlerOrThrow = async (
     await handler(
       (
         {
-          event: item->Ecosystem.getItemEvent(
-            ~ecosystem=config.ecosystem,
-            ~transactionStore=indexerState
-            ->IndexerState.getChainState(~chain=eventItem.chain)
-            ->ChainState.transactionStore,
-          ),
+          event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
           context: UserContext.getHandlerContext(contextParams),
         }: Internal.handlerArgs
       ),
@@ -177,12 +172,7 @@ let preloadBatchOrThrow = async (
             )
             promises->Array.push(
               handler({
-                event: item->Ecosystem.getItemEvent(
-                  ~ecosystem=config.ecosystem,
-                  ~transactionStore=indexerState
-                  ->IndexerState.getChainState(~chain=(item->Internal.castUnsafeEventItem).chain)
-                  ->ChainState.transactionStore,
-                ),
+                event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
                 context: UserContext.getHandlerContext({
                   item,
                   indexerState,
@@ -291,6 +281,31 @@ type logPartitionInfo = {
   lastItemBlockNumber?: int,
 }
 
+// Off the hot path: bulk-materialise the selected transaction fields for the
+// batch's store-backed (HyperSync) items and write them onto the payloads, so
+// handlers read plain objects. A batch can span chains, each with its own store
+// and field mask, so group items by chain before materialising.
+let materializeBatchTransactions = async (batch: Batch.t, ~chainStates: dict<ChainState.t>) => {
+  let itemsByChain: dict<array<Internal.item>> = Dict.make()
+  batch.items->Array.forEach(item => {
+    let chainId = item->Internal.getItemChainId->Int.toString
+    switch itemsByChain->Utils.Dict.dangerouslyGetNonOption(chainId) {
+    | Some(items) => items->Array.push(item)
+    | None => itemsByChain->Dict.set(chainId, [item])
+    }
+  })
+
+  let _ = await itemsByChain
+  ->Dict.toArray
+  ->Array.map(async ((chainId, items)) => {
+    let cs = chainStates->Dict.getUnsafe(chainId)
+    await cs
+    ->ChainState.transactionStore
+    ->TransactionStore.materializeItems(~items, ~mask=cs->ChainState.transactionFieldMask)
+  })
+  ->Promise.all
+}
+
 let processEventBatch = async (
   ~batch: Batch.t,
   ~indexerState: IndexerState.t,
@@ -322,6 +337,9 @@ let processEventBatch = async (
     let timeRef = Hrtime.makeTimer()
 
     if batch.items->Utils.Array.notEmpty {
+      // Materialise store-backed transactions onto payloads before any handler
+      // (preload or execute) reads them.
+      await materializeBatchTransactions(batch, ~chainStates)
       await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
     }
 

@@ -1195,12 +1195,6 @@ let make = (
                   )
                 }
 
-                let transactionId = log.transactionIndex->Int.toString
-                transactionStore->TransactionStore.pushEvm(
-                  ~blockNumber=block->getBlockNumber,
-                  ~transactionId,
-                  ~tx=transaction,
-                )
                 Internal.Event({
                   eventConfig: (eventConfig :> Internal.eventConfig),
                   timestamp: block->getBlockTimestamp,
@@ -1208,13 +1202,14 @@ let make = (
                   blockHash: block->getBlockHash,
                   chain,
                   logIndex: log.logIndex,
-                  transactionId,
+                  transactionId: log.transactionIndex->Int.toString,
                   payload: {
                     contractName: eventConfig.contractName,
                     eventName: eventConfig.name,
                     chainId: chain->ChainMap.Chain.toChainId,
                     params: decoded,
                     block,
+                    transaction,
                     srcAddress: routedAddress,
                     logIndex: log.logIndex,
                   }->Evm.fromPayload,

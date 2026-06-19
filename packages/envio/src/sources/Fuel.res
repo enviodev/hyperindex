@@ -41,10 +41,9 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))))
   ),
   logger,
-  // Fuel keeps the transaction on the payload for now, so the event is the
-  // payload as-is and the store is unused.
-  toEvent: (eventItem, ~transactionStore as _) =>
-    eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
+  // Fuel carries the transaction inline on the payload.
+  transactionFieldMask: _ => 0.,
+  toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem =>
     Logging.createChildFrom(
       ~logger,

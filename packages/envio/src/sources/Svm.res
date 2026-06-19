@@ -20,10 +20,9 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // parse. The schema is a no-op object that always surfaces `None`.
   onEventBlockFilterSchema: S.object(_ => None),
   logger,
-  // SVM keeps the transaction on the payload for now, so the event is the
-  // payload as-is and the store is unused.
-  toEvent: (eventItem, ~transactionStore as _) =>
-    eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
+  // SVM carries the transaction inline on the payload.
+  transactionFieldMask: _ => 0.,
+  toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem => {
     let instruction =
       eventItem.payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)

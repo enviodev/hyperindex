@@ -287,8 +287,6 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
 
       let payload = switch config.ecosystem.name {
       | Evm =>
-        transactionStore->TransactionStore.pushEvm(~blockNumber, ~transactionId, ~tx=transaction)
-
         (
           {
             contractName: eventConfig.contractName,
@@ -297,6 +295,7 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
             chainId,
             srcAddress,
             logIndex,
+            transaction,
             block,
           }: Evm.payload
         )->Evm.fromPayload

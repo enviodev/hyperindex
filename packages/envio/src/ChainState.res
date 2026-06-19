@@ -17,12 +17,9 @@ type t = {
   // transactionId). Fetch responses merge their page in; entries are pruned as
   // the chain progresses and dropped above the target on rollback.
   transactionStore: TransactionStore.t,
+  // Bitmask of the transaction fields the store materialises at batch prep.
+  transactionFieldMask: float,
 }
-
-// Stamped on each item so `toRawEvent` (which has no store in its signature) can
-// resolve transaction fields for the raw_events table.
-@set
-external setItemTransactionStore: (Internal.item, TransactionStore.t) => unit = "_txStore"
 
 let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
   let addresses = []
@@ -48,6 +45,7 @@ let make = (
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
+  ~transactionFieldMask=0.,
   ~logger: Pino.t,
 ): t => {
   logger,
@@ -61,6 +59,7 @@ let make = (
   reorgDetection,
   safeCheckpointTracking,
   transactionStore: TransactionStore.make(),
+  transactionFieldMask,
 }
 
 let makeInternal = (
@@ -312,6 +311,7 @@ let makeInternal = (
     ~committedProgressBlockNumber=progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
+    ~transactionFieldMask=config.ecosystem.transactionFieldMask(eventConfigs),
     ~logger,
   )
 }
@@ -403,6 +403,7 @@ let chainConfig = (cs: t) => cs.chainConfig
 let reorgDetection = (cs: t) => cs.reorgDetection
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
 let transactionStore = (cs: t) => cs.transactionStore
+let transactionFieldMask = (cs: t) => cs.transactionFieldMask
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
@@ -449,9 +450,8 @@ let handleQueryResult = (
   ~transactionStore as page: TransactionStore.t,
 ) => {
   // Merge this response's page into the chain store in lockstep with appending
-  // its items to the buffer; stamp the chain store on each item for toRawEvent.
+  // its items to the buffer.
   cs.transactionStore->TransactionStore.merge(page)
-  newItems->Array.forEach(item => item->setItemTransactionStore(cs.transactionStore))
 
   let fs = switch newItemsWithDcs {
   | [] => cs.fetchState

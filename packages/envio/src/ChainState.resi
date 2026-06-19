@@ -15,6 +15,7 @@ let make: (
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
+  ~transactionFieldMask: float=?,
   ~logger: Pino.t,
 ) => t
 
@@ -46,6 +47,7 @@ let chainConfig: t => Config.chain
 let reorgDetection: t => ReorgDetection.t
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let transactionStore: t => TransactionStore.t
+let transactionFieldMask: t => float
 let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
 let numEventsProcessed: t => float

@@ -1,8 +1,9 @@
 //! Per-chain transaction store shared across ecosystems. Transactions are kept
 //! as raw upstream structs (their large fields, e.g. EVM `input`, never cross
-//! the napi boundary until a handler actually reads them) and materialised one
-//! field at a time on demand. The store lives on the ReScript `ChainState`;
-//! fetch responses are merged in, and entries are pruned/rolled back by block.
+//! the napi boundary until they are read). At batch preparation the fields a
+//! chain's config selected are materialised in bulk, off the JS thread. The
+//! store lives on the ReScript `ChainState`; fetch responses are merged in, and
+//! entries are pruned/rolled back by block.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -10,43 +11,12 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use hypersync_client::format::Hex;
 use hypersync_client::simple_types;
-use napi::bindgen_prelude::{BigInt, ToNapiValue};
 use napi_derive::napi;
 
 use crate::evm_hypersync_source::types::{
     map_address_string, map_bigint, map_hex_string, AccessList as AccessListItem,
     Authorization as AuthorizationItem, Transaction as EvmReadyTx,
 };
-
-/// A single transaction field materialised on demand. Variants cover exactly the
-/// shapes the public EVM transaction exposes; `serde`-free so big integers keep
-/// full precision across the boundary.
-pub enum FieldValue {
-    Str(String),
-    Int(i64),
-    Float(f64),
-    Big(BigInt),
-    StrVec(Vec<String>),
-    AccessList(Vec<AccessListItem>),
-    AuthList(Vec<AuthorizationItem>),
-}
-
-impl ToNapiValue for FieldValue {
-    unsafe fn to_napi_value(
-        env: napi::sys::napi_env,
-        val: Self,
-    ) -> napi::Result<napi::sys::napi_value> {
-        match val {
-            FieldValue::Str(v) => String::to_napi_value(env, v),
-            FieldValue::Int(v) => i64::to_napi_value(env, v),
-            FieldValue::Float(v) => f64::to_napi_value(env, v),
-            FieldValue::Big(v) => BigInt::to_napi_value(env, v),
-            FieldValue::StrVec(v) => Vec::<String>::to_napi_value(env, v),
-            FieldValue::AccessList(v) => Vec::<AccessListItem>::to_napi_value(env, v),
-            FieldValue::AuthList(v) => Vec::<AuthorizationItem>::to_napi_value(env, v),
-        }
-    }
-}
 
 /// Transaction field codes shared with ReScript by ordinal value. The order is
 /// the contract: it mirrors `Evm.res` `transactionFields`, which the ReScript
@@ -90,6 +60,8 @@ pub enum EvmTxField {
 }
 
 impl EvmTxField {
+    // Used by the ordinal-contract test; the lib build decodes via `as u32`.
+    #[allow(dead_code)]
     pub const ALL: [EvmTxField; 33] = [
         EvmTxField::TransactionIndex,
         EvmTxField::Hash,
@@ -126,6 +98,7 @@ impl EvmTxField {
         EvmTxField::AuthorizationList,
     ];
 
+    #[allow(dead_code)]
     pub fn from_i32(code: i32) -> Option<EvmTxField> {
         EvmTxField::ALL.get(code as usize).copied()
     }
@@ -171,73 +144,6 @@ impl EvmTxField {
             AuthorizationList => "authorizationList",
         }
     }
-}
-
-fn evm_get_field(
-    tx: &simple_types::Transaction,
-    field: EvmTxField,
-    checksum: bool,
-) -> Result<Option<FieldValue>> {
-    use EvmTxField::*;
-    Ok(match field {
-        TransactionIndex => tx
-            .transaction_index
-            .map(|n| i64::try_from(u64::from(n)))
-            .transpose()?
-            .map(FieldValue::Int),
-        Hash => map_hex_string(&tx.hash).map(FieldValue::Str),
-        From => map_address_string(&tx.from, checksum).map(FieldValue::Str),
-        To => map_address_string(&tx.to, checksum).map(FieldValue::Str),
-        Gas => map_bigint(&tx.gas).map(FieldValue::Big),
-        GasPrice => map_bigint(&tx.gas_price).map(FieldValue::Big),
-        MaxPriorityFeePerGas => map_bigint(&tx.max_priority_fee_per_gas).map(FieldValue::Big),
-        MaxFeePerGas => map_bigint(&tx.max_fee_per_gas).map(FieldValue::Big),
-        CumulativeGasUsed => map_bigint(&tx.cumulative_gas_used).map(FieldValue::Big),
-        EffectiveGasPrice => map_bigint(&tx.effective_gas_price).map(FieldValue::Big),
-        GasUsed => map_bigint(&tx.gas_used).map(FieldValue::Big),
-        Input => map_hex_string(&tx.input).map(FieldValue::Str),
-        Nonce => map_bigint(&tx.nonce).map(FieldValue::Big),
-        Value => map_bigint(&tx.value).map(FieldValue::Big),
-        V => map_hex_string(&tx.v).map(FieldValue::Str),
-        R => map_hex_string(&tx.r).map(FieldValue::Str),
-        S => map_hex_string(&tx.s).map(FieldValue::Str),
-        ContractAddress => map_address_string(&tx.contract_address, checksum).map(FieldValue::Str),
-        LogsBloom => map_hex_string(&tx.logs_bloom).map(FieldValue::Str),
-        Root => map_hex_string(&tx.root).map(FieldValue::Str),
-        Status => tx.status.map(|v| FieldValue::Int(v.to_u8() as i64)),
-        YParity => map_hex_string(&tx.y_parity).map(FieldValue::Str),
-        ChainId => tx
-            .chain_id
-            .as_ref()
-            .map(|n| i64::try_from(ruint::aliases::U256::from_be_slice(n)))
-            .transpose()?
-            .map(FieldValue::Int),
-        MaxFeePerBlobGas => map_bigint(&tx.max_fee_per_blob_gas).map(FieldValue::Big),
-        BlobVersionedHashes => tx
-            .blob_versioned_hashes
-            .as_ref()
-            .map(|arr| FieldValue::StrVec(arr.iter().map(|h| h.encode_hex()).collect())),
-        Type => tx.type_.map(|v| FieldValue::Int(u8::from(v) as i64)),
-        L1Fee => map_bigint(&tx.l1_fee).map(FieldValue::Big),
-        L1GasPrice => map_bigint(&tx.l1_gas_price).map(FieldValue::Big),
-        L1GasUsed => map_bigint(&tx.l1_gas_used).map(FieldValue::Big),
-        L1FeeScalar => tx.l1_fee_scalar.map(FieldValue::Float),
-        GasUsedForL1 => map_bigint(&tx.gas_used_for_l1).map(FieldValue::Big),
-        AccessList => tx
-            .access_list
-            .as_ref()
-            .map(|arr| FieldValue::AccessList(arr.iter().map(AccessListItem::from).collect())),
-        AuthorizationList => tx
-            .authorization_list
-            .as_ref()
-            .map(|al| {
-                al.iter()
-                    .map(AuthorizationItem::try_from)
-                    .collect::<Result<Vec<_>>>()
-                    .map(FieldValue::AuthList)
-            })
-            .transpose()?,
-    })
 }
 
 /// Decode the fields selected by `mask` (bit `code` ⇔ `EvmTxField`) into the
@@ -374,72 +280,15 @@ fn decode_selected_evm(
     Ok(out)
 }
 
-/// One stored transaction, kept in its ecosystem's compact form. More variants
-/// (SVM raw, pre-built JS for RPC/Fuel/Simulate) are added as those sources are
-/// wired in.
+/// One stored transaction, kept in its ecosystem's compact raw form. More
+/// variants (e.g. SVM raw) are added as those sources move to the Rust store.
 enum StoredTx {
-    /// HyperSync: raw upstream transaction, fields materialised on demand.
+    /// HyperSync: raw upstream transaction, selected fields decoded in bulk at
+    /// batch prep.
     EvmRaw {
         tx: Arc<simple_types::Transaction>,
         checksum: bool,
     },
-    /// RPC / simulate: the transaction was assembled in JS and handed over
-    /// already in final form. Kept owned (Send) so the store can be returned
-    /// across the async boundary; fields are read back on demand.
-    EvmReady(Box<EvmReadyTx>),
-}
-
-impl StoredTx {
-    fn get_field(&self, field: i32) -> Result<Option<FieldValue>> {
-        let f = match EvmTxField::from_i32(field) {
-            Some(f) => f,
-            None => return Ok(None),
-        };
-        match self {
-            StoredTx::EvmRaw { tx, checksum } => evm_get_field(tx, f, *checksum),
-            StoredTx::EvmReady(tx) => Ok(evm_ready_get_field(tx, f)),
-        }
-    }
-}
-
-/// Read a single field off an already-materialised EVM transaction.
-fn evm_ready_get_field(tx: &EvmReadyTx, field: EvmTxField) -> Option<FieldValue> {
-    use EvmTxField::*;
-    match field {
-        TransactionIndex => tx.transaction_index.map(FieldValue::Int),
-        Hash => tx.hash.clone().map(FieldValue::Str),
-        From => tx.from.clone().map(FieldValue::Str),
-        To => tx.to.clone().map(FieldValue::Str),
-        Gas => tx.gas.clone().map(FieldValue::Big),
-        GasPrice => tx.gas_price.clone().map(FieldValue::Big),
-        MaxPriorityFeePerGas => tx.max_priority_fee_per_gas.clone().map(FieldValue::Big),
-        MaxFeePerGas => tx.max_fee_per_gas.clone().map(FieldValue::Big),
-        CumulativeGasUsed => tx.cumulative_gas_used.clone().map(FieldValue::Big),
-        EffectiveGasPrice => tx.effective_gas_price.clone().map(FieldValue::Big),
-        GasUsed => tx.gas_used.clone().map(FieldValue::Big),
-        Input => tx.input.clone().map(FieldValue::Str),
-        Nonce => tx.nonce.clone().map(FieldValue::Big),
-        Value => tx.value.clone().map(FieldValue::Big),
-        V => tx.v.clone().map(FieldValue::Str),
-        R => tx.r.clone().map(FieldValue::Str),
-        S => tx.s.clone().map(FieldValue::Str),
-        ContractAddress => tx.contract_address.clone().map(FieldValue::Str),
-        LogsBloom => tx.logs_bloom.clone().map(FieldValue::Str),
-        Root => tx.root.clone().map(FieldValue::Str),
-        Status => tx.status.map(FieldValue::Int),
-        YParity => tx.y_parity.clone().map(FieldValue::Str),
-        ChainId => tx.chain_id.map(FieldValue::Int),
-        MaxFeePerBlobGas => tx.max_fee_per_blob_gas.clone().map(FieldValue::Big),
-        BlobVersionedHashes => tx.blob_versioned_hashes.clone().map(FieldValue::StrVec),
-        Type => tx.type_.map(FieldValue::Int),
-        L1Fee => tx.l1_fee.clone().map(FieldValue::Big),
-        L1GasPrice => tx.l1_gas_price.clone().map(FieldValue::Big),
-        L1GasUsed => tx.l1_gas_used.clone().map(FieldValue::Big),
-        L1FeeScalar => tx.l1_fee_scalar.map(FieldValue::Float),
-        GasUsedForL1 => tx.gas_used_for_l1.clone().map(FieldValue::Big),
-        AccessList => tx.access_list.clone().map(FieldValue::AccessList),
-        AuthorizationList => tx.authorization_list.clone().map(FieldValue::AuthList),
-    }
 }
 
 /// `blockNumber -> (transactionId -> tx)`. Block-keyed outer map so prune and
@@ -475,43 +324,6 @@ impl TransactionStore {
         for (block, txs) in std::mem::take(&mut *src) {
             dst.entry(block).or_default().extend(txs);
         }
-    }
-
-    /// Materialise a single field of one transaction. Returns `None` when the
-    /// transaction or the field is absent (e.g. the field wasn't selected).
-    #[napi]
-    pub fn get_transaction_field(
-        &self,
-        block_number: i64,
-        transaction_id: String,
-        field: i32,
-    ) -> napi::Result<Option<FieldValue>> {
-        let inner = self.inner.lock().unwrap();
-        let block = match u64::try_from(block_number) {
-            Ok(b) => b,
-            Err(_) => return Ok(None),
-        };
-        match inner.get(&block).and_then(|txs| txs.get(&transaction_id)) {
-            Some(stored) => stored
-                .get_field(field)
-                .map_err(crate::evm_hypersync_source::map_err),
-            None => Ok(None),
-        }
-    }
-
-    /// Store a transaction assembled in JS (RPC / simulate). Multiple logs in
-    /// the same tx pass the same key and collapse to one entry.
-    #[napi]
-    pub fn push_evm(&self, block_number: i64, transaction_id: String, tx: EvmReadyTx) {
-        let block = match u64::try_from(block_number) {
-            Ok(b) => b,
-            Err(_) => return,
-        };
-        let mut inner = self.inner.lock().unwrap();
-        inner
-            .entry(block)
-            .or_default()
-            .insert(transaction_id, StoredTx::EvmReady(Box::new(tx)));
     }
 
     /// Bulk-materialise the selected fields (one bit per `EvmTxField` code in
@@ -627,64 +439,31 @@ mod tests {
     }
 
     #[test]
-    fn store_returns_requested_field_only() {
-        let store = TransactionStore::new();
-        store.insert_evm_raw(100, "3".to_string(), Arc::new(raw_tx()), false);
-
-        match store
-            .get_transaction_field(100, "3".to_string(), EvmTxField::Input as i32)
-            .unwrap()
-        {
-            Some(FieldValue::Str(s)) => assert_eq!(s, "0xabcd"),
-            other => panic!("expected input string, got {:?}", other.is_some()),
-        }
-
-        // Missing block / tx / unselected field all resolve to None.
-        assert!(store
-            .get_transaction_field(999, "3".to_string(), EvmTxField::Input as i32)
-            .unwrap()
-            .is_none());
-        assert!(store
-            .get_transaction_field(100, "0".to_string(), EvmTxField::Input as i32)
-            .unwrap()
-            .is_none());
-        assert!(store
-            .get_transaction_field(100, "3".to_string(), EvmTxField::Gas as i32)
-            .unwrap()
-            .is_none());
-    }
-
-    #[test]
     fn prune_and_rollback_drop_by_block() {
         let store = TransactionStore::new();
-        store.insert_evm_raw(
-            10,
-            "0".to_string(),
-            Arc::new(simple_types::Transaction::default()),
-            false,
-        );
-        store.insert_evm_raw(
-            20,
-            "0".to_string(),
-            Arc::new(simple_types::Transaction::default()),
-            false,
-        );
-        store.insert_evm_raw(
-            30,
-            "0".to_string(),
-            Arc::new(simple_types::Transaction::default()),
-            false,
-        );
+        for block in [10u64, 20, 30] {
+            store.insert_evm_raw(
+                block,
+                "0".to_string(),
+                Arc::new(simple_types::Transaction::default()),
+                false,
+            );
+        }
 
         store.prune(10);
-        assert!(store
-            .get_transaction_field(10, "0".to_string(), EvmTxField::Hash as i32)
-            .unwrap()
-            .is_none());
+        assert!(!store.inner.lock().unwrap().contains_key(&10));
 
         store.rollback(20);
-        // Block 30 dropped by rollback; block 20 survives (no hash set → None).
-        assert_eq!(store.inner.lock().unwrap().len(), 1);
-        assert!(store.inner.lock().unwrap().contains_key(&20));
+        // Block 30 dropped by rollback; block 20 survives.
+        assert_eq!(
+            store
+                .inner
+                .lock()
+                .unwrap()
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![20]
+        );
     }
 }

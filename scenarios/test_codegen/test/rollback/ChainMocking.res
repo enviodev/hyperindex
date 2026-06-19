@@ -39,8 +39,6 @@ module Make = () => {
     item: Internal.item,
     srcAddress: Address.t,
     transactionHash: string,
-    transaction: Internal.eventTransaction,
-    transactionId: string,
   }
 
   type makeEvent = (~blockHash: string) => Internal.eventPayload
@@ -51,7 +49,6 @@ module Make = () => {
     logIndex: int,
     srcAddress: Address.t,
     eventConfig: Internal.evmEventConfig,
-    transaction: Internal.eventTransaction,
     transactionIndex: int,
   }
 
@@ -99,6 +96,7 @@ module Make = () => {
         srcAddress,
         chainId,
         block,
+        transaction,
         logIndex,
       }->Evm.fromPayload
     }
@@ -109,7 +107,6 @@ module Make = () => {
       logIndex,
       srcAddress,
       eventConfig,
-      transaction,
       transactionIndex,
     }
   }
@@ -172,10 +169,8 @@ module Make = () => {
       srcAddress,
       transactionHash,
       eventConfig,
-      transaction,
       transactionIndex,
     }): log => {
-      let transactionId = transactionIndex->Int.toString
       let log = Internal.Event({
         eventConfig: (eventConfig :> Internal.eventConfig),
         payload: makeEvent(~blockHash),
@@ -184,9 +179,9 @@ module Make = () => {
         blockNumber,
         blockHash,
         logIndex,
-        transactionId,
+        transactionId: transactionIndex->Int.toString,
       })
-      {item: log, srcAddress, transactionHash, transaction, transactionId}
+      {item: log, srcAddress, transactionHash}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -278,21 +273,15 @@ module Make = () => {
     })
 
     let pageLogs = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
-    let transactionStore = TransactionStore.make()
-    pageLogs->Array.forEach(l =>
-      transactionStore->TransactionStore.pushEvm(
-        ~blockNumber=l.item->Internal.getItemBlockNumber,
-        ~transactionId=l.transactionId,
-        ~tx=l.transaction,
-      )
-    )
     let parsedQueueItems = pageLogs->Array.map(l => l.item)
 
     {
       knownHeight,
       blockHashes,
       parsedQueueItems,
-      transactionStore,
+      // Mock events carry their transaction inline on the payload, so the page
+      // store is empty (it merges as a no-op in handleQueryResult).
+      transactionStore: TransactionStore.make(),
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,

@@ -1,6 +1,7 @@
 // EVM's concrete item payload. Erased to `Internal.eventPayload` on the item
-// and recovered here via `toPayload`. The transaction is not carried here — it
-// lives in the per-chain transaction store and is resolved on demand.
+// and recovered here via `toPayload`. HyperSync omits `transaction` (it lives
+// raw in the per-chain store and is written onto the payload at batch prep);
+// RPC/simulate build it inline.
 type payload = {
   contractName: string,
   eventName: string,
@@ -8,22 +9,11 @@ type payload = {
   chainId: int,
   srcAddress: Address.t,
   logIndex: int,
+  transaction?: Internal.eventTransaction,
   block: Internal.eventBlock,
 }
 external fromPayload: payload => Internal.eventPayload = "%identity"
 external toPayload: Internal.eventPayload => payload = "%identity"
-
-// The event handed to handlers is the payload with a lazily-resolved
-// `transaction` getter attached.
-@set
-external setEventTransaction: (Internal.event, Internal.eventTransaction) => unit = "transaction"
-// True when the payload already carries an inline transaction (test mocks build
-// payloads this way); production EVM sources don't, so the getter is attached.
-let hasInlineTransaction: Internal.event => bool = %raw(`e => e.transaction !== undefined && e.transaction !== null`)
-@get external inlineTransaction: Internal.event => Internal.eventTransaction = "transaction"
-// The transaction store is stamped on the item by `ChainState` so `toRawEvent`
-// (no store in its signature) can resolve transaction fields.
-@get external itemTransactionStore: Internal.eventItem => TransactionStore.t = "_txStore"
 
 // Ordered transaction field names. The index of each is the field code shared
 // with the Rust store (`EvmTxField`) — keep this order in sync.
@@ -62,6 +52,31 @@ let transactionFields = [
   "accessList",
   "authorizationList",
 ]
+
+// Field name → bit index (the code shared with the Rust store), built once.
+let transactionFieldCodes = {
+  let codes = Dict.make()
+  transactionFields->Array.forEachWithIndex((name, i) => codes->Dict.set(name, i))
+  codes
+}
+
+let pow2: int => float = %raw(`c => Math.pow(2, c)`)
+
+// Union of the chain's selected transaction fields as a bitmask float (bit
+// `code` set ⇔ selected). Built arithmetically to dodge 32-bit JS bitwise ops.
+let transactionFieldMask = (eventConfigs: array<Internal.eventConfig>): float => {
+  let selected = Utils.Set.make()
+  eventConfigs->Array.forEach(eventConfig => {
+    let eventConfig = eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+    eventConfig.selectedTransactionFields->Utils.Set.forEach(field => {
+      switch transactionFieldCodes->Utils.Dict.dangerouslyGetNonOption((field :> string)) {
+      | Some(code) => selected->Utils.Set.add(code)->ignore
+      | None => ()
+      }
+    })
+  })
+  selected->Utils.Set.toArray->Array.reduce(0., (mask, code) => mask +. pow2(code))
+}
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
@@ -122,20 +137,10 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))))
   ),
   logger,
-  toEvent: (eventItem, ~transactionStore) => {
-    let event = eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event)
-    if !(event->hasInlineTransaction) {
-      event->setEventTransaction(
-        TransactionView.make(
-          transactionFields,
-          transactionStore,
-          eventItem.blockNumber,
-          eventItem.transactionId,
-        ),
-      )
-    }
-    event
-  },
+  transactionFieldMask,
+  // The payload carries `transaction` by batch prep (HyperSync) or inline
+  // (RPC/simulate), so the event is the payload as-is.
+  toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem =>
     Logging.createChildFrom(
       ~logger,
@@ -150,20 +155,9 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     ),
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
-    let event = eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event)
-    let transaction = if event->hasInlineTransaction {
-      event->inlineTransaction
-    } else {
-      TransactionView.toDict(
-        transactionFields,
-        eventItem->itemTransactionStore,
-        eventItem.blockNumber,
-        eventItem.transactionId,
-      )->(Utils.magic: dict<unknown> => Internal.eventTransaction)
-    }
     eventItem->RawEvent.make(
       ~block=payload.block,
-      ~transaction,
+      ~transaction=payload.transaction,
       ~params=payload.params,
       ~srcAddress=payload.srcAddress,
       ~cleanUpRawEventFieldsInPlace,

@@ -12,7 +12,16 @@ let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
   ~transactionStore: TransactionStore.t,
+  ~transactionFieldMask: float,
 ) => {
+  // contractRegister handlers can read event.transaction, so materialise the
+  // selected fields onto the payloads before running them. All items belong to
+  // the chain being fetched, hence a single page store and mask.
+  await transactionStore->TransactionStore.materializeItems(
+    ~items=itemsWithContractRegister,
+    ~mask=transactionFieldMask,
+  )
+
   let itemsWithDcs = []
 
   let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
@@ -53,7 +62,6 @@ let runContractRegistersOrThrow = async (
         item,
         onRegister,
         config,
-        transactionStore,
         isResolved: false,
       }
       let result = contractRegister(ContractRegisterContext.getContractRegisterArgs(params))
@@ -229,6 +237,7 @@ let rec onQueryResponse = async (
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
           ~transactionStore,
+          ~transactionFieldMask=chainState->ChainState.transactionFieldMask,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
         | newItemsWithDcs => proceed(~newItemsWithDcs)

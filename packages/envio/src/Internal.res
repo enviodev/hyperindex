@@ -277,6 +277,11 @@ type event
 // modules, not here, and are distinct per ecosystem.
 type eventPayload
 
+// Generic access to the payload's `transaction`, written at batch prep for
+// store-backed ecosystems (HyperSync) and present inline otherwise.
+@get external getPayloadTransaction: eventPayload => Nullable.t<eventTransaction> = "transaction"
+@set external setPayloadTransaction: (eventPayload, eventTransaction) => unit = "transaction"
+
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
