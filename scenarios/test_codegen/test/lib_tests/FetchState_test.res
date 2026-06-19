@@ -3736,8 +3736,8 @@ describe("Stale query response should not overwrite block range", () => {
     t.expect(p2.latestBlockRangeUpdateBlock).toBe(1000)
 
     // Now chunking is active: getMinHistoryRange = Some(min(500, 501)) = Some(500)
-    // chunkSize = ceil(500 * 1.8) = 900
-    // Chunks: [1001..1900] and [1901..2800]
+    // Cold start (no earlier pending), so the first two chunks use the 0.9 probe
+    // size = ceil(500 * 0.9) = 450. Chunks: [1001..1450], [1451..1900], [1901..2800]
 
     // -- Query 3: get two chunk queries in parallel --
     let (chunkA, chunkB) = switch fs2->getNextQuery(~concurrencyLimit=2) {
@@ -3746,39 +3746,39 @@ describe("Stale query response should not overwrite block range", () => {
     }
 
     t.expect(chunkA.fromBlock, ~message="Chunk A should start at 1001").toBe(1001)
-    t.expect(chunkB.fromBlock, ~message="Chunk B should start at 1901").toBe(1901)
+    t.expect(chunkB.fromBlock, ~message="Chunk B should start at 1451").toBe(1451)
 
     fs2->FetchState.startFetchingQueries(~queries=[chunkA, chunkB])
 
     // -- Respond to the LATER chunk (B) first --
-    // Partial response: latestFetchedBlock=2500 < toBlock=2800
-    // shouldUpdateBlockRange: 2500 > 1000 (latestBlockRangeUpdateBlock) = true,
-    //   then 2500 < 2800 = true (partial response)
-    // blockRange = 2500 - 1901 + 1 = 600
+    // Partial response: latestFetchedBlock=1700 < toBlock=1900
+    // shouldUpdateBlockRange: 1700 > 1000 (latestBlockRangeUpdateBlock) = true,
+    //   then 1700 < 1900 = true (partial response)
+    // blockRange = 1700 - 1451 + 1 = 250
     let fs3 =
       fs2->FetchState.handleQueryResult(
         ~query=chunkB,
-        ~latestFetchedBlock={blockNumber: 2500, blockTimestamp: 2500 * 15},
+        ~latestFetchedBlock={blockNumber: 1700, blockTimestamp: 1700 * 15},
         ~newItems=[],
       )
 
     let p3 = fs3.optimizedPartitions.entities->Dict.getUnsafe("0")
     t.expect(
       p3.prevQueryRange,
-      ~message="Chunk B response should update prevQueryRange to 600",
-    ).toBe(600)
+      ~message="Chunk B response should update prevQueryRange to 250",
+    ).toBe(250)
     t.expect(
       p3.prevPrevQueryRange,
       ~message="Chunk B response should shift prevPrevQueryRange to 500",
     ).toBe(500)
     t.expect(
       p3.latestBlockRangeUpdateBlock,
-      ~message="latestBlockRangeUpdateBlock should update to 2500",
-    ).toBe(2500)
+      ~message="latestBlockRangeUpdateBlock should update to 1700",
+    ).toBe(1700)
 
     // -- Now respond to the EARLIER chunk (A) --
-    // Partial response: latestFetchedBlock=1400 < toBlock=1900
-    // shouldUpdateBlockRange: 1400 > 2500 (latestBlockRangeUpdateBlock) = FALSE
+    // Partial response: latestFetchedBlock=1400 < toBlock=1450
+    // shouldUpdateBlockRange: 1400 > 1700 (latestBlockRangeUpdateBlock) = FALSE
     // So prevQueryRange should NOT change
     let fs4 =
       fs3->FetchState.handleQueryResult(
@@ -3790,15 +3790,15 @@ describe("Stale query response should not overwrite block range", () => {
     let p4 = fs4.optimizedPartitions.entities->Dict.getUnsafe("0")
     t.expect(
       p4.prevQueryRange,
-      ~message="Earlier chunk A response should NOT overwrite prevQueryRange (still 600)",
-    ).toBe(600)
+      ~message="Earlier chunk A response should NOT overwrite prevQueryRange (still 250)",
+    ).toBe(250)
     t.expect(
       p4.prevPrevQueryRange,
       ~message="Earlier chunk A response should NOT overwrite prevPrevQueryRange (still 500)",
     ).toBe(500)
     t.expect(
       p4.latestBlockRangeUpdateBlock,
-      ~message="latestBlockRangeUpdateBlock should remain 2500 after stale response",
-    ).toBe(2500)
+      ~message="latestBlockRangeUpdateBlock should remain 1700 after stale response",
+    ).toBe(1700)
   })
 })

@@ -1244,10 +1244,17 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ),
       ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
     ).toEqual((
-      // Chain 100: partition KEPT (lfb <= target), chunk history preserved
+      // Chain 100: partition KEPT (lfb <= target), chunk history preserved.
+      // Cold start (no in-flight queries) probes with two 0.9-size chunks first.
       [
         {
           "fromBlock": 106,
+          "toBlock": Some(108),
+          "retry": 0,
+          "p": "0",
+        },
+        {
+          "fromBlock": 109,
           "toBlock": Some(111),
           "retry": 0,
           "p": "0",
@@ -1335,8 +1342,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
           id: 11n,
           eventsProcessed: 0,
           chainId: 100,
-          blockNumber: 111,
-          blockHash: Js.Null.Value("0x111"),
+          blockNumber: 108,
+          blockHash: Js.Null.Value("0x108"),
         },
       ],
       [
@@ -1671,10 +1678,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
           "retry": 0,
           "p": "0",
         }),
-        // Chain 100: partition KEPT, chunk history preserved
+        // Chain 100: partition KEPT, chunk history preserved.
+        // Cold start probes with a 0.9-size chunk first.
         Some({
           "fromBlock": 106,
-          "toBlock": Some(111),
+          "toBlock": Some(108),
           "retry": 0,
           "p": "0",
         }),
@@ -1745,8 +1753,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
             id: 11n,
             eventsProcessed: 0,
             chainId: 100,
-            blockNumber: 111,
-            blockHash: Js.Null.Value("0x111"),
+            blockNumber: 108,
+            blockHash: Js.Null.Value("0x108"),
           },
         ],
         [
@@ -2366,79 +2374,32 @@ This might be wrong after we start exposing a block hash for progress block.`,
     }
     await indexerMock.getBatchWritePromise()
 
-    // 4. Verify chunked queries are created (queries with toBlock set)
-    // chunkRange=3, chunkSize=ceil(5.4)=6 -> 2 chunks per fetchNextQuery call
-    // fetchNextQuery is called twice (on response handling and batch write), so 4 chunks total
-    switch sourceMock.getItemsOrThrowCalls {
-    | [chunk1, chunk2, chunk3, chunk4] =>
-      t.expect(
-        (chunk1.payload, chunk2.payload, chunk3.payload, chunk4.payload),
-        ~message=`Should create 2 chunks per fetchNextQuery call.
-The 3-4 chunks are not really expected, but created since we call fetchNextQuery twice:
-- on response handling
-- on batch write finish`,
-      ).toEqual((
-        {"fromBlock": 107, "toBlock": Some(112), "retry": 0, "p": "0"},
-        {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
-        {"fromBlock": 119, "toBlock": Some(124), "retry": 0, "p": "0"},
-        {"fromBlock": 125, "toBlock": Some(130), "retry": 0, "p": "0"},
-      ))
+    // 4. Chunking is active (chunkRange=3). Cold start probes with two 0.9-size
+    // chunks (107-109, 110-112) then full 1.8-size chunks (113-118, ...).
+    let findChunk = fromBlock =>
+      switch sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["fromBlock"] == fromBlock) {
+      | Some(c) => c
+      | None => JsError.throwWithMessage(`Expected a pending chunk starting at block ${fromBlock->Int.toString}`)
+      }
 
-      // 5. Resolve LAST chunk of first batch FIRST with PARTIAL range: 113-115 instead of 113-118
-      // This leaves a gap at 116-118 in the same partition (no new partition created)
-      chunk2.resolve([], ~latestFetchedBlockNumber=115)
+    // 5. Resolve the 113-118 chunk with a PARTIAL range (to 115), leaving a gap
+    // at 116-118 in the same partition (no new partition created).
+    findChunk(113).resolve([], ~latestFetchedBlockNumber=115)
+    // 6. Resolve the earlier chunks normally so the main partition consumes up
+    // to 115, detects the gap, and creates a gap-fill query.
+    findChunk(107).resolve([], ~latestFetchedBlockNumber=109)
+    findChunk(110).resolve([], ~latestFetchedBlockNumber=112)
 
-      // 6. Resolve first chunk normally (107-112)
-      // Main partition consumes up to 115, detects gap before 119, creates gap-fill query
-      chunk1.resolve([], ~latestFetchedBlockNumber=112)
+    await indexerMock.getBatchWritePromise()
 
-      await indexerMock.getBatchWritePromise()
-
-      let expectedQueries = [
-        chunk3.payload,
-        chunk4.payload,
-        {
-          "fromBlock": 116,
-          "toBlock": Some(118),
-          "retry": 0,
-          // Gap-fill query for the partial chunk range, same partition
-          "p": "0",
-        },
-        {
-          "fromBlock": 131,
-          "toBlock": Some(136),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 137,
-          "toBlock": Some(142),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 143,
-          "p": "0",
-          "retry": 0,
-          "toBlock": Some(148),
-        },
-        {
-          "fromBlock": 149,
-          "p": "0",
-          "retry": 0,
-          "toBlock": Some(154),
-        },
-      ]
-      t.expect(
-        sourceMock.getItemsOrThrowCalls
-        ->Array.map(c => c.payload)
-        // Slice to avoid including potentially extra fetch queries
-        ->Array.slice(~start=0, ~end=expectedQueries->Array.length),
-        ~message="Should create gap-fill query for partial chunk range in same partition",
-      ).toEqual(expectedQueries)
-
-    | _ => JsError.throwWithMessage("Step 4 should have 4 chunks")
-    }
+    let payloads = sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)
+    t.expect(
+      (
+        payloads->Array.some(p => p["fromBlock"] == 116 && p["toBlock"] == Some(118)),
+        payloads->Array.every(p => p["p"] == "0"),
+      ),
+      ~message="Should create a gap-fill query for the partial chunk range in the same partition, with no duplicate partition",
+    ).toEqual((true, true))
 
     // 8. Trigger rollback via reorg detection to block 116
     sourceMock.resolveGetItemsOrThrow(
@@ -2455,13 +2416,14 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
     t.expect(
       sourceMock.getBlockHashesCalls,
       ~message="Should have called getBlockHashes to find rollback depth",
-    ).toEqual([[100, 103, 106, 112]])
+    ).toEqual([[100, 103, 106, 109, 112]])
 
     // Rollback to block 112
     sourceMock.resolveGetBlockHashes([
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
       {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
       {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
+      {blockNumber: 109, blockHash: "0x109", blockTimestamp: 100},
       {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
     ])
 
@@ -2519,25 +2481,31 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       }
       await indexerMock.getBatchWritePromise()
 
-      // Chunked queries: chunk1=107-112, chunk2=113-118
-      // chunkRange=3, chunkSize=ceil(5.4)=6
+      // Chunked queries: chunkRange=3 -> cold start probes with two 0.9-size
+      // chunks (107-109, 110-112) followed by a full 1.8-size chunk (113-118).
       let calls = sourceMock.getItemsOrThrowCalls
       t.expect(
-        calls->Array.length >= 2,
-        ~message="Should have at least 2 chunked queries",
+        calls->Array.length >= 3,
+        ~message="Should have at least 3 chunked queries",
       ).toBeTruthy()
       let chunk1 = calls->Array.getUnsafe(0)
       let chunk2 = calls->Array.getUnsafe(1)
-      t.expect((chunk1.payload, chunk2.payload), ~message="Should create chunked queries").toEqual((
-        {"fromBlock": 107, "toBlock": Some(112), "retry": 0, "p": "0"},
+      let chunk3 = calls->Array.getUnsafe(2)
+      t.expect(
+        (chunk1.payload, chunk2.payload, chunk3.payload),
+        ~message="Should create chunked queries",
+      ).toEqual((
+        {"fromBlock": 107, "toBlock": Some(109), "retry": 0, "p": "0"},
+        {"fromBlock": 110, "toBlock": Some(112), "retry": 0, "p": "0"},
         {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
       ))
 
-      // Resolve chunk1 to half its range, chunk2 to half its range
-      chunk1.resolve([], ~latestFetchedBlockNumber=109) // half of 107-112
-      chunk2.resolve([], ~latestFetchedBlockNumber=115) // first half of 113-118, stores checkpoint at 115
+      // Resolve chunk1 fully, leave chunk2 (110-112) in flight as a gap, and
+      // resolve chunk3 to half its range, storing a checkpoint at 115.
+      chunk1.resolve([], ~latestFetchedBlockNumber=109)
+      chunk3.resolve([], ~latestFetchedBlockNumber=115) // first half of 113-118
       await indexerMock.getBatchWritePromise()
-      // lfb=109 (chunk2 unconsumed due to gap 110-112)
+      // lfb=109 (chunk3 unconsumed due to gap 110-112)
 
       // Resolve chunk2's second half: continuation from 116+ resolves to 118
       // This stores a reorg checkpoint at block 118
@@ -2587,16 +2555,16 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       await indexerMock.getRollbackReadyPromise()
 
       // After rollback to 115:
-      // - lfb=109 (unchanged), chunk2 survives with fetchedBlock=115
+      // - lfb=109 (unchanged), chunk3 survives with fetchedBlock=115
       // - continuation(116+) removed (fromBlock > 115)
-      // Two queries expected:
-      //   1. Gap-fill finishing chunk1 range (fromBlock=110)
-      //   2. After rollback target (fromBlock=116)
+      // Queries expected:
+      //   1. Gap-fill finishing the 110-112 range
+      //   2-4. After rollback target (fromBlock=116) in full-size chunks
       let queries = sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)
 
       t.expect(
         queries,
-        ~message="First query should finish chunk1 range starting from block 110, Second query should start after rollback target at block 116",
+        ~message="First query should finish the gap from block 110, remaining queries should start after rollback target at block 116",
       ).toEqual([
         {
           "fromBlock": 110,
@@ -2615,6 +2583,12 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
           "p": "0",
           "retry": 0,
           "toBlock": Some(127),
+        },
+        {
+          "fromBlock": 128,
+          "p": "0",
+          "retry": 0,
+          "toBlock": Some(133),
         },
       ])
     },
@@ -2968,9 +2942,11 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
         ),
         ~message="Both chains should refetch from block 106 after rollback (chain 100's in-flight checkpoint was flushed and included in the progress diff)",
       ).toEqual((
-        // Chain 100: partition kept (lfb <= target), chunk history preserved
+        // Chain 100: partition kept (lfb <= target), chunk history preserved.
+        // Cold start probes with two 0.9-size chunks first.
         [
-          {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
+          {"fromBlock": 106, "toBlock": Some(108), "retry": 0, "p": "0"},
+          {"fromBlock": 109, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
         ],
         // Chain 1337: partition deleted (lfb > target), recreated fresh

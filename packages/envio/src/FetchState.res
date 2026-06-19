@@ -1295,6 +1295,7 @@ let pushQueriesForRange = (
   ~rangeEndBlock: option<int>,
   ~maxQueryBlockNumber: int,
   ~maybeChunkRange: option<int>,
+  ~hasEarlierPending: bool,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
   ~indexingAddresses: dict<indexingAddress>,
@@ -1320,26 +1321,33 @@ let pushQueriesForRange = (
         | None => maxQueryBlockNumber
         }
         let chunkSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 1.8)
-        if rangeFromBlock + 2 * chunkSize - 1 <= maxBlock {
-          // Create 2 chunks of ceil(1.8 * chunkRange) each
-          queries->Array.push({
-            partitionId,
-            fromBlock: rangeFromBlock,
-            toBlock: Some(rangeFromBlock + chunkSize - 1),
-            isChunk: true,
-            selection,
-            addressesByContractName,
-            indexingAddresses,
-          })
-          queries->Array.push({
-            partitionId,
-            fromBlock: rangeFromBlock + chunkSize,
-            toBlock: Some(rangeFromBlock + 2 * chunkSize - 1),
-            isChunk: true,
-            selection,
-            addressesByContractName,
-            indexingAddresses,
-          })
+        // When nothing is in flight ahead of this range, probe with two smaller
+        // chunks first so their responses come back quickly and refresh the
+        // chunking heuristic before committing to full-size chunks.
+        let firstChunkSize = hasEarlierPending
+          ? chunkSize
+          : Js.Math.ceil_int(chunkRange->Int.toFloat *. 0.9)
+        let getChunkSize = chunkIdx => chunkIdx < 2 ? firstChunkSize : chunkSize
+        if rangeFromBlock + getChunkSize(0) + getChunkSize(1) - 1 <= maxBlock {
+          let chunkFromBlock = ref(rangeFromBlock)
+          let chunkIdx = ref(0)
+          while (
+            chunkIdx.contents < 3 &&
+              chunkFromBlock.contents + getChunkSize(chunkIdx.contents) - 1 <= maxBlock
+          ) {
+            let chunkToBlock = chunkFromBlock.contents + getChunkSize(chunkIdx.contents) - 1
+            queries->Array.push({
+              partitionId,
+              fromBlock: chunkFromBlock.contents,
+              toBlock: Some(chunkToBlock),
+              isChunk: true,
+              selection,
+              addressesByContractName,
+              indexingAddresses,
+            })
+            chunkFromBlock := chunkToBlock + 1
+            chunkIdx := chunkIdx.contents + 1
+          }
         } else {
           // Not enough room for 2 chunks, fall back to a single query
           queries->Array.push({
@@ -1465,6 +1473,7 @@ let getNextQuery = (
             ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
             ~maxQueryBlockNumber,
             ~maybeChunkRange,
+            ~hasEarlierPending=pqIdx.contents > 0,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
             ~indexingAddresses,
@@ -1489,6 +1498,7 @@ let getNextQuery = (
           ~rangeEndBlock=queryEndBlock,
           ~maxQueryBlockNumber,
           ~maybeChunkRange,
+          ~hasEarlierPending=p.mutPendingQueries->Array.length > 0,
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
           ~indexingAddresses,
@@ -1722,7 +1732,7 @@ let make = (
       ~indexerStartBlock=startBlock,
       ~fromBlock=progressBlockNumber,
       ~maxBlockNumber,
-      ~maxOnBlockBufferSize=maxOnBlockBufferSize,
+      ~maxOnBlockBufferSize,
     )
   } else {
     progressBlockNumber
@@ -1739,7 +1749,7 @@ let make = (
     indexingAddresses,
     blockLag,
     onBlockConfigs,
-    maxOnBlockBufferSize: maxOnBlockBufferSize,
+    maxOnBlockBufferSize,
     knownHeight,
     buffer,
     firstEventBlock,
