@@ -1125,42 +1125,51 @@ describe("E2E tests", () => {
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
     await indexerMock.getBatchWritePromise()
 
-    // Chunking activates: chunkRange=min(300,501)=300, chunkSize=ceil(300*1.8)=540
-    // At least 2 chunks of size 540; extra chunks may appear later
+    // Chunking activates: chunkRange=min(300,501)=300. Cold start probes with
+    // two 0.9-size chunks (270) before full 1.8-size chunks (540).
     t.expect(
-      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=2),
-      ~message="Should have at least 2 chunks of size 540",
+      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=3),
+      ~message="Should start with two probe chunks then a full-size chunk",
     ).toEqual([
-      {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
+      {"fromBlock": 801, "toBlock": Some(1070), "retry": 0, "p": "0"},
+      {"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"},
       {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
     ])
 
     // Phase A — chunks grow:
-    // Resolve chunk1 and chunk2 at full range.
-    // With the fix, full-range split chunks update block range (540 >= chunkRange 300).
+    // Resolve the probes and the first full-size chunk in order. Full-range
+    // split chunks of size 540 update the block range (540 >= chunkRange 300).
     let calls = sourceMock.getItemsOrThrowCalls
-    if calls->Array.length < 2 {
-      JsError.throwWithMessage("Expected at least 2 chunks")
+    if calls->Array.length < 3 {
+      JsError.throwWithMessage("Expected at least 3 chunks")
     }
     let chunk1 = calls->Array.getUnsafe(0)
     let chunk2 = calls->Array.getUnsafe(1)
-    chunk1.resolve([], ~latestFetchedBlockNumber=1340)
-    chunk2.resolve([], ~latestFetchedBlockNumber=1880)
+    let chunk3 = calls->Array.getUnsafe(2)
+    // Resolve the probes, the full-size chunk, and the next full-size chunk in
+    // one batch so two 540-range responses land together and chunkRange grows to
+    // 540 before the next chunks are generated (chunkSize=ceil(540*1.8)=972).
+    let next540 =
+      sourceMock.getItemsOrThrowCalls
+      ->Array.find(c => c.payload["fromBlock"] === 1881)
+      ->Option.getOrThrow
+    chunk1.resolve([], ~latestFetchedBlockNumber=1070)
+    chunk2.resolve([], ~latestFetchedBlockNumber=1340)
+    chunk3.resolve([], ~latestFetchedBlockNumber=1880)
+    next540.resolve([], ~latestFetchedBlockNumber=2420)
     await indexerMock.getBatchWritePromise()
 
     // After: prevQueryRange=540, prevPrevQueryRange=540
     // chunkRange=min(540,540)=540, chunkSize=ceil(540*1.8)=972
-    // Assert: new tail chunks have size 972
-    let grownChunks =
-      sourceMock.getItemsOrThrowCalls->Array.filter(
-        c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(972),
+    // Assert: the grown tail chunks have size 972 (no chunk exceeds it)
+    let maxChunkSize =
+      sourceMock.getItemsOrThrowCalls->Array.reduce(0, (max, c) =>
+        switch c.payload["toBlock"] {
+        | Some(tb) => Pervasives.max(max, tb - c.payload["fromBlock"] + 1)
+        | None => max
+        }
       )
-    t.expect(
-      grownChunks->Array.length >= 2,
-      ~message=`Chunks should have grown to size 972, found ${grownChunks
-        ->Array.length
-        ->Int.toString} such chunks`,
-    ).toBeTruthy()
+    t.expect(maxChunkSize, ~message="Tail chunks should have grown to size 972").toBe(972)
 
     // Phase B — chunks shrink on partial response:
     // Resolve the first pending chunk (at queue front) at partial range so the
@@ -1170,17 +1179,15 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     // After: prevQueryRange=100, prevPrevQueryRange=540
-    // chunkRange=min(100,540)=100, chunkSize=ceil(100*1.8)=180
-    // Assert: new tail chunks have size 180
+    // chunkRange=min(100,540)=100. The gap-fill for the partial range has no
+    // earlier in-flight chunk, so it is a 0.9 probe of size ceil(100*0.9)=90.
     let shrunkChunks =
       sourceMock.getItemsOrThrowCalls->Array.filter(
-        c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(180),
+        c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(90),
       )
     t.expect(
-      shrunkChunks->Array.length >= 2,
-      ~message=`Chunks should have shrunk to size 180, found ${shrunkChunks
-        ->Array.length
-        ->Int.toString} such chunks`,
+      shrunkChunks->Array.length >= 1,
+      ~message="New chunks should have shrunk to the 0.9 probe size 90",
     ).toBeTruthy()
   })
 
@@ -1216,49 +1223,50 @@ describe("E2E tests", () => {
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
     await indexerMock.getBatchWritePromise()
 
-    // At least 2 chunks starting at (801,1340), (1341,1880); extra chunks may appear later
+    // Cold start probes with two 0.9-size chunks (270) then a full-size chunk.
     t.expect(
-      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=2),
-      ~message="Should have at least 2 chunks of size 540",
+      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=3),
+      ~message="Should start with two probe chunks then a full-size chunk",
     ).toEqual([
-      {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
+      {"fromBlock": 801, "toBlock": Some(1070), "retry": 0, "p": "0"},
+      {"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"},
       {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
     ])
     let calls = sourceMock.getItemsOrThrowCalls
-    if calls->Array.length < 2 {
-      JsError.throwWithMessage("Expected at least 2 chunks")
+    if calls->Array.length < 3 {
+      JsError.throwWithMessage("Expected at least 3 chunks")
     }
     let chunk1 = calls->Array.getUnsafe(0)
     let chunk2 = calls->Array.getUnsafe(1)
+    let chunk3 = calls->Array.getUnsafe(2)
 
-    // Step 1: Resolve chunk2 FIRST (out of order) with item at block 1500
-    chunk2.resolve([
+    // Step 1: Resolve the later chunk3 FIRST (out of order) with item at block 1500
+    chunk3.resolve([
       {
         blockNumber: 1500,
         logIndex: 0,
         handler: async ({context}) => {
-          context.\"SimpleEntity".set({id: "item-1500", value: "from-chunk2"})
+          context.\"SimpleEntity".set({id: "item-1500", value: "from-chunk3"})
         },
       },
     ])
-    // Wait for chunk2's response to be processed
+    // Wait for chunk3's response to be processed
     await Utils.delay(0)
     await Utils.delay(0)
 
-    // Item at 1500 should NOT be in DB yet — chunk1 hasn't completed,
+    // Item at 1500 should NOT be in DB yet — earlier chunks haven't completed,
     // so bufferBlockNumber=800 and 1500 > 800 means it's not ready.
     t.expect(
       await indexerMock.query(SimpleEntity),
-      ~message="Item at block 1500 should not be ready while chunk1 is pending",
+      ~message="Item at block 1500 should not be ready while earlier chunks are pending",
     ).toEqual([])
 
-    // Step 2: Resolve chunk1 at HALF range (801-1070) with item at block 850.
-    // Only chunk1's first half is consumed; chunk2 still blocked.
-    // After chunk2 resolved, chunk1 should remain pending
+    // Step 2: Resolve chunk1 with item at block 850. Buffer advances to 1070,
+    // but chunk2 is still pending so the item at 1500 stays blocked.
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=1),
-      ~message="After chunk2 resolved, chunk1 should remain pending",
-    ).toEqual([{"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"}])
+      ~message="After chunk3 resolved, chunk1 should remain pending",
+    ).toEqual([{"fromBlock": 801, "toBlock": Some(1070), "retry": 0, "p": "0"}])
     chunk1.resolve(
       [
         {
@@ -1273,24 +1281,24 @@ describe("E2E tests", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    // Only item-850 should be in DB — chunk1 didn't finish its full range,
-    // so chunk2's item at 1500 is still beyond the buffer.
+    // Only item-850 should be in DB — chunk2 hasn't completed,
+    // so chunk3's item at 1500 is still beyond the buffer.
     t.expect(
       await indexerMock.query(SimpleEntity),
-      ~message="Only item-850 should be in DB after partial chunk1 resolve",
+      ~message="Only item-850 should be in DB while chunk2 is pending",
     ).toEqual([{Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}])
 
-    // Step 3: A finishing query for the remainder of chunk1 (1071-1340) should exist.
-    let finishingQuery =
+    // Step 3: chunk2 (1071-1340) bridging chunk1 and chunk3 should still be pending.
+    let bridgingQuery =
       sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["fromBlock"] === 1071)
     t.expect(
-      finishingQuery->Option.map(c => c.payload),
-      ~message="Should have a finishing query for the rest of chunk1",
+      bridgingQuery->Option.map(c => c.payload),
+      ~message="Should still have the bridging chunk2 query",
     ).toEqual(Some({"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"}))
 
-    // Step 4: Resolve the finishing query — now chunk1's full range is consumed,
-    // then chunk2 is consumed too. bufferBlockNumber advances to 1880.
-    (finishingQuery->Option.getOrThrow).resolve([], ~latestFetchedBlockNumber=1340)
+    // Step 4: Resolve chunk2 — now the range is contiguous through chunk3,
+    // bufferBlockNumber advances to 1880 and the item at 1500 becomes ready.
+    (bridgingQuery->Option.getOrThrow).resolve([], ~latestFetchedBlockNumber=1340)
     await indexerMock.getBatchWritePromise()
 
     // Both items should now be in DB
@@ -1299,7 +1307,7 @@ describe("E2E tests", () => {
       ~message="Both items should be in DB after chunk1 fully completes",
     ).toEqual([
       {Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"},
-      {Indexer.Entities.SimpleEntity.id: "item-1500", value: "from-chunk2"},
+      {Indexer.Entities.SimpleEntity.id: "item-1500", value: "from-chunk3"},
     ])
   })
 
@@ -1381,9 +1389,9 @@ describe("E2E tests", () => {
       ~message="Step 3: DC2 new query from 25601",
     ).toEqual([("2", 5000), ("0", 25101), ("3", 25601)])
 
-    // Step 4: Resolve DC2 at lfb=25900 (range=300) → chunking activates
-    // chunkRange=min(300,501)=300, chunkSize=ceil(300*1.8)=540
-    // Chunks: (25901,26440),(26441,26980) — concurrency limited → chunk1 only
+    // Step 4: Resolve DC2 at lfb=25900 (range=300) → chunking activates.
+    // Cold start probes with two 0.9-size chunks (270) then a full-size chunk:
+    // (25901,26170),(26171,26440),(26441,26980)
     // Buffer block stays 4999 → no batch write
     let dc2Call2 =
       sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "3")->Option.getOrThrow
@@ -1396,11 +1404,12 @@ describe("E2E tests", () => {
       sourceMock.getItemsOrThrowCalls
       ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
       ->Array.toSorted(((_, a, _), (_, b, _)) => Int.compare(a, b)),
-      ~message="Step 4: DC2 has 2 chunks (25901-26440, 26441-26980)",
+      ~message="Step 4: DC2 has 3 chunks (25901-26170, 26171-26440, 26441-26980)",
     ).toEqual([
       ("2", 5000, Some(99800)),
       ("0", 25101, Some(99800)),
-      ("3", 25901, Some(26440)),
+      ("3", 25901, Some(26170)),
+      ("3", 26171, Some(26440)),
       ("3", 26441, Some(26980)),
     ])
 
@@ -1420,8 +1429,8 @@ describe("E2E tests", () => {
     // DC1("2"): mergeBlock=26980, query 7001→26980
     // DC2("3"): mergeBlock=26980, chunks still pending
     // P0("0"): still pending 25101→99800
-    // New("4"): lfb=26980, both addresses, inherits minRange=300 from DC2 history
-    //   → chunkSize=ceil(300*1.8)=540, chunks: 26981→27520, 27521→28060
+    // New("4"): lfb=26980, both addresses, inherits minRange=300 from DC2 history.
+    //   Cold start probes with two 0.9-size chunks (270) then full-size chunks (540).
     t.expect(
       sourceMock.getItemsOrThrowCalls
       ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
@@ -1430,12 +1439,15 @@ describe("E2E tests", () => {
     ).toEqual([
       ("2", 7001, Some(26980)),
       ("0", 25101, Some(99800)),
-      ("3", 25901, Some(26440)),
+      ("3", 25901, Some(26170)),
+      ("3", 26171, Some(26440)),
       ("3", 26441, Some(26980)),
-      ("4", 26981, Some(27520)),
+      ("4", 26981, Some(27250)),
+      ("4", 27251, Some(27520)),
       ("4", 27521, Some(28060)),
       ("4", 28061, Some(28600)),
       ("4", 28601, Some(29140)),
+      ("4", 29141, Some(29680)),
     ])
 
     // Verify merged partition "4" has both DC addresses
