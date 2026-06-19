@@ -136,6 +136,34 @@ let allEvmTransactionFields: array<evmTransactionField> = [
 ]
 let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
 
+// SVM transaction fields. Order mirrors the Rust `SvmTxField` ordinals (the bit
+// position in the selection mask) and `Svm.res` `transactionFields`.
+type svmTransactionField =
+  | @as("signatures") Signatures
+  | @as("feePayer") FeePayer
+  | @as("success") Success
+  | @as("err") Err
+  | @as("fee") Fee
+  | @as("computeUnitsConsumed") ComputeUnitsConsumed
+  | @as("accountKeys") AccountKeys
+  | @as("recentBlockhash") RecentBlockhash
+  | @as("version") Version
+  | @as("tokenBalances") TokenBalances
+
+let allSvmTransactionFields: array<svmTransactionField> = [
+  Signatures,
+  FeePayer,
+  Success,
+  Err,
+  Fee,
+  ComputeUnitsConsumed,
+  AccountKeys,
+  RecentBlockhash,
+  Version,
+  TokenBalances,
+]
+let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
+
 // Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
 let evmNullableBlockFields = Utils.Set.fromArray(
   (
@@ -462,6 +490,9 @@ type svmInstructionEventConfig = {
   includeTransaction: bool,
   includeLogs: bool,
   includeTokenBalances: bool,
+  /** The transaction fields this instruction selected, as a set of field codes
+   for the per-chain materialisation mask. Empty when no transaction is wanted. */
+  selectedTransactionFields: Utils.Set.t<svmTransactionField>,
   /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
    AND across positions. Empty outer array means "no account filter". */
   accountFilters: array<svmAccountFilterGroup>,

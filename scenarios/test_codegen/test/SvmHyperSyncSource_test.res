@@ -33,6 +33,7 @@ let makeEventConfig = (): Internal.svmInstructionEventConfig => {
   includeTransaction: true,
   includeLogs: false,
   includeTokenBalances: false,
+  selectedTransactionFields: Utils.Set.fromArray(Internal.allSvmTransactionFields),
   accountFilters: [],
   isInner: None,
   accounts: [],

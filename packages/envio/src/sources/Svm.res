@@ -4,10 +4,51 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.time
   }`)
 
+// Ordered transaction field names. The index of each is the field code shared
+// with the Rust store (`SvmTxField`) — keep this order in sync.
+let transactionFields = [
+  "signatures",
+  "feePayer",
+  "success",
+  "err",
+  "fee",
+  "computeUnitsConsumed",
+  "accountKeys",
+  "recentBlockhash",
+  "version",
+  "tokenBalances",
+]
+
+// Field name → bit index (the code shared with the Rust store), built once.
+let transactionFieldCodes = {
+  let codes = Dict.make()
+  transactionFields->Array.forEachWithIndex((name, i) => codes->Dict.set(name, i))
+  codes
+}
+
+let pow2: int => float = %raw(`c => Math.pow(2, c)`)
+
+// Union of the chain's selected transaction fields as a bitmask float (bit
+// `code` set ⇔ selected). Built arithmetically to dodge 32-bit JS bitwise ops.
+let transactionFieldMask = (eventConfigs: array<Internal.eventConfig>): float => {
+  let selected = Utils.Set.make()
+  eventConfigs->Array.forEach(eventConfig => {
+    let eventConfig =
+      eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+    eventConfig.selectedTransactionFields->Utils.Set.forEach(field => {
+      switch transactionFieldCodes->Utils.Dict.dangerouslyGetNonOption((field :> string)) {
+      | Some(code) => selected->Utils.Set.add(code)->ignore
+      | None => ()
+      }
+    })
+  })
+  selected->Utils.Set.toArray->Array.reduce(0., (mask, code) => mask +. pow2(code))
+}
+
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
   blockFields: ["slot"],
-  transactionFields: [],
+  transactionFields,
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "hash",
@@ -20,8 +61,7 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // parse. The schema is a no-op object that always surfaces `None`.
   onEventBlockFilterSchema: S.object(_ => None),
   logger,
-  // SVM carries the transaction inline on the payload.
-  transactionFieldMask: _ => 0.,
+  transactionFieldMask,
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem => {
     let instruction =

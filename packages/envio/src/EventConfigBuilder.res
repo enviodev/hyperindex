@@ -430,6 +430,7 @@ let buildSvmInstructionEventConfig = (
   ~includeTransaction: bool,
   ~includeLogs: bool,
   ~includeTokenBalances: bool,
+  ~transactionFields: option<array<Internal.svmTransactionField>>=?,
   ~accountFilters: array<Internal.svmAccountFilterGroup>,
   ~isInner: option<bool>,
   ~isWildcard: bool,
@@ -444,6 +445,32 @@ let buildSvmInstructionEventConfig = (
     S.json(~validate=false)
     ->Utils.Schema.coerceToJsonPgType
     ->(Utils.magic: S.t<JSON.t> => S.t<Internal.eventParams>)
+
+  // Explicit per-field selection wins; otherwise fall back to the include flags
+  // (the whole transaction when `includeTransaction`, plus tokenBalances when
+  // `includeTokenBalances`) so behaviour matches the pre-selection default.
+  let selectedTransactionFields = switch transactionFields {
+  | Some(fields) => Utils.Set.fromArray(fields)
+  | None =>
+    let selected = Utils.Set.make()
+    if includeTransaction {
+      [
+        Internal.Signatures,
+        FeePayer,
+        Success,
+        Err,
+        Fee,
+        ComputeUnitsConsumed,
+        AccountKeys,
+        RecentBlockhash,
+        Version,
+      ]->Array.forEach(field => selected->Utils.Set.add(field)->ignore)
+    }
+    if includeTokenBalances {
+      selected->Utils.Set.add(TokenBalances)->ignore
+    }
+    selected
+  }
   {
     id: switch discriminator {
     | Some(d) => d
@@ -465,6 +492,7 @@ let buildSvmInstructionEventConfig = (
     includeTransaction,
     includeLogs,
     includeTokenBalances,
+    selectedTransactionFields,
     accountFilters,
     isInner,
     accounts,
