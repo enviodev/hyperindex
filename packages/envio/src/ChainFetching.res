@@ -305,9 +305,11 @@ let finishWaitingForNewBlock = (
     scheduleProcessing()
   }
 
-let checkAndFetchForChain = async (
+let fetchChain = async (
   state: IndexerState.t,
   chain,
+  ~concurrencyLimit,
+  ~bufferLimit,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
@@ -361,6 +363,8 @@ let checkAndFetchForChain = async (
           | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
           }
         },
+        ~concurrencyLimit,
+        ~bufferLimit,
         ~stateId,
       )
     } catch {
@@ -368,29 +372,4 @@ let checkAndFetchForChain = async (
       IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
     }
   }
-}
-
-let checkAndFetchAllChains = async (
-  state: IndexerState.t,
-  ~stateId,
-  ~scheduleFetch,
-  ~scheduleProcessing,
-  ~scheduleRollback,
-) => {
-  // Iterate the state's chain states so we can construct tests that don't use
-  // all chains
-  let _ = await state
-  ->IndexerState.chainStates
-  ->Dict.valuesToArray
-  ->Array.map(cs =>
-    checkAndFetchForChain(
-      state,
-      ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id),
-      ~stateId,
-      ~scheduleFetch,
-      ~scheduleProcessing,
-      ~scheduleRollback,
-    )
-  )
-  ->Promise.all
 }

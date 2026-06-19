@@ -78,7 +78,6 @@ describe("SourceManager creation", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[source],
-      ~maxPartitionConcurrency=10,
     )
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(source)
   })
@@ -90,7 +89,6 @@ describe("SourceManager creation", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[fallback, sync0, sync1],
-      ~maxPartitionConcurrency=10,
     )
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(sync0)
   })
@@ -101,7 +99,6 @@ describe("SourceManager creation", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[live, sync],
-      ~maxPartitionConcurrency=10,
     )
     // Sync is always preferred as initial active source (backfill mode)
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(sync)
@@ -113,7 +110,6 @@ describe("SourceManager creation", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[sync, live],
-      ~maxPartitionConcurrency=10,
     )
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(live)
   })
@@ -121,7 +117,7 @@ describe("SourceManager creation", () => {
   it("Fails to create without primary sources", t => {
     t.expect(
       () => {
-        SourceManager.make(~isRealtime=false, ~sources=[], ~maxPartitionConcurrency=10)
+        SourceManager.make(~isRealtime=false, ~sources=[])
       },
     ).toThrowError("Invalid configuration, no data-source for historical sync provided")
     t.expect(
@@ -129,7 +125,6 @@ describe("SourceManager creation", () => {
         SourceManager.make(
           ~isRealtime=false,
           ~sources=[MockIndexer.Source.make([], ~sourceFor=Fallback).source],
-          ~maxPartitionConcurrency=10,
         )
       },
     ).toThrowError("Invalid configuration, no data-source for historical sync provided")
@@ -202,7 +197,6 @@ describe("SourceManager source priority with Live sources", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
-        ~maxPartitionConcurrency=10,
         ~newBlockStallTimeoutRealtime,
       )
 
@@ -240,7 +234,6 @@ describe("SourceManager source priority with Live sources", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
-        ~maxPartitionConcurrency=10,
         ~newBlockStallTimeoutRealtime,
       )
 
@@ -283,7 +276,6 @@ describe("SourceManager source priority with Live sources", () => {
         ~isRealtime=false,
         ~newBlockStallTimeoutRealtime,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
-        ~maxPartitionConcurrency=10,
       )
 
       {
@@ -329,7 +321,6 @@ describe("SourceManager source priority with Live sources", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[syncMock.source, fallbackMock.source],
-        ~maxPartitionConcurrency=10,
       )
 
       let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=0, ~reducedPolling=false)
@@ -433,7 +424,7 @@ describe("SourceManager fetchNext", () => {
       buffer,
       normalSelection,
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
-      targetBufferSize,
+      maxOnBlockBufferSize: targetBufferSize,
       chainId: 0,
       indexingAddresses,
       contractConfigs: Dict.make(),
@@ -455,13 +446,45 @@ describe("SourceManager fetchNext", () => {
 
   let source: Source.t = MockIndexer.Source.make([]).source
 
+  it("getNextQuery caps a partition at 10 pending chunks", t => {
+    let pendingChunk = (idx): FetchState.pendingQuery => {
+      fromBlock: idx * 10 + 1,
+      toBlock: Some(idx * 10 + 10),
+      isChunk: true,
+      fetchedBlock: None,
+    }
+    // Chunking on (prevQueryRange set) so the tail wants two chunks per round.
+    let withPending = count => {
+      let p = {
+        ...mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
+        mutPendingQueries: Array.fromInitializer(~length=count, pendingChunk),
+        prevQueryRange: 10,
+        prevPrevQueryRange: 10,
+      }
+      mockFetchState([p], ~knownHeight=1000)
+    }
+    let newQueryCount = nextQuery =>
+      switch nextQuery {
+      | FetchState.Ready(queries) => queries->Array.length
+      | _ => 0
+      }
+
+    t.expect({
+      // 10 already pending: the partition is capped, so the scheduler issues nothing.
+      "atCap": withPending(10)->FetchState.getNextQuery(~concurrencyLimit=30, ~bufferLimit=5000),
+      // 9 pending: the two-chunk tail is trimmed down to the one remaining slot.
+      "oneSlotLeft": withPending(9)
+      ->FetchState.getNextQuery(~concurrencyLimit=30, ~bufferLimit=5000)
+      ->newQueryCount,
+    }).toEqual({"atCap": FetchState.NothingToQuery, "oneSlotLeft": 1})
+  })
+
   Async.it(
     "Executes full partitions in any order when we didn't reach concurency limit",
     async t => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[source],
-        ~maxPartitionConcurrency=10,
       )
 
       let partition0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
@@ -478,6 +501,8 @@ describe("SourceManager fetchNext", () => {
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
+          ~bufferLimit=5000,
+          ~concurrencyLimit=10,
           ~stateId=0,
         )
 
@@ -531,7 +556,6 @@ describe("SourceManager fetchNext", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[source],
-        ~maxPartitionConcurrency=2,
       )
 
       let partition0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
@@ -548,6 +572,8 @@ describe("SourceManager fetchNext", () => {
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
+          ~bufferLimit=5000,
+          ~concurrencyLimit=2,
           ~stateId=0,
         )
 
@@ -589,7 +615,6 @@ describe("SourceManager fetchNext", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[source],
-        ~maxPartitionConcurrency=10,
       )
 
       let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
@@ -605,6 +630,8 @@ describe("SourceManager fetchNext", () => {
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
+          ~bufferLimit=5000,
+          ~concurrencyLimit=10,
           ~stateId=0,
         )
 
@@ -625,7 +652,6 @@ describe("SourceManager fetchNext", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[source],
-      ~maxPartitionConcurrency=10,
     )
 
     let waitForNewBlockMock = waitForNewBlockMock()
@@ -640,6 +666,8 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
+        ~bufferLimit=5000,
+        ~concurrencyLimit=10,
         ~stateId=0,
       )
 
@@ -660,6 +688,8 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
+        ~bufferLimit=5000,
+        ~concurrencyLimit=10,
         ~stateId=0,
       )
 
@@ -675,7 +705,6 @@ describe("SourceManager fetchNext", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[source],
-      ~maxPartitionConcurrency=10,
     )
 
     let waitForNewBlockMock = waitForNewBlockMock()
@@ -691,6 +720,8 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
+        ~bufferLimit=5000,
+        ~concurrencyLimit=10,
         ~stateId=0,
       )
 
@@ -706,7 +737,6 @@ describe("SourceManager fetchNext", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[source],
-      ~maxPartitionConcurrency=10,
     )
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)
@@ -721,6 +751,8 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
+        ~bufferLimit=5000,
+        ~concurrencyLimit=10,
         ~stateId=0,
       )
 
@@ -732,6 +764,8 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
+      ~concurrencyLimit=10,
       ~stateId=0,
     )
 
@@ -751,7 +785,6 @@ describe("SourceManager fetchNext", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[source],
-      ~maxPartitionConcurrency=10,
     )
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)
@@ -765,6 +798,8 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=neverOnNewBlock,
+        ~bufferLimit=5000,
+        ~concurrencyLimit=10,
         ~stateId=0,
       )
 
@@ -776,6 +811,8 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
+      ~concurrencyLimit=10,
       ~stateId=0,
     )
     t.expect(
@@ -789,6 +826,8 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
+        ~bufferLimit=5000,
+        ~concurrencyLimit=10,
         ~stateId=1,
       )
     t.expect(waitForNewBlockMock.calls, ~message=`Should add a new call after a rollback`).toEqual([
@@ -812,7 +851,6 @@ describe("SourceManager fetchNext", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[source],
-      ~maxPartitionConcurrency=3,
     )
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
@@ -828,17 +866,23 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
+        ~bufferLimit=5000,
+        ~concurrencyLimit=3,
         ~stateId=0,
       )
 
     t.expect(executeQueryMock.callIds).toEqual(["0", "1"])
 
+    // The shared budget has 1 slot left after p0/p1 (CrossChainState nets the
+    // in-flight count before calling), so only the most-behind partition runs.
     let fetchNextPromise2 =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0, p1, p2, p3], ~knownHeight=10),
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
+        ~bufferLimit=5000,
+        ~concurrencyLimit=1,
         ~stateId=0,
       )
 
@@ -855,6 +899,8 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
+      ~concurrencyLimit=0,
       ~stateId=0,
     )
     // Even if we are in the next state,
@@ -865,18 +911,24 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
+      ~concurrencyLimit=0,
       ~stateId=1,
     )
 
     (executeQueryMock.resolveFns->Utils.Array.firstUnsafe)()
     (executeQueryMock.resolveFns->Array.getUnsafe(1))()
 
-    // After resolving one the call with prev stateId won't do anything
+    // After resolving one the call with prev stateId won't do anything.
+    // The two resolves above decrement in-flight on the next microtask, so this
+    // call's synchronous getNextQuery still sees the budget full (limit 0).
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([p0, p1, p2, p3], ~knownHeight=10),
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
+      ~concurrencyLimit=0,
       ~stateId=0,
     )
 
@@ -890,6 +942,8 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
+        ~bufferLimit=5000,
+        ~concurrencyLimit=2,
         ~stateId=1,
       )
 
@@ -917,6 +971,8 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
+      ~concurrencyLimit=0,
       ~stateId=0,
     )
 
@@ -934,7 +990,6 @@ describe("SourceManager fetchNext", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[source],
-      ~maxPartitionConcurrency=10,
     )
 
     let executeQueryMock = executeQueryMock()
@@ -962,6 +1017,8 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
+        ~bufferLimit=4,
+        ~concurrencyLimit=10,
         ~stateId=0,
       )
 
@@ -979,7 +1036,6 @@ describe("SourceManager fetchNext", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[source],
-      ~maxPartitionConcurrency=1,
     )
 
     let executeQueryMock = executeQueryMock()
@@ -1000,6 +1056,8 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=executeQueryMock.fn,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
+      ~bufferLimit=5000,
+      ~concurrencyLimit=1,
       ~stateId=0,
     )
 
@@ -1021,7 +1079,6 @@ describe("SourceManager wait for new blocks", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[source],
-        ~maxPartitionConcurrency=10,
       )
 
       let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=0, ~reducedPolling=false)
@@ -1041,7 +1098,6 @@ describe("SourceManager wait for new blocks", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[mock0.source, mock1.source],
-        ~maxPartitionConcurrency=10,
       )
 
       let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=0, ~reducedPolling=false)
@@ -1077,7 +1133,6 @@ describe("SourceManager wait for new blocks", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[syncMock.source, liveMock.source],
-      ~maxPartitionConcurrency=10,
     )
 
     let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=0, ~reducedPolling=false)
@@ -1105,7 +1160,6 @@ describe("SourceManager wait for new blocks", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[syncMock.source, liveMock.source],
-      ~maxPartitionConcurrency=10,
     )
     let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=0, ~reducedPolling=false)
 
@@ -1138,7 +1192,6 @@ describe("SourceManager wait for new blocks", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[mock0.source, mock1.source],
-        ~maxPartitionConcurrency=10,
       )
 
       let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=100, ~reducedPolling=false)
@@ -1226,7 +1279,6 @@ describe("SourceManager wait for new blocks", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[mock0.source, mock1.source],
-        ~maxPartitionConcurrency=10,
         ~getHeightRetryInterval=SourceManager.makeGetHeightRetryInterval(
           ~initialRetryInterval,
           ~backoffMultiplicative=2,
@@ -1364,7 +1416,6 @@ describe("SourceManager wait for new blocks", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[sync.source, fallback.source],
-        ~maxPartitionConcurrency=10,
         ~newBlockStallTimeout,
         ~stalledPollingInterval,
       )
@@ -1488,7 +1539,6 @@ describe("SourceManager wait for new blocks", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[sync.source],
-        ~maxPartitionConcurrency=10,
         ~newBlockStallTimeout,
         ~stalledPollingInterval,
       )
@@ -1543,7 +1593,6 @@ describe("SourceManager wait for new blocks", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[sync.source],
-        ~maxPartitionConcurrency=10,
         ~stalledPollingInterval,
         ~reducedPollingInterval,
       )
@@ -1599,7 +1648,6 @@ describe("SourceManager.executeQuery", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[source],
-      ~maxPartitionConcurrency=10,
     )
     let p =
       sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=false, ~knownHeight=100)
@@ -1615,7 +1663,6 @@ describe("SourceManager.executeQuery", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[sourceMock.source],
-      ~maxPartitionConcurrency=10,
     )
     let p =
       sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=false, ~knownHeight=100)
@@ -1641,7 +1688,6 @@ describe("SourceManager.executeQuery", () => {
         // to verify that we don't switch to it
         MockIndexer.Source.make([]).source,
       ],
-      ~maxPartitionConcurrency=10,
     )
     let p =
       sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isRealtime=false, ~knownHeight=100)
@@ -1686,7 +1732,6 @@ describe("SourceManager.executeQuery", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[syncMock.source, fallbackMock.source],
-        ~maxPartitionConcurrency=10,
       )
 
       // getNextSources picks sync (primary, recovered) at the start
@@ -1804,7 +1849,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         ~isRealtime=false,
         ~newBlockStallTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
-        ~maxPartitionConcurrency=10,
       )
 
       {
@@ -1858,7 +1902,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         ~isRealtime=false,
         ~recoveryTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
-        ~maxPartitionConcurrency=10,
       )
 
       {
@@ -1957,7 +2000,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[syncMock.source],
-      ~maxPartitionConcurrency=10,
       ~recoveryTimeout,
     )
 
@@ -1990,7 +2032,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let sourceManager = SourceManager.make(
         ~isRealtime=true,
         ~sources=[liveMock.source],
-        ~maxPartitionConcurrency=10,
         ~recoveryTimeout,
       )
 
@@ -2030,7 +2071,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         ~isRealtime=false,
         ~newBlockStallTimeoutRealtime,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
-        ~maxPartitionConcurrency=10,
       )
 
       {
@@ -2080,7 +2120,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         ~isRealtime=false,
         ~recoveryTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
-        ~maxPartitionConcurrency=10,
       )
 
       {
@@ -2219,7 +2258,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[syncMock.source, liveMock0.source, liveMock1.source],
-        ~maxPartitionConcurrency=10,
       )
 
       // In isRealtime=true mode with hasRealtime=true, Live sources are Primary.
@@ -2273,7 +2311,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       ~isRealtime=false,
       ~newBlockStallTimeout,
       ~sources=[syncMock0.source, syncMock1.source],
-      ~maxPartitionConcurrency=10,
     )
 
     {
@@ -2320,7 +2357,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[syncMock0.source, syncMock1.source],
-        ~maxPartitionConcurrency=10,
       )
 
       let p =
@@ -2404,7 +2440,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[syncMock0.source, syncMock1.source, syncMock2.source],
-        ~maxPartitionConcurrency=10,
       )
 
       let p =
@@ -2472,7 +2507,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[syncMock.source, fallbackMock.source],
-      ~maxPartitionConcurrency=10,
       ~recoveryTimeout,
     )
 
@@ -2557,7 +2591,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[syncMock0.source, syncMock1.source, fallbackMock.source],
-      ~maxPartitionConcurrency=10,
     )
 
     let p =
@@ -2614,7 +2647,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[syncMock.source],
-      ~maxPartitionConcurrency=10,
     )
 
     let p =
@@ -2658,7 +2690,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[syncMock0.source, syncMock1.source],
-        ~maxPartitionConcurrency=10,
       )
 
       // First query: succeed on syncMock0 (activeSource), then fail with ImpossibleForTheQuery on next query
@@ -2738,7 +2769,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
       ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
-      ~maxPartitionConcurrency=10,
     )
 
     // In isRealtime=true mode, liveMock is Primary (hasRealtime=true).
@@ -2794,7 +2824,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[syncMock.source, liveMock.source],
-        ~maxPartitionConcurrency=10,
         ~newBlockStallTimeoutRealtime,
       )
 
@@ -2845,7 +2874,6 @@ describe("SourceManager height subscription", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=true,
         ~sources=[mock.source],
-        ~maxPartitionConcurrency=10,
       )
 
       let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=true, ~knownHeight=100, ~reducedPolling=false)
@@ -2875,7 +2903,6 @@ describe("SourceManager height subscription", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
-      ~maxPartitionConcurrency=10,
     )
 
     // First call - create subscription
@@ -2901,7 +2928,6 @@ describe("SourceManager height subscription", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=true,
         ~sources=[mock.source],
-        ~maxPartitionConcurrency=10,
       )
 
       // First call - create subscription and set initial height
@@ -2933,7 +2959,6 @@ describe("SourceManager height subscription", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[mock.source],
-        ~maxPartitionConcurrency=10,
       )
 
       let p = sourceManager->SourceManager.waitForNewBlock(~isRealtime=false, ~knownHeight=100, ~reducedPolling=false)
@@ -2960,7 +2985,6 @@ describe("SourceManager height subscription", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=true,
         ~sources=[mock.source],
-        ~maxPartitionConcurrency=10,
         ~newBlockStallTimeoutRealtime=stallTimeout,
       )
 
@@ -3001,7 +3025,6 @@ describe("SourceManager height subscription", () => {
       let sourceManager = SourceManager.make(
         ~isRealtime=true,
         ~sources=[mock.source],
-        ~maxPartitionConcurrency=10,
         ~newBlockStallTimeoutRealtime=stallTimeout,
       )
 
@@ -3053,7 +3076,6 @@ describe("SourceManager height subscription", () => {
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
-      ~maxPartitionConcurrency=10,
     )
 
     // First call - create subscription

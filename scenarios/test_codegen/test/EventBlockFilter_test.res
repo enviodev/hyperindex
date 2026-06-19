@@ -341,7 +341,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=3,
-      ~targetBufferSize=5000,
+      ~maxOnBlockBufferSize=5000,
       ~chainId=1,
       ~knownHeight=10000,
     )
@@ -352,7 +352,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
   let firstQuery = (fetchState: FetchState.t) =>
     switch fetchState
     ->FetchState.updateKnownHeight(~knownHeight=10000)
-    ->FetchState.getNextQuery(~concurrencyLimit=10) {
+    ->FetchState.getNextQuery(~concurrencyLimit=10, ~bufferLimit=5000) {
     | Ready([q]) => q
     | Ready(qs) =>
       JsError.throwWithMessage(

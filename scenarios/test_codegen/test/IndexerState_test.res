@@ -32,7 +32,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~eventConfigs,
       ~addresses=[],
       ~startBlock=0,
-      ~targetBufferSize=5000,
+      ~maxOnBlockBufferSize=5000,
       ~chainId=1,
       ~knownHeight=0,
     )
@@ -111,7 +111,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~fetchState=fetchState.contents,
       ~sourceManager=SourceManager.make(
         ~sources=[mockSource.source],
-        ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
         ~isRealtime=false,
       ),
       // This is quite a hack - but it works!
@@ -238,7 +237,7 @@ describe("IndexerState", () => {
             ~eventConfigs,
             ~addresses=[],
             ~startBlock=0,
-            ~targetBufferSize=5000,
+            ~maxOnBlockBufferSize=5000,
             ~chainId,
             ~knownHeight=0,
           ),
@@ -285,7 +284,6 @@ describe("IndexerState", () => {
             ~fetchState=makeFetchState(~chainId=chainConfig.id, ~eventBlocks),
             ~sourceManager=SourceManager.make(
               ~sources=[mockSource.source],
-              ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
               ~isRealtime=false,
             ),
             ~reorgDetection=ReorgDetection.make(

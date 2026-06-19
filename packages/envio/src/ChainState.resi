@@ -22,7 +22,6 @@ let makeFromConfig: (
   Config.chain,
   ~config: Config.t,
   ~registrations: HandlerRegister.registrations,
-  ~targetBufferSize: int,
   ~knownHeight: int,
 ) => t
 
@@ -34,7 +33,6 @@ let makeFromDbState: (
   ~isRealtime: bool,
   ~config: Config.t,
   ~registrations: HandlerRegister.registrations,
-  ~targetBufferSize: int,
   ~reducedPollingInterval: int=?,
 ) => t
 
@@ -52,7 +50,6 @@ let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
 // Derived (pure).
 let hasProcessedToEndblock: t => bool
-let hasNoMoreEventsToProcess: t => bool
 let getHighestBlockBelowThreshold: t => int
 let isActivelyIndexing: t => bool
 let isReady: t => bool
@@ -77,12 +74,8 @@ let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
-let applyBatchProgress: (
-  t,
-  ~batch: Batch.t,
-  ~allChainsAtHead: bool,
-  ~nextQueueItemIsNone: bool,
-) => unit
+let applyBatchProgress: (t, ~batch: Batch.t) => unit
+let markReady: t => unit
 let rollback: (
   t,
   ~newProgressBlockNumber: option<int>,
