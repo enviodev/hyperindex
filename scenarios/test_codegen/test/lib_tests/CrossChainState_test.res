@@ -10,7 +10,7 @@ let mockEvent = (~blockNumber): Internal.item =>
     blockHash: `0x${blockNumber->Int.toString}`,
     eventConfig: Utils.magic("Mock eventConfig in CrossChainState test"),
     logIndex: 0,
-    event: Utils.magic("Mock event in CrossChainState test"),
+    payload: Utils.magic("Mock event in CrossChainState test"),
   })
 
 // A chain state with no partitions, so bufferBlockNumber is latestOnBlockBlockNumber
