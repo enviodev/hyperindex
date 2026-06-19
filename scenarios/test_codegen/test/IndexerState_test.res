@@ -64,8 +64,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           eventConfig: ("Mock eventConfig in IndexerState test")->(
             Utils.magic: string => Internal.eventConfig
           ),
-          event: (`mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`)->(
-            Utils.magic: string => Internal.event
+          payload: (`mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`)->(
+            Utils.magic: string => Internal.eventPayload
           ),
         })
         allEvents->Array.push(batchItem)->ignore
@@ -168,7 +168,7 @@ describe("IndexerState", () => {
           eventConfig: ("Mock eventConfig in IndexerState test")->(
             Utils.magic: string => Internal.eventConfig
           ),
-          event: (`mock initial event`)->(Utils.magic: string => Internal.event),
+          payload: (`mock initial event`)->(Utils.magic: string => Internal.eventPayload),
         })
 
         let numberOfMockEventsReadFromQueues = ref(0)
@@ -265,7 +265,7 @@ describe("IndexerState", () => {
                   blockHash: `0x${blockNumber->Int.toString}`,
                   logIndex: 0,
                   eventConfig: ("Mock eventConfig")->(Utils.magic: string => Internal.eventConfig),
-                  event: ("Mock event")->(Utils.magic: string => Internal.event),
+                  payload: ("Mock event")->(Utils.magic: string => Internal.eventPayload),
                 }),
               ],
             )
@@ -344,7 +344,7 @@ describe("IndexerState", () => {
             blockHash: "0x15",
             logIndex: 0,
             eventConfig: ("Mock eventConfig")->(Utils.magic: string => Internal.eventConfig),
-            event: ("Mock event")->(Utils.magic: string => Internal.event),
+            payload: ("Mock event")->(Utils.magic: string => Internal.eventPayload),
           }),
         ],
         ~knownHeight=concurrentFetchState.knownHeight,

@@ -4,7 +4,7 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.time
   }`)
 
-let ecosystem: Ecosystem.t = {
+let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
   blockFields: ["slot"],
   transactionFields: [],
@@ -19,6 +19,23 @@ let ecosystem: Ecosystem.t = {
   // SVM has no event handlers, so there is no `onEvent` `where` value to
   // parse. The schema is a no-op object that always surfaces `None`.
   onEventBlockFilterSchema: S.object(_ => None),
+  logger,
+  toEvent: eventItem => eventItem.payload->Internal.payloadToEvent,
+  toEventLogger: eventItem => {
+    let instruction =
+      eventItem.payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
+    Logging.createChildFrom(
+      ~logger,
+      ~params={
+        "program": eventItem.eventConfig.contractName,
+        "instruction": eventItem.eventConfig.name,
+        "chainId": eventItem.chain->ChainMap.Chain.toChainId,
+        "slot": eventItem.blockNumber,
+        "programId": instruction.programId,
+      },
+    )
+  },
+  toRawEvent: _ => JsError.throwWithMessage("Raw events are not supported for SVM"),
 }
 
 module GetFinalizedSlot = {

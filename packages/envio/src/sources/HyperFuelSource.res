@@ -397,7 +397,7 @@ let make = ({chain, endpointUrl}: options): t => {
         blockNumber: block.height,
         blockHash: block.id,
         logIndex: receiptIndex,
-        event: {
+        payload: {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,
           chainId,
@@ -408,7 +408,7 @@ let make = ({chain, endpointUrl}: options): t => {
           block: block->Obj.magic,
           srcAddress: contractAddress,
           logIndex: receiptIndex,
-        }->Internal.fromGenericEvent,
+        }->Fuel.fromPayload,
       })
     })
 

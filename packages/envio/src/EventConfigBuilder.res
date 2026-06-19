@@ -312,7 +312,7 @@ let resolveFieldSelection = (
 // ============== Client-side address filter ==============
 
 let compileAddressFilter: string => (
-  Internal.event,
+  Internal.eventPayload,
   int,
   dict<Internal.indexingContract>,
 ) => bool = %raw(`function (body) {
@@ -339,7 +339,7 @@ let buildAddressFilterBody = (groups: array<array<string>>): option<string> => {
 }
 
 let buildAddressFilter = (groups: array<array<string>>): option<
-  (Internal.event, int, dict<Internal.indexingContract>) => bool,
+  (Internal.eventPayload, int, dict<Internal.indexingContract>) => bool,
 > => buildAddressFilterBody(groups)->Option.map(compileAddressFilter)
 
 // ============== Build complete EVM event config ==============

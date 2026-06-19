@@ -5,6 +5,7 @@ let loadById = (
   ~indexerState,
   ~shouldGroup,
   ~item,
+  ~ecosystem,
   ~entityId,
 ) => {
   let key = `${entityConfig.name}.get`
@@ -28,7 +29,10 @@ let loadById = (
       )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
     | Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
+      reason->ErrorHandling.mkLogAndRaise(
+        ~logger=Ecosystem.getItemLogger(item, ~ecosystem),
+        ~msg=message,
+      )
     }
 
     let entitiesMap = Dict.make()
@@ -248,6 +252,7 @@ let loadEffect = (
   ~indexerState,
   ~shouldGroup,
   ~item,
+  ~ecosystem,
 ) => {
   let effectName = effect.name
   let key = `${effectName}.effect`
@@ -279,9 +284,7 @@ let loadEffect = (
         )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
       } catch {
       | exn =>
-        item
-        ->Logging.getItemLogger
-        ->Logging.childWarn({
+        Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childWarn({
           "msg": `Failed to load cache effect cache. The indexer will continue working, but the effect will not be able to use the cache.`,
           "err": exn->Utils.prettifyExn,
           "effect": effectName,
@@ -298,9 +301,7 @@ let loadEffect = (
         | S.Raised(error) =>
           inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
           Prometheus.EffectCacheInvalidationsCount.increment(~effectName)
-          item
-          ->Logging.getItemLogger
-          ->Logging.childTrace({
+          Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childTrace({
             "msg": "Invalidated effect cache",
             "input": dbEntity.id,
             "effect": effectName,
@@ -357,6 +358,7 @@ let loadByFilter = (
   ~indexerState,
   ~shouldGroup,
   ~item,
+  ~ecosystem,
   ~filter: EntityFilter.t,
 ) => {
   let key = filter->EntityFilter.toOperationKey(~entityName=entityConfig.name)
@@ -396,7 +398,7 @@ let loadByFilter = (
       | Persistence.StorageError({message, reason}) =>
         reason->ErrorHandling.mkLogAndRaise(
           ~logger=Logging.createChildFrom(
-            ~logger=item->Logging.getItemLogger,
+            ~logger=Ecosystem.getItemLogger(item, ~ecosystem),
             // The executed query might be merged from multiple getWhere
             // calls, so report it as the operation users write with the
             // values bound to its placeholders, instead of an internal

@@ -269,12 +269,15 @@ type genericEvent<'params, 'block, 'transaction> = {
 // (blockNumber, timestamp, blockHash) live on the item instead.
 type event
 
-external fromGenericEvent: genericEvent<'a, 'b, 'c> => event = "%identity"
+// Opaque payload an item carries. A source builds an ecosystem-specific
+// concrete payload (see `Evm.payload` / `Fuel.payload`) and erases it to this
+// type; consumers never read it directly — the ecosystem converts it back to
+// its own payload to produce the user-facing `event`, a logger, or a raw
+// event. The concrete payload types deliberately live in the ecosystem
+// modules, not here, and are distinct per ecosystem.
+type eventPayload
 
-// Escape hatch for serialization boundaries (raw events, logging)
-// which genuinely need the runtime shape.
-external toGenericEvent: event => genericEvent<eventParams, eventBlock, eventTransaction> =
-  "%identity"
+external payloadToEvent: eventPayload => event = "%identity"
 
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
@@ -373,7 +376,7 @@ type eventConfig = private {
   // number, drops an event whose param-address isn't registered at/before that
   // block — the param-level analogue of EventRouter's srcAddress
   // `effectiveStartBlock` check. Absent otherwise.
-  clientAddressFilter?: (event, int, dict<indexingContract>) => bool,
+  clientAddressFilter?: (eventPayload, int, dict<indexingContract>) => bool,
   handler: option<handler>,
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
@@ -499,7 +502,25 @@ type eventItem = private {
   blockNumber: int,
   blockHash: string,
   logIndex: int,
-  event: event,
+  payload: eventPayload,
+}
+
+// Row shape for the `raw_events` table. Defined here (rather than in
+// `InternalTable`) so the ecosystem's `toRawEvent` can reference it without
+// pulling in `InternalTable`'s dependency on `Config`.
+type rawEvent = {
+  chain_id: int,
+  event_id: bigint,
+  event_name: string,
+  contract_name: string,
+  block_number: int,
+  log_index: int,
+  src_address: Address.t,
+  block_hash: string,
+  block_timestamp: int,
+  block_fields: JSON.t,
+  transaction_fields: JSON.t,
+  params: JSON.t,
 }
 
 // Opaque type to support both EVM and other ecosystems
@@ -533,7 +554,7 @@ type item =
       blockNumber: int,
       blockHash: string,
       logIndex: int,
-      event: event,
+      payload: eventPayload,
     })
   | @as(1) Block({onBlockConfig: onBlockConfig, blockNumber: int, logIndex: int})
 

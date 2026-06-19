@@ -56,7 +56,7 @@ let runEventHandlerOrThrow = async (
     await handler(
       (
         {
-          event: eventItem.event,
+          event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
           context: UserContext.getHandlerContext(contextParams),
         }: Internal.handlerArgs
       ),
@@ -161,7 +161,7 @@ let preloadBatchOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
-      | Event({eventConfig: {handler, contractName, name: eventName}, event}) =>
+      | Event({eventConfig: {handler, contractName, name: eventName}}) =>
         switch handler {
         | None => ()
         | Some(handler) =>
@@ -172,7 +172,7 @@ let preloadBatchOrThrow = async (
             )
             promises->Array.push(
               handler({
-                event,
+                event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
                 context: UserContext.getHandlerContext({
                   item,
                   indexerState,
@@ -340,7 +340,10 @@ let processEventBatch = async (
     reason->ErrorHandling.make(~msg=message, ~logger)->Error
   | ProcessingError({message, exn, item}) =>
     exn
-    ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
+    ->ErrorHandling.make(
+      ~msg=message,
+      ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+    )
     ->Error
   | exn => exn->ErrorHandling.make(~msg="Failed processing batch", ~logger)->Error
   }

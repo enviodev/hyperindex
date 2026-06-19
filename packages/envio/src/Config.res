@@ -546,10 +546,19 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     )
   }
 
+  let logger = Logging.getLogger()
   let ecosystem = switch ecosystemName {
-  | Ecosystem.Evm => Evm.ecosystem
-  | Ecosystem.Fuel => Fuel.ecosystem
-  | Ecosystem.Svm => Svm.ecosystem
+  | Ecosystem.Evm => Evm.make(~logger)
+  | Ecosystem.Fuel => Fuel.make(~logger)
+  | Ecosystem.Svm => Svm.make(~logger)
+  }
+
+  // SVM has no raw-events representation (`Svm.toRawEvent` throws), so reject
+  // it at config time instead of failing mid-indexing.
+  if ecosystemName === Ecosystem.Svm && publicConfig["rawEvents"]->Option.getOr(false) {
+    JsError.throwWithMessage(
+      "Invalid indexer config: rawEvents is not supported for the SVM ecosystem",
+    )
   }
 
   // Extract EVM-specific options with defaults
