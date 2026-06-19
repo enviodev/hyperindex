@@ -283,7 +283,7 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
 
       // Unique within (blockNumber) since logIndex auto-increments; simulate
       // items don't share transactions.
-      let transactionId = logIndex->Int.toString
+      let transactionIndex = logIndex
 
       let payload = switch config.ecosystem.name {
       | Evm =>
@@ -322,7 +322,7 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
           blockNumber,
           blockHash,
           logIndex,
-          transactionId,
+          transactionIndex,
           payload,
         }),
       )

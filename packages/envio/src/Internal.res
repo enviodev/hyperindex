@@ -505,9 +505,9 @@ type eventItem = private {
   blockNumber: int,
   blockHash: string,
   logIndex: int,
-  // Within-block transaction key into the per-chain transaction store
-  // (stringified transactionIndex for EVM/SVM, tx id for Fuel).
-  transactionId: string,
+  // Within-block transaction index — the key into the per-chain transaction
+  // store. Unused (0) for ecosystems that carry the transaction inline (Fuel).
+  transactionIndex: int,
   payload: eventPayload,
 }
 
@@ -560,7 +560,7 @@ type item =
       blockNumber: int,
       blockHash: string,
       logIndex: int,
-      transactionId: string,
+      transactionIndex: int,
       payload: eventPayload,
     })
   | @as(1) Block({onBlockConfig: onBlockConfig, blockNumber: int, logIndex: int})

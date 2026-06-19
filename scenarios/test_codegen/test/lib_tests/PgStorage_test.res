@@ -1083,7 +1083,7 @@ describe("ecosystem.toRawEvent", () => {
           blockNumber,
           blockHash: "0xblockhash",
           logIndex,
-          transactionId: "0",
+          transactionIndex: 0,
           payload: event,
         })->Internal.castUnsafeEventItem
 

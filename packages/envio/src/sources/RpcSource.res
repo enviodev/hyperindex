@@ -1202,7 +1202,7 @@ let make = (
                   blockHash: block->getBlockHash,
                   chain,
                   logIndex: log.logIndex,
-                  transactionId: log.transactionIndex->Int.toString,
+                  transactionIndex: log.transactionIndex,
                   payload: {
                     contractName: eventConfig.contractName,
                     eventName: eventConfig.name,

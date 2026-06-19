@@ -851,7 +851,7 @@ module Source = {
                           blockNumber: item.blockNumber,
                           blockHash: `0x${item.blockNumber->Int.toString}`,
                           logIndex: item.logIndex,
-                          transactionId: "0",
+                          transactionIndex: 0,
                           payload: {
                             contractName: "MockContract",
                             eventName: "MockEvent",

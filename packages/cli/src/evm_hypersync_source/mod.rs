@@ -329,7 +329,7 @@ fn convert_event_items(
         if let Some(tx) = event.transaction {
             store.insert_evm_raw(
                 block_number as u64,
-                transaction_index.to_string(),
+                transaction_index as u32,
                 tx,
                 should_checksum,
             );

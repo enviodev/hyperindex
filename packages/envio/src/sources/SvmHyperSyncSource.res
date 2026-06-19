@@ -511,7 +511,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
             blockHash: "",
             logIndex: synthLogIndex(instr),
             // SVM keeps the transaction on the payload for now; the store is unused.
-            transactionId: instr.transactionIndex->Int.toString,
+            transactionIndex: instr.transactionIndex,
             payload: payload->(Utils.magic: Envio.svmInstruction => Internal.eventPayload),
           }),
         )

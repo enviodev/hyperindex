@@ -179,7 +179,7 @@ module Make = () => {
         blockNumber,
         blockHash,
         logIndex,
-        transactionId: transactionIndex->Int.toString,
+        transactionIndex,
       })
       {item: log, srcAddress, transactionHash}
     })

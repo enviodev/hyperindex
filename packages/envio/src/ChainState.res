@@ -14,8 +14,8 @@ type t = {
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
-  // transactionId). Fetch responses merge their page in; entries are pruned as
-  // the chain progresses and dropped above the target on rollback.
+  // transactionIndex). Fetch responses merge their page in; entries are pruned
+  // as the chain progresses and dropped above the target on rollback.
   transactionStore: TransactionStore.t,
   // Bitmask of the transaction fields the store materialises at batch prep.
   transactionFieldMask: float,

@@ -1,8 +1,9 @@
 // Binding to the Rust `TransactionStore` napi class. Transactions are kept in
 // Rust as raw structs (their large fields never enter JS until read) keyed by
-// (blockNumber, transactionId). One store lives per chain on `ChainState`; each
-// fetch response contributes a page that is merged in. At batch preparation the
-// selected fields are materialised in bulk, asynchronously, off the JS thread.
+// (blockNumber, transactionIndex). One store lives per chain on `ChainState`;
+// each fetch response contributes a page that is merged in. At batch
+// preparation the selected fields are materialised in bulk, off the JS thread,
+// in columnar form and zipped into plain JS objects on the main thread.
 type t
 
 @send external classNew: Core.transactionStoreCtor => t = "new"
@@ -17,7 +18,7 @@ let make = (): t => Core.getAddon().transactionStore->classNew
 external materialize: (
   t,
   ~blockNumbers: array<int>,
-  ~transactionIds: array<string>,
+  ~transactionIndices: array<int>,
   ~mask: float,
 ) => promise<array<Internal.eventTransaction>> = "materialize"
 
@@ -29,12 +30,12 @@ external materialize: (
 
 // Materialise the mask-selected fields for the store-backed items and write the
 // resulting transaction onto each item's payload. Items that already carry an
-// inline transaction (RPC/simulate/Fuel/SVM) are skipped, so a zero mask with
-// no store-backed items costs nothing. Deduped per (blockNumber, transactionId).
+// inline transaction (RPC/simulate/Fuel) are skipped, so a zero mask with no
+// store-backed items costs nothing. Deduped per (blockNumber, transactionIndex).
 let materializeItems = async (store: t, ~items: array<Internal.item>, ~mask: float) => {
   let keys = []
   let blockNumbers = []
-  let transactionIds = []
+  let transactionIndices = []
   let payloadsByKey = Dict.make()
 
   items->Array.forEach(item =>
@@ -44,13 +45,14 @@ let materializeItems = async (store: t, ~items: array<Internal.item>, ~mask: flo
       switch eventItem.payload->Internal.getPayloadTransaction->Nullable.toOption {
       | Some(_) => ()
       | None =>
-        let key = eventItem.blockNumber->Int.toString ++ ":" ++ eventItem.transactionId
+        let key =
+          eventItem.blockNumber->Int.toString ++ ":" ++ eventItem.transactionIndex->Int.toString
         switch payloadsByKey->Utils.Dict.dangerouslyGetNonOption(key) {
         | Some(payloads) => payloads->Array.push(eventItem.payload)
         | None =>
           keys->Array.push(key)
           blockNumbers->Array.push(eventItem.blockNumber)
-          transactionIds->Array.push(eventItem.transactionId)
+          transactionIndices->Array.push(eventItem.transactionIndex)
           payloadsByKey->Dict.set(key, [eventItem.payload])
         }
       }
@@ -59,7 +61,7 @@ let materializeItems = async (store: t, ~items: array<Internal.item>, ~mask: flo
   )
 
   if keys->Utils.Array.notEmpty {
-    let txs = await store->materialize(~blockNumbers, ~transactionIds, ~mask)
+    let txs = await store->materialize(~blockNumbers, ~transactionIndices, ~mask)
     keys->Array.forEachWithIndex((key, i) => {
       let tx = txs->Array.getUnsafe(i)
       payloadsByKey

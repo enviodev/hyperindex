@@ -414,8 +414,9 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         blockNumber: block.height,
         blockHash: block.id,
         logIndex: receiptIndex,
-        // Fuel keeps the transaction on the payload for now; the store is unused.
-        transactionId: item.transactionId,
+        // Fuel carries the transaction inline on the payload; the store key is
+        // unused (Fuel identifies transactions by hash, kept on the payload).
+        transactionIndex: 0,
         payload: {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,

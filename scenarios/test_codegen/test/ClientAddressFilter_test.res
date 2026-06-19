@@ -186,7 +186,7 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
       blockHash: `0x${blockNumber->Int.toString}`,
       eventConfig: (eventConfig :> Internal.eventConfig),
       logIndex: 0,
-      transactionId: "0",
+      transactionIndex: 0,
       payload: {"params": {"to": to}}->(
         Utils.magic: {"params": {"to": Address.t}} => Internal.eventPayload
       ),
