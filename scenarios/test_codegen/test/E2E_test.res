@@ -1237,7 +1237,6 @@ describe("E2E tests", () => {
       JsError.throwWithMessage("Expected at least 3 chunks")
     }
     let chunk1 = calls->Array.getUnsafe(0)
-    let chunk2 = calls->Array.getUnsafe(1)
     let chunk3 = calls->Array.getUnsafe(2)
 
     // Step 1: Resolve the later chunk3 FIRST (out of order) with item at block 1500

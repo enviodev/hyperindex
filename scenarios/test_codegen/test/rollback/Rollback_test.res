@@ -2393,13 +2393,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getBatchWritePromise()
 
     let payloads = sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)
+    let gapFills = payloads->Array.filter(p => p["fromBlock"] == 116 && p["toBlock"] == Some(118))
     t.expect(
-      (
-        payloads->Array.some(p => p["fromBlock"] == 116 && p["toBlock"] == Some(118)),
-        payloads->Array.every(p => p["p"] == "0"),
-      ),
-      ~message="Should create a gap-fill query for the partial chunk range in the same partition, with no duplicate partition",
-    ).toEqual((true, true))
+      (gapFills, payloads->Array.every(p => p["p"] == "0")),
+      ~message="Should create exactly one gap-fill query for the partial chunk range in the same partition, with no duplicate partition",
+    ).toEqual(([{"fromBlock": 116, "toBlock": Some(118), "retry": 0, "p": "0"}], true))
 
     // 8. Trigger rollback via reorg detection to block 116
     sourceMock.resolveGetItemsOrThrow(
@@ -2521,14 +2519,19 @@ This might be wrong after we start exposing a block hash for progress block.`,
       continuationCall.resolve([], ~latestFetchedBlockNumber=118)
       await Utils.delay(0)
 
-      // Trigger rollback: prevRangeLastBlock at 118 with reorged hash
-      sourceMock.resolveGetItemsOrThrow(
+      // Trigger rollback on a tail query that starts after 118, so the reorged
+      // prevRangeLastBlock=118 is that query's real parent block rather than
+      // being paired with an unrelated earlier pending call via queue order.
+      let postReorgCall =
+        sourceMock.getItemsOrThrowCalls
+        ->Array.find(call => call.payload["fromBlock"] > 118)
+        ->Option.getOrThrow
+      postReorgCall.resolve(
         [],
         ~prevRangeLastBlock={
           blockNumber: 118,
           blockHash: "0x118-reorged",
         },
-        ~resolveAt=#first,
       )
       await Utils.delay(0)
       await Utils.delay(0)
