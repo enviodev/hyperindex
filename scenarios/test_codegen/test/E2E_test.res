@@ -111,7 +111,7 @@ describe("E2E tests", () => {
     ).toEqual([{value: "1", labels: Dict.make()}])
   })
 
-  Async.itWithOptions("Prom metrics are set independently per chain", {retry: 3}, async t => {
+  Async.itWithOptions("Prom readiness metrics are gated on the whole indexer", {retry: 3}, async t => {
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -144,13 +144,13 @@ describe("E2E tests", () => {
     sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
     await indexerMock.getBatchWritePromise()
 
-    // Chain 1337 should be ready, chain 100 should not
+    // No chain is marked ready until every chain catches up
     t.expect(
       await indexerMock.metric("envio_progress_ready"),
-      ~message="Only chain 1337 should be ready",
+      ~message="No chain is ready while chain 100 is still syncing",
     ).toEqual([
       {value: "0", labels: Dict.fromArray([("chainId", "100")])},
-      {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
+      {value: "0", labels: Dict.fromArray([("chainId", "1337")])},
     ])
     t.expect(
       await indexerMock.metric("hyperindex_synced_to_head"),
@@ -1615,13 +1615,13 @@ describe("E2E tests", () => {
       sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexerMock.getBatchWritePromise()
 
-      // Chain 1337 should be ready, chain 100 should not
+      // No chain is marked ready until every chain catches up
       t.expect(
         await indexerMock.metric("envio_progress_ready"),
-        ~message="Only chain 1337 should be ready",
+        ~message="No chain is ready while chain 100 is still syncing",
       ).toEqual([
         {value: "0", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "0", labels: Dict.fromArray([("chainId", "1337")])},
       ])
       t.expect(
         await indexerMock.metric("hyperindex_synced_to_head"),
