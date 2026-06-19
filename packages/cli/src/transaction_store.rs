@@ -325,7 +325,7 @@ impl Default for TransactionStore {
 
 #[napi]
 impl TransactionStore {
-    #[napi(constructor)]
+    #[napi(factory)]
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(BTreeMap::new()),
