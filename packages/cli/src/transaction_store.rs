@@ -240,6 +240,140 @@ fn evm_get_field(
     })
 }
 
+/// Decode the fields selected by `mask` (bit `code` ⇔ `EvmTxField`) into the
+/// public `Transaction` shape. Unselected fields stay `None`, so large fields
+/// like `input` are only decoded when their bit is set.
+fn decode_selected_evm(
+    tx: &simple_types::Transaction,
+    mask: u64,
+    checksum: bool,
+) -> Result<EvmReadyTx> {
+    let has = |f: EvmTxField| mask & (1u64 << (f as u32)) != 0;
+    use EvmTxField::*;
+    let mut out = EvmReadyTx::default();
+    if has(TransactionIndex) {
+        out.transaction_index = tx
+            .transaction_index
+            .map(|n| i64::try_from(u64::from(n)))
+            .transpose()?;
+    }
+    if has(Hash) {
+        out.hash = map_hex_string(&tx.hash);
+    }
+    if has(From) {
+        out.from = map_address_string(&tx.from, checksum);
+    }
+    if has(To) {
+        out.to = map_address_string(&tx.to, checksum);
+    }
+    if has(Gas) {
+        out.gas = map_bigint(&tx.gas);
+    }
+    if has(GasPrice) {
+        out.gas_price = map_bigint(&tx.gas_price);
+    }
+    if has(MaxPriorityFeePerGas) {
+        out.max_priority_fee_per_gas = map_bigint(&tx.max_priority_fee_per_gas);
+    }
+    if has(MaxFeePerGas) {
+        out.max_fee_per_gas = map_bigint(&tx.max_fee_per_gas);
+    }
+    if has(CumulativeGasUsed) {
+        out.cumulative_gas_used = map_bigint(&tx.cumulative_gas_used);
+    }
+    if has(EffectiveGasPrice) {
+        out.effective_gas_price = map_bigint(&tx.effective_gas_price);
+    }
+    if has(GasUsed) {
+        out.gas_used = map_bigint(&tx.gas_used);
+    }
+    if has(Input) {
+        out.input = map_hex_string(&tx.input);
+    }
+    if has(Nonce) {
+        out.nonce = map_bigint(&tx.nonce);
+    }
+    if has(Value) {
+        out.value = map_bigint(&tx.value);
+    }
+    if has(V) {
+        out.v = map_hex_string(&tx.v);
+    }
+    if has(R) {
+        out.r = map_hex_string(&tx.r);
+    }
+    if has(S) {
+        out.s = map_hex_string(&tx.s);
+    }
+    if has(ContractAddress) {
+        out.contract_address = map_address_string(&tx.contract_address, checksum);
+    }
+    if has(LogsBloom) {
+        out.logs_bloom = map_hex_string(&tx.logs_bloom);
+    }
+    if has(Root) {
+        out.root = map_hex_string(&tx.root);
+    }
+    if has(Status) {
+        out.status = tx.status.map(|v| v.to_u8() as i64);
+    }
+    if has(YParity) {
+        out.y_parity = map_hex_string(&tx.y_parity);
+    }
+    if has(ChainId) {
+        out.chain_id = tx
+            .chain_id
+            .as_ref()
+            .map(|n| i64::try_from(ruint::aliases::U256::from_be_slice(n)))
+            .transpose()?;
+    }
+    if has(MaxFeePerBlobGas) {
+        out.max_fee_per_blob_gas = map_bigint(&tx.max_fee_per_blob_gas);
+    }
+    if has(BlobVersionedHashes) {
+        out.blob_versioned_hashes = tx
+            .blob_versioned_hashes
+            .as_ref()
+            .map(|arr| arr.iter().map(|h| h.encode_hex()).collect());
+    }
+    if has(Type) {
+        out.type_ = tx.type_.map(|v| u8::from(v) as i64);
+    }
+    if has(L1Fee) {
+        out.l1_fee = map_bigint(&tx.l1_fee);
+    }
+    if has(L1GasPrice) {
+        out.l1_gas_price = map_bigint(&tx.l1_gas_price);
+    }
+    if has(L1GasUsed) {
+        out.l1_gas_used = map_bigint(&tx.l1_gas_used);
+    }
+    if has(L1FeeScalar) {
+        out.l1_fee_scalar = tx.l1_fee_scalar;
+    }
+    if has(GasUsedForL1) {
+        out.gas_used_for_l1 = map_bigint(&tx.gas_used_for_l1);
+    }
+    if has(AccessList) {
+        out.access_list = tx
+            .access_list
+            .as_ref()
+            .map(|arr| arr.iter().map(AccessListItem::from).collect());
+    }
+    if has(AuthorizationList) {
+        out.authorization_list = tx
+            .authorization_list
+            .as_ref()
+            .map(|al| {
+                al.iter()
+                    .map(AuthorizationItem::try_from)
+                    .collect::<Result<_>>()
+            })
+            .transpose()?;
+    }
+    Ok(out)
+}
+
 /// One stored transaction, kept in its ecosystem's compact form. More variants
 /// (SVM raw, pre-built JS for RPC/Fuel/Simulate) are added as those sources are
 /// wired in.
@@ -380,6 +514,45 @@ impl TransactionStore {
             .insert(transaction_id, StoredTx::EvmReady(Box::new(tx)));
     }
 
+    /// Bulk-materialise the selected fields (one bit per `EvmTxField` code in
+    /// `mask`) of the given transactions. Async so the decode runs off the JS
+    /// thread; the brief lock only collects `Arc`s, the decode happens unlocked.
+    /// Missing keys yield an empty transaction. Result is aligned with the input.
+    #[napi]
+    pub async fn materialize(
+        &self,
+        block_numbers: Vec<i64>,
+        transaction_ids: Vec<String>,
+        mask: BigInt,
+    ) -> napi::Result<Vec<EvmReadyTx>> {
+        let mask: u64 = mask.words.first().copied().unwrap_or(0);
+
+        let collected: Vec<Option<(Arc<simple_types::Transaction>, bool)>> = {
+            let inner = self.inner.lock().unwrap();
+            block_numbers
+                .iter()
+                .zip(transaction_ids.iter())
+                .map(|(block, id)| {
+                    let block = u64::try_from(*block).ok()?;
+                    match inner.get(&block).and_then(|txs| txs.get(id)) {
+                        Some(StoredTx::EvmRaw { tx, checksum }) => Some((tx.clone(), *checksum)),
+                        _ => None,
+                    }
+                })
+                .collect()
+        };
+
+        let mut out = Vec::with_capacity(collected.len());
+        for entry in collected {
+            out.push(match entry {
+                Some((tx, checksum)) => decode_selected_evm(&tx, mask, checksum)
+                    .map_err(crate::evm_hypersync_source::map_err)?,
+                None => EvmReadyTx::default(),
+            });
+        }
+        Ok(out)
+    }
+
     /// Drop transactions for blocks at or below `up_to_block` (already processed).
     #[napi]
     pub fn prune(&self, up_to_block: i64) {
@@ -428,6 +601,17 @@ mod tests {
         tx.transaction_index = Some(3u64.into());
         tx.input = Some(hypersync_client::format::Data::from(vec![0xab, 0xcd]));
         tx
+    }
+
+    #[test]
+    fn decode_selected_only_materialises_masked_fields() {
+        // Select only `input` via the bitmask.
+        let mask = 1u64 << (EvmTxField::Input as u32);
+        let out = decode_selected_evm(&raw_tx(), mask, false).unwrap();
+        assert_eq!(out.input.as_deref(), Some("0xabcd"));
+        // transactionIndex is present on the raw tx but not selected → stays None.
+        assert!(out.transaction_index.is_none());
+        assert!(out.gas.is_none());
     }
 
     #[test]
