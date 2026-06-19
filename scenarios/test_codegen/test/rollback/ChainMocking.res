@@ -39,6 +39,8 @@ module Make = () => {
     item: Internal.item,
     srcAddress: Address.t,
     transactionHash: string,
+    transaction: Internal.eventTransaction,
+    transactionId: string,
   }
 
   type makeEvent = (~blockHash: string) => Internal.eventPayload
@@ -49,6 +51,8 @@ module Make = () => {
     logIndex: int,
     srcAddress: Address.t,
     eventConfig: Internal.evmEventConfig,
+    transaction: Internal.eventTransaction,
+    transactionIndex: int,
   }
 
   type composedEventConstructor = (
@@ -85,6 +89,7 @@ module Make = () => {
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
 
+    let transaction = makeTransaction(~transactionIndex, ~transactionHash)
     let makeEvent: makeEvent = (~blockHash) => {
       let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
       {
@@ -94,7 +99,6 @@ module Make = () => {
         srcAddress,
         chainId,
         block,
-        transaction: makeTransaction(~transactionIndex, ~transactionHash),
         logIndex,
       }->Evm.fromPayload
     }
@@ -105,6 +109,8 @@ module Make = () => {
       logIndex,
       srcAddress,
       eventConfig,
+      transaction,
+      transactionIndex,
     }
   }
 
@@ -166,7 +172,10 @@ module Make = () => {
       srcAddress,
       transactionHash,
       eventConfig,
+      transaction,
+      transactionIndex,
     }): log => {
+      let transactionId = transactionIndex->Int.toString
       let log = Internal.Event({
         eventConfig: (eventConfig :> Internal.eventConfig),
         payload: makeEvent(~blockHash),
@@ -175,8 +184,9 @@ module Make = () => {
         blockNumber,
         blockHash,
         logIndex,
+        transactionId,
       })
-      {item: log, srcAddress, transactionHash}
+      {item: log, srcAddress, transactionHash, transaction, transactionId}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -230,7 +240,7 @@ module Make = () => {
           },
         )
         if isLogInConfig {
-          Some(l.item)
+          Some(l)
         } else {
           None
         }
@@ -267,12 +277,22 @@ module Make = () => {
       }
     })
 
-    let parsedQueueItems = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
+    let pageLogs = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
+    let transactionStore = TransactionStore.make()
+    pageLogs->Array.forEach(l =>
+      transactionStore->TransactionStore.pushEvm(
+        ~blockNumber=l.item->Internal.getItemBlockNumber,
+        ~transactionId=l.transactionId,
+        ~tx=l.transaction,
+      )
+    )
+    let parsedQueueItems = pageLogs->Array.map(l => l.item)
 
     {
       knownHeight,
       blockHashes,
       parsedQueueItems,
+      transactionStore,
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,

@@ -17,6 +17,10 @@ external toPayload: Internal.eventPayload => payload = "%identity"
 // `transaction` getter attached.
 @set
 external setEventTransaction: (Internal.event, Internal.eventTransaction) => unit = "transaction"
+// True when the payload already carries an inline transaction (test mocks build
+// payloads this way); production EVM sources don't, so the getter is attached.
+let hasInlineTransaction: Internal.event => bool = %raw(`e => e.transaction !== undefined && e.transaction !== null`)
+@get external inlineTransaction: Internal.event => Internal.eventTransaction = "transaction"
 // The transaction store is stamped on the item by `ChainState` so `toRawEvent`
 // (no store in its signature) can resolve transaction fields.
 @get external itemTransactionStore: Internal.eventItem => TransactionStore.t = "_txStore"
@@ -120,14 +124,16 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   logger,
   toEvent: (eventItem, ~transactionStore) => {
     let event = eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event)
-    event->setEventTransaction(
-      TransactionView.make(
-        transactionFields,
-        transactionStore,
-        eventItem.blockNumber,
-        eventItem.transactionId,
-      ),
-    )
+    if !(event->hasInlineTransaction) {
+      event->setEventTransaction(
+        TransactionView.make(
+          transactionFields,
+          transactionStore,
+          eventItem.blockNumber,
+          eventItem.transactionId,
+        ),
+      )
+    }
     event
   },
   toEventLogger: eventItem =>
@@ -144,12 +150,17 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     ),
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
-    let transaction = TransactionView.toDict(
-      transactionFields,
-      eventItem->itemTransactionStore,
-      eventItem.blockNumber,
-      eventItem.transactionId,
-    )
+    let event = eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event)
+    let transaction = if event->hasInlineTransaction {
+      event->inlineTransaction
+    } else {
+      TransactionView.toDict(
+        transactionFields,
+        eventItem->itemTransactionStore,
+        eventItem.blockNumber,
+        eventItem.transactionId,
+      )->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+    }
     eventItem->RawEvent.make(
       ~block=payload.block,
       ~transaction,
