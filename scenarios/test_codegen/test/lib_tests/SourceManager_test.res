@@ -424,7 +424,7 @@ describe("SourceManager fetchNext", () => {
       buffer,
       normalSelection,
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
-      targetBufferSize,
+      maxOnBlockBufferSize: targetBufferSize,
       chainId: 0,
       indexingAddresses,
       contractConfigs: Dict.make(),

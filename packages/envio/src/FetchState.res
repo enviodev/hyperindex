@@ -499,7 +499,7 @@ type t = {
   // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
   // size). Fetch depth is bounded separately by getNextQuery's bufferLimit, the
   // chain's per-tick slice of the indexer-wide pool.
-  targetBufferSize: int,
+  maxOnBlockBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
   knownHeight: int,
   firstEventBlock: option<int>,
@@ -555,7 +555,7 @@ let numAddresses = fetchState => fetchState.indexingAddresses->Utils.Dict.size
 
 // Appends Block items produced by the onBlock handlers for every block in
 // (fromBlock, maxBlockNumber] into mutItems and returns the new
-// latestOnBlockBlockNumber pointer. targetBufferSize bounds how many items
+// latestOnBlockBlockNumber pointer. maxOnBlockBufferSize bounds how many items
 // are generated at once to prevent OOM.
 let appendOnBlockItems = (
   ~mutItems: array<Internal.item>,
@@ -563,7 +563,7 @@ let appendOnBlockItems = (
   ~indexerStartBlock,
   ~fromBlock,
   ~maxBlockNumber,
-  ~targetBufferSize,
+  ~maxOnBlockBufferSize,
 ) => {
   let newItemsCounter = ref(0)
   let latestOnBlockBlockNumber = ref(fromBlock)
@@ -574,7 +574,7 @@ let appendOnBlockItems = (
   while (
     latestOnBlockBlockNumber.contents < maxBlockNumber &&
       // Additional safeguard to prevent OOM
-      newItemsCounter.contents <= targetBufferSize
+      newItemsCounter.contents <= maxOnBlockBufferSize
   ) {
     let blockNumber = latestOnBlockBlockNumber.contents + 1
     latestOnBlockBlockNumber := blockNumber
@@ -628,7 +628,7 @@ let updateInternal = (
   | [] => knownHeight
   | onBlockConfigs => {
       // Calculate the max block number we are going to create items for
-      // Use targetBufferSize to get the last target item in the buffer
+      // Use maxOnBlockBufferSize to get the last target item in the buffer
       //
       // mutItems is not very reliable, since it might not be sorted,
       // but the chances for it happen are very low and not critical
@@ -637,7 +637,7 @@ let updateInternal = (
       let maxBlockNumber = switch switch mutItemsRef.contents {
       | Some(mutItems) => mutItems
       | None => fetchState.buffer
-      }->Array.get(fetchState.targetBufferSize - 1) {
+      }->Array.get(fetchState.maxOnBlockBufferSize - 1) {
       | Some(item) => item->Internal.getItemBlockNumber
       | None =>
         switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
@@ -658,7 +658,7 @@ let updateInternal = (
         ~indexerStartBlock=fetchState.startBlock,
         ~fromBlock=fetchState.latestOnBlockBlockNumber,
         ~maxBlockNumber,
-        ~targetBufferSize=fetchState.targetBufferSize,
+        ~maxOnBlockBufferSize=fetchState.maxOnBlockBufferSize,
       )
     }
   }
@@ -670,7 +670,7 @@ let updateInternal = (
     normalSelection: fetchState.normalSelection,
     chainId: fetchState.chainId,
     onBlockConfigs: fetchState.onBlockConfigs,
-    targetBufferSize: fetchState.targetBufferSize,
+    maxOnBlockBufferSize: fetchState.maxOnBlockBufferSize,
     optimizedPartitions,
     latestOnBlockBlockNumber,
     indexingAddresses,
@@ -1722,7 +1722,7 @@ let make = (
       ~indexerStartBlock=startBlock,
       ~fromBlock=progressBlockNumber,
       ~maxBlockNumber,
-      ~targetBufferSize=maxOnBlockBufferSize,
+      ~maxOnBlockBufferSize=maxOnBlockBufferSize,
     )
   } else {
     progressBlockNumber
@@ -1739,7 +1739,7 @@ let make = (
     indexingAddresses,
     blockLag,
     onBlockConfigs,
-    targetBufferSize: maxOnBlockBufferSize,
+    maxOnBlockBufferSize: maxOnBlockBufferSize,
     knownHeight,
     buffer,
     firstEventBlock,
