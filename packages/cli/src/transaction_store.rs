@@ -515,17 +515,20 @@ impl TransactionStore {
     }
 
     /// Bulk-materialise the selected fields (one bit per `EvmTxField` code in
-    /// `mask`) of the given transactions. Async so the decode runs off the JS
-    /// thread; the brief lock only collects `Arc`s, the decode happens unlocked.
-    /// Missing keys yield an empty transaction. Result is aligned with the input.
+    /// `mask`) of the given transactions. The mask is a JS number (`f64`): its
+    /// exact-integer range (2^53) dwarfs the field count, and the ReScript side
+    /// builds it arithmetically to dodge 32-bit JS bitwise ops. Async so the
+    /// decode runs off the JS thread; the brief lock only collects `Arc`s, the
+    /// decode happens unlocked. Missing keys yield an empty transaction. Result
+    /// is aligned with the input.
     #[napi]
     pub async fn materialize(
         &self,
         block_numbers: Vec<i64>,
         transaction_ids: Vec<String>,
-        mask: BigInt,
+        mask: f64,
     ) -> napi::Result<Vec<EvmReadyTx>> {
-        let mask: u64 = mask.words.first().copied().unwrap_or(0);
+        let mask = mask as u64;
 
         let collected: Vec<Option<(Arc<simple_types::Transaction>, bool)>> = {
             let inner = self.inner.lock().unwrap();
