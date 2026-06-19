@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use hypersync_client::format::Hex;
 use hypersync_client::simple_types;
+use hypersync_client_solana::simple_types as solana_simple;
 use napi::bindgen_prelude::{BigInt, ToNapiValue};
 use napi::sys;
 use napi_derive::napi;
@@ -23,6 +24,13 @@ use crate::evm_hypersync_source::types::{
     map_address_string, map_bigint, map_hex_string, AccessList as AccessListItem,
     Authorization as AuthorizationItem,
 };
+
+fn bigint_u64(v: u64) -> BigInt {
+    BigInt {
+        sign_bit: false,
+        words: vec![v],
+    }
+}
 
 /// Transaction field codes shared with ReScript by ordinal value. The order is
 /// the contract: it mirrors `Evm.res` `transactionFields`, and the ordinal is
@@ -152,6 +160,73 @@ impl EvmTxField {
     }
 }
 
+/// SVM transaction field codes, mirroring `Svm.res` `transactionFields` by
+/// ordinal (the bit position in the selection mask). Keep the two in sync.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(i32)]
+pub enum SvmTxField {
+    Signatures = 0,
+    FeePayer = 1,
+    Success = 2,
+    Err = 3,
+    Fee = 4,
+    ComputeUnitsConsumed = 5,
+    AccountKeys = 6,
+    RecentBlockhash = 7,
+    Version = 8,
+    TokenBalances = 9,
+}
+
+impl SvmTxField {
+    #[allow(dead_code)]
+    pub const ALL: [SvmTxField; 10] = [
+        SvmTxField::Signatures,
+        SvmTxField::FeePayer,
+        SvmTxField::Success,
+        SvmTxField::Err,
+        SvmTxField::Fee,
+        SvmTxField::ComputeUnitsConsumed,
+        SvmTxField::AccountKeys,
+        SvmTxField::RecentBlockhash,
+        SvmTxField::Version,
+        SvmTxField::TokenBalances,
+    ];
+
+    #[allow(dead_code)]
+    pub fn from_i32(code: i32) -> Option<SvmTxField> {
+        SvmTxField::ALL.get(code as usize).copied()
+    }
+
+    /// JS property name; must match `Svm.res` `transactionFields`.
+    pub fn name(self) -> &'static str {
+        use SvmTxField::*;
+        match self {
+            Signatures => "signatures",
+            FeePayer => "feePayer",
+            Success => "success",
+            Err => "err",
+            Fee => "fee",
+            ComputeUnitsConsumed => "computeUnitsConsumed",
+            AccountKeys => "accountKeys",
+            RecentBlockhash => "recentBlockhash",
+            Version => "version",
+            TokenBalances => "tokenBalances",
+        }
+    }
+}
+
+/// The materialised SVM token balance, matching the public `svmTokenBalance`
+/// shape (napi camel-cases the field names).
+#[napi(object)]
+#[derive(Clone)]
+pub struct SvmTokenBalanceOut {
+    pub account: Option<String>,
+    pub mint: Option<String>,
+    pub owner: Option<String>,
+    pub pre_amount: Option<String>,
+    pub post_amount: Option<String>,
+}
+
 /// One materialised field across all rows: struct-of-arrays, one entry per row,
 /// `None` where the row is missing or the value is absent. The cell type is
 /// concrete per column (no per-cell sum type); every variant's element type is
@@ -160,11 +235,13 @@ impl EvmTxField {
 enum Column {
     I64(Vec<Option<i64>>),
     F64(Vec<Option<f64>>),
+    Bool(Vec<Option<bool>>),
     Big(Vec<Option<BigInt>>),
     Str(Vec<Option<String>>),
     StrVec(Vec<Option<Vec<String>>>),
     AccessList(Vec<Option<Vec<AccessListItem>>>),
     AuthList(Vec<Option<Vec<AuthorizationItem>>>),
+    TokenBalances(Vec<Option<Vec<SvmTokenBalanceOut>>>),
 }
 
 impl Column {
@@ -179,11 +256,13 @@ impl Column {
         match self {
             Column::I64(v) => set_col(env, objs, key, v),
             Column::F64(v) => set_col(env, objs, key, v),
+            Column::Bool(v) => set_col(env, objs, key, v),
             Column::Big(v) => set_col(env, objs, key, v),
             Column::Str(v) => set_col(env, objs, key, v),
             Column::StrVec(v) => set_col(env, objs, key, v),
             Column::AccessList(v) => set_col(env, objs, key, v),
             Column::AuthList(v) => set_col(env, objs, key, v),
+            Column::TokenBalances(v) => set_col(env, objs, key, v),
         }
     }
 }
@@ -355,14 +434,80 @@ fn decode_evm_columns(
     Ok(Columns { len, columns })
 }
 
-/// One stored transaction, kept in its ecosystem's compact raw form. More
-/// variants (e.g. SVM raw) are added as those sources move to the Rust store.
+/// A stored SVM transaction: the raw upstream transaction plus the token
+/// balances joined to it (a separate upstream table, materialised as one field).
+pub struct SvmStored {
+    tx: solana_simple::Transaction,
+    token_balances: Vec<solana_simple::TokenBalance>,
+}
+
+/// Build one SVM column by extracting a field from each record.
+fn fill_svm<T>(
+    records: &[Option<Arc<SvmStored>>],
+    extract: impl Fn(&SvmStored) -> Option<T>,
+) -> Vec<Option<T>> {
+    records
+        .iter()
+        .map(|rec| rec.as_ref().and_then(|r| extract(r)))
+        .collect()
+}
+
+/// Decode the mask-selected fields of the given SVM transactions into columns.
+/// Large fields (e.g. `accountKeys`) are only cloned when their bit is set.
+fn decode_svm_columns(records: &[Option<Arc<SvmStored>>], mask: u64) -> Columns {
+    let len = records.len();
+    let has = |f: SvmTxField| mask & (1u64 << (f as u32)) != 0;
+    let mut columns: Vec<(&'static str, Column)> = Vec::new();
+
+    use SvmTxField::*;
+
+    macro_rules! col {
+        ($field:expr, $variant:ident, $extract:expr) => {{
+            if has($field) {
+                columns.push(($field.name(), Column::$variant(fill_svm(records, $extract))));
+            }
+        }};
+    }
+
+    col!(Signatures, StrVec, |r| Some(r.tx.signatures.clone()));
+    col!(FeePayer, Str, |r| r.tx.fee_payer.clone());
+    col!(Success, Bool, |r| r.tx.success);
+    col!(Err, Str, |r| r.tx.err.clone());
+    col!(Fee, Big, |r| r.tx.fee.map(bigint_u64));
+    col!(ComputeUnitsConsumed, Big, |r| r
+        .tx
+        .compute_units_consumed
+        .map(bigint_u64));
+    col!(AccountKeys, StrVec, |r| Some(r.tx.account_keys.clone()));
+    col!(RecentBlockhash, Str, |r| r.tx.recent_blockhash.clone());
+    col!(Version, Str, |r| r.tx.version.clone());
+    col!(TokenBalances, TokenBalances, |r| Some(
+        r.token_balances
+            .iter()
+            .map(|tb| SvmTokenBalanceOut {
+                account: tb.account.clone(),
+                mint: tb.mint.clone(),
+                owner: tb.owner.clone(),
+                pre_amount: tb.pre_amount.clone(),
+                post_amount: tb.post_amount.clone(),
+            })
+            .collect()
+    ));
+
+    Columns { len, columns }
+}
+
+/// One stored transaction, kept in its ecosystem's compact raw form.
 enum StoredTx {
     /// HyperSync: raw upstream transaction, selected fields decoded at batch prep.
     EvmRaw {
         tx: Arc<simple_types::Transaction>,
         checksum: bool,
     },
+    /// SVM HyperSync: raw upstream transaction (+ joined token balances).
+    // Constructed by the SVM source once it builds the store (wired next).
+    #[allow(dead_code)]
+    Svm { rec: Arc<SvmStored> },
 }
 
 /// A per-block bucket. Generic so the block-keyed container below can host other
@@ -458,22 +603,59 @@ impl TransactionStore {
     ) -> napi::Result<Columns> {
         let mask = mask as u64;
 
-        let collected: Vec<Option<(Arc<simple_types::Transaction>, bool)>> = {
+        // A store is per-chain, hence single-ecosystem; pick the decoder from the
+        // first stored record and collect the matching raw refs under the lock.
+        enum Plan {
+            Evm(Vec<Option<(Arc<simple_types::Transaction>, bool)>>),
+            Svm(Vec<Option<Arc<SvmStored>>>),
+        }
+
+        let plan = {
             let inner = self.inner.lock().unwrap();
-            block_numbers
-                .iter()
-                .zip(transaction_indices.iter())
-                .map(|(block, idx)| {
-                    let block = u64::try_from(*block).ok()?;
-                    match inner.map.get(&block).and_then(|b| b.0.get(idx)) {
-                        Some(StoredTx::EvmRaw { tx, checksum }) => Some((tx.clone(), *checksum)),
-                        None => None,
-                    }
-                })
-                .collect()
+            let is_svm = inner
+                .map
+                .values()
+                .flat_map(|b| b.0.values())
+                .next()
+                .map_or(false, |tx| matches!(tx, StoredTx::Svm { .. }));
+
+            if is_svm {
+                Plan::Svm(
+                    block_numbers
+                        .iter()
+                        .zip(transaction_indices.iter())
+                        .map(|(block, idx)| {
+                            let block = u64::try_from(*block).ok()?;
+                            match inner.map.get(&block).and_then(|b| b.0.get(idx)) {
+                                Some(StoredTx::Svm { rec }) => Some(rec.clone()),
+                                _ => None,
+                            }
+                        })
+                        .collect(),
+                )
+            } else {
+                Plan::Evm(
+                    block_numbers
+                        .iter()
+                        .zip(transaction_indices.iter())
+                        .map(|(block, idx)| {
+                            let block = u64::try_from(*block).ok()?;
+                            match inner.map.get(&block).and_then(|b| b.0.get(idx)) {
+                                Some(StoredTx::EvmRaw { tx, checksum }) => {
+                                    Some((tx.clone(), *checksum))
+                                }
+                                _ => None,
+                            }
+                        })
+                        .collect(),
+                )
+            }
         };
 
-        decode_evm_columns(&collected, mask).map_err(map_err)
+        match plan {
+            Plan::Evm(records) => decode_evm_columns(&records, mask).map_err(map_err),
+            Plan::Svm(records) => Ok(decode_svm_columns(&records, mask)),
+        }
     }
 
     /// Drop transactions for blocks at or below `up_to_block` (already processed).
@@ -513,6 +695,29 @@ impl TransactionStore {
             .or_default()
             .0
             .insert(transaction_index, StoredTx::EvmRaw { tx, checksum });
+    }
+
+    /// Insert a raw SVM transaction with its joined token balances (called by the
+    /// SVM HyperSync source while building a page). Not exposed to JS.
+    #[allow(dead_code)] // wired by the SVM source next
+    pub(crate) fn insert_svm_raw(&self, slot: u64, transaction_index: u32, rec: Arc<SvmStored>) {
+        self.inner
+            .lock()
+            .unwrap()
+            .map
+            .entry(slot)
+            .or_default()
+            .0
+            .insert(transaction_index, StoredTx::Svm { rec });
+    }
+
+    /// Build a stored SVM record from a raw transaction and its token balances.
+    #[allow(dead_code)] // wired by the SVM source next
+    pub(crate) fn make_svm_stored(
+        tx: solana_simple::Transaction,
+        token_balances: Vec<solana_simple::TokenBalance>,
+    ) -> SvmStored {
+        SvmStored { tx, token_balances }
     }
 }
 
@@ -561,6 +766,43 @@ mod tests {
         }
         assert_eq!(EvmTxField::from_i32(EvmTxField::ALL.len() as i32), None);
         assert_eq!(EvmTxField::Input.name(), "input");
+
+        for (idx, field) in SvmTxField::ALL.iter().enumerate() {
+            assert_eq!(SvmTxField::from_i32(idx as i32), Some(*field));
+        }
+        assert_eq!(SvmTxField::from_i32(SvmTxField::ALL.len() as i32), None);
+        assert_eq!(SvmTxField::AccountKeys.name(), "accountKeys");
+    }
+
+    #[test]
+    fn svm_decode_selected_only_materialises_masked_fields() {
+        let tx = solana_simple::Transaction {
+            account_keys: vec!["key1".to_string(), "key2".to_string()],
+            fee: Some(5000),
+            signatures: vec!["sig".to_string()],
+            ..Default::default()
+        };
+        let rec = Arc::new(SvmStored {
+            tx,
+            token_balances: vec![],
+        });
+
+        // Select only accountKeys.
+        let mask = 1u64 << (SvmTxField::AccountKeys as u32);
+        let cols = decode_svm_columns(&[Some(rec)], mask);
+
+        match column(&cols, "accountKeys") {
+            Some(Column::StrVec(v)) => {
+                assert_eq!(v, &vec![Some(vec!["key1".to_string(), "key2".to_string()])])
+            }
+            other => panic!(
+                "expected accountKeys column, got present={}",
+                other.is_some()
+            ),
+        }
+        // fee and signatures are present on the raw tx but unselected.
+        assert!(column(&cols, "fee").is_none());
+        assert!(column(&cols, "signatures").is_none());
     }
 
     #[test]
