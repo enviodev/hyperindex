@@ -1259,21 +1259,17 @@ impl SystemConfig {
                                         format!("Layout for instruction '{}'", instr.name)
                                     })?;
                                 let fs = instr.field_selection.as_ref();
-                                let include_token_balances = fs
-                                    .and_then(|f| f.token_balance_fields.as_ref())
-                                    .is_some_and(|v| v.is_enabled());
-                                let include_transaction = fs
-                                    .and_then(|f| f.transaction_fields.as_ref())
-                                    .is_some_and(|v| v.is_enabled())
-                                    || include_token_balances;
+                                let selected_transaction_fields =
+                                    resolve_svm_transaction_fields(fs).with_context(|| {
+                                        format!("Field selection for instruction '{}'", instr.name)
+                                    })?;
                                 let include_logs = fs
                                     .and_then(|f| f.log_fields.as_ref())
                                     .is_some_and(|v| v.is_enabled());
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
-                                    include_token_balances,
-                                    include_transaction,
+                                    selected_transaction_fields,
                                     include_logs,
                                     account_filters: instr
                                         .account_filters
@@ -2063,6 +2059,62 @@ pub struct SvmAccountFilter {
     pub values: Vec<String>,
 }
 
+/// Selectable SVM parent-transaction field names (camelCase), matching the
+/// public `svmTransaction` shape. `tokenBalances` is selected via the separate
+/// `token_balance_fields` config knob, so it isn't accepted here.
+pub const SVM_TRANSACTION_FIELDS: [&str; 9] = [
+    "signatures",
+    "feePayer",
+    "success",
+    "err",
+    "fee",
+    "computeUnitsConsumed",
+    "accountKeys",
+    "recentBlockhash",
+    "version",
+];
+
+/// Resolve an instruction's field selection into the selected transaction-field
+/// names. `transaction_fields: true` selects all; a list selects (and validates)
+/// those; `token_balance_fields` adds `tokenBalances`.
+fn resolve_svm_transaction_fields(
+    fs: Option<&human_config::svm::SvmFieldSelection>,
+) -> anyhow::Result<Vec<String>> {
+    let mut selected: Vec<String> = Vec::new();
+    let Some(fs) = fs else {
+        return Ok(selected);
+    };
+    match fs.transaction_fields.as_ref() {
+        Some(human_config::svm::FieldSelectionValue::All(true)) => {
+            selected.extend(SVM_TRANSACTION_FIELDS.iter().map(|s| s.to_string()))
+        }
+        Some(human_config::svm::FieldSelectionValue::Fields(fields)) => {
+            for f in fields {
+                if !SVM_TRANSACTION_FIELDS.contains(&f.as_str()) {
+                    anyhow::bail!(
+                        "Invalid transaction field '{}'. Valid fields are: {}. \
+                         (Token balances are selected via token_balance_fields.)",
+                        f,
+                        SVM_TRANSACTION_FIELDS.join(", ")
+                    );
+                }
+                if !selected.contains(f) {
+                    selected.push(f.clone());
+                }
+            }
+        }
+        Some(human_config::svm::FieldSelectionValue::All(false)) | None => {}
+    }
+    if fs
+        .token_balance_fields
+        .as_ref()
+        .is_some_and(|v| v.is_enabled())
+    {
+        selected.push("tokenBalances".to_string());
+    }
+    Ok(selected)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
@@ -2072,9 +2124,10 @@ pub struct SvmEventKind {
     /// router precomputes a per-program ordering on this so dispatch tries
     /// longest first.
     pub discriminator_byte_len: u8,
-    pub include_transaction: bool,
+    /// Selected parent-transaction fields (camelCase names matching the public
+    /// `svmTransaction` shape, incl. `tokenBalances`). Empty = no transaction.
+    pub selected_transaction_fields: Vec<String>,
     pub include_logs: bool,
-    pub include_token_balances: bool,
     /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
     /// AND across positions. An empty outer list means "no account filter".
     pub account_filters: Vec<Vec<SvmAccountFilter>>,
@@ -4033,9 +4086,11 @@ type Foo {
                         e.name.as_str(),
                         k.discriminator.as_deref(),
                         k.discriminator_byte_len,
-                        k.include_transaction,
+                        !k.selected_transaction_fields.is_empty(),
                         k.include_logs,
-                        k.include_token_balances,
+                        k.selected_transaction_fields
+                            .iter()
+                            .any(|f| f == "tokenBalances"),
                         k.account_filters.len(),
                     ),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),

@@ -33,40 +33,44 @@ external materialize: (
 // inline transaction (RPC/simulate/Fuel) are skipped, so a zero mask with no
 // store-backed items costs nothing. Deduped per (blockNumber, transactionIndex).
 let materializeItems = async (store: t, ~items: array<Internal.item>, ~mask: float) => {
-  let keys = []
-  let blockNumbers = []
-  let transactionIndices = []
-  let payloadsByKey = Dict.make()
+  // No selected transaction fields ⇒ no transaction is wanted on this chain;
+  // leave payloads untouched (rather than stamping an empty object).
+  if mask != 0. {
+    let keys = []
+    let blockNumbers = []
+    let transactionIndices = []
+    let payloadsByKey = Dict.make()
 
-  items->Array.forEach(item =>
-    switch item {
-    | Internal.Event(_) =>
-      let eventItem = item->Internal.castUnsafeEventItem
-      switch eventItem.payload->Internal.getPayloadTransaction->Nullable.toOption {
-      | Some(_) => ()
-      | None =>
-        let key =
-          eventItem.blockNumber->Int.toString ++ ":" ++ eventItem.transactionIndex->Int.toString
-        switch payloadsByKey->Utils.Dict.dangerouslyGetNonOption(key) {
-        | Some(payloads) => payloads->Array.push(eventItem.payload)
+    items->Array.forEach(item =>
+      switch item {
+      | Internal.Event(_) =>
+        let eventItem = item->Internal.castUnsafeEventItem
+        switch eventItem.payload->Internal.getPayloadTransaction->Nullable.toOption {
+        | Some(_) => ()
         | None =>
-          keys->Array.push(key)
-          blockNumbers->Array.push(eventItem.blockNumber)
-          transactionIndices->Array.push(eventItem.transactionIndex)
-          payloadsByKey->Dict.set(key, [eventItem.payload])
+          let key =
+            eventItem.blockNumber->Int.toString ++ ":" ++ eventItem.transactionIndex->Int.toString
+          switch payloadsByKey->Utils.Dict.dangerouslyGetNonOption(key) {
+          | Some(payloads) => payloads->Array.push(eventItem.payload)
+          | None =>
+            keys->Array.push(key)
+            blockNumbers->Array.push(eventItem.blockNumber)
+            transactionIndices->Array.push(eventItem.transactionIndex)
+            payloadsByKey->Dict.set(key, [eventItem.payload])
+          }
         }
+      | Internal.Block(_) => ()
       }
-    | Internal.Block(_) => ()
-    }
-  )
+    )
 
-  if keys->Utils.Array.notEmpty {
-    let txs = await store->materialize(~blockNumbers, ~transactionIndices, ~mask)
-    keys->Array.forEachWithIndex((key, i) => {
-      let tx = txs->Array.getUnsafe(i)
-      payloadsByKey
-      ->Dict.getUnsafe(key)
-      ->Array.forEach(payload => payload->Internal.setPayloadTransaction(tx))
-    })
+    if keys->Utils.Array.notEmpty {
+      let txs = await store->materialize(~blockNumbers, ~transactionIndices, ~mask)
+      keys->Array.forEachWithIndex((key, i) => {
+        let tx = txs->Array.getUnsafe(i)
+        payloadsByKey
+        ->Dict.getUnsafe(key)
+        ->Array.forEach(payload => payload->Internal.setPayloadTransaction(tx))
+      })
+    }
   }
 }

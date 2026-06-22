@@ -30,10 +30,54 @@ pub(crate) mod mod_helpers {
 }
 
 use hypersync_client_solana::decode::ProgramSchema as UpstreamSchema;
+use hypersync_client_solana::simple_types as simple;
 
+use crate::transaction_store::TransactionStore;
 use config::SvmClientConfig;
 use query::SvmQuery;
 use types::QueryResponse;
+
+/// Move the raw transactions and token balances of a response into a
+/// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept raw in Rust so
+/// only the config-selected fields are materialised at batch prep; many
+/// instructions in one transaction collapse to a single stored record.
+fn build_svm_store(
+    transactions: Vec<simple::Transaction>,
+    token_balances: Vec<simple::TokenBalance>,
+) -> TransactionStore {
+    let store = TransactionStore::new();
+
+    let mut tx_by_key: HashMap<(u64, u32), simple::Transaction> = HashMap::new();
+    for tx in transactions {
+        tx_by_key.insert((tx.slot, tx.transaction_index), tx);
+    }
+    let mut tb_by_key: HashMap<(u64, u32), Vec<simple::TokenBalance>> = HashMap::new();
+    for tb in token_balances {
+        if let Some(ti) = tb.transaction_index {
+            tb_by_key.entry((tb.slot, ti)).or_default().push(tb);
+        }
+    }
+
+    // Union of keys: a transaction may have token balances but no selected
+    // transaction fields, or vice versa.
+    let mut keys: Vec<(u64, u32)> = tx_by_key.keys().copied().collect();
+    for key in tb_by_key.keys() {
+        if !tx_by_key.contains_key(key) {
+            keys.push(*key);
+        }
+    }
+    for key in keys {
+        let tx = tx_by_key.remove(&key).unwrap_or_default();
+        let token_balances = tb_by_key.remove(&key).unwrap_or_default();
+        store.insert_svm_raw(
+            key.0,
+            key.1,
+            Arc::new(TransactionStore::make_svm_stored(tx, token_balances)),
+        );
+    }
+
+    store
+}
 
 #[napi]
 pub struct SvmHypersyncClient {
@@ -86,12 +130,12 @@ impl SvmHypersyncClient {
     /// must NOT call `collect` (which spins up parallel batched requests under
     /// `StreamConfig::default()` and can DoS the server on multi-day windows).
     #[napi]
-    pub async fn get(&self, query: SvmQuery) -> napi::Result<QueryResponse> {
+    pub async fn get(&self, query: SvmQuery) -> napi::Result<(QueryResponse, TransactionStore)> {
         let q: hypersync_solana_net_types::query::SolanaQuery = query
             .try_into()
             .context("parse solana query")
             .map_err(map_err)?;
-        let resp = self
+        let mut resp = self
             .inner
             .get(&q)
             .await
@@ -120,13 +164,21 @@ impl SvmHypersyncClient {
                 .collect()
         };
 
+        // Retain raw transactions + token balances in Rust; ReScript builds
+        // items from instructions and the store materialises the parent
+        // transaction (selected fields only) at batch prep.
+        let store = build_svm_store(
+            std::mem::take(&mut resp.transactions),
+            std::mem::take(&mut resp.token_balances),
+        );
+
         let mut out = QueryResponse::try_from(resp)
             .context("convert solana response")
             .map_err(map_err)?;
         for (instr, d) in out.data.instructions.iter_mut().zip(decoded) {
             instr.decoded = d;
         }
-        Ok(out)
+        Ok((out, store))
     }
 }
 
@@ -170,11 +222,12 @@ mod tests {
             ..Default::default()
         };
 
-        let resp = client.get(q).await.expect("collect");
+        // Transactions are moved into the store, so `resp.data.transactions` is
+        // empty here by design.
+        let (resp, _store) = client.get(q).await.expect("collect");
         eprintln!(
-            "got {} instructions / {} txs / next_slot={}",
+            "got {} instructions / next_slot={}",
             resp.data.instructions.len(),
-            resp.data.transactions.len(),
             resp.next_slot
         );
         assert!(

@@ -3103,9 +3103,8 @@ mod test {
             kind: system_config::EventKind::Svm(system_config::SvmEventKind {
                 discriminator: Some("0x21".to_string()),
                 discriminator_byte_len: 1,
-                include_transaction: false,
+                selected_transaction_fields: vec![],
                 include_logs: false,
-                include_token_balances: false,
                 account_filters: vec![],
                 is_inner: None,
                 accounts: vec![],

@@ -505,8 +505,6 @@ enum StoredTx {
         checksum: bool,
     },
     /// SVM HyperSync: raw upstream transaction (+ joined token balances).
-    // Constructed by the SVM source once it builds the store (wired next).
-    #[allow(dead_code)]
     Svm { rec: Arc<SvmStored> },
 }
 
@@ -699,7 +697,6 @@ impl TransactionStore {
 
     /// Insert a raw SVM transaction with its joined token balances (called by the
     /// SVM HyperSync source while building a page). Not exposed to JS.
-    #[allow(dead_code)] // wired by the SVM source next
     pub(crate) fn insert_svm_raw(&self, slot: u64, transaction_index: u32, rec: Arc<SvmStored>) {
         self.inner
             .lock()
@@ -712,7 +709,6 @@ impl TransactionStore {
     }
 
     /// Build a stored SVM record from a raw transaction and its token balances.
-    #[allow(dead_code)] // wired by the SVM source next
     pub(crate) fn make_svm_stored(
         tx: solana_simple::Transaction,
         token_balances: Vec<solana_simple::TokenBalance>,

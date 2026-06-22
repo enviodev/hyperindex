@@ -487,11 +487,10 @@ type svmInstructionEventConfig = {
    `dN` selector at query time and the dispatch-key precomputation in the
    router. */
   discriminatorByteLen: int,
-  includeTransaction: bool,
   includeLogs: bool,
-  includeTokenBalances: bool,
   /** The transaction fields this instruction selected, as a set of field codes
-   for the per-chain materialisation mask. Empty when no transaction is wanted. */
+   for the per-chain materialisation mask. Empty when no transaction is wanted.
+   `tokenBalances` is one of the selectable fields. */
   selectedTransactionFields: Utils.Set.t<svmTransactionField>,
   /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
    AND across positions. Empty outer array means "no account filter". */

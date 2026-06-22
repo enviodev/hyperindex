@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3130
 expression: json
 ---
 {
@@ -34,9 +35,8 @@ expression: json
             "svm": {
               "discriminator": "0x21",
               "discriminatorByteLen": 1,
-              "includeTransaction": false,
+              "transactionFields": [],
               "includeLogs": false,
-              "includeTokenBalances": false,
               "accounts": [
                 "metadata",
                 "mint",
@@ -75,9 +75,18 @@ expression: json
             "svm": {
               "discriminator": "0x0f",
               "discriminatorByteLen": 1,
-              "includeTransaction": true,
+              "transactionFields": [
+                "signatures",
+                "feePayer",
+                "success",
+                "err",
+                "fee",
+                "computeUnitsConsumed",
+                "accountKeys",
+                "recentBlockhash",
+                "version"
+              ],
               "includeLogs": false,
-              "includeTokenBalances": false,
               "accountFilters": [
                 [
                   {

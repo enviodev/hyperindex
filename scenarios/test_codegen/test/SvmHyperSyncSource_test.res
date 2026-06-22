@@ -30,10 +30,18 @@ let makeEventConfig = (): Internal.svmInstructionEventConfig => {
   programId: metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe,
   discriminator: Some("0x21"),
   discriminatorByteLen: 1,
-  includeTransaction: true,
   includeLogs: false,
-  includeTokenBalances: false,
-  selectedTransactionFields: Utils.Set.fromArray(Internal.allSvmTransactionFields),
+  selectedTransactionFields: Utils.Set.fromArray([
+    Internal.Signatures,
+    FeePayer,
+    Success,
+    Err,
+    Fee,
+    ComputeUnitsConsumed,
+    AccountKeys,
+    RecentBlockhash,
+    Version,
+  ]),
   accountFilters: [],
   isInner: None,
   accounts: [],
@@ -86,7 +94,10 @@ let mockClient: SvmHyperSyncClient.t = {
   getHeight: () => Promise.resolve(slot + 1000),
   get: (~query) => {
     capturedQueries->Array.push(query)
-    Promise.resolve(mockResponse)
+    // The real Rust client builds the store from raw transactions; the mock
+    // returns an empty page (transaction materialisation is covered by the Rust
+    // unit tests). This test asserts the item shape and the query columns.
+    Promise.resolve((mockResponse, TransactionStore.make()))
   },
 }
 
@@ -161,7 +172,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         "timestamp": timestamp,
         "blockNumber": blockNumber,
         "block": instruction.block,
-        "transactionSignatures": instruction.transaction->Option.map(tx => tx.signatures),
       })
     | _ => None
     }
@@ -174,7 +184,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         "timestamp": blockTime,
         "blockNumber": slot,
         "block": ({slot, time: blockTime, hash: ""}: Envio.svmInstructionBlock),
-        "transactionSignatures": Some([txSignature]),
       }),
       // Default merge mode: requesting a table's columns opts the matched
       // result set into that join, so selections carry no include flags.
