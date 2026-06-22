@@ -69,6 +69,68 @@ let makeChainState = (
   )
 }
 
+// A chain state with one fresh address partition behind the head, so
+// getNextQuery actually produces a Ready query (unlike the onBlock-only helper
+// above). The partition has no response yet, so each query estimates at the
+// default size.
+let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
+  let normalSelection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
+  let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
+  let partition: FetchState.partition = {
+    id: "0",
+    latestFetchedBlock: {blockNumber: latestFetchedBlock, blockTimestamp: 0},
+    selection: normalSelection,
+    addressesByContractName: Dict.fromArray([("MockContract", [address])]),
+    mergeBlock: None,
+    dynamicContract: None,
+    mutPendingQueries: [],
+    prevQueryRange: 0,
+    prevPrevQueryRange: 0,
+    prevRangeSize: 0,
+    latestBlockRangeUpdateBlock: 0,
+  }
+  let indexingAddresses = Dict.fromArray([
+    (
+      address->Address.toString,
+      ({contractName: "MockContract", address, registrationBlock: -1, effectiveStartBlock: 0}: Internal.indexingContract),
+    ),
+  ])
+  let fetchState: FetchState.t = {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=[partition],
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=1,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: latestFetchedBlock,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    indexingAddresses,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockConfigs: [],
+    knownHeight,
+    firstEventBlock: Some(0),
+  }
+  let mockSource = MockIndexer.Source.make([], ~chain=#1)
+  ChainState.make(
+    ~chainConfig={...baseChainConfig, id: chainId},
+    ~fetchState,
+    ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+    ~reorgDetection=ReorgDetection.make(
+      ~chainReorgCheckpoints=[],
+      ~maxReorgDepth=200,
+      ~shouldRollbackOnReorg=false,
+    ),
+    ~committedProgressBlockNumber=-1,
+    ~logger=Logging.getLogger(),
+  )
+}
+
 let emptyBatch: Batch.t = {
   totalBatchSize: 0,
   items: [],
@@ -149,6 +211,30 @@ describe("CrossChainState fetch control", () => {
     })
 
     t.expect(dispatched).toEqual([])
+  })
+
+  Async.it("checkAndFetch still dispatches when the only query exceeds the budget", async t => {
+    // Fresh partition behind the head: its query estimates at the default
+    // (10000), far above the tiny remaining budget (1). Admission must still let
+    // one query through, otherwise the chain would never make progress.
+    let cs = makeFetchingChainState(~chainId=1, ~knownHeight=1000, ~latestFetchedBlock=0)
+    let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=1)
+
+    let dispatched = []
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+      dispatched
+      ->Array.push((
+        chain->ChainMap.Chain.toChainId,
+        switch action {
+        | Ready(queries) => queries->Array.length
+        | _ => 0
+        },
+      ))
+      ->ignore
+      Promise.resolve()
+    })
+
+    t.expect(dispatched).toEqual([(1, 1)])
   })
 })
 

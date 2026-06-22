@@ -252,18 +252,19 @@ let checkAndFetch = async (
 
   candidates->Array.sort(((_, a, _), (_, b, _)) => Float.compare(a, b))
 
+  // Admit furthest-behind first until the budget runs out. The condition is
+  // checked before each query, so as long as there's any budget left we admit
+  // the next one even when its estimate alone exceeds the remainder — otherwise a
+  // chain whose only query is bigger than the budget would never make progress.
   let admittedByChain = Dict.make()
   let running = ref(0.)
   let remainingF = remaining->Int.toFloat
-  for i in 0 to candidates->Array.length - 1 {
-    let (chainId, _, query) = candidates->Array.getUnsafe(i)
-    if running.contents < remainingF {
-      switch admittedByChain->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
-      | Some(arr) => arr->Array.push(query)
-      | None => admittedByChain->Utils.Dict.setByInt(chainId, [query])
-      }
-      running := running.contents +. query.estResponseSize
-    }
+  let idx = ref(0)
+  while running.contents < remainingF && idx.contents < candidates->Array.length {
+    let (chainId, _, query) = candidates->Array.getUnsafe(idx.contents)
+    admittedByChain->Utils.Dict.push(chainId->Int.toString, query)
+    running := running.contents +. query.estResponseSize
+    idx := idx.contents + 1
   }
   admittedByChain->Dict.forEachWithKey((queries, chainId) => {
     actionByChain->Dict.set(chainId, FetchState.Ready(queries))

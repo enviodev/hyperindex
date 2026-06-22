@@ -3127,11 +3127,11 @@ describe("FetchState unit tests for specific cases", () => {
         Ready([
           partition2Query,
           {
+            // Partition responded with no items, so density can't be derived and
+            // the estimate falls back to the default (carried over from queryA).
             ...queryA,
             indexingAddresses: fetchStateWithBothDcsAndQueryAResponse.indexingAddresses,
             partitionId: "1",
-            // Partition responded with no items, so its density (and estimate) is 0.
-            estResponseSize: 0.,
             toBlock: Some(500),
             fromBlock: 401,
           },

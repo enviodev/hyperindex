@@ -82,11 +82,16 @@ let defaultEstResponseSize = 10_000.
 // Estimated items a query will return, from the partition's event density
 // (items/block derived from its last response) and the query's block range.
 // toBlock None is the open-ended tail, capped at maxQueryBlockNumber. Falls back
-// to defaultEstResponseSize until the partition has a response to derive density.
+// to defaultEstResponseSize until the partition has a non-empty response to
+// derive density from — a zero estimate would let the query bypass budget
+// admission. The positive branch is floored at 1 for the same reason.
 let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~maxQueryBlockNumber) =>
-  if p.prevQueryRange > 0 {
+  if p.prevQueryRange > 0 && p.prevRangeSize > 0 {
     let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
-    (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density
+    Pervasives.max(
+      1.,
+      (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density,
+    )
   } else {
     defaultEstResponseSize
   }
