@@ -580,6 +580,10 @@ impl TransactionStore {
     /// page into the persistent per-chain store).
     #[napi]
     pub fn merge(&self, page: &TransactionStore) {
+        // Merging a store into itself would lock the same Mutex twice (deadlock).
+        if std::ptr::eq(self, page) {
+            return;
+        }
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
         src.drain_into(&mut dst);
@@ -599,6 +603,15 @@ impl TransactionStore {
         transaction_indices: Vec<u32>,
         mask: f64,
     ) -> napi::Result<Columns> {
+        // The two key vectors are zipped into the output; a length mismatch would
+        // silently truncate and misalign the result with the caller's items.
+        if block_numbers.len() != transaction_indices.len() {
+            return Err(napi::Error::from_reason(format!(
+                "block_numbers and transaction_indices length mismatch: {} != {}",
+                block_numbers.len(),
+                transaction_indices.len()
+            )));
+        }
         let mask = mask as u64;
 
         // A store is per-chain, hence single-ecosystem; pick the decoder from the
