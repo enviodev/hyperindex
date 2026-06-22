@@ -303,8 +303,10 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     )
   )
   let needsTokenBalances = selectedTxFields->Utils.Set.has(Internal.TokenBalances)
+  // Always fetched so the store can be keyed by (slot, transactionIndex).
+  let txKeyColumns: array<SvmHyperSyncClient.QueryTypes.transactionField> = [Slot, TransactionIndex]
   let txQueryFields = {
-    let fields: array<SvmHyperSyncClient.QueryTypes.transactionField> = [Slot, TransactionIndex]
+    let fields = txKeyColumns->Array.copy
     selectedTxFields
     ->Utils.Set.toArray
     ->Array.forEach(field =>
@@ -315,9 +317,9 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     )
     fields
   }
-  // The transaction table is needed only when a column beyond the slot+index
-  // key is selected.
-  let needsTransactions = txQueryFields->Array.length > 2
+  // The transaction table is needed only when a real column (beyond the key) is
+  // selected.
+  let needsTransactions = txQueryFields->Array.length > txKeyColumns->Array.length
 
   let getItemsOrThrow = async (
     ~fromBlock,

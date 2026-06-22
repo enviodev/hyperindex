@@ -54,29 +54,19 @@ let transactionFields = [
 ]
 
 // Field name → bit index (the code shared with the Rust store), built once.
-let transactionFieldCodes = {
-  let codes = Dict.make()
-  transactionFields->Array.forEachWithIndex((name, i) => codes->Dict.set(name, i))
-  codes
-}
+let transactionFieldCodes = TransactionStore.fieldCodes(transactionFields)
 
-let pow2: int => float = %raw(`c => Math.pow(2, c)`)
-
-// Union of the chain's selected transaction fields as a bitmask float (bit
-// `code` set ⇔ selected). Built arithmetically to dodge 32-bit JS bitwise ops.
-let transactionFieldMask = (eventConfigs: array<Internal.eventConfig>): float => {
-  let selected = Utils.Set.make()
-  eventConfigs->Array.forEach(eventConfig => {
-    let eventConfig = eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-    eventConfig.selectedTransactionFields->Utils.Set.forEach(field => {
-      switch transactionFieldCodes->Utils.Dict.dangerouslyGetNonOption((field :> string)) {
-      | Some(code) => selected->Utils.Set.add(code)->ignore
-      | None => ()
-      }
-    })
-  })
-  selected->Utils.Set.toArray->Array.reduce(0., (mask, code) => mask +. pow2(code))
-}
+let transactionFieldMask = (eventConfigs: array<Internal.eventConfig>): float =>
+  eventConfigs->TransactionStore.mask(
+    ~codes=transactionFieldCodes,
+    ~getSelectedFields=eventConfig => {
+      (
+        eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+      ).selectedTransactionFields->(
+        Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
+      )
+    },
+  )
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
