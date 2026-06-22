@@ -11,10 +11,6 @@ type t = {
   // True once every chain has caught up to head/endBlock. Monotonic during a run.
   mutable isRealtime: bool,
   mutable isInReorgThreshold: bool,
-  // Indexer-wide caps on concurrent data-source queries, shared across all
-  // chains. The realtime budget applies once every chain is at head.
-  maxBackfillConcurrency: int,
-  maxRealtimeConcurrency: int,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
 }
@@ -26,18 +22,10 @@ let calculateTargetBufferSize = () =>
   | None => 100_000
   }
 
-// The concurrency budget in force for the current phase.
-let maxConcurrency = (crossChainState: t) =>
-  crossChainState.isRealtime
-    ? crossChainState.maxRealtimeConcurrency
-    : crossChainState.maxBackfillConcurrency
-
 let make = (
   ~chainStates,
   ~isInReorgThreshold,
   ~isRealtime,
-  ~maxBackfillConcurrency=Env.maxBackfillConcurrency,
-  ~maxRealtimeConcurrency=Env.maxRealtimeConcurrency,
   ~targetBufferSize=calculateTargetBufferSize(),
 ): t => {
   let crossChainState = {
@@ -45,11 +33,8 @@ let make = (
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
     isInReorgThreshold,
-    maxBackfillConcurrency,
-    maxRealtimeConcurrency,
     targetBufferSize,
   }
-  Prometheus.IndexingMaxConcurrency.set(~maxConcurrency=crossChainState->maxConcurrency)
   Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
   crossChainState
 }
@@ -64,17 +49,6 @@ let getChainState = (crossChainState: t, chainId) =>
 let chainStates = (crossChainState: t) => crossChainState.chainStates
 let isRealtime = (crossChainState: t) => crossChainState.isRealtime
 let isInReorgThreshold = (crossChainState: t) => crossChainState.isInReorgThreshold
-
-// Partition queries in flight across every chain — the live draw against
-// maxConcurrency.
-let inFlight = (crossChainState: t) => {
-  let total = ref(0)
-  for i in 0 to crossChainState.chainIds->Array.length - 1 {
-    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
-    total := total.contents + cs->ChainState.sourceManager->SourceManager.inFlightCount
-  }
-  total.contents
-}
 
 // Ready-to-process items across every chain — the live draw against
 // targetBufferSize, which is a budget of processable events (items stuck behind
@@ -199,18 +173,13 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t) => {
     Prometheus.ProgressReady.setAllReady()
   }
 
-  let wasRealtime = crossChainState.isRealtime
   crossChainState.isRealtime = crossChainState.isRealtime || allChainsReady.contents
-  if !wasRealtime && crossChainState.isRealtime {
-    // The realtime budget takes over now that every chain is at head.
-    Prometheus.IndexingMaxConcurrency.set(~maxConcurrency=crossChainState->maxConcurrency)
-  }
 }
 
 // --- Fetch control. ---
 
-// Chains ordered furthest-behind first, so the shared concurrency and buffer
-// pools go to the chains with the most backfill work before the rest.
+// Chains ordered furthest-behind first, so the shared buffer pool goes to the
+// chains with the most backfill work before the rest.
 let priorityOrder = (crossChainState: t) =>
   crossChainState.chainStates
   ->Dict.valuesToArray
@@ -221,49 +190,40 @@ let priorityOrder = (crossChainState: t) =>
     )
   )
 
-// Dispatch a fetch tick across every chain in priority order, drawing from the
-// shared concurrency and buffer pools. Chains are visited in turn; fetchChain
-// bumps the in-flight count synchronously before it suspends, so a later chain
-// sees the slots an earlier one already claimed and the budget is honored
-// indexer-wide.
-//
-// bufferLimit is each chain's slice of the shared pool: it may grow its buffer
-// into whatever the other chains leave free, so a lone backfilling chain can use
-// the whole pool while head-following chains stay shallow.
+// Dispatch a fetch tick across every chain in priority order, drawing each
+// chain's itemBudget from one shared pool of ~targetBufferSize ready events.
+// The pool is drawn down as we go: the furthest-behind chain takes what it can,
+// the rest get whatever's left, so a lone backfilling chain uses the whole pool
+// while head-following chains stay shallow. Each chain converts its itemBudget
+// into a block window via its density, so the budget bounds buffered items
+// regardless of partition count.
 let checkAndFetch = async (
   crossChainState: t,
-  ~fetchChain: (
-    ~chain: ChainMap.Chain.t,
-    ~concurrencyLimit: int,
-    ~bufferLimit: int,
-  ) => promise<unit>,
+  ~fetchChain: (~chain: ChainMap.Chain.t, ~itemBudget: int, ~density: float) => promise<unit>,
 ) => {
-  let maxConcurrency = crossChainState->maxConcurrency
-  // Pool is a budget of ready-to-process items, but the cap fed to getNextQuery
-  // is still a buffer position (it tracks the sorted buffer, ready items first),
-  // so add this chain's own buffer size back rather than its ready count. A chain
-  // with a gap therefore gets extra headroom to fetch the not-ready overhang
-  // while still aiming for its share of ~targetBufferSize ready events.
-  let totalReady = crossChainState->totalReadyCount
-  // Track the in-flight total as a running counter (summed once up front, then
-  // adjusted by each chain's delta) instead of re-summing every chain — O(chains)
-  // per tick rather than O(chains^2). fetchChain bumps the chain's count
-  // synchronously, so the delta is observable right after the call.
-  let inFlight = ref(crossChainState->inFlight)
+  let remaining = ref(
+    Pervasives.max(0, crossChainState.targetBufferSize - crossChainState->totalReadyCount),
+  )
   let priorityOrdered = crossChainState->priorityOrder
   let promises = []
   for i in 0 to priorityOrdered->Array.length - 1 {
     let cs = priorityOrdered->Array.getUnsafe(i)
     let chain = ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id)
-    let sourceManager = cs->ChainState.sourceManager
-    let concurrencyLimit = Pervasives.max(0, maxConcurrency - inFlight.contents)
-    let bufferLimit =
-      crossChainState.targetBufferSize -
-      (totalReady -
-      cs->ChainState.fetchState->FetchState.bufferSize)
-    let inFlightBefore = sourceManager->SourceManager.inFlightCount
-    promises->Array.push(fetchChain(~chain, ~concurrencyLimit, ~bufferLimit))
-    inFlight := inFlight.contents + (sourceManager->SourceManager.inFlightCount - inFlightBefore)
+    let density = cs->ChainState.density
+    let fetchState = cs->ChainState.fetchState
+    let itemBudget = remaining.contents
+    promises->Array.push(fetchChain(~chain, ~itemBudget, ~density))
+    // Draw down the pool by the items this chain's window will engage, so later
+    // chains only see the free remainder. During backfill the head is far away,
+    // so this is ~itemBudget (the chain takes the whole pool); near the head the
+    // gap shrinks and chains share.
+    let frontier = fetchState->FetchState.bufferBlockNumber
+    let projected =
+      Pervasives.min(
+        itemBudget->Int.toFloat,
+        density *. Pervasives.max(0., (fetchState.knownHeight - frontier)->Int.toFloat),
+      )->Float.toInt
+    remaining := remaining.contents - projected
   }
   let _ = await promises->Promise.all
 }

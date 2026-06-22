@@ -223,14 +223,13 @@ let fetchNext = async (
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
-  ~concurrencyLimit,
-  ~bufferLimit,
+  ~itemBudget,
+  ~density,
   ~stateId,
 ) => {
-  let nextQuery = fetchState->FetchState.getNextQuery(~concurrencyLimit, ~bufferLimit)
+  let nextQuery = fetchState->FetchState.getNextQuery(~itemBudget, ~density)
 
   switch nextQuery {
-  | ReachedMaxConcurrency
   | NothingToQuery => ()
   | WaitingForNewBlock =>
     switch sourceManager.waitingForNewBlockStateId {

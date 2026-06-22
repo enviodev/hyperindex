@@ -497,7 +497,7 @@ type t = {
   // Buffer of items ordered from earliest to latest
   buffer: array<Internal.item>,
   // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
-  // size). Fetch depth is bounded separately by getNextQuery's bufferLimit, the
+  // size). Fetch depth is bounded separately by getNextQuery's itemBudget, the
   // chain's per-tick slice of the indexer-wide pool.
   maxOnBlockBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
@@ -1253,7 +1253,6 @@ let handleQueryResult = (
 }
 
 type nextQuery =
-  | ReachedMaxConcurrency
   | WaitingForNewBlock
   | NothingToQuery
   | Ready(array<query>)
@@ -1366,22 +1365,19 @@ let maxPendingChunksPerPartition = 10
 
 let getNextQuery = (
   {
-    buffer,
     optimizedPartitions,
     indexingAddresses,
     blockLag,
     latestOnBlockBlockNumber,
     knownHeight,
   } as fetchState: t,
-  ~concurrencyLimit,
-  ~bufferLimit,
+  ~itemBudget,
+  ~density,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
     WaitingForNewBlock
-  } else if concurrencyLimit === 0 {
-    ReachedMaxConcurrency
-  } else if bufferLimit <= 0 {
+  } else if itemBudget <= 0 {
     // No room left in the shared buffer pool for this chain; wait for processing
     // to drain before fetching more.
     NothingToQuery
@@ -1395,18 +1391,15 @@ let getNextQuery = (
       !isOnBlockBehindTheHead,
     )
 
-    // Limit how far ahead we fetch to bufferLimit items (this chain's share of
-    // the indexer-wide buffer pool) so processing always has buffer without
-    // ballooning memory. A partition that fetched further is skipped until the
-    // buffer drains.
-    let maxQueryBlockNumber = {
-      switch buffer->Array.get(bufferLimit - 1) {
-      | Some(item) =>
-        // Just in case check that we don't query beyond the current block
-        Pervasives.min(item->Internal.getItemBlockNumber, knownHeight)
-      | None => knownHeight
-      }
-    }
+    // Translate the chain's item budget into a block ceiling using its measured
+    // event density (events/block across all partitions): every partition fetches
+    // only up to frontier + itemBudget/density, so the events pulled into the
+    // buffer over that window stay near itemBudget regardless of partition count.
+    // Before any batch is processed density is 0; fall back to a fixed block
+    // window so a fresh chain doesn't fetch unbounded to the head.
+    let frontier = fetchState->bufferBlockNumber
+    let window = density > 0. ? Js.Math.ceil_int(itemBudget->Int.toFloat /. density) : 10000
+    let maxQueryBlockNumber = Pervasives.min(knownHeight, frontier + window)
 
     let queries = []
 
@@ -1500,9 +1493,8 @@ let getNextQuery = (
       }
 
       // Cap parallel in-flight chunks per partition so a single partition can't
-      // drain the whole concurrency budget (especially the high realtime one).
-      // Keep the earliest new chunks; the furthest-ahead ones wait for the next
-      // round once these resolve.
+      // monopolize fetching. Keep the earliest new chunks; the furthest-ahead
+      // ones wait for the next round once these resolve.
       let maxNewChunks = Pervasives.max(0, maxPendingChunksPerPartition - pendingCount)
       let generatedCount = queries->Array.length - partitionQueriesStart
       if generatedCount > maxNewChunks {
@@ -1525,13 +1517,6 @@ let getNextQuery = (
         NothingToQuery
       }
     } else {
-      // Enforce concurrency limit: sort by fromBlock and take the first concurrencyLimit
-      let queries = if queries->Array.length > concurrencyLimit {
-        queries->Array.sort((a, b) => Int.compare(a.fromBlock, b.fromBlock))
-        queries->Array.slice(~start=0, ~end=concurrencyLimit)
-      } else {
-        queries
-      }
       Ready(queries)
     }
   }

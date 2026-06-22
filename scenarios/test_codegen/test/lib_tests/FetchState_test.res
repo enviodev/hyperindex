@@ -1718,20 +1718,23 @@ describe("FetchState.getNextQuery & integration", () => {
     }
   }
 
-  // The default configuration with ability to overwrite some values
+  // The default configuration with ability to overwrite some values.
+  // density defaults to 0 so the budget never constrains the block window
+  // (window falls back to 10000 blocks, larger than the small test heights);
+  // tests that exercise the budget pass an explicit density.
   let getNextQuery = (
     fs,
     ~endBlock=None,
     ~knownHeight=10,
-    ~targetBufferSize=10,
-    ~concurrencyLimit=10,
+    ~itemBudget=10,
+    ~density=0.,
   ) =>
     switch endBlock {
     | Some(_) => {...fs, endBlock}
     | None => fs
     }
     ->FetchState.updateKnownHeight(~knownHeight)
-    ->FetchState.getNextQuery(~concurrencyLimit, ~bufferLimit=targetBufferSize)
+    ->FetchState.getNextQuery(~itemBudget, ~density)
 
   it("Emulate first indexer queries with a static event", t => {
     let fetchState = makeInitial()

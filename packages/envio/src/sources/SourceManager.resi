@@ -31,8 +31,8 @@ let fetchNext: (
   ~executeQuery: FetchState.query => promise<unit>,
   ~waitForNewBlock: (~knownHeight: int) => promise<int>,
   ~onNewBlock: (~knownHeight: int) => unit,
-  ~concurrencyLimit: int,
-  ~bufferLimit: int,
+  ~itemBudget: int,
+  ~density: float,
   ~stateId: int,
 ) => promise<unit>
 

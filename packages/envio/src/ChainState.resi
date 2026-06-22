@@ -46,6 +46,7 @@ let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
 let numEventsProcessed: t => float
+let density: t => float
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
 // Derived (pure).

@@ -9,8 +9,6 @@ let make: (
   ~chainStates: dict<ChainState.t>,
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
-  ~maxBackfillConcurrency: int=?,
-  ~maxRealtimeConcurrency: int=?,
   ~targetBufferSize: int=?,
 ) => t
 
@@ -18,8 +16,6 @@ let make: (
 let chainStates: t => dict<ChainState.t>
 let isRealtime: t => bool
 let isInReorgThreshold: t => bool
-let maxConcurrency: t => int
-let inFlight: t => int
 
 // Derived (pure).
 let nextItemIsNone: t => bool
@@ -39,9 +35,5 @@ let applyBatchProgress: (t, ~batch: Batch.t) => unit
 let priorityOrder: t => array<ChainState.t>
 let checkAndFetch: (
   t,
-  ~fetchChain: (
-    ~chain: ChainMap.Chain.t,
-    ~concurrencyLimit: int,
-    ~bufferLimit: int,
-  ) => promise<unit>,
+  ~fetchChain: (~chain: ChainMap.Chain.t, ~itemBudget: int, ~density: float) => promise<unit>,
 ) => promise<unit>

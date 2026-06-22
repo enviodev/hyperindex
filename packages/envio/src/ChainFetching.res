@@ -308,8 +308,8 @@ let finishWaitingForNewBlock = (
 let fetchChain = async (
   state: IndexerState.t,
   chain,
-  ~concurrencyLimit,
-  ~bufferLimit,
+  ~itemBudget,
+  ~density,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
@@ -363,8 +363,8 @@ let fetchChain = async (
           | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
           }
         },
-        ~concurrencyLimit,
-        ~bufferLimit,
+        ~itemBudget,
+        ~density,
         ~stateId,
       )
     } catch {
