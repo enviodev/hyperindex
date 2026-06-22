@@ -74,14 +74,22 @@ type query = {
   indexingAddresses: dict<indexingAddress>,
 }
 
+// Default estimate for a query whose partition hasn't responded yet, so the
+// shared budget still accounts for unknown queries instead of treating them as
+// free.
+let defaultEstResponseSize = 10_000.
+
 // Estimated items a query will return, from the partition's event density
 // (items/block derived from its last response) and the query's block range.
-// toBlock None is the open-ended tail, capped at maxQueryBlockNumber.
-let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~maxQueryBlockNumber) => {
-  let density =
-    p.prevQueryRange > 0 ? p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat : 0.
-  (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density
-}
+// toBlock None is the open-ended tail, capped at maxQueryBlockNumber. Falls back
+// to defaultEstResponseSize until the partition has a response to derive density.
+let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~maxQueryBlockNumber) =>
+  if p.prevQueryRange > 0 {
+    let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
+    (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density
+  } else {
+    defaultEstResponseSize
+  }
 
 // Calculate the chunk range from history using min-of-last-3-ranges heuristic
 let getMinHistoryRange = (p: partition) => {
