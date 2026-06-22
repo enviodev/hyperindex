@@ -422,14 +422,14 @@ fn decode_evm_columns(
         .access_list
         .as_ref()
         .map(|arr| arr.iter().map(AccessListItem::from).collect())));
-    col!(AuthorizationList, AuthList, |tx, _| Ok(tx
+    col!(AuthorizationList, AuthList, |tx, _| tx
         .authorization_list
         .as_ref()
         .map(|al| al
             .iter()
             .map(AuthorizationItem::try_from)
             .collect::<Result<_>>())
-        .transpose()?));
+        .transpose());
 
     Ok(Columns { len, columns })
 }
@@ -615,7 +615,7 @@ impl TransactionStore {
                 .values()
                 .flat_map(|b| b.0.values())
                 .next()
-                .map_or(false, |tx| matches!(tx, StoredTx::Svm { .. }));
+                .is_some_and(|tx| matches!(tx, StoredTx::Svm { .. }));
 
             if is_svm {
                 Plan::Svm(
