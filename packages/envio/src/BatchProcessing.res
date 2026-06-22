@@ -163,9 +163,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
           state
           ->IndexerState.chainStates
           ->Dict.valuesToArray
-          ->Array.every(cs =>
-            cs->ChainState.isProgressAtHead && cs->ChainState.endBlock->Option.isNone
-          )
+          ->Array.every(ChainState.isAtHeadWithoutEndBlock)
         ) {
           IndexerState.errorExit(
             state,

@@ -467,6 +467,11 @@ let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None
 // True once the fetch frontier has reached the head/endBlock for this chain.
 let isFetchingAtHead = (cs: t) => cs.fetchState->FetchState.isFetchingAtHead
 
+// Reached head on a chain with no configured endBlock — used by auto-exit to
+// detect that no events were found in the start..head range.
+let isAtHeadWithoutEndBlock = (cs: t) =>
+  cs.isProgressAtHead && cs.fetchState.endBlock->Option.isNone
+
 // --- State transitions. The chain state is mutated only through these; each
 // owns a cohesive update so callers don't juggle individual fields. ---
 
@@ -531,6 +536,14 @@ let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
 // Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
 let enterReorgThreshold = (cs: t) =>
   cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
+
+// Snapshot the chain's metadata fields for staging into the chains table.
+let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
+  firstEventBlockNumber: cs.fetchState.firstEventBlock->Null.fromOption,
+  isHyperSync: (cs.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
+  latestFetchedBlockNumber: cs.fetchState->FetchState.bufferBlockNumber,
+  timestampCaughtUpToHeadOrEndblock: cs.timestampCaughtUpToHeadOrEndblock->Null.fromOption,
+}
 
 // Snapshot the inputs a batch build needs from this chain.
 let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {

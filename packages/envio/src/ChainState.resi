@@ -75,7 +75,8 @@ let dispatch: (
   ~stateId: int,
 ) => promise<unit>
 
-// Batch helpers.
+// Views.
+let toChainMetadata: t => InternalTable.Chains.metaFields
 let toChainBeforeBatch: t => Batch.chainBeforeBatch
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
@@ -85,6 +86,7 @@ let getHighestBlockBelowThreshold: t => int
 let isActivelyIndexing: t => bool
 let isReady: t => bool
 let isFetchingAtHead: t => bool
+let isAtHeadWithoutEndBlock: t => bool
 
 // State transitions. The chain state is mutated only through these.
 let handleQueryResult: (
