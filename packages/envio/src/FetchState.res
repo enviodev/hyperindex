@@ -1335,8 +1335,6 @@ let pushQueriesForRange = (
   ~addressesByContractName: dict<array<Address.t>>,
   ~indexingAddresses: dict<indexingAddress>,
 ) => {
-  let estResponseSize = (~fromBlock, ~toBlock) =>
-    calculateEstResponseSize(partition, ~fromBlock, ~toBlock, ~maxQueryBlockNumber)
   if rangeFromBlock <= maxQueryBlockNumber {
     switch rangeEndBlock {
     | Some(endBlock) if rangeFromBlock > endBlock => ()
@@ -1349,7 +1347,12 @@ let pushQueriesForRange = (
           toBlock: rangeEndBlock,
           selection,
           isChunk: false,
-          estResponseSize: estResponseSize(~fromBlock=rangeFromBlock, ~toBlock=rangeEndBlock),
+          estResponseSize: calculateEstResponseSize(
+            partition,
+            ~fromBlock=rangeFromBlock,
+            ~toBlock=rangeEndBlock,
+            ~maxQueryBlockNumber,
+          ),
           addressesByContractName,
           indexingAddresses,
         })
@@ -1377,9 +1380,11 @@ let pushQueriesForRange = (
               toBlock: Some(chunkToBlock),
               isChunk: true,
               selection,
-              estResponseSize: estResponseSize(
+              estResponseSize: calculateEstResponseSize(
+                partition,
                 ~fromBlock=chunkFromBlock.contents,
                 ~toBlock=Some(chunkToBlock),
+                ~maxQueryBlockNumber,
               ),
               addressesByContractName,
               indexingAddresses,
@@ -1395,7 +1400,12 @@ let pushQueriesForRange = (
             toBlock: rangeEndBlock,
             selection,
             isChunk: rangeEndBlock !== None,
-            estResponseSize: estResponseSize(~fromBlock=rangeFromBlock, ~toBlock=rangeEndBlock),
+            estResponseSize: calculateEstResponseSize(
+              partition,
+              ~fromBlock=rangeFromBlock,
+              ~toBlock=rangeEndBlock,
+              ~maxQueryBlockNumber,
+            ),
             addressesByContractName,
             indexingAddresses,
           })
@@ -1418,7 +1428,7 @@ let getNextQuery = (
     knownHeight,
   } as fetchState: t,
   ~budget,
-  ~chainPendingBudget=0.,
+  ~chainPendingBudget,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
@@ -1802,23 +1812,6 @@ let make = (
 }
 
 let bufferSize = ({buffer}: t) => buffer->Array.length
-
-// Estimated items across all in-flight queries (sum of their estResponseSize).
-// The shared buffer budget counts this so we don't re-dispatch the pool while
-// queries are still being fetched.
-let reservedSize = ({optimizedPartitions}: t) => {
-  let total = ref(0.)
-  for i in 0 to optimizedPartitions.idsInAscOrder->Array.length - 1 {
-    let p =
-      optimizedPartitions.entities->Dict.getUnsafe(
-        optimizedPartitions.idsInAscOrder->Array.getUnsafe(i),
-      )
-    for j in 0 to p.mutPendingQueries->Array.length - 1 {
-      total := total.contents +. (p.mutPendingQueries->Array.getUnsafe(j)).estResponseSize
-    }
-  }
-  total.contents
-}
 
 // Number of buffered items at or below the ready frontier (processable now,
 // i.e. not stuck behind a gap from a lagging partition or out-of-order chunk).

@@ -351,7 +351,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
   let firstQuery = (fetchState: FetchState.t) =>
     switch fetchState
     ->FetchState.updateKnownHeight(~knownHeight=10000)
-    ->FetchState.getNextQuery(~budget=5000) {
+    ->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.) {
     | Ready([q]) => q
     | Ready(qs) =>
       JsError.throwWithMessage(

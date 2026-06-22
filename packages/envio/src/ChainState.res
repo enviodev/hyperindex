@@ -615,7 +615,9 @@ let rollback = (
     | None => ()
     }
     cs.fetchState = cs.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
-    cs.pendingBudget = cs.fetchState->FetchState.reservedSize
+
+    // Rollback requires no in-flight queries, so nothing stays reserved.
+    cs.pendingBudget = 0.
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
   | None =>
@@ -626,7 +628,9 @@ let rollback = (
         )
       cs.fetchState =
         cs.fetchState->FetchState.rollback(~targetBlockNumber=rollbackTargetBlockNumber)
-      cs.pendingBudget = cs.fetchState->FetchState.reservedSize
+
+      // Rollback requires no in-flight queries, so nothing stays reserved.
+      cs.pendingBudget = 0.
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,
