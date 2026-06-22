@@ -13,7 +13,6 @@ let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 
 let blockTime = 1778064393
 let slot = 417950033
-let txSignature = "5tuam3k7KxWf4Zxk42oDyZwztZGcHJ4eqkKS3DtCLSiqjGn4EdDGqnaQc5ymU6fFH99UMSvuSjhL4usZgJjquaQD"
 
 let makeEventConfig = (): Internal.svmInstructionEventConfig => {
   id: "0x21",
@@ -60,16 +59,6 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
         blockTime,
       },
     ],
-    transactions: [
-      {
-        slot,
-        transactionIndex: 965,
-        signatures: [txSignature],
-        accountKeys: [],
-        loadedAddressesWritable: [],
-        loadedAddressesReadonly: [],
-      },
-    ],
     instructions: [
       {
         slot,
@@ -84,7 +73,6 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
       },
     ],
     logs: [],
-    tokenBalances: [],
   },
 }
 

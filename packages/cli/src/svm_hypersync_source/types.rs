@@ -18,26 +18,6 @@ pub struct Block {
 
 #[napi(object)]
 #[derive(Default, Clone)]
-pub struct Transaction {
-    pub slot: i64,
-    pub transaction_index: i64,
-    pub signatures: Vec<String>,
-    pub fee_payer: Option<String>,
-    pub success: Option<bool>,
-    pub err: Option<String>,
-    /// Lamports. `u64` upstream, exposed as `BigInt` because lamports values
-    /// can theoretically exceed `i64::MAX`.
-    pub fee: Option<BigInt>,
-    pub compute_units_consumed: Option<BigInt>,
-    pub account_keys: Vec<String>,
-    pub recent_blockhash: Option<String>,
-    pub version: Option<String>,
-    pub loaded_addresses_writable: Vec<String>,
-    pub loaded_addresses_readonly: Vec<String>,
-}
-
-#[napi(object)]
-#[derive(Default, Clone)]
 pub struct Instruction {
     pub slot: i64,
     pub transaction_index: i64,
@@ -92,18 +72,6 @@ pub struct Balance {
 
 #[napi(object)]
 #[derive(Default, Clone)]
-pub struct TokenBalance {
-    pub slot: i64,
-    pub transaction_index: Option<i64>,
-    pub account: Option<String>,
-    pub mint: Option<String>,
-    pub owner: Option<String>,
-    pub pre_amount: Option<String>,
-    pub post_amount: Option<String>,
-}
-
-#[napi(object)]
-#[derive(Default, Clone)]
 pub struct Reward {
     pub slot: i64,
     pub pubkey: Option<String>,
@@ -117,11 +85,9 @@ pub struct Reward {
 #[derive(Default, Clone)]
 pub struct QueryResponseData {
     pub blocks: Vec<Block>,
-    pub transactions: Vec<Transaction>,
     pub instructions: Vec<Instruction>,
     pub logs: Vec<Log>,
     pub balances: Vec<Balance>,
-    pub token_balances: Vec<TokenBalance>,
     pub rewards: Vec<Reward>,
 }
 
@@ -182,27 +148,6 @@ impl TryFrom<simple::Block> for Block {
     }
 }
 
-impl TryFrom<simple::Transaction> for Transaction {
-    type Error = anyhow::Error;
-    fn try_from(t: simple::Transaction) -> Result<Self> {
-        Ok(Self {
-            slot: u64_to_i64(t.slot, "transaction.slot")?,
-            transaction_index: u32_to_i64(t.transaction_index),
-            signatures: t.signatures,
-            fee_payer: t.fee_payer,
-            success: t.success,
-            err: t.err,
-            fee: t.fee.map(bigint_u64),
-            compute_units_consumed: t.compute_units_consumed.map(bigint_u64),
-            account_keys: t.account_keys,
-            recent_blockhash: t.recent_blockhash,
-            version: t.version,
-            loaded_addresses_writable: t.loaded_addresses_writable,
-            loaded_addresses_readonly: t.loaded_addresses_readonly,
-        })
-    }
-}
-
 impl TryFrom<simple::Instruction> for Instruction {
     type Error = anyhow::Error;
     fn try_from(i: simple::Instruction) -> Result<Self> {
@@ -259,21 +204,6 @@ impl TryFrom<simple::Balance> for Balance {
     }
 }
 
-impl TryFrom<simple::TokenBalance> for TokenBalance {
-    type Error = anyhow::Error;
-    fn try_from(t: simple::TokenBalance) -> Result<Self> {
-        Ok(Self {
-            slot: u64_to_i64(t.slot, "token_balance.slot")?,
-            transaction_index: t.transaction_index.map(u32_to_i64),
-            account: t.account,
-            mint: t.mint,
-            owner: t.owner,
-            pre_amount: t.pre_amount,
-            post_amount: t.post_amount,
-        })
-    }
-}
-
 impl TryFrom<simple::Reward> for Reward {
     type Error = anyhow::Error;
     fn try_from(r: simple::Reward) -> Result<Self> {
@@ -304,11 +234,9 @@ impl TryFrom<simple::SolanaResponse> for QueryResponse {
                 .with_context(|| format!("response_bytes {} overflows i64", r.response_bytes))?,
             data: QueryResponseData {
                 blocks: try_map(r.blocks)?,
-                transactions: try_map(r.transactions)?,
                 instructions: try_map(r.instructions)?,
                 logs: try_map(r.logs)?,
                 balances: try_map(r.balances)?,
-                token_balances: try_map(r.token_balances)?,
                 rewards: try_map(r.rewards)?,
             },
         })

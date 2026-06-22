@@ -147,22 +147,6 @@ module ResponseTypes = {
     blockHeight?: int,
   }
 
-  type transaction = {
-    slot: int,
-    transactionIndex: int,
-    signatures: array<string>,
-    feePayer?: string,
-    success?: bool,
-    err?: string,
-    fee?: int,
-    computeUnitsConsumed?: int,
-    accountKeys: array<string>,
-    recentBlockhash?: string,
-    version?: string,
-    loadedAddressesWritable: array<string>,
-    loadedAddressesReadonly: array<string>,
-  }
-
   /// Borsh-decoded view attached by the Rust client. `argsJson`/`accountsJson`
   /// are stringified to side-step napi-rs's lack of native JSON passthrough.
   /** Solana instruction record.
@@ -204,22 +188,10 @@ module ResponseTypes = {
     message?: string,
   }
 
-  type tokenBalance = {
-    slot: int,
-    transactionIndex?: int,
-    account?: string,
-    mint?: string,
-    owner?: string,
-    preAmount?: string,
-    postAmount?: string,
-  }
-
   type queryResponseData = {
     blocks: array<block>,
-    transactions: array<transaction>,
     instructions: array<instruction>,
     logs: array<log>,
-    tokenBalances: array<tokenBalance>,
   }
 
   type queryResponse = {

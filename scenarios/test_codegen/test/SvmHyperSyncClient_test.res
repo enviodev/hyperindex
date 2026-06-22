@@ -52,7 +52,6 @@ describe_skip("SvmHyperSyncClient live", () => {
         | None => false
         }
       ),
-      "hasTransactions": resp.data.transactions->Array.length > 0,
     }
     t.expect(summary).toEqual({
       "heightLooksRecent": true,
@@ -60,7 +59,6 @@ describe_skip("SvmHyperSyncClient live", () => {
       "firstProgramId": tokenMetadataProgram,
       "firstDataIsHex": true,
       "allInstructionSlotsHaveBlockTime": true,
-      "hasTransactions": true,
     })
   })
 })
