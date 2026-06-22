@@ -139,6 +139,7 @@ let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
 // SVM transaction fields. Order mirrors the Rust `SvmTxField` ordinals (the bit
 // position in the selection mask) and `Svm.res` `transactionFields`.
 type svmTransactionField =
+  | @as("transactionIndex") TransactionIndex
   | @as("signatures") Signatures
   | @as("feePayer") FeePayer
   | @as("success") Success
@@ -151,6 +152,7 @@ type svmTransactionField =
   | @as("tokenBalances") TokenBalances
 
 let allSvmTransactionFields: array<svmTransactionField> = [
+  TransactionIndex,
   Signatures,
   FeePayer,
   Success,

@@ -7,6 +7,7 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
 // Ordered transaction field names. The index of each is the field code shared
 // with the Rust store (`SvmTxField`) — keep this order in sync.
 let transactionFields = [
+  "transactionIndex",
   "signatures",
   "feePayer",
   "success",

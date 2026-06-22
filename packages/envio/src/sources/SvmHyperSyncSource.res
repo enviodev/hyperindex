@@ -247,13 +247,15 @@ let probeRouter = (
   }
 }
 
-// Map a selected transaction field to its query-side column. `tokenBalances`
-// lives in a separate table (requested via `needsTokenBalances`), so it has no
-// transaction column.
+// Map a selected transaction field to the extra query-side column it needs.
+// `transactionIndex` is always fetched as the store key, and `tokenBalances`
+// lives in a separate table (requested via `needsTokenBalances`), so neither
+// adds a transaction column here.
 let toQueryTxField = (field: Internal.svmTransactionField): option<
   SvmHyperSyncClient.QueryTypes.transactionField,
 > =>
   switch field {
+  | TransactionIndex => None
   | Signatures => Some(Signatures)
   | FeePayer => Some(FeePayer)
   | Success => Some(Success)
@@ -317,9 +319,12 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     )
     fields
   }
-  // The transaction table is needed only when a real column (beyond the key) is
+  // Every selected field except `tokenBalances` (its own table) is read off a
+  // stored transaction record, so the transaction table must be fetched to
+  // populate the store — even when only `transactionIndex` (a key column) is
   // selected.
-  let needsTransactions = txQueryFields->Array.length > txKeyColumns->Array.length
+  let needsTransactions =
+    selectedTxFields->Utils.Set.toArray->Array.some(field => field != Internal.TokenBalances)
 
   let getItemsOrThrow = async (
     ~fromBlock,

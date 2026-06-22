@@ -48,6 +48,7 @@ type svmTokenBalance = {
 }
 
 type svmTransaction = {
+  transactionIndex?: int,
   signatures: array<string>,
   feePayer?: SvmTypes.Pubkey.t,
   success?: bool,

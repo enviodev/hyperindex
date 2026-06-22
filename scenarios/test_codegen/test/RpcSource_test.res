@@ -89,7 +89,9 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~selectedTransactionFields=Utils.Set.fromArray([TransactionIndex]),
+        ~selectedTransactionFields=Utils.Set.fromArray([
+          (TransactionIndex: Internal.evmTransactionField),
+        ]),
       ),
     ).toEqual({
       "transactionIndex": 1,
@@ -119,7 +121,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~selectedTransactionFields=Utils.Set.fromArray([Hash, TransactionIndex]),
+        ~selectedTransactionFields=Utils.Set.fromArray([
+          Hash,
+          (TransactionIndex: Internal.evmTransactionField),
+        ]),
       ),
     ).toEqual({
       "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
@@ -134,7 +139,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~selectedTransactionFields=Utils.Set.fromArray([TransactionIndex, Hash]),
+        ~selectedTransactionFields=Utils.Set.fromArray([
+          (TransactionIndex: Internal.evmTransactionField),
+          Hash,
+        ]),
       ),
     ).toEqual({
       "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
@@ -165,7 +173,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
         ~selectedTransactionFields=Utils.Set.fromArray([
           Hash,
-          TransactionIndex,
+          (TransactionIndex: Internal.evmTransactionField),
           From,
           To,
           Gas,

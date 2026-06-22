@@ -2062,7 +2062,8 @@ pub struct SvmAccountFilter {
 /// Selectable SVM parent-transaction field names (camelCase), matching the
 /// public `svmTransaction` shape. `tokenBalances` is selected via the separate
 /// `token_balance_fields` config knob, so it isn't accepted here.
-pub const SVM_TRANSACTION_FIELDS: [&str; 9] = [
+pub const SVM_TRANSACTION_FIELDS: [&str; 10] = [
+    "transactionIndex",
     "signatures",
     "feePayer",
     "success",

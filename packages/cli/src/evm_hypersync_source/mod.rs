@@ -249,7 +249,7 @@ fn convert_event_items(
     should_checksum: bool,
     requested_block_fields: &[BlockField],
     requested_transaction_fields: &[TransactionField],
-    store: &TransactionStore,
+    transaction_store: &TransactionStore,
 ) -> std::result::Result<Vec<EventItem>, ConvertError> {
     let mut items = Vec::with_capacity(events.len());
     for event in events {
@@ -306,7 +306,7 @@ fn convert_event_items(
         // Move the raw transaction into the store keyed by (block, txIndex). Its
         // fields materialise on demand; logs sharing a tx collapse to one entry.
         if let Some(tx) = event.transaction {
-            store.insert_evm_raw(
+            transaction_store.insert_evm_raw(
                 block_number as u64,
                 transaction_index as u32,
                 tx,

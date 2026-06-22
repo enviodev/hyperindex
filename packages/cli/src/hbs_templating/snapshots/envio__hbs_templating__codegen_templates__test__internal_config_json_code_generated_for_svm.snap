@@ -76,6 +76,7 @@ expression: json
               "discriminator": "0x0f",
               "discriminatorByteLen": 1,
               "transactionFields": [
+                "transactionIndex",
                 "signatures",
                 "feePayer",
                 "success",

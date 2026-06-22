@@ -14,7 +14,19 @@ let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 let blockTime = 1778064393
 let slot = 417950033
 
-let makeEventConfig = (): Internal.svmInstructionEventConfig => {
+let makeEventConfig = (
+  ~selectedTransactionFields=[
+    Internal.Signatures,
+    FeePayer,
+    Success,
+    Err,
+    Fee,
+    ComputeUnitsConsumed,
+    AccountKeys,
+    RecentBlockhash,
+    Version,
+  ],
+): Internal.svmInstructionEventConfig => {
   id: "0x21",
   name: "CreateMetadataAccountV3",
   contractName: "TokenMetadata",
@@ -30,17 +42,7 @@ let makeEventConfig = (): Internal.svmInstructionEventConfig => {
   discriminator: Some("0x21"),
   discriminatorByteLen: 1,
   includeLogs: false,
-  selectedTransactionFields: Utils.Set.fromArray([
-    Internal.Signatures,
-    FeePayer,
-    Success,
-    Err,
-    Fee,
-    ComputeUnitsConsumed,
-    AccountKeys,
-    RecentBlockhash,
-    Version,
-  ]),
+  selectedTransactionFields: Utils.Set.fromArray(selectedTransactionFields),
   accountFilters: [],
   isInner: None,
   accounts: [],
@@ -92,7 +94,7 @@ let mockClient: SvmHyperSyncClient.t = {
 // The source captures its client at construction, so the mock addon only
 // needs to be in place for the `make` call; restore the previous addon right
 // after to avoid leaking the mock into other tests.
-let makeSource = () => {
+let makeSource = (~eventConfigs=[makeEventConfig()]) => {
   let prevAddon = Core.addonRef.contents
   Core.addonRef :=
     Some(
@@ -106,7 +108,7 @@ let makeSource = () => {
     chain,
     endpointUrl: "https://solana.hypersync.xyz",
     apiToken: None,
-    eventConfigs: [makeEventConfig()],
+    eventConfigs,
     clientTimeoutMillis: 10_000,
   }) catch {
   | exn =>
@@ -200,5 +202,36 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         }: SvmHyperSyncClient.query
       ),
     })
+  })
+
+  // `transactionIndex` is read off a stored transaction record, so selecting it
+  // alone must still fetch the transaction table (with just the key columns) to
+  // populate the store — otherwise the store stays empty and nothing
+  // materialises.
+  Async.it("fetches the transaction table when only transactionIndex is selected", async t => {
+    let eventConfig = makeEventConfig(~selectedTransactionFields=[TransactionIndex])
+    let source = makeSource(~eventConfigs=[eventConfig])
+
+    let _ = await source.getItemsOrThrow(
+      ~fromBlock=slot - 10,
+      ~toBlock=Some(slot + 10),
+      ~addressesByContractName=Dict.fromArray([
+        ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
+      ]),
+      ~indexingAddresses,
+      ~knownHeight=slot + 1000,
+      ~partitionId="0",
+      ~selection={
+        eventConfigs: [(eventConfig :> Internal.eventConfig)],
+        dependsOnAddresses: true,
+      },
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+    )
+
+    let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
+    t.expect(query.fields->Option.flatMap(fields => fields.transaction)).toEqual(
+      Some([Slot, TransactionIndex]),
+    )
   })
 })

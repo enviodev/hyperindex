@@ -186,7 +186,6 @@ pub(crate) fn map_hex_string<T: Hex>(v: &Option<T>) -> Option<String> {
     v.as_ref().map(|v| v.encode_hex())
 }
 
-#[allow(dead_code)]
 pub(crate) fn map_i64<T: AsRef<[u8]>>(opt: &Option<T>) -> Result<Option<i64>> {
     opt.as_ref()
         .map(|v| {

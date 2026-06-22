@@ -18,6 +18,7 @@ use hypersync_client_solana::simple_types as solana_simple;
 use napi::bindgen_prelude::{BigInt, ToNapiValue};
 use napi::sys;
 use napi_derive::napi;
+use strum::VariantArray;
 
 use crate::evm_hypersync_source::map_err;
 use crate::evm_hypersync_source::types::{
@@ -36,7 +37,7 @@ fn bigint_u64(v: u64) -> BigInt {
 /// the contract: it mirrors `Evm.res` `transactionFields`, and the ordinal is
 /// the bit position in the selection mask. Keep the two in sync — guarded by a
 /// test.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, VariantArray)]
 #[repr(i32)]
 pub enum EvmTxField {
     TransactionIndex = 0,
@@ -75,49 +76,6 @@ pub enum EvmTxField {
 }
 
 impl EvmTxField {
-    // Used by the ordinal-contract test; the lib build decodes via `as u32`.
-    #[allow(dead_code)]
-    pub const ALL: [EvmTxField; 33] = [
-        EvmTxField::TransactionIndex,
-        EvmTxField::Hash,
-        EvmTxField::From,
-        EvmTxField::To,
-        EvmTxField::Gas,
-        EvmTxField::GasPrice,
-        EvmTxField::MaxPriorityFeePerGas,
-        EvmTxField::MaxFeePerGas,
-        EvmTxField::CumulativeGasUsed,
-        EvmTxField::EffectiveGasPrice,
-        EvmTxField::GasUsed,
-        EvmTxField::Input,
-        EvmTxField::Nonce,
-        EvmTxField::Value,
-        EvmTxField::V,
-        EvmTxField::R,
-        EvmTxField::S,
-        EvmTxField::ContractAddress,
-        EvmTxField::LogsBloom,
-        EvmTxField::Root,
-        EvmTxField::Status,
-        EvmTxField::YParity,
-        EvmTxField::ChainId,
-        EvmTxField::MaxFeePerBlobGas,
-        EvmTxField::BlobVersionedHashes,
-        EvmTxField::Type,
-        EvmTxField::L1Fee,
-        EvmTxField::L1GasPrice,
-        EvmTxField::L1GasUsed,
-        EvmTxField::L1FeeScalar,
-        EvmTxField::GasUsedForL1,
-        EvmTxField::AccessList,
-        EvmTxField::AuthorizationList,
-    ];
-
-    #[allow(dead_code)]
-    pub fn from_i32(code: i32) -> Option<EvmTxField> {
-        EvmTxField::ALL.get(code as usize).copied()
-    }
-
     /// JS property name; must match `Evm.res` `transactionFields`. Used as the
     /// object key when zipping columns into JS objects.
     pub fn name(self) -> &'static str {
@@ -162,45 +120,28 @@ impl EvmTxField {
 
 /// SVM transaction field codes, mirroring `Svm.res` `transactionFields` by
 /// ordinal (the bit position in the selection mask). Keep the two in sync.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, VariantArray)]
 #[repr(i32)]
 pub enum SvmTxField {
-    Signatures = 0,
-    FeePayer = 1,
-    Success = 2,
-    Err = 3,
-    Fee = 4,
-    ComputeUnitsConsumed = 5,
-    AccountKeys = 6,
-    RecentBlockhash = 7,
-    Version = 8,
-    TokenBalances = 9,
+    TransactionIndex = 0,
+    Signatures = 1,
+    FeePayer = 2,
+    Success = 3,
+    Err = 4,
+    Fee = 5,
+    ComputeUnitsConsumed = 6,
+    AccountKeys = 7,
+    RecentBlockhash = 8,
+    Version = 9,
+    TokenBalances = 10,
 }
 
 impl SvmTxField {
-    #[allow(dead_code)]
-    pub const ALL: [SvmTxField; 10] = [
-        SvmTxField::Signatures,
-        SvmTxField::FeePayer,
-        SvmTxField::Success,
-        SvmTxField::Err,
-        SvmTxField::Fee,
-        SvmTxField::ComputeUnitsConsumed,
-        SvmTxField::AccountKeys,
-        SvmTxField::RecentBlockhash,
-        SvmTxField::Version,
-        SvmTxField::TokenBalances,
-    ];
-
-    #[allow(dead_code)]
-    pub fn from_i32(code: i32) -> Option<SvmTxField> {
-        SvmTxField::ALL.get(code as usize).copied()
-    }
-
     /// JS property name; must match `Svm.res` `transactionFields`.
     pub fn name(self) -> &'static str {
         use SvmTxField::*;
         match self {
+            TransactionIndex => "transactionIndex",
             Signatures => "signatures",
             FeePayer => "feePayer",
             Success => "success",
@@ -349,87 +290,115 @@ fn decode_evm_columns(
     mask: u64,
 ) -> Result<Columns> {
     let len = records.len();
-    let has = |f: EvmTxField| mask & (1u64 << (f as u32)) != 0;
     let mut columns: Vec<(&'static str, Column)> = Vec::new();
 
-    use EvmTxField::*;
-
-    macro_rules! col {
-        ($field:expr, $variant:ident, $extract:expr) => {{
-            if has($field) {
-                columns.push(($field.name(), Column::$variant(fill(records, $extract)?)));
+    for &field in EvmTxField::VARIANTS {
+        if mask & (1u64 << (field as u32)) == 0 {
+            continue;
+        }
+        // Exhaustive match: adding an `EvmTxField` variant fails to compile until
+        // it is decoded here.
+        let column = match field {
+            EvmTxField::TransactionIndex => Column::I64(fill(records, |tx, _| {
+                Ok(tx
+                    .transaction_index
+                    .map(|n| i64::try_from(u64::from(n)))
+                    .transpose()?)
+            })?),
+            EvmTxField::Hash => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.hash)))?),
+            EvmTxField::From => Column::Str(fill(records, |tx, cs| {
+                Ok(map_address_string(&tx.from, cs))
+            })?),
+            EvmTxField::To => {
+                Column::Str(fill(records, |tx, cs| Ok(map_address_string(&tx.to, cs)))?)
             }
-        }};
+            EvmTxField::Gas => Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.gas)))?),
+            EvmTxField::GasPrice => {
+                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.gas_price)))?)
+            }
+            EvmTxField::MaxPriorityFeePerGas => Column::Big(fill(records, |tx, _| {
+                Ok(map_bigint(&tx.max_priority_fee_per_gas))
+            })?),
+            EvmTxField::MaxFeePerGas => {
+                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.max_fee_per_gas)))?)
+            }
+            EvmTxField::CumulativeGasUsed => Column::Big(fill(records, |tx, _| {
+                Ok(map_bigint(&tx.cumulative_gas_used))
+            })?),
+            EvmTxField::EffectiveGasPrice => Column::Big(fill(records, |tx, _| {
+                Ok(map_bigint(&tx.effective_gas_price))
+            })?),
+            EvmTxField::GasUsed => {
+                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.gas_used)))?)
+            }
+            EvmTxField::Input => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.input)))?),
+            EvmTxField::Nonce => Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.nonce)))?),
+            EvmTxField::Value => Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.value)))?),
+            EvmTxField::V => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.v)))?),
+            EvmTxField::R => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.r)))?),
+            EvmTxField::S => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.s)))?),
+            EvmTxField::ContractAddress => Column::Str(fill(records, |tx, cs| {
+                Ok(map_address_string(&tx.contract_address, cs))
+            })?),
+            EvmTxField::LogsBloom => {
+                Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.logs_bloom)))?)
+            }
+            EvmTxField::Root => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.root)))?),
+            EvmTxField::Status => Column::I64(fill(records, |tx, _| {
+                Ok(tx.status.map(|v| v.to_u8() as i64))
+            })?),
+            EvmTxField::YParity => {
+                Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.y_parity)))?)
+            }
+            EvmTxField::ChainId => Column::I64(fill(records, |tx, _| {
+                Ok(tx
+                    .chain_id
+                    .as_ref()
+                    .map(|n| i64::try_from(ruint::aliases::U256::from_be_slice(n)))
+                    .transpose()?)
+            })?),
+            EvmTxField::MaxFeePerBlobGas => Column::Big(fill(records, |tx, _| {
+                Ok(map_bigint(&tx.max_fee_per_blob_gas))
+            })?),
+            EvmTxField::BlobVersionedHashes => Column::StrVec(fill(records, |tx, _| {
+                Ok(tx
+                    .blob_versioned_hashes
+                    .as_ref()
+                    .map(|arr| arr.iter().map(|h| h.encode_hex()).collect()))
+            })?),
+            EvmTxField::Type => Column::I64(fill(records, |tx, _| {
+                Ok(tx.type_.map(|v| u8::from(v) as i64))
+            })?),
+            EvmTxField::L1Fee => Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.l1_fee)))?),
+            EvmTxField::L1GasPrice => {
+                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.l1_gas_price)))?)
+            }
+            EvmTxField::L1GasUsed => {
+                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.l1_gas_used)))?)
+            }
+            EvmTxField::L1FeeScalar => Column::F64(fill(records, |tx, _| Ok(tx.l1_fee_scalar))?),
+            EvmTxField::GasUsedForL1 => {
+                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.gas_used_for_l1)))?)
+            }
+            EvmTxField::AccessList => Column::AccessList(fill(records, |tx, _| {
+                Ok(tx
+                    .access_list
+                    .as_ref()
+                    .map(|arr| arr.iter().map(AccessListItem::from).collect()))
+            })?),
+            EvmTxField::AuthorizationList => Column::AuthList(fill(records, |tx, _| {
+                tx.authorization_list
+                    .as_ref()
+                    .map(|al| {
+                        al.iter()
+                            .map(AuthorizationItem::try_from)
+                            .collect::<Result<_>>()
+                    })
+                    .transpose()
+            })?),
+        };
+        columns.push((field.name(), column));
     }
-
-    col!(TransactionIndex, I64, |tx, _| Ok(tx
-        .transaction_index
-        .map(|n| i64::try_from(u64::from(n)))
-        .transpose()?));
-    col!(Hash, Str, |tx, _| Ok(map_hex_string(&tx.hash)));
-    col!(From, Str, |tx, cs| Ok(map_address_string(&tx.from, cs)));
-    col!(To, Str, |tx, cs| Ok(map_address_string(&tx.to, cs)));
-    col!(Gas, Big, |tx, _| Ok(map_bigint(&tx.gas)));
-    col!(GasPrice, Big, |tx, _| Ok(map_bigint(&tx.gas_price)));
-    col!(MaxPriorityFeePerGas, Big, |tx, _| Ok(map_bigint(
-        &tx.max_priority_fee_per_gas
-    )));
-    col!(MaxFeePerGas, Big, |tx, _| Ok(map_bigint(
-        &tx.max_fee_per_gas
-    )));
-    col!(CumulativeGasUsed, Big, |tx, _| Ok(map_bigint(
-        &tx.cumulative_gas_used
-    )));
-    col!(EffectiveGasPrice, Big, |tx, _| Ok(map_bigint(
-        &tx.effective_gas_price
-    )));
-    col!(GasUsed, Big, |tx, _| Ok(map_bigint(&tx.gas_used)));
-    col!(Input, Str, |tx, _| Ok(map_hex_string(&tx.input)));
-    col!(Nonce, Big, |tx, _| Ok(map_bigint(&tx.nonce)));
-    col!(Value, Big, |tx, _| Ok(map_bigint(&tx.value)));
-    col!(V, Str, |tx, _| Ok(map_hex_string(&tx.v)));
-    col!(R, Str, |tx, _| Ok(map_hex_string(&tx.r)));
-    col!(S, Str, |tx, _| Ok(map_hex_string(&tx.s)));
-    col!(ContractAddress, Str, |tx, cs| Ok(map_address_string(
-        &tx.contract_address,
-        cs
-    )));
-    col!(LogsBloom, Str, |tx, _| Ok(map_hex_string(&tx.logs_bloom)));
-    col!(Root, Str, |tx, _| Ok(map_hex_string(&tx.root)));
-    col!(Status, I64, |tx, _| Ok(tx.status.map(|v| v.to_u8() as i64)));
-    col!(YParity, Str, |tx, _| Ok(map_hex_string(&tx.y_parity)));
-    col!(ChainId, I64, |tx, _| Ok(tx
-        .chain_id
-        .as_ref()
-        .map(|n| i64::try_from(ruint::aliases::U256::from_be_slice(n)))
-        .transpose()?));
-    col!(MaxFeePerBlobGas, Big, |tx, _| Ok(map_bigint(
-        &tx.max_fee_per_blob_gas
-    )));
-    col!(BlobVersionedHashes, StrVec, |tx, _| Ok(tx
-        .blob_versioned_hashes
-        .as_ref()
-        .map(|arr| arr.iter().map(|h| h.encode_hex()).collect())));
-    col!(Type, I64, |tx, _| Ok(tx.type_.map(|v| u8::from(v) as i64)));
-    col!(L1Fee, Big, |tx, _| Ok(map_bigint(&tx.l1_fee)));
-    col!(L1GasPrice, Big, |tx, _| Ok(map_bigint(&tx.l1_gas_price)));
-    col!(L1GasUsed, Big, |tx, _| Ok(map_bigint(&tx.l1_gas_used)));
-    col!(L1FeeScalar, F64, |tx, _| Ok(tx.l1_fee_scalar));
-    col!(GasUsedForL1, Big, |tx, _| Ok(map_bigint(
-        &tx.gas_used_for_l1
-    )));
-    col!(AccessList, AccessList, |tx, _| Ok(tx
-        .access_list
-        .as_ref()
-        .map(|arr| arr.iter().map(AccessListItem::from).collect())));
-    col!(AuthorizationList, AuthList, |tx, _| tx
-        .authorization_list
-        .as_ref()
-        .map(|al| al
-            .iter()
-            .map(AuthorizationItem::try_from)
-            .collect::<Result<_>>())
-        .transpose());
 
     Ok(Columns { len, columns })
 }
@@ -456,43 +425,52 @@ fn fill_svm<T>(
 /// Large fields (e.g. `accountKeys`) are only cloned when their bit is set.
 fn decode_svm_columns(records: &[Option<Arc<SvmStored>>], mask: u64) -> Columns {
     let len = records.len();
-    let has = |f: SvmTxField| mask & (1u64 << (f as u32)) != 0;
     let mut columns: Vec<(&'static str, Column)> = Vec::new();
 
-    use SvmTxField::*;
-
-    macro_rules! col {
-        ($field:expr, $variant:ident, $extract:expr) => {{
-            if has($field) {
-                columns.push(($field.name(), Column::$variant(fill_svm(records, $extract))));
+    for &field in SvmTxField::VARIANTS {
+        if mask & (1u64 << (field as u32)) == 0 {
+            continue;
+        }
+        // Exhaustive match: adding an `SvmTxField` variant fails to compile until
+        // it is decoded here.
+        let column = match field {
+            SvmTxField::TransactionIndex => {
+                Column::I64(fill_svm(records, |r| Some(r.tx.transaction_index as i64)))
             }
-        }};
+            SvmTxField::Signatures => {
+                Column::StrVec(fill_svm(records, |r| Some(r.tx.signatures.clone())))
+            }
+            SvmTxField::FeePayer => Column::Str(fill_svm(records, |r| r.tx.fee_payer.clone())),
+            SvmTxField::Success => Column::Bool(fill_svm(records, |r| r.tx.success)),
+            SvmTxField::Err => Column::Str(fill_svm(records, |r| r.tx.err.clone())),
+            SvmTxField::Fee => Column::Big(fill_svm(records, |r| r.tx.fee.map(bigint_u64))),
+            SvmTxField::ComputeUnitsConsumed => Column::Big(fill_svm(records, |r| {
+                r.tx.compute_units_consumed.map(bigint_u64)
+            })),
+            SvmTxField::AccountKeys => {
+                Column::StrVec(fill_svm(records, |r| Some(r.tx.account_keys.clone())))
+            }
+            SvmTxField::RecentBlockhash => {
+                Column::Str(fill_svm(records, |r| r.tx.recent_blockhash.clone()))
+            }
+            SvmTxField::Version => Column::Str(fill_svm(records, |r| r.tx.version.clone())),
+            SvmTxField::TokenBalances => Column::TokenBalances(fill_svm(records, |r| {
+                Some(
+                    r.token_balances
+                        .iter()
+                        .map(|tb| SvmTokenBalanceOut {
+                            account: tb.account.clone(),
+                            mint: tb.mint.clone(),
+                            owner: tb.owner.clone(),
+                            pre_amount: tb.pre_amount.clone(),
+                            post_amount: tb.post_amount.clone(),
+                        })
+                        .collect(),
+                )
+            })),
+        };
+        columns.push((field.name(), column));
     }
-
-    col!(Signatures, StrVec, |r| Some(r.tx.signatures.clone()));
-    col!(FeePayer, Str, |r| r.tx.fee_payer.clone());
-    col!(Success, Bool, |r| r.tx.success);
-    col!(Err, Str, |r| r.tx.err.clone());
-    col!(Fee, Big, |r| r.tx.fee.map(bigint_u64));
-    col!(ComputeUnitsConsumed, Big, |r| r
-        .tx
-        .compute_units_consumed
-        .map(bigint_u64));
-    col!(AccountKeys, StrVec, |r| Some(r.tx.account_keys.clone()));
-    col!(RecentBlockhash, Str, |r| r.tx.recent_blockhash.clone());
-    col!(Version, Str, |r| r.tx.version.clone());
-    col!(TokenBalances, TokenBalances, |r| Some(
-        r.token_balances
-            .iter()
-            .map(|tb| SvmTokenBalanceOut {
-                account: tb.account.clone(),
-                mint: tb.mint.clone(),
-                owner: tb.owner.clone(),
-                pre_amount: tb.pre_amount.clone(),
-                post_amount: tb.post_amount.clone(),
-            })
-            .collect()
-    ));
 
     Columns { len, columns }
 }
@@ -770,17 +748,77 @@ mod tests {
 
     #[test]
     fn field_codes_match_names_in_order() {
-        for (idx, field) in EvmTxField::ALL.iter().enumerate() {
-            assert_eq!(EvmTxField::from_i32(idx as i32), Some(*field));
-        }
-        assert_eq!(EvmTxField::from_i32(EvmTxField::ALL.len() as i32), None);
-        assert_eq!(EvmTxField::Input.name(), "input");
+        // The bit position (`field as u32`) must equal the field's index in
+        // `VARIANTS`, and the names must match the ReScript `transactionFields`
+        // arrays in that same order. Pin both so a reordered or misnumbered
+        // variant fails here rather than silently corrupting the shared mask.
+        let evm_codes: Vec<i32> = EvmTxField::VARIANTS.iter().map(|&f| f as i32).collect();
+        assert_eq!(
+            evm_codes,
+            Vec::from_iter(0..EvmTxField::VARIANTS.len() as i32)
+        );
+        let evm_names: Vec<&str> = EvmTxField::VARIANTS.iter().map(|f| f.name()).collect();
+        assert_eq!(
+            evm_names,
+            vec![
+                "transactionIndex",
+                "hash",
+                "from",
+                "to",
+                "gas",
+                "gasPrice",
+                "maxPriorityFeePerGas",
+                "maxFeePerGas",
+                "cumulativeGasUsed",
+                "effectiveGasPrice",
+                "gasUsed",
+                "input",
+                "nonce",
+                "value",
+                "v",
+                "r",
+                "s",
+                "contractAddress",
+                "logsBloom",
+                "root",
+                "status",
+                "yParity",
+                "chainId",
+                "maxFeePerBlobGas",
+                "blobVersionedHashes",
+                "type",
+                "l1Fee",
+                "l1GasPrice",
+                "l1GasUsed",
+                "l1FeeScalar",
+                "gasUsedForL1",
+                "accessList",
+                "authorizationList",
+            ]
+        );
 
-        for (idx, field) in SvmTxField::ALL.iter().enumerate() {
-            assert_eq!(SvmTxField::from_i32(idx as i32), Some(*field));
-        }
-        assert_eq!(SvmTxField::from_i32(SvmTxField::ALL.len() as i32), None);
-        assert_eq!(SvmTxField::AccountKeys.name(), "accountKeys");
+        let svm_codes: Vec<i32> = SvmTxField::VARIANTS.iter().map(|&f| f as i32).collect();
+        assert_eq!(
+            svm_codes,
+            Vec::from_iter(0..SvmTxField::VARIANTS.len() as i32)
+        );
+        let svm_names: Vec<&str> = SvmTxField::VARIANTS.iter().map(|f| f.name()).collect();
+        assert_eq!(
+            svm_names,
+            vec![
+                "transactionIndex",
+                "signatures",
+                "feePayer",
+                "success",
+                "err",
+                "fee",
+                "computeUnitsConsumed",
+                "accountKeys",
+                "recentBlockhash",
+                "version",
+                "tokenBalances",
+            ]
+        );
     }
 
     #[test]
