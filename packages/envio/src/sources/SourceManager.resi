@@ -10,7 +10,6 @@ let getSourceRole: (
 
 let make: (
   ~sources: array<Source.t>,
-  ~maxPartitionConcurrency: int,
   ~isRealtime: bool,
   ~newBlockStallTimeout: int=?,
   ~newBlockStallTimeoutRealtime: int=?,
@@ -22,14 +21,17 @@ let make: (
 
 let getActiveSource: t => Source.t
 
+let inFlightCount: t => int
+
 let onReorg: (t, ~rollbackTargetBlock: int) => unit
 
-let fetchNext: (
+let dispatch: (
   t,
   ~fetchState: FetchState.t,
   ~executeQuery: FetchState.query => promise<unit>,
   ~waitForNewBlock: (~knownHeight: int) => promise<int>,
   ~onNewBlock: (~knownHeight: int) => unit,
+  ~action: FetchState.nextQuery,
   ~stateId: int,
 ) => promise<unit>
 

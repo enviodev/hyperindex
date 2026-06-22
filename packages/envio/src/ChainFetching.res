@@ -321,9 +321,10 @@ let finishWaitingForNewBlock = (
     scheduleProcessing()
   }
 
-let checkAndFetchForChain = async (
+let fetchChain = async (
   state: IndexerState.t,
   chain,
+  ~action,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
@@ -335,14 +336,14 @@ let checkAndFetchForChain = async (
     let isRealtime = state->IndexerState.isRealtime
     let sourceManager = chainState->ChainState.sourceManager
 
-    // Only affects the WaitingForNewBlock branch of fetchNext, where
+    // Only affects the WaitingForNewBlock branch of dispatch, where
     // there's nothing to fetch. During backfill any such chain is idle.
     let reducedPolling = !isRealtime
 
     // Owns its error boundary: launch doesn't catch, so any failure here (the
-    // query, response handling, or fetchNext itself) must stop the indexer.
+    // query, response handling, or dispatch itself) must stop the indexer.
     try {
-      await sourceManager->SourceManager.fetchNext(
+      await sourceManager->SourceManager.dispatch(
         ~fetchState,
         ~waitForNewBlock=(~knownHeight) =>
           sourceManager->SourceManager.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling),
@@ -357,7 +358,7 @@ let checkAndFetchForChain = async (
           ),
         ~executeQuery=async query => {
           // Caught here (not just by the outer try) so the query promise never
-          // rejects: fetchNext spins a side-chain off it that would otherwise
+          // rejects: dispatch spins a side-chain off it that would otherwise
           // become an unhandled rejection.
           try {
             let response = await sourceManager->SourceManager.executeQuery(
@@ -377,6 +378,7 @@ let checkAndFetchForChain = async (
           | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
           }
         },
+        ~action,
         ~stateId,
       )
     } catch {
@@ -384,29 +386,4 @@ let checkAndFetchForChain = async (
       IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
     }
   }
-}
-
-let checkAndFetchAllChains = async (
-  state: IndexerState.t,
-  ~stateId,
-  ~scheduleFetch,
-  ~scheduleProcessing,
-  ~scheduleRollback,
-) => {
-  // Iterate the state's chain states so we can construct tests that don't use
-  // all chains
-  let _ = await state
-  ->IndexerState.chainStates
-  ->Dict.valuesToArray
-  ->Array.map(cs =>
-    checkAndFetchForChain(
-      state,
-      ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id),
-      ~stateId,
-      ~scheduleFetch,
-      ~scheduleProcessing,
-      ~scheduleRollback,
-    )
-  )
-  ->Promise.all
 }

@@ -199,11 +199,11 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=10,
-      ~targetBufferSize=5000,
+      ~maxOnBlockBufferSize=5000,
       ~chainId=1,
       ~knownHeight=1000,
     )
-    let query = switch fetchState->FetchState.getNextQuery(~concurrencyLimit=10) {
+    let query = switch fetchState->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.) {
     | Ready([q]) => q
     | _ => JsError.throwWithMessage("expected a single ready query")
     }

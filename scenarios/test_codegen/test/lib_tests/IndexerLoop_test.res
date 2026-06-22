@@ -19,7 +19,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ],
       ~addresses=[],
       ~startBlock=0,
-      ~targetBufferSize=5000,
+      ~maxOnBlockBufferSize=5000,
       ~chainId=chainConfig.id,
       ~knownHeight=0,
     )
@@ -29,7 +29,6 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~fetchState,
       ~sourceManager=SourceManager.make(
         ~sources=[mockSource.source],
-        ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
         ~isRealtime=false,
       ),
       ~reorgDetection=ReorgDetection.make(

@@ -17,12 +17,18 @@ let launch = (state: IndexerState.t, work: unit => promise<unit>) =>
 let start = (state: IndexerState.t) => {
   let rec scheduleFetch = () =>
     launch(state, () =>
-      ChainFetching.checkAndFetchAllChains(
-        state,
-        ~stateId=state->IndexerState.epoch,
-        ~scheduleFetch,
-        ~scheduleProcessing,
-        ~scheduleRollback,
+      state
+      ->IndexerState.crossChainState
+      ->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) =>
+        ChainFetching.fetchChain(
+          state,
+          chain,
+          ~action,
+          ~stateId=state->IndexerState.epoch,
+          ~scheduleFetch,
+          ~scheduleProcessing,
+          ~scheduleRollback,
+        )
       )
     )
   and scheduleProcessing = () =>

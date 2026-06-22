@@ -172,7 +172,7 @@ let prepareBatch = (
     chainsBeforeBatch
     ->Dict.valuesToArray
     ->Array.map(chainBeforeBatch => chainBeforeBatch.fetchState)
-    ->FetchState.sortForUnorderedBatch(~batchSizeTarget)
+    ->FetchState.sortForBatch(~batchSizeTarget)
 
   let chainIdx = ref(0)
   let preparedNumber = preparedFetchStates->Array.length

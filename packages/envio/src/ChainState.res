@@ -11,6 +11,10 @@ type t = {
   mutable timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   mutable committedProgressBlockNumber: int,
   mutable numEventsProcessed: float,
+  // Running sum of in-flight queries' estResponseSize, kept here so the
+  // scheduler doesn't re-sum pending queries on every tick. Incremented when
+  // queries are dispatched, decremented as their responses land.
+  mutable pendingBudget: float,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
@@ -56,6 +60,7 @@ let make = (
   timestampCaughtUpToHeadOrEndblock,
   committedProgressBlockNumber,
   numEventsProcessed,
+  pendingBudget: 0.,
   reorgDetection,
   safeCheckpointTracking,
   transactionStore: TransactionStore.make(),
@@ -71,7 +76,6 @@ let makeInternal = (
   ~progressBlockNumber,
   ~config: Config.t,
   ~registrations: HandlerRegister.registrations,
-  ~targetBufferSize,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
@@ -205,7 +209,7 @@ let makeInternal = (
     ~startBlock,
     ~endBlock,
     ~eventConfigs,
-    ~targetBufferSize,
+    ~maxOnBlockBufferSize=2 * config.batchSize,
     ~knownHeight,
     ~chainId=chainConfig.id,
     // FIXME: Shouldn't set with full history
@@ -292,12 +296,7 @@ let makeInternal = (
   make(
     ~chainConfig,
     ~fetchState,
-    ~sourceManager=SourceManager.make(
-      ~sources,
-      ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
-      ~isRealtime,
-      ~reducedPollingInterval?,
-    ),
+    ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints,
       ~maxReorgDepth,
@@ -316,13 +315,7 @@ let makeInternal = (
   )
 }
 
-let makeFromConfig = (
-  chainConfig: Config.chain,
-  ~config,
-  ~registrations,
-  ~targetBufferSize,
-  ~knownHeight,
-) => {
+let makeFromConfig = (chainConfig: Config.chain, ~config, ~registrations, ~knownHeight) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
 
   makeInternal(
@@ -336,7 +329,6 @@ let makeFromConfig = (
     ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0.,
-    ~targetBufferSize,
     ~logger,
     ~indexingAddresses=configAddresses(chainConfig),
     ~isInReorgThreshold=false,
@@ -356,7 +348,6 @@ let makeFromDbState = (
   ~isRealtime,
   ~config,
   ~registrations,
-  ~targetBufferSize,
   ~reducedPollingInterval=?,
 ) => {
   let chainId = chainConfig.id
@@ -386,7 +377,6 @@ let makeFromDbState = (
       : resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
     ~logger,
-    ~targetBufferSize,
     ~isInReorgThreshold,
     ~isRealtime,
     ~knownHeight=resumedChainState.sourceBlockNumber,
@@ -407,7 +397,24 @@ let transactionFieldMask = (cs: t) => cs.transactionFieldMask
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
+let pendingBudget = (cs: t) => cs.pendingBudget
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
+
+// Mark queries as in flight and reserve their estimated size against the shared
+// buffer budget in one step, so the counter stays in sync with the pending
+// queries it tracks.
+let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
+  cs.fetchState->FetchState.startFetchingQueries(~queries)
+  cs.pendingBudget =
+    cs.pendingBudget +. queries->Array.reduce(0., (acc, query) => acc +. query.estResponseSize)
+}
+
+// Drop every in-flight query and release their reservations together, keeping
+// pendingBudget coupled to the pending queries it tracks.
+let resetPendingQueries = (cs: t) => {
+  cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
+  cs.pendingBudget = 0.
+}
 
 // --- Derived (pure). ---
 
@@ -417,10 +424,6 @@ let hasProcessedToEndblock = (cs: t) => {
   | Some(endBlock) => committedProgressBlockNumber >= endBlock
   | None => false
   }
-}
-
-let hasNoMoreEventsToProcess = (cs: t) => {
-  cs.fetchState->FetchState.bufferSize === 0
 }
 
 let getHighestBlockBelowThreshold = (cs: t): int => {
@@ -462,6 +465,9 @@ let handleQueryResult = (
     fs
     ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
     ->FetchState.updateKnownHeight(~knownHeight)
+
+  // The query is no longer in flight, so release its reservation.
+  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.estResponseSize)
 }
 
 // Run reorg detection against a fetch response and commit the updated guard.
@@ -483,7 +489,7 @@ let prepareReorg = (cs: t, ~eventsProcessedDiff) => {
   | Some(diff) => cs.numEventsProcessed = cs.numEventsProcessed +. diff
   | None => ()
   }
-  cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
+  cs->resetPendingQueries
 }
 
 let updateKnownHeight = (cs: t, ~knownHeight) =>
@@ -516,12 +522,11 @@ let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
   }
 
 // Commit a processed batch's progress for this chain (progress block, events
-// processed, head/safe-checkpoint tracking, first event block) and update its
-// caught-up timestamp. `allChainsAtHead`/`nextQueueItemIsNone` are whole-indexer
-// conditions the caller computes once. Emits the per-chain progress metrics.
-let applyBatchProgress = (cs: t, ~batch: Batch.t, ~allChainsAtHead, ~nextQueueItemIsNone) => {
+// processed, head/safe-checkpoint tracking, first event block). Emits the
+// per-chain progress metrics. Readiness is decided by CrossChainState once every
+// chain is caught up (see markReady).
+let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
   let chainId = cs.chainConfig.id
-  let wasReady = cs->isReady
 
   switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
   | Some(chainAfterBatch) => {
@@ -582,47 +587,16 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~allChainsAtHead, ~nextQueueIt
     }
   | None => ()
   }
-
-  /* strategy for TUI synced status:
-   * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
-   *
-   * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
-   *
-   * New conditions for valid synced:
-   *
-   * CASE 1 (chains are being synchronised at the head)
-   *
-   * All chain fetchers are fetching at the head AND
-   * No events that can be processed on the queue (even if events still exist on the individual queues)
-   * CASE 2 (chain finishes earlier than any other chain)
-   *
-   * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
-   *
-   * The given chain fetcher is fetching at the head or latest processed block >= endblock
-   * The given chain has processed all events on the queue
-   * see https://github.com/Float-Capital/indexer/pull/1388 */
-  if cs->hasProcessedToEndblock {
-    // in the case this is already set, don't reset and instead propagate the existing value
-    if !(cs->isReady) {
-      cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
-    }
-  } else if !(cs->isReady) && cs.isProgressAtHead {
-    // CASE1: all chains are caught up to head and the queue returns None,
-    // meaning we are busy synchronizing chains at the head.
-    if nextQueueItemIsNone && allChainsAtHead {
-      cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
-    } else if cs->hasNoMoreEventsToProcess {
-      // CASE2: all events on this chain's queue have been processed; other
-      // chains may still be syncing.
-      cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
-    }
-  }
-
-  // Set envio_progress_ready per-chain when it first becomes ready
-  if cs->isReady && !wasReady {
-    Prometheus.ProgressReady.set(~chainId)
-  }
 }
+
+// Mark the chain caught up to head/endblock. Called by CrossChainState only once
+// every chain in the indexer is caught up, so no chain flips to ready while
+// another is still backfilling. Sticky: a chain stays ready once set.
+let markReady = (cs: t) =>
+  if !(cs->isReady) {
+    cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
+    Prometheus.ProgressReady.set(~chainId=cs.chainConfig.id)
+  }
 
 // Roll a chain back to a reorg target. With a progress diff, restore fetch/
 // safe-checkpoint/progress state to `newProgressBlockNumber`; the reorg chain

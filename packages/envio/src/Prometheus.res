@@ -351,18 +351,6 @@ module IndexingAddresses = {
   }
 }
 
-module IndexingMaxConcurrency = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_indexing_max_concurrency",
-    ~help="The maximum number of concurrent queries to the chain data-source.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
-
-  let set = (~maxConcurrency, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=maxConcurrency)
-  }
-}
-
 module IndexingConcurrency = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_concurrency",
@@ -426,7 +414,7 @@ module IndexingBufferSize = {
 module IndexingTargetBufferSize = {
   let gauge = PromClient.Gauge.makeGauge({
     "name": "envio_indexing_target_buffer_size",
-    "help": "The target buffer size per chain for indexing. The actual number of items in the queue may exceed this value, but the indexer always tries to keep the buffer filled up to this target.",
+    "help": "The indexer-wide target buffer size shared across all chains. The actual number of items in the queue may exceed this value, but the indexer always tries to keep the buffer filled up to this target.",
   })
 
   let set = (~targetBufferSize) => {

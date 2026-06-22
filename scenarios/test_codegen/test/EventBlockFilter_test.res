@@ -341,24 +341,22 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=3,
-      ~targetBufferSize=5000,
+      ~maxOnBlockBufferSize=5000,
       ~chainId=1,
       ~knownHeight=10000,
     )
 
   // Pull the first query the scheduler would dispatch. `updateKnownHeight`
-  // is needed so `getNextQuery` sees a non-zero head; `concurrencyLimit` is
-  // generous to avoid `ReachedMaxConcurrency` masking the real result.
+  // is needed so `getNextQuery` sees a non-zero head.
   let firstQuery = (fetchState: FetchState.t) =>
     switch fetchState
     ->FetchState.updateKnownHeight(~knownHeight=10000)
-    ->FetchState.getNextQuery(~concurrencyLimit=10) {
+    ->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.) {
     | Ready([q]) => q
     | Ready(qs) =>
       JsError.throwWithMessage(
         `Expected a single query, got ${qs->Array.length->Int.toString}`,
       )
-    | ReachedMaxConcurrency => JsError.throwWithMessage("Unexpected ReachedMaxConcurrency")
     | WaitingForNewBlock => JsError.throwWithMessage("Unexpected WaitingForNewBlock")
     | NothingToQuery => JsError.throwWithMessage("Unexpected NothingToQuery")
     }

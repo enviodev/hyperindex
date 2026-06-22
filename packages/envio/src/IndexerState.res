@@ -89,12 +89,9 @@ type t = {
   chainMetaThrottler: Throttler.t,
   // True while a batch is being processed; guards ProcessEventBatch re-entry.
   mutable isProcessing: bool,
-  // --- Chain state: per-chain runtime state plus the run-wide flags that were
-  // the chain manager. Each chain state is mutated in place through ChainState. ---
-  mutable chainStates: dict<ChainState.t>,
-  // True once every chain has caught up to head/endBlock. Monotonic during a run.
-  mutable isRealtime: bool,
-  mutable isInReorgThreshold: bool,
+  // Whole-indexer view over every chain's runtime state plus the run-wide flags
+  // derived from it. Mutated in place through CrossChainState.
+  crossChainState: CrossChainState.t,
   mutable rollbackState: rollbackState,
   indexerStartTime: Date.t,
   writeThrottlers: WriteThrottlers.t,
@@ -119,6 +116,7 @@ let make = (
   ~chainStates: dict<ChainState.t>,
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
+  ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
   ~committedCheckpointId=Internal.initialCheckpointId,
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
@@ -156,9 +154,12 @@ let make = (
     chainMetaDirty: false,
     chainMetaThrottler,
     isProcessing: false,
-    chainStates,
-    isInReorgThreshold,
-    isRealtime,
+    crossChainState: CrossChainState.make(
+      ~chainStates,
+      ~isInReorgThreshold,
+      ~isRealtime,
+      ~targetBufferSize,
+    ),
     indexerStartTime: Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(),
@@ -180,21 +181,6 @@ let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~max
   progressBlockNumber > sourceBlockNumber - maxReorgDepth
 }
 
-let calculateTargetBufferSize = (~activeChainsCount) => {
-  switch Env.targetBufferSize {
-  | Some(size) => size
-  | None =>
-    switch activeChainsCount {
-    | 1 => 60_000
-    | 2 => 30_000
-    | 3 => 20_000
-    | 4 => 15_000
-    | 5 => 10_000
-    | _ => 5_000
-    }
-  }
-}
-
 let makeFromDbState = (
   ~config: Config.t,
   ~persistence: Persistence.t,
@@ -204,6 +190,7 @@ let makeFromDbState = (
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
   ~reducedPollingInterval=?,
+  ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
   ~onError,
 ) => {
   let isInReorgThreshold = if initialState.cleanRun {
@@ -219,11 +206,7 @@ let makeFromDbState = (
     )
   }
 
-  let targetBufferSize = calculateTargetBufferSize(
-    ~activeChainsCount=initialState.chains->Array.length,
-  )
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
-  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
   Prometheus.ReorgThreshold.set(~isInReorgThreshold)
   initialState.cache->Utils.Dict.forEach(({effectName, count}) => {
     Prometheus.EffectCacheCount.set(~count, ~effectName)
@@ -247,7 +230,6 @@ let makeFromDbState = (
         ~reorgCheckpoints=initialState.reorgCheckpoints,
         ~isInReorgThreshold,
         ~isRealtime,
-        ~targetBufferSize,
         ~config,
         ~registrations,
         ~reducedPollingInterval?,
@@ -281,6 +263,7 @@ let makeFromDbState = (
     ~chainStates,
     ~isInReorgThreshold,
     ~isRealtime,
+    ~targetBufferSize,
     ~committedCheckpointId=initialState.checkpointId,
     ~isDevelopmentMode,
     ~shouldUseTui,
@@ -321,9 +304,9 @@ let unexpectedErrorMsg = "Indexer has failed with an unexpected error"
 let stop = (state: t) => state.isStopped = true
 
 let getChainState = (state: t, ~chain: chain): ChainState.t =>
-  switch state.chainStates->Utils.Dict.dangerouslyGetByIntNonOption(
-    chain->ChainMap.Chain.toChainId,
-  ) {
+  switch state.crossChainState
+  ->CrossChainState.chainStates
+  ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId) {
   | Some(cs) => cs
   | None =>
     // Should be unreachable, since we validate on Chain.t creation
@@ -332,74 +315,21 @@ let getChainState = (state: t, ~chain: chain): ChainState.t =>
     )
   }
 
-let nextItemIsNone = (state: t): bool =>
-  !Batch.hasReadyItem(state.chainStates->Dict.valuesToArray->Array.map(ChainState.fetchState))
-
-let isProgressAtHead = (state: t) =>
-  state.chainStates->Dict.valuesToArray->Array.every(ChainState.isProgressAtHead)
-
-let getSafeCheckpointId = (state: t) => {
-  let result: ref<option<bigint>> = ref(None)
-
-  state.chainStates->Utils.Dict.forEach(cs => {
-    switch cs->ChainState.safeCheckpointTracking {
-    | None => () // Skip chains with maxReorgDepth = 0
-    | Some(safeCheckpointTracking) => {
-        let safeCheckpointId =
-          safeCheckpointTracking->SafeCheckpointTracking.getSafeCheckpointId(
-            ~sourceBlockNumber=(cs->ChainState.fetchState).knownHeight,
-          )
-        switch result.contents {
-        | None => result := Some(safeCheckpointId)
-        | Some(current) if safeCheckpointId < current => result := Some(safeCheckpointId)
-        | _ => ()
-        }
-      }
-    }
-  })
-
-  switch result.contents {
-  | Some(id) if id > 0n => Some(id)
-  | _ => None // No safe checkpoint found
-  }
-}
+let getSafeCheckpointId = (state: t) => state.crossChainState->CrossChainState.getSafeCheckpointId
 
 let createBatch = (
   state: t,
   ~processedCheckpointId,
   ~batchSizeTarget: int,
   ~isRollback: bool,
-): Batch.t => {
-  Batch.make(
-    ~isInReorgThreshold=state.isInReorgThreshold,
-    ~checkpointIdBeforeBatch=processedCheckpointId->BigInt.add(
-      // Since for rollback we have a diff checkpoint id.
-      // This is needed to currectly overwrite old state
-      // in an append-only ClickHouse insert.
-      isRollback ? 1n : 0n,
-    ),
-    ~chainsBeforeBatch=state.chainStates->Utils.Dict.mapValues((cs): Batch.chainBeforeBatch => {
-      fetchState: cs->ChainState.fetchState,
-      progressBlockNumber: cs->ChainState.committedProgressBlockNumber,
-      totalEventsProcessed: cs->ChainState.numEventsProcessed,
-      sourceBlockNumber: (cs->ChainState.fetchState).knownHeight,
-      reorgDetection: cs->ChainState.reorgDetection,
-      chainConfig: cs->ChainState.chainConfig,
-    }),
+): Batch.t =>
+  state.crossChainState->CrossChainState.createBatch(
+    ~processedCheckpointId,
     ~batchSizeTarget,
+    ~isRollback,
   )
-}
 
-// Enter the reorg threshold: shrink each chain's buffer by its configured
-// blockLag and flip the flag.
-let enterReorgThreshold = (state: t) => {
-  Logging.info("Reorg threshold reached")
-  Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
-
-  state.chainStates->Utils.Dict.forEach(ChainState.enterReorgThreshold)
-
-  state.isInReorgThreshold = true
-}
+let enterReorgThreshold = (state: t) => state.crossChainState->CrossChainState.enterReorgThreshold
 
 // Begin a reorg rollback. Invalidates in-flight fetches and enters the
 // ReorgDetected state as one step, so the epoch bump can never be left out. The
@@ -428,28 +358,8 @@ let clearRollback = (state: t) => state.rollbackState = NoRollback
 // realtime transition where the parked waiter is bound to the pre-realtime source.
 let invalidateInflight = (state: t) => state.epoch = state.epoch + 1
 
-/**
-Sets all chains' timestampCaughtUpToHeadOrEndblock when valid state lines up, and
-commits each progressed chain's batch progress, mutating the chain states in place.
-*/
-let applyBatchProgress = (state: t, ~batch: Batch.t) => {
-  let nextQueueItemIsNone = state->nextItemIsNone
-  let allChainsAtHead = state->isProgressAtHead
-  let allChainsReady = ref(true)
-
-  state.chainStates->Utils.Dict.forEach(cs => {
-    cs->ChainState.applyBatchProgress(~batch, ~allChainsAtHead, ~nextQueueItemIsNone)
-    if !(cs->ChainState.isReady) {
-      allChainsReady := false
-    }
-  })
-
-  if allChainsReady.contents {
-    Prometheus.ProgressReady.setAllReady()
-  }
-
-  state.isRealtime = state.isRealtime || allChainsReady.contents
-}
+let applyBatchProgress = (state: t, ~batch: Batch.t) =>
+  state.crossChainState->CrossChainState.applyBatchProgress(~batch)
 
 // Processing-loop mutex. Guards ProcessEventBatch re-entry so only one
 // processing loop runs at a time.
@@ -478,9 +388,10 @@ let writeFiber = (state: t) => state.writeFiber
 let hasFailedWrite = (state: t) => state.hasFailedWrite
 let chainMetaDirty = (state: t) => state.chainMetaDirty
 let chainMetaThrottler = (state: t) => state.chainMetaThrottler
-let chainStates = (state: t) => state.chainStates
-let isInReorgThreshold = (state: t) => state.isInReorgThreshold
-let isRealtime = (state: t) => state.isRealtime
+let crossChainState = (state: t) => state.crossChainState
+let chainStates = (state: t) => state.crossChainState->CrossChainState.chainStates
+let isInReorgThreshold = (state: t) => state.crossChainState->CrossChainState.isInReorgThreshold
+let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
 let rollbackState = (state: t) => state.rollbackState
 let indexerStartTime = (state: t) => state.indexerStartTime
 let loadManager = (state: t) => state.loadManager

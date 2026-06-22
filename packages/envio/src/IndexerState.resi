@@ -32,6 +32,7 @@ let make: (
   ~chainStates: dict<ChainState.t>,
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
+  ~targetBufferSize: int=?,
   ~committedCheckpointId: Internal.checkpointId=?,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
@@ -48,6 +49,7 @@ let makeFromDbState: (
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
   ~reducedPollingInterval: int=?,
+  ~targetBufferSize: int=?,
   ~onError: ErrorHandling.t => unit,
 ) => t
 
@@ -93,6 +95,7 @@ let writeFiber: t => option<promise<unit>>
 let hasFailedWrite: t => bool
 let chainMetaDirty: t => bool
 let chainMetaThrottler: t => Throttler.t
+let crossChainState: t => CrossChainState.t
 let chainStates: t => dict<ChainState.t>
 let isInReorgThreshold: t => bool
 let isRealtime: t => bool

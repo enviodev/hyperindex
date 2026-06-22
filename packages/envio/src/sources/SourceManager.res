@@ -17,7 +17,6 @@ type t = {
   sourcesState: array<sourceState>,
   mutable statusStart: Hrtime.timeRef,
   mutable status: sourceManagerStatus,
-  maxPartitionConcurrency: int,
   newBlockStallTimeout: int,
   newBlockStallTimeoutRealtime: int,
   stalledPollingInterval: int,
@@ -42,6 +41,10 @@ type t = {
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
+
+// Partition queries currently in flight on this chain's sources. Summed across
+// chains by CrossChainState to enforce the indexer-wide concurrency budget.
+let inFlightCount = sourceManager => sourceManager.fetchingPartitionsCount
 
 let getRateLimitTimeMs = sourceManager =>
   sourceManager.committedRateLimitTimeMs +.
@@ -148,7 +151,6 @@ let makeGetHeightRetryInterval = (
 
 let make = (
   ~sources: array<Source.t>,
-  ~maxPartitionConcurrency,
   ~isRealtime,
   ~newBlockStallTimeout=60_000,
   ~newBlockStallTimeoutRealtime=20_000,
@@ -169,16 +171,11 @@ let make = (
   | None =>
     JsError.throwWithMessage("Invalid configuration, no data-source for historical sync provided")
   }
-  Prometheus.IndexingMaxConcurrency.set(
-    ~maxConcurrency=maxPartitionConcurrency,
-    ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
-  )
   Prometheus.IndexingConcurrency.set(
     ~concurrency=0,
     ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
   )
   {
-    maxPartitionConcurrency,
     sourcesState: sources->Array.map(source => {
       source,
       knownHeight: 0,
@@ -220,24 +217,20 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   sourceManager.status = newStatus
 }
 
-let fetchNext = async (
+// Carry out the fetch decision made by CrossChainState.checkAndFetch: either
+// dispatch the admitted queries or start waiting for a new block. Selection
+// (getNextQuery + cross-chain admission) happens upstream so the budget is split
+// per query across all chains.
+let dispatch = async (
   sourceManager: t,
   ~fetchState: FetchState.t,
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
+  ~action: FetchState.nextQuery,
   ~stateId,
 ) => {
-  let {maxPartitionConcurrency} = sourceManager
-
-  let nextQuery = fetchState->FetchState.getNextQuery(
-    ~concurrencyLimit={
-      maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
-    },
-  )
-
-  switch nextQuery {
-  | ReachedMaxConcurrency
+  switch action {
   | NothingToQuery => ()
   | WaitingForNewBlock =>
     switch sourceManager.waitingForNewBlockStateId {
@@ -258,7 +251,8 @@ let fetchNext = async (
       }
     }
   | Ready(queries) => {
-      fetchState->FetchState.startFetchingQueries(~queries)
+      // Queries are already marked in flight by ChainState.startFetchingQueries
+      // when they were admitted; here we just execute them.
       sourceManager.fetchingPartitionsCount =
         sourceManager.fetchingPartitionsCount + queries->Array.length
       Prometheus.IndexingConcurrency.set(

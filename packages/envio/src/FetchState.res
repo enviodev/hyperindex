@@ -19,6 +19,9 @@ type pendingQuery = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
+  // Estimated items this in-flight query will add, carried from the query so the
+  // shared buffer budget can account for what's already being fetched.
+  estResponseSize: float,
   // Stores latestFetchedBlock when query completes. Only needed to persist
   // timestamp while earlier queries are still pending before updating
   // the partition's latestFetchedBlock.
@@ -47,6 +50,10 @@ type partition = {
   // Track last 3 successful query ranges for chunking heuristic (0 means no data)
   prevQueryRange: int,
   prevPrevQueryRange: int,
+  // Item count of the response that set prevQueryRange. Paired with it to derive
+  // the partition's event density (prevRangeSize / prevQueryRange) for sizing
+  // queries against the buffer budget.
+  prevRangeSize: int,
   // Tracks the latestFetchedBlock.blockNumber of the most recent response
   // that updated prevQueryRange. Prevents degradation of the chunking heuristic
   // when parallel query responses arrive out of order.
@@ -58,10 +65,38 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
+  // Estimated number of items the query will return, from the partition's
+  // density and the query's block range. Used to admit queries against the
+  // shared buffer budget.
+  estResponseSize: float,
+  // Owning chain and the chain progress % at the query's fromBlock. Set by the
+  // cross-chain scheduler so candidate queries can be pooled and ordered
+  // (furthest-behind first) without allocating a side tuple per query.
+  mutable chainId: int,
+  mutable progress: float,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
   indexingAddresses: dict<indexingAddress>,
 }
+
+// Default estimate for a query whose partition hasn't responded yet, so the
+// shared budget still accounts for unknown queries instead of treating them as
+// free.
+let defaultEstResponseSize = 10_000.
+
+// Estimated items a query will return, from the partition's event density
+// (items/block derived from its last response) and the query's block range.
+// toBlock None is the open-ended tail, capped at maxQueryBlockNumber. A partition
+// that responded with no items has density 0, so its queries cost 0 — correct,
+// they don't fill the buffer. Only a partition that has never responded
+// (prevQueryRange 0) has no signal, so it falls back to defaultEstResponseSize.
+let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~maxQueryBlockNumber) =>
+  if p.prevQueryRange > 0 {
+    let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
+    (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density
+  } else {
+    defaultEstResponseSize
+  }
 
 // Calculate the chunk range from history using min-of-last-3-ranges heuristic
 let getMinHistoryRange = (p: partition) => {
@@ -160,6 +195,7 @@ module OptimizedPartitions = {
         mutPendingQueries: [],
         prevQueryRange: minRange,
         prevPrevQueryRange: minRange,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       }
     }
@@ -397,6 +433,7 @@ module OptimizedPartitions = {
     optimizedPartitions: t,
     ~query,
     ~knownHeight,
+    ~itemsCount,
     ~latestFetchedBlock: blockNumberAndTimestamp,
   ) => {
     let p = optimizedPartitions->getOrThrow(~partitionId=query.partitionId)
@@ -428,6 +465,7 @@ module OptimizedPartitions = {
         }
     let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
     let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
+    let updatedPrevRangeSize = shouldUpdateBlockRange ? itemsCount : p.prevRangeSize
 
     // Process fetched queries from front of queue for main partition
     let updatedLatestFetchedBlock = consumeFetchedQueries(
@@ -449,6 +487,7 @@ module OptimizedPartitions = {
         latestFetchedBlock: updatedLatestFetchedBlock,
         prevQueryRange: updatedPrevQueryRange,
         prevPrevQueryRange: updatedPrevPrevQueryRange,
+        prevRangeSize: updatedPrevRangeSize,
         latestBlockRangeUpdateBlock: shouldUpdateBlockRange
           ? latestFetchedBlock.blockNumber
           : p.latestBlockRangeUpdateBlock,
@@ -496,9 +535,10 @@ type t = {
   blockLag: int,
   // Buffer of items ordered from earliest to latest
   buffer: array<Internal.item>,
-  // How many items we should aim to have in the buffer
-  // ready for processing
-  targetBufferSize: int,
+  // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
+  // size). Fetch depth is bounded separately by getNextQuery's itemBudget, the
+  // chain's per-tick slice of the indexer-wide pool.
+  maxOnBlockBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
   knownHeight: int,
   firstEventBlock: option<int>,
@@ -554,7 +594,7 @@ let numAddresses = fetchState => fetchState.indexingAddresses->Utils.Dict.size
 
 // Appends Block items produced by the onBlock handlers for every block in
 // (fromBlock, maxBlockNumber] into mutItems and returns the new
-// latestOnBlockBlockNumber pointer. targetBufferSize bounds how many items
+// latestOnBlockBlockNumber pointer. maxOnBlockBufferSize bounds how many items
 // are generated at once to prevent OOM.
 let appendOnBlockItems = (
   ~mutItems: array<Internal.item>,
@@ -562,7 +602,7 @@ let appendOnBlockItems = (
   ~indexerStartBlock,
   ~fromBlock,
   ~maxBlockNumber,
-  ~targetBufferSize,
+  ~maxOnBlockBufferSize,
 ) => {
   let newItemsCounter = ref(0)
   let latestOnBlockBlockNumber = ref(fromBlock)
@@ -573,7 +613,7 @@ let appendOnBlockItems = (
   while (
     latestOnBlockBlockNumber.contents < maxBlockNumber &&
       // Additional safeguard to prevent OOM
-      newItemsCounter.contents <= targetBufferSize
+      newItemsCounter.contents <= maxOnBlockBufferSize
   ) {
     let blockNumber = latestOnBlockBlockNumber.contents + 1
     latestOnBlockBlockNumber := blockNumber
@@ -627,7 +667,7 @@ let updateInternal = (
   | [] => knownHeight
   | onBlockConfigs => {
       // Calculate the max block number we are going to create items for
-      // Use targetBufferSize to get the last target item in the buffer
+      // Use maxOnBlockBufferSize to get the last target item in the buffer
       //
       // mutItems is not very reliable, since it might not be sorted,
       // but the chances for it happen are very low and not critical
@@ -636,7 +676,7 @@ let updateInternal = (
       let maxBlockNumber = switch switch mutItemsRef.contents {
       | Some(mutItems) => mutItems
       | None => fetchState.buffer
-      }->Array.get(fetchState.targetBufferSize - 1) {
+      }->Array.get(fetchState.maxOnBlockBufferSize - 1) {
       | Some(item) => item->Internal.getItemBlockNumber
       | None =>
         switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
@@ -657,7 +697,7 @@ let updateInternal = (
         ~indexerStartBlock=fetchState.startBlock,
         ~fromBlock=fetchState.latestOnBlockBlockNumber,
         ~maxBlockNumber,
-        ~targetBufferSize=fetchState.targetBufferSize,
+        ~maxOnBlockBufferSize=fetchState.maxOnBlockBufferSize,
       )
     }
   }
@@ -669,7 +709,7 @@ let updateInternal = (
     normalSelection: fetchState.normalSelection,
     chainId: fetchState.chainId,
     onBlockConfigs: fetchState.onBlockConfigs,
-    targetBufferSize: fetchState.targetBufferSize,
+    maxOnBlockBufferSize: fetchState.maxOnBlockBufferSize,
     optimizedPartitions,
     latestOnBlockBlockNumber,
     indexingAddresses,
@@ -837,6 +877,7 @@ OptimizedPartitions.t => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
           })
           nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
@@ -1178,6 +1219,7 @@ let registerDynamicContracts = (
                         mutPendingQueries: p.mutPendingQueries,
                         prevQueryRange: p.prevQueryRange,
                         prevPrevQueryRange: p.prevPrevQueryRange,
+                        prevRangeSize: p.prevRangeSize,
                         latestBlockRangeUpdateBlock: p.latestBlockRangeUpdateBlock,
                       })
                     }
@@ -1240,6 +1282,7 @@ let handleQueryResult = (
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,
       ~knownHeight=fetchState.knownHeight,
+      ~itemsCount=newItems->Array.length,
       ~latestFetchedBlock,
     ),
     ~mutItems=?{
@@ -1252,7 +1295,6 @@ let handleQueryResult = (
 }
 
 type nextQuery =
-  | ReachedMaxConcurrency
   | WaitingForNewBlock
   | NothingToQuery
   | Ready(array<query>)
@@ -1266,6 +1308,7 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
       fromBlock: q.fromBlock,
       toBlock: q.toBlock,
       isChunk: q.isChunk,
+      estResponseSize: q.estResponseSize,
       fetchedBlock: None,
     }
 
@@ -1294,6 +1337,7 @@ let pushQueriesForRange = (
   ~rangeEndBlock: option<int>,
   ~maxQueryBlockNumber: int,
   ~maybeChunkRange: option<int>,
+  ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
   ~indexingAddresses: dict<indexingAddress>,
@@ -1310,6 +1354,14 @@ let pushQueriesForRange = (
           toBlock: rangeEndBlock,
           selection,
           isChunk: false,
+          estResponseSize: calculateEstResponseSize(
+            partition,
+            ~fromBlock=rangeFromBlock,
+            ~toBlock=rangeEndBlock,
+            ~maxQueryBlockNumber,
+          ),
+          chainId: 0,
+          progress: 0.,
           addressesByContractName,
           indexingAddresses,
         })
@@ -1319,26 +1371,38 @@ let pushQueriesForRange = (
         | None => maxQueryBlockNumber
         }
         let chunkSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 1.8)
-        if rangeFromBlock + 2 * chunkSize - 1 <= maxBlock {
-          // Create 2 chunks of ceil(1.8 * chunkRange) each
-          queries->Array.push({
-            partitionId,
-            fromBlock: rangeFromBlock,
-            toBlock: Some(rangeFromBlock + chunkSize - 1),
-            isChunk: true,
-            selection,
-            addressesByContractName,
-            indexingAddresses,
-          })
-          queries->Array.push({
-            partitionId,
-            fromBlock: rangeFromBlock + chunkSize,
-            toBlock: Some(rangeFromBlock + 2 * chunkSize - 1),
-            isChunk: true,
-            selection,
-            addressesByContractName,
-            indexingAddresses,
-          })
+        // Probe with two smaller chunks first so their responses come back
+        // quickly and refresh the chunking heuristic, then three full-size chunks.
+        let probeSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 0.9)
+        let getChunkSize = chunkIdx => chunkIdx < 2 ? probeSize : chunkSize
+        if rangeFromBlock + getChunkSize(0) + getChunkSize(1) - 1 <= maxBlock {
+          let chunkFromBlock = ref(rangeFromBlock)
+          let chunkIdx = ref(0)
+          while (
+            chunkIdx.contents < 5 &&
+              chunkFromBlock.contents + getChunkSize(chunkIdx.contents) - 1 <= maxBlock
+          ) {
+            let chunkToBlock = chunkFromBlock.contents + getChunkSize(chunkIdx.contents) - 1
+            queries->Array.push({
+              partitionId,
+              fromBlock: chunkFromBlock.contents,
+              toBlock: Some(chunkToBlock),
+              isChunk: true,
+              selection,
+              estResponseSize: calculateEstResponseSize(
+                partition,
+                ~fromBlock=chunkFromBlock.contents,
+                ~toBlock=Some(chunkToBlock),
+                ~maxQueryBlockNumber,
+              ),
+              chainId: 0,
+              progress: 0.,
+              addressesByContractName,
+              indexingAddresses,
+            })
+            chunkFromBlock := chunkToBlock + 1
+            chunkIdx := chunkIdx.contents + 1
+          }
         } else {
           // Not enough room for 2 chunks, fall back to a single query
           queries->Array.push({
@@ -1347,6 +1411,14 @@ let pushQueriesForRange = (
             toBlock: rangeEndBlock,
             selection,
             isChunk: rangeEndBlock !== None,
+            estResponseSize: calculateEstResponseSize(
+              partition,
+              ~fromBlock=rangeFromBlock,
+              ~toBlock=rangeEndBlock,
+              ~maxQueryBlockNumber,
+            ),
+            chainId: 0,
+            progress: 0.,
             addressesByContractName,
             indexingAddresses,
           })
@@ -1356,23 +1428,28 @@ let pushQueriesForRange = (
   }
 }
 
+// Most parallel in-flight chunk queries a single partition may have at once.
+let maxPendingChunksPerPartition = 10
+
 let getNextQuery = (
   {
     buffer,
     optimizedPartitions,
-    targetBufferSize,
     indexingAddresses,
     blockLag,
     latestOnBlockBlockNumber,
     knownHeight,
   } as fetchState: t,
-  ~concurrencyLimit,
+  ~budget,
+  ~chainPendingBudget,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
     WaitingForNewBlock
-  } else if concurrencyLimit === 0 {
-    ReachedMaxConcurrency
+  } else if budget <= 0 {
+    // No room left in the shared buffer pool for this chain; wait for processing
+    // to drain before fetching more.
+    NothingToQuery
   } else {
     let isOnBlockBehindTheHead = latestOnBlockBlockNumber < headBlockNumber
     let shouldWaitForNewBlock = ref(
@@ -1383,13 +1460,11 @@ let getNextQuery = (
       !isOnBlockBehindTheHead,
     )
 
-    // We want to limit the buffer size to targetBufferSize (usually 3 * batchSize)
-    // To make sure the processing always has some buffer
-    // and not increase the memory usage too much
-    // If a partition fetched further
-    // it should be skipped until the buffer is consumed
+    // Limit how far ahead we fetch to budget items (plus what's already in
+    // flight) so processing always has buffer without ballooning memory. A
+    // partition that fetched further is skipped until the buffer drains.
     let maxQueryBlockNumber = {
-      switch buffer->Array.get(targetBufferSize - 1) {
+      switch buffer->Array.get(budget + chainPendingBudget->Float.toInt - 1) {
       | Some(item) =>
         // Just in case check that we don't query beyond the current block
         Pervasives.min(item->Internal.getItemBlockNumber, knownHeight)
@@ -1406,8 +1481,9 @@ let getNextQuery = (
       let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
       let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
 
+      let pendingCount = p.mutPendingQueries->Array.length
       let isBehindTheHead = p.latestFetchedBlock.blockNumber < headBlockNumber
-      let hasPendingQueries = p.mutPendingQueries->Utils.Array.notEmpty
+      let hasPendingQueries = pendingCount > 0
 
       if hasPendingQueries || isBehindTheHead {
         // Even if there are some partitions waiting for the new block
@@ -1417,6 +1493,8 @@ let getNextQuery = (
         // and we don't want to poll the head for a few small partitions
         shouldWaitForNewBlock := false
       }
+
+      let partitionQueriesStart = queries->Array.length
 
       // Compute queryEndBlock for this partition
       let queryEndBlock = Utils.Math.minOptInt(fetchState.endBlock, p.mergeBlock)
@@ -1455,6 +1533,7 @@ let getNextQuery = (
             ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
             ~maxQueryBlockNumber,
             ~maybeChunkRange,
+            ~partition=p,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
             ~indexingAddresses,
@@ -1479,10 +1558,26 @@ let getNextQuery = (
           ~rangeEndBlock=queryEndBlock,
           ~maxQueryBlockNumber,
           ~maybeChunkRange,
+          ~partition=p,
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
           ~indexingAddresses,
         )
+      }
+
+      // Cap parallel in-flight chunks per partition so a single partition can't
+      // monopolize fetching. Keep the earliest new chunks; the furthest-ahead
+      // ones wait for the next round once these resolve.
+      let maxNewChunks = Pervasives.max(0, maxPendingChunksPerPartition - pendingCount)
+      let generatedCount = queries->Array.length - partitionQueriesStart
+      if generatedCount > maxNewChunks {
+        queries
+        ->Array.splice(
+          ~start=partitionQueriesStart + maxNewChunks,
+          ~remove=generatedCount - maxNewChunks,
+          ~insert=[],
+        )
+        ->ignore
       }
 
       idxRef := idxRef.contents + 1
@@ -1495,13 +1590,6 @@ let getNextQuery = (
         NothingToQuery
       }
     } else {
-      // Enforce concurrency limit: sort by fromBlock and take the first concurrencyLimit
-      let queries = if queries->Array.length > concurrencyLimit {
-        queries->Array.sort((a, b) => Int.compare(a.fromBlock, b.fromBlock))
-        queries->Array.slice(~start=0, ~end=concurrencyLimit)
-      } else {
-        queries
-      }
       Ready(queries)
     }
   }
@@ -1547,7 +1635,7 @@ let make = (
   ~addresses: array<Internal.indexingAddress>,
   ~maxAddrInPartition,
   ~chainId,
-  ~targetBufferSize,
+  ~maxOnBlockBufferSize,
   ~knownHeight,
   ~progressBlockNumber=startBlock - 1,
   ~onBlockConfigs=[],
@@ -1611,6 +1699,7 @@ let make = (
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
+      prevRangeSize: 0,
       latestBlockRangeUpdateBlock: 0,
     })
   }
@@ -1696,7 +1785,7 @@ let make = (
       ~indexerStartBlock=startBlock,
       ~fromBlock=progressBlockNumber,
       ~maxBlockNumber,
-      ~targetBufferSize,
+      ~maxOnBlockBufferSize,
     )
   } else {
     progressBlockNumber
@@ -1713,7 +1802,7 @@ let make = (
     indexingAddresses,
     blockLag,
     onBlockConfigs,
-    targetBufferSize,
+    maxOnBlockBufferSize,
     knownHeight,
     buffer,
     firstEventBlock,
@@ -1736,6 +1825,25 @@ let make = (
 }
 
 let bufferSize = ({buffer}: t) => buffer->Array.length
+
+// Number of buffered items at or below the ready frontier (processable now,
+// i.e. not stuck behind a gap from a lagging partition or out-of-order chunk).
+// The buffer is kept sorted, so binary-search the frontier in O(log n).
+let bufferReadyCount = (fetchState: t) => {
+  let frontier = fetchState->bufferBlockNumber
+  let buffer = fetchState.buffer
+  let lo = ref(0)
+  let hi = ref(buffer->Array.length)
+  while lo.contents < hi.contents {
+    let mid = (lo.contents + hi.contents) / 2
+    if buffer->Array.getUnsafe(mid)->Internal.getItemBlockNumber <= frontier {
+      lo := mid + 1
+    } else {
+      hi := mid
+    }
+  }
+  lo.contents
+}
 
 let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlockNumber) => {
   // - Remove queries where fromBlock > target
@@ -1957,29 +2065,41 @@ let isReadyToEnterReorgThreshold = ({endBlock, blockLag, buffer, knownHeight} as
   buffer->Utils.Array.isEmpty
 }
 
-let sortForUnorderedBatch = {
+// Lower progress percentage = further behind = higher priority. Shared by the
+// batch ordering and the cross-chain fetch priority.
+let getProgressPercentage = (fetchState: t) => {
+  switch fetchState.firstEventBlock {
+  | None => 0.
+  | Some(firstEventBlock) =>
+    let totalRange = fetchState.knownHeight - firstEventBlock
+    if totalRange <= 0 {
+      0.
+    } else {
+      let progress = switch fetchState.buffer->Array.get(0) {
+      | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
+      | None => fetchState->bufferBlockNumber - firstEventBlock
+      }
+      progress->Int.toFloat /. totalRange->Int.toFloat
+    }
+  }
+}
+
+// Progress a specific block sits at along the chain, used to order queries from
+// different chains: a query starting further back (lower %) is fetched first.
+let getProgressPercentageAt = (fetchState: t, ~blockNumber) => {
+  switch fetchState.firstEventBlock {
+  | None => 0.
+  | Some(firstEventBlock) =>
+    let totalRange = fetchState.knownHeight - firstEventBlock
+    totalRange <= 0 ? 0. : (blockNumber - firstEventBlock)->Int.toFloat /. totalRange->Int.toFloat
+  }
+}
+
+let sortForBatch = {
   let hasFullBatch = ({buffer} as fetchState: t, ~batchSizeTarget) => {
     switch buffer->Array.get(batchSizeTarget - 1) {
     | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
     | None => false
-    }
-  }
-
-  // Lower progress percentage = further behind = higher priority
-  let getProgressPercentage = (fetchState: t) => {
-    switch fetchState.firstEventBlock {
-    | None => 0.
-    | Some(firstEventBlock) =>
-      let totalRange = fetchState.knownHeight - firstEventBlock
-      if totalRange <= 0 {
-        0.
-      } else {
-        let progress = switch fetchState.buffer->Array.get(0) {
-        | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
-        | None => fetchState->bufferBlockNumber - firstEventBlock
-        }
-        progress->Int.toFloat /. totalRange->Int.toFloat
-      }
     }
   }
 
