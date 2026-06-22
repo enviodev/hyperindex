@@ -388,9 +388,21 @@ let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let pendingBudget = (cs: t) => cs.pendingBudget
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
 
-// Reserve the estimated size of queries about to be dispatched, so the shared
-// buffer budget accounts for them while they're in flight.
-let addPendingBudget = (cs: t, ~amount) => cs.pendingBudget = cs.pendingBudget +. amount
+// Mark queries as in flight and reserve their estimated size against the shared
+// buffer budget in one step, so the counter stays in sync with the pending
+// queries it tracks.
+let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
+  cs.fetchState->FetchState.startFetchingQueries(~queries)
+  cs.pendingBudget =
+    cs.pendingBudget +. queries->Array.reduce(0., (acc, query) => acc +. query.estResponseSize)
+}
+
+// Drop every in-flight query and release their reservations together, keeping
+// pendingBudget coupled to the pending queries it tracks.
+let resetPendingQueries = (cs: t) => {
+  cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
+  cs.pendingBudget = 0.
+}
 
 // --- Derived (pure). ---
 
@@ -460,10 +472,7 @@ let prepareReorg = (cs: t, ~eventsProcessedDiff) => {
   | Some(diff) => cs.numEventsProcessed = cs.numEventsProcessed +. diff
   | None => ()
   }
-  cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
-
-  // resetPendingQueries drops every in-flight query, so nothing is reserved.
-  cs.pendingBudget = 0.
+  cs->resetPendingQueries
 }
 
 let updateKnownHeight = (cs: t, ~knownHeight) =>
@@ -615,9 +624,6 @@ let rollback = (
     | None => ()
     }
     cs.fetchState = cs.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
-
-    // Rollback requires no in-flight queries, so nothing stays reserved.
-    cs.pendingBudget = 0.
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
   | None =>
@@ -628,9 +634,6 @@ let rollback = (
         )
       cs.fetchState =
         cs.fetchState->FetchState.rollback(~targetBlockNumber=rollbackTargetBlockNumber)
-
-      // Rollback requires no in-flight queries, so nothing stays reserved.
-      cs.pendingBudget = 0.
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,

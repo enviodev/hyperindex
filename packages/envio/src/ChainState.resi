@@ -47,7 +47,7 @@ let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
 let numEventsProcessed: t => float
 let pendingBudget: t => float
-let addPendingBudget: (t, ~amount: float) => unit
+let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
 // Derived (pure).

@@ -357,6 +357,12 @@ describe("SourceManager fetchNext", () => {
     ~stateId,
   ) => {
     let action = fetchState->FetchState.getNextQuery(~budget, ~chainPendingBudget=0.)
+    // CrossChainState marks queries in flight when admitting them; dispatch no
+    // longer does, so mirror that here before dispatching.
+    switch action {
+    | Ready(queries) => fetchState->FetchState.startFetchingQueries(~queries)
+    | _ => ()
+    }
     sourceManager->SourceManager.dispatch(
       ~fetchState,
       ~executeQuery,

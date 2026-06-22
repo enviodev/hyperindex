@@ -238,8 +238,15 @@ let checkAndFetch = async (
     | Ready(queries) =>
       // Default to NothingToQuery; replaced below if any candidate is admitted.
       actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
-      let progress = fetchState->FetchState.getProgressPercentage
-      queries->Array.forEach(query => candidates->Array.push((chainId, progress, query)))
+      // Order by where each query starts along its chain, not the chain as a
+      // whole, so the furthest-behind ranges across all chains go first.
+      queries->Array.forEach(query =>
+        candidates->Array.push((
+          chainId,
+          fetchState->FetchState.getProgressPercentageAt(~blockNumber=query.fromBlock),
+          query,
+        ))
+      )
     }
   }
 
@@ -260,12 +267,11 @@ let checkAndFetch = async (
   }
   admittedByChain->Dict.forEachWithKey((queries, chainId) => {
     actionByChain->Dict.set(chainId, FetchState.Ready(queries))
-    // Reserve the admitted queries against the shared budget while they're in
-    // flight; released as each response lands in ChainState.handleQueryResult.
-    let reserved = queries->Array.reduce(0., (acc, query) => acc +. query.estResponseSize)
+    // Mark the admitted queries in flight and reserve their size against the
+    // shared budget; released as each response lands in handleQueryResult.
     crossChainState
     ->getChainState(chainId->Int.fromString->Option.getUnsafe)
-    ->ChainState.addPendingBudget(~amount=reserved)
+    ->ChainState.startFetchingQueries(~queries)
   })
 
   let promises = []

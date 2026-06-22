@@ -2071,6 +2071,17 @@ let getProgressPercentage = (fetchState: t) => {
   }
 }
 
+// Progress a specific block sits at along the chain, used to order queries from
+// different chains: a query starting further back (lower %) is fetched first.
+let getProgressPercentageAt = (fetchState: t, ~blockNumber) => {
+  switch fetchState.firstEventBlock {
+  | None => 0.
+  | Some(firstEventBlock) =>
+    let totalRange = fetchState.knownHeight - firstEventBlock
+    totalRange <= 0 ? 0. : (blockNumber - firstEventBlock)->Int.toFloat /. totalRange->Int.toFloat
+  }
+}
+
 let sortForBatch = {
   let hasFullBatch = ({buffer} as fetchState: t, ~batchSizeTarget) => {
     switch buffer->Array.get(batchSizeTarget - 1) {
