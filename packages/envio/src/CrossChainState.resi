@@ -35,5 +35,5 @@ let applyBatchProgress: (t, ~batch: Batch.t) => unit
 let priorityOrder: t => array<ChainState.t>
 let checkAndFetch: (
   t,
-  ~fetchChain: (~chain: ChainMap.Chain.t, ~itemBudget: int, ~density: float) => promise<unit>,
+  ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => promise<unit>

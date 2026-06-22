@@ -75,6 +75,7 @@ describe("FetchState onBlock functionality", () => {
     // This should trigger the onBlock logic and add block items to the queue
     let query: FetchState.query = {
       partitionId: "0",
+      estResponseSize: 0.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -122,6 +123,7 @@ describe("FetchState onBlock functionality", () => {
     // Process a batch that goes from block 0 to 10
     let query: FetchState.query = {
       partitionId: "0",
+      estResponseSize: 0.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -170,6 +172,7 @@ describe("FetchState onBlock functionality", () => {
     // Process a batch that goes from block 0 to 10
     let query: FetchState.query = {
       partitionId: "0",
+      estResponseSize: 0.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -222,6 +225,7 @@ describe("FetchState onBlock functionality", () => {
     // Process a batch
     let query: FetchState.query = {
       partitionId: "0",
+      estResponseSize: 0.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -277,6 +281,7 @@ describe("FetchState onBlock functionality", () => {
     // Process a batch
     let query: FetchState.query = {
       partitionId: "0",
+      estResponseSize: 0.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,

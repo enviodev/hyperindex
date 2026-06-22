@@ -217,19 +217,20 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   sourceManager.status = newStatus
 }
 
-let fetchNext = async (
+// Carry out the fetch decision made by CrossChainState.checkAndFetch: either
+// dispatch the admitted queries or start waiting for a new block. Selection
+// (getNextQuery + cross-chain admission) happens upstream so the budget is split
+// per query across all chains.
+let dispatch = async (
   sourceManager: t,
   ~fetchState: FetchState.t,
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
-  ~itemBudget,
-  ~density,
+  ~action: FetchState.nextQuery,
   ~stateId,
 ) => {
-  let nextQuery = fetchState->FetchState.getNextQuery(~itemBudget, ~density)
-
-  switch nextQuery {
+  switch action {
   | NothingToQuery => ()
   | WaitingForNewBlock =>
     switch sourceManager.waitingForNewBlockStateId {

@@ -382,17 +382,6 @@ let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
 
-// Average events per block processed so far (across all partitions). Computed
-// from persisted progress, so it's available immediately on restart with no
-// warmup. 0 until the first event block is known.
-let density = (cs: t) =>
-  switch cs.fetchState.firstEventBlock {
-  | Some(firstEventBlock) =>
-    let blocks = (cs.committedProgressBlockNumber - firstEventBlock + 1)->Int.toFloat
-    blocks > 0. ? cs.numEventsProcessed /. blocks : 0.
-  | None => 0.
-  }
-
 // --- Derived (pure). ---
 
 let hasProcessedToEndblock = (cs: t) => {

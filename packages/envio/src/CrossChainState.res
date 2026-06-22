@@ -190,40 +190,84 @@ let priorityOrder = (crossChainState: t) =>
     )
   )
 
-// Dispatch a fetch tick across every chain in priority order, drawing each
-// chain's itemBudget from one shared pool of ~targetBufferSize ready events.
-// The pool is drawn down as we go: the furthest-behind chain takes what it can,
-// the rest get whatever's left, so a lone backfilling chain uses the whole pool
-// while head-following chains stay shallow. Each chain converts its itemBudget
-// into a block window via its density, so the budget bounds buffered items
-// regardless of partition count.
+// In-flight estimated items across every chain — the live draw against
+// targetBufferSize alongside totalReadyCount, so the pool isn't re-dispatched
+// while queries are still being fetched.
+let totalReservedSize = (crossChainState: t) => {
+  let total = ref(0.)
+  for i in 0 to crossChainState.chainIds->Array.length - 1 {
+    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    total := total.contents +. cs->ChainState.fetchState->FetchState.reservedSize
+  }
+  total.contents
+}
+
+// Dispatch a fetch tick across the whole indexer from one shared pool of
+// ~targetBufferSize ready events. Every chain proposes its candidate queries
+// (each carrying an estimated response size) against the full free budget; the
+// candidates are then pooled, ordered by chain progress (furthest-behind first),
+// and admitted until the budget is consumed. So the budget is split per query
+// across chains rather than per chain — a chain that can only use a little
+// leaves the rest for the others automatically.
 let checkAndFetch = async (
   crossChainState: t,
-  ~fetchChain: (~chain: ChainMap.Chain.t, ~itemBudget: int, ~density: float) => promise<unit>,
+  ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => {
-  let remaining = ref(
-    Pervasives.max(0, crossChainState.targetBufferSize - crossChainState->totalReadyCount),
+  let remaining = Pervasives.max(
+    0,
+    crossChainState.targetBufferSize -
+    crossChainState->totalReadyCount -
+    crossChainState->totalReservedSize->Float.toInt,
   )
-  let priorityOrdered = crossChainState->priorityOrder
+
+  let chainIds = crossChainState.chainIds
+  let actionByChain = Dict.make()
+  // Candidate queries from every chain, each tagged with its chain id and the
+  // chain's progress % (the admission sort key).
+  let candidates = []
+  for i in 0 to chainIds->Array.length - 1 {
+    let chainId = chainIds->Array.getUnsafe(i)
+    let fetchState = crossChainState->getChainState(chainId)->ChainState.fetchState
+    switch fetchState->FetchState.getNextQuery(~budget=remaining) {
+    | (WaitingForNewBlock | NothingToQuery) as action =>
+      actionByChain->Utils.Dict.setByInt(chainId, action)
+    | Ready(queries) =>
+      // Default to NothingToQuery; replaced below if any candidate is admitted.
+      actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
+      let progress = fetchState->FetchState.getProgressPercentage
+      queries->Array.forEach(query => candidates->Array.push((chainId, progress, query)))
+    }
+  }
+
+  candidates->Array.sort(((_, a, _), (_, b, _)) => Float.compare(a, b))
+
+  let admittedByChain = Dict.make()
+  let running = ref(0.)
+  let remainingF = remaining->Int.toFloat
+  for i in 0 to candidates->Array.length - 1 {
+    let (chainId, _, query) = candidates->Array.getUnsafe(i)
+    if running.contents < remainingF {
+      switch admittedByChain->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
+      | Some(arr) => arr->Array.push(query)
+      | None => admittedByChain->Utils.Dict.setByInt(chainId, [query])
+      }
+      running := running.contents +. query.estResponseSize
+    }
+  }
+  admittedByChain->Dict.forEachWithKey((queries, chainId) =>
+    actionByChain->Dict.set(chainId, FetchState.Ready(queries))
+  )
+
   let promises = []
-  for i in 0 to priorityOrdered->Array.length - 1 {
-    let cs = priorityOrdered->Array.getUnsafe(i)
-    let chain = ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id)
-    let density = cs->ChainState.density
-    let fetchState = cs->ChainState.fetchState
-    let itemBudget = remaining.contents
-    promises->Array.push(fetchChain(~chain, ~itemBudget, ~density))
-    // Draw down the pool by the items this chain's window will engage, so later
-    // chains only see the free remainder. During backfill the head is far away,
-    // so this is ~itemBudget (the chain takes the whole pool); near the head the
-    // gap shrinks and chains share.
-    let frontier = fetchState->FetchState.bufferBlockNumber
-    let projected =
-      Pervasives.min(
-        itemBudget->Int.toFloat,
-        density *. Pervasives.max(0., (fetchState.knownHeight - frontier)->Int.toFloat),
-      )->Float.toInt
-    remaining := remaining.contents - projected
+  for i in 0 to chainIds->Array.length - 1 {
+    let chainId = chainIds->Array.getUnsafe(i)
+    switch actionByChain->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
+    | Some(NothingToQuery)
+    | None => ()
+    | Some(action) =>
+      let chain = ChainMap.Chain.makeUnsafe(~chainId)
+      promises->Array.push(dispatchChain(~chain, ~action))
+    }
   }
   let _ = await promises->Promise.all
 }

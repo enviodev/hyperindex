@@ -19,6 +19,9 @@ type pendingQuery = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
+  // Estimated items this in-flight query will add, carried from the query so the
+  // shared buffer budget can account for what's already being fetched.
+  estResponseSize: float,
   // Stores latestFetchedBlock when query completes. Only needed to persist
   // timestamp while earlier queries are still pending before updating
   // the partition's latestFetchedBlock.
@@ -47,6 +50,10 @@ type partition = {
   // Track last 3 successful query ranges for chunking heuristic (0 means no data)
   prevQueryRange: int,
   prevPrevQueryRange: int,
+  // Item count of the response that set prevQueryRange. Paired with it to derive
+  // the partition's event density (prevRangeSize / prevQueryRange) for sizing
+  // queries against the buffer budget.
+  prevRangeSize: int,
   // Tracks the latestFetchedBlock.blockNumber of the most recent response
   // that updated prevQueryRange. Prevents degradation of the chunking heuristic
   // when parallel query responses arrive out of order.
@@ -58,10 +65,18 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
+  // Estimated number of items the query will return, from the partition's
+  // density and the query's block range. Used to admit queries against the
+  // shared buffer budget.
+  estResponseSize: float,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
   indexingAddresses: dict<indexingAddress>,
 }
+
+// Events per block for a partition, from its last response (0 until it has one).
+let partitionDensity = (p: partition) =>
+  p.prevQueryRange > 0 ? p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat : 0.
 
 // Calculate the chunk range from history using min-of-last-3-ranges heuristic
 let getMinHistoryRange = (p: partition) => {
@@ -160,6 +175,7 @@ module OptimizedPartitions = {
         mutPendingQueries: [],
         prevQueryRange: minRange,
         prevPrevQueryRange: minRange,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       }
     }
@@ -397,6 +413,7 @@ module OptimizedPartitions = {
     optimizedPartitions: t,
     ~query,
     ~knownHeight,
+    ~itemsCount,
     ~latestFetchedBlock: blockNumberAndTimestamp,
   ) => {
     let p = optimizedPartitions->getOrThrow(~partitionId=query.partitionId)
@@ -428,6 +445,7 @@ module OptimizedPartitions = {
         }
     let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
     let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
+    let updatedPrevRangeSize = shouldUpdateBlockRange ? itemsCount : p.prevRangeSize
 
     // Process fetched queries from front of queue for main partition
     let updatedLatestFetchedBlock = consumeFetchedQueries(
@@ -449,6 +467,7 @@ module OptimizedPartitions = {
         latestFetchedBlock: updatedLatestFetchedBlock,
         prevQueryRange: updatedPrevQueryRange,
         prevPrevQueryRange: updatedPrevPrevQueryRange,
+        prevRangeSize: updatedPrevRangeSize,
         latestBlockRangeUpdateBlock: shouldUpdateBlockRange
           ? latestFetchedBlock.blockNumber
           : p.latestBlockRangeUpdateBlock,
@@ -838,6 +857,7 @@ OptimizedPartitions.t => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
           })
           nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
@@ -1179,6 +1199,7 @@ let registerDynamicContracts = (
                         mutPendingQueries: p.mutPendingQueries,
                         prevQueryRange: p.prevQueryRange,
                         prevPrevQueryRange: p.prevPrevQueryRange,
+                        prevRangeSize: p.prevRangeSize,
                         latestBlockRangeUpdateBlock: p.latestBlockRangeUpdateBlock,
                       })
                     }
@@ -1241,6 +1262,7 @@ let handleQueryResult = (
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,
       ~knownHeight=fetchState.knownHeight,
+      ~itemsCount=newItems->Array.length,
       ~latestFetchedBlock,
     ),
     ~mutItems=?{
@@ -1266,6 +1288,7 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
       fromBlock: q.fromBlock,
       toBlock: q.toBlock,
       isChunk: q.isChunk,
+      estResponseSize: q.estResponseSize,
       fetchedBlock: None,
     }
 
@@ -1294,10 +1317,14 @@ let pushQueriesForRange = (
   ~rangeEndBlock: option<int>,
   ~maxQueryBlockNumber: int,
   ~maybeChunkRange: option<int>,
+  ~density: float,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
   ~indexingAddresses: dict<indexingAddress>,
 ) => {
+  // Estimated items for a query, from its block range and the partition density.
+  let estResponseSize = (~fromBlock, ~toBlock) =>
+    (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density
   if rangeFromBlock <= maxQueryBlockNumber {
     switch rangeEndBlock {
     | Some(endBlock) if rangeFromBlock > endBlock => ()
@@ -1310,6 +1337,7 @@ let pushQueriesForRange = (
           toBlock: rangeEndBlock,
           selection,
           isChunk: false,
+          estResponseSize: estResponseSize(~fromBlock=rangeFromBlock, ~toBlock=rangeEndBlock),
           addressesByContractName,
           indexingAddresses,
         })
@@ -1337,6 +1365,10 @@ let pushQueriesForRange = (
               toBlock: Some(chunkToBlock),
               isChunk: true,
               selection,
+              estResponseSize: estResponseSize(
+                ~fromBlock=chunkFromBlock.contents,
+                ~toBlock=Some(chunkToBlock),
+              ),
               addressesByContractName,
               indexingAddresses,
             })
@@ -1351,6 +1383,7 @@ let pushQueriesForRange = (
             toBlock: rangeEndBlock,
             selection,
             isChunk: rangeEndBlock !== None,
+            estResponseSize: estResponseSize(~fromBlock=rangeFromBlock, ~toBlock=rangeEndBlock),
             addressesByContractName,
             indexingAddresses,
           })
@@ -1371,13 +1404,12 @@ let getNextQuery = (
     latestOnBlockBlockNumber,
     knownHeight,
   } as fetchState: t,
-  ~itemBudget,
-  ~density,
+  ~budget,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
     WaitingForNewBlock
-  } else if itemBudget <= 0 {
+  } else if budget <= 0 {
     // No room left in the shared buffer pool for this chain; wait for processing
     // to drain before fetching more.
     NothingToQuery
@@ -1391,14 +1423,25 @@ let getNextQuery = (
       !isOnBlockBehindTheHead,
     )
 
-    // Translate the chain's item budget into a block ceiling using its measured
-    // event density (events/block across all partitions): every partition fetches
-    // only up to frontier + itemBudget/density, so the events pulled into the
-    // buffer over that window stay near itemBudget regardless of partition count.
-    // Before any batch is processed density is 0; fall back to a fixed block
+    // Translate the chain's item budget into a block ceiling using the chain
+    // density (sum of per-partition densities): every partition fetches only up
+    // to frontier + budget/density, so the events pulled into the buffer over
+    // that window stay near budget regardless of partition count. Before any
+    // partition has a response the density is 0; fall back to a fixed block
     // window so a fresh chain doesn't fetch unbounded to the head.
+    let chainDensity = ref(0.)
+    for idx in 0 to optimizedPartitions.idsInAscOrder->Array.length - 1 {
+      let p =
+        optimizedPartitions.entities->Dict.getUnsafe(
+          optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx),
+        )
+      chainDensity := chainDensity.contents +. partitionDensity(p)
+    }
     let frontier = fetchState->bufferBlockNumber
-    let window = density > 0. ? Js.Math.ceil_int(itemBudget->Int.toFloat /. density) : 10000
+    let window =
+      chainDensity.contents > 0.
+        ? Js.Math.ceil_int(budget->Int.toFloat /. chainDensity.contents)
+        : 10000
     let maxQueryBlockNumber = Pervasives.min(knownHeight, frontier + window)
 
     let queries = []
@@ -1462,6 +1505,7 @@ let getNextQuery = (
             ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
             ~maxQueryBlockNumber,
             ~maybeChunkRange,
+            ~density=partitionDensity(p),
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
             ~indexingAddresses,
@@ -1486,6 +1530,7 @@ let getNextQuery = (
           ~rangeEndBlock=queryEndBlock,
           ~maxQueryBlockNumber,
           ~maybeChunkRange,
+          ~density=partitionDensity(p),
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
           ~indexingAddresses,
@@ -1626,6 +1671,7 @@ let make = (
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
+      prevRangeSize: 0,
       latestBlockRangeUpdateBlock: 0,
     })
   }
@@ -1751,6 +1797,23 @@ let make = (
 }
 
 let bufferSize = ({buffer}: t) => buffer->Array.length
+
+// Estimated items across all in-flight queries (sum of their estResponseSize).
+// The shared buffer budget counts this so we don't re-dispatch the pool while
+// queries are still being fetched.
+let reservedSize = ({optimizedPartitions}: t) => {
+  let total = ref(0.)
+  for i in 0 to optimizedPartitions.idsInAscOrder->Array.length - 1 {
+    let p =
+      optimizedPartitions.entities->Dict.getUnsafe(
+        optimizedPartitions.idsInAscOrder->Array.getUnsafe(i),
+      )
+    for j in 0 to p.mutPendingQueries->Array.length - 1 {
+      total := total.contents +. (p.mutPendingQueries->Array.getUnsafe(j)).estResponseSize
+    }
+  }
+  total.contents
+}
 
 // Number of buffered items at or below the ready frontier (processable now,
 // i.e. not stuck behind a gap from a lagging partition or out-of-order chunk).
