@@ -69,6 +69,11 @@ type query = {
   // density and the query's block range. Used to admit queries against the
   // shared buffer budget.
   estResponseSize: float,
+  // Owning chain and the chain progress % at the query's fromBlock. Set by the
+  // cross-chain scheduler so candidate queries can be pooled and ordered
+  // (furthest-behind first) without allocating a side tuple per query.
+  mutable chainId: int,
+  mutable progress: float,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
   indexingAddresses: dict<indexingAddress>,
@@ -1355,6 +1360,8 @@ let pushQueriesForRange = (
             ~toBlock=rangeEndBlock,
             ~maxQueryBlockNumber,
           ),
+          chainId: 0,
+          progress: 0.,
           addressesByContractName,
           indexingAddresses,
         })
@@ -1388,6 +1395,8 @@ let pushQueriesForRange = (
                 ~toBlock=Some(chunkToBlock),
                 ~maxQueryBlockNumber,
               ),
+              chainId: 0,
+              progress: 0.,
               addressesByContractName,
               indexingAddresses,
             })
@@ -1408,6 +1417,8 @@ let pushQueriesForRange = (
               ~toBlock=rangeEndBlock,
               ~maxQueryBlockNumber,
             ),
+            chainId: 0,
+            progress: 0.,
             addressesByContractName,
             indexingAddresses,
           })

@@ -202,6 +202,12 @@ let totalReservedSize = (crossChainState: t) => {
   total.contents
 }
 
+// Furthest-behind first: order candidate queries by the chain progress % at
+// their fromBlock, so the most behind ranges across all chains are admitted
+// before the rest.
+let compareByProgress = (a: FetchState.query, b: FetchState.query) =>
+  Float.compare(a.progress, b.progress)
+
 // Dispatch a fetch tick across the whole indexer from one shared pool of
 // ~targetBufferSize ready events. Every chain proposes its candidate queries
 // (each carrying an estimated response size) against the full free budget; the
@@ -222,8 +228,9 @@ let checkAndFetch = async (
 
   let chainIds = crossChainState.chainIds
   let actionByChain = Dict.make()
-  // Candidate queries from every chain, each tagged with its chain id and the
-  // chain's progress % (the admission sort key).
+  // Candidate queries from every chain. Each query carries its chain id and the
+  // chain progress % at its fromBlock (the admission sort key), set here so the
+  // pool can be ordered without a side tuple per query.
   let candidates = []
   for i in 0 to chainIds->Array.length - 1 {
     let chainId = chainIds->Array.getUnsafe(i)
@@ -238,19 +245,16 @@ let checkAndFetch = async (
     | Ready(queries) =>
       // Default to NothingToQuery; replaced below if any candidate is admitted.
       actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
-      // Order by where each query starts along its chain, not the chain as a
-      // whole, so the furthest-behind ranges across all chains go first.
-      queries->Array.forEach(query =>
-        candidates->Array.push((
-          chainId,
-          fetchState->FetchState.getProgressPercentageAt(~blockNumber=query.fromBlock),
-          query,
-        ))
-      )
+      queries->Array.forEach(query => {
+        query.chainId = chainId
+        query.progress =
+          fetchState->FetchState.getProgressPercentageAt(~blockNumber=query.fromBlock)
+        candidates->Array.push(query)
+      })
     }
   }
 
-  candidates->Array.sort(((_, a, _), (_, b, _)) => Float.compare(a, b))
+  candidates->Array.sort(compareByProgress)
 
   // Admit furthest-behind first until the budget runs out. The condition is
   // checked before each query, so as long as there's any budget left we admit
@@ -261,8 +265,8 @@ let checkAndFetch = async (
   let remainingF = remaining->Int.toFloat
   let idx = ref(0)
   while running.contents < remainingF && idx.contents < candidates->Array.length {
-    let (chainId, _, query) = candidates->Array.getUnsafe(idx.contents)
-    admittedByChain->Utils.Dict.push(chainId->Int.toString, query)
+    let query = candidates->Array.getUnsafe(idx.contents)
+    admittedByChain->Utils.Dict.push(query.chainId->Int.toString, query)
     running := running.contents +. query.estResponseSize
     idx := idx.contents + 1
   }
