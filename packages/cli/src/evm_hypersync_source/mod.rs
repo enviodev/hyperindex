@@ -14,7 +14,7 @@ pub(crate) mod types;
 use config::ClientConfig;
 use decode::DecoderCore;
 use query::{BlockField, LogField, Query, TransactionField};
-use types::{encode_address, Block, EventParamsInput, Log, ParamValue, RollbackGuard, Transaction};
+use types::{encode_address, Block, EventParamsInput, ParamValue, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -166,11 +166,12 @@ impl EvmHypersyncClient {
     }
 }
 
+// The only caller of `get` is the block-hash query, which selects block fields
+// only — so the response carries just blocks. Event items (with their
+// transactions in the store) flow through `get_event_items` instead.
 #[napi(object)]
 pub struct QueryResponseData {
     pub blocks: Vec<Block>,
-    pub transactions: Vec<Transaction>,
-    pub logs: Vec<Log>,
 }
 
 #[napi(object)]
@@ -219,24 +220,6 @@ fn convert_response(
         .collect::<Result<Vec<_>>>()
         .context("mapping blocks")?;
 
-    let transactions = res
-        .data
-        .transactions
-        .into_iter()
-        .flatten()
-        .map(|tx| Transaction::from_simple(&tx, should_checksum))
-        .collect::<Result<Vec<_>>>()
-        .context("mapping transactions")?;
-
-    let logs = res
-        .data
-        .logs
-        .into_iter()
-        .flatten()
-        .map(|l| Log::from_simple(&l, should_checksum))
-        .collect::<Result<Vec<_>>>()
-        .context("mapping logs")?;
-
     Ok(QueryResponse {
         archive_height: res
             .archive_height
@@ -248,11 +231,7 @@ fn convert_response(
             .total_execution_time
             .try_into()
             .context("convert total_execution_time")?,
-        data: QueryResponseData {
-            blocks,
-            transactions,
-            logs,
-        },
+        data: QueryResponseData { blocks },
         rollback_guard: res
             .rollback_guard
             .map(RollbackGuard::try_from)

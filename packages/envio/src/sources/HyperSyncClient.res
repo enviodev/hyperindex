@@ -208,72 +208,6 @@ module ResponseTypes = {
     mixHash?: string,
   }
 
-  type accessList = {
-    address?: Address.t,
-    storageKeys?: array<string>,
-  }
-
-  let accessListSchema = S.object(s => {
-    address: ?s.field("address", S.option(Address.schema)),
-    storageKeys: ?s.field("storageKeys", S.option(S.array(S.string))),
-  })
-
-  type authorizationList = {
-    chainId: bigint,
-    address: Address.t,
-    nonce: int,
-    yParity: [#0 | #1],
-    r: string,
-    s: string,
-  }
-
-  let authorizationListSchema = S.object(s => {
-    chainId: s.field("chainId", S.bigint),
-    address: s.field("address", Address.schema),
-    nonce: s.field("nonce", S.int),
-    yParity: s.field("yParity", S.enum([#0, #1])),
-    r: s.field("r", S.string),
-    s: s.field("s", S.string),
-  })
-
-  type transaction = {
-    blockHash?: string,
-    blockNumber?: int,
-    from?: string,
-    gas?: bigint,
-    gasPrice?: bigint,
-    hash?: string,
-    input?: string,
-    nonce?: bigint,
-    to?: string,
-    transactionIndex?: int,
-    value?: bigint,
-    v?: string,
-    r?: string,
-    s?: string,
-    yParity?: string,
-    maxPriorityFeePerGas?: bigint,
-    maxFeePerGas?: bigint,
-    chainId?: int,
-    accessList?: array<accessList>,
-    maxFeePerBlobGas?: bigint,
-    blobVersionedHashes?: array<string>,
-    cumulativeGasUsed?: bigint,
-    effectiveGasPrice?: bigint,
-    gasUsed?: bigint,
-    contractAddress?: string,
-    logsBloom?: string,
-    @as("type") type_?: int,
-    root?: string,
-    status?: int,
-    l1Fee?: bigint,
-    l1GasPrice?: bigint,
-    l1GasUsed?: bigint,
-    l1FeeScalar?: float,
-    gasUsedForL1?: bigint,
-    authorizationList?: array<authorizationList>,
-  }
-
   type log = {
     removed?: bool,
     @as("logIndex") index?: int,
@@ -286,11 +220,9 @@ module ResponseTypes = {
     topics?: array<Nullable.t<EvmTypes.Hex.t>>,
   }
 
-  type event = {
-    transaction?: transaction,
-    block?: block,
-    log: log,
-  }
+  // Only the log is needed for decoding; the transaction/block are served from
+  // the store (event items) or unused (block-hash query).
+  type event = {log: log}
 
   type rollbackGuard = {
     blockNumber: int,
@@ -303,11 +235,7 @@ module ResponseTypes = {
 
 type query = QueryTypes.query
 
-type queryResponseData = {
-  blocks: array<ResponseTypes.block>,
-  transactions: array<ResponseTypes.transaction>,
-  logs: array<ResponseTypes.log>,
-}
+type queryResponseData = {blocks: array<ResponseTypes.block>}
 
 type queryResponse = {
   archiveHeight: option<int>,
