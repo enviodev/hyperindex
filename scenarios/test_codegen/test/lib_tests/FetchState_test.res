@@ -1838,12 +1838,10 @@ describe("FetchState.getNextQuery & integration", () => {
       updatedFetchState->getNextQuery(~budget=2),
       ~message=`Should wait for new block even if partitions have nothing to query`,
     ).toEqual(WaitingForNewBlock)
-    switch updatedFetchState->getNextQuery(~budget=2, ~knownHeight=11) {
-    // Behind the head, so the budget bounds how far we fetch, not whether: it
-    // still issues a small query rather than waiting.
-    | Ready([q]) => t.expect(q.fromBlock).toBe(11)
-    | _ => JsError.throwWithMessage("Expected a single query past the head")
-    }
+    t.expect(
+      updatedFetchState->getNextQuery(~budget=2, ~knownHeight=11),
+      ~message=`Should do nothing if the case above is not waiting for new block`,
+    ).toEqual(NothingToQuery)
 
     updatedFetchState->FetchState.startFetchingQueries(~queries=[query])
     t.expect(
@@ -2191,12 +2189,11 @@ describe("FetchState.getNextQuery & integration", () => {
       4,
     ))
 
-    switch fetchStateWithResponse1->getNextQuery(~budget=1) {
-    // A small budget shrinks the block window via density rather than blocking
-    // the fetch entirely, so there's still something to query.
-    | Ready(_) => ()
-    | _ => JsError.throwWithMessage("Expected a bounded query for a small budget")
-    }
+    t.expect(
+      fetchStateWithResponse1->getNextQuery(~budget=1),
+      ~message=`Even if we have a partition with toBlock which wants to merge
+      if it's outside of the budget, we should return NothingToQuery`,
+    ).toEqual(NothingToQuery)
 
     let queries = switch fetchStateWithResponse1->getNextQuery {
     | Ready(queries) => queries
@@ -2756,15 +2753,14 @@ describe("FetchState unit tests for specific cases", () => {
         },
       ]),
     )
-    switch {
-      ...fetchState,
-      knownHeight: 2,
-    }->FetchState.getNextQuery(~budget=2) {
-    // The small budget bounds the window via density rather than blocking; the
-    // wildcard partition is still behind the head, so it issues a query.
-    | Ready([q]) => t.expect(q.fromBlock).toBe(2)
-    | _ => JsError.throwWithMessage("Expected a single bounded query")
-    }
+    t.expect(
+      {
+        ...fetchState,
+        knownHeight: 2,
+      }->FetchState.getNextQuery(~budget=2),
+      ~message=`Should wait until queue is processed, to continue fetching.
+      Don't wait for new block, until all partitions reached the head`,
+    ).toEqual(NothingToQuery)
   })
 
   it("Allows to get event one block earlier than the dc registring event", t => {
@@ -3539,11 +3535,9 @@ describe("FetchState buffer overflow prevention", () => {
       let fetchStateWithTwoPartitions =
         fetchState->FetchState.registerDynamicContracts([dc->dcToItem])
 
-      // Partition "0" responds with 15 items over blocks 0..14 (range 15), so its
-      // density is 1 item/block. With budget 10 the block window is 10, and since
-      // partition "1" (registered at block 0) is the frontier, the query is
-      // capped at frontier + 10 = block 10 — below both knownHeight and endBlock.
-      let largeQueueEvents = Array.fromInitializer(~length=15, i => mockEvent(~blockNumber=14 - i))
+      // Buffer 15 items (blocks 6..20). With budget 10 the cap is the block at
+      // buffer index 10-1=9, i.e. block 15 — below both knownHeight and endBlock.
+      let largeQueueEvents = Array.fromInitializer(~length=15, i => mockEvent(~blockNumber=20 - i))
 
       let query0 = {
         FetchState.partitionId: "0",
@@ -3558,17 +3552,13 @@ describe("FetchState buffer overflow prevention", () => {
 
       fetchStateWithTwoPartitions->FetchState.startFetchingQueries(~queries=[query0])
       let fetchStateWithLargeQueue =
-        // knownHeight well past the response so the density (prevQueryRange /
-        // prevRangeSize) is recorded.
-        fetchStateWithTwoPartitions
-        ->FetchState.updateKnownHeight(~knownHeight=1000)
-        ->FetchState.handleQueryResult(
+        fetchStateWithTwoPartitions->FetchState.handleQueryResult(
           ~query=query0,
-          ~latestFetchedBlock={blockNumber: 14, blockTimestamp: 14 * 15},
+          ~latestFetchedBlock={blockNumber: 30, blockTimestamp: 30 * 15},
           ~newItems=largeQueueEvents,
         )
 
-      // Test case 1: With endBlock set, still limited by the density window (10).
+      // Test case 1: With endBlock set, should be limited by maxQueryBlockNumber
       let fetchStateWithEndBlock = {
         ...fetchStateWithLargeQueue,
         endBlock: Some(25),
@@ -3579,19 +3569,19 @@ describe("FetchState buffer overflow prevention", () => {
       | Ready([q]) =>
         t.expect(
           q.toBlock,
-          ~message="Should limit toBlock to the density window (10) when below endBlock and knownHeight",
-        ).toBe(Some(10))
+          ~message="Should limit endBlock to maxQueryBlockNumber (15) when both endBlock and maxQueryBlockNumber are present",
+        ).toBe(Some(15))
       | _ => JsError.throwWithMessage("Expected Ready query when buffer limiting is active")
       }
 
-      // Test case 2: endBlock=None -> still capped at the density window (10).
+      // Test case 2: endBlock=None, maxQueryBlockNumber=15 -> Should use Some(15)
       let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None, knownHeight: 30}
       switch fetchStateNoEndBlock->FetchState.getNextQuery(~budget=10) {
       | Ready([q]) =>
         t.expect(
           q.toBlock,
-          ~message="Should cap toBlock at the density window (10) when no endBlock was specified",
-        ).toBe(Some(10))
+          ~message="Should set endBlock to maxQueryBlockNumber (15) when no endBlock was specified",
+        ).toBe(Some(15))
       | _ => JsError.throwWithMessage("Expected Ready query when buffer limiting is active")
       }
 

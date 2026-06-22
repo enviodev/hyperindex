@@ -197,7 +197,7 @@ let totalReservedSize = (crossChainState: t) => {
   let total = ref(0.)
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
-    total := total.contents +. cs->ChainState.fetchState->FetchState.reservedSize
+    total := total.contents +. cs->ChainState.pendingBudget
   }
   total.contents
 }
@@ -227,8 +227,12 @@ let checkAndFetch = async (
   let candidates = []
   for i in 0 to chainIds->Array.length - 1 {
     let chainId = chainIds->Array.getUnsafe(i)
-    let fetchState = crossChainState->getChainState(chainId)->ChainState.fetchState
-    switch fetchState->FetchState.getNextQuery(~budget=remaining) {
+    let cs = crossChainState->getChainState(chainId)
+    let fetchState = cs->ChainState.fetchState
+    switch fetchState->FetchState.getNextQuery(
+      ~budget=remaining,
+      ~chainPendingBudget=cs->ChainState.pendingBudget,
+    ) {
     | (WaitingForNewBlock | NothingToQuery) as action =>
       actionByChain->Utils.Dict.setByInt(chainId, action)
     | Ready(queries) =>
@@ -254,9 +258,15 @@ let checkAndFetch = async (
       running := running.contents +. query.estResponseSize
     }
   }
-  admittedByChain->Dict.forEachWithKey((queries, chainId) =>
+  admittedByChain->Dict.forEachWithKey((queries, chainId) => {
     actionByChain->Dict.set(chainId, FetchState.Ready(queries))
-  )
+    // Reserve the admitted queries against the shared budget while they're in
+    // flight; released as each response lands in ChainState.handleQueryResult.
+    let reserved = queries->Array.reduce(0., (acc, query) => acc +. query.estResponseSize)
+    crossChainState
+    ->getChainState(chainId->Int.fromString->Option.getUnsafe)
+    ->ChainState.addPendingBudget(~amount=reserved)
+  })
 
   let promises = []
   for i in 0 to chainIds->Array.length - 1 {

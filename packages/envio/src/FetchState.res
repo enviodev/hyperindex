@@ -74,9 +74,14 @@ type query = {
   indexingAddresses: dict<indexingAddress>,
 }
 
-// Events per block for a partition, from its last response (0 until it has one).
-let partitionDensity = (p: partition) =>
-  p.prevQueryRange > 0 ? p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat : 0.
+// Estimated items a query will return, from the partition's event density
+// (items/block derived from its last response) and the query's block range.
+// toBlock None is the open-ended tail, capped at maxQueryBlockNumber.
+let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~maxQueryBlockNumber) => {
+  let density =
+    p.prevQueryRange > 0 ? p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat : 0.
+  (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density
+}
 
 // Calculate the chunk range from history using min-of-last-3-ranges heuristic
 let getMinHistoryRange = (p: partition) => {
@@ -1317,14 +1322,13 @@ let pushQueriesForRange = (
   ~rangeEndBlock: option<int>,
   ~maxQueryBlockNumber: int,
   ~maybeChunkRange: option<int>,
-  ~density: float,
+  ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
   ~indexingAddresses: dict<indexingAddress>,
 ) => {
-  // Estimated items for a query, from its block range and the partition density.
   let estResponseSize = (~fromBlock, ~toBlock) =>
-    (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density
+    calculateEstResponseSize(partition, ~fromBlock, ~toBlock, ~maxQueryBlockNumber)
   if rangeFromBlock <= maxQueryBlockNumber {
     switch rangeEndBlock {
     | Some(endBlock) if rangeFromBlock > endBlock => ()
@@ -1398,6 +1402,7 @@ let maxPendingChunksPerPartition = 10
 
 let getNextQuery = (
   {
+    buffer,
     optimizedPartitions,
     indexingAddresses,
     blockLag,
@@ -1405,6 +1410,7 @@ let getNextQuery = (
     knownHeight,
   } as fetchState: t,
   ~budget,
+  ~chainPendingBudget=0.,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
@@ -1423,26 +1429,17 @@ let getNextQuery = (
       !isOnBlockBehindTheHead,
     )
 
-    // Translate the chain's item budget into a block ceiling using the chain
-    // density (sum of per-partition densities): every partition fetches only up
-    // to frontier + budget/density, so the events pulled into the buffer over
-    // that window stay near budget regardless of partition count. Before any
-    // partition has a response the density is 0; fall back to a fixed block
-    // window so a fresh chain doesn't fetch unbounded to the head.
-    let chainDensity = ref(0.)
-    for idx in 0 to optimizedPartitions.idsInAscOrder->Array.length - 1 {
-      let p =
-        optimizedPartitions.entities->Dict.getUnsafe(
-          optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx),
-        )
-      chainDensity := chainDensity.contents +. partitionDensity(p)
+    // Limit how far ahead we fetch to budget items (plus what's already in
+    // flight) so processing always has buffer without ballooning memory. A
+    // partition that fetched further is skipped until the buffer drains.
+    let maxQueryBlockNumber = {
+      switch buffer->Array.get(budget + chainPendingBudget->Float.toInt - 1) {
+      | Some(item) =>
+        // Just in case check that we don't query beyond the current block
+        Pervasives.min(item->Internal.getItemBlockNumber, knownHeight)
+      | None => knownHeight
+      }
     }
-    let frontier = fetchState->bufferBlockNumber
-    let window =
-      chainDensity.contents > 0.
-        ? Js.Math.ceil_int(budget->Int.toFloat /. chainDensity.contents)
-        : 10000
-    let maxQueryBlockNumber = Pervasives.min(knownHeight, frontier + window)
 
     let queries = []
 
@@ -1505,7 +1502,7 @@ let getNextQuery = (
             ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
             ~maxQueryBlockNumber,
             ~maybeChunkRange,
-            ~density=partitionDensity(p),
+            ~partition=p,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
             ~indexingAddresses,
@@ -1530,7 +1527,7 @@ let getNextQuery = (
           ~rangeEndBlock=queryEndBlock,
           ~maxQueryBlockNumber,
           ~maybeChunkRange,
-          ~density=partitionDensity(p),
+          ~partition=p,
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
           ~indexingAddresses,

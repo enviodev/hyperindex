@@ -11,6 +11,10 @@ type t = {
   mutable timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   mutable committedProgressBlockNumber: int,
   mutable numEventsProcessed: float,
+  // Running sum of in-flight queries' estResponseSize, kept here so the
+  // scheduler doesn't re-sum pending queries on every tick. Incremented when
+  // queries are dispatched, decremented as their responses land.
+  mutable pendingBudget: float,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
 }
@@ -49,6 +53,7 @@ let make = (
   timestampCaughtUpToHeadOrEndblock,
   committedProgressBlockNumber,
   numEventsProcessed,
+  pendingBudget: 0.,
   reorgDetection,
   safeCheckpointTracking,
 }
@@ -380,7 +385,12 @@ let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
+let pendingBudget = (cs: t) => cs.pendingBudget
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
+
+// Reserve the estimated size of queries about to be dispatched, so the shared
+// buffer budget accounts for them while they're in flight.
+let addPendingBudget = (cs: t, ~amount) => cs.pendingBudget = cs.pendingBudget +. amount
 
 // --- Derived (pure). ---
 
@@ -426,6 +436,9 @@ let handleQueryResult = (
     fs
     ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
     ->FetchState.updateKnownHeight(~knownHeight)
+
+  // The query is no longer in flight, so release its reservation.
+  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.estResponseSize)
 }
 
 // Run reorg detection against a fetch response and commit the updated guard.
@@ -448,6 +461,9 @@ let prepareReorg = (cs: t, ~eventsProcessedDiff) => {
   | None => ()
   }
   cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
+
+  // resetPendingQueries drops every in-flight query, so nothing is reserved.
+  cs.pendingBudget = 0.
 }
 
 let updateKnownHeight = (cs: t, ~knownHeight) =>
@@ -599,6 +615,7 @@ let rollback = (
     | None => ()
     }
     cs.fetchState = cs.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
+    cs.pendingBudget = cs.fetchState->FetchState.reservedSize
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
   | None =>
@@ -609,6 +626,7 @@ let rollback = (
         )
       cs.fetchState =
         cs.fetchState->FetchState.rollback(~targetBlockNumber=rollbackTargetBlockNumber)
+      cs.pendingBudget = cs.fetchState->FetchState.reservedSize
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,
