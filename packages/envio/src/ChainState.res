@@ -377,7 +377,6 @@ let makeFromDbState = (
 // --- Read accessors. ---
 
 let logger = (cs: t) => cs.logger
-let fetchState = (cs: t) => cs.fetchState
 let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
 let reorgDetection = (cs: t) => cs.reorgDetection
@@ -387,6 +386,24 @@ let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let pendingBudget = (cs: t) => cs.pendingBudget
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
+
+// Fetch-frontier reads. The FetchState is owned here; callers go through these
+// rather than reaching into it.
+let knownHeight = (cs: t) => cs.fetchState.knownHeight
+let startBlock = (cs: t) => cs.fetchState.startBlock
+let endBlock = (cs: t) => cs.fetchState.endBlock
+let firstEventBlock = (cs: t) => cs.fetchState.firstEventBlock
+let indexingAddresses = (cs: t) => cs.fetchState.indexingAddresses
+let numAddresses = (cs: t) => cs.fetchState->FetchState.numAddresses
+let bufferBlockNumber = (cs: t) => cs.fetchState->FetchState.bufferBlockNumber
+let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
+let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
+let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
+let getProgressPercentageAt = (cs: t, ~blockNumber) =>
+  cs.fetchState->FetchState.getProgressPercentageAt(~blockNumber)
+let hasReadyItem = (cs: t) =>
+  cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
+let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyToEnterReorgThreshold
 
 // Mark queries as in flight and reserve their estimated size against the shared
 // buffer budget in one step, so the counter stays in sync with the pending
@@ -403,6 +420,30 @@ let resetPendingQueries = (cs: t) => {
   cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
   cs.pendingBudget = 0.
 }
+
+// Propose the chain's candidate queries against the shared buffer budget,
+// accounting for this chain's own in-flight reservations.
+let getNextQuery = (cs: t, ~budget) =>
+  cs.fetchState->FetchState.getNextQuery(~budget, ~chainPendingBudget=cs.pendingBudget)
+
+// Run a fetch tick for this chain against its sources, feeding the owned fetch
+// frontier to the source manager.
+let dispatch = (
+  cs: t,
+  ~executeQuery,
+  ~waitForNewBlock,
+  ~onNewBlock,
+  ~action: FetchState.nextQuery,
+  ~stateId,
+) =>
+  cs.sourceManager->SourceManager.dispatch(
+    ~fetchState=cs.fetchState,
+    ~executeQuery,
+    ~waitForNewBlock,
+    ~onNewBlock,
+    ~action,
+    ~stateId,
+  )
 
 // --- Derived (pure). ---
 
@@ -490,6 +531,28 @@ let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
 // Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
 let enterReorgThreshold = (cs: t) =>
   cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
+
+// Snapshot the inputs a batch build needs from this chain.
+let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
+  fetchState: cs.fetchState,
+  progressBlockNumber: cs.committedProgressBlockNumber,
+  totalEventsProcessed: cs.numEventsProcessed,
+  sourceBlockNumber: cs.fetchState.knownHeight,
+  reorgDetection: cs.reorgDetection,
+  chainConfig: cs.chainConfig,
+}
+
+// Whether the chain's post-batch fetch frontier is ready to cross into the reorg
+// threshold, using the batch's progressed frontier when this chain advanced.
+let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
+  let fetchState = switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+    cs.fetchState.chainId,
+  ) {
+  | Some(chainAfterBatch) => chainAfterBatch.fetchState
+  | None => cs.fetchState
+  }
+  fetchState->FetchState.isReadyToEnterReorgThreshold
+}
 
 // Commit the post-batch fetch frontier for a chain that progressed in the batch,
 // applying blockLag when this batch also crosses into the reorg threshold.

@@ -7,15 +7,14 @@ let stage = (state: IndexerState.t) => {
   ->IndexerState.chainStates
   ->Dict.valuesToArray
   ->Array.forEach(cs => {
-    let fetchState = cs->ChainState.fetchState
     chainsData->Dict.set(
       (cs->ChainState.chainConfig).id->Int.toString,
       {
-        firstEventBlockNumber: fetchState.firstEventBlock->Null.fromOption,
+        firstEventBlockNumber: cs->ChainState.firstEventBlock->Null.fromOption,
         isHyperSync: (
           cs->ChainState.sourceManager->SourceManager.getActiveSource
         ).poweredByHyperSync,
-        latestFetchedBlockNumber: fetchState->FetchState.bufferBlockNumber,
+        latestFetchedBlockNumber: cs->ChainState.bufferBlockNumber,
         timestampCaughtUpToHeadOrEndblock: cs
         ->ChainState.timestampCaughtUpToHeadOrEndblock
         ->Null.fromOption,

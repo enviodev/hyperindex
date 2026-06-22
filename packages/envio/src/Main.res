@@ -183,7 +183,7 @@ let buildChainsObject = (~config: Config.t) => {
             | Some(state) => {
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
                 let chainState = state->IndexerState.getChainState(~chain)
-                let indexingAddresses = (chainState->ChainState.fetchState).indexingAddresses
+                let indexingAddresses = chainState->ChainState.indexingAddresses
 
                 // Collect all addresses for this contract name from indexingAddresses
                 let addresses = []
@@ -784,15 +784,11 @@ let start = async (
             ->IndexerState.chainStates
             ->Dict.valuesToArray
             ->Array.map(cs => {
-              let fetchState = cs->ChainState.fetchState
-              let latestFetchedBlockNumber = Pervasives.max(
-                FetchState.bufferBlockNumber(fetchState),
-                0,
-              )
+              let latestFetchedBlockNumber = Pervasives.max(cs->ChainState.bufferBlockNumber, 0)
               let knownHeight =
                 cs->ChainState.hasProcessedToEndblock
-                  ? fetchState.endBlock->Option.getOr(fetchState.knownHeight)
-                  : fetchState.knownHeight
+                  ? cs->ChainState.endBlock->Option.getOr(cs->ChainState.knownHeight)
+                  : cs->ChainState.knownHeight
 
               {
                 chainId: (cs->ChainState.chainConfig).id->Int.toFloat,
@@ -802,15 +798,15 @@ let start = async (
                 latestFetchedBlockNumber,
                 knownHeight,
                 numBatchesFetched: 0,
-                startBlock: fetchState.startBlock,
-                endBlock: fetchState.endBlock,
-                firstEventBlockNumber: fetchState.firstEventBlock,
+                startBlock: cs->ChainState.startBlock,
+                endBlock: cs->ChainState.endBlock,
+                firstEventBlockNumber: cs->ChainState.firstEventBlock,
                 latestProcessedBlock: cs->ChainState.committedProgressBlockNumber === -1
                   ? None
                   : Some(cs->ChainState.committedProgressBlockNumber),
                 timestampCaughtUpToHeadOrEndblock: cs->ChainState.timestampCaughtUpToHeadOrEndblock,
                 numEventsProcessed: cs->ChainState.numEventsProcessed,
-                numAddresses: fetchState->FetchState.numAddresses,
+                numAddresses: cs->ChainState.numAddresses,
               }
             })
           Active({

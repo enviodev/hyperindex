@@ -38,7 +38,6 @@ let makeFromDbState: (
 
 // Accessors.
 let logger: t => Pino.t
-let fetchState: t => FetchState.t
 let sourceManager: t => SourceManager.t
 let chainConfig: t => Config.chain
 let reorgDetection: t => ReorgDetection.t
@@ -49,6 +48,36 @@ let numEventsProcessed: t => float
 let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
+
+// Fetch-frontier reads.
+let knownHeight: t => int
+let startBlock: t => int
+let endBlock: t => option<int>
+let firstEventBlock: t => option<int>
+let indexingAddresses: t => dict<FetchState.indexingAddress>
+let numAddresses: t => int
+let bufferBlockNumber: t => int
+let bufferSize: t => int
+let bufferReadyCount: t => int
+let getProgressPercentage: t => float
+let getProgressPercentageAt: (t, ~blockNumber: int) => float
+let hasReadyItem: t => bool
+let isReadyToEnterReorgThreshold: t => bool
+
+// Fetch control.
+let getNextQuery: (t, ~budget: int) => FetchState.nextQuery
+let dispatch: (
+  t,
+  ~executeQuery: FetchState.query => promise<unit>,
+  ~waitForNewBlock: (~knownHeight: int) => promise<int>,
+  ~onNewBlock: (~knownHeight: int) => unit,
+  ~action: FetchState.nextQuery,
+  ~stateId: int,
+) => promise<unit>
+
+// Batch helpers.
+let toChainBeforeBatch: t => Batch.chainBeforeBatch
+let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).
 let hasProcessedToEndblock: t => bool

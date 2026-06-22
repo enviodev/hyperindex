@@ -158,17 +158,16 @@ module App = {
       ->Dict.valuesToArray
       ->Array.map(cs => {
         let numEventsProcessed = cs->ChainState.numEventsProcessed
-        let fetchState = cs->ChainState.fetchState
         let committedProgressBlockNumber = cs->ChainState.committedProgressBlockNumber
         let timestampCaughtUpToHeadOrEndblock = cs->ChainState.timestampCaughtUpToHeadOrEndblock
         let sourceManager = cs->ChainState.sourceManager
-        let latestFetchedBlockNumber = Pervasives.max(fetchState->FetchState.bufferBlockNumber, 0)
+        let latestFetchedBlockNumber = Pervasives.max(cs->ChainState.bufferBlockNumber, 0)
         let hasProcessedToEndblock = cs->ChainState.hasProcessedToEndblock
         let knownHeight = hasProcessedToEndblock
-          ? fetchState.endBlock->Option.getOr(fetchState.knownHeight)
-          : fetchState.knownHeight
+          ? cs->ChainState.endBlock->Option.getOr(cs->ChainState.knownHeight)
+          : cs->ChainState.knownHeight
 
-        let firstEventBlock = fetchState.firstEventBlock
+        let firstEventBlock = cs->ChainState.firstEventBlock
         let progress: TuiData.progress = if hasProcessedToEndblock {
           // If the endblock has been reached then set the progress to synced.
           // if there's chains that have no events in the block range start->end,
@@ -208,14 +207,14 @@ module App = {
             latestFetchedBlockNumber,
             eventsProcessed: numEventsProcessed,
             chainId: (cs->ChainState.chainConfig).id->Int.toString,
-            progressBlock: committedProgressBlockNumber < fetchState.startBlock
-              ? Some(fetchState.startBlock)
+            progressBlock: committedProgressBlockNumber < cs->ChainState.startBlock
+              ? Some(cs->ChainState.startBlock)
               : Some(committedProgressBlockNumber),
             bufferBlock: Some(latestFetchedBlockNumber),
-            sourceBlock: Some(fetchState.knownHeight),
-            firstEventBlockNumber: fetchState.firstEventBlock,
-            startBlock: fetchState.startBlock,
-            endBlock: fetchState.endBlock,
+            sourceBlock: Some(cs->ChainState.knownHeight),
+            firstEventBlockNumber: firstEventBlock,
+            startBlock: cs->ChainState.startBlock,
+            endBlock: cs->ChainState.endBlock,
             poweredByHyperSync: (sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
             blockUnit: switch (state->IndexerState.config).ecosystem.name {
             | Svm => "Slot"
