@@ -1739,9 +1739,9 @@ describe("FetchState.getNextQuery & integration", () => {
   }
 
   // The default configuration with ability to overwrite some values.
-  // Partitions here have no response yet, so density is 0 and the block window
-  // falls back to 10000 blocks (larger than the small test heights); the budget
-  // therefore doesn't constrain and queries carry estResponseSize 0.
+  // Partitions here have no response yet, so the block window isn't constrained
+  // (the small test heights stay below the buffer-position cap) and query sizing
+  // falls back to FetchState.defaultEstResponseSize (10000).
   let getNextQuery = (
     fs,
     ~endBlock=None,
