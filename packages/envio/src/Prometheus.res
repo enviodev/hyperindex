@@ -351,17 +351,6 @@ module IndexingAddresses = {
   }
 }
 
-module IndexingMaxConcurrency = {
-  let gauge = PromClient.Gauge.makeGauge({
-    "name": "envio_indexing_max_concurrency",
-    "help": "The maximum number of concurrent data-source queries across the whole indexer.",
-  })
-
-  let set = (~maxConcurrency) => {
-    gauge->PromClient.Gauge.set(maxConcurrency)
-  }
-}
-
 module IndexingConcurrency = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_concurrency",

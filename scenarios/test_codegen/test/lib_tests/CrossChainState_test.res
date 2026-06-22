@@ -69,6 +69,68 @@ let makeChainState = (
   )
 }
 
+// A chain state with one fresh address partition behind the head, so
+// getNextQuery actually produces a Ready query (unlike the onBlock-only helper
+// above). The partition has no response yet, so each query estimates at the
+// default size.
+let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
+  let normalSelection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
+  let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
+  let partition: FetchState.partition = {
+    id: "0",
+    latestFetchedBlock: {blockNumber: latestFetchedBlock, blockTimestamp: 0},
+    selection: normalSelection,
+    addressesByContractName: Dict.fromArray([("MockContract", [address])]),
+    mergeBlock: None,
+    dynamicContract: None,
+    mutPendingQueries: [],
+    prevQueryRange: 0,
+    prevPrevQueryRange: 0,
+    prevRangeSize: 0,
+    latestBlockRangeUpdateBlock: 0,
+  }
+  let indexingAddresses = Dict.fromArray([
+    (
+      address->Address.toString,
+      ({contractName: "MockContract", address, registrationBlock: -1, effectiveStartBlock: 0}: Internal.indexingContract),
+    ),
+  ])
+  let fetchState: FetchState.t = {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=[partition],
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=1,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: latestFetchedBlock,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    indexingAddresses,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockConfigs: [],
+    knownHeight,
+    firstEventBlock: Some(0),
+  }
+  let mockSource = MockIndexer.Source.make([], ~chain=#1)
+  ChainState.make(
+    ~chainConfig={...baseChainConfig, id: chainId},
+    ~fetchState,
+    ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+    ~reorgDetection=ReorgDetection.make(
+      ~chainReorgCheckpoints=[],
+      ~maxReorgDepth=200,
+      ~shouldRollbackOnReorg=false,
+    ),
+    ~committedProgressBlockNumber=-1,
+    ~logger=Logging.getLogger(),
+  )
+}
+
 let emptyBatch: Batch.t = {
   totalBatchSize: 0,
   items: [],
@@ -81,25 +143,12 @@ let emptyBatch: Batch.t = {
   checkpointEventsProcessed: [],
 }
 
-let makeCrossChainState = (
-  ~chainStatesList,
-  ~isRealtime=false,
-  ~maxBackfillConcurrency=30,
-  ~maxRealtimeConcurrency=200,
-  ~targetBufferSize=100,
-) => {
+let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSize=100) => {
   let chainStates = Dict.make()
   chainStatesList->Array.forEach(cs =>
     chainStates->Utils.Dict.setByInt((cs->ChainState.chainConfig).id, cs)
   )
-  CrossChainState.make(
-    ~chainStates,
-    ~isInReorgThreshold=false,
-    ~isRealtime,
-    ~maxBackfillConcurrency,
-    ~maxRealtimeConcurrency,
-    ~targetBufferSize,
-  )
+  CrossChainState.make(~chainStates, ~isInReorgThreshold=false, ~isRealtime, ~targetBufferSize)
 }
 
 describe("CrossChainState fetch control", () => {
@@ -115,130 +164,77 @@ describe("CrossChainState fetch control", () => {
     ).toEqual([1, 2, 3])
   })
 
-  Async.it(
-    "checkAndFetch dispatches every chain in priority order, sharing the buffer pool",
-    async t => {
-      let a = makeChainState(
-        ~chainId=1,
-        ~knownHeight=1000,
-        ~frontier=100,
-        ~firstEventBlock=0,
-        ~bufferBlocks=Array.make(~length=10, 100),
-      )
-      let b = makeChainState(
-        ~chainId=2,
-        ~knownHeight=1000,
-        ~frontier=500,
-        ~firstEventBlock=0,
-        ~bufferBlocks=Array.make(~length=20, 500),
-      )
-      let cHead = makeChainState(
-        ~chainId=3,
-        ~knownHeight=1000,
-        ~frontier=1000,
-        ~firstEventBlock=0,
-        ~bufferBlocks=Array.make(~length=5, 950),
-      )
-
-      let cm = makeCrossChainState(
-        ~chainStatesList=[cHead, a, b],
-        ~maxBackfillConcurrency=30,
-        ~targetBufferSize=100,
-      )
-
-      let calls = []
-      await cm->CrossChainState.checkAndFetch(~fetchChain=(~chain, ~concurrencyLimit, ~bufferLimit) => {
-        calls
-        ->Array.push({
-          "chainId": chain->ChainMap.Chain.toChainId,
-          "concurrencyLimit": concurrencyLimit,
-          "bufferLimit": bufferLimit,
-        })
-        ->ignore
-        Promise.resolve()
-      })
-
-      // Total buffered = 10 + 20 + 5 = 35. Every chain is dispatched
-      // furthest-behind first, each allowed to grow into the pool the others
-      // leave free (100 - (35 - own)).
-      t.expect(calls).toEqual([
-        {"chainId": 1, "concurrencyLimit": 30, "bufferLimit": 75},
-        {"chainId": 2, "concurrencyLimit": 30, "bufferLimit": 85},
-        {"chainId": 3, "concurrencyLimit": 30, "bufferLimit": 70},
-      ])
-    },
-  )
-
-  Async.it(
-    "checkAndFetch counts only ready items against the pool, leaving overhang headroom",
-    async t => {
-      // Chain 1 has a gap: blocks 50,100 are ready (<= frontier 100) but 200,300
-      // are stuck behind it. Only the 2 ready items count against the pool, so it
-      // gets extra headroom to fetch the not-ready overhang. Chain 2 is gap-free.
-      let gapped = makeChainState(
-        ~chainId=1,
-        ~knownHeight=1000,
-        ~frontier=100,
-        ~firstEventBlock=0,
-        ~bufferBlocks=[50, 100, 200, 300],
-      )
-      let gapFree = makeChainState(
-        ~chainId=2,
-        ~knownHeight=1000,
-        ~frontier=500,
-        ~firstEventBlock=0,
-        ~bufferBlocks=[500],
-      )
-      let cm = makeCrossChainState(~chainStatesList=[gapFree, gapped], ~targetBufferSize=100)
-
-      let calls = []
-      await cm->CrossChainState.checkAndFetch(~fetchChain=(~chain, ~concurrencyLimit as _, ~bufferLimit) => {
-        calls->Array.push({"chainId": chain->ChainMap.Chain.toChainId, "bufferLimit": bufferLimit})->ignore
-        Promise.resolve()
-      })
-
-      // totalReady = 2 (chain 1) + 1 (chain 2) = 3, not 5 buffered.
-      // chain 1: 100 - (3 - bufferSize 4) = 101 (room to fetch past the gap).
-      // chain 2: 100 - (3 - bufferSize 1) = 98.
-      t.expect(calls).toEqual([
-        {"chainId": 1, "bufferLimit": 101},
-        {"chainId": 2, "bufferLimit": 98},
-      ])
-    },
-  )
-
-  Async.it("checkAndFetch follows the head on every chain once realtime", async t => {
-    let a = makeChainState(~chainId=1, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0, ~bufferBlocks=[1000])
-    let b = makeChainState(~chainId=2, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0, ~bufferBlocks=[1000])
+  Async.it("checkAndFetch dispatches every chain that has work, skipping idle ones", async t => {
+    // Chains at head (onBlock-only, frontier == knownHeight) wait for a new
+    // block, so they're dispatched with that action. A chain whose buffer is
+    // already full of ready items (>= targetBufferSize) gets no budget, so it
+    // isn't dispatched.
+    let a = makeChainState(~chainId=1, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0)
+    let b = makeChainState(~chainId=2, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0)
 
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime=true)
 
-    let dispatchedChainIds = []
-    await cm->CrossChainState.checkAndFetch(~fetchChain=(~chain, ~concurrencyLimit as _, ~bufferLimit as _) => {
-      dispatchedChainIds->Array.push(chain->ChainMap.Chain.toChainId)->ignore
+    let dispatched = []
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+      dispatched->Array.push((chain->ChainMap.Chain.toChainId, action))->ignore
       Promise.resolve()
     })
 
-    t.expect(dispatchedChainIds->Array.toSorted(Int.compare)).toEqual([1, 2])
+    t.expect(
+      dispatched->Array.map(((chainId, action)) => (chainId, action === WaitingForNewBlock)),
+    ).toEqual([(1, true), (2, true)])
   })
 
-  Async.it("checkAndFetch uses the realtime concurrency budget once realtime", async t => {
-    let a = makeChainState(~chainId=1, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0)
-
-    let cm = makeCrossChainState(
-      ~chainStatesList=[a],
-      ~isRealtime=true,
-      ~maxBackfillConcurrency=5,
-      ~maxRealtimeConcurrency=50,
+  Async.it("checkAndFetch doesn't dispatch when the buffer pool is full", async t => {
+    // Both chains are backfilling with onBlock-only frontiers, so they have no
+    // partitions to fetch; the pool being full leaves nothing to do.
+    let a = makeChainState(
+      ~chainId=1,
+      ~knownHeight=1000,
+      ~frontier=100,
+      ~firstEventBlock=0,
+      ~bufferBlocks=Array.make(~length=60, 100),
     )
+    let b = makeChainState(
+      ~chainId=2,
+      ~knownHeight=1000,
+      ~frontier=100,
+      ~firstEventBlock=0,
+      ~bufferBlocks=Array.make(~length=60, 100),
+    )
+    let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=100)
 
-    let seenConcurrencyLimit = ref(-1)
-    await cm->CrossChainState.checkAndFetch(~fetchChain=(~chain as _, ~concurrencyLimit, ~bufferLimit as _) => {
-      seenConcurrencyLimit := concurrencyLimit
+    let dispatched = []
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action as _) => {
+      dispatched->Array.push(chain->ChainMap.Chain.toChainId)->ignore
       Promise.resolve()
     })
 
-    t.expect(seenConcurrencyLimit.contents).toEqual(50)
+    t.expect(dispatched).toEqual([])
+  })
+
+  Async.it("checkAndFetch still dispatches when the only query exceeds the budget", async t => {
+    // Fresh partition behind the head: its query estimates at the default
+    // (10000), far above the tiny remaining budget (1). Admission must still let
+    // one query through, otherwise the chain would never make progress.
+    let cs = makeFetchingChainState(~chainId=1, ~knownHeight=1000, ~latestFetchedBlock=0)
+    let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=1)
+
+    let dispatched = []
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+      dispatched
+      ->Array.push((
+        chain->ChainMap.Chain.toChainId,
+        switch action {
+        | Ready(queries) => queries->Array.length
+        | _ => 0
+        },
+      ))
+      ->ignore
+      Promise.resolve()
+    })
+
+    t.expect(dispatched).toEqual([(1, 1)])
   })
 })
 
@@ -298,33 +294,3 @@ describe("CrossChainState readiness", () => {
   })
 })
 
-describe("CrossChainState shared concurrency (end to end)", () => {
-  Async.it("Two backfilling chains share one concurrency slot", async t => {
-    let sourceMockA = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chain=#1337)
-    let sourceMockB = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chain=#100)
-
-    let _indexerMock = await MockIndexer.Indexer.make(
-      ~chains=[
-        {MockIndexer.Indexer.chain: #1337, sourceConfig: Config.CustomSources([sourceMockA.source])},
-        {MockIndexer.Indexer.chain: #100, sourceConfig: Config.CustomSources([sourceMockB.source])},
-      ],
-      ~maxBackfillConcurrency=1,
-      ~shouldRollbackOnReorg=false,
-    )
-    await Utils.delay(0)
-
-    // Both chains wait for a head first (waiting doesn't consume a slot).
-    sourceMockA.resolveGetHeightOrThrow(1000)
-    sourceMockB.resolveGetHeightOrThrow(1000)
-    await Utils.delay(0)
-    await Utils.delay(0)
-    await Utils.delay(0)
-
-    // With a single shared slot, only one of the two backfilling chains may have
-    // a query in flight at a time.
-    t.expect(
-      sourceMockA.getItemsOrThrowCalls->Array.length + sourceMockB.getItemsOrThrowCalls->Array.length,
-      ~message="The indexer-wide concurrency budget of 1 must be shared across chains",
-    ).toEqual(1)
-  })
-})

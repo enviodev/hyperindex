@@ -217,20 +217,20 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   sourceManager.status = newStatus
 }
 
-let fetchNext = async (
+// Carry out the fetch decision made by CrossChainState.checkAndFetch: either
+// dispatch the admitted queries or start waiting for a new block. Selection
+// (getNextQuery + cross-chain admission) happens upstream so the budget is split
+// per query across all chains.
+let dispatch = async (
   sourceManager: t,
   ~fetchState: FetchState.t,
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
-  ~concurrencyLimit,
-  ~bufferLimit,
+  ~action: FetchState.nextQuery,
   ~stateId,
 ) => {
-  let nextQuery = fetchState->FetchState.getNextQuery(~concurrencyLimit, ~bufferLimit)
-
-  switch nextQuery {
-  | ReachedMaxConcurrency
+  switch action {
   | NothingToQuery => ()
   | WaitingForNewBlock =>
     switch sourceManager.waitingForNewBlockStateId {
@@ -251,7 +251,8 @@ let fetchNext = async (
       }
     }
   | Ready(queries) => {
-      fetchState->FetchState.startFetchingQueries(~queries)
+      // Queries are already marked in flight by ChainState.startFetchingQueries
+      // when they were admitted; here we just execute them.
       sourceManager.fetchingPartitionsCount =
         sourceManager.fetchingPartitionsCount + queries->Array.length
       Prometheus.IndexingConcurrency.set(

@@ -25,14 +25,13 @@ let inFlightCount: t => int
 
 let onReorg: (t, ~rollbackTargetBlock: int) => unit
 
-let fetchNext: (
+let dispatch: (
   t,
   ~fetchState: FetchState.t,
   ~executeQuery: FetchState.query => promise<unit>,
   ~waitForNewBlock: (~knownHeight: int) => promise<int>,
   ~onNewBlock: (~knownHeight: int) => unit,
-  ~concurrencyLimit: int,
-  ~bufferLimit: int,
+  ~action: FetchState.nextQuery,
   ~stateId: int,
 ) => promise<unit>
 
