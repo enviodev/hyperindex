@@ -49,7 +49,6 @@ let numEventsProcessed: t => float
 let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
-let transactionFieldMask: t => float
 
 // Fetch-frontier reads.
 let knownHeight: t => int

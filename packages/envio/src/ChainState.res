@@ -414,9 +414,6 @@ let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let pendingBudget = (cs: t) => cs.pendingBudget
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
-// 0. for chains that carry the transaction inline (RPC/Fuel/Simulate, or EVM
-// with no selected transaction fields) — nothing for the store to materialise.
-let transactionFieldMask = (cs: t) => cs.transactionFieldMask
 
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
 // rather than reaching into it.

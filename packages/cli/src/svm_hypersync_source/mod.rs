@@ -45,7 +45,7 @@ fn build_svm_store(
     transactions: Vec<simple::Transaction>,
     token_balances: Vec<simple::TokenBalance>,
 ) -> TransactionStore {
-    let store = TransactionStore::new();
+    let store = TransactionStore::new_svm();
 
     let mut tx_by_key: HashMap<(u64, u32), simple::Transaction> = HashMap::new();
     for tx in transactions {
@@ -67,7 +67,12 @@ fn build_svm_store(
         }
     }
     for key in keys {
-        let tx = tx_by_key.remove(&key).unwrap_or_default();
+        let mut tx = tx_by_key.remove(&key).unwrap_or_default();
+        // For a token-balance-only key the transaction row is absent, so the
+        // defaulted struct carries slot/index 0. Restore the real identity from
+        // the key so materialising `transactionIndex` doesn't yield 0.
+        tx.slot = key.0;
+        tx.transaction_index = key.1;
         let token_balances = tb_by_key.remove(&key).unwrap_or_default();
         store.insert_svm_raw(
             key.0,

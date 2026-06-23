@@ -450,20 +450,30 @@ fn decode_svm_columns(records: &[Option<Arc<SvmStored>>], mask: u64) -> Columns 
                 Column::Str(fill_svm(records, |r| r.tx.recent_blockhash.clone()))
             }
             SvmTxField::Version => Column::Str(fill_svm(records, |r| r.tx.version.clone())),
-            SvmTxField::TokenBalances => Column::TokenBalances(fill_svm(records, |r| {
-                Some(
-                    r.token_balances
-                        .iter()
-                        .map(|tb| SvmTokenBalanceOut {
-                            account: tb.account.clone(),
-                            mint: tb.mint.clone(),
-                            owner: tb.owner.clone(),
-                            pre_amount: tb.pre_amount.clone(),
-                            post_amount: tb.post_amount.clone(),
+            // Always materialise an array when selected: a record absent from the
+            // store (its transaction had no token balances, so it was never
+            // inserted) means "no balances" → `[]`, not a missing field.
+            SvmTxField::TokenBalances => Column::TokenBalances(
+                records
+                    .iter()
+                    .map(|rec| {
+                        Some(match rec {
+                            Some(r) => r
+                                .token_balances
+                                .iter()
+                                .map(|tb| SvmTokenBalanceOut {
+                                    account: tb.account.clone(),
+                                    mint: tb.mint.clone(),
+                                    owner: tb.owner.clone(),
+                                    pre_amount: tb.pre_amount.clone(),
+                                    post_amount: tb.post_amount.clone(),
+                                })
+                                .collect(),
+                            None => vec![],
                         })
-                        .collect(),
-                )
-            })),
+                    })
+                    .collect(),
+            ),
         };
         columns.push((field.name(), column));
     }
@@ -694,6 +704,14 @@ impl TransactionStore {
         store
             .should_checksum
             .store(should_checksum, Ordering::Relaxed);
+        store
+    }
+
+    /// Create an SVM page store. The ecosystem is tagged here (not inferred from
+    /// records) so even an empty page selects the SVM decoder after merge.
+    pub(crate) fn new_svm() -> Self {
+        let store = Self::new();
+        store.ecosystem.store(ECO_SVM, Ordering::Relaxed);
         store
     }
 

@@ -36,14 +36,22 @@ describe("TransactionStore field-code contract", () => {
   it("SVM transactionFields match the Rust SvmTxField order", t => {
     t.expect(Svm.transactionFields).toEqual(Core.getAddon().svmTransactionFieldNames())
   })
+
+  it("fieldCodes maps each field name to its bit index", t => {
+    t.expect(TransactionStore.fieldCodes(["transactionIndex", "hash", "from"])).toEqual(
+      Dict.fromArray([("transactionIndex", 0), ("hash", 1), ("from", 2)]),
+    )
+  })
 })
 
 describe("TransactionStore.materializeItems", () => {
-  Async.it("leaves payloads untouched when the mask is 0", async t => {
+  Async.it("stamps an empty transaction object when the mask is 0", async t => {
     let store = TransactionStore.make()
     let item = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=0)
     await store->TransactionStore.materializeItems(~items=[item], ~mask=0.)
-    t.expect(rawTx(item)->Nullable.toOption).toEqual(None)
+    // Store-backed items always get a transaction object (matching the inline
+    // sources) — an empty object rather than `undefined` — even with no fields.
+    t.expect(rawTx(item)->Nullable.toOption).toEqual(Some(%raw(`{}`)))
   })
 
   Async.it("skips inline txs, materialises store-backed items, and dedupes by adjacency", async t => {
