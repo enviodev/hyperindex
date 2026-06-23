@@ -270,17 +270,16 @@ let registerProcessEventBatchMetrics = (
   ~loadDuration,
   ~handlerDuration,
 ) => {
-  logger->Logging.childTrace({
-    "msg": "Processed batch",
-    "totalBatchSize": batch.totalBatchSize,
-    "loader_time_elapsed": loadDuration,
-    "handlers_time_elapsed": handlerDuration,
-    "chains": batch.progressedChainsById->Utils.Dict.mapValues(chainAfterBatch => {
-      {
-        "batchSize": chainAfterBatch.batchSize,
-        "progress": chainAfterBatch.progressBlockNumber,
-      }
-    }),
+  // Durations are batch-wide; repeated on each chain's line so it stays self-contained.
+  batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
+    logger->Logging.childTrace({
+      "msg": "Processed batch",
+      "chainId": chainId->Int.fromString->Option.getUnsafe,
+      "batchSize": chainAfterBatch.batchSize,
+      "progress": chainAfterBatch.progressBlockNumber,
+      "loader_time_elapsed": loadDuration,
+      "handlers_time_elapsed": handlerDuration,
+    })
   })
 
   Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration)
