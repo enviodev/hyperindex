@@ -1,19 +1,4 @@
-type chainData = {
-  chainId: float,
-  poweredByHyperSync: bool,
-  firstEventBlockNumber: option<int>,
-  latestProcessedBlock: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  numEventsProcessed: float,
-  latestFetchedBlockNumber: int,
-  // Need this for API backwards compatibility
-  @as("currentBlockHeight")
-  knownHeight: int,
-  numBatchesFetched: int,
-  startBlock: int,
-  endBlock: option<int>,
-  numAddresses: int,
-}
+type chainData = ChainState.chainData
 @tag("status")
 type state =
   | @as("disabled") Disabled({})
@@ -780,35 +765,7 @@ let start = async (
       | None => Initializing({})
       | Some(state) => {
           let chains =
-            state
-            ->IndexerState.chainStates
-            ->Dict.valuesToArray
-            ->Array.map(cs => {
-              let latestFetchedBlockNumber = Pervasives.max(cs->ChainState.bufferBlockNumber, 0)
-              let knownHeight =
-                cs->ChainState.hasProcessedToEndblock
-                  ? cs->ChainState.endBlock->Option.getOr(cs->ChainState.knownHeight)
-                  : cs->ChainState.knownHeight
-
-              {
-                chainId: (cs->ChainState.chainConfig).id->Int.toFloat,
-                poweredByHyperSync: (
-                  cs->ChainState.sourceManager->SourceManager.getActiveSource
-                ).poweredByHyperSync,
-                latestFetchedBlockNumber,
-                knownHeight,
-                numBatchesFetched: 0,
-                startBlock: cs->ChainState.startBlock,
-                endBlock: cs->ChainState.endBlock,
-                firstEventBlockNumber: cs->ChainState.firstEventBlock,
-                latestProcessedBlock: cs->ChainState.committedProgressBlockNumber === -1
-                  ? None
-                  : Some(cs->ChainState.committedProgressBlockNumber),
-                timestampCaughtUpToHeadOrEndblock: cs->ChainState.timestampCaughtUpToHeadOrEndblock,
-                numEventsProcessed: cs->ChainState.numEventsProcessed,
-                numAddresses: cs->ChainState.numAddresses,
-              }
-            })
+            state->IndexerState.chainStates->Dict.valuesToArray->Array.map(ChainState.toChainData)
           Active({
             envioVersion,
             chains,

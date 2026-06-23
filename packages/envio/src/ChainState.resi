@@ -51,12 +51,7 @@ let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
 // Fetch-frontier reads.
 let knownHeight: t => int
-let startBlock: t => int
-let endBlock: t => option<int>
-let firstEventBlock: t => option<int>
 let indexingAddresses: t => dict<FetchState.indexingAddress>
-let numAddresses: t => int
-let bufferBlockNumber: t => int
 let bufferSize: t => int
 let bufferReadyCount: t => int
 let getProgressPercentage: t => float
@@ -76,6 +71,22 @@ let dispatch: (
 ) => promise<unit>
 
 // Views.
+type chainData = {
+  chainId: float,
+  poweredByHyperSync: bool,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  numEventsProcessed: float,
+  latestFetchedBlockNumber: int,
+  @as("currentBlockHeight")
+  knownHeight: int,
+  numBatchesFetched: int,
+  startBlock: int,
+  endBlock: option<int>,
+  numAddresses: int,
+}
+let toChainData: t => chainData
 let toChainMetadata: t => InternalTable.Chains.metaFields
 let toChainBeforeBatch: t => Batch.chainBeforeBatch
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool

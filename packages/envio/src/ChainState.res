@@ -19,6 +19,24 @@ type t = {
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
 }
 
+// Per-chain shape returned by the status API.
+type chainData = {
+  chainId: float,
+  poweredByHyperSync: bool,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  numEventsProcessed: float,
+  latestFetchedBlockNumber: int,
+  // Need this for API backwards compatibility
+  @as("currentBlockHeight")
+  knownHeight: int,
+  numBatchesFetched: int,
+  startBlock: int,
+  endBlock: option<int>,
+  numAddresses: int,
+}
+
 let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
   let addresses = []
   chainConfig.contracts->Array.forEach(contract => {
@@ -390,12 +408,7 @@ let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrE
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
-let startBlock = (cs: t) => cs.fetchState.startBlock
-let endBlock = (cs: t) => cs.fetchState.endBlock
-let firstEventBlock = (cs: t) => cs.fetchState.firstEventBlock
 let indexingAddresses = (cs: t) => cs.fetchState.indexingAddresses
-let numAddresses = (cs: t) => cs.fetchState->FetchState.numAddresses
-let bufferBlockNumber = (cs: t) => cs.fetchState->FetchState.bufferBlockNumber
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
@@ -543,6 +556,26 @@ let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
   isHyperSync: (cs.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
   latestFetchedBlockNumber: cs.fetchState->FetchState.bufferBlockNumber,
   timestampCaughtUpToHeadOrEndblock: cs.timestampCaughtUpToHeadOrEndblock->Null.fromOption,
+}
+
+// Snapshot the chain's view for the status API.
+let toChainData = (cs: t): chainData => {
+  chainId: cs.chainConfig.id->Int.toFloat,
+  poweredByHyperSync: (cs.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
+  firstEventBlockNumber: cs.fetchState.firstEventBlock,
+  latestProcessedBlock: cs.committedProgressBlockNumber === -1
+    ? None
+    : Some(cs.committedProgressBlockNumber),
+  timestampCaughtUpToHeadOrEndblock: cs.timestampCaughtUpToHeadOrEndblock,
+  numEventsProcessed: cs.numEventsProcessed,
+  latestFetchedBlockNumber: Pervasives.max(cs.fetchState->FetchState.bufferBlockNumber, 0),
+  knownHeight: cs->hasProcessedToEndblock
+    ? cs.fetchState.endBlock->Option.getOr(cs.fetchState.knownHeight)
+    : cs.fetchState.knownHeight,
+  numBatchesFetched: 0,
+  startBlock: cs.fetchState.startBlock,
+  endBlock: cs.fetchState.endBlock,
+  numAddresses: cs.fetchState->FetchState.numAddresses,
 }
 
 // Snapshot the inputs a batch build needs from this chain.
