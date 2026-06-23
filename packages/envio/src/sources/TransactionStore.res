@@ -60,46 +60,52 @@ external materialize: (
 // selected none — so `event.transaction` is never `undefined` (matching the
 // inline sources). Deduped per (blockNumber, transactionIndex).
 let materializeItems = async (store: t, ~items: array<Internal.item>, ~mask: float) => {
-  let keys = []
+  // Store-backed items arrive in (block, logIndex) order, and a transaction's
+  // logs are contiguous within a block, so events sharing a (blockNumber,
+  // transactionIndex) are adjacent. Group them by extending the current run
+  // rather than hashing a string key per item. A key recurring non-adjacently
+  // just splits into two groups (one redundant decode) — never incorrect.
   let blockNumbers = []
   let transactionIndices = []
-  let payloadsByKey = Dict.make()
+  let payloadGroups = []
 
   items->Array.forEach(item =>
     switch item {
     | Internal.Event(_) =>
       let eventItem = item->Internal.castUnsafeEventItem
       switch eventItem.payload->Internal.getPayloadTransaction->Nullable.toOption {
-      | Some(_) => ()
+      | Some(_) => () // RPC/simulate/Fuel carry the transaction inline.
       | None =>
-        let key =
-          eventItem.blockNumber->Int.toString ++ ":" ++ eventItem.transactionIndex->Int.toString
-        switch payloadsByKey->Utils.Dict.dangerouslyGetNonOption(key) {
-        | Some(payloads) => payloads->Array.push(eventItem.payload)
-        | None =>
-          keys->Array.push(key)
-          blockNumbers->Array.push(eventItem.blockNumber)
-          transactionIndices->Array.push(eventItem.transactionIndex)
-          payloadsByKey->Dict.set(key, [eventItem.payload])
+        let {blockNumber, transactionIndex} = eventItem
+        let last = payloadGroups->Array.length - 1
+        if (
+          last >= 0 &&
+          blockNumbers->Array.getUnsafe(last) == blockNumber &&
+          transactionIndices->Array.getUnsafe(last) == transactionIndex
+        ) {
+          payloadGroups->Array.getUnsafe(last)->Array.push(eventItem.payload)
+        } else {
+          blockNumbers->Array.push(blockNumber)
+          transactionIndices->Array.push(transactionIndex)
+          payloadGroups->Array.push([eventItem.payload])
         }
       }
     | Internal.Block(_) => ()
     }
   )
 
-  if keys->Utils.Array.notEmpty {
+  if payloadGroups->Utils.Array.notEmpty {
     // A zero mask selects no fields, so there's nothing to decode — each
-    // store-backed item gets an empty transaction object.
+    // store-backed item still gets an empty transaction object, so
+    // `event.transaction` is never undefined (matching the inline sources).
     let txs = if mask == 0. {
-      keys->Array.map((_): Internal.eventTransaction => %raw(`{}`))
+      payloadGroups->Array.map((_): Internal.eventTransaction => %raw(`{}`))
     } else {
       await store->materialize(~blockNumbers, ~transactionIndices, ~mask)
     }
-    keys->Array.forEachWithIndex((key, i) => {
+    payloadGroups->Array.forEachWithIndex((payloads, i) => {
       let tx = txs->Array.getUnsafe(i)
-      payloadsByKey
-      ->Dict.getUnsafe(key)
-      ->Array.forEach(payload => payload->Internal.setPayloadTransaction(tx))
+      payloads->Array.forEach(payload => payload->Internal.setPayloadTransaction(tx))
     })
   }
 }
