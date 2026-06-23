@@ -270,7 +270,11 @@ let checkAndFetch = async (
     running := running.contents +. query.estResponseSize
     idx := idx.contents + 1
   }
+  let startedQueriesCount = ref(0)
+  let startedByChain = Dict.make()
   admittedByChain->Dict.forEachWithKey((queries, chainId) => {
+    startedQueriesCount := startedQueriesCount.contents + queries->Array.length
+    startedByChain->Dict.set(chainId, queries->Array.length)
     actionByChain->Dict.set(chainId, FetchState.Ready(queries))
     // Mark the admitted queries in flight and reserve their size against the
     // shared budget; released as each response lands in handleQueryResult.
@@ -278,6 +282,13 @@ let checkAndFetch = async (
     ->getChainState(chainId->Int.fromString->Option.getUnsafe)
     ->ChainState.startFetchingQueries(~queries)
   })
+  if startedQueriesCount.contents > 0 {
+    Logging.trace({
+      "msg": "Started fetching queries",
+      "queries": startedQueriesCount.contents,
+      "chains": startedByChain,
+    })
+  }
 
   let promises = []
   for i in 0 to chainIds->Array.length - 1 {

@@ -324,6 +324,12 @@ let fetchChain = async (
     // there's nothing to fetch. During backfill any such chain is idle.
     let reducedPolling = !isRealtime
 
+    // Accumulated across all queries dispatched in this tick so their per-query
+    // results collapse into a single completion log instead of one per query.
+    let fetchedQueries = ref(0)
+    let fetchedNumEvents = ref(0)
+    let fetchedToBlock = ref(0)
+
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
     try {
@@ -358,6 +364,10 @@ let fetchChain = async (
               ~scheduleProcessing,
               ~scheduleRollback,
             )
+            fetchedQueries := fetchedQueries.contents + 1
+            fetchedNumEvents := fetchedNumEvents.contents + response.parsedQueueItems->Array.length
+            fetchedToBlock :=
+              Pervasives.max(fetchedToBlock.contents, response.latestFetchedBlockNumber)
           } catch {
           | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
           }
@@ -365,6 +375,15 @@ let fetchChain = async (
         ~action,
         ~stateId,
       )
+      if fetchedQueries.contents > 0 {
+        Logging.trace({
+          "msg": "Fetched block ranges from server",
+          "chainId": chain->ChainMap.Chain.toChainId,
+          "queries": fetchedQueries.contents,
+          "numEvents": fetchedNumEvents.contents,
+          "toBlock": fetchedToBlock.contents,
+        })
+      }
     } catch {
     | exn =>
       IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
