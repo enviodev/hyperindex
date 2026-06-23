@@ -306,7 +306,14 @@ let resolveFieldSelection = (
   | Some(fields) => Utils.Set.fromArray(fields)
   | None => globalTransactionFieldsSet
   }
-  (selectedBlockFields, selectedTransactionFields)
+  // The base eventConfig stores these as a string set (field names match the
+  // typed variants at runtime).
+  (
+    selectedBlockFields,
+    selectedTransactionFields->(
+      Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
+    ),
+  )
 }
 
 // ============== Client-side address filter ==============
@@ -444,7 +451,12 @@ let buildSvmInstructionEventConfig = (
     ->Utils.Schema.coerceToJsonPgType
     ->(Utils.magic: S.t<JSON.t> => S.t<Internal.eventParams>)
 
-  let selectedTransactionFields = Utils.Set.fromArray(transactionFields)
+  // The base eventConfig stores these as a string set (field names match the
+  // typed variants at runtime).
+  let selectedTransactionFields =
+    Utils.Set.fromArray(transactionFields)->(
+      Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
+    )
   {
     id: switch discriminator {
     | Some(d) => d
@@ -530,6 +542,8 @@ let buildFuelEventConfig = (
     filterByAddresses: false,
     dependsOnAddresses: !isWildcard,
     startBlock,
+    // Fuel keeps the transaction inline on the payload; nothing to materialise.
+    selectedTransactionFields: Utils.Set.make(),
     kind: fuelKind,
   }
 }

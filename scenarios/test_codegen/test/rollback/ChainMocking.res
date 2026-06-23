@@ -279,9 +279,9 @@ module Make = () => {
       knownHeight,
       blockHashes,
       parsedQueueItems,
-      // Mock events carry their transaction inline on the payload, so the page
-      // store is empty (it merges as a no-op in handleQueryResult).
-      transactionStore: TransactionStore.make(),
+      // Mock events carry their transaction inline on the payload, so there's no
+      // page store to merge.
+      transactionStore: None,
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,

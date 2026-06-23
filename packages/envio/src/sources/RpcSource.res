@@ -1129,8 +1129,6 @@ let make = (
       )
     }
 
-    let transactionStore = TransactionStore.make()
-
     let parsedQueueItems = await logs
     ->Array.zip(parsedEvents)
     ->Array.filterMap(((
@@ -1162,7 +1160,9 @@ let make = (
                 let (block, transaction) = try await Promise.all2((
                   log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
                   log->getEventTransactionOrThrow(
-                    ~selectedTransactionFields=eventConfig.selectedTransactionFields,
+                    ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
+                      Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
+                    ),
                   ),
                 )) catch {
                 | TransactionDataNotFound({message}) =>
@@ -1253,7 +1253,8 @@ let make = (
       latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
-      transactionStore,
+      // RPC keeps the transaction inline on the payload; no store page.
+      transactionStore: None,
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },

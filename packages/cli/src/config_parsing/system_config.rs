@@ -4079,6 +4079,12 @@ type Foo {
             assert!(matches!(token_metadata.abi, Abi::Svm(_)));
             assert_eq!(token_metadata.events.len(), 2);
 
+            let to_strings = |fields: &[&str]| {
+                fields
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<String>>()
+            };
             let kinds: Vec<_> = token_metadata
                 .events
                 .iter()
@@ -4087,11 +4093,8 @@ type Foo {
                         e.name.as_str(),
                         k.discriminator.as_deref(),
                         k.discriminator_byte_len,
-                        !k.selected_transaction_fields.is_empty(),
+                        k.selected_transaction_fields.clone(),
                         k.include_logs,
-                        k.selected_transaction_fields
-                            .iter()
-                            .any(|f| f == "tokenBalances"),
                         k.account_filters.len(),
                     ),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
@@ -4104,8 +4107,7 @@ type Foo {
                         "CreateMetadataAccountV3",
                         Some("0x21"),
                         1,
-                        false,
-                        false,
+                        to_strings(&[]),
                         false,
                         0
                     ),
@@ -4113,8 +4115,18 @@ type Foo {
                         "UpdateMetadataAccountV2",
                         Some("0x0f"),
                         1,
-                        true,
-                        false,
+                        to_strings(&[
+                            "transactionIndex",
+                            "signatures",
+                            "feePayer",
+                            "success",
+                            "err",
+                            "fee",
+                            "computeUnitsConsumed",
+                            "accountKeys",
+                            "recentBlockhash",
+                            "version",
+                        ]),
                         false,
                         1
                     ),

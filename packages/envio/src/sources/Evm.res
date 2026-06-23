@@ -57,16 +57,7 @@ let transactionFields = [
 let transactionFieldCodes = TransactionStore.fieldCodes(transactionFields)
 
 let transactionFieldMask = (eventConfigs: array<Internal.eventConfig>): float =>
-  eventConfigs->TransactionStore.mask(
-    ~codes=transactionFieldCodes,
-    ~getSelectedFields=eventConfig => {
-      (
-        eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-      ).selectedTransactionFields->(
-        Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
-      )
-    },
-  )
+  eventConfigs->TransactionStore.mask(~codes=transactionFieldCodes)
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash

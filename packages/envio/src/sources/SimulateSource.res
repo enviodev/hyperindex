@@ -1,9 +1,4 @@
-let make = (
-  ~items: array<Internal.item>,
-  ~transactionStore: TransactionStore.t,
-  ~endBlock: int,
-  ~chain: ChainMap.Chain.t,
-): Source.t => {
+let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain.t): Source.t => {
   // getItemsOrThrow might be called multiple times with different partition ids.
   // Return all items on the first call and empty on subsequent calls to prevent
   // duplicate event processing.
@@ -33,12 +28,12 @@ let make = (
       ~retry as _,
       ~logger as _,
     ) => {
-      // Return all items + the store page on first call, empty on subsequent.
-      let (result, page) = if delivered.contents {
-        ([], TransactionStore.make())
+      // Return all items on the first call, empty on subsequent.
+      let result = if delivered.contents {
+        []
       } else {
         delivered := true
-        (items, transactionStore)
+        items
       }
 
       let reportedHeight = max(endBlock, 1)
@@ -46,7 +41,8 @@ let make = (
         Source.knownHeight: reportedHeight,
         blockHashes: [],
         parsedQueueItems: result,
-        transactionStore: page,
+        // Simulate keeps the transaction inline on the payload; no store page.
+        transactionStore: None,
         fromBlockQueried: 0,
         latestFetchedBlockNumber: reportedHeight,
         latestFetchedBlockTimestamp: 0,

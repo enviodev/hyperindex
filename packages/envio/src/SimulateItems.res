@@ -195,17 +195,15 @@ let findEventConfig = (~config: Config.t, ~contractName: string, ~eventName: str
   found.contents
 }
 
-let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Config.chain): (
-  array<Internal.item>,
-  TransactionStore.t,
-) => {
+let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Config.chain): array<
+  Internal.item,
+> => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
   let chainId = chainConfig.id
   let startBlock = chainConfig.startBlock
   let currentBlock = ref(startBlock)
   let currentLogIndex = ref(0)
 
-  let transactionStore = TransactionStore.make()
   let items = []
 
   simulateItems->Array.forEach(rawJson => {
@@ -281,38 +279,6 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       // Update currentBlock for subsequent items
       currentBlock := blockNumber
 
-      // Unique within (blockNumber) since logIndex auto-increments; simulate
-      // items don't share transactions.
-      let transactionIndex = logIndex
-
-      let payload = switch config.ecosystem.name {
-      | Evm =>
-        (
-          {
-            contractName: eventConfig.contractName,
-            eventName: eventConfig.name,
-            params,
-            chainId,
-            srcAddress,
-            logIndex,
-            transaction,
-            block,
-          }: Evm.payload
-        )->Evm.fromPayload
-      | _ =>
-        // Fuel keeps the transaction on the payload (erased like Evm's).
-        {
-          "contractName": eventConfig.contractName,
-          "eventName": eventConfig.name,
-          "params": params,
-          "chainId": chainId,
-          "srcAddress": srcAddress,
-          "logIndex": logIndex,
-          "transaction": transaction,
-          "block": block,
-        }->(Utils.magic: {..} => Internal.eventPayload)
-      }
-
       items
       ->Array.push(
         Internal.Event({
@@ -322,8 +288,21 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
           blockNumber,
           blockHash,
           logIndex,
-          transactionIndex,
-          payload,
+          // Simulate keeps the transaction inline on the payload, so the store
+          // key is unused.
+          transactionIndex: 0,
+          payload: (
+            {
+              contractName: eventConfig.contractName,
+              eventName: eventConfig.name,
+              params,
+              chainId,
+              srcAddress,
+              logIndex,
+              transaction,
+              block,
+            }: Evm.payload
+          )->Evm.fromPayload,
         }),
       )
       ->ignore
@@ -333,7 +312,7 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
     }
   })
 
-  (items, transactionStore)
+  items
 }
 
 // Apply simulate source config from processConfig JSON to a Config.t
@@ -351,10 +330,10 @@ let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
         let simulateRaw: option<array<JSON.t>> = raw["simulate"]->Nullable.toOption
         switch simulateRaw {
         | Some(simulateItems) =>
-          let (items, transactionStore) = parse(~simulateItems, ~config, ~chainConfig)
+          let items = parse(~simulateItems, ~config, ~chainConfig)
           let startBlock: int = raw["startBlock"]->(Utils.magic: 'a => int)
           let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
-          let source = SimulateSource.make(~items, ~transactionStore, ~endBlock, ~chain)
+          let source = SimulateSource.make(~items, ~endBlock, ~chain)
           {...chainConfig, startBlock, endBlock, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig
         }

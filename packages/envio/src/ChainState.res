@@ -409,8 +409,6 @@ let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
 let reorgDetection = (cs: t) => cs.reorgDetection
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
-let transactionStore = (cs: t) => cs.transactionStore
-let transactionFieldMask = (cs: t) => cs.transactionFieldMask
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
@@ -502,6 +500,24 @@ let isAtHeadWithoutEndBlock = (cs: t) =>
 
 // Apply a fetch response: register any new dynamic contracts, append the items
 // to the buffer and advance the known head.
+// Materialise the chain store's selected transaction fields onto a batch's
+// items at batch prep (the persistent-store path).
+let materializeBatchItems = (cs: t, ~items: array<Internal.item>) =>
+  cs.transactionStore->TransactionStore.materializeItems(~items, ~mask=cs.transactionFieldMask)
+
+// Materialise a fetch-response page's transactions onto its items before
+// contract-register handlers read them. `None` pages (RPC/Fuel/Simulate keep the
+// transaction inline) are a no-op.
+let materializePageItems = (
+  cs: t,
+  ~items: array<Internal.item>,
+  ~page: option<TransactionStore.t>,
+) =>
+  switch page {
+  | Some(store) => store->TransactionStore.materializeItems(~items, ~mask=cs.transactionFieldMask)
+  | None => Promise.resolve()
+  }
+
 let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
@@ -509,11 +525,14 @@ let handleQueryResult = (
   ~newItemsWithDcs,
   ~latestFetchedBlock,
   ~knownHeight,
-  ~transactionStore as page: TransactionStore.t,
+  ~transactionStore as page: option<TransactionStore.t>,
 ) => {
   // Merge this response's page into the chain store in lockstep with appending
-  // its items to the buffer.
-  cs.transactionStore->TransactionStore.merge(page)
+  // its items to the buffer. Inline-transaction sources contribute no page.
+  switch page {
+  | Some(page) => cs.transactionStore->TransactionStore.merge(page)
+  | None => ()
+  }
 
   let fs = switch newItemsWithDcs {
   | [] => cs.fetchState

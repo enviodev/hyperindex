@@ -24,16 +24,7 @@ let transactionFields = [
 let transactionFieldCodes = TransactionStore.fieldCodes(transactionFields)
 
 let transactionFieldMask = (eventConfigs: array<Internal.eventConfig>): float =>
-  eventConfigs->TransactionStore.mask(
-    ~codes=transactionFieldCodes,
-    ~getSelectedFields=eventConfig => {
-      (
-        eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-      ).selectedTransactionFields->(
-        Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
-      )
-    },
-  )
+  eventConfigs->TransactionStore.mask(~codes=transactionFieldCodes)
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,

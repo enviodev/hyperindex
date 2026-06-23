@@ -42,7 +42,9 @@ let makeEventConfig = (
   discriminator: Some("0x21"),
   discriminatorByteLen: 1,
   includeLogs: false,
-  selectedTransactionFields: Utils.Set.fromArray(selectedTransactionFields),
+  selectedTransactionFields: Utils.Set.fromArray(selectedTransactionFields)->(
+    Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
+  ),
   accountFilters: [],
   isInner: None,
   accounts: [],

@@ -43,8 +43,6 @@ let sourceManager: t => SourceManager.t
 let chainConfig: t => Config.chain
 let reorgDetection: t => ReorgDetection.t
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
-let transactionStore: t => TransactionStore.t
-let transactionFieldMask: t => float
 let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
 let numEventsProcessed: t => float
@@ -110,8 +108,14 @@ let handleQueryResult: (
   ~newItemsWithDcs: array<Internal.item>,
   ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight: int,
-  ~transactionStore: TransactionStore.t,
+  ~transactionStore: option<TransactionStore.t>,
 ) => unit
+let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
+let materializePageItems: (
+  t,
+  ~items: array<Internal.item>,
+  ~page: option<TransactionStore.t>,
+) => promise<unit>
 let registerReorgGuard: (
   t,
   ~blockHashes: array<ReorgDetection.blockData>,

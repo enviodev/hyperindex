@@ -299,9 +299,7 @@ let materializeBatchTransactions = async (batch: Batch.t, ~chainStates: dict<Cha
   ->Dict.toArray
   ->Array.map(async ((chainId, items)) => {
     let cs = chainStates->Dict.getUnsafe(chainId)
-    await cs
-    ->ChainState.transactionStore
-    ->TransactionStore.materializeItems(~items, ~mask=cs->ChainState.transactionFieldMask)
+    await cs->ChainState.materializeBatchItems(~items)
   })
   ->Promise.all
 }

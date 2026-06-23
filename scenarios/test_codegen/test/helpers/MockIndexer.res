@@ -871,7 +871,7 @@ module Source = {
                         })
                       },
                     ),
-                    transactionStore: TransactionStore.make(),
+                    transactionStore: None,
                     fromBlockQueried: fromBlock,
                     latestFetchedBlockNumber,
                     latestFetchedBlockTimestamp: latestFetchedBlockNumber,
@@ -1006,7 +1006,9 @@ let evmEventConfig = (
         ])
       },
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
-    selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
+    selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames)->(
+      Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
+    ),
     sighash: id,
     topicCount: 1,
     paramsMetadata: [],

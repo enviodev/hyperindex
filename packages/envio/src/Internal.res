@@ -415,6 +415,11 @@ type eventConfig = private {
   paramsRawEventSchema: S.schema<eventParams>,
   simulateParamsSchema: S.schema<eventParams>,
   startBlock: option<int>,
+  // Field names selected for the chain's transaction-store materialisation
+  // (camelCase, matching the ecosystem's `transactionFields`). Stored as a
+  // string set so the shared mask logic is ecosystem-agnostic; sources recover
+  // the typed view where they need it.
+  selectedTransactionFields: Utils.Set.t<string>,
 }
 
 type fuelEventKind =
@@ -452,7 +457,6 @@ type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
-  selectedTransactionFields: Utils.Set.t<evmTransactionField>,
   sighash: string,
   topicCount: int,
   paramsMetadata: array<paramMeta>,
@@ -490,10 +494,6 @@ type svmInstructionEventConfig = {
    router. */
   discriminatorByteLen: int,
   includeLogs: bool,
-  /** The transaction fields this instruction selected, as a set of field codes
-   for the per-chain materialisation mask. Empty when no transaction is wanted.
-   `tokenBalances` is one of the selectable fields. */
-  selectedTransactionFields: Utils.Set.t<svmTransactionField>,
   /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
    AND across positions. Empty outer array means "no account filter". */
   accountFilters: array<svmAccountFilterGroup>,

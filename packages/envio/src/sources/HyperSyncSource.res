@@ -424,7 +424,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     {
       latestFetchedBlockTimestamp,
       parsedQueueItems,
-      transactionStore: pageUnsafe.transactionStore,
+      transactionStore: Some(pageUnsafe.transactionStore),
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,

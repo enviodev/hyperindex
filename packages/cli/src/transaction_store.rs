@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{CStr, CString};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -270,13 +271,13 @@ impl ToNapiValue for Columns {
 /// Build one column by extracting a field from each record. `None` rows (a key
 /// missing from the store) yield `None` cells.
 fn fill<T>(
-    records: &[Option<(Arc<simple_types::Transaction>, bool)>],
-    extract: impl Fn(&simple_types::Transaction, bool) -> Result<Option<T>>,
+    records: &[Option<Arc<simple_types::Transaction>>],
+    extract: impl Fn(&simple_types::Transaction) -> Result<Option<T>>,
 ) -> Result<Vec<Option<T>>> {
     records
         .iter()
         .map(|rec| match rec {
-            Some((tx, cs)) => extract(tx.as_ref(), *cs),
+            Some(tx) => extract(tx.as_ref()),
             None => Ok(None),
         })
         .collect()
@@ -286,8 +287,9 @@ fn fill<T>(
 /// Large fields (e.g. `input`) are only touched when their bit is set, and the
 /// whole thing runs off the JS thread.
 fn decode_evm_columns(
-    records: &[Option<(Arc<simple_types::Transaction>, bool)>],
+    records: &[Option<Arc<simple_types::Transaction>>],
     mask: u64,
+    should_checksum: bool,
 ) -> Result<Columns> {
     let len = records.len();
     let mut columns: Vec<(&'static str, Column)> = Vec::new();
@@ -299,94 +301,90 @@ fn decode_evm_columns(
         // Exhaustive match: adding an `EvmTxField` variant fails to compile until
         // it is decoded here.
         let column = match field {
-            EvmTxField::TransactionIndex => Column::I64(fill(records, |tx, _| {
+            EvmTxField::TransactionIndex => Column::I64(fill(records, |tx| {
                 Ok(tx
                     .transaction_index
                     .map(|n| i64::try_from(u64::from(n)))
                     .transpose()?)
             })?),
-            EvmTxField::Hash => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.hash)))?),
-            EvmTxField::From => Column::Str(fill(records, |tx, cs| {
-                Ok(map_address_string(&tx.from, cs))
+            EvmTxField::Hash => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.hash)))?),
+            EvmTxField::From => Column::Str(fill(records, |tx| {
+                Ok(map_address_string(&tx.from, should_checksum))
             })?),
-            EvmTxField::To => {
-                Column::Str(fill(records, |tx, cs| Ok(map_address_string(&tx.to, cs)))?)
-            }
-            EvmTxField::Gas => Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.gas)))?),
-            EvmTxField::GasPrice => {
-                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.gas_price)))?)
-            }
-            EvmTxField::MaxPriorityFeePerGas => Column::Big(fill(records, |tx, _| {
+            EvmTxField::To => Column::Str(fill(records, |tx| {
+                Ok(map_address_string(&tx.to, should_checksum))
+            })?),
+            EvmTxField::Gas => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas)))?),
+            EvmTxField::GasPrice => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_price)))?),
+            EvmTxField::MaxPriorityFeePerGas => Column::Big(fill(records, |tx| {
                 Ok(map_bigint(&tx.max_priority_fee_per_gas))
             })?),
             EvmTxField::MaxFeePerGas => {
-                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.max_fee_per_gas)))?)
+                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.max_fee_per_gas)))?)
             }
-            EvmTxField::CumulativeGasUsed => Column::Big(fill(records, |tx, _| {
-                Ok(map_bigint(&tx.cumulative_gas_used))
-            })?),
-            EvmTxField::EffectiveGasPrice => Column::Big(fill(records, |tx, _| {
-                Ok(map_bigint(&tx.effective_gas_price))
-            })?),
-            EvmTxField::GasUsed => {
-                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.gas_used)))?)
+            EvmTxField::CumulativeGasUsed => {
+                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.cumulative_gas_used)))?)
             }
-            EvmTxField::Input => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.input)))?),
-            EvmTxField::Nonce => Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.nonce)))?),
-            EvmTxField::Value => Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.value)))?),
-            EvmTxField::V => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.v)))?),
-            EvmTxField::R => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.r)))?),
-            EvmTxField::S => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.s)))?),
-            EvmTxField::ContractAddress => Column::Str(fill(records, |tx, cs| {
-                Ok(map_address_string(&tx.contract_address, cs))
+            EvmTxField::EffectiveGasPrice => {
+                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.effective_gas_price)))?)
+            }
+            EvmTxField::GasUsed => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_used)))?),
+            EvmTxField::Input => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.input)))?),
+            EvmTxField::Nonce => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.nonce)))?),
+            EvmTxField::Value => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.value)))?),
+            EvmTxField::V => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.v)))?),
+            EvmTxField::R => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.r)))?),
+            EvmTxField::S => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.s)))?),
+            EvmTxField::ContractAddress => Column::Str(fill(records, |tx| {
+                Ok(map_address_string(&tx.contract_address, should_checksum))
             })?),
             EvmTxField::LogsBloom => {
-                Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.logs_bloom)))?)
+                Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.logs_bloom)))?)
             }
-            EvmTxField::Root => Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.root)))?),
-            EvmTxField::Status => Column::I64(fill(records, |tx, _| {
-                Ok(tx.status.map(|v| v.to_u8() as i64))
-            })?),
+            EvmTxField::Root => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.root)))?),
+            EvmTxField::Status => {
+                Column::I64(fill(records, |tx| Ok(tx.status.map(|v| v.to_u8() as i64)))?)
+            }
             EvmTxField::YParity => {
-                Column::Str(fill(records, |tx, _| Ok(map_hex_string(&tx.y_parity)))?)
+                Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.y_parity)))?)
             }
-            EvmTxField::ChainId => Column::I64(fill(records, |tx, _| {
+            EvmTxField::ChainId => Column::I64(fill(records, |tx| {
                 Ok(tx
                     .chain_id
                     .as_ref()
                     .map(|n| i64::try_from(ruint::aliases::U256::from_be_slice(n)))
                     .transpose()?)
             })?),
-            EvmTxField::MaxFeePerBlobGas => Column::Big(fill(records, |tx, _| {
+            EvmTxField::MaxFeePerBlobGas => Column::Big(fill(records, |tx| {
                 Ok(map_bigint(&tx.max_fee_per_blob_gas))
             })?),
-            EvmTxField::BlobVersionedHashes => Column::StrVec(fill(records, |tx, _| {
+            EvmTxField::BlobVersionedHashes => Column::StrVec(fill(records, |tx| {
                 Ok(tx
                     .blob_versioned_hashes
                     .as_ref()
                     .map(|arr| arr.iter().map(|h| h.encode_hex()).collect()))
             })?),
-            EvmTxField::Type => Column::I64(fill(records, |tx, _| {
+            EvmTxField::Type => Column::I64(fill(records, |tx| {
                 Ok(tx.type_.map(|v| u8::from(v) as i64))
             })?),
-            EvmTxField::L1Fee => Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.l1_fee)))?),
+            EvmTxField::L1Fee => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_fee)))?),
             EvmTxField::L1GasPrice => {
-                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.l1_gas_price)))?)
+                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_gas_price)))?)
             }
             EvmTxField::L1GasUsed => {
-                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.l1_gas_used)))?)
+                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_gas_used)))?)
             }
-            EvmTxField::L1FeeScalar => Column::F64(fill(records, |tx, _| Ok(tx.l1_fee_scalar))?),
+            EvmTxField::L1FeeScalar => Column::F64(fill(records, |tx| Ok(tx.l1_fee_scalar))?),
             EvmTxField::GasUsedForL1 => {
-                Column::Big(fill(records, |tx, _| Ok(map_bigint(&tx.gas_used_for_l1)))?)
+                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_used_for_l1)))?)
             }
-            EvmTxField::AccessList => Column::AccessList(fill(records, |tx, _| {
+            EvmTxField::AccessList => Column::AccessList(fill(records, |tx| {
                 Ok(tx
                     .access_list
                     .as_ref()
                     .map(|arr| arr.iter().map(AccessListItem::from).collect()))
             })?),
-            EvmTxField::AuthorizationList => Column::AuthList(fill(records, |tx, _| {
+            EvmTxField::AuthorizationList => Column::AuthList(fill(records, |tx| {
                 tx.authorization_list
                     .as_ref()
                     .map(|al| {
@@ -478,10 +476,7 @@ fn decode_svm_columns(records: &[Option<Arc<SvmStored>>], mask: u64) -> Columns 
 /// One stored transaction, kept in its ecosystem's compact raw form.
 enum StoredTx {
     /// HyperSync: raw upstream transaction, selected fields decoded at batch prep.
-    EvmRaw {
-        tx: Arc<simple_types::Transaction>,
-        checksum: bool,
-    },
+    EvmRaw { tx: Arc<simple_types::Transaction> },
     /// SVM HyperSync: raw upstream transaction (+ joined token balances).
     Svm { rec: Arc<SvmStored> },
 }
@@ -537,6 +532,10 @@ impl<B: Bucket> BlockKeyed<B> {
 #[napi]
 pub struct TransactionStore {
     inner: Mutex<BlockKeyed<TxBucket>>,
+    // Address checksumming is a per-chain setting, so it lives on the store
+    // rather than on every transaction; `merge` carries it into the persistent
+    // store. SVM ignores it.
+    should_checksum: AtomicBool,
 }
 
 impl Default for TransactionStore {
@@ -551,6 +550,7 @@ impl TransactionStore {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(BlockKeyed::new()),
+            should_checksum: AtomicBool::new(false),
         }
     }
 
@@ -565,6 +565,10 @@ impl TransactionStore {
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
         src.drain_into(&mut dst);
+        self.should_checksum.store(
+            page.should_checksum.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
     }
 
     /// Bulk-materialise the selected fields (one bit per `EvmTxField` code in
@@ -595,7 +599,7 @@ impl TransactionStore {
         // A store is per-chain, hence single-ecosystem; pick the decoder from the
         // first stored record and collect the matching raw refs under the lock.
         enum Plan {
-            Evm(Vec<Option<(Arc<simple_types::Transaction>, bool)>>),
+            Evm(Vec<Option<Arc<simple_types::Transaction>>>),
             Svm(Vec<Option<Arc<SvmStored>>>),
         }
 
@@ -630,9 +634,7 @@ impl TransactionStore {
                         .map(|(block, idx)| {
                             let block = u64::try_from(*block).ok()?;
                             match inner.map.get(&block).and_then(|b| b.0.get(idx)) {
-                                Some(StoredTx::EvmRaw { tx, checksum }) => {
-                                    Some((tx.clone(), *checksum))
-                                }
+                                Some(StoredTx::EvmRaw { tx }) => Some(tx.clone()),
                                 _ => None,
                             }
                         })
@@ -642,7 +644,10 @@ impl TransactionStore {
         };
 
         match plan {
-            Plan::Evm(records) => decode_evm_columns(&records, mask).map_err(map_err),
+            Plan::Evm(records) => {
+                decode_evm_columns(&records, mask, self.should_checksum.load(Ordering::Relaxed))
+                    .map_err(map_err)
+            }
             Plan::Svm(records) => Ok(decode_svm_columns(&records, mask)),
         }
     }
@@ -667,6 +672,16 @@ impl TransactionStore {
 }
 
 impl TransactionStore {
+    /// Create a page store for an EVM source, carrying that chain's
+    /// address-checksumming setting (copied into the persistent store on merge).
+    pub(crate) fn with_checksum(should_checksum: bool) -> Self {
+        let store = Self::new();
+        store
+            .should_checksum
+            .store(should_checksum, Ordering::Relaxed);
+        store
+    }
+
     /// Insert a raw EVM transaction (called by the HyperSync source while
     /// building a page). Not exposed to JS.
     pub(crate) fn insert_evm_raw(
@@ -674,7 +689,6 @@ impl TransactionStore {
         block_number: u64,
         transaction_index: u32,
         tx: Arc<simple_types::Transaction>,
-        checksum: bool,
     ) {
         self.inner
             .lock()
@@ -683,7 +697,7 @@ impl TransactionStore {
             .entry(block_number)
             .or_default()
             .0
-            .insert(transaction_index, StoredTx::EvmRaw { tx, checksum });
+            .insert(transaction_index, StoredTx::EvmRaw { tx });
     }
 
     /// Insert a raw SVM transaction with its joined token balances (called by the
@@ -731,7 +745,7 @@ mod tests {
         // Select only `input` via the bitmask.
         let mask = 1u64 << (EvmTxField::Input as u32);
         let cols =
-            decode_evm_columns(&[Some((Arc::new(raw_tx()), false))], mask).expect("decode columns");
+            decode_evm_columns(&[Some(Arc::new(raw_tx()))], mask, false).expect("decode columns");
 
         // Exactly one column (input) is present; transactionIndex (present on the
         // raw tx but unselected) and gas are absent.
@@ -856,12 +870,7 @@ mod tests {
     fn prune_and_rollback_drop_by_block() {
         let store = TransactionStore::new();
         for block in [10u64, 20, 30] {
-            store.insert_evm_raw(
-                block,
-                0,
-                Arc::new(simple_types::Transaction::default()),
-                false,
-            );
+            store.insert_evm_raw(block, 0, Arc::new(simple_types::Transaction::default()));
         }
 
         store.prune(10);

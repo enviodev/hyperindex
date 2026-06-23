@@ -300,15 +300,15 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
   // mask. `slot`/`transactionIndex` are always fetched as the store key.
   let selectedTxFields = Utils.Set.make()
   eventConfigs->Array.forEach(cfg =>
-    cfg.selectedTransactionFields->Utils.Set.forEach(field =>
-      selectedTxFields->Utils.Set.add(field)->ignore
-    )
+    cfg.selectedTransactionFields
+    ->(Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.svmTransactionField>)
+    ->Utils.Set.forEach(field => selectedTxFields->Utils.Set.add(field)->ignore)
   )
   let needsTokenBalances = selectedTxFields->Utils.Set.has(Internal.TokenBalances)
-  // Always fetched so the store can be keyed by (slot, transactionIndex).
-  let txKeyColumns: array<SvmHyperSyncClient.QueryTypes.transactionField> = [Slot, TransactionIndex]
   let txQueryFields = {
-    let fields = txKeyColumns->Array.copy
+    // Slot + TransactionIndex are always fetched so the store can be keyed by
+    // (slot, transactionIndex).
+    let fields: array<SvmHyperSyncClient.QueryTypes.transactionField> = [Slot, TransactionIndex]
     selectedTxFields
     ->Utils.Set.toArray
     ->Array.forEach(field =>
@@ -323,8 +323,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
   // stored transaction record, so the transaction table must be fetched to
   // populate the store — even when only `transactionIndex` (a key column) is
   // selected.
-  let needsTransactions =
-    selectedTxFields->Utils.Set.toArray->Array.some(field => field != Internal.TokenBalances)
+  let txFieldCount = selectedTxFields->Utils.Set.size
+  let needsTransactions = txFieldCount > 1 || (txFieldCount === 1 && !needsTokenBalances)
 
   let getItemsOrThrow = async (
     ~fromBlock,
@@ -513,7 +513,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       latestFetchedBlockTimestamp: latestBlockTime,
       parsedQueueItems,
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
-      transactionStore,
+      transactionStore: Some(transactionStore),
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,

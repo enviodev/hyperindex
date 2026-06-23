@@ -21,17 +21,10 @@ let pow2: int => float = %raw(`c => Math.pow(2, c)`)
 
 // Union of an ecosystem's selected transaction fields as a bitmask float (bit
 // `code` set ⇔ selected). Built arithmetically to dodge 32-bit JS bitwise ops.
-// `getSelectedFields` extracts the selected field names from each event config.
-let mask = (
-  eventConfigs: array<Internal.eventConfig>,
-  ~codes: dict<int>,
-  ~getSelectedFields: Internal.eventConfig => Utils.Set.t<string>,
-): float => {
+let mask = (eventConfigs: array<Internal.eventConfig>, ~codes: dict<int>): float => {
   let selected = Utils.Set.make()
   eventConfigs->Array.forEach(eventConfig =>
-    eventConfig
-    ->getSelectedFields
-    ->Utils.Set.forEach(name =>
+    eventConfig.selectedTransactionFields->Utils.Set.forEach(name =>
       switch codes->Utils.Dict.dangerouslyGetNonOption(name) {
       | Some(code) => selected->Utils.Set.add(code)->ignore
       | None => ()

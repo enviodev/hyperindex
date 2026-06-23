@@ -19,8 +19,9 @@ type blockRangeFetchResponse = {
   blockHashes: array<ReorgDetection.blockData>,
   parsedQueueItems: array<Internal.item>,
   // Page of transactions for this response's items, keyed by (blockNumber,
-  // transactionIndex); merged into the chain's store on apply.
-  transactionStore: TransactionStore.t,
+  // transactionIndex); merged into the chain's store on apply. `None` for
+  // sources that keep the transaction inline on the payload (RPC/Fuel/Simulate).
+  transactionStore: option<TransactionStore.t>,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
   latestFetchedBlockTimestamp: int,

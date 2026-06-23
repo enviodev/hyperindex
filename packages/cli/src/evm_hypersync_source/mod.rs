@@ -129,7 +129,7 @@ impl EvmHypersyncClient {
             RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
         };
 
-        let transaction_store = TransactionStore::new();
+        let transaction_store = TransactionStore::with_checksum(self.enable_checksum_addresses);
         let items = tokio::task::block_in_place(|| {
             convert_event_items(
                 response.data,
@@ -306,12 +306,7 @@ fn convert_event_items(
         // Move the raw transaction into the store keyed by (block, txIndex). Its
         // fields materialise on demand; logs sharing a tx collapse to one entry.
         if let Some(tx) = event.transaction {
-            transaction_store.insert_evm_raw(
-                block_number as u64,
-                transaction_index as u32,
-                tx,
-                should_checksum,
-            );
+            transaction_store.insert_evm_raw(block_number as u64, transaction_index as u32, tx);
         }
 
         items.push(EventItem {
