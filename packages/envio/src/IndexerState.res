@@ -23,27 +23,7 @@ module WriteThrottlers = {
   }
 }
 
-module EntityTables = {
-  type t = dict<InMemoryTable.Entity.t>
-  exception UndefinedEntity({entityName: string})
-  let make = (entities: array<Internal.entityConfig>): t => {
-    let init = Dict.make()
-    entities->Array.forEach(entityConfig => {
-      init->Dict.set((entityConfig.name :> string), InMemoryTable.Entity.make())
-    })
-    init
-  }
-
-  let get = (self: t, ~entityName: string) => {
-    switch self->Utils.Dict.dangerouslyGetNonOption(entityName) {
-    | Some(table) => table
-    | None =>
-      UndefinedEntity({entityName: entityName})->ErrorHandling.mkLogAndRaise(
-        ~msg="Unexpected, entity InMemoryTable is undefined",
-      )
-    }
-  }
-}
+module EntityTables = EntityTables
 
 type effectCacheInMemTable = {
   // Cache keys whose handler output is persisted on the next write. Drained
@@ -140,7 +120,9 @@ let make = (
     config,
     persistence,
     allEntities: persistence.allEntities,
-    entities: EntityTables.make(persistence.allEntities),
+    // Cross-chain (unordered) entities are shared across chains; isolated
+    // entities live per-chain on ChainState.entities instead.
+    entities: EntityTables.make(persistence.allEntities->Array.filter(e => e.crossChain)),
     effects: Dict.make(),
     rollback: None,
     committedCheckpointId,
@@ -477,7 +459,11 @@ let beginRollbackDiff = (
   ~diffCheckpointId,
   ~progressBlockNumberByChainId,
 ) => {
-  state.entities = EntityTables.make(state.allEntities)
+  state.entities = EntityTables.make(state.allEntities->Array.filter(e => e.crossChain))
+  let isolatedEntities = state.allEntities->Array.filter(e => !e.crossChain)
+  state.chainStates->Utils.Dict.forEach(cs =>
+    cs->ChainState.setEntities(EntityTables.make(isolatedEntities))
+  )
   state.effects = Dict.make()
   state.rollback = Some({
     targetCheckpointId,

@@ -80,25 +80,37 @@ type safeReorgBlocks = {
 // - Rollbacks will not cross the safe checkpoint id, so rows older than the anchor can never be referenced again.
 // - If nothing changed in reorg threshold (after the safe checkpoint), the current state for that id can be reconstructed from the
 //   origin table; we do not need a pre-safe anchor for it.
-let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema) => {
+let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
 
+  // Isolated entities key history by (id, chain_id), so the anchor and every
+  // join must be chain-scoped — otherwise one chain's anchor would mask another
+  // chain's still-relevant history for the same id.
+  let (keyCols, joinCond, psScope) = switch chainIdColumn {
+  | Some(col) => (
+      `t.id, t.${col}`,
+      `d.id = a.id AND d.${col} = a.${col}`,
+      `ps.id = d.id AND ps.${col} = d.${col}`,
+    )
+  | None => (`t.id`, `d.id = a.id`, `ps.id = d.id`)
+  }
+
   `WITH anchors AS (
-  SELECT t.id, MAX(t.${checkpointIdFieldName}) AS keep_checkpoint_id
+  SELECT ${keyCols}, MAX(t.${checkpointIdFieldName}) AS keep_checkpoint_id
   FROM ${historyTableRef} t WHERE t.${checkpointIdFieldName} <= $1
-  GROUP BY t.id
+  GROUP BY ${keyCols}
 )
 DELETE FROM ${historyTableRef} d
 USING anchors a
-WHERE d.id = a.id
+WHERE ${joinCond}
   AND (
     d.${checkpointIdFieldName} < a.keep_checkpoint_id
     OR (
       d.${checkpointIdFieldName} = a.keep_checkpoint_id AND
       NOT EXISTS (
-        SELECT 1 FROM ${historyTableRef} ps 
-        WHERE ps.id = d.id AND ps.${checkpointIdFieldName} > $1
-      ) 
+        SELECT 1 FROM ${historyTableRef} ps
+        WHERE ${psScope} AND ps.${checkpointIdFieldName} > $1
+      )
     )
   );`
 }
@@ -108,18 +120,26 @@ let pruneStaleEntityHistory = (
   ~entityName,
   ~entityIndex,
   ~pgSchema,
+  ~chainIdColumn,
   ~safeCheckpointId,
 ): promise<unit> => {
   sql->Postgres.preparedUnsafe(
-    makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
+    makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn),
     [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
 }
 
 // If an entity doesn't have a history before the update
-// we create it automatically with envio_checkpoint_id 0
-let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex) => {
+// we create it automatically with envio_checkpoint_id 0.
+// For isolated entities the entity table holds one row per (id, chain_id), so
+// the "missing history" check is scoped by chain too — otherwise one chain's
+// baseline would mask another's, and the checkpoint-0 rows would collide.
+let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex, ~chainIdColumn) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
+  let historyJoin = switch chainIdColumn {
+  | Some(column) => `h.id = e.id AND h."${column}" = e."${column}"`
+  | None => `h.id = e.id`
+  }
   `WITH target_ids AS (
   SELECT UNNEST($1::${(Text: Postgres.columnType :> string)}[]) AS id
 ),
@@ -127,7 +147,7 @@ missing_history AS (
   SELECT e.*
   FROM "${pgSchema}"."${entityName}" e
   JOIN target_ids t ON e.id = t.id
-  LEFT JOIN ${historyTableRef} h ON h.id = e.id
+  LEFT JOIN ${historyTableRef} h ON ${historyJoin}
   WHERE h.id IS NULL
 )
 INSERT INTO ${historyTableRef}
@@ -135,10 +155,17 @@ SELECT *, 0 AS ${checkpointIdFieldName}, '${(RowAction.SET :> string)}' as ${cha
 FROM missing_history;`
 }
 
-let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<string>) => {
+let backfillHistory = (
+  sql,
+  ~pgSchema,
+  ~entityName,
+  ~entityIndex,
+  ~chainIdColumn,
+  ~ids: array<string>,
+) => {
   sql
   ->Postgres.preparedUnsafe(
-    makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
+    makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn),
     [ids]->Obj.magic,
   )
   ->Utils.Promise.ignoreValue

@@ -1,7 +1,7 @@
 use super::{
     entity_parsing::IndexFieldDirection,
     field_types,
-    human_config::{self, evm::For, ColumnNameFormat},
+    human_config::{self, evm::For, ColumnNameFormat, Multichain},
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, Ecosystem, EventKind,
         FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
@@ -54,15 +54,31 @@ pub(crate) struct PublicConfigJson<'a> {
 #[serde(rename_all = "camelCase")]
 struct StorageConfig {
     postgres: bool,
+    // Per-backend column_name_format; emitted only for the non-default
+    // snake_case so the JSON stays byte-identical for existing projects.
+    // The runtime uses it to spell columns it appends itself (the chain id
+    // column in isolated multichain mode).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    postgres_column_name_format: Option<&'static str>,
     #[serde(skip_serializing_if = "is_false")]
     clickhouse: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clickhouse_column_name_format: Option<&'static str>,
 }
 
 impl From<&system_config::Storage> for StorageConfig {
     fn from(s: &system_config::Storage) -> Self {
+        let format_of = |backend: Option<system_config::StorageBackend>| match backend
+            .map(|b| b.column_name_format)
+        {
+            None | Some(ColumnNameFormat::Original) => None,
+            Some(ColumnNameFormat::SnakeCase) => Some("snake_case"),
+        };
         Self {
             postgres: s.postgres.is_some(),
+            postgres_column_name_format: format_of(s.postgres),
             clickhouse: s.clickhouse.is_some(),
+            clickhouse_column_name_format: format_of(s.clickhouse),
         }
     }
 }
@@ -79,6 +95,10 @@ struct EntityJson {
     // JSON byte-identical for projects predating per-backend `default`.
     #[serde(skip_serializing_if = "Option::is_none")]
     storage: Option<EntityStorageJson>,
+    // Present (true) for every entity in unordered multichain mode; omitted
+    // in isolated mode. Storages add a chain_id column when set.
+    #[serde(skip_serializing_if = "is_false")]
+    cross_chain: bool,
     properties: Vec<PropertyJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     derived_fields: Vec<DerivedFieldJson>,
@@ -783,6 +803,7 @@ impl SystemConfig {
                 Ok(EntityJson {
                     name: entity.name.clone(),
                     storage,
+                    cross_chain: matches!(cfg.multichain, Multichain::Unordered),
                     properties,
                     derived_fields,
                     composite_indices,
@@ -815,15 +836,29 @@ impl SystemConfig {
     pub fn to_view_json(&self) -> Result<String> {
         let view = ConfigView {
             version: system_config::VERSION,
-            storage: (&self.storage).into(),
+            storage: ViewStorageConfig {
+                postgres: self.storage.postgres.is_some(),
+                clickhouse: self.storage.clickhouse.is_some(),
+            },
         };
         Ok(serde_json::to_string_pretty(&view)?)
     }
+}
+
+// `config view` surfaces only which backends are enabled; the per-backend
+// column_name_format is an internal detail for the runtime, kept out of this
+// user-facing output.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewStorageConfig {
+    postgres: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    clickhouse: bool,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConfigView<'a> {
     version: &'a str,
-    storage: StorageConfig,
+    storage: ViewStorageConfig,
 }

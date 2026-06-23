@@ -8,7 +8,7 @@ use super::{
             RpcSelection,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
-        HumanConfig,
+        HumanConfig, Multichain,
     },
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
@@ -432,6 +432,7 @@ pub struct SystemConfig {
     pub contracts: ContractMap,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
+    pub multichain: Multichain,
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
@@ -590,7 +591,20 @@ const MAX_PG_IDENTIFIER_LENGTH: usize = 63;
 /// the reserved `envio_*` columns added to entity history tables, or exceed
 /// Postgres's identifier length limit. Catch all of these at codegen time
 /// instead of failing on table creation.
-pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+// The column appended to every entity table in isolated multichain mode,
+// spelled per the backend's column_name_format.
+pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static str {
+    match format {
+        human_config::ColumnNameFormat::Original => "chainId",
+        human_config::ColumnNameFormat::SnakeCase => "chain_id",
+    }
+}
+
+pub fn validate_db_column_names(
+    storage: &Storage,
+    schema: &Schema,
+    multichain: Multichain,
+) -> anyhow::Result<()> {
     let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
     for backend in [storage.postgres, storage.clickhouse].iter().flatten() {
         if !formats.contains(&backend.column_name_format) {
@@ -608,6 +622,7 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
 
     let mut empty: Vec<String> = vec![];
     let mut reserved: Vec<String> = vec![];
+    let mut chain_id_reserved: Vec<String> = vec![];
     let mut too_long: Vec<String> = vec![];
     let mut collisions: Vec<String> = vec![];
     for format in &formats {
@@ -623,6 +638,19 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
                         let line = format!("  - `{}.{}`", entity.name, pg_field.field_name);
                         if !empty.contains(&line) {
                             empty.push(line);
+                        }
+                    }
+                    // Isolated multichain mode appends a chain id column to
+                    // every entity table, so a user column with that name
+                    // would collide.
+                    if multichain == Multichain::Isolated && column == chain_id_column_name(*format)
+                    {
+                        let line = format!(
+                            "  - `{}.{}` maps to the \"{column}\" column.",
+                            entity.name, pg_field.field_name
+                        );
+                        if !chain_id_reserved.contains(&line) {
+                            chain_id_reserved.push(line);
                         }
                     }
                     if column.starts_with("envio_") {
@@ -696,6 +724,20 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
              are reserved for internal indexer columns (eg `envio_change` in entity history \
              tables).",
             reserved.join("\n")
+        ));
+    }
+    if !chain_id_reserved.is_empty() {
+        return Err(anyhow!(
+            "Schema validation failed:\n\
+             \n\
+             Entity fields that collide with the chain id column added in isolated multichain \
+             mode:\n\
+             {}\n\
+             \n\
+             Fixes:\n  \
+             - Rename the listed fields in schema.graphql. With `multichain: isolated` every \
+             entity table gets a chain id column.",
+            chain_id_reserved.join("\n")
         ));
     }
     if !too_long.is_empty() {
@@ -891,8 +933,14 @@ impl SystemConfig {
 
         let base_config = human_config.get_base_config();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
+        let multichain = match &human_config {
+            HumanConfig::Evm(c) => c.multichain,
+            HumanConfig::Fuel(c) => c.multichain,
+            HumanConfig::Svm(c) => c.multichain,
+        }
+        .unwrap_or(Multichain::Unordered);
         validate_entity_storage(&storage, &schema)?;
-        validate_db_column_names(&storage, &schema)?;
+        validate_db_column_names(&storage, &schema, multichain)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
         let final_project_paths = project_paths.clone();
@@ -1060,6 +1108,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
+                    multichain,
                     schema,
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
@@ -1206,6 +1255,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: false,
                     save_full_history: false,
+                    multichain,
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
@@ -1354,6 +1404,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: uses_hypersync,
                     save_full_history: false,
+                    multichain,
                     schema,
                     field_selection: FieldSelection::svm(),
                     enable_raw_events: false,
@@ -3624,7 +3675,7 @@ mod test {
     // --- validate_db_column_names: snake_case column collision checks ---
 
     mod db_column_name_validation {
-        use super::super::{validate_db_column_names, Storage};
+        use super::super::{validate_db_column_names, Multichain, Storage};
         use crate::config_parsing::{entity_parsing::Schema, human_config::ColumnNameFormat};
 
         fn storage(column_name_format: ColumnNameFormat) -> Storage {
@@ -3648,8 +3699,82 @@ type Token {
 }"#,
             )
             .unwrap();
-            assert!(
-                validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).is_ok()
+            assert!(validate_db_column_names(
+                &storage(ColumnNameFormat::SnakeCase),
+                &schema,
+                Multichain::Unordered
+            )
+            .is_ok());
+        }
+
+        #[test]
+        fn isolated_multichain_reserves_chain_id_column() {
+            // Under snake_case, `chainId` maps to the reserved chain_id
+            // column; under original it collides verbatim. Unordered mode
+            // reserves neither.
+            let camel_schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+  chainId: Int!
+}"#,
+            )
+            .unwrap();
+            let snake_schema = Schema::from_string(
+                r#"
+type Token {
+  id: ID!
+  chain_id: Int!
+}"#,
+            )
+            .unwrap();
+            let err = validate_db_column_names(
+                &storage(ColumnNameFormat::SnakeCase),
+                &camel_schema,
+                Multichain::Isolated,
+            )
+            .unwrap_err();
+            assert_eq!(
+                (
+                    err.to_string(),
+                    validate_db_column_names(
+                        &storage(ColumnNameFormat::Original),
+                        &camel_schema,
+                        Multichain::Isolated,
+                    )
+                    .unwrap_err()
+                    .to_string()
+                    .contains("`Token.chainId` maps to the \"chainId\" column."),
+                    // Under original format a literal `chain_id` field doesn't
+                    // collide with the injected `chainId` column.
+                    validate_db_column_names(
+                        &storage(ColumnNameFormat::Original),
+                        &snake_schema,
+                        Multichain::Isolated,
+                    )
+                    .is_ok(),
+                    validate_db_column_names(
+                        &storage(ColumnNameFormat::SnakeCase),
+                        &camel_schema,
+                        Multichain::Unordered,
+                    )
+                    .is_ok(),
+                ),
+                (
+                    "Schema validation failed:\n\
+                     \n\
+                     Entity fields that collide with the chain id column added in isolated \
+                     multichain mode:\n  \
+                     - `Token.chainId` maps to the \"chain_id\" column.\n\
+                     \n\
+                     Fixes:\n  \
+                     - Rename the listed fields in schema.graphql. With `multichain: isolated` \
+                     every entity table gets a chain id column."
+                        .to_string(),
+                    true,
+                    true,
+                    true,
+                )
             );
         }
 
@@ -3664,8 +3789,12 @@ type Token {
 }"#,
             )
             .unwrap();
-            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
-                .unwrap_err();
+            let err = validate_db_column_names(
+                &storage(ColumnNameFormat::SnakeCase),
+                &schema,
+                Multichain::Unordered,
+            )
+            .unwrap_err();
             assert_eq!(
                 err.to_string(),
                 "Schema validation failed:\n\
@@ -3697,8 +3826,12 @@ type Transfer {
 }"#,
             )
             .unwrap();
-            let err = validate_db_column_names(&storage(ColumnNameFormat::Original), &schema)
-                .unwrap_err();
+            let err = validate_db_column_names(
+                &storage(ColumnNameFormat::Original),
+                &schema,
+                Multichain::Unordered,
+            )
+            .unwrap_err();
             assert!(
                 err.to_string().contains(
                     "- `Transfer`: fields `token`, `token_id` all map to the \"token_id\" column."
@@ -3719,8 +3852,12 @@ type Token {
 }"#,
             )
             .unwrap();
-            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
-                .unwrap_err();
+            let err = validate_db_column_names(
+                &storage(ColumnNameFormat::SnakeCase),
+                &schema,
+                Multichain::Unordered,
+            )
+            .unwrap_err();
             assert_eq!(
                 err.to_string(),
                 "Schema validation failed:\n\
@@ -3745,8 +3882,12 @@ type Token {
 }"#,
             )
             .unwrap();
-            let err = validate_db_column_names(&storage(ColumnNameFormat::Original), &schema)
-                .unwrap_err();
+            let err = validate_db_column_names(
+                &storage(ColumnNameFormat::Original),
+                &schema,
+                Multichain::Unordered,
+            )
+            .unwrap_err();
             assert!(
                 err.to_string().contains(
                     "- `Token.envio_checkpoint_id` maps to the \"envio_checkpoint_id\" column."
@@ -3771,11 +3912,18 @@ type Token {{
             // 64 characters as written: rejected for Postgres in both
             // formats (snake_case only makes it longer).
             assert_eq!(long_field.len(), 64);
-            assert!(
-                validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_err()
-            );
-            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
-                .unwrap_err();
+            assert!(validate_db_column_names(
+                &storage(ColumnNameFormat::Original),
+                &schema,
+                Multichain::Unordered
+            )
+            .is_err());
+            let err = validate_db_column_names(
+                &storage(ColumnNameFormat::SnakeCase),
+                &schema,
+                Multichain::Unordered,
+            )
+            .unwrap_err();
             assert!(
                 err.to_string().contains("longer than 63"),
                 "Unexpected error: {err}"
@@ -3808,10 +3956,18 @@ type Token {{
                     column_name_format: ColumnNameFormat::SnakeCase,
                 }),
             };
-            assert!(validate_db_column_names(&pg_original_ch_snake, &schema).is_ok());
-            assert!(
-                validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).is_err()
-            );
+            assert!(validate_db_column_names(
+                &pg_original_ch_snake,
+                &schema,
+                Multichain::Unordered
+            )
+            .is_ok());
+            assert!(validate_db_column_names(
+                &storage(ColumnNameFormat::SnakeCase),
+                &schema,
+                Multichain::Unordered
+            )
+            .is_err());
         }
 
         // Entity references get an `_id` suffix on the column, so a `token`
@@ -3831,8 +3987,12 @@ type Transfer {
 }"#,
             )
             .unwrap();
-            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
-                .unwrap_err();
+            let err = validate_db_column_names(
+                &storage(ColumnNameFormat::SnakeCase),
+                &schema,
+                Multichain::Unordered,
+            )
+            .unwrap_err();
             assert!(
                 err.to_string().contains(
                     "- `Transfer`: fields `token`, `tokenId` all map to the \"token_id\" column."
@@ -3858,9 +4018,12 @@ type Transfer {
 }"#,
             )
             .unwrap();
-            assert!(
-                validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_ok()
-            );
+            assert!(validate_db_column_names(
+                &storage(ColumnNameFormat::Original),
+                &schema,
+                Multichain::Unordered
+            )
+            .is_ok());
         }
 
         // The check also applies when only ClickHouse opts into snake_case
@@ -3885,7 +4048,7 @@ type Token {
                     column_name_format: ColumnNameFormat::SnakeCase,
                 }),
             };
-            assert!(validate_db_column_names(&storage, &schema).is_err());
+            assert!(validate_db_column_names(&storage, &schema, Multichain::Unordered).is_err());
         }
     }
 

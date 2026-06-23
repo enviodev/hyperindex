@@ -11,9 +11,9 @@ let keepLatestChangesLimit = Env.inMemoryObjectsTarget
 let getChangesCount = (state: IndexerState.t) => {
   let total = ref(0.)
   state
-  ->IndexerState.allEntities
-  ->Array.forEach(entityConfig => {
-    total := total.contents +. (state->InMemoryStore.getInMemTable(~entityConfig)).changesCount
+  ->InMemoryStore.eachEntityTable
+  ->Array.forEach(((_chainId, _entityConfig, table)) => {
+    total := total.contents +. table.changesCount
   })
   state
   ->IndexerState.effects
@@ -101,16 +101,21 @@ let runOneWrite = async (state: IndexerState.t) => {
 
     let rollback = state->IndexerState.takeRollback
 
-    let updatedEntities = persistence.allEntities->Array.filterMap(entityConfig => {
-      let table = state->InMemoryStore.getInMemTable(~entityConfig)
-      let changes =
-        table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
-      if changes->Utils.Array.isEmpty {
-        None
-      } else {
-        Some(({entityConfig, changes}: Persistence.updatedEntity))
-      }
-    })
+    // Cross-chain entities flush as a single group; isolated entities flush one
+    // group per chain. The chain isn't tagged here — the write path derives it
+    // from each change's checkpoint id.
+    let updatedEntities =
+      state
+      ->InMemoryStore.eachEntityTable
+      ->Array.filterMap(((chainId, entityConfig, table)) => {
+        let changes =
+          table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
+        if changes->Utils.Array.isEmpty {
+          None
+        } else {
+          Some(({entityConfig, changes, chainId}: Persistence.updatedEntity))
+        }
+      })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
 
     await persistence.storage.writeBatch(
@@ -185,11 +190,9 @@ let commitBatch = (state: IndexerState.t, ~batch: Batch.t) => {
 let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
   let committedCheckpointId = state->IndexerState.committedCheckpointId
   state
-  ->IndexerState.allEntities
-  ->Array.forEach(entityConfig =>
-    state
-    ->InMemoryStore.getInMemTable(~entityConfig)
-    ->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
+  ->InMemoryStore.eachEntityTable
+  ->Array.forEach(((_chainId, _entityConfig, table)) =>
+    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
   )
   state
   ->IndexerState.effects

@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=../../packages/envio/evm.schema.json
+name: multichain_isolated_test
+description: Isolated multichain mode test indexer
+# Each chain's entities are kept isolated from each other; entity rows are
+# scoped by chain id (composite (id, chain_id) primary key).
+multichain: isolated
+rollback_on_reorg: false
+contracts:
+  - name: Counter
+    events:
+      - event: "Increment()"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Counter
+        address: "0x0000000000000000000000000000000000000001"
+  - id: 137
+    start_block: 0
+    contracts:
+      - name: Counter
+        address: "0x0000000000000000000000000000000000000001"

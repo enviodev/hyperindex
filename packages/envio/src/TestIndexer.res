@@ -94,6 +94,16 @@ let handleWriteBatch = (
   // checkpointId -> entityName -> entityChange
   let changesByCheckpoint: dict<dict<entityChange>> = Dict.make()
 
+  // Chain id is derived from each change's checkpoint, mirroring the real store
+  // (envio_checkpoints maps checkpoint id -> chain id).
+  let chainIdByCheckpointId = Dict.make()
+  for idx in 0 to checkpointIds->Array.length - 1 {
+    chainIdByCheckpointId->Dict.set(
+      checkpointIds->Array.getUnsafe(idx)->BigInt.toString,
+      checkpointChainIds->Array.getUnsafe(idx),
+    )
+  }
+
   updatedEntities->Array.forEach(({entityName, changes}) => {
     let entityDict = switch state.entities->Dict.get(entityName) {
     | Some(dict) => dict
@@ -104,15 +114,38 @@ let handleWriteBatch = (
     }
     let entityConfig = state.entityConfigs->Dict.getUnsafe(entityName)
 
+    // Isolated entities are keyed per chain so the same id on different chains
+    // stays distinct, mirroring the composite (id, chain_id) primary key.
+    let chainIdAt = checkpointId =>
+      entityConfig.crossChain
+        ? None
+        : chainIdByCheckpointId->Dict.get(checkpointId->BigInt.toString)
+    let rowKey = (entityId, chainId) =>
+      switch chainId {
+      | Some(chainId) => `${chainId->Int.toString}-${entityId}`
+      | None => entityId
+      }
+    // The entity schema drops the implicit chain id column, so re-attach it for
+    // load filtering (Eq chainId) and so reads can see it.
+    let withChainId = (entity: Internal.entity, chainId): Internal.entity =>
+      switch chainId {
+      | Some(chainId) =>
+        let copy = entity->(Utils.magic: Internal.entity => dict<unknown>)->Dict.copy
+        copy->Dict.set("chainId", chainId->(Utils.magic: int => unknown))
+        copy->(Utils.magic: dict<unknown> => Internal.entity)
+      | None => entity
+      }
+
     let processChange = (change: TestIndexerProxyStorage.serializableChange) => {
       switch change {
       | Set({entityId, entity, checkpointId}) =>
+        let chainId = chainIdAt(checkpointId)
         // Parse entity immediately to store decoded values for proper comparisons
         // (bigint/BigDecimal need actual values, not JSON strings)
-        let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
+        let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)->withChainId(chainId)
 
         // Update entities dict with parsed entity for load operations
-        entityDict->Dict.set(entityId, parsedEntity)
+        entityDict->Dict.set(rowKey(entityId, chainId), parsedEntity)
 
         // Track change by checkpoint
         let checkpointKey = checkpointId->BigInt.toString
@@ -134,7 +167,7 @@ let handleWriteBatch = (
 
       | Delete({entityId, checkpointId}) =>
         // Update entities dict for load operations
-        Dict.delete(entityDict->Obj.magic, entityId)
+        Dict.delete(entityDict->Obj.magic, rowKey(entityId, chainIdAt(checkpointId)))
 
         // Track change by checkpoint
         let checkpointKey = checkpointId->BigInt.toString

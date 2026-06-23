@@ -144,6 +144,10 @@ module EnvioAddresses = {
     // always required to have Postgres enabled (Storage::resolve forbids
     // a Postgres-disabled global), so this is safe regardless of mode.
     storage: {postgres: true, clickhouse: false},
+    // The chain id is carried as an explicit field (the id is already
+    // {chainId}-{address}), so this internal table stays cross-chain and gets
+    // no implicit chain id column.
+    crossChain: true,
   }->Internal.fromGenericEntityConfig
 }
 
@@ -315,6 +319,7 @@ let entityJsonSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
     "storage": s.matches(S.option(entityStorageSchema)),
+    "crossChain": s.matches(S.option(S.bool)),
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
     "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
@@ -393,6 +398,7 @@ let parseEntitiesFromJson = (
   entitiesJson: array<'entityJson>,
   ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
   ~globalStorage: storage,
+  ~chainIdField: Table.fieldOrDerived,
 ): array<Internal.entityConfig> => {
   entitiesJson->Array.mapWithIndex((entityJson, index) => {
     let entityName = entityJson["name"]
@@ -440,6 +446,13 @@ let parseEntitiesFromJson = (
           },
         )
       )
+
+    // Cross-chain entities (unordered multichain mode) share rows across
+    // chains; isolated ones are chain-scoped, so their tables get a chain id
+    // column. It's not part of the entity schema: storage writes stamp the
+    // value from the change's checkpoint.
+    let crossChain = entityJson["crossChain"]->Option.getOr(false)
+    let fields = crossChain ? fields : fields->Array.concat([chainIdField])
 
     let table = Table.mkTable(
       entityName,
@@ -489,6 +502,7 @@ let parseEntitiesFromJson = (
       schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
       table,
       storage,
+      crossChain,
     }->Internal.fromGenericEntityConfig
   })
 }
@@ -496,7 +510,9 @@ let parseEntitiesFromJson = (
 let publicConfigStorageSchema = S.schema(s =>
   {
     "postgres": s.matches(S.bool),
+    "postgresColumnNameFormat": s.matches(S.option(S.string)),
     "clickhouse": s.matches(S.option(S.bool)),
+    "clickhouseColumnNameFormat": s.matches(S.option(S.string)),
   }
 )
 
@@ -967,10 +983,22 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
   }
 
+  let chainIdDbName = format => format === Some("snake_case") ? Some("chain_id") : None
+  let chainIdField = Table.mkField(
+    "chainId",
+    Int32,
+    ~fieldSchema=S.int,
+    // Part of the composite primary key (id, chainId) so the same entity id
+    // can exist independently per chain.
+    ~isPrimaryKey=true,
+    ~postgresDbName=?chainIdDbName(publicConfig["storage"]["postgresColumnNameFormat"]),
+    ~clickhouseDbName=?chainIdDbName(publicConfig["storage"]["clickhouseColumnNameFormat"]),
+  )
+
   let userEntities =
     publicConfig["entities"]
     ->Option.getOr([])
-    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage)
+    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage, ~chainIdField)
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 

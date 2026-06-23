@@ -121,11 +121,15 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
 
     let isClickHouseOnly = !params.entityConfig.storage.postgres
 
+    // The chain the handler runs on; routes isolated entities to their
+    // per-chain in-memory table (ignored for cross-chain entities).
+    let chainId = params.item->Internal.getItemChainId
+
     let set = params.isPreload
       ? noopSet
       : (entity: Internal.entity) => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~chainId)
           ->InMemoryTable.Entity.set(
             ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Set({
@@ -234,7 +238,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
       } else {
         entityId => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~chainId)
           ->InMemoryTable.Entity.set(
             ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Delete({

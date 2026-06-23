@@ -15,6 +15,7 @@ let make: (
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
+  ~entities: EntityTables.t=?,
   ~logger: Pino.t,
 ) => t
 
@@ -48,6 +49,8 @@ let numEventsProcessed: t => float
 let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
+let entities: t => EntityTables.t
+let setEntities: (t, EntityTables.t) => unit
 
 // Fetch-frontier reads.
 let knownHeight: t => int

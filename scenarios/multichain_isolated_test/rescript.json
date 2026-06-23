@@ -1,0 +1,23 @@
+{
+  "name": "multichain_isolated_test",
+  "sources": [
+    {
+      "dir": "src",
+      "subdirs": true
+    },
+    {
+      "dir": "test",
+      "subdirs": true
+    }
+  ],
+  "suffix": ".res.mjs",
+  "package-specs": {
+    "module": "esmodule",
+    "in-source": true
+  },
+  "jsx": {
+    "version": 4
+  },
+  "dependencies": ["rescript-schema", "envio"],
+  "compiler-flags": ["-open RescriptSchema"]
+}
