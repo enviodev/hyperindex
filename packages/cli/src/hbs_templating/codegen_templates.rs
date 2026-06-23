@@ -2232,11 +2232,14 @@ type testIndexer = {{
                                 .join("; ");
                             format!("{{ {fields} }}")
                         };
+                        let transaction_ts =
+                            svm_transaction_ts_type(&svm_kind.selected_transaction_fields, &event.name);
                         instruction_entries.push(format!(
-                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: {accs} }};",
+                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: {accs}; readonly transaction: {tx} }};",
                             instr = event.name,
                             args = args_ts,
                             accs = accounts_ts,
+                            tx = transaction_ts,
                         ));
                     }
                     if !instruction_entries.is_empty() {
@@ -2557,6 +2560,48 @@ fn field_type_to_ts_type(
             }
         }
     }
+}
+
+/// Per-instruction SVM parent-transaction TS type for the generated program
+/// table. Selected fields get their real type; unselected fields become
+/// `FieldNotSelected<...>` so reading them is a compile error pointing at the
+/// `field_selection` knob to add — matching the EVM block/transaction story.
+fn svm_transaction_ts_type(selected: &[String], instruction_name: &str) -> String {
+    // (camelCase name, TS type, `field_selection` knob that enables it). Order
+    // mirrors the public `SvmTransaction` shape in `packages/envio/index.d.ts`.
+    const FIELDS: &[(&str, &str, &str)] = &[
+        ("transactionIndex", "number", "transaction_fields"),
+        ("signatures", "readonly string[]", "transaction_fields"),
+        ("feePayer", "string", "transaction_fields"),
+        ("success", "boolean", "transaction_fields"),
+        ("err", "string", "transaction_fields"),
+        ("fee", "bigint", "transaction_fields"),
+        ("computeUnitsConsumed", "bigint", "transaction_fields"),
+        ("accountKeys", "readonly string[]", "transaction_fields"),
+        ("recentBlockhash", "string", "transaction_fields"),
+        ("version", "string", "transaction_fields"),
+        (
+            "tokenBalances",
+            "readonly { readonly account?: string; readonly mint?: string; readonly owner?: string; readonly preAmount?: string; readonly postAmount?: string }[]",
+            "token_balance_fields",
+        ),
+    ];
+    let entries: Vec<String> = FIELDS
+        .iter()
+        .map(|(name, ts_type, knob)| {
+            if selected.iter().any(|s| s == name) {
+                format!("readonly {name}: {ts_type}")
+            } else {
+                format!(
+                    "readonly {name}: FieldNotSelected<\"Field '{name}' is not selected for the '{instr}' instruction. Add it under field_selection.{knob} in config.yaml.\">",
+                    name = name,
+                    instr = instruction_name,
+                    knob = knob,
+                )
+            }
+        })
+        .collect();
+    format!("{{ {} }}", entries.join("; "))
 }
 
 /// Quote a TypeScript property name when it isn't a bare identifier.

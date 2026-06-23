@@ -1033,6 +1033,7 @@ export type SvmLog = {
  * are base58 strings. */
 export type SvmInstruction<
   Params extends SvmInstructionParams = SvmInstructionParams,
+  Tx = SvmTransaction,
 > = {
   /** Program name as declared under `programs[].name` in `config.yaml`. */
   readonly programName: string;
@@ -1050,8 +1051,11 @@ export type SvmInstruction<
   readonly d8?: string;
   /** Borsh-decoded params. Present when a schema is configured and matched. */
   readonly params?: Params;
-  /** Present when the instruction's `include_transaction` is `true`. */
-  readonly transaction?: SvmTransaction;
+  /** Parent transaction. Carries only the fields selected via this
+   * instruction's `field_selection`; unselected fields are typed as
+   * `FieldNotSelected<...>` so reading them is a compile error. Absent when
+   * no fields are selected. */
+  readonly transaction?: Tx;
   /** Present when the instruction's `include_logs` is `true`; only logs
    * scoped to this exact instruction (matching `instruction_address`). */
   readonly logs?: readonly SvmLog[];
@@ -1081,6 +1085,17 @@ type SvmParamsFromProgramTable<TInstr> = TInstr extends {
       readonly extraAccounts: readonly string[];
     }
   : SvmInstructionParams;
+
+/** Parent-transaction type extracted from `Global.config.svm.programs[P][I]`.
+ * The codegen emits a `transaction` shape per (program, instruction) where
+ * unselected fields are `FieldNotSelected<...>`; this surfaces it so handlers
+ * get a compile error on unselected fields. Falls back to the full
+ * `SvmTransaction` when codegen hasn't populated the table. */
+type SvmTransactionFromProgramTable<TInstr> = TInstr extends {
+  transaction: infer T;
+}
+  ? T
+  : SvmTransaction;
 
 /** Options for an SVM `indexer.onInstruction` registration. */
 export type SvmOnInstructionOptions<P extends string = string, I extends string = string> = {
@@ -1327,7 +1342,10 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                   handler: (
                     args: SvmOnInstructionHandlerArgs<
                       Config,
-                      SvmInstruction<SvmParamsFromProgramTable<Programs[P][I]>>
+                      SvmInstruction<
+                        SvmParamsFromProgramTable<Programs[P][I]>,
+                        SvmTransactionFromProgramTable<Programs[P][I]>
+                      >
                     >,
                   ) => Promise<void>,
                 ) => void;

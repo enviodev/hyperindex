@@ -485,7 +485,7 @@
           ]
         },
         "token_balance_fields": {
-          "description": "Include SPL Token / Token-2022 balance snapshots for the parent transaction. Implies transaction_fields: true. Use `true` to include all fields.",
+          "description": "Include SPL Token / Token-2022 balance snapshots for the parent transaction, exposed as `transaction.tokenBalances`. Independent of `transaction_fields`: other transaction fields still require their own selection. Use `true` to include all token-balance fields.",
           "anyOf": [
             {
               "$ref": "#/$defs/FieldSelectionValue"

@@ -1277,8 +1277,10 @@ pub mod svm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Include SPL Token / Token-2022 balance snapshots for the \
-                           parent transaction. Implies transaction_fields: true. \
-                           Use `true` to include all fields."
+                           parent transaction, exposed as `transaction.tokenBalances`. \
+                           Independent of `transaction_fields`: other transaction \
+                           fields still require their own selection. Use `true` to \
+                           include all token-balance fields."
         )]
         pub token_balance_fields: Option<FieldSelectionValue>,
     }
