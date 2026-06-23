@@ -18,7 +18,7 @@ let getLastKnownValidBlock = async (
     ->ChainState.reorgDetection
     ->ReorgDetection.getThresholdBlockNumbersBelowBlock(
       ~blockNumber=reorgBlockNumber,
-      ~knownHeight=(chainState->ChainState.fetchState).knownHeight,
+      ~knownHeight=chainState->ChainState.knownHeight,
     )
 
   switch scannedBlockNumbers {

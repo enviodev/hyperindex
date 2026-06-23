@@ -34,12 +34,6 @@ type t = {
   checkpointEventsProcessed: array<int>,
 }
 
-let hasReadyItem = (fetchStates: array<FetchState.t>) => {
-  fetchStates->Array.some(fetchState => {
-    fetchState->FetchState.isActivelyIndexing && fetchState->FetchState.hasReadyItem
-  })
-}
-
 let getProgressedChainsById = {
   let getChainAfterBatchIfProgressed = (
     ~chainBeforeBatch: chainBeforeBatch,
