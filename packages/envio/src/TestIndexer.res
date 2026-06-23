@@ -65,13 +65,13 @@ let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFi
       fieldValue->S.convertOrThrow(isArray ? queryField.arrayFieldSchema : queryField.fieldSchema)
     }
     let filter = filter->EntityFilter.mapValues(~mapValue=parseLeaf)
+    let matcher = filter->EntityFilter.makeMatcher(~table=entityConfig.table)
 
     entityDict
     ->Dict.valuesToArray
     ->Array.forEach(entity => {
-      // Cast entity to dict of field values (same approach as InMemoryTable)
-      let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
-      if filter->EntityFilter.matches(~entity=entityAsDict) {
+      let entityAsDict = entity->(Utils.magic: Internal.entity => dict<unknown>)
+      if matcher(entityAsDict) {
         // Serialize entity back to JSON for worker thread
         let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
         results->Array.push(jsonEntity)->ignore

@@ -256,27 +256,29 @@ describe("EntityFilter.makeMatcher", () => {
       Table.mkField("nickname", String, ~isIndex=true, ~isNullable=true, ~fieldSchema=S.string),
       Table.mkField("price", BigDecimal({}), ~isIndex=true, ~fieldSchema=S.string),
       Table.mkField("tags", String, ~isArray=true, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("created", Date, ~isIndex=true, ~fieldSchema=S.string),
     ],
   )
 
   let u = value => value->toUnknown
 
-  let mkEntity = (~score, ~balance, ~active, ~nickname, ~price, ~tags) => {
-    open EntityFilter.FieldValue
+  let mkEntity = (~score, ~balance, ~active, ~nickname, ~price, ~tags, ~created) => {
     let entity = Dict.make()
-    entity->Dict.set("id", "id"->castFrom)
-    entity->Dict.set("score", score->castFrom)
-    entity->Dict.set("balance", balance->castFrom)
-    entity->Dict.set("active", active->castFrom)
-    entity->Dict.set("price", price->castFrom)
-    entity->Dict.set("tags", tags->castFrom)
+    entity->Dict.set("id", "id"->u)
+    entity->Dict.set("score", score->u)
+    entity->Dict.set("balance", balance->u)
+    entity->Dict.set("active", active->u)
+    entity->Dict.set("price", price->u)
+    entity->Dict.set("tags", tags->u)
+    entity->Dict.set("created", created->u)
     switch nickname {
-    | Some(nickname) => entity->Dict.set("nickname", nickname->castFrom)
+    | Some(nickname) => entity->Dict.set("nickname", nickname->u)
     | None => ()
     }
     entity
   }
 
+  // Columns chosen so each filter below partitions the three rows distinctly.
   let entities = [
     mkEntity(
       ~score=5,
@@ -285,6 +287,7 @@ describe("EntityFilter.makeMatcher", () => {
       ~nickname=Some("nick"),
       ~price=BigDecimal.fromInt(3),
       ~tags=["x", "y"],
+      ~created=Date.fromTime(1000.),
     ),
     mkEntity(
       ~score=7,
@@ -293,6 +296,7 @@ describe("EntityFilter.makeMatcher", () => {
       ~nickname=Some("zzz"),
       ~price=BigDecimal.fromInt(5),
       ~tags=["x"],
+      ~created=Date.fromTime(2000.),
     ),
     mkEntity(
       ~score=2,
@@ -301,39 +305,47 @@ describe("EntityFilter.makeMatcher", () => {
       ~nickname=None,
       ~price=BigDecimal.fromInt(1),
       ~tags=["x", "y"],
+      ~created=Date.fromTime(500.),
     ),
   ]
 
-  let filters: array<EntityFilter.t> = [
-    Eq({fieldName: "score", fieldValue: u(5)}),
-    Gt({fieldName: "score", fieldValue: u(5)}),
-    Lt({fieldName: "score", fieldValue: u(5)}),
-    In({fieldName: "score", fieldValue: [u(5), u(7)]}),
-    Eq({fieldName: "balance", fieldValue: u(BigInt.fromInt(10))}),
-    Gt({fieldName: "balance", fieldValue: u(BigInt.fromInt(10))}),
-    Eq({fieldName: "active", fieldValue: u(true)}),
-    Eq({fieldName: "nickname", fieldValue: u("nick")}),
-    Gt({fieldName: "nickname", fieldValue: u("a")}),
-    In({fieldName: "nickname", fieldValue: [u("nick"), u("other")]}),
-    Eq({fieldName: "price", fieldValue: u(BigDecimal.fromInt(3))}),
-    Gt({fieldName: "price", fieldValue: u(BigDecimal.fromInt(3))}),
-    Eq({fieldName: "tags", fieldValue: u(["x", "y"])}),
-    And({
-      filters: [
-        Gt({fieldName: "score", fieldValue: u(3)}),
-        Eq({fieldName: "active", fieldValue: u(true)}),
-      ],
-    }),
+  // Each case pairs a filter with its expected match per entity above.
+  let cases: array<(EntityFilter.t, array<bool>)> = [
+    (Eq({fieldName: "score", fieldValue: u(5)}), [true, false, false]),
+    (Gt({fieldName: "score", fieldValue: u(5)}), [false, true, false]),
+    (Lt({fieldName: "score", fieldValue: u(5)}), [false, false, true]),
+    (In({fieldName: "score", fieldValue: [u(5), u(7)]}), [true, true, false]),
+    (Eq({fieldName: "balance", fieldValue: u(BigInt.fromInt(10))}), [true, false, false]),
+    (Gt({fieldName: "balance", fieldValue: u(BigInt.fromInt(10))}), [false, true, false]),
+    (Eq({fieldName: "active", fieldValue: u(true)}), [true, false, true]),
+    (Eq({fieldName: "nickname", fieldValue: u("nick")}), [true, false, false]),
+    // The undefined nullable column matches no comparison.
+    (Gt({fieldName: "nickname", fieldValue: u("a")}), [true, true, false]),
+    (In({fieldName: "nickname", fieldValue: [u("nick"), u("other")]}), [true, false, false]),
+    (Eq({fieldName: "price", fieldValue: u(BigDecimal.fromInt(3))}), [true, false, false]),
+    (Gt({fieldName: "price", fieldValue: u(BigDecimal.fromInt(3))}), [false, true, false]),
+    (Eq({fieldName: "tags", fieldValue: u(["x", "y"])}), [true, false, true]),
+    // Lexicographic: ["x"] is a proper prefix of ["x","y"], so it sorts lower.
+    (Lt({fieldName: "tags", fieldValue: u(["x", "y"])}), [false, true, false]),
+    (Eq({fieldName: "created", fieldValue: u(Date.fromTime(1000.))}), [true, false, false]),
+    (Gt({fieldName: "created", fieldValue: u(Date.fromTime(1000.))}), [false, true, false]),
+    (
+      And({
+        filters: [
+          Gt({fieldName: "score", fieldValue: u(3)}),
+          Eq({fieldName: "active", fieldValue: u(true)}),
+        ],
+      }),
+      [true, false, false],
+    ),
   ]
 
-  it("Matches identically to EntityFilter.matches across every field kind", t => {
-    let viaMatches =
-      filters->Array.map(filter => entities->Array.map(entity => filter->EntityFilter.matches(~entity)))
-    let viaMatcher = filters->Array.map(filter => {
+  it("Specializes the comparison per field type for every operator", t => {
+    let actual = cases->Array.map(((filter, _expected)) => {
       let matcher = filter->EntityFilter.makeMatcher(~table)
       entities->Array.map(entity => matcher(entity))
     })
-    t.expect(viaMatcher).toEqual(viaMatches)
+    t.expect(actual).toEqual(cases->Array.map(((_filter, expected)) => expected))
   })
 })
 
