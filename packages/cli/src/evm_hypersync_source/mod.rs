@@ -1,7 +1,8 @@
-use std::sync::Once;
+use std::collections::HashMap;
+use std::sync::{Arc, Once};
 
 use anyhow::{Context, Result};
-use hypersync_client::RateLimitResponse;
+use hypersync_client::{simple_types, RateLimitResponse};
 use napi_derive::napi;
 
 use crate::transaction_store::TransactionStore;
@@ -13,7 +14,7 @@ pub(crate) mod types;
 
 use config::ClientConfig;
 use decode::DecoderCore;
-use query::{BlockField, LogField, Query, TransactionField};
+use query::{BlockField, FieldSelection, LogField, Query, TransactionField};
 use types::{encode_address, Block, EventParamsInput, ParamValue, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
@@ -116,10 +117,19 @@ impl EvmHypersyncClient {
             .clone()
             .unwrap_or_default();
 
+        // Join logs to their blocks/transactions ourselves rather than going
+        // through the client's event API. The strategies decide whether the
+        // join key can be lifted off the log (block.number / nothing) or needs
+        // the joined row fetched, and augment the field selection accordingly.
+        let block_join = JoinStrategy::for_block(&requested_block_fields);
+        let transaction_join = JoinStrategy::for_transaction(&requested_transaction_fields);
+        apply_block_join(&mut query.field_selection, block_join);
+        apply_transaction_join(&mut query.field_selection, transaction_join);
+
         let query = query.try_into().context("parse query").map_err(map_err)?;
         let res = self
             .inner
-            .get_events_with_rate_limit(query)
+            .get_with_rate_limit(&query)
             .await
             .context("run inner query")
             .map_err(map_err)?;
@@ -132,9 +142,13 @@ impl EvmHypersyncClient {
         let transaction_store = TransactionStore::with_checksum(self.enable_checksum_addresses);
         let items = tokio::task::block_in_place(|| {
             convert_event_items(
-                response.data,
+                response.data.blocks,
+                response.data.transactions,
+                response.data.logs,
                 &self.decoder,
                 self.enable_checksum_addresses,
+                block_join,
+                transaction_join,
                 &requested_block_fields,
                 &requested_transaction_fields,
                 &transaction_store,
@@ -240,22 +254,143 @@ fn convert_response(
     })
 }
 
-/// Validation + decoding for one page of events. Aborts on the first item that
-/// has a structural defect (server omitted a required field; raw bytes can't
-/// be decoded against the declared ABI).
+/// How a log gets joined to its block (or transaction). Mirrors the client's
+/// internal event-join: when the only requested field is the join key itself
+/// (`block.number`) we lift it off the log instead of fetching the joined row.
+#[derive(Clone, Copy)]
+enum JoinStrategy {
+    /// No fields requested — the joined row is absent from the item.
+    NotSelected,
+    /// Only the join key is requested; synthesize it from the log.
+    OnlyLogJoinField,
+    /// Other fields requested; fetch the joined row and match it to the log.
+    FullJoin,
+}
+
+impl JoinStrategy {
+    fn for_block(fields: &[BlockField]) -> Self {
+        match fields {
+            [] => Self::NotSelected,
+            [BlockField::Number] => Self::OnlyLogJoinField,
+            _ => Self::FullJoin,
+        }
+    }
+
+    fn for_transaction(fields: &[TransactionField]) -> Self {
+        match fields {
+            [] => Self::NotSelected,
+            [TransactionField::Hash] => Self::OnlyLogJoinField,
+            _ => Self::FullJoin,
+        }
+    }
+}
+
+fn add_field<T: PartialEq>(selection: &mut Option<Vec<T>>, field: T) {
+    let fields = selection.get_or_insert_with(Vec::new);
+    if !fields.contains(&field) {
+        fields.push(field);
+    }
+}
+
+fn remove_field<T: PartialEq>(selection: &mut Option<Vec<T>>, field: T) {
+    if let Some(fields) = selection {
+        fields.retain(|f| *f != field);
+    }
+}
+
+// log.blockNumber is already force-selected by `ensure_required_log_fields`, so
+// only the block table itself needs adjusting here.
+fn apply_block_join(selection: &mut FieldSelection, strategy: JoinStrategy) {
+    match strategy {
+        JoinStrategy::NotSelected => {}
+        JoinStrategy::OnlyLogJoinField => remove_field(&mut selection.block, BlockField::Number),
+        JoinStrategy::FullJoin => add_field(&mut selection.block, BlockField::Number),
+    }
+}
+
+fn apply_transaction_join(selection: &mut FieldSelection, strategy: JoinStrategy) {
+    match strategy {
+        JoinStrategy::NotSelected => {}
+        JoinStrategy::OnlyLogJoinField => {
+            add_field(&mut selection.log, LogField::TransactionHash);
+            remove_field(&mut selection.transaction, TransactionField::Hash);
+        }
+        JoinStrategy::FullJoin => {
+            add_field(&mut selection.log, LogField::TransactionHash);
+            add_field(&mut selection.transaction, TransactionField::Hash);
+        }
+    }
+}
+
+/// Joins logs to their blocks/transactions, validates the requested fields and
+/// decodes each log into an `EventItem`. Aborts on the first item that has a
+/// structural defect (server omitted a required field; raw bytes can't be
+/// decoded against the declared ABI).
+#[allow(clippy::too_many_arguments)]
 fn convert_event_items(
-    events: Vec<hypersync_client::simple_types::Event>,
+    blocks: Vec<Vec<simple_types::Block>>,
+    transactions: Vec<Vec<simple_types::Transaction>>,
+    logs: Vec<Vec<simple_types::Log>>,
     decoder: &DecoderCore,
     should_checksum: bool,
+    block_join: JoinStrategy,
+    transaction_join: JoinStrategy,
     requested_block_fields: &[BlockField],
     requested_transaction_fields: &[TransactionField],
     transaction_store: &TransactionStore,
 ) -> std::result::Result<Vec<EventItem>, ConvertError> {
-    let mut items = Vec::with_capacity(events.len());
-    for event in events {
+    use hypersync_client::format::Hash;
+
+    let blocks_by_number: HashMap<u64, Arc<simple_types::Block>> =
+        if matches!(block_join, JoinStrategy::FullJoin) {
+            blocks
+                .into_iter()
+                .flatten()
+                .filter_map(|b| b.number.map(|number| (number, Arc::new(b))))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
+    let transactions_by_hash: HashMap<Hash, Arc<simple_types::Transaction>> =
+        if matches!(transaction_join, JoinStrategy::FullJoin) {
+            transactions
+                .into_iter()
+                .flatten()
+                .filter_map(|t| t.hash.clone().map(|hash| (hash, Arc::new(t))))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
+    let mut items = Vec::with_capacity(logs.iter().map(Vec::len).sum());
+    for log in logs.into_iter().flatten() {
+        let block: Option<Arc<simple_types::Block>> = match block_join {
+            JoinStrategy::NotSelected => None,
+            JoinStrategy::OnlyLogJoinField => Some(Arc::new(simple_types::Block {
+                number: log.block_number.map(u64::from),
+                ..Default::default()
+            })),
+            JoinStrategy::FullJoin => log
+                .block_number
+                .and_then(|number| blocks_by_number.get(&u64::from(number)).cloned()),
+        };
+
+        let transaction: Option<Arc<simple_types::Transaction>> = match transaction_join {
+            JoinStrategy::NotSelected => None,
+            JoinStrategy::OnlyLogJoinField => Some(Arc::new(simple_types::Transaction {
+                hash: log.transaction_hash.clone(),
+                ..Default::default()
+            })),
+            JoinStrategy::FullJoin => log
+                .transaction_hash
+                .as_ref()
+                .and_then(|hash| transactions_by_hash.get(hash).cloned()),
+        };
+
         let mut missing: Vec<String> = Vec::new();
 
-        match &event.block {
+        match &block {
             None if !requested_block_fields.is_empty() => missing.push("block".into()),
             Some(block) => {
                 for &field in requested_block_fields {
@@ -267,7 +402,7 @@ fn convert_event_items(
             None => {}
         }
 
-        match &event.transaction {
+        match &transaction {
             None if !requested_transaction_fields.is_empty() => missing.push("transaction".into()),
             Some(transaction) => {
                 for &field in requested_transaction_fields {
@@ -288,12 +423,9 @@ fn convert_event_items(
         // `None` is reserved for "topic0/count doesn't match a registered
         // signature", which is the only outcome the wildcard event path
         // expects to handle.
-        let params = decoder
-            .decode_simple(&event.log)
-            .context("decode event params")?;
+        let params = decoder.decode_simple(&log).context("decode event params")?;
 
-        let block = event
-            .block
+        let item_block = block
             .as_ref()
             .map(|b| Block::from_simple(b, should_checksum))
             .transpose()
@@ -301,11 +433,11 @@ fn convert_event_items(
             .unwrap_or_default();
 
         let (log_index, src_address, topic0, topic_count, block_number, transaction_index) =
-            flatten_log_for_js(&event.log, should_checksum).context("mapping log")?;
+            flatten_log_for_js(&log, should_checksum).context("mapping log")?;
 
         // Move the raw transaction into the store keyed by (block, txIndex). Its
         // fields materialise on demand; logs sharing a tx collapse to one entry.
-        if let Some(tx) = event.transaction {
+        if let Some(tx) = transaction {
             transaction_store.insert_evm_raw(block_number as u64, transaction_index as u32, tx);
         }
 
@@ -314,7 +446,7 @@ fn convert_event_items(
             src_address,
             topic0,
             topic_count,
-            block,
+            block: item_block,
             transaction_index,
             params,
         });
@@ -530,18 +662,30 @@ mod tests {
         DecoderCore::from_params(Vec::new(), false).unwrap()
     }
 
+    fn full_log(block_number: u64) -> simple_types::Log {
+        simple_types::Log {
+            log_index: Some(0.into()),
+            block_number: Some(block_number.into()),
+            transaction_index: Some(0u64.into()),
+            address: Some(Default::default()),
+            data: Some(Default::default()),
+            topics: std::iter::once(Some(Default::default())).collect(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn missing_block_field_returns_typed_error() {
-        // event.block is None but the user asked for block.number/hash/timestamp.
-        let event = simple_types::Event {
-            transaction: None,
-            block: None,
-            log: simple_types::Log::default(),
-        };
+        // The server returned no block for the log but the user asked for
+        // block.number/hash/timestamp.
         let err = convert_event_items(
-            vec![event],
+            vec![],
+            vec![],
+            vec![vec![simple_types::Log::default()]],
             &empty_decoder(),
             false,
+            JoinStrategy::FullJoin,
+            JoinStrategy::NotSelected,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
             &TransactionStore::new(),
@@ -559,18 +703,17 @@ mod tests {
     fn missing_block_field_named_path() {
         // block is present but timestamp is not.
         let mut block = simple_types::Block::default();
-        block.number = Some(1u64.into());
+        block.number = Some(1);
         block.hash = Some(Default::default());
         // timestamp left None
-        let event = simple_types::Event {
-            transaction: None,
-            block: Some(block.into()),
-            log: simple_types::Log::default(),
-        };
         let err = convert_event_items(
-            vec![event],
+            vec![vec![block]],
+            vec![],
+            vec![vec![full_log(1)]],
             &empty_decoder(),
             false,
+            JoinStrategy::FullJoin,
+            JoinStrategy::NotSelected,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
             &TransactionStore::new(),
@@ -591,27 +734,18 @@ mod tests {
         // BaseFeePerGas is inherently nullable — server omitting it must not
         // trigger MissingFields, regardless of whether the user requested it.
         let mut block = simple_types::Block::default();
-        block.number = Some(1u64.into());
+        block.number = Some(1);
         block.hash = Some(Default::default());
         block.timestamp = Some(Default::default());
         // base_fee_per_gas left None
-        let event = simple_types::Event {
-            transaction: None,
-            block: Some(block.into()),
-            log: simple_types::Log {
-                log_index: Some(0.into()),
-                block_number: Some(0u64.into()),
-                transaction_index: Some(0u64.into()),
-                address: Some(Default::default()),
-                data: Some(Default::default()),
-                topics: std::iter::once(Some(Default::default())).collect(),
-                ..Default::default()
-            },
-        };
         let res = convert_event_items(
-            vec![event],
+            vec![vec![block]],
+            vec![],
+            vec![vec![full_log(1)]],
             &empty_decoder(),
             false,
+            JoinStrategy::FullJoin,
+            JoinStrategy::NotSelected,
             &[
                 BlockField::Number,
                 BlockField::Hash,
@@ -628,27 +762,19 @@ mod tests {
     #[test]
     fn missing_transaction_field_with_transaction_present() {
         let mut block = simple_types::Block::default();
-        block.number = Some(1u64.into());
+        block.number = Some(1);
         block.hash = Some(Default::default());
         block.timestamp = Some(Default::default());
-        let tx = simple_types::Transaction::default(); // hash absent
-        let event = simple_types::Event {
-            transaction: Some(tx.into()),
-            block: Some(block.into()),
-            log: simple_types::Log {
-                log_index: Some(0.into()),
-                block_number: Some(0u64.into()),
-                transaction_index: Some(0u64.into()),
-                address: Some(Default::default()),
-                data: Some(Default::default()),
-                topics: std::iter::once(Some(Default::default())).collect(),
-                ..Default::default()
-            },
-        };
+        // The log carries no transactionHash, so the synthesized join transaction
+        // has no hash and the requested transaction.hash is reported missing.
         let err = convert_event_items(
-            vec![event],
+            vec![vec![block]],
+            vec![],
+            vec![vec![full_log(1)]],
             &empty_decoder(),
             false,
+            JoinStrategy::FullJoin,
+            JoinStrategy::OnlyLogJoinField,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::Hash],
             &TransactionStore::new(),
@@ -662,6 +788,44 @@ mod tests {
             }
             ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
         }
+    }
+
+    #[test]
+    fn full_join_matches_block_and_transaction() {
+        // Block and transaction live in separate response arrays; the log is
+        // matched to its block by number and to its transaction by hash, and the
+        // transaction lands in the store keyed by (blockNumber, txIndex).
+        let mut block = simple_types::Block::default();
+        block.number = Some(7);
+        block.hash = Some(Default::default());
+        block.timestamp = Some(Default::default());
+
+        let mut tx = simple_types::Transaction::default();
+        tx.hash = Some(Default::default());
+        tx.block_number = Some(7u64.into());
+
+        let mut log = full_log(7);
+        log.transaction_hash = Some(Default::default());
+
+        let store = TransactionStore::new();
+        let items = convert_event_items(
+            vec![vec![block]],
+            vec![vec![tx]],
+            vec![vec![log]],
+            &empty_decoder(),
+            false,
+            JoinStrategy::FullJoin,
+            JoinStrategy::FullJoin,
+            &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
+            &[TransactionField::BlockNumber],
+            &store,
+        )
+        .expect("expected success when block and transaction join");
+
+        assert_eq!(
+            items.iter().map(|i| i.block.number).collect::<Vec<_>>(),
+            vec![Some(7)]
+        );
     }
 
     #[test]
