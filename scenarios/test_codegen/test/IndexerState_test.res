@@ -228,7 +228,7 @@ describe("IndexerState", () => {
           state
           ->IndexerState.chainStates
           ->Dict.valuesToArray
-          ->Array.reduce(0, (accum, cs) => accum + cs->ChainState.fetchState->FetchState.bufferSize)
+          ->Array.reduce(0, (accum, cs) => accum + cs->ChainState.bufferSize)
 
         t.expect(
           amountStillOnQueues + numberOfMockEventsReadFromQueues.contents,
@@ -351,7 +351,6 @@ describe("IndexerState", () => {
         // A fetch lands mid-batch and appends block 15 to this chain's buffer
         // (its batch-time snapshot held only block 5).
         let cs = state->IndexerState.getChainState(~chain)
-        let concurrentFetchState = cs->ChainState.fetchState
         let concurrentQuery: FetchState.query = {
           ...defaultQuery,
           partitionId: "0",
@@ -361,9 +360,9 @@ describe("IndexerState", () => {
           isChunk: false,
           selection: {dependsOnAddresses: false, eventConfigs},
           addressesByContractName: Dict.make(),
-          indexingAddresses: concurrentFetchState.indexingAddresses,
+          indexingAddresses: cs->ChainState.indexingAddresses,
         }
-        concurrentFetchState->FetchState.startFetchingQueries(~queries=[concurrentQuery])
+        cs->ChainState.startFetchingQueries(~queries=[concurrentQuery])
         cs->ChainState.handleQueryResult(
           ~query=concurrentQuery,
           ~newItemsWithDcs=[],
@@ -379,7 +378,7 @@ describe("IndexerState", () => {
               payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
             }),
           ],
-          ~knownHeight=concurrentFetchState.knownHeight,
+          ~knownHeight=cs->ChainState.knownHeight,
         )
 
         state->IndexerState.applyBatchProgress(~batch)
@@ -394,7 +393,7 @@ describe("IndexerState", () => {
             "committedProgressBlockNumber": resultCs->ChainState.committedProgressBlockNumber,
             // The concurrent fetch buffered 2 events; the batch-time snapshot had 1.
             // Seeing 2 proves the current (post-fetch) fetchState was kept.
-            "bufferSize": resultCs->ChainState.fetchState->FetchState.bufferSize,
+            "bufferSize": resultCs->ChainState.bufferSize,
           },
           ~message="must commit the batch's progress while keeping the mid-batch fetch frontier",
         ).toEqual({

@@ -77,15 +77,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
     state
     ->IndexerState.chainStates
     ->Dict.valuesToArray
-    ->Array.every(cs => {
-      let fetchState = switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
-        (cs->ChainState.fetchState).chainId,
-      ) {
-      | Some(chainAfterBatch) => chainAfterBatch.fetchState
-      | None => cs->ChainState.fetchState
-      }
-      fetchState->FetchState.isReadyToEnterReorgThreshold
-    })
+    ->Array.every(cs => cs->ChainState.isReadyToEnterReorgThresholdAfterBatch(~batch))
 
   if shouldEnterReorgThreshold {
     IndexerState.enterReorgThreshold(state)
@@ -171,9 +163,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
           state
           ->IndexerState.chainStates
           ->Dict.valuesToArray
-          ->Array.every(cs =>
-            cs->ChainState.isProgressAtHead && (cs->ChainState.fetchState).endBlock->Option.isNone
-          )
+          ->Array.every(ChainState.isAtHeadWithoutEndBlock)
         ) {
           IndexerState.errorExit(
             state,

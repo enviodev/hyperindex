@@ -38,7 +38,6 @@ let makeFromDbState: (
 
 // Accessors.
 let logger: t => Pino.t
-let fetchState: t => FetchState.t
 let sourceManager: t => SourceManager.t
 let chainConfig: t => Config.chain
 let reorgDetection: t => ReorgDetection.t
@@ -50,12 +49,55 @@ let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
+// Fetch-frontier reads.
+let knownHeight: t => int
+let indexingAddresses: t => dict<FetchState.indexingAddress>
+let bufferSize: t => int
+let bufferReadyCount: t => int
+let getProgressPercentage: t => float
+let getProgressPercentageAt: (t, ~blockNumber: int) => float
+let hasReadyItem: t => bool
+let isReadyToEnterReorgThreshold: t => bool
+
+// Fetch control.
+let getNextQuery: (t, ~budget: int) => FetchState.nextQuery
+let dispatch: (
+  t,
+  ~executeQuery: FetchState.query => promise<unit>,
+  ~waitForNewBlock: (~knownHeight: int) => promise<int>,
+  ~onNewBlock: (~knownHeight: int) => unit,
+  ~action: FetchState.nextQuery,
+  ~stateId: int,
+) => promise<unit>
+
+// Views.
+type chainData = {
+  chainId: float,
+  poweredByHyperSync: bool,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  numEventsProcessed: float,
+  latestFetchedBlockNumber: int,
+  @as("currentBlockHeight")
+  knownHeight: int,
+  numBatchesFetched: int,
+  startBlock: int,
+  endBlock: option<int>,
+  numAddresses: int,
+}
+let toChainData: t => chainData
+let toChainMetadata: t => InternalTable.Chains.metaFields
+let toChainBeforeBatch: t => Batch.chainBeforeBatch
+let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
+
 // Derived (pure).
 let hasProcessedToEndblock: t => bool
 let getHighestBlockBelowThreshold: t => int
 let isActivelyIndexing: t => bool
 let isReady: t => bool
 let isFetchingAtHead: t => bool
+let isAtHeadWithoutEndBlock: t => bool
 
 // State transitions. The chain state is mutated only through these.
 let handleQueryResult: (
