@@ -452,20 +452,30 @@ fn decode_svm_columns(records: &[Option<Arc<SvmStored>>], mask: u64) -> Columns 
                 Column::Str(fill_svm(records, |r| r.tx.recent_blockhash.clone()))
             }
             SvmTxField::Version => Column::Str(fill_svm(records, |r| r.tx.version.clone())),
-            SvmTxField::TokenBalances => Column::TokenBalances(fill_svm(records, |r| {
-                Some(
-                    r.token_balances
-                        .iter()
-                        .map(|tb| SvmTokenBalanceOut {
-                            account: tb.account.clone(),
-                            mint: tb.mint.clone(),
-                            owner: tb.owner.clone(),
-                            pre_amount: tb.pre_amount.clone(),
-                            post_amount: tb.post_amount.clone(),
+            // Always materialise an array when selected: a record absent from the
+            // store (its transaction had no token balances, so it was never
+            // inserted) means "no balances" → `[]`, not a missing field.
+            SvmTxField::TokenBalances => Column::TokenBalances(
+                records
+                    .iter()
+                    .map(|rec| {
+                        Some(match rec {
+                            Some(r) => r
+                                .token_balances
+                                .iter()
+                                .map(|tb| SvmTokenBalanceOut {
+                                    account: tb.account.clone(),
+                                    mint: tb.mint.clone(),
+                                    owner: tb.owner.clone(),
+                                    pre_amount: tb.pre_amount.clone(),
+                                    post_amount: tb.post_amount.clone(),
+                                })
+                                .collect(),
+                            None => vec![],
                         })
-                        .collect(),
-                )
-            })),
+                    })
+                    .collect(),
+            ),
         };
         columns.push((field.name(), column));
     }
@@ -536,6 +546,10 @@ pub struct TransactionStore {
     // rather than on every transaction; `merge` carries it into the persistent
     // store. SVM ignores it.
     should_checksum: AtomicBool,
+    // Which columnar decoder to use. Set when an SVM page is built and carried
+    // into the persistent store on `merge`, so the choice never depends on
+    // whether a record happens to be present at materialize time.
+    is_svm: AtomicBool,
 }
 
 impl Default for TransactionStore {
@@ -551,6 +565,7 @@ impl TransactionStore {
         Self {
             inner: Mutex::new(BlockKeyed::new()),
             should_checksum: AtomicBool::new(false),
+            is_svm: AtomicBool::new(false),
         }
     }
 
@@ -569,6 +584,9 @@ impl TransactionStore {
             page.should_checksum.load(Ordering::Relaxed),
             Ordering::Relaxed,
         );
+        if page.is_svm.load(Ordering::Relaxed) {
+            self.is_svm.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Bulk-materialise the selected fields (one bit per `EvmTxField` code in
@@ -596,8 +614,8 @@ impl TransactionStore {
         }
         let mask = mask as u64;
 
-        // A store is per-chain, hence single-ecosystem; pick the decoder from the
-        // first stored record and collect the matching raw refs under the lock.
+        // A store is per-chain, hence single-ecosystem; the `is_svm` flag picks
+        // the decoder, and the matching raw refs are collected under the lock.
         enum Plan {
             Evm(Vec<Option<Arc<simple_types::Transaction>>>),
             Svm(Vec<Option<Arc<SvmStored>>>),
@@ -605,14 +623,7 @@ impl TransactionStore {
 
         let plan = {
             let inner = self.inner.lock().unwrap();
-            let is_svm = inner
-                .map
-                .values()
-                .flat_map(|b| b.0.values())
-                .next()
-                .is_some_and(|tx| matches!(tx, StoredTx::Svm { .. }));
-
-            if is_svm {
+            if self.is_svm.load(Ordering::Relaxed) {
                 Plan::Svm(
                     block_numbers
                         .iter()
@@ -679,6 +690,14 @@ impl TransactionStore {
         store
             .should_checksum
             .store(should_checksum, Ordering::Relaxed);
+        store
+    }
+
+    /// Create an SVM page store. The ecosystem flag is set here (not inferred
+    /// from records) so even an empty page selects the SVM decoder after merge.
+    pub(crate) fn new_svm() -> Self {
+        let store = Self::new();
+        store.is_svm.store(true, Ordering::Relaxed);
         store
     }
 
