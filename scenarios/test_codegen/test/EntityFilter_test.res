@@ -1,5 +1,7 @@
 open Vitest
 
+external toUnknown: 'a => unknown = "%identity"
+
 describe("EntityFilter.toOperationKey", () => {
   it("Replaces filter values with $N placeholders", t => {
     let v = 0->(Utils.magic: int => unknown)
@@ -240,6 +242,98 @@ describe("EntityFilter.merge", () => {
     ).toThrowError(
       "Unexpected filter And(a:Eq:2) in a merged batch. Filters batched into a single query must use the same operator and field.",
     )
+  })
+})
+
+describe("EntityFilter.makeMatcher", () => {
+  let table = Table.mkTable(
+    "users",
+    ~fields=[
+      Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+      Table.mkField("score", Int32, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("balance", BigInt({}), ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("active", Boolean, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("nickname", String, ~isIndex=true, ~isNullable=true, ~fieldSchema=S.string),
+      Table.mkField("price", BigDecimal({}), ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("tags", String, ~isArray=true, ~isIndex=true, ~fieldSchema=S.string),
+    ],
+  )
+
+  let u = value => value->toUnknown
+
+  let mkEntity = (~score, ~balance, ~active, ~nickname, ~price, ~tags) => {
+    open EntityFilter.FieldValue
+    let entity = Dict.make()
+    entity->Dict.set("id", "id"->castFrom)
+    entity->Dict.set("score", score->castFrom)
+    entity->Dict.set("balance", balance->castFrom)
+    entity->Dict.set("active", active->castFrom)
+    entity->Dict.set("price", price->castFrom)
+    entity->Dict.set("tags", tags->castFrom)
+    switch nickname {
+    | Some(nickname) => entity->Dict.set("nickname", nickname->castFrom)
+    | None => ()
+    }
+    entity
+  }
+
+  let entities = [
+    mkEntity(
+      ~score=5,
+      ~balance=BigInt.fromInt(10),
+      ~active=true,
+      ~nickname=Some("nick"),
+      ~price=BigDecimal.fromInt(3),
+      ~tags=["x", "y"],
+    ),
+    mkEntity(
+      ~score=7,
+      ~balance=BigInt.fromInt(20),
+      ~active=false,
+      ~nickname=Some("zzz"),
+      ~price=BigDecimal.fromInt(5),
+      ~tags=["x"],
+    ),
+    mkEntity(
+      ~score=2,
+      ~balance=BigInt.fromInt(5),
+      ~active=true,
+      ~nickname=None,
+      ~price=BigDecimal.fromInt(1),
+      ~tags=["x", "y"],
+    ),
+  ]
+
+  let filters: array<EntityFilter.t> = [
+    Eq({fieldName: "score", fieldValue: u(5)}),
+    Gt({fieldName: "score", fieldValue: u(5)}),
+    Lt({fieldName: "score", fieldValue: u(5)}),
+    In({fieldName: "score", fieldValue: [u(5), u(7)]}),
+    Eq({fieldName: "balance", fieldValue: u(BigInt.fromInt(10))}),
+    Gt({fieldName: "balance", fieldValue: u(BigInt.fromInt(10))}),
+    Eq({fieldName: "active", fieldValue: u(true)}),
+    Eq({fieldName: "nickname", fieldValue: u("nick")}),
+    Gt({fieldName: "nickname", fieldValue: u("a")}),
+    In({fieldName: "nickname", fieldValue: [u("nick"), u("other")]}),
+    Eq({fieldName: "price", fieldValue: u(BigDecimal.fromInt(3))}),
+    Gt({fieldName: "price", fieldValue: u(BigDecimal.fromInt(3))}),
+    Eq({fieldName: "tags", fieldValue: u(["x", "y"])}),
+    And({
+      filters: [
+        Gt({fieldName: "score", fieldValue: u(3)}),
+        Eq({fieldName: "active", fieldValue: u(true)}),
+      ],
+    }),
+  ]
+
+  it("Matches identically to EntityFilter.matches across every field kind", t => {
+    let viaMatches =
+      filters->Array.map(filter => entities->Array.map(entity => filter->EntityFilter.matches(~entity)))
+    let viaMatcher = filters->Array.map(filter => {
+      let matcher = filter->EntityFilter.makeMatcher(~table)
+      entities->Array.map(entity => matcher(entity))
+    })
+    t.expect(viaMatcher).toEqual(viaMatches)
   })
 })
 

@@ -384,6 +384,94 @@ let rec matches = (filter: t, ~entity: dict<FieldValue.t>) =>
   | And({filters}) => filters->Array.every(filter => filter->matches(~entity))
   }
 
+// A predicate specialized to a single filter, with the field value kind and
+// comparison resolved once from the table config instead of on every call.
+type matcher = dict<FieldValue.t> => bool
+
+// Raw JS comparisons. `>`/`<` on FieldValue.t would compile to the polymorphic
+// Caml_obj.* path; for primitive fields the native operators are both correct
+// and far cheaper.
+let gtNative: (FieldValue.t, FieldValue.t) => bool = %raw(`(a, b) => a > b`)
+let ltNative: (FieldValue.t, FieldValue.t) => bool = %raw(`(a, b) => a < b`)
+
+// Fields whose values are JS primitives at runtime, so === and the native
+// comparison operators match FieldValue's structural semantics exactly.
+// BigDecimal is a bignumber.js instance, Json an arbitrary object, and Date's
+// runtime shape isn't guaranteed primitive — those keep the structural path.
+let isNativeFieldType = (fieldType: Table.fieldType) =>
+  switch fieldType {
+  | String
+  | Boolean
+  | Uint32
+  | UInt52
+  | UInt64
+  | Int32
+  | Number
+  | BigInt(_)
+  | Serial
+  | BigSerial
+  | Enum(_)
+  | Entity(_) => true
+  | BigDecimal(_)
+  | Json
+  | Date => false
+  }
+
+let rec makeMatcher = (filter: t, ~table: Table.table): matcher => {
+  // Some(isNullable) when the field is a non-array native primitive, None when
+  // it must fall back to the structural FieldValue comparison.
+  let nativeField = fieldName =>
+    switch table->Table.getFieldByApiName(fieldName) {
+    | Some(Field({fieldType, isArray: false, isNullable})) if isNativeFieldType(fieldType) =>
+      Some(isNullable)
+    | _ => None
+    }
+
+  switch filter {
+  | Eq({fieldName, fieldValue}) =>
+    let value = fieldValue->FieldValue.castFrom
+    switch fieldName->nativeField {
+    // undefined === value is false and undefined === undefined is true, so
+    // nullable fields stay correct without a separate guard.
+    | Some(_) => entity => entity->Dict.getUnsafe(fieldName) === value
+    | None => entity => entity->Dict.getUnsafe(fieldName)->FieldValue.eq(value)
+    }
+  | Gt({fieldName, fieldValue}) =>
+    let value = fieldValue->FieldValue.castFrom
+    switch fieldName->nativeField {
+    // A nullable field can be undefined, where native ordering against a real
+    // value diverges from the structural compare, so only specialize non-null.
+    | Some(false) => entity => gtNative(entity->Dict.getUnsafe(fieldName), value)
+    | _ => entity => entity->Dict.getUnsafe(fieldName)->FieldValue.gt(value)
+    }
+  | Lt({fieldName, fieldValue}) =>
+    let value = fieldValue->FieldValue.castFrom
+    switch fieldName->nativeField {
+    | Some(false) => entity => ltNative(entity->Dict.getUnsafe(fieldName), value)
+    | _ => entity => entity->Dict.getUnsafe(fieldName)->FieldValue.lt(value)
+    }
+  | In({fieldName, fieldValue}) =>
+    let values = fieldValue->Array.map(FieldValue.castFrom)
+    switch fieldName->nativeField {
+    | Some(_) =>
+      entity => {
+        let entityFieldValue = entity->Dict.getUnsafe(fieldName)
+        values->Array.some(value => entityFieldValue === value)
+      }
+    | None =>
+      entity => {
+        let entityFieldValue = entity->Dict.getUnsafe(fieldName)
+        values->Array.some(value => entityFieldValue->FieldValue.eq(value))
+      }
+    }
+  | And({filters: []}) =>
+    _ => JsError.throwWithMessage(`The "and" filter must contain at least one nested filter.`)
+  | And({filters}) =>
+    let matchers = filters->Array.map(filter => filter->makeMatcher(~table))
+    entity => matchers->Array.every(matcher => matcher(entity))
+  }
+}
+
 // In values are mapped as one array (isArray=true), so they can be
 // converted with the table's cached array schema in a single pass.
 let rec mapValues = (

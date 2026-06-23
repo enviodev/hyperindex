@@ -1,6 +1,8 @@
 module Entity = {
   type relatedEntityId = string
-  type filterWithRelatedIds = (EntityFilter.t, Utils.Set.t<relatedEntityId>)
+  // The matcher is specialized from the filter once at index creation and
+  // reused for every entity write against this index.
+  type filterWithRelatedIds = (EntityFilter.t, EntityFilter.matcher, Utils.Set.t<relatedEntityId>)
   // Keyed by EntityFilter.toString
   type filterIndices = dict<filterWithRelatedIds>
 
@@ -114,8 +116,8 @@ module Entity = {
       })
     }
 
-    self.filterIndices->Utils.Dict.forEach(((filter, relatedEntityIds)) => {
-      if filter->EntityFilter.matches(~entity=entityAsDict) {
+    self.filterIndices->Utils.Dict.forEach(((filter, matcher, relatedEntityIds)) => {
+      if matcher(entityAsDict) {
         //Add entity id to the filter index and the filter to entity filters
         relatedEntityIds->Utils.Set.add(entityId)->ignore
         self->getOrCreateEntityFilters(~entityId)->Utils.Set.add(filter)->ignore
@@ -133,7 +135,7 @@ module Entity = {
         switch self.filterIndices->Utils.Dict.dangerouslyGetNonOption(
           filter->EntityFilter.toString,
         ) {
-        | Some((_filter, relatedEntityIds)) =>
+        | Some((_filter, _matcher, relatedEntityIds)) =>
           let _wasRemoved = relatedEntityIds->Utils.Set.delete(entityId)
         | None => () //Unexpected filter index should exist if it is in entityFilters
         }
@@ -206,7 +208,7 @@ module Entity = {
       switch inMemTable.filterIndices->Utils.Dict.dangerouslyGetNonOption(filterKey) {
       | None =>
         JsError.throwWithMessage(`Unexpected error. Must have an index for the filter ${filterKey}`)
-      | Some((_filter, relatedEntityIds)) =>
+      | Some((_filter, _matcher, relatedEntityIds)) =>
         relatedEntityIds
         ->Utils.Set.toArray
         ->Array.filterMap(entityId => {
@@ -219,18 +221,19 @@ module Entity = {
     }
   }
 
-  let addEmptyIndex = (inMemTable: t, ~filter: EntityFilter.t) => {
+  let addEmptyIndex = (inMemTable: t, ~filter: EntityFilter.t, ~table: Table.table) => {
     let filterKey = filter->EntityFilter.toString
     switch inMemTable.filterIndices->Utils.Dict.dangerouslyGetNonOption(filterKey) {
     | Some(_) => () //Should not happen, this means the index already exists
     | None =>
+      let matcher = filter->EntityFilter.makeMatcher(~table)
       let relatedEntityIds = Utils.Set.make()
       inMemTable.latestEntityChangeById->Utils.Dict.forEach(change => {
         switch change->mapChangeToEntity {
         | Some(entity) =>
           let entityAsDict =
             entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
-          if filter->EntityFilter.matches(~entity=entityAsDict) {
+          if matcher(entityAsDict) {
             let entityId = entity->getEntityIdUnsafe
             let _ = inMemTable->getOrCreateEntityFilters(~entityId)->Utils.Set.add(filter)
             let _ = relatedEntityIds->Utils.Set.add(entityId)
@@ -238,7 +241,7 @@ module Entity = {
         | None => ()
         }
       })
-      inMemTable.filterIndices->Dict.set(filterKey, (filter, relatedEntityIds))
+      inMemTable.filterIndices->Dict.set(filterKey, (filter, matcher, relatedEntityIds))
     }
   }
 }
