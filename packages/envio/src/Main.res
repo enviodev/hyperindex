@@ -1,19 +1,4 @@
-type chainData = {
-  chainId: float,
-  poweredByHyperSync: bool,
-  firstEventBlockNumber: option<int>,
-  latestProcessedBlock: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  numEventsProcessed: float,
-  latestFetchedBlockNumber: int,
-  // Need this for API backwards compatibility
-  @as("currentBlockHeight")
-  knownHeight: int,
-  numBatchesFetched: int,
-  startBlock: int,
-  endBlock: option<int>,
-  numAddresses: int,
-}
+type chainData = ChainState.chainData
 @tag("status")
 type state =
   | @as("disabled") Disabled({})
@@ -183,7 +168,7 @@ let buildChainsObject = (~config: Config.t) => {
             | Some(state) => {
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
                 let chainState = state->IndexerState.getChainState(~chain)
-                let indexingAddresses = (chainState->ChainState.fetchState).indexingAddresses
+                let indexingAddresses = chainState->ChainState.indexingAddresses
 
                 // Collect all addresses for this contract name from indexingAddresses
                 let addresses = []
@@ -780,39 +765,7 @@ let start = async (
       | None => Initializing({})
       | Some(state) => {
           let chains =
-            state
-            ->IndexerState.chainStates
-            ->Dict.valuesToArray
-            ->Array.map(cs => {
-              let fetchState = cs->ChainState.fetchState
-              let latestFetchedBlockNumber = Pervasives.max(
-                FetchState.bufferBlockNumber(fetchState),
-                0,
-              )
-              let knownHeight =
-                cs->ChainState.hasProcessedToEndblock
-                  ? fetchState.endBlock->Option.getOr(fetchState.knownHeight)
-                  : fetchState.knownHeight
-
-              {
-                chainId: (cs->ChainState.chainConfig).id->Int.toFloat,
-                poweredByHyperSync: (
-                  cs->ChainState.sourceManager->SourceManager.getActiveSource
-                ).poweredByHyperSync,
-                latestFetchedBlockNumber,
-                knownHeight,
-                numBatchesFetched: 0,
-                startBlock: fetchState.startBlock,
-                endBlock: fetchState.endBlock,
-                firstEventBlockNumber: fetchState.firstEventBlock,
-                latestProcessedBlock: cs->ChainState.committedProgressBlockNumber === -1
-                  ? None
-                  : Some(cs->ChainState.committedProgressBlockNumber),
-                timestampCaughtUpToHeadOrEndblock: cs->ChainState.timestampCaughtUpToHeadOrEndblock,
-                numEventsProcessed: cs->ChainState.numEventsProcessed,
-                numAddresses: fetchState->FetchState.numAddresses,
-              }
-            })
+            state->IndexerState.chainStates->Dict.valuesToArray->Array.map(ChainState.toChainData)
           Active({
             envioVersion,
             chains,

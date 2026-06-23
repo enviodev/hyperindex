@@ -1769,6 +1769,17 @@ describe("FetchState.getNextQuery & integration", () => {
     ->FetchState.updateKnownHeight(~knownHeight)
     ->FetchState.getNextQuery(~budget, ~chainPendingBudget=0.)
 
+  it("Returns NothingToQuery when the buffer budget is exhausted", t => {
+    // Same state queries Ready with a positive budget (see the test below), so a
+    // non-positive budget is the only reason nothing is queried here.
+    let fetchState = makeInitial()
+
+    t.expect(
+      (fetchState->getNextQuery(~budget=0), fetchState->getNextQuery(~budget=-5)),
+      ~message="Should skip fetching when there's no room left in the shared buffer pool",
+    ).toEqual((NothingToQuery, NothingToQuery))
+  })
+
   it("Emulate first indexer queries with a static event", t => {
     let fetchState = makeInitial()
 

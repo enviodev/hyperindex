@@ -125,7 +125,7 @@ let rec onQueryResponse = async (
       fromBlockQueried,
     } = response
 
-    if knownHeight > (chainState->ChainState.fetchState).knownHeight {
+    if knownHeight > chainState->ChainState.knownHeight {
       Prometheus.SourceHeight.set(
         ~blockNumber=knownHeight,
         ~chainId=(chainState->ChainState.chainConfig).id,
@@ -310,7 +310,7 @@ let finishWaitingForNewBlock = (
       ->IndexerState.chainStates
       ->Dict.valuesToArray
       ->Array.every(cs => {
-        cs->ChainState.fetchState->FetchState.isReadyToEnterReorgThreshold
+        cs->ChainState.isReadyToEnterReorgThreshold
       })
 
     // Kick processing in case there are block handlers to run.
@@ -332,7 +332,6 @@ let fetchChain = async (
 ) => {
   let chainState = state->IndexerState.getChainState(~chain)
   if !(state->IndexerState.isResolvingReorg) && !(state->IndexerState.isStopped) {
-    let fetchState = chainState->ChainState.fetchState
     let isRealtime = state->IndexerState.isRealtime
     let sourceManager = chainState->ChainState.sourceManager
 
@@ -343,8 +342,7 @@ let fetchChain = async (
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
     try {
-      await sourceManager->SourceManager.dispatch(
-        ~fetchState,
+      await chainState->ChainState.dispatch(
         ~waitForNewBlock=(~knownHeight) =>
           sourceManager->SourceManager.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling),
         ~onNewBlock=(~knownHeight) =>
@@ -363,7 +361,7 @@ let fetchChain = async (
           try {
             let response = await sourceManager->SourceManager.executeQuery(
               ~query,
-              ~knownHeight=fetchState.knownHeight,
+              ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
             )
             await onQueryResponse(
