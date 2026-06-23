@@ -289,9 +289,14 @@ let materializeBatchTransactions = async (batch: Batch.t, ~chainStates: dict<Cha
   let itemsByChain: dict<array<Internal.item>> = Dict.make()
   batch.items->Array.forEach(item => {
     let chainId = item->Internal.getItemChainId->Int.toString
-    switch itemsByChain->Utils.Dict.dangerouslyGetNonOption(chainId) {
-    | Some(items) => items->Array.push(item)
-    | None => itemsByChain->Dict.set(chainId, [item])
+
+    // Skip chains that carry the transaction inline (mask 0) before grouping, so
+    // an inline-only batch allocates nothing here.
+    if chainStates->Dict.getUnsafe(chainId)->ChainState.transactionFieldMask != 0. {
+      switch itemsByChain->Utils.Dict.dangerouslyGetNonOption(chainId) {
+      | Some(items) => items->Array.push(item)
+      | None => itemsByChain->Dict.set(chainId, [item])
+      }
     }
   })
 
