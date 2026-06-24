@@ -997,9 +997,11 @@ export type SvmTokenBalance = {
   readonly postAmount?: string;
 };
 
-/** Parent transaction surfaced when an instruction's
- * `include_transaction` flag is `true`. */
+/** Full parent-transaction shape. Per-instruction handler types narrow this to
+ * the fields selected via `field_selection.transaction_fields`; this standalone
+ * type is the fallback when the program table hasn't been generated. */
 export type SvmTransaction = {
+  readonly transactionIndex?: number;
   readonly signatures: readonly string[];
   readonly feePayer?: string;
   readonly success?: boolean;
@@ -1011,7 +1013,7 @@ export type SvmTransaction = {
   readonly recentBlockhash?: string;
   readonly version?: string;
   /** SPL Token / Token-2022 balance snapshots for this transaction.
-   * Present when `include_token_balances` is `true`. */
+   * Present when selected via `field_selection.token_balance_fields`. */
   readonly tokenBalances?: readonly SvmTokenBalance[];
 };
 

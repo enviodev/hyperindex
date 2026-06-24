@@ -2569,40 +2569,60 @@ fn field_type_to_ts_type(
 /// `FieldNotSelected<...>` so reading them is a compile error pointing at the
 /// `field_selection` knob to add — matching the EVM block/transaction story.
 fn svm_transaction_ts_type(selected: &[String], instruction_name: &str) -> String {
-    // (camelCase name, TS type, `field_selection` knob that enables it). Order
-    // mirrors the public `SvmTransaction` shape in `packages/envio/index.d.ts`.
-    const FIELDS: &[(&str, &str, &str)] = &[
-        ("transactionIndex", "number", "transaction_fields"),
-        ("signatures", "readonly string[]", "transaction_fields"),
-        ("feePayer", "string", "transaction_fields"),
-        ("success", "boolean", "transaction_fields"),
-        ("err", "string", "transaction_fields"),
-        ("fee", "bigint", "transaction_fields"),
-        ("computeUnitsConsumed", "bigint", "transaction_fields"),
-        ("accountKeys", "readonly string[]", "transaction_fields"),
-        ("recentBlockhash", "string", "transaction_fields"),
-        ("version", "string", "transaction_fields"),
-        (
-            "tokenBalances",
-            "readonly { readonly account?: string; readonly mint?: string; readonly owner?: string; readonly preAmount?: string; readonly postAmount?: string }[]",
-            "token_balance_fields",
-        ),
-    ];
-    let entries: Vec<String> = FIELDS
-        .iter()
-        .map(|(name, ts_type, knob)| {
-            if selected.iter().any(|s| s == name) {
-                format!("readonly {name}: {ts_type}")
-            } else {
-                format!(
-                    "readonly {name}: FieldNotSelected<\"Field '{name}' is not selected for the '{instr}' instruction. Add it under field_selection.{knob} in config.yaml.\">",
-                    name = name,
-                    instr = instruction_name,
-                    knob = knob,
-                )
-            }
+    use crate::config_parsing::human_config::svm::SvmTransactionField;
+    use strum::IntoEnumIterator;
+
+    // TS type + whether the property is optional *when selected*. Optionality
+    // tracks genuine source nullability in the materializer
+    // (`transaction_store.rs` `decode_svm_columns`): fields read off `Option`
+    // columns can be `undefined` even when selected (e.g. `err` on a successful
+    // tx, `version` on a legacy tx), while `transactionIndex`/`signatures`/
+    // `accountKeys` are always populated. Mirrors the per-field EVM convention
+    // in `system_config.rs`. The match is exhaustive, so adding a
+    // `SvmTransactionField` variant won't compile until its type is declared.
+    fn ts_type(field: &SvmTransactionField) -> (&'static str, bool) {
+        match field {
+            SvmTransactionField::TransactionIndex => ("number", false),
+            SvmTransactionField::Signatures => ("readonly string[]", false),
+            SvmTransactionField::FeePayer => ("string", true),
+            SvmTransactionField::Success => ("boolean", true),
+            SvmTransactionField::Err => ("string", true),
+            SvmTransactionField::Fee => ("bigint", true),
+            SvmTransactionField::ComputeUnitsConsumed => ("bigint", true),
+            SvmTransactionField::AccountKeys => ("readonly string[]", false),
+            SvmTransactionField::RecentBlockhash => ("string", true),
+            SvmTransactionField::Version => ("string", true),
+        }
+    }
+
+    const TOKEN_BALANCES_TS: &str = "readonly { readonly account?: string; readonly mint?: string; readonly owner?: string; readonly preAmount?: string; readonly postAmount?: string }[]";
+
+    let render = |name: &str, ts: &str, optional: bool, knob: &str| -> String {
+        if selected.iter().any(|s| s == name) {
+            let opt = if optional { "?" } else { "" };
+            format!("readonly {name}{opt}: {ts}")
+        } else {
+            format!(
+                "readonly {name}: FieldNotSelected<\"Field '{name}' is not selected for the '{instruction_name}' instruction. Add it under field_selection.{knob} in config.yaml.\">"
+            )
+        }
+    };
+
+    let mut entries: Vec<String> = SvmTransactionField::iter()
+        .map(|field| {
+            let (ts, optional) = ts_type(&field);
+            render(&field.to_string(), ts, optional, "transaction_fields")
         })
         .collect();
+    // `tokenBalances` lives outside the enum (selected via the separate
+    // `token_balance_fields` toggle) and is always materialised to `[]` when
+    // selected, so it's required rather than optional.
+    entries.push(render(
+        "tokenBalances",
+        TOKEN_BALANCES_TS,
+        false,
+        "token_balance_fields",
+    ));
     format!("{{ {} }}", entries.join("; "))
 }
 
@@ -3139,6 +3159,44 @@ mod test {
     fn internal_config_json_code_with_lowercase_contract_name() {
         let json = get_internal_config_json_helper("lowercase-contract-name.yaml");
         insta::assert_snapshot!(json);
+    }
+
+    #[test]
+    fn svm_transaction_ts_type_renders_optionality_and_unselected() {
+        // Always-present selected fields (`signatures`, `tokenBalances`) have no
+        // `?`; nullable selected fields (`feePayer`) carry `?`; unselected fields
+        // are `FieldNotSelected` sentinels.
+        let generated = svm_transaction_ts_type(
+            &[
+                "signatures".to_string(),
+                "feePayer".to_string(),
+                "tokenBalances".to_string(),
+            ],
+            "Swap",
+        );
+        let nope = |field: &str, knob: &str| {
+            format!(
+                "readonly {field}: FieldNotSelected<\"Field '{field}' is not selected for the 'Swap' instruction. Add it under field_selection.{knob} in config.yaml.\">"
+            )
+        };
+        let expected = format!(
+            "{{ {} }}",
+            [
+                nope("transactionIndex", "transaction_fields"),
+                "readonly signatures: readonly string[]".to_string(),
+                "readonly feePayer?: string".to_string(),
+                nope("success", "transaction_fields"),
+                nope("err", "transaction_fields"),
+                nope("fee", "transaction_fields"),
+                nope("computeUnitsConsumed", "transaction_fields"),
+                nope("accountKeys", "transaction_fields"),
+                nope("recentBlockhash", "transaction_fields"),
+                nope("version", "transaction_fields"),
+                "readonly tokenBalances: readonly { readonly account?: string; readonly mint?: string; readonly owner?: string; readonly preAmount?: string; readonly postAmount?: string }[]".to_string(),
+            ]
+            .join("; ")
+        );
+        assert_eq!(generated, expected);
     }
 
     #[test]
