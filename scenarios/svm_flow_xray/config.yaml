@@ -28,12 +28,12 @@ chains:
             - name: route
               discriminator: "0xe517cb977ae3ad2a"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
             - name: sharedAccountsRoute
               discriminator: "0xc1209b3341d69c81"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
         - name: Kamino
           program_id: KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD
@@ -42,22 +42,22 @@ chains:
             - name: depositReserveLiquidityAndObligationCollateral
               discriminator: "0x81c70402de271a2e"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
             - name: borrowObligationLiquidity
               discriminator: "0x797f12cc49f5e141"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
             - name: repayObligationLiquidity
               discriminator: "0x91b20de14cf09348"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
             - name: withdrawObligationCollateralAndRedeemReserveCollateral
               discriminator: "0x4b5d5ddc2296dac4"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
         - name: Drift
           program_id: dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH
@@ -66,29 +66,29 @@ chains:
             - name: placePerpOrder
               discriminator: "0x45a15dca787e4cb9"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
             - name: fillPerpOrder
               discriminator: "0x0dbcf86786d96af0"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
             - name: liquidatePerp
               discriminator: "0x4b2377f7bf128b02"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
                 log_fields: true
             - name: liquidateSpot
               discriminator: "0x6b00802923e5fb12"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
                 log_fields: true
             - name: settlePnl
               discriminator: "0x2b3dea2d0f5f9899"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
         # --- inline-decoded programs (no Anchor IDL) ---
         # SplToken + System are intentionally NOT matched: they are the
@@ -126,7 +126,7 @@ chains:
                 - userDestTokenAccount
                 - userSourceOwner
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
         # Orca + Meteora narrow swap match (sha256("global:swap")[..8] =
         # 0xf8c69e91e17587c8). Jupiter routes CPI into both constantly, so this
@@ -139,7 +139,7 @@ chains:
             - name: swap
               discriminator: "0xf8c69e91e17587c8"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
         - name: Meteora
           program_id: LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo
@@ -147,5 +147,5 @@ chains:
             - name: swap
               discriminator: "0xf8c69e91e17587c8"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true

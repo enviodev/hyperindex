@@ -6,7 +6,8 @@
 # Schema verified against packages/envio/svm.schema.json:
 #   instruction keys = { name, discriminator, args:[{name,type}], accounts:[str], field_selection, is_inner, account_filters }
 #   args .type accepts bare-string primitives ("u64","u8",...).
-#   field_selection.token_balance_fields: true  implies transaction_fields: true.
+#   field_selection.token_balance_fields: true  adds transaction.tokenBalances;
+#     other transaction fields require field_selection.transaction_fields: [...].
 #
 # Every instruction below sets field_selection.token_balance_fields: true per spec.
 # is_inner is left absent on all (== null == matches both inner+outer), per spec.
