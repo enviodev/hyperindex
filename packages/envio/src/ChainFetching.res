@@ -326,7 +326,7 @@ let fetchChain = async (
 
     // Accumulated across all queries dispatched in this tick so their per-query
     // results collapse into a single completion log instead of one per query.
-    let fetchedQueries = ref(0)
+    let fetchedPartitions = []
     let fetchedNumEvents = ref(0)
     let fetchedToBlock = ref(0)
 
@@ -364,7 +364,7 @@ let fetchChain = async (
               ~scheduleProcessing,
               ~scheduleRollback,
             )
-            fetchedQueries := fetchedQueries.contents + 1
+            fetchedPartitions->Array.push(query.partitionId)
             fetchedNumEvents := fetchedNumEvents.contents + response.parsedQueueItems->Array.length
             fetchedToBlock :=
               Pervasives.max(fetchedToBlock.contents, response.latestFetchedBlockNumber)
@@ -375,11 +375,11 @@ let fetchChain = async (
         ~action,
         ~stateId,
       )
-      if fetchedQueries.contents > 0 {
+      if fetchedPartitions->Array.length > 0 {
         Logging.trace({
           "msg": "Finished querying",
           "chainId": chain->ChainMap.Chain.toChainId,
-          "queries": fetchedQueries.contents,
+          "partitions": fetchedPartitions,
           "numEvents": fetchedNumEvents.contents,
           "toBlock": fetchedToBlock.contents,
         })

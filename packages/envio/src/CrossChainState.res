@@ -274,7 +274,7 @@ let checkAndFetch = async (
     Logging.trace({
       "msg": "Started querying",
       "chainId": chainId->Int.fromString->Option.getUnsafe,
-      "queries": queries->Array.length,
+      "partitions": queries->Array.map((query: FetchState.query) => query.partitionId),
     })
     actionByChain->Dict.set(chainId, FetchState.Ready(queries))
     // Mark the admitted queries in flight and reserve their size against the
