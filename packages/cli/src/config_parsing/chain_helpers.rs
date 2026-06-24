@@ -199,7 +199,7 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Harmony = 1666600000,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Holesky = 17000,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
