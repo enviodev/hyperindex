@@ -343,7 +343,7 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Rsk = 30,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Saakuru = 7225878,
 
     #[subenum(GraphNetwork, HypersyncChain, NetworkWithExplorer)]
