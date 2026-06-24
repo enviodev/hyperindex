@@ -377,7 +377,7 @@ let fetchChain = async (
       )
       if fetchedQueries.contents > 0 {
         Logging.trace({
-          "msg": "Finished fetching queries",
+          "msg": "Finished querying",
           "chainId": chain->ChainMap.Chain.toChainId,
           "queries": fetchedQueries.contents,
           "numEvents": fetchedNumEvents.contents,

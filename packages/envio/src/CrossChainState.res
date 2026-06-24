@@ -272,7 +272,7 @@ let checkAndFetch = async (
   }
   admittedByChain->Dict.forEachWithKey((queries, chainId) => {
     Logging.trace({
-      "msg": "Started fetching queries",
+      "msg": "Started querying",
       "chainId": chainId->Int.fromString->Option.getUnsafe,
       "queries": queries->Array.length,
     })
