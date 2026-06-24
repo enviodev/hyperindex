@@ -117,9 +117,13 @@ impl EvmHypersyncClient {
             .clone()
             .unwrap_or_default();
 
-        // Force-add block.number so the page's blocks can be keyed and the items
-        // can reference them; every EVM event selection includes it already.
-        add_field(&mut query.field_selection.block, BlockField::Number);
+        // Force-add the block fields the indexer always needs: number keys the
+        // page's blocks and lets items reference them, while the consumer reads
+        // timestamp and hash off every block unconditionally. Enforcing them here
+        // keeps the guarantee local to the path that relies on it.
+        for field in [BlockField::Number, BlockField::Timestamp, BlockField::Hash] {
+            add_field(&mut query.field_selection.block, field);
+        }
         // Transactions are accumulated into the store keyed by
         // (blockNumber, transactionIndex), so those keys must come back on each
         // transaction row whenever any transaction field is requested.
