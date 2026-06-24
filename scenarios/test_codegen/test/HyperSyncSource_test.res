@@ -80,6 +80,23 @@ describe("HyperSyncSource - getSelectionConfig", () => {
     },
   )
 
+  Async.it("Excludes transactionIndex from the query (served from the log / store key)", async t => {
+    let selectionConfig = {
+      dependsOnAddresses: true,
+      eventConfigs: [
+        (MockIndexer.evmEventConfig(
+          ~transactionFieldNames=([TransactionIndex, Hash]: array<Internal.evmTransactionField>),
+        ) :> Internal.eventConfig),
+      ],
+    }->HyperSyncSource.getSelectionConfig(~chain)
+
+    t.expect(selectionConfig.fieldSelection).toEqual({
+      block: [],
+      transaction: [Hash],
+      log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
+    })
+  })
+
   Async.it("Combines field selection from multiple events on different contracts", async t => {
     let selectionConfig = {
       dependsOnAddresses: true,

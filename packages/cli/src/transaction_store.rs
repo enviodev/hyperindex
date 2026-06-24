@@ -283,9 +283,12 @@ fn fill<T>(
 
 /// Decode the mask-selected fields of the given EVM transactions into columns.
 /// Large fields (e.g. `input`) are only touched when their bit is set, and the
-/// whole thing runs off the JS thread.
+/// whole thing runs off the JS thread. `transaction_indices` is the requested
+/// key per row, so `transactionIndex` resolves from the key (always known)
+/// rather than a stored record.
 fn decode_evm_columns(
     records: &[Option<Arc<simple_types::Transaction>>],
+    transaction_indices: &[u32],
     mask: u64,
     should_checksum: bool,
 ) -> Result<Columns> {
@@ -298,7 +301,7 @@ fn decode_evm_columns(
         }
         // Fail fast on a malformed field, but name it so the failure is
         // actionable (one bad row aborts the whole batch's materialisation).
-        let column = decode_evm_field(field, records, should_checksum)
+        let column = decode_evm_field(field, records, transaction_indices, should_checksum)
             .with_context(|| format!("decoding EVM transaction field '{}'", field.name()))?;
         columns.push((field.name(), column));
     }
@@ -311,15 +314,18 @@ fn decode_evm_columns(
 fn decode_evm_field(
     field: EvmTxField,
     records: &[Option<Arc<simple_types::Transaction>>],
+    transaction_indices: &[u32],
     should_checksum: bool,
 ) -> Result<Column> {
     Ok(match field {
-        EvmTxField::TransactionIndex => Column::I64(fill(records, |tx| {
-            Ok(tx
-                .transaction_index
-                .map(|n| i64::try_from(u64::from(n)))
-                .transpose()?)
-        })?),
+        // The within-block index is the store key, so it's always available
+        // regardless of whether the transaction row was fetched.
+        EvmTxField::TransactionIndex => Column::I64(
+            transaction_indices
+                .iter()
+                .map(|&i| Some(i as i64))
+                .collect(),
+        ),
         EvmTxField::Hash => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.hash)))?),
         EvmTxField::From => Column::Str(fill(records, |tx| {
             Ok(map_address_string(&tx.from, should_checksum))
@@ -658,8 +664,10 @@ impl TransactionStore {
                     )
                 };
                 let should_checksum = self.should_checksum.load(Ordering::Relaxed);
-                tokio::task::block_in_place(|| decode_evm_columns(&records, mask, should_checksum))
-                    .map_err(map_err)
+                tokio::task::block_in_place(|| {
+                    decode_evm_columns(&records, &transaction_indices, mask, should_checksum)
+                })
+                .map_err(map_err)
             }
             ECO_SVM => {
                 let records = {
@@ -820,8 +828,8 @@ mod tests {
     fn decode_selected_only_materialises_masked_fields() {
         // Select only `input` via the bitmask.
         let mask = 1u64 << (EvmTxField::Input as u32);
-        let cols =
-            decode_evm_columns(&[Some(Arc::new(raw_tx()))], mask, false).expect("decode columns");
+        let cols = decode_evm_columns(&[Some(Arc::new(raw_tx()))], &[0], mask, false)
+            .expect("decode columns");
 
         // Exactly one column (input) is present; transactionIndex (present on the
         // raw tx but unselected) and gas are absent.
@@ -834,6 +842,22 @@ mod tests {
         }
         assert!(column(&cols, "transactionIndex").is_none());
         assert!(column(&cols, "gas").is_none());
+    }
+
+    #[test]
+    fn evm_transaction_index_comes_from_key_even_on_miss() {
+        // A missing record (None) still materialises the requested key as
+        // `transactionIndex`, so it never depends on a fetched transaction row.
+        let mask = 1u64 << (EvmTxField::TransactionIndex as u32);
+        let cols = decode_evm_columns(&[None, Some(Arc::new(raw_tx()))], &[7, 3], mask, false)
+            .expect("decode columns");
+        match column(&cols, "transactionIndex") {
+            Some(Column::I64(v)) => assert_eq!(v, &vec![Some(7), Some(3)]),
+            other => panic!(
+                "expected transactionIndex i64 column, got present={}",
+                other.is_some()
+            ),
+        }
     }
 
     #[test]

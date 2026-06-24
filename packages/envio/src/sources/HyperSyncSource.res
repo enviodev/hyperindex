@@ -36,11 +36,15 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     )
     selectedTransactionFields
     ->Utils.Set.toArray
-    ->Array.forEach(name =>
-      capitalizedTransactionFields
-      ->Utils.Set.add((name :> string)->Utils.String.capitalize)
-      ->ignore
-    )
+    ->Array.forEach(name => {
+      // transactionIndex is read off the log (the store key), so it never needs
+      // to be requested as a transaction column — and requesting it alone would
+      // pull the whole transaction table for nothing.
+      let fieldName = (name :> string)
+      if fieldName != "transactionIndex" {
+        capitalizedTransactionFields->Utils.Set.add(fieldName->Utils.String.capitalize)->ignore
+      }
+    })
 
     let eventFilters = getEventFiltersOrThrow(chain)
     if dependsOnAddresses {
