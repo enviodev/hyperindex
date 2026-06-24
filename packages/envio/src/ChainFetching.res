@@ -328,7 +328,6 @@ let fetchChain = async (
     // results collapse into a single completion log instead of one per query.
     let fetchedPartitions = []
     let fetchedNumEvents = ref(0)
-    let fetchedToBlock = ref(0)
 
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
@@ -366,8 +365,6 @@ let fetchChain = async (
             )
             fetchedPartitions->Array.push(query.partitionId)
             fetchedNumEvents := fetchedNumEvents.contents + response.parsedQueueItems->Array.length
-            fetchedToBlock :=
-              Pervasives.max(fetchedToBlock.contents, response.latestFetchedBlockNumber)
           } catch {
           | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
           }
@@ -381,7 +378,6 @@ let fetchChain = async (
           "chainId": chain->ChainMap.Chain.toChainId,
           "partitions": fetchedPartitions,
           "numEvents": fetchedNumEvents.contents,
-          "toBlock": fetchedToBlock.contents,
         })
       }
     } catch {
