@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, Once};
 
 use anyhow::{Context, Result};
@@ -340,16 +340,17 @@ fn process_response(
     requested_transaction_fields: &[TransactionField],
     transaction_store: &TransactionStore,
 ) -> std::result::Result<(Vec<EventItem>, Vec<Block>), ConvertError> {
-    let blocks_by_number: HashMap<u64, Arc<simple_types::Block>> =
-        if matches!(block_join, JoinStrategy::FullJoin) {
-            blocks
-                .into_iter()
-                .flatten()
-                .filter_map(|b| b.number.map(|number| (number, Arc::new(b))))
-                .collect()
-        } else {
-            HashMap::new()
-        };
+    // The server returns one block per number; items reference them by number,
+    // so no per-block sharing is needed — keep them owned and track which
+    // numbers are present for the per-log coverage check below.
+    let response_blocks: Vec<simple_types::Block> = if matches!(block_join, JoinStrategy::FullJoin)
+    {
+        blocks.into_iter().flatten().collect()
+    } else {
+        Vec::new()
+    };
+    let present_block_numbers: HashSet<u64> =
+        response_blocks.iter().filter_map(|b| b.number).collect();
 
     let mut missing: Vec<String> = Vec::new();
 
@@ -376,7 +377,7 @@ fn process_response(
     }
 
     // Validate the requested block fields once per distinct block.
-    for block in blocks_by_number.values() {
+    for block in &response_blocks {
         for &field in requested_block_fields {
             if let Some(name) = block_field_missing(block, field) {
                 push_unique(&mut missing, format!("block.{}", name));
@@ -390,7 +391,7 @@ fn process_response(
         if matches!(block_join, JoinStrategy::FullJoin) {
             let present = log
                 .block_number
-                .is_some_and(|n| blocks_by_number.contains_key(&u64::from(n)));
+                .is_some_and(|n| present_block_numbers.contains(&u64::from(n)));
             if !present {
                 push_unique(&mut missing, "block".into());
             }
@@ -416,8 +417,8 @@ fn process_response(
     let out_blocks: Vec<Block> = match block_join {
         JoinStrategy::NotSelected => Vec::new(),
         JoinStrategy::FullJoin => {
-            let mut blocks = blocks_by_number
-                .values()
+            let mut blocks = response_blocks
+                .iter()
                 .map(|b| Block::from_simple(b, should_checksum))
                 .collect::<Result<Vec<_>>>()
                 .context("mapping blocks")?;
