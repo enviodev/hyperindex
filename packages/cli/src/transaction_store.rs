@@ -419,7 +419,13 @@ fn fill_svm<T>(
 
 /// Decode the mask-selected fields of the given SVM transactions into columns.
 /// Large fields (e.g. `accountKeys`) are only cloned when their bit is set.
-fn decode_svm_columns(records: &[Option<Arc<SvmStored>>], mask: u64) -> Columns {
+/// `transaction_indices` is the requested key per row, so `transactionIndex`
+/// resolves from the key (always known) rather than a stored record.
+fn decode_svm_columns(
+    records: &[Option<Arc<SvmStored>>],
+    transaction_indices: &[u32],
+    mask: u64,
+) -> Columns {
     let len = records.len();
     let mut columns: Vec<(&'static str, Column)> = Vec::new();
 
@@ -430,9 +436,14 @@ fn decode_svm_columns(records: &[Option<Arc<SvmStored>>], mask: u64) -> Columns 
         // Exhaustive match: adding an `SvmTxField` variant fails to compile until
         // it is decoded here.
         let column = match field {
-            SvmTxField::TransactionIndex => {
-                Column::I64(fill_svm(records, |r| Some(r.tx.transaction_index as i64)))
-            }
+            // The within-block index is the store key, so it's always available
+            // regardless of whether the transaction row was fetched.
+            SvmTxField::TransactionIndex => Column::I64(
+                transaction_indices
+                    .iter()
+                    .map(|&i| Some(i as i64))
+                    .collect(),
+            ),
             SvmTxField::Signatures => {
                 Column::StrVec(fill_svm(records, |r| Some(r.tx.signatures.clone())))
             }
@@ -664,7 +675,7 @@ impl TransactionStore {
                     )
                 };
                 Ok(tokio::task::block_in_place(|| {
-                    decode_svm_columns(&records, mask)
+                    decode_svm_columns(&records, &transaction_indices, mask)
                 }))
             }
             // Empty store (no ecosystem learned yet): every key is a miss, so the
@@ -715,22 +726,33 @@ impl TransactionStore {
         store
     }
 
-    /// Insert a raw EVM transaction (called by the HyperSync source while
-    /// building a page). Not exposed to JS.
+    /// Insert raw EVM transactions in one locked pass (called by the HyperSync
+    /// source while building a page). Many logs in a page share a transaction;
+    /// the first `(block, index)` entry wins and the rest are skipped, so a tx is
+    /// stored once. Not exposed to JS.
+    pub(crate) fn insert_evm_raw_bulk(&self, txs: Vec<(u64, u32, Arc<simple_types::Transaction>)>) {
+        self.ecosystem.store(ECO_EVM, Ordering::Relaxed);
+        let mut inner = self.inner.lock().unwrap();
+        for (block_number, transaction_index, tx) in txs {
+            inner
+                .map
+                .entry(block_number)
+                .or_default()
+                .entry(transaction_index)
+                .or_insert(StoredTx::EvmRaw { tx });
+        }
+    }
+
+    /// Insert a single raw EVM transaction. Convenience over `insert_evm_raw_bulk`
+    /// for tests. Not exposed to JS.
+    #[cfg(test)]
     pub(crate) fn insert_evm_raw(
         &self,
         block_number: u64,
         transaction_index: u32,
         tx: Arc<simple_types::Transaction>,
     ) {
-        self.ecosystem.store(ECO_EVM, Ordering::Relaxed);
-        self.inner
-            .lock()
-            .unwrap()
-            .map
-            .entry(block_number)
-            .or_default()
-            .insert(transaction_index, StoredTx::EvmRaw { tx });
+        self.insert_evm_raw_bulk(vec![(block_number, transaction_index, tx)]);
     }
 
     /// Insert a raw SVM transaction with its joined token balances (called by the
@@ -903,7 +925,7 @@ mod tests {
 
         // Select only accountKeys.
         let mask = 1u64 << (SvmTxField::AccountKeys as u32);
-        let cols = decode_svm_columns(&[Some(rec)], mask);
+        let cols = decode_svm_columns(&[Some(rec)], &[0], mask);
 
         match column(&cols, "accountKeys") {
             Some(Column::StrVec(v)) => {

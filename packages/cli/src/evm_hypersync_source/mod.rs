@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::Once;
 
 use anyhow::{Context, Result};
@@ -252,6 +253,7 @@ fn convert_event_items(
     transaction_store: &TransactionStore,
 ) -> std::result::Result<Vec<EventItem>, ConvertError> {
     let mut items = Vec::with_capacity(events.len());
+    let mut raw_txs: Vec<(u64, u32, Arc<hypersync_client::simple_types::Transaction>)> = Vec::new();
     for event in events {
         let mut missing: Vec<String> = Vec::new();
 
@@ -303,10 +305,11 @@ fn convert_event_items(
         let (log_index, src_address, topic0, topic_count, block_number, transaction_index) =
             flatten_log_for_js(&event.log, should_checksum).context("mapping log")?;
 
-        // Move the raw transaction into the store keyed by (block, txIndex). Its
-        // fields materialise on demand; logs sharing a tx collapse to one entry.
+        // Collect the raw transaction keyed by (block, txIndex) for a single
+        // bulk insert below. Its fields materialise on demand; logs sharing a tx
+        // collapse to one stored entry.
         if let Some(tx) = event.transaction {
-            transaction_store.insert_evm_raw(block_number as u64, transaction_index as u32, tx);
+            raw_txs.push((block_number as u64, transaction_index as u32, tx));
         }
 
         items.push(EventItem {
@@ -319,6 +322,7 @@ fn convert_event_items(
             params,
         });
     }
+    transaction_store.insert_evm_raw_bulk(raw_txs);
     Ok(items)
 }
 

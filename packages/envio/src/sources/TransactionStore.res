@@ -34,6 +34,13 @@ let mask = (eventConfigs: array<Internal.eventConfig>, ~codes: dict<int>): float
   selected->Utils.Set.toArray->Array.reduce(0., (mask, code) => mask +. pow2(code))
 }
 
+// Build an ecosystem's mask function from its ordered field-name array. The
+// field codes are derived once and closed over.
+let makeMaskFn = (fields: array<string>): (array<Internal.eventConfig> => float) => {
+  let codes = fieldCodes(fields)
+  eventConfigs => eventConfigs->mask(~codes)
+}
+
 // Drain another store (a fetch-response page) into this one.
 @send external merge: (t, t) => unit = "merge"
 

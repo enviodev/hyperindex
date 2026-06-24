@@ -2,8 +2,6 @@ type name = | @as("evm") Evm | @as("fuel") Fuel | @as("svm") Svm
 
 type t = {
   name: name,
-  blockFields: array<string>,
-  transactionFields: array<string>,
   blockNumberName: string,
   blockTimestampName: string,
   blockHashName: string,

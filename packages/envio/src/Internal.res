@@ -58,7 +58,6 @@ type evmTransactionField =
   | @as("root") Root
   | @as("status") Status
   | @as("yParity") YParity
-  | @as("accessList") AccessList
   | @as("maxFeePerBlobGas") MaxFeePerBlobGas
   | @as("blobVersionedHashes") BlobVersionedHashes
   | @as("type") Type
@@ -67,6 +66,7 @@ type evmTransactionField =
   | @as("l1GasUsed") L1GasUsed
   | @as("l1FeeScalar") L1FeeScalar
   | @as("gasUsedForL1") GasUsedForL1
+  | @as("accessList") AccessList
   | @as("authorizationList") AuthorizationList
 
 let allEvmBlockFields: array<evmBlockField> = [
@@ -123,7 +123,6 @@ let allEvmTransactionFields: array<evmTransactionField> = [
   Root,
   Status,
   YParity,
-  AccessList,
   MaxFeePerBlobGas,
   BlobVersionedHashes,
   Type,
@@ -132,6 +131,7 @@ let allEvmTransactionFields: array<evmTransactionField> = [
   L1GasUsed,
   L1FeeScalar,
   GasUsedForL1,
+  AccessList,
   AuthorizationList,
 ]
 let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)

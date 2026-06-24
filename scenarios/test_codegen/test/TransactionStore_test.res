@@ -37,6 +37,24 @@ describe("TransactionStore field-code contract", () => {
     t.expect(Svm.transactionFields).toEqual(Core.getAddon().svmTransactionFieldNames())
   })
 
+  // `Internal` holds a third copy of each field list (the schema enums); pin it
+  // to the same Rust ordering so all three stay aligned.
+  it("EVM Internal.allEvmTransactionFields match the Rust EvmTxField order", t => {
+    t.expect(
+      Internal.allEvmTransactionFields->(
+        Utils.magic: array<Internal.evmTransactionField> => array<string>
+      ),
+    ).toEqual(Core.getAddon().evmTransactionFieldNames())
+  })
+
+  it("SVM Internal.allSvmTransactionFields match the Rust SvmTxField order", t => {
+    t.expect(
+      Internal.allSvmTransactionFields->(
+        Utils.magic: array<Internal.svmTransactionField> => array<string>
+      ),
+    ).toEqual(Core.getAddon().svmTransactionFieldNames())
+  })
+
   it("fieldCodes maps each field name to its bit index", t => {
     t.expect(TransactionStore.fieldCodes(["transactionIndex", "hash", "from"])).toEqual(
       Dict.fromArray([("transactionIndex", 0), ("hash", 1), ("from", 2)]),
