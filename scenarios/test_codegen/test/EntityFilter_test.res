@@ -347,6 +347,93 @@ describe("EntityFilter.makeMatcher", () => {
     })
     t.expect(actual).toEqual(cases->Array.map(((_filter, expected)) => expected))
   })
+
+  it("Treats a nullish value on an object-typed field as matching nothing", t => {
+    // Without the nullish guard these would call BigDecimal/Date/Json methods
+    // on undefined and throw rather than return false.
+    let nullableTable = Table.mkTable(
+      "t",
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkField("price", BigDecimal({}), ~isIndex=true, ~isNullable=true, ~fieldSchema=S.string),
+        Table.mkField("created", Date, ~isIndex=true, ~isNullable=true, ~fieldSchema=S.string),
+        Table.mkField("tags", String, ~isArray=true, ~isIndex=true, ~isNullable=true, ~fieldSchema=S.string),
+      ],
+    )
+    let entity = Dict.make()
+    entity->Dict.set("id", "x"->u)
+    let run = filter => (filter->EntityFilter.makeMatcher(~table=nullableTable))(entity)
+    t.expect([
+      run(Eq({fieldName: "price", fieldValue: u(BigDecimal.fromInt(1))})),
+      run(Gt({fieldName: "price", fieldValue: u(BigDecimal.fromInt(1))})),
+      run(Eq({fieldName: "created", fieldValue: u(Date.fromTime(0.))})),
+      run(Eq({fieldName: "tags", fieldValue: u(["x"])})),
+    ]).toEqual([false, false, false, false])
+  })
+
+  it("Compares Json fields structurally rather than by reference", t => {
+    let jsonTable = Table.mkTable(
+      "t",
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkField("meta", Json, ~isIndex=true, ~fieldSchema=S.string),
+      ],
+    )
+    let entity = Dict.make()
+    entity->Dict.set("id", "x"->u)
+    entity->Dict.set("meta", {"a": 1, "b": [2, 3]}->u)
+    let run = value =>
+      (Eq({fieldName: "meta", fieldValue: value->u})->EntityFilter.makeMatcher(~table=jsonTable))(entity)
+    t.expect([
+      // A distinct object with equal contents matches; a differing one does not.
+      run({"a": 1, "b": [2, 3]}),
+      run({"a": 1, "b": [2, 4]}),
+    ]).toEqual([true, false])
+  })
+
+  it("Throws when an And filter has no nested filters", t => {
+    let matcher = EntityFilter.And({filters: []})->EntityFilter.makeMatcher(~table)
+    t.expect(() => matcher(Dict.make())).toThrowError(
+      `The "and" filter must contain at least one nested filter.`,
+    )
+  })
+})
+
+describe("EntityFilter.toString", () => {
+  let u = value => value->toUnknown
+
+  it("Serializes each value type into a stable, unambiguous cache key", t => {
+    t.expect(
+      [
+        EntityFilter.Eq({fieldName: "a", fieldValue: u("hello")}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(5)}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(BigInt.fromInt(10))}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(true)}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(BigDecimal.fromFloat(1.5))}),
+        EntityFilter.Gt({fieldName: "a", fieldValue: u(5)}),
+        EntityFilter.Lt({fieldName: "a", fieldValue: u(5)}),
+        EntityFilter.In({fieldName: "a", fieldValue: [u(1), u(2)]}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(["x", "y"])}),
+        EntityFilter.And({
+          filters: [
+            Gt({fieldName: "a", fieldValue: u(1)}),
+            Lt({fieldName: "b", fieldValue: u(2)}),
+          ],
+        }),
+      ]->Array.map(EntityFilter.toString),
+    ).toEqual([
+      "a:Eq:hello",
+      "a:Eq:5",
+      "a:Eq:10",
+      "a:Eq:true",
+      "a:Eq:1.5",
+      "a:Gt:5",
+      "a:Lt:5",
+      "a:In:[1,2]",
+      "a:Eq:[x,y]",
+      "And(a:Gt:1,b:Lt:2)",
+    ])
+  })
 })
 
 describe("EntityFilter.mapValues", () => {
