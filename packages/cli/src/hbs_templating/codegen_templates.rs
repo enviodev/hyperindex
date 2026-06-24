@@ -2232,8 +2232,10 @@ type testIndexer = {{
                                 .join("; ");
                             format!("{{ {fields} }}")
                         };
-                        let transaction_ts =
-                            svm_transaction_ts_type(&svm_kind.selected_transaction_fields, &event.name);
+                        let transaction_ts = svm_transaction_ts_type(
+                            &svm_kind.selected_transaction_fields,
+                            &event.name,
+                        );
                         instruction_entries.push(format!(
                             "          \"{instr}\": {{ readonly args: {args}; readonly accounts: {accs}; readonly transaction: {tx} }};",
                             instr = event.name,
