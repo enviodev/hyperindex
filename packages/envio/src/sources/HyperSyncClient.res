@@ -280,7 +280,9 @@ module EventItems = {
     srcAddress: Address.t,
     topic0: EvmTypes.Hex.t,
     topicCount: int,
-    block: ResponseTypes.block,
+    // Number of the block this log belongs to; the block itself is resolved from
+    // `response.blocks`, deduplicated across items sharing a block.
+    blockNumber: int,
     // Key (with the block number) into the transaction store; the transaction
     // is resolved from the store on demand.
     transactionIndex: int,
@@ -290,6 +292,8 @@ module EventItems = {
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
+    // One entry per block number referenced by `items`.
+    blocks: array<ResponseTypes.block>,
     items: array<item>,
     rollbackGuard: option<ResponseTypes.rollbackGuard>,
   }
