@@ -110,20 +110,21 @@ impl EvmHypersyncClient {
         // to the field selection so callers don't have to know the contract.
         ensure_required_log_fields(&mut query.field_selection.log);
 
-        let requested_block_fields = query.field_selection.block.clone().unwrap_or_default();
         let requested_transaction_fields = query
             .field_selection
             .transaction
             .clone()
             .unwrap_or_default();
 
-        // Force-add the block fields the indexer always needs: number keys the
-        // page's blocks and lets items reference them, while the consumer reads
-        // timestamp and hash off every block unconditionally. Enforcing them here
-        // keeps the guarantee local to the path that relies on it.
-        for field in [BlockField::Number, BlockField::Timestamp, BlockField::Hash] {
+        // Force-add the always-required block fields, then snapshot the full
+        // block selection as the set to validate. Validating the forced fields
+        // (not just the user's) is what guarantees the consumer's unconditional
+        // number/timestamp/hash reads — the presence check, not the request, is
+        // the guarantee, so it must cover them here rather than trusting config.
+        for &field in REQUIRED_BLOCK_FIELDS {
             add_field(&mut query.field_selection.block, field);
         }
+        let validated_block_fields = query.field_selection.block.clone().unwrap_or_default();
         // Transactions are accumulated into the store keyed by
         // (blockNumber, transactionIndex), so those keys must come back on each
         // transaction row whenever any transaction field is requested.
@@ -159,7 +160,7 @@ impl EvmHypersyncClient {
                 response.data.logs,
                 &self.decoder,
                 self.enable_checksum_addresses,
-                &requested_block_fields,
+                &validated_block_fields,
                 &requested_transaction_fields,
                 &transaction_store,
             )
@@ -297,7 +298,7 @@ fn process_response(
     logs: Vec<Vec<simple_types::Log>>,
     decoder: &DecoderCore,
     should_checksum: bool,
-    requested_block_fields: &[BlockField],
+    validated_block_fields: &[BlockField],
     requested_transaction_fields: &[TransactionField],
     transaction_store: &TransactionStore,
 ) -> std::result::Result<(Vec<EventItem>, Vec<Block>), ConvertError> {
@@ -331,9 +332,10 @@ fn process_response(
         }
     }
 
-    // Validate the requested block fields once per distinct block.
+    // Validate every block field we requested — the user's selection plus the
+    // always-required number/timestamp/hash — once per distinct block.
     for block in &response_blocks {
-        for &field in requested_block_fields {
+        for &field in validated_block_fields {
             if let Some(name) = block_field_missing(block, field) {
                 push_unique(&mut missing, format!("block.{}", name));
             }
@@ -343,7 +345,7 @@ fn process_response(
     // Coverage: every log must resolve to its block (when block fields were
     // requested) and its transaction (when transaction fields were requested).
     for log in logs.iter().flatten() {
-        if !requested_block_fields.is_empty() {
+        if !validated_block_fields.is_empty() {
             let present = log
                 .block_number
                 .is_some_and(|n| present_block_numbers.contains(&u64::from(n)));
@@ -573,6 +575,13 @@ fn transaction_field_missing(
     }
 }
 
+/// Block fields the indexer always needs: `number` keys the page's blocks and
+/// lets items reference them; the consumer reads `timestamp` and `hash` off
+/// every block unconditionally. Force-added to the query and validated for
+/// presence regardless of the user's selection.
+const REQUIRED_BLOCK_FIELDS: &[BlockField] =
+    &[BlockField::Number, BlockField::Timestamp, BlockField::Hash];
+
 fn ensure_required_log_fields(selection: &mut Option<Vec<LogField>>) {
     use std::collections::BTreeSet;
     const REQUIRED: &[LogField] = &[
@@ -654,6 +663,37 @@ mod tests {
             &empty_decoder(),
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
+            &[],
+            &TransactionStore::new(),
+        )
+        .err()
+        .expect("expected MissingFields error");
+
+        match err {
+            ConvertError::MissingFields(fields) => {
+                assert_eq!(fields, vec!["block.timestamp".to_string()])
+            }
+            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn forced_block_fields_validated_even_when_user_requested_none() {
+        // get_event_items force-adds REQUIRED_BLOCK_FIELDS and validates that
+        // forced set, so number/timestamp/hash are guaranteed present even when
+        // the user's config selected no block fields. Here the user requested
+        // nothing yet a missing timestamp is still reported.
+        let mut block = simple_types::Block::default();
+        block.number = Some(1);
+        block.hash = Some(Default::default());
+        // timestamp left None
+        let err = process_response(
+            vec![vec![block]],
+            vec![],
+            vec![vec![full_log(1)]],
+            &empty_decoder(),
+            false,
+            REQUIRED_BLOCK_FIELDS,
             &[],
             &TransactionStore::new(),
         )
