@@ -14,7 +14,7 @@ pub(crate) mod types;
 
 use config::ClientConfig;
 use decode::DecoderCore;
-use query::{BlockField, FieldSelection, LogField, Query, TransactionField};
+use query::{BlockField, LogField, Query, TransactionField};
 use types::{encode_address, Block, EventParamsInput, ParamValue, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
@@ -117,11 +117,9 @@ impl EvmHypersyncClient {
             .clone()
             .unwrap_or_default();
 
-        // Join logs to their blocks ourselves rather than going through the
-        // client's event API. The block strategy decides whether the join key
-        // can be lifted off the log (block.number) or needs the block fetched.
-        let block_join = JoinStrategy::for_block(&requested_block_fields);
-        apply_block_join(&mut query.field_selection, block_join);
+        // Force-add block.number so the page's blocks can be keyed and the items
+        // can reference them; every EVM event selection includes it already.
+        add_field(&mut query.field_selection.block, BlockField::Number);
         // Transactions are accumulated into the store keyed by
         // (blockNumber, transactionIndex), so those keys must come back on each
         // transaction row whenever any transaction field is requested.
@@ -157,7 +155,6 @@ impl EvmHypersyncClient {
                 response.data.logs,
                 &self.decoder,
                 self.enable_checksum_addresses,
-                block_join,
                 &requested_block_fields,
                 &requested_transaction_fields,
                 &transaction_store,
@@ -270,49 +267,10 @@ fn convert_response(
     })
 }
 
-/// How a log gets joined to its block. Mirrors the client's internal
-/// event-join: when the only requested field is the join key itself
-/// (`block.number`) we lift it off the log instead of fetching the block.
-#[derive(Clone, Copy)]
-enum JoinStrategy {
-    /// No block fields requested — the page carries no blocks.
-    NotSelected,
-    /// Only `block.number` requested; synthesize the block from the log.
-    OnlyLogJoinField,
-    /// Other fields requested; fetch the block and match it to the log by number.
-    FullJoin,
-}
-
-impl JoinStrategy {
-    fn for_block(fields: &[BlockField]) -> Self {
-        match fields {
-            [] => Self::NotSelected,
-            [BlockField::Number] => Self::OnlyLogJoinField,
-            _ => Self::FullJoin,
-        }
-    }
-}
-
 fn add_field<T: PartialEq>(selection: &mut Option<Vec<T>>, field: T) {
     let fields = selection.get_or_insert_with(Vec::new);
     if !fields.contains(&field) {
         fields.push(field);
-    }
-}
-
-fn remove_field<T: PartialEq>(selection: &mut Option<Vec<T>>, field: T) {
-    if let Some(fields) = selection {
-        fields.retain(|f| *f != field);
-    }
-}
-
-// log.blockNumber is already force-selected by `ensure_required_log_fields`, so
-// only the block table itself needs adjusting here.
-fn apply_block_join(selection: &mut FieldSelection, strategy: JoinStrategy) {
-    match strategy {
-        JoinStrategy::NotSelected => {}
-        JoinStrategy::OnlyLogJoinField => remove_field(&mut selection.block, BlockField::Number),
-        JoinStrategy::FullJoin => add_field(&mut selection.block, BlockField::Number),
     }
 }
 
@@ -335,20 +293,13 @@ fn process_response(
     logs: Vec<Vec<simple_types::Log>>,
     decoder: &DecoderCore,
     should_checksum: bool,
-    block_join: JoinStrategy,
     requested_block_fields: &[BlockField],
     requested_transaction_fields: &[TransactionField],
     transaction_store: &TransactionStore,
 ) -> std::result::Result<(Vec<EventItem>, Vec<Block>), ConvertError> {
     // The server returns one block per number; items reference them by number,
-    // so no per-block sharing is needed — keep them owned and track which
-    // numbers are present for the per-log coverage check below.
-    let response_blocks: Vec<simple_types::Block> = if matches!(block_join, JoinStrategy::FullJoin)
-    {
-        blocks.into_iter().flatten().collect()
-    } else {
-        Vec::new()
-    };
+    // so keep them owned and track which numbers are present for coverage.
+    let response_blocks: Vec<simple_types::Block> = blocks.into_iter().flatten().collect();
     let present_block_numbers: HashSet<u64> =
         response_blocks.iter().filter_map(|b| b.number).collect();
 
@@ -388,7 +339,7 @@ fn process_response(
     // Coverage: every log must resolve to its block (when block fields were
     // requested) and its transaction (when transaction fields were requested).
     for log in logs.iter().flatten() {
-        if matches!(block_join, JoinStrategy::FullJoin) {
+        if !requested_block_fields.is_empty() {
             let present = log
                 .block_number
                 .is_some_and(|n| present_block_numbers.contains(&u64::from(n)));
@@ -413,38 +364,12 @@ fn process_response(
         return Err(ConvertError::MissingFields(missing));
     }
 
-    // Deduplicated blocks for the page; items reference them by number.
-    let out_blocks: Vec<Block> = match block_join {
-        JoinStrategy::NotSelected => Vec::new(),
-        JoinStrategy::FullJoin => {
-            let mut blocks = response_blocks
-                .iter()
-                .map(|b| Block::from_simple(b, should_checksum))
-                .collect::<Result<Vec<_>>>()
-                .context("mapping blocks")?;
-            blocks.sort_by_key(|b| b.number);
-            blocks
-        }
-        JoinStrategy::OnlyLogJoinField => {
-            let mut seen: HashSet<u64> = HashSet::new();
-            let mut blocks = Vec::new();
-            for log in logs.iter().flatten() {
-                if let Some(number) = log.block_number {
-                    if seen.insert(u64::from(number)) {
-                        blocks.push(Block::from_simple(
-                            &simple_types::Block {
-                                number: Some(u64::from(number)),
-                                ..Default::default()
-                            },
-                            should_checksum,
-                        )?);
-                    }
-                }
-            }
-            blocks.sort_by_key(|b| b.number);
-            blocks
-        }
-    };
+    // Blocks for the page (one per number); items reference them by number.
+    let out_blocks: Vec<Block> = response_blocks
+        .iter()
+        .map(|b| Block::from_simple(b, should_checksum))
+        .collect::<Result<Vec<_>>>()
+        .context("mapping blocks")?;
 
     let mut items = Vec::with_capacity(logs.iter().map(Vec::len).sum());
     for log in logs.into_iter().flatten() {
@@ -698,7 +623,6 @@ mod tests {
             vec![vec![simple_types::Log::default()]],
             &empty_decoder(),
             false,
-            JoinStrategy::FullJoin,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
             &TransactionStore::new(),
@@ -725,7 +649,6 @@ mod tests {
             vec![vec![full_log(1)]],
             &empty_decoder(),
             false,
-            JoinStrategy::FullJoin,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
             &TransactionStore::new(),
@@ -756,7 +679,6 @@ mod tests {
             vec![vec![full_log(1)]],
             &empty_decoder(),
             false,
-            JoinStrategy::FullJoin,
             &[
                 BlockField::Number,
                 BlockField::Hash,
@@ -787,7 +709,6 @@ mod tests {
             vec![vec![full_log(1)]],
             &empty_decoder(),
             false,
-            JoinStrategy::FullJoin,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::Hash],
             &TransactionStore::new(),
@@ -817,7 +738,6 @@ mod tests {
             vec![vec![full_log(1)]],
             &empty_decoder(),
             false,
-            JoinStrategy::FullJoin,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::Hash],
             &TransactionStore::new(),
@@ -854,7 +774,6 @@ mod tests {
             vec![vec![full_log(7)]],
             &empty_decoder(),
             false,
-            JoinStrategy::FullJoin,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::BlockNumber],
             &store,
