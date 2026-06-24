@@ -74,7 +74,7 @@ describe("HyperSync client getEventItems (live)", () => {
           usdcAddress->Address.toString->String.toLowerCase
       ),
       "everyBlockInRange": res.items->Array.every(item => {
-        let n = item.block.number->Option.getUnsafe
+        let n = item.blockNumber
         n >= fromBlock && n <= toBlock
       }),
       "everyParamsDecoded": res.items->Array.every(item =>
