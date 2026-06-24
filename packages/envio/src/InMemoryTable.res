@@ -103,7 +103,6 @@ module Entity = {
 
   let updateIndices = (self: t, ~entity: Internal.entity) => {
     let entityId = entity->getEntityIdUnsafe
-    let entityAsDict = entity->(Utils.magic: Internal.entity => dict<unknown>)
 
     //Remove any invalid filters on entity, reusing each filter's stored matcher
     switch self.filtersByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
@@ -113,7 +112,7 @@ module Entity = {
         let stillMatches = switch self.filterIndices->Utils.Dict.dangerouslyGetNonOption(
           filter->EntityFilter.toString,
         ) {
-        | Some((_filter, matcher, _relatedEntityIds)) => matcher(entityAsDict)
+        | Some((_filter, matcher, _relatedEntityIds)) => matcher(entity)
         | None => false
         }
         if !stillMatches {
@@ -123,7 +122,7 @@ module Entity = {
     }
 
     self.filterIndices->Utils.Dict.forEach(((filter, matcher, relatedEntityIds)) => {
-      if matcher(entityAsDict) {
+      if matcher(entity) {
         //Add entity id to the filter index and the filter to entity filters
         relatedEntityIds->Utils.Set.add(entityId)->ignore
         self->getOrCreateEntityFilters(~entityId)->Utils.Set.add(filter)->ignore
@@ -237,8 +236,7 @@ module Entity = {
       inMemTable.latestEntityChangeById->Utils.Dict.forEach(change => {
         switch change->mapChangeToEntity {
         | Some(entity) =>
-          let entityAsDict = entity->(Utils.magic: Internal.entity => dict<unknown>)
-          if matcher(entityAsDict) {
+          if matcher(entity) {
             let entityId = entity->getEntityIdUnsafe
             let _ = inMemTable->getOrCreateEntityFilters(~entityId)->Utils.Set.add(filter)
             let _ = relatedEntityIds->Utils.Set.add(entityId)

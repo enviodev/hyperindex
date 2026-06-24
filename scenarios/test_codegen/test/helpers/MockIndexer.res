@@ -172,7 +172,7 @@ module Storage = {
             )) => entityConfig.table.tableName === table.tableName) {
             | Some((_, rows)) =>
               let matcher = filter->EntityFilter.makeMatcher(~table)
-              rows->Array.filter(row => matcher(row->(Utils.magic: 'entity => dict<unknown>)))
+              rows->Array.filter(row => matcher(row->(Utils.magic: 'entity => Internal.entity)))
             | None => []
             }
             Promise.resolve(rows->(Utils.magic: array<'entity> => array<unknown>))

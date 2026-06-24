@@ -316,7 +316,11 @@ let merge = (filters: array<t>) =>
 // A predicate specialized to a single filter. The field's comparison is
 // resolved once from the table config, so per-entity matching avoids both the
 // operator dispatch and the polymorphic Caml_obj compare.
-type matcher = dict<unknown> => bool
+type matcher = Internal.entity => bool
+
+// Reads a field off an entity by its API name. Indexed/queryable fields hold
+// raw runtime values, so the result is compared directly.
+@get_index external getField: (Internal.entity, string) => unknown = ""
 
 // Compares (entityValue, filterValue) raw runtime values for one field. A
 // nullish entity value (a missing or null column) matches nothing, mirroring
@@ -436,17 +440,17 @@ let rec makeMatcher = (filter: t, ~table: Table.table): matcher => {
   switch filter {
   | Eq({fieldName, fieldValue}) =>
     let eq = (fieldName->fieldCompare).eq
-    entity => eq(entity->Dict.getUnsafe(fieldName), fieldValue)
+    entity => eq(entity->getField(fieldName), fieldValue)
   | Gt({fieldName, fieldValue}) =>
     let gt = (fieldName->fieldCompare).gt
-    entity => gt(entity->Dict.getUnsafe(fieldName), fieldValue)
+    entity => gt(entity->getField(fieldName), fieldValue)
   | Lt({fieldName, fieldValue}) =>
     let lt = (fieldName->fieldCompare).lt
-    entity => lt(entity->Dict.getUnsafe(fieldName), fieldValue)
+    entity => lt(entity->getField(fieldName), fieldValue)
   | In({fieldName, fieldValue}) =>
     let eq = (fieldName->fieldCompare).eq
     entity => {
-      let entityFieldValue = entity->Dict.getUnsafe(fieldName)
+      let entityFieldValue = entity->getField(fieldName)
       fieldValue->Array.some(value => eq(entityFieldValue, value))
     }
   | And({filters: []}) =>

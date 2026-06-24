@@ -70,8 +70,7 @@ let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFi
     entityDict
     ->Dict.valuesToArray
     ->Array.forEach(entity => {
-      let entityAsDict = entity->(Utils.magic: Internal.entity => dict<unknown>)
-      if matcher(entityAsDict) {
+      if matcher(entity) {
         // Serialize entity back to JSON for worker thread
         let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
         results->Array.push(jsonEntity)->ignore

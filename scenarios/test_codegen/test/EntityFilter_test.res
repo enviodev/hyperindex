@@ -1,6 +1,7 @@
 open Vitest
 
 external toUnknown: 'a => unknown = "%identity"
+external asEntity: dict<unknown> => Internal.entity = "%identity"
 
 describe("EntityFilter.toOperationKey", () => {
   it("Replaces filter values with $N placeholders", t => {
@@ -275,7 +276,7 @@ describe("EntityFilter.makeMatcher", () => {
     | Some(nickname) => entity->Dict.set("nickname", nickname->u)
     | None => ()
     }
-    entity
+    entity->asEntity
   }
 
   // Columns chosen so each filter below partitions the three rows distinctly.
@@ -362,7 +363,7 @@ describe("EntityFilter.makeMatcher", () => {
     )
     let entity = Dict.make()
     entity->Dict.set("id", "x"->u)
-    let run = filter => (filter->EntityFilter.makeMatcher(~table=nullableTable))(entity)
+    let run = filter => (filter->EntityFilter.makeMatcher(~table=nullableTable))(entity->asEntity)
     t.expect([
       run(Eq({fieldName: "price", fieldValue: u(BigDecimal.fromInt(1))})),
       run(Gt({fieldName: "price", fieldValue: u(BigDecimal.fromInt(1))})),
@@ -383,7 +384,9 @@ describe("EntityFilter.makeMatcher", () => {
     entity->Dict.set("id", "x"->u)
     entity->Dict.set("meta", {"a": 1, "b": [2, 3]}->u)
     let run = value =>
-      (Eq({fieldName: "meta", fieldValue: value->u})->EntityFilter.makeMatcher(~table=jsonTable))(entity)
+      (Eq({fieldName: "meta", fieldValue: value->u})->EntityFilter.makeMatcher(~table=jsonTable))(
+        entity->asEntity,
+      )
     t.expect([
       // A distinct object with equal contents matches; a differing one does not.
       run({"a": 1, "b": [2, 3]}),
@@ -393,7 +396,7 @@ describe("EntityFilter.makeMatcher", () => {
 
   it("Throws when an And filter has no nested filters", t => {
     let matcher = EntityFilter.And({filters: []})->EntityFilter.makeMatcher(~table)
-    t.expect(() => matcher(Dict.make())).toThrowError(
+    t.expect(() => matcher(Dict.make()->asEntity)).toThrowError(
       `The "and" filter must contain at least one nested filter.`,
     )
   })
