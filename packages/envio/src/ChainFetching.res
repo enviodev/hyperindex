@@ -326,8 +326,8 @@ let fetchChain = async (
 
     // Accumulated across all queries dispatched in this tick so their per-query
     // results collapse into a single completion log instead of one per query.
-    let fetchedPartitions = []
-    let fetchedNumEvents = ref(0)
+    let fetchedByPartition = Dict.make()
+    let timeRef = Hrtime.makeTimer()
 
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
@@ -363,8 +363,14 @@ let fetchChain = async (
               ~scheduleProcessing,
               ~scheduleRollback,
             )
-            fetchedPartitions->Array.push(query.partitionId)
-            fetchedNumEvents := fetchedNumEvents.contents + response.parsedQueueItems->Array.length
+            fetchedByPartition->Dict.set(
+              query.partitionId,
+              {
+                "fromBlock": response.fromBlockQueried,
+                "toBlock": response.latestFetchedBlockNumber,
+                "numEvents": response.parsedQueueItems->Array.length,
+              },
+            )
           } catch {
           | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
           }
@@ -372,12 +378,12 @@ let fetchChain = async (
         ~action,
         ~stateId,
       )
-      if fetchedPartitions->Array.length > 0 {
+      if fetchedByPartition->Dict.keysToArray->Array.length > 0 {
         Logging.trace({
           "msg": "Finished querying",
           "chainId": chain->ChainMap.Chain.toChainId,
-          "partitions": fetchedPartitions,
-          "numEvents": fetchedNumEvents.contents,
+          "partitions": fetchedByPartition,
+          "durationMs": timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
         })
       }
     } catch {
