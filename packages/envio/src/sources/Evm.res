@@ -40,7 +40,6 @@ let transactionFields = [
   "root",
   "status",
   "yParity",
-  "chainId",
   "maxFeePerBlobGas",
   "blobVersionedHashes",
   "type",

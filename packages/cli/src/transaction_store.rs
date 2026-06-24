@@ -9,10 +9,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{CStr, CString};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use hypersync_client::format::Hex;
 use hypersync_client::simple_types;
 use hypersync_client_solana::simple_types as solana_simple;
@@ -63,17 +63,16 @@ pub enum EvmTxField {
     Root = 19,
     Status = 20,
     YParity = 21,
-    ChainId = 22,
-    MaxFeePerBlobGas = 23,
-    BlobVersionedHashes = 24,
-    Type = 25,
-    L1Fee = 26,
-    L1GasPrice = 27,
-    L1GasUsed = 28,
-    L1FeeScalar = 29,
-    GasUsedForL1 = 30,
-    AccessList = 31,
-    AuthorizationList = 32,
+    MaxFeePerBlobGas = 22,
+    BlobVersionedHashes = 23,
+    Type = 24,
+    L1Fee = 25,
+    L1GasPrice = 26,
+    L1GasUsed = 27,
+    L1FeeScalar = 28,
+    GasUsedForL1 = 29,
+    AccessList = 30,
+    AuthorizationList = 31,
 }
 
 impl EvmTxField {
@@ -104,7 +103,6 @@ impl EvmTxField {
             Root => "root",
             Status => "status",
             YParity => "yParity",
-            ChainId => "chainId",
             MaxFeePerBlobGas => "maxFeePerBlobGas",
             BlobVersionedHashes => "blobVersionedHashes",
             Type => "type",
@@ -298,107 +296,107 @@ fn decode_evm_columns(
         if mask & (1u64 << (field as u32)) == 0 {
             continue;
         }
-        // Exhaustive match: adding an `EvmTxField` variant fails to compile until
-        // it is decoded here.
-        let column = match field {
-            EvmTxField::TransactionIndex => Column::I64(fill(records, |tx| {
-                Ok(tx
-                    .transaction_index
-                    .map(|n| i64::try_from(u64::from(n)))
-                    .transpose()?)
-            })?),
-            EvmTxField::Hash => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.hash)))?),
-            EvmTxField::From => Column::Str(fill(records, |tx| {
-                Ok(map_address_string(&tx.from, should_checksum))
-            })?),
-            EvmTxField::To => Column::Str(fill(records, |tx| {
-                Ok(map_address_string(&tx.to, should_checksum))
-            })?),
-            EvmTxField::Gas => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas)))?),
-            EvmTxField::GasPrice => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_price)))?),
-            EvmTxField::MaxPriorityFeePerGas => Column::Big(fill(records, |tx| {
-                Ok(map_bigint(&tx.max_priority_fee_per_gas))
-            })?),
-            EvmTxField::MaxFeePerGas => {
-                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.max_fee_per_gas)))?)
-            }
-            EvmTxField::CumulativeGasUsed => {
-                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.cumulative_gas_used)))?)
-            }
-            EvmTxField::EffectiveGasPrice => {
-                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.effective_gas_price)))?)
-            }
-            EvmTxField::GasUsed => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_used)))?),
-            EvmTxField::Input => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.input)))?),
-            EvmTxField::Nonce => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.nonce)))?),
-            EvmTxField::Value => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.value)))?),
-            EvmTxField::V => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.v)))?),
-            EvmTxField::R => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.r)))?),
-            EvmTxField::S => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.s)))?),
-            EvmTxField::ContractAddress => Column::Str(fill(records, |tx| {
-                Ok(map_address_string(&tx.contract_address, should_checksum))
-            })?),
-            EvmTxField::LogsBloom => {
-                Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.logs_bloom)))?)
-            }
-            EvmTxField::Root => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.root)))?),
-            EvmTxField::Status => {
-                Column::I64(fill(records, |tx| Ok(tx.status.map(|v| v.to_u8() as i64)))?)
-            }
-            EvmTxField::YParity => {
-                Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.y_parity)))?)
-            }
-            EvmTxField::ChainId => Column::I64(fill(records, |tx| {
-                Ok(tx
-                    .chain_id
-                    .as_ref()
-                    .map(|n| i64::try_from(ruint::aliases::U256::from_be_slice(n)))
-                    .transpose()?)
-            })?),
-            EvmTxField::MaxFeePerBlobGas => Column::Big(fill(records, |tx| {
-                Ok(map_bigint(&tx.max_fee_per_blob_gas))
-            })?),
-            EvmTxField::BlobVersionedHashes => Column::StrVec(fill(records, |tx| {
-                Ok(tx
-                    .blob_versioned_hashes
-                    .as_ref()
-                    .map(|arr| arr.iter().map(|h| h.encode_hex()).collect()))
-            })?),
-            EvmTxField::Type => Column::I64(fill(records, |tx| {
-                Ok(tx.type_.map(|v| u8::from(v) as i64))
-            })?),
-            EvmTxField::L1Fee => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_fee)))?),
-            EvmTxField::L1GasPrice => {
-                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_gas_price)))?)
-            }
-            EvmTxField::L1GasUsed => {
-                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_gas_used)))?)
-            }
-            EvmTxField::L1FeeScalar => Column::F64(fill(records, |tx| Ok(tx.l1_fee_scalar))?),
-            EvmTxField::GasUsedForL1 => {
-                Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_used_for_l1)))?)
-            }
-            EvmTxField::AccessList => Column::AccessList(fill(records, |tx| {
-                Ok(tx
-                    .access_list
-                    .as_ref()
-                    .map(|arr| arr.iter().map(AccessListItem::from).collect()))
-            })?),
-            EvmTxField::AuthorizationList => Column::AuthList(fill(records, |tx| {
-                tx.authorization_list
-                    .as_ref()
-                    .map(|al| {
-                        al.iter()
-                            .map(AuthorizationItem::try_from)
-                            .collect::<Result<_>>()
-                    })
-                    .transpose()
-            })?),
-        };
+        // Fail fast on a malformed field, but name it so the failure is
+        // actionable (one bad row aborts the whole batch's materialisation).
+        let column = decode_evm_field(field, records, should_checksum)
+            .with_context(|| format!("decoding EVM transaction field '{}'", field.name()))?;
         columns.push((field.name(), column));
     }
 
     Ok(Columns { len, columns })
+}
+
+/// Decode a single selected EVM field across all rows. Exhaustive match: adding
+/// an `EvmTxField` variant fails to compile until it is decoded here.
+fn decode_evm_field(
+    field: EvmTxField,
+    records: &[Option<Arc<simple_types::Transaction>>],
+    should_checksum: bool,
+) -> Result<Column> {
+    Ok(match field {
+        EvmTxField::TransactionIndex => Column::I64(fill(records, |tx| {
+            Ok(tx
+                .transaction_index
+                .map(|n| i64::try_from(u64::from(n)))
+                .transpose()?)
+        })?),
+        EvmTxField::Hash => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.hash)))?),
+        EvmTxField::From => Column::Str(fill(records, |tx| {
+            Ok(map_address_string(&tx.from, should_checksum))
+        })?),
+        EvmTxField::To => Column::Str(fill(records, |tx| {
+            Ok(map_address_string(&tx.to, should_checksum))
+        })?),
+        EvmTxField::Gas => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas)))?),
+        EvmTxField::GasPrice => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_price)))?),
+        EvmTxField::MaxPriorityFeePerGas => Column::Big(fill(records, |tx| {
+            Ok(map_bigint(&tx.max_priority_fee_per_gas))
+        })?),
+        EvmTxField::MaxFeePerGas => {
+            Column::Big(fill(records, |tx| Ok(map_bigint(&tx.max_fee_per_gas)))?)
+        }
+        EvmTxField::CumulativeGasUsed => {
+            Column::Big(fill(records, |tx| Ok(map_bigint(&tx.cumulative_gas_used)))?)
+        }
+        EvmTxField::EffectiveGasPrice => {
+            Column::Big(fill(records, |tx| Ok(map_bigint(&tx.effective_gas_price)))?)
+        }
+        EvmTxField::GasUsed => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_used)))?),
+        EvmTxField::Input => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.input)))?),
+        EvmTxField::Nonce => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.nonce)))?),
+        EvmTxField::Value => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.value)))?),
+        EvmTxField::V => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.v)))?),
+        EvmTxField::R => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.r)))?),
+        EvmTxField::S => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.s)))?),
+        EvmTxField::ContractAddress => Column::Str(fill(records, |tx| {
+            Ok(map_address_string(&tx.contract_address, should_checksum))
+        })?),
+        EvmTxField::LogsBloom => {
+            Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.logs_bloom)))?)
+        }
+        EvmTxField::Root => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.root)))?),
+        EvmTxField::Status => {
+            Column::I64(fill(records, |tx| Ok(tx.status.map(|v| v.to_u8() as i64)))?)
+        }
+        EvmTxField::YParity => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.y_parity)))?),
+        EvmTxField::MaxFeePerBlobGas => Column::Big(fill(records, |tx| {
+            Ok(map_bigint(&tx.max_fee_per_blob_gas))
+        })?),
+        EvmTxField::BlobVersionedHashes => Column::StrVec(fill(records, |tx| {
+            Ok(tx
+                .blob_versioned_hashes
+                .as_ref()
+                .map(|arr| arr.iter().map(|h| h.encode_hex()).collect()))
+        })?),
+        EvmTxField::Type => Column::I64(fill(records, |tx| {
+            Ok(tx.type_.map(|v| u8::from(v) as i64))
+        })?),
+        EvmTxField::L1Fee => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_fee)))?),
+        EvmTxField::L1GasPrice => {
+            Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_gas_price)))?)
+        }
+        EvmTxField::L1GasUsed => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_gas_used)))?),
+        EvmTxField::L1FeeScalar => Column::F64(fill(records, |tx| Ok(tx.l1_fee_scalar))?),
+        EvmTxField::GasUsedForL1 => {
+            Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_used_for_l1)))?)
+        }
+        EvmTxField::AccessList => Column::AccessList(fill(records, |tx| {
+            Ok(tx
+                .access_list
+                .as_ref()
+                .map(|arr| arr.iter().map(AccessListItem::from).collect()))
+        })?),
+        EvmTxField::AuthorizationList => Column::AuthList(fill(records, |tx| {
+            tx.authorization_list
+                .as_ref()
+                .map(|al| {
+                    al.iter()
+                        .map(AuthorizationItem::try_from)
+                        .collect::<Result<_>>()
+                })
+                .transpose()
+        })?),
+    })
 }
 
 /// A stored SVM transaction: the raw upstream transaction plus the token
@@ -491,65 +489,78 @@ enum StoredTx {
     Svm { rec: Arc<SvmStored> },
 }
 
-/// A per-block bucket. Generic so the block-keyed container below can host other
-/// record types later (e.g. one block per block number) without change.
-trait Bucket: Default {
-    fn absorb(&mut self, other: Self);
-}
-
-/// Transactions for one block, keyed by the numeric transaction index.
+/// Transactions keyed by block number, then by within-block transaction index.
+/// The outer `BTreeMap` keeps prune and rollback cheap range splits.
 #[derive(Default)]
-struct TxBucket(HashMap<u32, StoredTx>);
-
-impl Bucket for TxBucket {
-    fn absorb(&mut self, other: Self) {
-        self.0.extend(other.0);
-    }
+struct BlockTxs {
+    map: BTreeMap<u64, HashMap<u32, StoredTx>>,
 }
 
-/// Block-keyed container: `blockNumber -> bucket`. The outer `BTreeMap` makes
-/// prune and rollback cheap range operations; the bucket shape varies by record
-/// type (transactions now; blocks could reuse this with a single-record bucket).
-struct BlockKeyed<B> {
-    map: BTreeMap<u64, B>,
-}
-
-impl<B: Bucket> BlockKeyed<B> {
+impl BlockTxs {
     fn new() -> Self {
-        Self {
-            map: BTreeMap::new(),
-        }
+        Self::default()
     }
 
-    /// Drain every entry from `self` into `dst` (merging buckets per block).
+    /// Drain every entry from `self` into `dst`, merging per-block buckets.
     fn drain_into(&mut self, dst: &mut Self) {
         for (block, bucket) in std::mem::take(&mut self.map) {
-            dst.map.entry(block).or_default().absorb(bucket);
+            dst.map.entry(block).or_default().extend(bucket);
         }
     }
 
-    /// Drop blocks at or below `up_to` (already processed).
+    /// Drop blocks at or below `up_to` (already processed). `split_off` returns
+    /// the `>= up_to + 1` tail, which becomes the new map.
     fn prune(&mut self, up_to: u64) {
         self.map = self.map.split_off(&(up_to + 1));
     }
 
-    /// Drop blocks above `target` (rolled back).
+    /// Drop blocks above `target` (rolled back). `split_off` removes the
+    /// `>= target + 1` tail and we discard it, leaving `<= target` in place.
     fn rollback(&mut self, target: u64) {
         self.map.split_off(&(target + 1));
     }
 }
 
+/// Gather the stored records matching the requested keys, in input order;
+/// missing keys (or a record `pick` rejects) yield `None`. Shared by both
+/// ecosystems — only the `pick` closure (which `StoredTx` variant to take)
+/// differs.
+fn collect<T>(
+    store: &BlockTxs,
+    block_numbers: &[i64],
+    transaction_indices: &[u32],
+    pick: impl Fn(&StoredTx) -> Option<T>,
+) -> Vec<Option<T>> {
+    block_numbers
+        .iter()
+        .zip(transaction_indices)
+        .map(|(block, idx)| {
+            let block = u64::try_from(*block).ok()?;
+            store
+                .map
+                .get(&block)
+                .and_then(|b| b.get(idx))
+                .and_then(&pick)
+        })
+        .collect()
+}
+
+// Ecosystem tag selecting `materialize`'s decoder. A store is per-chain, hence
+// single-ecosystem; the tag is set on the first insert/merge so an empty store
+// never falls back to the wrong decoder.
+const ECO_UNKNOWN: u8 = 0;
+const ECO_EVM: u8 = 1;
+const ECO_SVM: u8 = 2;
+
 #[napi]
 pub struct TransactionStore {
-    inner: Mutex<BlockKeyed<TxBucket>>,
-    // Address checksumming is a per-chain setting, so it lives on the store
-    // rather than on every transaction; `merge` carries it into the persistent
-    // store. SVM ignores it.
+    inner: Mutex<BlockTxs>,
+    // Set on the first insert/merge; drives the decoder in `materialize`.
+    ecosystem: AtomicU8,
+    // Address checksumming is a per-chain EVM setting, so it lives on the store
+    // rather than on every transaction; learned once on the first merge. SVM
+    // ignores it.
     should_checksum: AtomicBool,
-    // Which columnar decoder to use. Set when an SVM page is built and carried
-    // into the persistent store on `merge`, so the choice never depends on
-    // whether a record happens to be present at materialize time.
-    is_svm: AtomicBool,
 }
 
 impl Default for TransactionStore {
@@ -563,9 +574,9 @@ impl TransactionStore {
     #[napi(factory)]
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(BlockKeyed::new()),
+            inner: Mutex::new(BlockTxs::new()),
+            ecosystem: AtomicU8::new(ECO_UNKNOWN),
             should_checksum: AtomicBool::new(false),
-            is_svm: AtomicBool::new(false),
         }
     }
 
@@ -577,25 +588,32 @@ impl TransactionStore {
         if std::ptr::eq(self, page) {
             return;
         }
-        let mut dst = self.inner.lock().unwrap();
-        let mut src = page.inner.lock().unwrap();
-        src.drain_into(&mut dst);
-        self.should_checksum.store(
-            page.should_checksum.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
-        if page.is_svm.load(Ordering::Relaxed) {
-            self.is_svm.store(true, Ordering::Relaxed);
+        {
+            let mut dst = self.inner.lock().unwrap();
+            let mut src = page.inner.lock().unwrap();
+            src.drain_into(&mut dst);
+        }
+        // Ecosystem + checksum are per-chain constants; learn them once from the
+        // first page that carries them (an empty SVM page stays `ECO_UNKNOWN`).
+        if self.ecosystem.load(Ordering::Relaxed) == ECO_UNKNOWN {
+            let page_ecosystem = page.ecosystem.load(Ordering::Relaxed);
+            if page_ecosystem != ECO_UNKNOWN {
+                self.ecosystem.store(page_ecosystem, Ordering::Relaxed);
+                self.should_checksum.store(
+                    page.should_checksum.load(Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+            }
         }
     }
 
-    /// Bulk-materialise the selected fields (one bit per `EvmTxField` code in
+    /// Bulk-materialise the selected fields (one bit per ecosystem field code in
     /// `mask`) of the given transactions, returned in columnar form. The mask is
     /// a JS number (`f64`): its exact-integer range (2^53) dwarfs the field
     /// count, and the ReScript side builds it arithmetically to dodge 32-bit JS
-    /// bitwise ops. Async so the decode runs off the JS thread; the brief lock
-    /// only collects `Arc`s. Missing keys yield an empty object. Result is
-    /// aligned with the input.
+    /// bitwise ops. Async + `block_in_place` so the bulk decode runs off the JS
+    /// thread without monopolising an async worker; the brief lock only clones
+    /// `Arc`s. Missing keys yield an empty object. Result is aligned with input.
     #[napi(ts_return_type = "Promise<object[]>")]
     pub async fn materialize(
         &self,
@@ -614,52 +632,47 @@ impl TransactionStore {
         }
         let mask = mask as u64;
 
-        // A store is per-chain, hence single-ecosystem; the `is_svm` flag picks
-        // the decoder, and the matching raw refs are collected under the lock.
-        enum Plan {
-            Evm(Vec<Option<Arc<simple_types::Transaction>>>),
-            Svm(Vec<Option<Arc<SvmStored>>>),
-        }
-
-        let plan = {
-            let inner = self.inner.lock().unwrap();
-            if self.is_svm.load(Ordering::Relaxed) {
-                Plan::Svm(
-                    block_numbers
-                        .iter()
-                        .zip(transaction_indices.iter())
-                        .map(|(block, idx)| {
-                            let block = u64::try_from(*block).ok()?;
-                            match inner.map.get(&block).and_then(|b| b.0.get(idx)) {
-                                Some(StoredTx::Svm { rec }) => Some(rec.clone()),
-                                _ => None,
-                            }
-                        })
-                        .collect(),
-                )
-            } else {
-                Plan::Evm(
-                    block_numbers
-                        .iter()
-                        .zip(transaction_indices.iter())
-                        .map(|(block, idx)| {
-                            let block = u64::try_from(*block).ok()?;
-                            match inner.map.get(&block).and_then(|b| b.0.get(idx)) {
-                                Some(StoredTx::EvmRaw { tx }) => Some(tx.clone()),
-                                _ => None,
-                            }
-                        })
-                        .collect(),
-                )
-            }
-        };
-
-        match plan {
-            Plan::Evm(records) => {
-                decode_evm_columns(&records, mask, self.should_checksum.load(Ordering::Relaxed))
+        match self.ecosystem.load(Ordering::Relaxed) {
+            ECO_EVM => {
+                let records = {
+                    let inner = self.inner.lock().unwrap();
+                    collect(
+                        &inner,
+                        &block_numbers,
+                        &transaction_indices,
+                        |stored| match stored {
+                            StoredTx::EvmRaw { tx } => Some(tx.clone()),
+                            _ => None,
+                        },
+                    )
+                };
+                let should_checksum = self.should_checksum.load(Ordering::Relaxed);
+                tokio::task::block_in_place(|| decode_evm_columns(&records, mask, should_checksum))
                     .map_err(map_err)
             }
-            Plan::Svm(records) => Ok(decode_svm_columns(&records, mask)),
+            ECO_SVM => {
+                let records = {
+                    let inner = self.inner.lock().unwrap();
+                    collect(
+                        &inner,
+                        &block_numbers,
+                        &transaction_indices,
+                        |stored| match stored {
+                            StoredTx::Svm { rec } => Some(rec.clone()),
+                            _ => None,
+                        },
+                    )
+                };
+                Ok(tokio::task::block_in_place(|| {
+                    decode_svm_columns(&records, mask)
+                }))
+            }
+            // Empty store (no ecosystem learned yet): every key is a miss, so the
+            // result is `len` empty objects regardless of the decoder.
+            _ => Ok(Columns {
+                len: block_numbers.len(),
+                columns: Vec::new(),
+            }),
         }
     }
 
@@ -687,17 +700,18 @@ impl TransactionStore {
     /// address-checksumming setting (copied into the persistent store on merge).
     pub(crate) fn with_checksum(should_checksum: bool) -> Self {
         let store = Self::new();
+        store.ecosystem.store(ECO_EVM, Ordering::Relaxed);
         store
             .should_checksum
             .store(should_checksum, Ordering::Relaxed);
         store
     }
 
-    /// Create an SVM page store. The ecosystem flag is set here (not inferred
-    /// from records) so even an empty page selects the SVM decoder after merge.
+    /// Create an SVM page store. The ecosystem is tagged here (not inferred from
+    /// records) so even an empty page selects the SVM decoder after merge.
     pub(crate) fn new_svm() -> Self {
         let store = Self::new();
-        store.is_svm.store(true, Ordering::Relaxed);
+        store.ecosystem.store(ECO_SVM, Ordering::Relaxed);
         store
     }
 
@@ -709,26 +723,26 @@ impl TransactionStore {
         transaction_index: u32,
         tx: Arc<simple_types::Transaction>,
     ) {
+        self.ecosystem.store(ECO_EVM, Ordering::Relaxed);
         self.inner
             .lock()
             .unwrap()
             .map
             .entry(block_number)
             .or_default()
-            .0
             .insert(transaction_index, StoredTx::EvmRaw { tx });
     }
 
     /// Insert a raw SVM transaction with its joined token balances (called by the
     /// SVM HyperSync source while building a page). Not exposed to JS.
     pub(crate) fn insert_svm_raw(&self, slot: u64, transaction_index: u32, rec: Arc<SvmStored>) {
+        self.ecosystem.store(ECO_SVM, Ordering::Relaxed);
         self.inner
             .lock()
             .unwrap()
             .map
             .entry(slot)
             .or_default()
-            .0
             .insert(transaction_index, StoredTx::Svm { rec });
     }
 
@@ -739,6 +753,27 @@ impl TransactionStore {
     ) -> SvmStored {
         SvmStored { tx, token_balances }
     }
+}
+
+/// Ordered EVM transaction-field names — the single source of truth the ReScript
+/// `Evm.res transactionFields` array is tested against. The order is the bit
+/// position in the selection mask, so the two must not drift.
+#[napi]
+pub fn evm_transaction_field_names() -> Vec<String> {
+    EvmTxField::VARIANTS
+        .iter()
+        .map(|f| f.name().to_string())
+        .collect()
+}
+
+/// Ordered SVM transaction-field names; `Svm.res transactionFields` is tested
+/// against this.
+#[napi]
+pub fn svm_transaction_field_names() -> Vec<String> {
+    SvmTxField::VARIANTS
+        .iter()
+        .map(|f| f.name().to_string())
+        .collect()
 }
 
 #[cfg(test)]
@@ -816,7 +851,6 @@ mod tests {
                 "root",
                 "status",
                 "yParity",
-                "chainId",
                 "maxFeePerBlobGas",
                 "blobVersionedHashes",
                 "type",

@@ -26,6 +26,10 @@ type addon = {
   hyperfuelClient: hyperfuelClientCtor,
   @as("TransactionStore")
   transactionStore: transactionStoreCtor,
+  // Ordered transaction-field names exposed for the field-code contract test
+  // (the ReScript `transactionFields` arrays must match the Rust ordinals).
+  evmTransactionFieldNames: unit => array<string>,
+  svmTransactionFieldNames: unit => array<string>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"
