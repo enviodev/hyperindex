@@ -692,7 +692,7 @@ type effect = {
   input: S.t<effectInput>,
   // The number of functions that are currently running.
   mutable activeCallsCount: int,
-  mutable prevCallStartTimerRef: Hrtime.timeRef,
+  mutable prevCallStartTimerRef: Performance.timeRef,
   rateLimit: option<rateLimitState>,
 }
 let cacheTablePrefix = "envio_effect_"

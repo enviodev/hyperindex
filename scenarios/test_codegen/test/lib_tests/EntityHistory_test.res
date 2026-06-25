@@ -905,7 +905,7 @@
 //       Assert.fail("Failed to insert mock rows")
 //     }
 
-//     let startTime = Hrtime.makeTimer()
+//     let startTime = Performance.now()
 
 //     try {
 //       let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
@@ -922,7 +922,7 @@
 //       Assert.fail("Failed to prune stale entity history")
 //     }
 
-//     let elapsedTime = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.intFromMillis
+//     let elapsedTime = Performance.secondsSince(startTime) *. 1000.
 //     Js.log2("Elapsed time", elapsedTime)
 //   })
 // })

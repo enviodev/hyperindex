@@ -254,6 +254,21 @@ let checkAndFetch = async (
     idx := idx.contents + 1
   }
   admittedByChain->Dict.forEachWithKey((queries, chainId) => {
+    let partitions = Dict.make()
+    queries->Array.forEach((query: FetchState.query) =>
+      partitions->Dict.set(
+        query.partitionId,
+        {
+          "fromBlock": query.fromBlock,
+          "targetBlock": query.toBlock,
+        },
+      )
+    )
+    Logging.trace({
+      "msg": "Started querying",
+      "chainId": chainId->Int.fromString->Option.getUnsafe,
+      "partitions": partitions,
+    })
     actionByChain->Dict.set(chainId, FetchState.Ready(queries))
     // Mark the admitted queries in flight and reserve their size against the
     // shared budget; released as each response lands in handleQueryResult.
