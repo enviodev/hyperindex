@@ -983,25 +983,30 @@ describe("Use Envio test framework to test event handlers", () => {
 
 
 
-  it("Currently filters are ignored by the test framework", async () => {
+  it("throws when a non-wildcard simulate event isn't indexed on the chain", () => {
     const indexer = createTestIndexer();
 
-    await assert.rejects(
-      indexer.process({
-        chains: {
-          1337: {
-            startBlock: 1,
-            endBlock: 100,
-            simulate: [
-              {
-                contract: "EventFiltersTest",
-                event: "FilterTestEvent",
-                params: { addr: "0x000" },
-              },
-            ],
+    // EventFiltersTest is configured on chains 100/137, not 1337, so its
+    // non-wildcard FilterTestEvent has no indexing address on 1337 and the
+    // event would otherwise be silently dropped by clientAddressFilter.
+    assert.throws(
+      () =>
+        indexer.process({
+          chains: {
+            1337: {
+              startBlock: 1,
+              endBlock: 100,
+              simulate: [
+                {
+                  contract: "EventFiltersTest",
+                  event: "FilterTestEvent",
+                  params: { addr: "0x000" },
+                },
+              ],
+            },
           },
-        },
-      }),
+        }),
+      { message: /isn't indexed on chain 1337/ }
     );
   });
 
@@ -1223,10 +1228,11 @@ describe("Use Envio test framework to test event handlers", () => {
   it("createTestIndexer throws when startBlock overlaps with previously processed blocks", async () => {
     const indexer = createTestIndexer();
 
-    // First process: block 1 with simulate event (WriteBatch sets progress to block 1)
+    // First process on chain 1337 where Gravatar is configured (so its EmptyEvent
+    // resolves to an indexed srcAddress). WriteBatch sets progress to block 100.
     await indexer.process({
       chains: {
-        1: {
+        1337: {
           startBlock: 1,
           endBlock: 100,
           simulate: [
@@ -1241,12 +1247,12 @@ describe("Use Envio test framework to test event handlers", () => {
       () =>
         indexer.process({
           chains: {
-            1: { startBlock: 50, endBlock: 150 },
+            1337: { startBlock: 50, endBlock: 150 },
           },
         }),
       {
         message:
-          "Invalid block range for chain 1: startBlock (50) must be greater than previously processed endBlock (100). Either use startBlock > 100 or create a new test indexer with createTestIndexer().",
+          "Invalid block range for chain 1337: startBlock (50) must be greater than previously processed endBlock (100). Either use startBlock > 100 or create a new test indexer with createTestIndexer().",
       }
     );
   });

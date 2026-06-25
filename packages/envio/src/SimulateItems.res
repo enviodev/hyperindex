@@ -231,15 +231,17 @@ let deriveSrcAddress = (
   }
 }
 
-// Indexing addresses to register for a chain's simulate items so the non-wildcard
-// `clientAddressFilter` (which gates on srcAddress being a known indexing address)
-// doesn't drop injected events. Wildcard events skip that check, so they're omitted.
-let indexingAddresses = (
+// A non-wildcard event is gated by `clientAddressFilter` on srcAddress ownership,
+// so a simulate item whose srcAddress isn't indexed on this chain would be
+// silently dropped (handler never runs). Fail loudly instead.
+let validateSrcAddresses = (
   ~simulateItems: array<JSON.t>,
   ~config: Config.t,
   ~chainConfig: Config.chain,
-): array<Internal.indexingAddress> => {
-  let byAddress = Dict.make()
+  ~indexingAddresses: array<Internal.indexingAddress>,
+): unit => {
+  let known = Utils.Set.make()
+  indexingAddresses->Array.forEach(ia => known->Utils.Set.add(ia.address->Address.toString)->ignore)
   simulateItems->Array.forEach(rawJson => {
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
     switch (raw->getContract, raw->getEvent) {
@@ -252,17 +254,10 @@ let indexingAddresses = (
           ~eventConfig,
           ~chainConfig,
         )
-        let key = srcAddress->Address.toString
-        switch byAddress->Utils.Dict.dangerouslyGetNonOption(key) {
-        | Some(_) => ()
-        | None =>
-          byAddress->Dict.set(
-            key,
-            {
-              Internal.address: srcAddress,
-              contractName: eventConfig.contractName,
-              registrationBlock: -1,
-            },
+        if !(known->Utils.Set.has(srcAddress->Address.toString)) {
+          JsError.throwWithMessage(
+            `simulate: ${contractName}.${eventName} resolved to address ${srcAddress->Address.toString}, which isn't indexed on chain ${chainConfig.id->Int.toString}. ` ++
+            `Provide a "srcAddress" configured or registered for ${contractName} on this chain, or use a wildcard event.`,
           )
         }
       | _ => ()
@@ -270,7 +265,6 @@ let indexingAddresses = (
     | _ => ()
     }
   })
-  byAddress->Dict.valuesToArray
 }
 
 let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Config.chain): array<

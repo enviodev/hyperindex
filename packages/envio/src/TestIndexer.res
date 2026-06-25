@@ -668,6 +668,30 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
               ~rawChainConfig,
               ~progressBlock=state.progressBlockByChain->Dict.get(chainIdStr),
             )
+            switch rawChainConfig.simulate {
+            | Some(simulateItems) =>
+              let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId))
+              let indexingAddresses = []
+              switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
+              | Some(dcDict) =>
+                dcDict
+                ->Dict.valuesToArray
+                ->Array.forEach(entity => {
+                  let dc = entity->castToEnvioAddresses
+                  if dc.chainId === chainId {
+                    indexingAddresses->Array.push(dc->toIndexingAddress)->ignore
+                  }
+                })
+              | None => ()
+              }
+              SimulateItems.validateSrcAddresses(
+                ~simulateItems,
+                ~config,
+                ~chainConfig,
+                ~indexingAddresses,
+              )
+            | None => ()
+            }
             (chainIdStr, chainId, rawChainConfig, processChainConfig)
           })
 
@@ -702,40 +726,6 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                 }
                 contracts->Array.push(dc->toIndexingAddress)->ignore
               })
-            | None => ()
-            }
-
-            // Register the simulated events' srcAddresses so non-wildcard events
-            // injected for a contract not configured on this chain still pass the
-            // clientAddressFilter's srcAddress ownership check.
-            switch rawChainConfig.simulate {
-            | Some(simulateItems) =>
-              let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId))
-              let simAddresses = SimulateItems.indexingAddresses(
-                ~simulateItems,
-                ~config,
-                ~chainConfig,
-              )
-              if simAddresses->Array.length > 0 {
-                let existing = switch indexingAddressesByChain->Dict.get(chainIdStr) {
-                | Some(arr) => arr
-                | None =>
-                  let arr = []
-                  indexingAddressesByChain->Dict.set(chainIdStr, arr)
-                  arr
-                }
-                let seen = Utils.Set.make()
-                existing->Array.forEach(ia =>
-                  seen->Utils.Set.add(ia.address->Address.toString)->ignore
-                )
-                simAddresses->Array.forEach(ia => {
-                  let key = ia.address->Address.toString
-                  if !(seen->Utils.Set.has(key)) {
-                    seen->Utils.Set.add(key)->ignore
-                    existing->Array.push(ia)->ignore
-                  }
-                })
-              }
             | None => ()
             }
 
