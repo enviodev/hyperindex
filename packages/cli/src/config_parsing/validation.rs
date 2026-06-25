@@ -360,25 +360,6 @@ pub fn validate_deserialized_svm_config_yaml(
                         }
                     }
                 }
-                if let Some(fs) = &instr.field_selection {
-                    for (name, val) in [
-                        ("transaction_fields", &fs.transaction_fields),
-                        ("log_fields", &fs.log_fields),
-                        ("token_balance_fields", &fs.token_balance_fields),
-                    ] {
-                        if let Some(v) = val {
-                            if v.is_per_field() {
-                                return Err(anyhow!(
-                                    "Per-field selection is not yet supported for \
-                                     `{name}` on instruction {:?} (program {:?}). \
-                                     Use `true` to include all fields.",
-                                    instr.name,
-                                    program.name
-                                ));
-                            }
-                        }
-                    }
-                }
             }
         }
     }
