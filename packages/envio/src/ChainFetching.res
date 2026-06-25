@@ -372,7 +372,7 @@ let fetchChain = async (
                 "msg": "Finished querying",
                 "chainId": chain->ChainMap.Chain.toChainId,
                 "partitions": fetchedByPartition,
-                "durationMs": (Performance.now() -. timeRef)->Int.fromFloat,
+                "duration": timeRef->Performance.secondsSince,
               })
             }
             await onQueryResponse(
