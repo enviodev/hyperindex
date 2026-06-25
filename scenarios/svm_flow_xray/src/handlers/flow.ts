@@ -7,7 +7,7 @@ import {
   type IndexerStats,
   type SvmInstruction,
   type SvmInstructionParams,
-  type SvmTokenBalance,
+  type SvmTransaction,
 } from "envio";
 import type {
   SplAmountArgs,
@@ -48,18 +48,10 @@ type MapArgs = (params: SvmInstructionParams) => NodeArgs;
 // Every handler is registered through the shared factories below, which take the
 // generic `SvmInstruction` — so the per-instruction `FieldNotSelected` compile
 // guard (which fires on `indexer.onInstruction`'s inferred argument) doesn't
-// reach these bodies. `FlowInstruction` pins the exact transaction fields the
-// handlers read, so dropping one from config.yaml's `transaction_fields` is a
-// type error here instead of a silent `undefined` at runtime.
-type FlowTransaction = {
-  readonly signatures: readonly string[];
-  readonly feePayer: string | undefined;
-  readonly success: boolean | undefined;
-  readonly fee: bigint | undefined;
-  readonly computeUnitsConsumed: bigint | undefined;
-  readonly tokenBalances: readonly SvmTokenBalance[];
-};
-type FlowInstruction = SvmInstruction<SvmInstructionParams, FlowTransaction>;
+// reach these bodies. Pinning the generated `SvmTransaction` keeps that guard:
+// dropping a field from config.yaml's `transaction_fields` types it as
+// `FieldNotSelected` here instead of a silent `undefined` at runtime.
+type FlowInstruction = SvmInstruction<SvmInstructionParams, SvmTransaction>;
 type FlowHandler = (a: { instruction: FlowInstruction; context: FlowContext }) => Promise<void>;
 
 const addrPath = (a: readonly number[]): string => a.join(".");

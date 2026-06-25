@@ -3279,23 +3279,27 @@ mod test {
     }
 
     #[test]
-    fn svm_transaction_dts_matches_runtime() {
-        // The hand-written public `SvmTransaction` in `index.d.ts` is the
-        // fallback for `SvmInstruction<Params, Tx>`; pin its field set AND
-        // optionality to the runtime `svmTransaction` (Envio.res), the source of
-        // truth it mirrors, so neither a missing field (the bug that dropped
-        // `transactionIndex`) nor a wrong `?`/required marker can ship.
-        let dts =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../envio/index.d.ts"))
-                .expect("read index.d.ts");
+    fn svm_transaction_field_specs_match_runtime() {
+        // The per-instruction transaction type is generated from
+        // `svm_transaction_field_specs()`; pin its field set to the runtime
+        // `svmTransaction` (Envio.res), the source of truth it mirrors, so a
+        // missing field (the bug that dropped `transactionIndex`) can't ship.
+        // Only names are compared: generated optionality is field-selection
+        // contextual, so it diverges from the standalone runtime type by design.
         let res = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../envio/src/Envio.res"
         ))
         .expect("read Envio.res");
-        let dts_fields = parse_type_fields(&dts, "export type SvmTransaction = {", "readonly ");
-        let res_fields = parse_type_fields(&res, "type svmTransaction = {", "");
-        assert_eq!(dts_fields, res_fields);
+        let res_fields: Vec<String> = parse_type_fields(&res, "type svmTransaction = {", "")
+            .into_iter()
+            .map(|(name, _optional)| name)
+            .collect();
+        let spec_fields: Vec<String> = svm_transaction_field_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        assert_eq!(spec_fields, res_fields);
     }
 
     #[test]

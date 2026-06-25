@@ -997,26 +997,6 @@ export type SvmTokenBalance = {
   readonly postAmount?: string;
 };
 
-/** Full parent-transaction shape. Per-instruction handler types narrow this to
- * the fields selected via `field_selection.transaction_fields`; this standalone
- * type is the fallback when the program table hasn't been generated. */
-export type SvmTransaction = {
-  readonly transactionIndex?: number;
-  readonly signatures: readonly string[];
-  readonly feePayer?: string;
-  readonly success?: boolean;
-  readonly err?: string;
-  /** Lamports. */
-  readonly fee?: bigint;
-  readonly computeUnitsConsumed?: bigint;
-  readonly accountKeys: readonly string[];
-  readonly recentBlockhash?: string;
-  readonly version?: string;
-  /** SPL Token / Token-2022 balance snapshots for this transaction.
-   * Present when selected via `field_selection.token_balance_fields`. */
-  readonly tokenBalances?: readonly SvmTokenBalance[];
-};
-
 export type SvmLog = {
   readonly kind: string;
   readonly message: string;
@@ -1087,17 +1067,6 @@ type SvmParamsFromProgramTable<TInstr> = TInstr extends {
       readonly extraAccounts: readonly string[];
     }
   : SvmInstructionParams;
-
-/** Parent-transaction type extracted from `Global.config.svm.programs[P][I]`.
- * The codegen emits a `transaction` shape per (program, instruction) where
- * unselected fields are `FieldNotSelected<...>`; this surfaces it so handlers
- * get a compile error on unselected fields. Falls back to the full
- * `SvmTransaction` when codegen hasn't populated the table. */
-type SvmTransactionFromProgramTable<TInstr> = TInstr extends {
-  transaction: infer T;
-}
-  ? T
-  : SvmTransaction;
 
 /** Options for an SVM `indexer.onInstruction` registration. */
 export type SvmOnInstructionOptions<P extends string = string, I extends string = string> = {
@@ -1346,7 +1315,7 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                       Config,
                       SvmInstruction<
                         SvmParamsFromProgramTable<Programs[P][I]>,
-                        SvmTransactionFromProgramTable<Programs[P][I]>
+                        Programs[P][I]["transaction"]
                       >
                     >,
                   ) => Promise<void>,
@@ -1715,6 +1684,7 @@ type EvmContractsT  = GlobalConfig extends { evm:  { contracts: infer X extends 
 type FuelChainsT    = GlobalConfig extends { fuel: { chains:    infer X extends Record<string, { id: number }> } } ? X : {};
 type FuelContractsT = GlobalConfig extends { fuel: { contracts: infer X extends Record<string, Record<string, any>> } } ? X : {};
 type SvmChainsT     = GlobalConfig extends { svm:  { chains:    infer X extends Record<string, { id: number }> } } ? X : {};
+type SvmProgramsT   = GlobalConfig extends { svm:  { programs:  infer X extends Record<string, Record<string, any>> } } ? X : {};
 type EntitiesT      = GlobalConfig extends { entities: infer X extends Record<string, object> } ? X : {};
 type EnumsT         = GlobalConfig extends { enums: infer X extends Record<string, any> } ? X : {};
 
@@ -1735,6 +1705,18 @@ export type EvmChainId  = IsEmptyObject<EvmChainsT>  extends true ? NotConfigure
 export type FuelChainId = IsEmptyObject<FuelChainsT> extends true ? NotConfigured<"FuelChainId", "Configure Fuel chains"> : FuelChainsT[keyof FuelChainsT]["id"];
 /** Union of all configured SVM chain IDs. */
 export type SvmChainId  = IsEmptyObject<SvmChainsT>  extends true ? NotConfigured<"SvmChainId",  "Configure SVM chains">  : SvmChainsT [keyof SvmChainsT ]["id"];
+
+/** The SVM parent-transaction type generated from this project's
+ *  `field_selection`: the union of every instruction's `transaction` shape,
+ *  with unselected fields typed as `FieldNotSelected<...>`. Resolves to a
+ *  `NotConfigured` hint until `envio codegen` augments {@link Global}. */
+export type SvmTransaction = IsEmptyObject<SvmProgramsT> extends true
+  ? NotConfigured<"SvmTransaction", "Configure SVM programs">
+  : {
+      [P in keyof SvmProgramsT]: {
+        [I in keyof SvmProgramsT[P]]: SvmProgramsT[P][I]["transaction"];
+      }[keyof SvmProgramsT[P]];
+    }[keyof SvmProgramsT];
 
 /** Lookup an EVM event type by contract and event name. Without generics,
  *  resolves to the discriminated union of every EVM event in the project. */
