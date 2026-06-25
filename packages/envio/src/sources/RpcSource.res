@@ -1034,7 +1034,7 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~indexingAddresses,
+    ~contractNameByAddress,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
@@ -1144,9 +1144,8 @@ let make = (
 
       switch eventRouter->EventRouter.get(
         ~tag=EventRouter.getEvmEventId(~sighash=topic0, ~topicCount=log.topics->Array.length),
-        ~indexingAddresses,
+        ~contractNameByAddress,
         ~contractAddress=routedAddress,
-        ~blockNumber=log.blockNumber,
       ) {
       | None => None
       | Some(eventConfig) =>

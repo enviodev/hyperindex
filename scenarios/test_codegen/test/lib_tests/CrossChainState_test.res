@@ -81,6 +81,7 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
     latestFetchedBlock: {blockNumber: latestFetchedBlock, blockTimestamp: 0},
     selection: normalSelection,
     addressesByContractName: Dict.fromArray([("MockContract", [address])]),
+    contractNameByAddress: Dict.make(), // derived in make
     mergeBlock: None,
     dynamicContract: None,
     mutPendingQueries: [],

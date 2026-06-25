@@ -144,7 +144,10 @@ let applyRegistrations = (~config: Config.t): Config.t => {
               contractRegister,
               getEventFiltersOrThrow,
               filterByAddresses,
-              clientAddressFilter: ?EventConfigBuilder.buildAddressFilter(addressFilterParamGroups),
+              clientAddressFilter: ?EventConfigBuilder.buildAddressFilter(
+                addressFilterParamGroups,
+                ~isWildcard,
+              ),
               dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
             } :> Internal.eventConfig)
           | Svm =>

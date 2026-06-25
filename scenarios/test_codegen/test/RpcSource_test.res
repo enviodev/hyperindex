@@ -1116,19 +1116,9 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
               ~fromBlock=0,
               ~toBlock=Some(100),
               ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
-              ~indexingAddresses=Dict.fromArray([
-                (
-                  mockAddress->Address.toString,
-                  (
-                    {
-                      contractName: eventConfig.contractName,
-                      address: mockAddress,
-                      registrationBlock: -1,
-                      effectiveStartBlock: 0,
-                    }: FetchState.indexingAddress
-                  ),
-                ),
-              ]),
+              ~contractNameByAddress=FetchState.deriveContractNameByAddress(
+                Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+              ),
               ~knownHeight=100,
               ~partitionId="0",
               ~selection={

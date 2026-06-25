@@ -13,7 +13,7 @@ let defaultQuery: FetchState.query = {
   progress: 0.,
   selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
   addressesByContractName: Dict.make(),
-  indexingAddresses: Dict.make(),
+  contractNameByAddress: Dict.make(),
 }
 
 type executeQueryMock = {
@@ -190,7 +190,7 @@ describe("SourceManager source priority with Live sources", () => {
     isChunk: false,
     selection,
     addressesByContractName,
-    indexingAddresses: Dict.make(),
+    contractNameByAddress: Dict.make(),
   }
 
   Async.it(
@@ -424,6 +424,7 @@ describe("SourceManager fetchNext", () => {
       },
       selection: normalSelection,
       addressesByContractName,
+      contractNameByAddress: Dict.make(), // derived in make
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
@@ -519,6 +520,7 @@ describe("SourceManager fetchNext", () => {
     let withPending = count => {
       let p = {
         ...mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
+        contractNameByAddress: Dict.make(), // derived in make
         mutPendingQueries: Array.fromInitializer(~length=count, pendingChunk),
         prevQueryRange: 10,
         prevRangeSize: 0,
@@ -578,7 +580,6 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition2.addressesByContractName,
-          indexingAddresses: fetchState.indexingAddresses,
         },
         {
           ...defaultQuery,
@@ -589,7 +590,6 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition0.addressesByContractName,
-          indexingAddresses: fetchState.indexingAddresses,
         },
         {
           ...defaultQuery,
@@ -600,7 +600,6 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition1.addressesByContractName,
-          indexingAddresses: fetchState.indexingAddresses,
         },
       ])
 
@@ -1478,7 +1477,7 @@ describe("SourceManager.executeQuery", () => {
     isChunk: false,
     selection,
     addressesByContractName,
-    indexingAddresses: Dict.make(),
+    contractNameByAddress: Dict.make(),
   }
 
   Async.it("Successfully executes the query", async t => {

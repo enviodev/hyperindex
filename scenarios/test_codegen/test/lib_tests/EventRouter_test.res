@@ -112,10 +112,9 @@ describe("EventRouter", () => {
       router->EventRouter.get(
         ~tag="test-event-tag",
         ~contractAddress=mockAddress1,
-        ~blockNumber=0,
-        ~indexingAddresses=Dict.make(),
+        ~contractNameByAddress=Dict.make(),
       ),
-      ~message=`We can return Some, but we want to always check that event is after contract startBlock`,
+      ~message=`The address isn't owned by this partition, so it falls back to wildcard (here None)`,
     ).toEqual(None)
   })
 
@@ -145,23 +144,17 @@ describe("EventRouter", () => {
         ~isWildcard=false,
       )
 
-      let indexingAddresses: dict<FetchState.indexingAddress> = Dict.make()
-      indexingAddresses->Dict.set(
+      let contractNameByAddress = Dict.make()
+      contractNameByAddress->Dict.set(
         nonWildcardContractAddress->Address.toString,
-        {
-          contractName: nonWildcardContractName,
-          address: nonWildcardContractAddress,
-          registrationBlock: -1,
-          effectiveStartBlock: 0,
-        },
+        nonWildcardContractName,
       )
 
       t.expect(
         router->EventRouter.get(
           ~tag="test-event-tag",
           ~contractAddress=nonWildcardContractAddress,
-          ~blockNumber=0,
-          ~indexingAddresses,
+          ~contractNameByAddress,
         ),
         ~message="Should return the non wildcard event",
       ).toEqual(Some("non-wildcard"))
@@ -170,8 +163,7 @@ describe("EventRouter", () => {
         router->EventRouter.get(
           ~tag="test-event-tag",
           ~contractAddress=wildcardContractAddress,
-          ~blockNumber=0,
-          ~indexingAddresses,
+          ~contractNameByAddress,
         ),
         ~message="Should return the wildcard event",
       ).toEqual(Some("wildcard"))
@@ -198,23 +190,14 @@ describe("EventRouter", () => {
         ~isWildcard=true,
       )
 
-      let indexingAddresses: dict<FetchState.indexingAddress> = Dict.make()
-      indexingAddresses->Dict.set(
-        indexedAddress->Address.toString,
-        {
-          contractName: noEventsContractName,
-          address: indexedAddress,
-          registrationBlock: 5,
-          effectiveStartBlock: 5,
-        },
-      )
+      let contractNameByAddress = Dict.make()
+      contractNameByAddress->Dict.set(indexedAddress->Address.toString, noEventsContractName)
 
       t.expect(
         router->EventRouter.get(
           ~tag="test-event-tag",
           ~contractAddress=indexedAddress,
-          ~blockNumber=10,
-          ~indexingAddresses,
+          ~contractNameByAddress,
         ),
         ~message="Should fall back to the wildcard handler when the contract has no registered event for this tag",
       ).toEqual(Some("wildcard"))

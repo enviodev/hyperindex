@@ -28,29 +28,25 @@ module Group = {
     }
   }
 
-  let get = (
-    group: t<'a>,
-    ~contractAddress,
-    ~blockNumber,
-    ~indexingAddresses: dict<FetchState.indexingAddress>,
-  ) =>
+  // Ownership only: resolve the owning contract from the partition's reverse
+  // index (the partition that fetched the log), not a chain-wide snapshot. The
+  // `effectiveStartBlock` temporal gate now lives in `clientAddressFilter`. The
+  // wildcard partition has an empty index → every log falls back to `wildcard`,
+  // so it can never claim an address-bound contract's logs.
+  let get = (group: t<'a>, ~contractAddress, ~contractNameByAddress: dict<string>) =>
     switch group {
     | {wildcard, byContractName} =>
-      switch indexingAddresses->Utils.Dict.dangerouslyGetNonOption(
+      switch contractNameByAddress->Utils.Dict.dangerouslyGetNonOption(
         contractAddress->Address.toString,
       ) {
-      | Some(indexingContract) =>
-        if indexingContract.effectiveStartBlock <= blockNumber {
-          switch byContractName->Utils.Dict.dangerouslyGetNonOption(indexingContract.contractName) {
-          // Fall back to the wildcard handler when the indexed contract has no
-          // matching event for this tag. This covers addresses registered for
-          // contracts without events (persisted for future config changes) as
-          // well as addresses whose contract has other events but not this one.
-          | None => wildcard
-          | Some(_) as event => event
-          }
-        } else {
-          None
+      | Some(contractName) =>
+        switch byContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
+        // Fall back to the wildcard handler when the owning contract has no
+        // matching event for this tag. This covers addresses registered for
+        // contracts without events (persisted for future config changes) as
+        // well as addresses whose contract has other events but not this one.
+        | None => wildcard
+        | Some(_) as event => event
         }
       | None => wildcard
       }
@@ -89,10 +85,10 @@ let addOrThrow = (
   }
 }
 
-let get = (router: t<'a>, ~tag, ~contractAddress, ~blockNumber, ~indexingAddresses) => {
+let get = (router: t<'a>, ~tag, ~contractAddress, ~contractNameByAddress) => {
   switch router->Utils.Dict.dangerouslyGetNonOption(tag) {
   | None => None
-  | Some(group) => group->Group.get(~contractAddress, ~blockNumber, ~indexingAddresses)
+  | Some(group) => group->Group.get(~contractAddress, ~contractNameByAddress)
   }
 }
 

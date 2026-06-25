@@ -41,6 +41,12 @@ type partition = {
   latestFetchedBlock: blockNumberAndTimestamp,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
+  // Reverse index address→contractName, derived from addressesByContractName.
+  // Used by EventRouter to resolve a log's owning contract from the partition
+  // that fetched it (instead of a chain-wide snapshot). Always recomputed in
+  // OptimizedPartitions.make, so partition literals can seed it with an empty
+  // dict.
+  contractNameByAddress: dict<string>,
   mergeBlock: option<int>,
   // When set, partition indexes a single dynamic contract type.
   // The addressesByContractName must contain only addresses for this contract.
@@ -76,7 +82,23 @@ type query = {
   mutable progress: float,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
-  indexingAddresses: dict<indexingAddress>,
+  // The owning partition's reverse index, referenced (not copied) so routing
+  // resolves ownership without a chain-wide snapshot.
+  contractNameByAddress: dict<string>,
+}
+
+// Invert addressesByContractName into address→contractName. 1:1 today (each
+// address belongs to one contract), so no key collisions.
+let deriveContractNameByAddress = (addressesByContractName: dict<array<Address.t>>): dict<
+  string,
+> => {
+  let result = Dict.make()
+  addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
+    for i in 0 to addresses->Array.length - 1 {
+      result->Dict.set(addresses->Array.getUnsafe(i)->Address.toString, contractName)
+    }
+  })
+  result
 }
 
 // Default estimate for a query whose partition hasn't responded yet, so the
@@ -192,6 +214,7 @@ module OptimizedPartitions = {
         latestFetchedBlock: {blockNumber: potentialMergeBlock, blockTimestamp: 0},
         mergeBlock: None,
         addressesByContractName: Dict.make(), // set below
+        contractNameByAddress: Dict.make(), // derived in make
         mutPendingQueries: [],
         prevQueryRange: minRange,
         prevPrevQueryRange: minRange,
@@ -374,7 +397,12 @@ module OptimizedPartitions = {
     for idx in 0 to partitionsCount - 1 {
       let p = newPartitions->Array.getUnsafe(idx)
       idsInAscOrder->Array.setUnsafe(idx, p.id)
-      entities->Dict.set(p.id, p)
+      // Single point where every partition's reverse index is (re)derived, so all
+      // construction paths (literals, spreads, merges, splits) stay consistent.
+      entities->Dict.set(
+        p.id,
+        {...p, contractNameByAddress: deriveContractNameByAddress(p.addressesByContractName)},
+      )
     }
 
     {
@@ -660,6 +688,9 @@ let updateInternal = (
   ~mutItems=?,
   ~blockLag=fetchState.blockLag,
   ~knownHeight=fetchState.knownHeight,
+  // Force the address-count metric refresh when indexingAddresses was mutated in
+  // place (same ref), since the referential check below can't detect that.
+  ~recountAddresses=false,
 ): t => {
   let mutItemsRef = ref(mutItems)
 
@@ -740,7 +771,7 @@ let updateInternal = (
     ~blockNumber=updatedFetchState->bufferBlockNumber,
     ~chainId=fetchState.chainId,
   )
-  if indexingAddresses !== fetchState.indexingAddresses {
+  if recountAddresses || indexingAddresses !== fetchState.indexingAddresses {
     Prometheus.IndexingAddresses.set(
       ~addressesCount=updatedFetchState->numAddresses,
       ~chainId=fetchState.chainId,
@@ -873,6 +904,7 @@ OptimizedPartitions.t => {
             selection: normalSelection,
             dynamicContract: isDynamic ? Some(contractName) : None,
             addressesByContractName,
+            contractNameByAddress: Dict.make(), // derived in make
             mergeBlock: None,
             mutPendingQueries: [],
             prevQueryRange: 0,
@@ -1143,13 +1175,13 @@ let registerDynamicContracts = (
   | ([], true) =>
     // Only dcs for contracts without events. Track them on
     // indexingAddresses so subsequent registrations see them, but don't touch
-    // partitions since there's nothing to fetch for them.
-    let newIndexingContracts = indexingAddresses->Utils.Dict.shallowCopy
-    let _ = Utils.Dict.mergeInPlace(newIndexingContracts, noEventsAddresses)
-    fetchState->updateInternal(~indexingAddresses=newIndexingContracts)
+    // partitions since there's nothing to fetch for them. Mutated in place — the
+    // index is never snapshotted onto a query, so there's no version to preserve.
+    let _ = Utils.Dict.mergeInPlace(indexingAddresses, noEventsAddresses)
+    fetchState->updateInternal(~recountAddresses=true)
   | (_, _) => {
       let newPartitions = []
-      let newIndexingAddresses = indexingAddresses->Utils.Dict.shallowCopy
+      let newIndexingAddresses = indexingAddresses
       let dynamicContractsRef = ref(fetchState.optimizedPartitions.dynamicContracts)
       let mutExistingPartitions = fetchState.optimizedPartitions.entities->Dict.valuesToArray
 
@@ -1215,6 +1247,7 @@ let registerDynamicContracts = (
                         selection: fetchState.normalSelection,
                         dynamicContract: Some(contractName),
                         addressesByContractName,
+                        contractNameByAddress: Dict.make(), // derived in make
                         mergeBlock: None,
                         mutPendingQueries: p.mutPendingQueries,
                         prevQueryRange: p.prevQueryRange,
@@ -1247,7 +1280,10 @@ let registerDynamicContracts = (
         ~progressBlockNumber=0,
       )
 
-      fetchState->updateInternal(~optimizedPartitions, ~indexingAddresses=newIndexingAddresses)
+      // newIndexingAddresses aliases fetchState.indexingAddresses (mutated in
+      // place), so signal the recount explicitly — the referential check can't.
+      let _ = newIndexingAddresses
+      fetchState->updateInternal(~optimizedPartitions, ~recountAddresses=true)
     }
   }
 }
@@ -1340,7 +1376,6 @@ let pushQueriesForRange = (
   ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
-  ~indexingAddresses: dict<indexingAddress>,
 ) => {
   if rangeFromBlock <= maxQueryBlockNumber {
     switch rangeEndBlock {
@@ -1363,7 +1398,7 @@ let pushQueriesForRange = (
           chainId: 0,
           progress: 0.,
           addressesByContractName,
-          indexingAddresses,
+          contractNameByAddress: partition.contractNameByAddress,
         })
       | Some(chunkRange) =>
         let maxBlock = switch rangeEndBlock {
@@ -1398,7 +1433,7 @@ let pushQueriesForRange = (
               chainId: 0,
               progress: 0.,
               addressesByContractName,
-              indexingAddresses,
+              contractNameByAddress: partition.contractNameByAddress,
             })
             chunkFromBlock := chunkToBlock + 1
             chunkIdx := chunkIdx.contents + 1
@@ -1420,7 +1455,7 @@ let pushQueriesForRange = (
             chainId: 0,
             progress: 0.,
             addressesByContractName,
-            indexingAddresses,
+            contractNameByAddress: partition.contractNameByAddress,
           })
         }
       }
@@ -1432,14 +1467,7 @@ let pushQueriesForRange = (
 let maxPendingChunksPerPartition = 10
 
 let getNextQuery = (
-  {
-    buffer,
-    optimizedPartitions,
-    indexingAddresses,
-    blockLag,
-    latestOnBlockBlockNumber,
-    knownHeight,
-  } as fetchState: t,
+  {buffer, optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight} as fetchState: t,
   ~budget,
   ~chainPendingBudget,
 ) => {
@@ -1536,7 +1564,6 @@ let getNextQuery = (
             ~partition=p,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
-            ~indexingAddresses,
           )
         }
         switch pq {
@@ -1561,7 +1588,6 @@ let getNextQuery = (
           ~partition=p,
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
-          ~indexingAddresses,
         )
       }
 
@@ -1694,6 +1720,7 @@ let make = (
         eventConfigs: notDependingOnAddresses,
       },
       addressesByContractName: Dict.make(),
+      contractNameByAddress: Dict.make(), // derived in make
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],

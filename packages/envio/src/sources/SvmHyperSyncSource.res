@@ -242,11 +242,11 @@ let probeRouter = (
   instr: SvmHyperSyncClient.ResponseTypes.instruction,
   byteLengthsDesc: array<int>,
   ~contractAddress,
-  ~indexingAddresses,
+  ~contractNameByAddress,
 ) => {
   let probe = (dN: option<string>) => {
     let tag = EventRouter.getSvmEventId(~programId, ~discriminator=dN)
-    router->EventRouter.get(~tag, ~contractAddress, ~blockNumber=instr.slot, ~indexingAddresses)
+    router->EventRouter.get(~tag, ~contractAddress, ~contractNameByAddress)
   }
 
   let result = byteLengthsDesc->Array.reduce(None, (acc, len) =>
@@ -306,7 +306,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName as _,
-    ~indexingAddresses,
+    ~contractNameByAddress,
     ~knownHeight,
     ~partitionId as _,
     ~selection as _,
@@ -448,7 +448,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
         instr,
         byteLengths,
         ~contractAddress,
-        ~indexingAddresses,
+        ~contractNameByAddress,
       )
 
       switch maybeConfig {
