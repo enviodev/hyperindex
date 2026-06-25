@@ -52,11 +52,7 @@ let transactionFields = [
   "authorizationList",
 ]
 
-// Field name → bit index (the code shared with the Rust store), built once.
-let transactionFieldCodes = TransactionStore.fieldCodes(transactionFields)
-
-let transactionFieldMask = (eventConfigs: array<Internal.eventConfig>): float =>
-  eventConfigs->TransactionStore.mask(~codes=transactionFieldCodes)
+let transactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
@@ -66,36 +62,6 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Evm,
-  blockFields: [
-    "number",
-    "timestamp",
-    "hash",
-    "parentHash",
-    "nonce",
-    "sha3Uncles",
-    "logsBloom",
-    "transactionsRoot",
-    "stateRoot",
-    "receiptsRoot",
-    "miner",
-    "difficulty",
-    "totalDifficulty",
-    "extraData",
-    "size",
-    "gasLimit",
-    "gasUsed",
-    "uncles",
-    "baseFeePerGas",
-    "blobGasUsed",
-    "excessBlobGas",
-    "parentBeaconBlockRoot",
-    "withdrawalsRoot",
-    "l1BlockNumber",
-    "sendCount",
-    "sendRoot",
-    "mixHash",
-  ],
-  transactionFields,
   blockNumberName: "number",
   blockTimestampName: "timestamp",
   blockHashName: "hash",

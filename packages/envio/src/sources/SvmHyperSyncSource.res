@@ -319,12 +319,18 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     )
     fields
   }
-  // Every selected field except `tokenBalances` (its own table) is read off a
-  // stored transaction record, so the transaction table must be fetched to
-  // populate the store — even when only `transactionIndex` (a key column) is
-  // selected.
-  let txFieldCount = selectedTxFields->Utils.Set.size
-  let needsTransactions = txFieldCount > 1 || (txFieldCount === 1 && !needsTokenBalances)
+  // The transaction table is fetched only when a selected field is actually read
+  // off a stored transaction record. `transactionIndex` materialises from the
+  // store key and `tokenBalances` lives in its own table, so neither requires it.
+  let needsTransactions =
+    selectedTxFields
+    ->Utils.Set.toArray
+    ->Array.some(field =>
+      switch field {
+      | Internal.TransactionIndex | Internal.TokenBalances => false
+      | _ => true
+      }
+    )
 
   let getItemsOrThrow = async (
     ~fromBlock,

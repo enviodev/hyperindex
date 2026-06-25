@@ -21,8 +21,6 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Fuel,
-  blockFields: ["id", "height", "time"],
-  transactionFields: ["id"],
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "id",

@@ -294,22 +294,28 @@ type logPartitionInfo = {
 // handlers read plain objects. A batch can span chains, each with its own store
 // and field mask, so group items by chain before materialising.
 let materializeBatchTransactions = async (batch: Batch.t, ~chainStates: dict<ChainState.t>) => {
-  let itemsByChain: dict<array<Internal.item>> = Dict.make()
-  batch.items->Array.forEach(item => {
-    let chainId = item->Internal.getItemChainId->Int.toString
-    switch itemsByChain->Utils.Dict.dangerouslyGetNonOption(chainId) {
-    | Some(items) => items->Array.push(item)
-    | None => itemsByChain->Dict.set(chainId, [item])
-    }
-  })
+  switch chainStates->Dict.valuesToArray {
+  // Single-chain indexers (the common case): every item belongs to the one
+  // chain, so skip the per-chain grouping and its allocations.
+  | [cs] => await cs->ChainState.materializeBatchItems(~items=batch.items)
+  | _ =>
+    let itemsByChain: dict<array<Internal.item>> = Dict.make()
+    batch.items->Array.forEach(item => {
+      let chainId = item->Internal.getItemChainId->Int.toString
+      switch itemsByChain->Utils.Dict.dangerouslyGetNonOption(chainId) {
+      | Some(items) => items->Array.push(item)
+      | None => itemsByChain->Dict.set(chainId, [item])
+      }
+    })
 
-  let _ = await itemsByChain
-  ->Dict.toArray
-  ->Array.map(async ((chainId, items)) => {
-    let cs = chainStates->Dict.getUnsafe(chainId)
-    await cs->ChainState.materializeBatchItems(~items)
-  })
-  ->Promise.all
+    let _ = await itemsByChain
+    ->Dict.toArray
+    ->Array.map(async ((chainId, items)) => {
+      let cs = chainStates->Dict.getUnsafe(chainId)
+      await cs->ChainState.materializeBatchItems(~items)
+    })
+    ->Promise.all
+  }
 }
 
 let processEventBatch = async (

@@ -20,16 +20,10 @@ let transactionFields = [
   "tokenBalances",
 ]
 
-// Field name → bit index (the code shared with the Rust store), built once.
-let transactionFieldCodes = TransactionStore.fieldCodes(transactionFields)
-
-let transactionFieldMask = (eventConfigs: array<Internal.eventConfig>): float =>
-  eventConfigs->TransactionStore.mask(~codes=transactionFieldCodes)
+let transactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
-  blockFields: ["slot"],
-  transactionFields,
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "hash",

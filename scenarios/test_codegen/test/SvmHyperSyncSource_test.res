@@ -206,34 +206,34 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     })
   })
 
-  // `transactionIndex` is read off a stored transaction record, so selecting it
-  // alone must still fetch the transaction table (with just the key columns) to
-  // populate the store — otherwise the store stays empty and nothing
-  // materialises.
-  Async.it("fetches the transaction table when only transactionIndex is selected", async t => {
-    let eventConfig = makeEventConfig(~selectedTransactionFields=[TransactionIndex])
-    let source = makeSource(~eventConfigs=[eventConfig])
+  // `transactionIndex` is materialised from the store key (the instruction's
+  // own index), not from a stored transaction record, so selecting it alone does
+  // not need the transaction table fetched.
+  Async.it(
+    "does not fetch the transaction table when only transactionIndex is selected",
+    async t => {
+      let eventConfig = makeEventConfig(~selectedTransactionFields=[TransactionIndex])
+      let source = makeSource(~eventConfigs=[eventConfig])
 
-    let _ = await source.getItemsOrThrow(
-      ~fromBlock=slot - 10,
-      ~toBlock=Some(slot + 10),
-      ~addressesByContractName=Dict.fromArray([
-        ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
-      ]),
-      ~indexingAddresses,
-      ~knownHeight=slot + 1000,
-      ~partitionId="0",
-      ~selection={
-        eventConfigs: [(eventConfig :> Internal.eventConfig)],
-        dependsOnAddresses: true,
-      },
-      ~retry=0,
-      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
-    )
+      let _ = await source.getItemsOrThrow(
+        ~fromBlock=slot - 10,
+        ~toBlock=Some(slot + 10),
+        ~addressesByContractName=Dict.fromArray([
+          ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
+        ]),
+        ~indexingAddresses,
+        ~knownHeight=slot + 1000,
+        ~partitionId="0",
+        ~selection={
+          eventConfigs: [(eventConfig :> Internal.eventConfig)],
+          dependsOnAddresses: true,
+        },
+        ~retry=0,
+        ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+      )
 
-    let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
-    t.expect(query.fields->Option.flatMap(fields => fields.transaction)).toEqual(
-      Some([Slot, TransactionIndex]),
-    )
-  })
+      let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
+      t.expect(query.fields->Option.flatMap(fields => fields.transaction)).toEqual(None)
+    },
+  )
 })
