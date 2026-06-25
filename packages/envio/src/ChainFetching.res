@@ -358,14 +358,6 @@ let fetchChain = async (
               ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
             )
-            await onQueryResponse(
-              state,
-              {chain, response, query},
-              ~stateId,
-              ~scheduleFetch,
-              ~scheduleProcessing,
-              ~scheduleRollback,
-            )
             fetchedCount := fetchedCount.contents + 1
             fetchedByPartition->Dict.set(
               query.partitionId,
@@ -375,6 +367,22 @@ let fetchChain = async (
                 "numEvents": response.parsedQueueItems->Array.length,
               },
             )
+            if dispatchedCount > 0 && fetchedCount.contents === dispatchedCount {
+              Logging.trace({
+                "msg": "Finished querying",
+                "chainId": chain->ChainMap.Chain.toChainId,
+                "partitions": fetchedByPartition,
+                "durationMs": (Performance.now() -. timeRef)->Int.fromFloat,
+              })
+            }
+            await onQueryResponse(
+              state,
+              {chain, response, query},
+              ~stateId,
+              ~scheduleFetch,
+              ~scheduleProcessing,
+              ~scheduleRollback,
+            )
           } catch {
           | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
           }
@@ -382,14 +390,6 @@ let fetchChain = async (
         ~action,
         ~stateId,
       )
-      if dispatchedCount > 0 && fetchedCount.contents === dispatchedCount {
-        Logging.trace({
-          "msg": "Finished querying",
-          "chainId": chain->ChainMap.Chain.toChainId,
-          "partitions": fetchedByPartition,
-          "durationMs": (Performance.now() -. timeRef)->Int.fromFloat,
-        })
-      }
     } catch {
     | exn =>
       IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))

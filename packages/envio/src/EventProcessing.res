@@ -307,7 +307,6 @@ let processEventBatch = async (
       "msg": "Started processing",
       "chainId": chainId->Int.fromString->Option.getUnsafe,
       "batchSize": chainAfterBatch.batchSize,
-      "progress": chainAfterBatch.progressBlockNumber,
     })
   })
 
