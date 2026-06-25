@@ -331,7 +331,6 @@ let fetchChain = async (
     }
     let fetchedByPartition = Dict.make()
     let fetchedCount = ref(0)
-    let timeRef = Performance.now()
 
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
@@ -372,7 +371,6 @@ let fetchChain = async (
                 "msg": "Finished querying",
                 "chainId": chain->ChainMap.Chain.toChainId,
                 "partitions": fetchedByPartition,
-                "duration": timeRef->Performance.secondsSince,
               })
             }
             await onQueryResponse(
