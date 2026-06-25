@@ -313,8 +313,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     ~retry,
     ~logger,
   ) => {
-    let totalTimeRef = Hrtime.makeTimer()
-    let pageFetchRef = Hrtime.makeTimer()
+    let totalTimeRef = Performance.now()
+    let pageFetchRef = Performance.now()
 
     let instructionSelections = buildInstructionSelections(eventConfigs)
     // Under the server's default merge mode, requesting a table's columns is
@@ -376,9 +376,9 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
         ),
       )
     }
-    let pageFetchTime = pageFetchRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let pageFetchTime = pageFetchRef->Performance.secondsSince
 
-    let parsingRef = Hrtime.makeTimer()
+    let parsingRef = Performance.now()
 
     // Per-slot unix timestamp lookup from the response's `blocks` table. Slots
     // without a block row (rare; usually skipped slots) fall back to `None`.
@@ -519,7 +519,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       let _ = logger
     })
 
-    let parsingTimeElapsed = parsingRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let parsingTimeElapsed = parsingRef->Performance.secondsSince
     let highestSlot = resp.nextSlot - 1
     let latestBlockTime =
       blockTimeBySlot
@@ -534,7 +534,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       blockHash: b.blockhash,
     })
 
-    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     {
       latestFetchedBlockTimestamp: latestBlockTime,
@@ -621,9 +621,9 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {
-      let timer = Hrtime.makeTimer()
+      let timer = Performance.now()
       let h = await client.getHeight()
-      let seconds = timer->Hrtime.timeSince->Hrtime.toSecondsFloat
+      let seconds = timer->Performance.secondsSince
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getHeight")
       Prometheus.SourceRequestCount.addSeconds(
         ~sourceName=name,

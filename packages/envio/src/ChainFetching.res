@@ -323,6 +323,15 @@ let fetchChain = async (
     // there's nothing to fetch. During backfill any such chain is idle.
     let reducedPolling = !isRealtime
 
+    // Accumulated across all queries dispatched in this tick so their per-query
+    // results collapse into a single completion log instead of one per query.
+    let dispatchedCount = switch action {
+    | FetchState.Ready(queries) => queries->Array.length
+    | WaitingForNewBlock | NothingToQuery => 0
+    }
+    let fetchedByPartition = Dict.make()
+    let fetchedCount = ref(0)
+
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
     try {
@@ -348,6 +357,22 @@ let fetchChain = async (
               ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
             )
+            fetchedCount := fetchedCount.contents + 1
+            fetchedByPartition->Dict.set(
+              query.partitionId,
+              {
+                "fromBlock": response.fromBlockQueried,
+                "toBlock": response.latestFetchedBlockNumber,
+                "numEvents": response.parsedQueueItems->Array.length,
+              },
+            )
+            if dispatchedCount > 0 && fetchedCount.contents === dispatchedCount {
+              Logging.trace({
+                "msg": "Finished querying",
+                "chainId": chain->ChainMap.Chain.toChainId,
+                "partitions": fetchedByPartition,
+              })
+            }
             await onQueryResponse(
               state,
               {chain, response, query},
