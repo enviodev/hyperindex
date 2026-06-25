@@ -197,43 +197,25 @@ let findEventConfig = (~config: Config.t, ~contractName: string, ~eventName: str
 
 let dummySrcAddress = Address.unsafeFromString("0x0000000000000000000000000000000000000000")
 
-// First configured address of `contractName`, preferring the simulated chain so
-// the synthetic srcAddress matches what's registered there; falls back to any
-// chain the contract is configured on.
-let firstContractAddress = (
-  ~chainConfig: Config.chain,
-  ~config: Config.t,
-  ~contractName: string,
-): option<Address.t> => {
-  let fromChain = (chainConfig: Config.chain) => {
-    let found = ref(None)
-    chainConfig.contracts->Array.forEach(contract => {
-      if found.contents->Option.isNone && contract.name === contractName {
-        found := contract.addresses->Array.get(0)
-      }
-    })
-    found.contents
-  }
-  switch fromChain(chainConfig) {
-  | Some(_) as addr => addr
-  | None =>
-    let found = ref(None)
-    config.chainMap
-    ->ChainMap.values
-    ->Array.forEach(c =>
-      if found.contents->Option.isNone {
-        found := fromChain(c)
-      }
-    )
-    found.contents
-  }
+// First address configured for `contractName` on the simulated chain. Only the
+// simulated chain is consulted — a contract's address on another chain has no
+// meaning here.
+let firstContractAddress = (~chainConfig: Config.chain, ~contractName: string): option<
+  Address.t,
+> => {
+  let found = ref(None)
+  chainConfig.contracts->Array.forEach(contract => {
+    if found.contents->Option.isNone && contract.name === contractName {
+      found := contract.addresses->Array.get(0)
+    }
+  })
+  found.contents
 }
 
 let deriveSrcAddress = (
   ~providedSrcAddress: option<Address.t>,
   ~eventConfig: Internal.eventConfig,
   ~chainConfig: Config.chain,
-  ~config: Config.t,
 ): Address.t => {
   switch providedSrcAddress {
   | Some(addr) => addr
@@ -241,7 +223,7 @@ let deriveSrcAddress = (
     if eventConfig.isWildcard {
       dummySrcAddress
     } else {
-      switch firstContractAddress(~chainConfig, ~config, ~contractName=eventConfig.contractName) {
+      switch firstContractAddress(~chainConfig, ~contractName=eventConfig.contractName) {
       | Some(addr) => addr
       | None => dummySrcAddress
       }
@@ -269,7 +251,6 @@ let indexingAddresses = (
           ~providedSrcAddress=item.srcAddress,
           ~eventConfig,
           ~chainConfig,
-          ~config,
         )
         let key = srcAddress->Address.toString
         switch byAddress->Utils.Dict.dangerouslyGetNonOption(key) {
@@ -339,7 +320,6 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
         ~providedSrcAddress=item.srcAddress,
         ~eventConfig,
         ~chainConfig,
-        ~config,
       )
 
       let rawItem = rawJson->(Utils.magic: JSON.t => {..})
