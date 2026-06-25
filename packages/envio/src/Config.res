@@ -195,9 +195,8 @@ let svmEventDescriptorSchema = S.schema(s =>
   {
     "discriminator": s.matches(S.option(S.string)),
     "discriminatorByteLen": s.matches(S.int),
-    "includeTransaction": s.matches(S.bool),
+    "transactionFields": s.matches(S.array(Internal.svmTransactionFieldSchema)),
     "includeLogs": s.matches(S.bool),
-    "includeTokenBalances": s.matches(S.bool),
     "accountFilters": s.matches(
       S.option(
         S.array(
@@ -704,9 +703,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
                 "svm": option<{
                   "discriminator": option<string>,
                   "discriminatorByteLen": int,
-                  "includeTransaction": bool,
+                  "transactionFields": array<Internal.svmTransactionField>,
                   "includeLogs": bool,
-                  "includeTokenBalances": bool,
                   "accountFilters": option<
                     array<array<{"position": int, "values": array<string>}>>,
                   >,
@@ -740,9 +738,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~programId,
             ~discriminator=svm["discriminator"],
             ~discriminatorByteLen=svm["discriminatorByteLen"],
-            ~includeTransaction=svm["includeTransaction"],
+            ~transactionFields=svm["transactionFields"],
             ~includeLogs=svm["includeLogs"],
-            ~includeTokenBalances=svm["includeTokenBalances"],
             ~accountFilters,
             ~isInner=svm["isInner"],
             ~isWildcard=false,

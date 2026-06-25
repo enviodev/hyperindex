@@ -854,6 +854,7 @@ module Source = {
                           blockNumber: item.blockNumber,
                           blockHash: `0x${item.blockNumber->Int.toString}`,
                           logIndex: item.logIndex,
+                          transactionIndex: 0,
                           payload: {
                             contractName: "MockContract",
                             eventName: "MockEvent",
@@ -861,7 +862,6 @@ module Source = {
                             chainId: chain->ChainMap.Chain.toChainId,
                             srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
                             logIndex: item.logIndex,
-                            transaction: %raw(`null`),
                             block: {
                               "number": item.blockNumber,
                               "timestamp": item.blockNumber,
@@ -871,6 +871,7 @@ module Source = {
                         })
                       },
                     ),
+                    transactionStore: None,
                     fromBlockQueried: fromBlock,
                     latestFetchedBlockNumber,
                     latestFetchedBlockTimestamp: latestFetchedBlockNumber,
@@ -1005,7 +1006,9 @@ let evmEventConfig = (
         ])
       },
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
-    selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
+    selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames)->(
+      Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
+    ),
     sighash: id,
     topicCount: 1,
     paramsMetadata: [],

@@ -17,6 +17,12 @@ type t = {
   mutable pendingBudget: float,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
+  // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
+  // transactionIndex). Fetch responses merge their page in; entries are pruned
+  // as the chain progresses and dropped above the target on rollback.
+  transactionStore: TransactionStore.t,
+  // Bitmask of the transaction fields the store materialises at batch prep.
+  transactionFieldMask: float,
 }
 
 // Per-chain shape returned by the status API.
@@ -61,6 +67,7 @@ let make = (
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
+  ~transactionFieldMask=0.,
   ~logger: Pino.t,
 ): t => {
   logger,
@@ -74,6 +81,8 @@ let make = (
   pendingBudget: 0.,
   reorgDetection,
   safeCheckpointTracking,
+  transactionStore: TransactionStore.make(),
+  transactionFieldMask,
 }
 
 let makeInternal = (
@@ -319,6 +328,7 @@ let makeInternal = (
     ~committedProgressBlockNumber=progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
+    ~transactionFieldMask=config.ecosystem.transactionFieldMask(eventConfigs),
     ~logger,
   )
 }
@@ -490,6 +500,24 @@ let isAtHeadWithoutEndBlock = (cs: t) =>
 
 // Apply a fetch response: register any new dynamic contracts, append the items
 // to the buffer and advance the known head.
+// Materialise the chain store's selected transaction fields onto a batch's
+// items at batch prep (the persistent-store path).
+let materializeBatchItems = (cs: t, ~items: array<Internal.item>) =>
+  cs.transactionStore->TransactionStore.materializeItems(~items, ~mask=cs.transactionFieldMask)
+
+// Materialise a fetch-response page's transactions onto its items before
+// contract-register handlers read them. `None` pages (RPC/Fuel/Simulate keep the
+// transaction inline) are a no-op.
+let materializePageItems = (
+  cs: t,
+  ~items: array<Internal.item>,
+  ~page: option<TransactionStore.t>,
+) =>
+  switch page {
+  | Some(store) => store->TransactionStore.materializeItems(~items, ~mask=cs.transactionFieldMask)
+  | None => Promise.resolve()
+  }
+
 let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
@@ -497,7 +525,15 @@ let handleQueryResult = (
   ~newItemsWithDcs,
   ~latestFetchedBlock,
   ~knownHeight,
+  ~transactionStore as page: option<TransactionStore.t>,
 ) => {
+  // Merge this response's page into the chain store in lockstep with appending
+  // its items to the buffer. Inline-transaction sources contribute no page.
+  switch page {
+  | Some(page) => cs.transactionStore->TransactionStore.merge(page)
+  | None => ()
+  }
+
   let fs = switch newItemsWithDcs {
   | [] => cs.fetchState
   | _ => cs.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
@@ -660,6 +696,8 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber
       cs.numEventsProcessed = chainAfterBatch.totalEventsProcessed
+      // Processed blocks' transactions are no longer needed.
+      cs.transactionStore->TransactionStore.prune(chainAfterBatch.progressBlockNumber)
       cs.isProgressAtHead = cs.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated
       switch cs.safeCheckpointTracking {
       | Some(safeCheckpointTracking) =>
@@ -733,6 +771,7 @@ let rollback = (
     | None => ()
     }
     cs.fetchState = cs.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
+    cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
   | None =>
@@ -743,6 +782,7 @@ let rollback = (
         )
       cs.fetchState =
         cs.fetchState->FetchState.rollback(~targetBlockNumber=rollbackTargetBlockNumber)
+      cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,

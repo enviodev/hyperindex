@@ -34,9 +34,8 @@ expression: json
             "svm": {
               "discriminator": "0x21",
               "discriminatorByteLen": 1,
-              "includeTransaction": false,
+              "transactionFields": [],
               "includeLogs": false,
-              "includeTokenBalances": false,
               "accounts": [
                 "metadata",
                 "mint",
@@ -75,9 +74,10 @@ expression: json
             "svm": {
               "discriminator": "0x0f",
               "discriminatorByteLen": 1,
-              "includeTransaction": true,
+              "transactionFields": [
+                "signatures"
+              ],
               "includeLogs": false,
-              "includeTokenBalances": false,
               "accountFilters": [
                 [
                   {

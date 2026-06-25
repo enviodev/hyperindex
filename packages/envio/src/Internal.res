@@ -58,7 +58,6 @@ type evmTransactionField =
   | @as("root") Root
   | @as("status") Status
   | @as("yParity") YParity
-  | @as("accessList") AccessList
   | @as("maxFeePerBlobGas") MaxFeePerBlobGas
   | @as("blobVersionedHashes") BlobVersionedHashes
   | @as("type") Type
@@ -67,6 +66,7 @@ type evmTransactionField =
   | @as("l1GasUsed") L1GasUsed
   | @as("l1FeeScalar") L1FeeScalar
   | @as("gasUsedForL1") GasUsedForL1
+  | @as("accessList") AccessList
   | @as("authorizationList") AuthorizationList
 
 let allEvmBlockFields: array<evmBlockField> = [
@@ -123,7 +123,6 @@ let allEvmTransactionFields: array<evmTransactionField> = [
   Root,
   Status,
   YParity,
-  AccessList,
   MaxFeePerBlobGas,
   BlobVersionedHashes,
   Type,
@@ -132,9 +131,40 @@ let allEvmTransactionFields: array<evmTransactionField> = [
   L1GasUsed,
   L1FeeScalar,
   GasUsedForL1,
+  AccessList,
   AuthorizationList,
 ]
 let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
+
+// SVM transaction fields. Order mirrors the Rust `SvmTxField` ordinals (the bit
+// position in the selection mask) and `Svm.res` `transactionFields`.
+type svmTransactionField =
+  | @as("transactionIndex") TransactionIndex
+  | @as("signatures") Signatures
+  | @as("feePayer") FeePayer
+  | @as("success") Success
+  | @as("err") Err
+  | @as("fee") Fee
+  | @as("computeUnitsConsumed") ComputeUnitsConsumed
+  | @as("accountKeys") AccountKeys
+  | @as("recentBlockhash") RecentBlockhash
+  | @as("version") Version
+  | @as("tokenBalances") TokenBalances
+
+let allSvmTransactionFields: array<svmTransactionField> = [
+  TransactionIndex,
+  Signatures,
+  FeePayer,
+  Success,
+  Err,
+  Fee,
+  ComputeUnitsConsumed,
+  AccountKeys,
+  RecentBlockhash,
+  Version,
+  TokenBalances,
+]
+let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 
 // Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
 let evmNullableBlockFields = Utils.Set.fromArray(
@@ -277,7 +307,10 @@ type event
 // modules, not here, and are distinct per ecosystem.
 type eventPayload
 
-external payloadToEvent: eventPayload => event = "%identity"
+// Generic access to the payload's `transaction`, written at batch prep for
+// store-backed ecosystems (HyperSync) and present inline otherwise.
+@get external getPayloadTransaction: eventPayload => Nullable.t<eventTransaction> = "transaction"
+@set external setPayloadTransaction: (eventPayload, eventTransaction) => unit = "transaction"
 
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
@@ -382,6 +415,11 @@ type eventConfig = private {
   paramsRawEventSchema: S.schema<eventParams>,
   simulateParamsSchema: S.schema<eventParams>,
   startBlock: option<int>,
+  // Field names selected for the chain's transaction-store materialisation
+  // (camelCase, matching the ecosystem's `transactionFields`). Stored as a
+  // string set so the shared mask logic is ecosystem-agnostic; sources recover
+  // the typed view where they need it.
+  selectedTransactionFields: Utils.Set.t<string>,
 }
 
 type fuelEventKind =
@@ -419,7 +457,6 @@ type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
-  selectedTransactionFields: Utils.Set.t<evmTransactionField>,
   sighash: string,
   topicCount: int,
   paramsMetadata: array<paramMeta>,
@@ -456,9 +493,7 @@ type svmInstructionEventConfig = {
    `dN` selector at query time and the dispatch-key precomputation in the
    router. */
   discriminatorByteLen: int,
-  includeTransaction: bool,
   includeLogs: bool,
-  includeTokenBalances: bool,
   /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
    AND across positions. Empty outer array means "no account filter". */
   accountFilters: array<svmAccountFilterGroup>,
@@ -502,6 +537,9 @@ type eventItem = private {
   blockNumber: int,
   blockHash: string,
   logIndex: int,
+  // Within-block transaction index — the key into the per-chain transaction
+  // store. Unused (0) for ecosystems that carry the transaction inline (Fuel).
+  transactionIndex: int,
   payload: eventPayload,
 }
 
@@ -554,6 +592,7 @@ type item =
       blockNumber: int,
       blockHash: string,
       logIndex: int,
+      transactionIndex: int,
       payload: eventPayload,
     })
   | @as(1) Block({onBlockConfig: onBlockConfig, blockNumber: int, logIndex: int})

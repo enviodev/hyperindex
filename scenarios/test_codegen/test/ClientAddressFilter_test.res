@@ -186,6 +186,7 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
       blockHash: `0x${blockNumber->Int.toString}`,
       eventConfig: (eventConfig :> Internal.eventConfig),
       logIndex: 0,
+      transactionIndex: 0,
       payload: {"params": {"to": to}}->(
         Utils.magic: {"params": {"to": Address.t}} => Internal.eventPayload
       ),
@@ -249,6 +250,7 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
       blockHash: `0x${blockNumber->Int.toString}`,
       eventConfig: (eventConfig :> Internal.eventConfig),
       logIndex: 0,
+      transactionIndex: 0,
       payload: {"srcAddress": srcAddress}->(
         Utils.magic: {"srcAddress": Address.t} => Internal.eventPayload
       ),

@@ -11,7 +11,14 @@ type partitionQueryResponse = {
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
+  ~chainState: ChainState.t,
+  ~page: option<TransactionStore.t>,
 ) => {
+  // contractRegister handlers can read event.transaction, so materialise the
+  // selected fields onto the payloads before running them. All items belong to
+  // the chain being fetched, hence its single page store and mask.
+  await chainState->ChainState.materializePageItems(~items=itemsWithContractRegister, ~page)
+
   let itemsWithDcs = []
 
   let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
@@ -106,6 +113,7 @@ let rec onQueryResponse = async (
     let chainState = state->IndexerState.getChainState(~chain)
     let {
       parsedQueueItems,
+      transactionStore,
       latestFetchedBlockNumber,
       latestFetchedBlockTimestamp,
       stats,
@@ -212,6 +220,7 @@ let rec onQueryResponse = async (
               blockTimestamp: latestFetchedBlockTimestamp,
             },
             ~query,
+            ~transactionStore,
           )
           ChainMetadata.stage(state)
           scheduleFetch()
@@ -224,6 +233,8 @@ let rec onQueryResponse = async (
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
+          ~chainState,
+          ~page=transactionStore,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
         | newItemsWithDcs => proceed(~newItemsWithDcs)
@@ -240,6 +251,7 @@ and applyQueryResponse = (
   ~knownHeight,
   ~latestFetchedBlock,
   ~query,
+  ~transactionStore,
 ) => {
   let chainState = state->IndexerState.getChainState(~chain)
   let wasFetchingAtHead = chainState->ChainState.isFetchingAtHead
@@ -250,6 +262,7 @@ and applyQueryResponse = (
     ~newItems,
     ~newItemsWithDcs,
     ~knownHeight,
+    ~transactionStore,
   )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.

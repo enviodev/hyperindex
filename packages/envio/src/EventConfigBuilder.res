@@ -306,7 +306,14 @@ let resolveFieldSelection = (
   | Some(fields) => Utils.Set.fromArray(fields)
   | None => globalTransactionFieldsSet
   }
-  (selectedBlockFields, selectedTransactionFields)
+  // The base eventConfig stores these as a string set (field names match the
+  // typed variants at runtime).
+  (
+    selectedBlockFields,
+    selectedTransactionFields->(
+      Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
+    ),
+  )
 }
 
 // ============== Client-side address filter ==============
@@ -449,9 +456,8 @@ let buildSvmInstructionEventConfig = (
   ~programId: SvmTypes.Pubkey.t,
   ~discriminator: option<string>,
   ~discriminatorByteLen: int,
-  ~includeTransaction: bool,
   ~includeLogs: bool,
-  ~includeTokenBalances: bool,
+  ~transactionFields: array<Internal.svmTransactionField>=[],
   ~accountFilters: array<Internal.svmAccountFilterGroup>,
   ~isInner: option<bool>,
   ~isWildcard: bool,
@@ -466,6 +472,13 @@ let buildSvmInstructionEventConfig = (
     S.json(~validate=false)
     ->Utils.Schema.coerceToJsonPgType
     ->(Utils.magic: S.t<JSON.t> => S.t<Internal.eventParams>)
+
+  // The base eventConfig stores these as a string set (field names match the
+  // typed variants at runtime).
+  let selectedTransactionFields =
+    Utils.Set.fromArray(transactionFields)->(
+      Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
+    )
   {
     id: switch discriminator {
     | Some(d) => d
@@ -485,9 +498,8 @@ let buildSvmInstructionEventConfig = (
     programId,
     discriminator,
     discriminatorByteLen,
-    includeTransaction,
     includeLogs,
-    includeTokenBalances,
+    selectedTransactionFields,
     accountFilters,
     isInner,
     accounts,
@@ -554,6 +566,8 @@ let buildFuelEventConfig = (
     dependsOnAddresses: !isWildcard,
     clientAddressFilter: ?buildAddressFilter([], ~isWildcard),
     startBlock,
+    // Fuel keeps the transaction inline on the payload; nothing to materialise.
+    selectedTransactionFields: Utils.Set.make(),
     kind: fuelKind,
   }
 }

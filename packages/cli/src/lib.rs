@@ -19,5 +19,6 @@ pub mod scripts;
 mod service_health;
 mod svm_hypersync_source;
 mod template_dirs;
+mod transaction_store;
 mod type_schema;
 mod utils;
