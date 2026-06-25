@@ -1,223 +1,397 @@
-import {
-  indexer,
-  type InstructionNode,
-  type TokenDelta,
-  type FlowTx,
-  type LiquidationEvent,
-  type IndexerStats,
-  type SvmInstruction,
-  type SvmInstructionParams,
-} from "envio";
-import type {
-  SplAmountArgs,
-  SystemTransferArgs,
-  RaydiumSwapArgs,
-  JupiterRouteArgs,
-  KaminoLiquidityArgs,
-  KaminoWithdrawArgs,
-  DriftPlacePerpArgs,
-  DriftLiquidatePerpArgs,
-  DriftLiquidateSpotArgs,
-  DriftSettlePnlArgs,
-} from "../types.js";
+import { indexer, type SvmOnSlotContext, type SvmTokenBalance } from "envio";
 
 const STATS_ID = "global";
-
-type EntityOps<T> = {
-  get: (id: string) => Promise<T | undefined>;
-  set: (entity: T) => void;
-};
-type FlowContext = {
-  InstructionNode: EntityOps<InstructionNode>;
-  TokenDelta: EntityOps<TokenDelta>;
-  FlowTx: EntityOps<FlowTx>;
-  LiquidationEvent: EntityOps<LiquidationEvent>;
-  IndexerStats: EntityOps<IndexerStats>;
-};
-
-type NodeArgs = {
-  argU64A?: bigint;
-  argU64B?: bigint;
-  argMintA?: string;
-  argMintB?: string;
-  argMarketIndex?: number;
-};
-type MapArgs = (params: SvmInstructionParams) => NodeArgs;
-type FlowHandler = (a: { instruction: SvmInstruction; context: FlowContext }) => Promise<void>;
 
 const addrPath = (a: readonly number[]): string => a.join(".");
 const parentOf = (a: readonly number[]): string | undefined =>
   a.length <= 1 ? undefined : a.slice(0, -1).join(".");
 
-function writeTokenDeltas(instruction: SvmInstruction, context: FlowContext, txSig: string): void {
-  for (const b of instruction.transaction?.tokenBalances ?? []) {
-    if (!b.account) continue;
-    const pre = BigInt(b.preAmount ?? "0");
-    const post = BigInt(b.postAmount ?? "0");
-    context.TokenDelta.set({
-      id: `${txSig}:${b.account}`,
+// Decoded args are best-effort (borsh decode can fail on IDL drift), so every
+// numeric read is treated as possibly-absent: BigInt(undefined) would throw and
+// kill the handler for an entire protocol.
+const bi = (x: unknown): bigint | undefined =>
+  x === undefined || x === null ? undefined : BigInt(x as string | number | bigint);
+
+// Plain write-shape passed to `record`. Carries only already-extracted values,
+// so the per-instruction transaction reads (and their `FieldNotSelected` compile
+// guard) stay at the inline `onInstruction` call sites where the type is exact.
+type FlowEvent = {
+  program: string;
+  ixName: string;
+  programId: string;
+  isInner: boolean;
+  slot: number;
+  addr: readonly number[];
+  txSig: string | undefined;
+  feePayer: string | undefined;
+  success: boolean | undefined;
+  fee: bigint | undefined;
+  computeUnits: bigint | undefined;
+  tokenBalances: readonly SvmTokenBalance[];
+  argU64A?: bigint;
+  argU64B?: bigint;
+  argMintA?: string;
+  argMintB?: string;
+  argMarketIndex?: number;
+  liquidation?: { marketIndex: number | undefined; liabilityAmount: bigint | undefined };
+};
+
+async function record(context: SvmOnSlotContext, e: FlowEvent): Promise<void> {
+  if (e.txSig) {
+    const txSig = e.txSig;
+    const path = addrPath(e.addr);
+    context.InstructionNode.set({
+      id: `${txSig}:${path}`,
       txSig,
-      slot: instruction.block.slot,
-      account: b.account,
-      mint: b.mint ?? "",
-      owner: b.owner,
-      preAmount: pre,
-      postAmount: post,
-      delta: post - pre,
+      slot: e.slot,
+      addrPath: path,
+      depth: Math.max(0, e.addr.length - 1),
+      parentPath: parentOf(e.addr),
+      program: e.program,
+      programId: e.programId,
+      ixName: e.ixName,
+      isInner: e.isInner,
+      feePayer: e.feePayer,
+      success: e.success,
+      fee: e.fee,
+      computeUnits: e.computeUnits,
+      argU64A: e.argU64A,
+      argU64B: e.argU64B,
+      argMintA: e.argMintA,
+      argMintB: e.argMintB,
+      argMarketIndex: e.argMarketIndex,
     });
+    context.FlowTx.set({
+      id: txSig,
+      slot: e.slot,
+      feePayer: e.feePayer,
+      success: e.success,
+      fee: e.fee,
+      computeUnits: e.computeUnits,
+    });
+    for (const b of e.tokenBalances) {
+      if (!b.account) continue;
+      const pre = BigInt(b.preAmount ?? "0");
+      const post = BigInt(b.postAmount ?? "0");
+      context.TokenDelta.set({
+        id: `${txSig}:${b.account}`,
+        txSig,
+        slot: e.slot,
+        account: b.account,
+        mint: b.mint ?? "",
+        owner: b.owner,
+        preAmount: pre,
+        postAmount: post,
+        delta: post - pre,
+      });
+    }
+    if (e.liquidation) {
+      context.LiquidationEvent.set({
+        id: `${txSig}:${path}`,
+        txSig,
+        slot: e.slot,
+        ixName: e.ixName,
+        marketIndex: e.liquidation.marketIndex,
+        liabilityAmount: e.liquidation.liabilityAmount,
+      });
+    }
   }
-}
-
-function writeFlowTx(instruction: SvmInstruction, context: FlowContext, txSig: string): void {
-  context.FlowTx.set({
-    id: txSig,
-    slot: instruction.block.slot,
-    feePayer: instruction.transaction?.feePayer,
-    success: instruction.transaction?.success,
-    fee: instruction.transaction?.fee,
-    computeUnits: instruction.transaction?.computeUnitsConsumed,
-  });
-}
-
-async function bumpStats(instruction: SvmInstruction, context: FlowContext): Promise<void> {
+  // Stats bump for every matched instruction, even one whose transaction
+  // carried no signature.
   const prev = await context.IndexerStats.get(STATS_ID);
   context.IndexerStats.set({
     id: STATS_ID,
-    lastSlot: Math.max(prev?.lastSlot ?? 0, instruction.block.slot),
+    lastSlot: Math.max(prev?.lastSlot ?? 0, e.slot),
     totalInstructions: (prev?.totalInstructions ?? 0n) + 1n,
   });
 }
 
-function writeNode(
-  instruction: SvmInstruction,
-  context: FlowContext,
-  program: string,
-  instructionName: string,
-  extra: NodeArgs,
-): void {
-  const txSig = instruction.transaction?.signatures[0];
-  if (!txSig) return;
-  const addr = instruction.instructionAddress;
-  const path = addrPath(addr);
-  const params = instruction.params;
-  context.InstructionNode.set({
-    id: `${txSig}:${path}`,
-    txSig,
-    slot: instruction.block.slot,
-    addrPath: path,
-    depth: Math.max(0, addr.length - 1),
-    parentPath: parentOf(addr),
-    program,
+indexer.onInstruction({ program: "Jupiter", instruction: "route" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  const args = instruction.params?.args;
+  await record(context, {
+    program: "Jupiter",
+    ixName: instruction.params?.name ?? "route",
     programId: instruction.programId,
-    // A handler only fires for its instruction's discriminator, so the
-    // registered name is correct even when borsh decode fails (e.g. a Jupiter
-    // routePlan variant newer than the bundled IDL).
-    ixName: params?.name ?? instructionName,
     isInner: instruction.isInner,
-    feePayer: instruction.transaction?.feePayer,
-    success: instruction.transaction?.success,
-    fee: instruction.transaction?.fee,
-    computeUnits: instruction.transaction?.computeUnitsConsumed,
-    argU64A: extra.argU64A,
-    argU64B: extra.argU64B,
-    argMintA: extra.argMintA,
-    argMintB: extra.argMintB,
-    argMarketIndex: extra.argMarketIndex,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+    argU64A: bi(args?.inAmount),
+    argU64B: bi(args?.quotedOutAmount),
+    argMintB: instruction.params?.accounts.destinationMint,
   });
-  writeFlowTx(instruction, context, txSig);
-  writeTokenDeltas(instruction, context, txSig);
-}
-
-function nodeHandler(program: string, instructionName: string, mapArgs?: MapArgs): FlowHandler {
-  return async ({ instruction, context }) => {
-    const params = instruction.params;
-    const extra = params && mapArgs ? mapArgs(params) : {};
-    writeNode(instruction, context, program, instructionName, extra);
-    await bumpStats(instruction, context);
-  };
-}
-
-function liquidationHandler(program: string, instructionName: string, mapArgs: MapArgs): FlowHandler {
-  return async ({ instruction, context }) => {
-    const params = instruction.params;
-    const extra = params ? mapArgs(params) : {};
-    writeNode(instruction, context, program, instructionName, extra);
-    const txSig = instruction.transaction?.signatures[0];
-    if (txSig) {
-      context.LiquidationEvent.set({
-        id: `${txSig}:${addrPath(instruction.instructionAddress)}`,
-        txSig,
-        slot: instruction.block.slot,
-        ixName: params?.name ?? instructionName,
-        marketIndex: extra.argMarketIndex,
-        liabilityAmount: extra.argU64A,
-      });
-    }
-    await bumpStats(instruction, context);
-  };
-}
-
-// IDL-decoded programs surface decoded.args loosely (codegen types them `{}`),
-// so every field read is treated as possibly-absent: BigInt(undefined) would
-// throw and kill the handler for an entire protocol.
-const bi = (x: unknown): bigint | undefined =>
-  x === undefined || x === null ? undefined : BigInt(x as string | number | bigint);
-
-const splAmount: MapArgs = (d) => ({ argU64A: bi((d.args as Partial<SplAmountArgs>).amount) });
-const systemTransfer: MapArgs = (d) => ({ argU64A: bi((d.args as Partial<SystemTransferArgs>).lamports) });
-const raydiumSwap: MapArgs = (d) => {
-  const a = d.args as Partial<RaydiumSwapArgs>;
-  return { argU64A: bi(a.amountIn), argU64B: bi(a.minAmountOut) };
-};
-const jupiterRoute: MapArgs = (d) => {
-  const a = d.args as Partial<JupiterRouteArgs>;
-  return {
-    argU64A: bi(a.inAmount),
-    argU64B: bi(a.quotedOutAmount),
-    argMintA: d.accounts.sourceMint,
-    argMintB: d.accounts.destinationMint,
-  };
-};
-const kaminoLiquidity: MapArgs = (d) => ({
-  argU64A: bi((d.args as Partial<KaminoLiquidityArgs>).liquidityAmount),
-  argMintA: d.accounts.reserveLiquidityMint ?? d.accounts.borrowReserveLiquidityMint,
 });
-const kaminoWithdraw: MapArgs = (d) => ({
-  argU64A: bi((d.args as Partial<KaminoWithdrawArgs>).collateralAmount),
-  argMintA: d.accounts.reserveLiquidityMint,
+
+indexer.onInstruction({ program: "Jupiter", instruction: "sharedAccountsRoute" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  const args = instruction.params?.args;
+  await record(context, {
+    program: "Jupiter",
+    ixName: instruction.params?.name ?? "sharedAccountsRoute",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+    argU64A: bi(args?.inAmount),
+    argU64B: bi(args?.quotedOutAmount),
+    argMintA: instruction.params?.accounts.sourceMint,
+    argMintB: instruction.params?.accounts.destinationMint,
+  });
 });
-const driftPlacePerp: MapArgs = (d) => ({
-  argMarketIndex: (d.args as DriftPlacePerpArgs).params?.marketIndex,
+
+indexer.onInstruction({ program: "Kamino", instruction: "depositReserveLiquidityAndObligationCollateral" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  await record(context, {
+    program: "Kamino",
+    ixName: instruction.params?.name ?? "depositReserveLiquidityAndObligationCollateral",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+    argU64A: bi(instruction.params?.args.liquidityAmount),
+    argMintA: instruction.params?.accounts.reserveLiquidityMint,
+  });
 });
-const driftLiquidatePerp: MapArgs = (d) => {
-  const a = d.args as Partial<DriftLiquidatePerpArgs>;
-  return { argMarketIndex: a.marketIndex, argU64A: bi(a.liquidatorMaxBaseAssetAmount) };
-};
-const driftLiquidateSpot: MapArgs = (d) => {
-  const a = d.args as Partial<DriftLiquidateSpotArgs>;
-  return { argMarketIndex: a.liabilityMarketIndex, argU64A: bi(a.liquidatorMaxLiabilityTransfer) };
-};
-const driftSettlePnl: MapArgs = (d) => ({ argMarketIndex: (d.args as Partial<DriftSettlePnlArgs>).marketIndex });
 
-indexer.onInstruction({ program: "Jupiter", instruction: "route" }, nodeHandler("Jupiter", "route", jupiterRoute));
-indexer.onInstruction({ program: "Jupiter", instruction: "sharedAccountsRoute" }, nodeHandler("Jupiter", "sharedAccountsRoute", jupiterRoute));
+indexer.onInstruction({ program: "Kamino", instruction: "borrowObligationLiquidity" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  await record(context, {
+    program: "Kamino",
+    ixName: instruction.params?.name ?? "borrowObligationLiquidity",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+    argU64A: bi(instruction.params?.args.liquidityAmount),
+    argMintA: instruction.params?.accounts.borrowReserveLiquidityMint,
+  });
+});
 
-indexer.onInstruction({ program: "Kamino", instruction: "depositReserveLiquidityAndObligationCollateral" }, nodeHandler("Kamino", "depositReserveLiquidityAndObligationCollateral", kaminoLiquidity));
-indexer.onInstruction({ program: "Kamino", instruction: "borrowObligationLiquidity" }, nodeHandler("Kamino", "borrowObligationLiquidity", kaminoLiquidity));
-indexer.onInstruction({ program: "Kamino", instruction: "repayObligationLiquidity" }, nodeHandler("Kamino", "repayObligationLiquidity", kaminoLiquidity));
-indexer.onInstruction({ program: "Kamino", instruction: "withdrawObligationCollateralAndRedeemReserveCollateral" }, nodeHandler("Kamino", "withdrawObligationCollateralAndRedeemReserveCollateral", kaminoWithdraw));
+indexer.onInstruction({ program: "Kamino", instruction: "repayObligationLiquidity" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  await record(context, {
+    program: "Kamino",
+    ixName: instruction.params?.name ?? "repayObligationLiquidity",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+    argU64A: bi(instruction.params?.args.liquidityAmount),
+    argMintA: instruction.params?.accounts.reserveLiquidityMint,
+  });
+});
 
-indexer.onInstruction({ program: "Drift", instruction: "placePerpOrder" }, nodeHandler("Drift", "placePerpOrder", driftPlacePerp));
-indexer.onInstruction({ program: "Drift", instruction: "fillPerpOrder" }, nodeHandler("Drift", "fillPerpOrder"));
-indexer.onInstruction({ program: "Drift", instruction: "liquidatePerp" }, liquidationHandler("Drift", "liquidatePerp", driftLiquidatePerp));
-indexer.onInstruction({ program: "Drift", instruction: "liquidateSpot" }, liquidationHandler("Drift", "liquidateSpot", driftLiquidateSpot));
-indexer.onInstruction({ program: "Drift", instruction: "settlePnl" }, nodeHandler("Drift", "settlePnl", driftSettlePnl));
+indexer.onInstruction({ program: "Kamino", instruction: "withdrawObligationCollateralAndRedeemReserveCollateral" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  await record(context, {
+    program: "Kamino",
+    ixName: instruction.params?.name ?? "withdrawObligationCollateralAndRedeemReserveCollateral",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+    argU64A: bi(instruction.params?.args.collateralAmount),
+    argMintA: instruction.params?.accounts.reserveLiquidityMint,
+  });
+});
 
-// SplToken + System are not matched (volume); see config.yaml. Their mapArgs
-// (splAmount / systemTransfer) are kept for a future tight-window deep dive.
-indexer.onInstruction({ program: "Raydium", instruction: "swap" }, nodeHandler("Raydium", "swap", raydiumSwap));
+indexer.onInstruction({ program: "Drift", instruction: "placePerpOrder" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  await record(context, {
+    program: "Drift",
+    ixName: instruction.params?.name ?? "placePerpOrder",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+    argMarketIndex: instruction.params?.args.params?.marketIndex,
+  });
+});
 
-// Orca + Meteora swap: discriminator-filtered (not program-wide), so the
-// CPI tree gets the protocol nodes Jupiter routes through.
-indexer.onInstruction({ program: "Orca", instruction: "swap" }, nodeHandler("Orca", "swap"));
-indexer.onInstruction({ program: "Meteora", instruction: "swap" }, nodeHandler("Meteora", "swap"));
+indexer.onInstruction({ program: "Drift", instruction: "fillPerpOrder" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  await record(context, {
+    program: "Drift",
+    ixName: instruction.params?.name ?? "fillPerpOrder",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+  });
+});
+
+indexer.onInstruction({ program: "Drift", instruction: "liquidatePerp" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  const args = instruction.params?.args;
+  const marketIndex = args?.marketIndex;
+  const liabilityAmount = bi(args?.liquidatorMaxBaseAssetAmount);
+  await record(context, {
+    program: "Drift",
+    ixName: instruction.params?.name ?? "liquidatePerp",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+    argMarketIndex: marketIndex,
+    argU64A: liabilityAmount,
+    liquidation: { marketIndex, liabilityAmount },
+  });
+});
+
+indexer.onInstruction({ program: "Drift", instruction: "liquidateSpot" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  const args = instruction.params?.args;
+  const marketIndex = args?.liabilityMarketIndex;
+  const liabilityAmount = bi(args?.liquidatorMaxLiabilityTransfer);
+  await record(context, {
+    program: "Drift",
+    ixName: instruction.params?.name ?? "liquidateSpot",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+    argMarketIndex: marketIndex,
+    argU64A: liabilityAmount,
+    liquidation: { marketIndex, liabilityAmount },
+  });
+});
+
+indexer.onInstruction({ program: "Drift", instruction: "settlePnl" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  await record(context, {
+    program: "Drift",
+    ixName: instruction.params?.name ?? "settlePnl",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+    argMarketIndex: instruction.params?.args.marketIndex,
+  });
+});
+
+// SplToken + System are not matched (volume); see config.yaml. Per-tx token
+// movement still arrives via transaction.tokenBalances on the DeFi events.
+indexer.onInstruction({ program: "Raydium", instruction: "swap" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  const args = instruction.params?.args;
+  await record(context, {
+    program: "Raydium",
+    ixName: instruction.params?.name ?? "swap",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+    argU64A: bi(args?.amountIn),
+    argU64B: bi(args?.minAmountOut),
+  });
+});
+
+// Orca + Meteora swap: discriminator-filtered (not program-wide), so the CPI
+// tree gets the protocol nodes Jupiter routes through.
+indexer.onInstruction({ program: "Orca", instruction: "swap" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  await record(context, {
+    program: "Orca",
+    ixName: instruction.params?.name ?? "swap",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+  });
+});
+
+indexer.onInstruction({ program: "Meteora", instruction: "swap" }, async ({ instruction, context }) => {
+  const tx = instruction.transaction;
+  await record(context, {
+    program: "Meteora",
+    ixName: instruction.params?.name ?? "swap",
+    programId: instruction.programId,
+    isInner: instruction.isInner,
+    slot: instruction.block.slot,
+    addr: instruction.instructionAddress,
+    txSig: tx.signatures[0],
+    feePayer: tx.feePayer,
+    success: tx.success,
+    fee: tx.fee,
+    computeUnits: tx.computeUnitsConsumed,
+    tokenBalances: tx.tokenBalances ?? [],
+  });
+});

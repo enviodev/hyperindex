@@ -1260,12 +1260,8 @@ impl SystemConfig {
                                     })?;
                                 let fs = instr.field_selection.as_ref();
                                 let selected_transaction_fields =
-                                    resolve_svm_transaction_fields(fs).with_context(|| {
-                                        format!("Field selection for instruction '{}'", instr.name)
-                                    })?;
-                                let include_logs = fs
-                                    .and_then(|f| f.log_fields.as_ref())
-                                    .is_some_and(|v| v.is_enabled());
+                                    resolve_svm_transaction_fields(fs);
+                                let include_logs = fs.and_then(|f| f.log_fields).unwrap_or(false);
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
@@ -2059,61 +2055,26 @@ pub struct SvmAccountFilter {
     pub values: Vec<String>,
 }
 
-/// Selectable SVM parent-transaction field names (camelCase), matching the
-/// public `svmTransaction` shape. `tokenBalances` is selected via the separate
-/// `token_balance_fields` config knob, so it isn't accepted here.
-pub const SVM_TRANSACTION_FIELDS: [&str; 10] = [
-    "transactionIndex",
-    "signatures",
-    "feePayer",
-    "success",
-    "err",
-    "fee",
-    "computeUnitsConsumed",
-    "accountKeys",
-    "recentBlockhash",
-    "version",
-];
-
 /// Resolve an instruction's field selection into the selected transaction-field
-/// names. `transaction_fields: true` selects all; a list selects (and validates)
-/// those; `token_balance_fields` adds `tokenBalances`.
+/// names (camelCase). The listed `transaction_fields` are deduplicated in
+/// declared order, then `token_balance_fields` appends `tokenBalances`.
 fn resolve_svm_transaction_fields(
     fs: Option<&human_config::svm::SvmFieldSelection>,
-) -> anyhow::Result<Vec<String>> {
+) -> Vec<String> {
     let mut selected: Vec<String> = Vec::new();
     let Some(fs) = fs else {
-        return Ok(selected);
+        return selected;
     };
-    match fs.transaction_fields.as_ref() {
-        Some(human_config::svm::FieldSelectionValue::All(true)) => {
-            selected.extend(SVM_TRANSACTION_FIELDS.iter().map(|s| s.to_string()))
+    for field in fs.transaction_fields.iter().flatten() {
+        let name = field.to_string();
+        if !selected.contains(&name) {
+            selected.push(name);
         }
-        Some(human_config::svm::FieldSelectionValue::Fields(fields)) => {
-            for f in fields {
-                if !SVM_TRANSACTION_FIELDS.contains(&f.as_str()) {
-                    anyhow::bail!(
-                        "Invalid transaction field '{}'. Valid fields are: {}. \
-                         (Token balances are selected via token_balance_fields.)",
-                        f,
-                        SVM_TRANSACTION_FIELDS.join(", ")
-                    );
-                }
-                if !selected.contains(f) {
-                    selected.push(f.clone());
-                }
-            }
-        }
-        Some(human_config::svm::FieldSelectionValue::All(false)) | None => {}
     }
-    if fs
-        .token_balance_fields
-        .as_ref()
-        .is_some_and(|v| v.is_enabled())
-    {
+    if fs.token_balance_fields == Some(true) {
         selected.push("tokenBalances".to_string());
     }
-    Ok(selected)
+    selected
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -4115,18 +4076,7 @@ type Foo {
                         "UpdateMetadataAccountV2",
                         Some("0x0f"),
                         1,
-                        to_strings(&[
-                            "transactionIndex",
-                            "signatures",
-                            "feePayer",
-                            "success",
-                            "err",
-                            "fee",
-                            "computeUnitsConsumed",
-                            "accountKeys",
-                            "recentBlockhash",
-                            "version",
-                        ]),
+                        to_strings(&["signatures"]),
                         false,
                         1
                     ),

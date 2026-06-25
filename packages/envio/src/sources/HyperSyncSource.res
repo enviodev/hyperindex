@@ -197,17 +197,18 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
   let makeEventBatchQueueItem = (
     item: HyperSyncClient.EventItems.item,
+    ~block: HyperSyncClient.ResponseTypes.block,
     ~params: Internal.eventParams,
     ~eventConfig: Internal.evmEventConfig,
   ): Internal.item => {
-    let {block, transactionIndex, logIndex, srcAddress} = item
+    let {transactionIndex, logIndex, srcAddress} = item
     let chainId = chain->ChainMap.Chain.toChainId
 
     Internal.Event({
       eventConfig: (eventConfig :> Internal.eventConfig),
       timestamp: block.timestamp->Option.getUnsafe,
       chain,
-      blockNumber: block.number->Option.getUnsafe,
+      blockNumber: item.blockNumber,
       blockHash: block.hash->Option.getUnsafe,
       logIndex,
       transactionIndex,
@@ -234,7 +235,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~retry,
     ~logger,
   ) => {
-    let totalTimeRef = Hrtime.makeTimer()
+    let totalTimeRef = Performance.now()
 
     let selectionConfig = selection->getSelectionConfig
 
@@ -243,7 +244,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed getting log selection for the query")
     }
 
-    let startFetchingBatchTimeRef = Hrtime.makeTimer()
+    let startFetchingBatchTimeRef = Performance.now()
 
     //fetch batch
     Prometheus.SourceRequestCount.increment(
@@ -303,7 +304,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       )
     }
 
-    let pageFetchTime = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -313,10 +314,20 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     //In the query
     let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-    let parsingTimeRef = Hrtime.makeTimer()
+    let parsingTimeRef = Performance.now()
 
     //Parse page items into queue items
     let parsedQueueItems = []
+
+    // Blocks are returned once per number; items reference them by blockNumber.
+    let blocksByNumber = Utils.Map.make()
+    pageUnsafe.blocks->Array.forEach(block => {
+      switch block.number {
+      | Some(number) => blocksByNumber->Utils.Map.set(number, block)->ignore
+      | None => ()
+      }
+    })
+    let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
 
     let handleDecodeFailure = (
       ~eventConfig: Internal.evmEventConfig,
@@ -353,7 +364,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
           ),
           ~indexingAddresses,
           ~contractAddress=item.srcAddress,
-          ~blockNumber=item.block.number->Option.getUnsafe,
+          ~blockNumber=item.blockNumber,
         )
 
       switch maybeEventConfig {
@@ -363,12 +374,16 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         ->Nullable.toOption
         ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
         | Some(params) =>
-          parsedQueueItems->Array.push(makeEventBatchQueueItem(item, ~params, ~eventConfig))->ignore
+          parsedQueueItems
+          ->Array.push(
+            makeEventBatchQueueItem(item, ~block=getBlock(item.blockNumber), ~params, ~eventConfig),
+          )
+          ->ignore
         | None =>
           handleDecodeFailure(
             ~eventConfig,
             ~logIndex=item.logIndex,
-            ~blockNumber=item.block.number->Option.getUnsafe,
+            ~blockNumber=item.blockNumber,
             ~chainId,
             ~exn=UndefinedValue,
           )
@@ -376,14 +391,14 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       }
     })
 
-    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
     // Collect (blockNumber, blockHash) pairs we already have from the response —
-    // one per item's block plus, when present, the rollbackGuard's head block
+    // one per returned block plus, when present, the rollbackGuard's head block
     // and the parent of the range's first block. Duplicates are allowed; reorg
     // detection notices same-block-number-different-hash collisions itself.
     let blockHashes = []
-    pageUnsafe.items->Array.forEach(({block}) => {
+    pageUnsafe.blocks->Array.forEach(block => {
       switch (block.number, block.hash) {
       | (Some(blockNumber), Some(blockHash)) =>
         blockHashes->Array.push({ReorgDetection.blockNumber, blockHash})->ignore
@@ -411,13 +426,13 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     | Some({timestamp}) => timestamp
     | None =>
       switch pageUnsafe.items->Array.get(pageUnsafe.items->Array.length - 1) {
-      | Some({block}) if block.number->Option.getUnsafe == heighestBlockQueried =>
-        block.timestamp->Option.getUnsafe
+      | Some(item) if item.blockNumber == heighestBlockQueried =>
+        getBlock(item.blockNumber).timestamp->Option.getUnsafe
       | _ => 0
       }
     }
 
-    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     let stats = {
       totalTimeElapsed,
@@ -454,7 +469,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {
-      let timerRef = Hrtime.makeTimer()
+      let timerRef = Performance.now()
       let result = try {
         await client.getHeight()
       } catch {
@@ -468,7 +483,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         | _ => throw(JsExn(e))
         }
       }
-      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+      let seconds = timerRef->Performance.secondsSince
       Prometheus.SourceRequestCount.increment(
         ~sourceName=name,
         ~chainId=chain->ChainMap.Chain.toChainId,

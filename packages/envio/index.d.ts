@@ -997,24 +997,6 @@ export type SvmTokenBalance = {
   readonly postAmount?: string;
 };
 
-/** Parent transaction surfaced when an instruction's
- * `include_transaction` flag is `true`. */
-export type SvmTransaction = {
-  readonly signatures: readonly string[];
-  readonly feePayer?: string;
-  readonly success?: boolean;
-  readonly err?: string;
-  /** Lamports. */
-  readonly fee?: bigint;
-  readonly computeUnitsConsumed?: bigint;
-  readonly accountKeys: readonly string[];
-  readonly recentBlockhash?: string;
-  readonly version?: string;
-  /** SPL Token / Token-2022 balance snapshots for this transaction.
-   * Present when `include_token_balances` is `true`. */
-  readonly tokenBalances?: readonly SvmTokenBalance[];
-};
-
 export type SvmLog = {
   readonly kind: string;
   readonly message: string;
@@ -1033,6 +1015,7 @@ export type SvmLog = {
  * are base58 strings. */
 export type SvmInstruction<
   Params extends SvmInstructionParams = SvmInstructionParams,
+  Tx = SvmTransaction,
 > = {
   /** Program name as declared under `programs[].name` in `config.yaml`. */
   readonly programName: string;
@@ -1050,8 +1033,11 @@ export type SvmInstruction<
   readonly d8?: string;
   /** Borsh-decoded params. Present when a schema is configured and matched. */
   readonly params?: Params;
-  /** Present when the instruction's `include_transaction` is `true`. */
-  readonly transaction?: SvmTransaction;
+  /** Parent transaction. Carries only the fields selected via this
+   * instruction's `field_selection`; unselected fields are typed as
+   * `FieldNotSelected<...>` so reading them is a compile error. Always present
+   * (`{}` when no fields are selected). */
+  readonly transaction: Tx;
   /** Present when the instruction's `include_logs` is `true`; only logs
    * scoped to this exact instruction (matching `instruction_address`). */
   readonly logs?: readonly SvmLog[];
@@ -1327,7 +1313,10 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                   handler: (
                     args: SvmOnInstructionHandlerArgs<
                       Config,
-                      SvmInstruction<SvmParamsFromProgramTable<Programs[P][I]>>
+                      SvmInstruction<
+                        SvmParamsFromProgramTable<Programs[P][I]>,
+                        Programs[P][I]["transaction"]
+                      >
                     >,
                   ) => Promise<void>,
                 ) => void;
@@ -1695,6 +1684,7 @@ type EvmContractsT  = GlobalConfig extends { evm:  { contracts: infer X extends 
 type FuelChainsT    = GlobalConfig extends { fuel: { chains:    infer X extends Record<string, { id: number }> } } ? X : {};
 type FuelContractsT = GlobalConfig extends { fuel: { contracts: infer X extends Record<string, Record<string, any>> } } ? X : {};
 type SvmChainsT     = GlobalConfig extends { svm:  { chains:    infer X extends Record<string, { id: number }> } } ? X : {};
+type SvmProgramsT   = GlobalConfig extends { svm:  { programs:  infer X extends Record<string, Record<string, any>> } } ? X : {};
 type EntitiesT      = GlobalConfig extends { entities: infer X extends Record<string, object> } ? X : {};
 type EnumsT         = GlobalConfig extends { enums: infer X extends Record<string, any> } ? X : {};
 
@@ -1715,6 +1705,18 @@ export type EvmChainId  = IsEmptyObject<EvmChainsT>  extends true ? NotConfigure
 export type FuelChainId = IsEmptyObject<FuelChainsT> extends true ? NotConfigured<"FuelChainId", "Configure Fuel chains"> : FuelChainsT[keyof FuelChainsT]["id"];
 /** Union of all configured SVM chain IDs. */
 export type SvmChainId  = IsEmptyObject<SvmChainsT>  extends true ? NotConfigured<"SvmChainId",  "Configure SVM chains">  : SvmChainsT [keyof SvmChainsT ]["id"];
+
+/** The SVM parent-transaction type generated from this project's
+ *  `field_selection`: the union of every instruction's `transaction` shape,
+ *  with unselected fields typed as `FieldNotSelected<...>`. Resolves to a
+ *  `NotConfigured` hint until `envio codegen` augments {@link Global}. */
+export type SvmTransaction = IsEmptyObject<SvmProgramsT> extends true
+  ? NotConfigured<"SvmTransaction", "Configure SVM programs">
+  : {
+      [P in keyof SvmProgramsT]: {
+        [I in keyof SvmProgramsT[P]]: SvmProgramsT[P][I]["transaction"];
+      }[keyof SvmProgramsT[P]];
+    }[keyof SvmProgramsT];
 
 /** Lookup an EVM event type by contract and event name. Without generics,
  *  resolves to the discriminated union of every EVM event in the project. */

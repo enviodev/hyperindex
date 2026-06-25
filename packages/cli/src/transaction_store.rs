@@ -734,33 +734,25 @@ impl TransactionStore {
         store
     }
 
-    /// Insert raw EVM transactions in one locked pass (called by the HyperSync
-    /// source while building a page). Many logs in a page share a transaction;
-    /// the first `(block, index)` entry wins and the rest are skipped, so a tx is
-    /// stored once. Not exposed to JS.
-    pub(crate) fn insert_evm_raw_bulk(&self, txs: Vec<(u64, u32, Arc<simple_types::Transaction>)>) {
-        self.ecosystem.store(ECO_EVM, Ordering::Relaxed);
-        let mut inner = self.inner.lock().unwrap();
-        for (block_number, transaction_index, tx) in txs {
-            inner
-                .map
-                .entry(block_number)
-                .or_default()
-                .entry(transaction_index)
-                .or_insert(StoredTx::EvmRaw { tx });
-        }
-    }
-
-    /// Insert a single raw EVM transaction. Convenience over `insert_evm_raw_bulk`
-    /// for tests. Not exposed to JS.
-    #[cfg(test)]
+    /// Insert a raw EVM transaction (called by the HyperSync source while
+    /// building a page). The page's transactions arrive already deduplicated by
+    /// the upstream response (one row per (block, index)), so a plain insert is
+    /// enough — many logs sharing a transaction never reach here. Not exposed to
+    /// JS.
     pub(crate) fn insert_evm_raw(
         &self,
         block_number: u64,
         transaction_index: u32,
         tx: Arc<simple_types::Transaction>,
     ) {
-        self.insert_evm_raw_bulk(vec![(block_number, transaction_index, tx)]);
+        self.ecosystem.store(ECO_EVM, Ordering::Relaxed);
+        self.inner
+            .lock()
+            .unwrap()
+            .map
+            .entry(block_number)
+            .or_default()
+            .insert(transaction_index, StoredTx::EvmRaw { tx });
     }
 
     /// Insert a raw SVM transaction with its joined token balances (called by the
