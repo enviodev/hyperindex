@@ -112,7 +112,7 @@ fn opt_hex(bytes: &Option<Vec<u8>>) -> Option<String> {
     bytes.as_deref().map(to_hex)
 }
 
-fn bigint_u64(v: u64) -> BigInt {
+pub(crate) fn bigint_u64(v: u64) -> BigInt {
     BigInt {
         sign_bit: false,
         words: vec![v],
