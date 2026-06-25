@@ -246,7 +246,7 @@ indexer.onInstruction({ program: "Drift", instruction: "placePerpOrder" }, async
     fee: tx?.fee,
     computeUnits: tx?.computeUnitsConsumed,
     tokenBalances: tx?.tokenBalances ?? [],
-    argMarketIndex: instruction.params?.args.params.marketIndex,
+    argMarketIndex: instruction.params?.args.params?.marketIndex,
   });
 });
 

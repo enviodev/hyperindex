@@ -2565,9 +2565,7 @@ fn field_type_to_ts_type(
 const SVM_TOKEN_BALANCES_TS: &str = "readonly { readonly account?: string; readonly mint?: string; readonly owner?: string; readonly preAmount?: string; readonly postAmount?: string }[]";
 
 /// One selected field line of a generated `.d.ts` record: a doc comment plus the
-/// `readonly` property with its real type. Shared by the EVM block/transaction
-/// records (`generate_ts_all_fields_record`) and the SVM per-instruction
-/// transaction record (`svm_transaction_ts_type`).
+/// `readonly` property with its real type.
 fn ts_selected_field(name: &str, ts_type: &str, indent: &str) -> String {
     format!("{indent}/** The {name} field. */\n{indent}readonly {name}: {ts_type};")
 }
@@ -2657,11 +2655,10 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
 }
 
 /// Per-instruction SVM parent-transaction TS type for the generated program
-/// table, rendered through the same selected/unselected helpers as the EVM
-/// block/transaction records: selected fields get their real type (nullable ones
-/// as `T | undefined`); unselected fields get an `@deprecated` hint plus
-/// `FieldNotSelected<...>`. `indent` is the indentation of the field lines; the
-/// closing brace sits two spaces shallower.
+/// table: selected fields get their real type (nullable ones as `T | undefined`);
+/// unselected fields get an `@deprecated` hint plus `FieldNotSelected<...>`.
+/// `indent` is the indentation of the field lines; the closing brace sits two
+/// spaces shallower.
 fn svm_transaction_ts_type(
     specs: &[SvmTransactionFieldSpec],
     selected: &[String],
