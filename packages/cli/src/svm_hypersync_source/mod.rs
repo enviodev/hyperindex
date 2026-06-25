@@ -7,7 +7,7 @@ use napi_derive::napi;
 mod borsh_decoder;
 mod config;
 mod query;
-mod types;
+pub(crate) mod types;
 
 /// Local hex helpers. Lives here so `decoder.rs` can pull them via
 /// `super::mod_helpers::hex_to_bytes` without crossing the crate boundary

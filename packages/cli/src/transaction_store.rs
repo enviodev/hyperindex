@@ -8,7 +8,6 @@
 //! back by block.
 
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -26,13 +25,7 @@ use crate::evm_hypersync_source::types::{
     map_address_string, map_bigint, map_hex_string, AccessList as AccessListItem,
     Authorization as AuthorizationItem,
 };
-
-fn bigint_u64(v: u64) -> BigInt {
-    BigInt {
-        sign_bit: false,
-        words: vec![v],
-    }
-}
+use crate::svm_hypersync_source::types::bigint_u64;
 
 /// Transaction field codes shared with ReScript by ordinal value. The order is
 /// the contract: it mirrors `Evm.res` `transactionFields`, and the ordinal is
@@ -191,7 +184,7 @@ impl Column {
         self,
         env: sys::napi_env,
         objs: &[sys::napi_value],
-        key: &CStr,
+        key: sys::napi_value,
     ) -> napi::Result<()> {
         match self {
             Column::I64(v) => set_col(env, objs, key, v),
@@ -210,14 +203,14 @@ impl Column {
 unsafe fn set_col<T: ToNapiValue>(
     env: sys::napi_env,
     objs: &[sys::napi_value],
-    key: &CStr,
+    key: sys::napi_value,
     values: Vec<Option<T>>,
 ) -> napi::Result<()> {
     for (obj, cell) in objs.iter().zip(values) {
         if let Some(v) = cell {
             let js = T::to_napi_value(env, v)?;
-            if sys::napi_set_named_property(env, *obj, key.as_ptr(), js) != sys::Status::napi_ok {
-                return Err(napi::Error::from_reason("napi_set_named_property failed"));
+            if sys::napi_set_property(env, *obj, key, js) != sys::Status::napi_ok {
+                return Err(napi::Error::from_reason("napi_set_property failed"));
             }
         }
     }
@@ -251,9 +244,19 @@ impl ToNapiValue for Columns {
         }
 
         for (name, col) in val.columns {
-            let key =
-                CString::new(name).map_err(|_| napi::Error::from_reason("invalid field name"))?;
-            col.set_on(env, &objs, &key)?;
+            // Create the JS property-key string once per column and reuse it for
+            // every row; `napi_set_named_property` would re-create it per cell.
+            let mut key = std::ptr::null_mut();
+            if sys::napi_create_string_utf8(
+                env,
+                name.as_ptr() as *const std::os::raw::c_char,
+                name.len() as isize,
+                &mut key,
+            ) != sys::Status::napi_ok
+            {
+                return Err(napi::Error::from_reason("napi_create_string_utf8 failed"));
+            }
+            col.set_on(env, &objs, key)?;
         }
 
         for (i, obj) in objs.iter().enumerate() {
@@ -268,17 +271,42 @@ impl ToNapiValue for Columns {
 
 /// Build one column by extracting a field from each record. `None` rows (a key
 /// missing from the store) yield `None` cells.
-fn fill<T>(
-    records: &[Option<Arc<simple_types::Transaction>>],
-    extract: impl Fn(&simple_types::Transaction) -> Result<Option<T>>,
+fn fill<R, T>(
+    records: &[Option<Arc<R>>],
+    extract: impl Fn(&R) -> Result<Option<T>>,
 ) -> Result<Vec<Option<T>>> {
     records
         .iter()
         .map(|rec| match rec {
-            Some(tx) => extract(tx.as_ref()),
+            Some(r) => extract(r.as_ref()),
             None => Ok(None),
         })
         .collect()
+}
+
+/// Iterate an ecosystem's field variants and decode each whose mask bit is set,
+/// collecting them into columns. Shared by both ecosystems; only the per-field
+/// `decode` table differs. A decode error names the field so one bad row aborts
+/// the batch's materialisation with an actionable message.
+fn build_columns<F: Copy>(
+    variants: &'static [F],
+    mask: u64,
+    len: usize,
+    ordinal: impl Fn(F) -> u32,
+    name: impl Fn(F) -> &'static str,
+    decode: impl Fn(F) -> Result<Column>,
+) -> Result<Columns> {
+    let mut columns: Vec<(&'static str, Column)> = Vec::new();
+    for &field in variants {
+        if mask & (1u64 << ordinal(field)) == 0 {
+            continue;
+        }
+        let field_name = name(field);
+        let column =
+            decode(field).with_context(|| format!("decoding transaction field '{field_name}'"))?;
+        columns.push((field_name, column));
+    }
+    Ok(Columns { len, columns })
 }
 
 /// Decode the mask-selected fields of the given EVM transactions into columns.
@@ -292,21 +320,14 @@ fn decode_evm_columns(
     mask: u64,
     should_checksum: bool,
 ) -> Result<Columns> {
-    let len = records.len();
-    let mut columns: Vec<(&'static str, Column)> = Vec::new();
-
-    for &field in EvmTxField::VARIANTS {
-        if mask & (1u64 << (field as u32)) == 0 {
-            continue;
-        }
-        // Fail fast on a malformed field, but name it so the failure is
-        // actionable (one bad row aborts the whole batch's materialisation).
-        let column = decode_evm_field(field, records, transaction_indices, should_checksum)
-            .with_context(|| format!("decoding EVM transaction field '{}'", field.name()))?;
-        columns.push((field.name(), column));
-    }
-
-    Ok(Columns { len, columns })
+    build_columns(
+        EvmTxField::VARIANTS,
+        mask,
+        records.len(),
+        |f| f as u32,
+        |f| f.name(),
+        |f| decode_evm_field(f, records, transaction_indices, should_checksum),
+    )
 }
 
 /// Decode a single selected EVM field across all rows. Exhaustive match: adding
@@ -412,17 +433,6 @@ pub struct SvmStored {
     token_balances: Vec<solana_simple::TokenBalance>,
 }
 
-/// Build one SVM column by extracting a field from each record.
-fn fill_svm<T>(
-    records: &[Option<Arc<SvmStored>>],
-    extract: impl Fn(&SvmStored) -> Option<T>,
-) -> Vec<Option<T>> {
-    records
-        .iter()
-        .map(|rec| rec.as_ref().and_then(|r| extract(r)))
-        .collect()
-}
-
 /// Decode the mask-selected fields of the given SVM transactions into columns.
 /// Large fields (e.g. `accountKeys`) are only cloned when their bit is set.
 /// `transaction_indices` is the requested key per row, so `transactionIndex`
@@ -431,71 +441,75 @@ fn decode_svm_columns(
     records: &[Option<Arc<SvmStored>>],
     transaction_indices: &[u32],
     mask: u64,
-) -> Columns {
-    let len = records.len();
-    let mut columns: Vec<(&'static str, Column)> = Vec::new();
+) -> Result<Columns> {
+    build_columns(
+        SvmTxField::VARIANTS,
+        mask,
+        records.len(),
+        |f| f as u32,
+        |f| f.name(),
+        |f| decode_svm_field(f, records, transaction_indices),
+    )
+}
 
-    for &field in SvmTxField::VARIANTS {
-        if mask & (1u64 << (field as u32)) == 0 {
-            continue;
+/// Decode a single selected SVM field across all rows. Exhaustive match: adding
+/// an `SvmTxField` variant fails to compile until it is decoded here.
+fn decode_svm_field(
+    field: SvmTxField,
+    records: &[Option<Arc<SvmStored>>],
+    transaction_indices: &[u32],
+) -> Result<Column> {
+    Ok(match field {
+        // The within-block index is the store key, so it's always available
+        // regardless of whether the transaction row was fetched.
+        SvmTxField::TransactionIndex => Column::I64(
+            transaction_indices
+                .iter()
+                .map(|&i| Some(i as i64))
+                .collect(),
+        ),
+        SvmTxField::Signatures => {
+            Column::StrVec(fill(records, |r| Ok(Some(r.tx.signatures.clone())))?)
         }
-        // Exhaustive match: adding an `SvmTxField` variant fails to compile until
-        // it is decoded here.
-        let column = match field {
-            // The within-block index is the store key, so it's always available
-            // regardless of whether the transaction row was fetched.
-            SvmTxField::TransactionIndex => Column::I64(
-                transaction_indices
-                    .iter()
-                    .map(|&i| Some(i as i64))
-                    .collect(),
-            ),
-            SvmTxField::Signatures => {
-                Column::StrVec(fill_svm(records, |r| Some(r.tx.signatures.clone())))
-            }
-            SvmTxField::FeePayer => Column::Str(fill_svm(records, |r| r.tx.fee_payer.clone())),
-            SvmTxField::Success => Column::Bool(fill_svm(records, |r| r.tx.success)),
-            SvmTxField::Err => Column::Str(fill_svm(records, |r| r.tx.err.clone())),
-            SvmTxField::Fee => Column::Big(fill_svm(records, |r| r.tx.fee.map(bigint_u64))),
-            SvmTxField::ComputeUnitsConsumed => Column::Big(fill_svm(records, |r| {
-                r.tx.compute_units_consumed.map(bigint_u64)
-            })),
-            SvmTxField::AccountKeys => {
-                Column::StrVec(fill_svm(records, |r| Some(r.tx.account_keys.clone())))
-            }
-            SvmTxField::RecentBlockhash => {
-                Column::Str(fill_svm(records, |r| r.tx.recent_blockhash.clone()))
-            }
-            SvmTxField::Version => Column::Str(fill_svm(records, |r| r.tx.version.clone())),
-            // Always materialise an array when selected: a record absent from the
-            // store (its transaction had no token balances, so it was never
-            // inserted) means "no balances" → `[]`, not a missing field.
-            SvmTxField::TokenBalances => Column::TokenBalances(
-                records
-                    .iter()
-                    .map(|rec| {
-                        Some(match rec {
-                            Some(r) => r
-                                .token_balances
-                                .iter()
-                                .map(|tb| SvmTokenBalanceOut {
-                                    account: tb.account.clone(),
-                                    mint: tb.mint.clone(),
-                                    owner: tb.owner.clone(),
-                                    pre_amount: tb.pre_amount.clone(),
-                                    post_amount: tb.post_amount.clone(),
-                                })
-                                .collect(),
-                            None => vec![],
-                        })
+        SvmTxField::FeePayer => Column::Str(fill(records, |r| Ok(r.tx.fee_payer.clone()))?),
+        SvmTxField::Success => Column::Bool(fill(records, |r| Ok(r.tx.success))?),
+        SvmTxField::Err => Column::Str(fill(records, |r| Ok(r.tx.err.clone()))?),
+        SvmTxField::Fee => Column::Big(fill(records, |r| Ok(r.tx.fee.map(bigint_u64)))?),
+        SvmTxField::ComputeUnitsConsumed => Column::Big(fill(records, |r| {
+            Ok(r.tx.compute_units_consumed.map(bigint_u64))
+        })?),
+        SvmTxField::AccountKeys => {
+            Column::StrVec(fill(records, |r| Ok(Some(r.tx.account_keys.clone())))?)
+        }
+        SvmTxField::RecentBlockhash => {
+            Column::Str(fill(records, |r| Ok(r.tx.recent_blockhash.clone()))?)
+        }
+        SvmTxField::Version => Column::Str(fill(records, |r| Ok(r.tx.version.clone()))?),
+        // Always materialise an array when selected: a record absent from the
+        // store (its transaction had no token balances, so it was never
+        // inserted) means "no balances" → `[]`, not a missing field.
+        SvmTxField::TokenBalances => Column::TokenBalances(
+            records
+                .iter()
+                .map(|rec| {
+                    Some(match rec {
+                        Some(r) => r
+                            .token_balances
+                            .iter()
+                            .map(|tb| SvmTokenBalanceOut {
+                                account: tb.account.clone(),
+                                mint: tb.mint.clone(),
+                                owner: tb.owner.clone(),
+                                pre_amount: tb.pre_amount.clone(),
+                                post_amount: tb.post_amount.clone(),
+                            })
+                            .collect(),
+                        None => vec![],
                     })
-                    .collect(),
-            ),
-        };
-        columns.push((field.name(), column));
-    }
-
-    Columns { len, columns }
+                })
+                .collect(),
+        ),
+    })
 }
 
 /// One stored transaction, kept in its ecosystem's compact raw form.
@@ -651,18 +665,15 @@ impl TransactionStore {
 
         match self.ecosystem.load(Ordering::Relaxed) {
             ECO_EVM => {
-                let records = {
-                    let inner = self.inner.lock().unwrap();
-                    collect(
-                        &inner,
+                let records =
+                    self.collect_locked(
                         &block_numbers,
                         &transaction_indices,
                         |stored| match stored {
                             StoredTx::EvmRaw { tx } => Some(tx.clone()),
                             _ => None,
                         },
-                    )
-                };
+                    );
                 let should_checksum = self.should_checksum.load(Ordering::Relaxed);
                 tokio::task::block_in_place(|| {
                     decode_evm_columns(&records, &transaction_indices, mask, should_checksum)
@@ -670,21 +681,19 @@ impl TransactionStore {
                 .map_err(map_err)
             }
             ECO_SVM => {
-                let records = {
-                    let inner = self.inner.lock().unwrap();
-                    collect(
-                        &inner,
+                let records =
+                    self.collect_locked(
                         &block_numbers,
                         &transaction_indices,
                         |stored| match stored {
                             StoredTx::Svm { rec } => Some(rec.clone()),
                             _ => None,
                         },
-                    )
-                };
-                Ok(tokio::task::block_in_place(|| {
+                    );
+                tokio::task::block_in_place(|| {
                     decode_svm_columns(&records, &transaction_indices, mask)
-                }))
+                })
+                .map_err(map_err)
             }
             // Empty store (no ecosystem learned yet): every key is a miss, so the
             // result is `len` empty objects regardless of the decoder.
@@ -715,6 +724,18 @@ impl TransactionStore {
 }
 
 impl TransactionStore {
+    /// Lock the store and gather the records for the requested keys. The lock is
+    /// held only for the `Arc` clones; decoding runs after it is released.
+    fn collect_locked<T>(
+        &self,
+        block_numbers: &[i64],
+        transaction_indices: &[u32],
+        pick: impl Fn(&StoredTx) -> Option<T>,
+    ) -> Vec<Option<T>> {
+        let inner = self.inner.lock().unwrap();
+        collect(&inner, block_numbers, transaction_indices, pick)
+    }
+
     /// Create a page store for an EVM source, carrying that chain's
     /// address-checksumming setting (copied into the persistent store on merge).
     pub(crate) fn with_checksum(should_checksum: bool) -> Self {
@@ -941,7 +962,7 @@ mod tests {
 
         // Select only accountKeys.
         let mask = 1u64 << (SvmTxField::AccountKeys as u32);
-        let cols = decode_svm_columns(&[Some(rec)], &[0], mask);
+        let cols = decode_svm_columns(&[Some(rec)], &[0], mask).expect("decode columns");
 
         match column(&cols, "accountKeys") {
             Some(Column::StrVec(v)) => {
