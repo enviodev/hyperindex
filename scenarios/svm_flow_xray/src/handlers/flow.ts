@@ -7,6 +7,7 @@ import {
   type IndexerStats,
   type SvmInstruction,
   type SvmInstructionParams,
+  type SvmTokenBalance,
 } from "envio";
 import type {
   SplAmountArgs,
@@ -43,13 +44,29 @@ type NodeArgs = {
   argMarketIndex?: number;
 };
 type MapArgs = (params: SvmInstructionParams) => NodeArgs;
-type FlowHandler = (a: { instruction: SvmInstruction; context: FlowContext }) => Promise<void>;
+
+// Every handler is registered through the shared factories below, which take the
+// generic `SvmInstruction` — so the per-instruction `FieldNotSelected` compile
+// guard (which fires on `indexer.onInstruction`'s inferred argument) doesn't
+// reach these bodies. `FlowInstruction` pins the exact transaction fields the
+// handlers read, so dropping one from config.yaml's `transaction_fields` is a
+// type error here instead of a silent `undefined` at runtime.
+type FlowTransaction = {
+  readonly signatures: readonly string[];
+  readonly feePayer: string | undefined;
+  readonly success: boolean | undefined;
+  readonly fee: bigint | undefined;
+  readonly computeUnitsConsumed: bigint | undefined;
+  readonly tokenBalances: readonly SvmTokenBalance[];
+};
+type FlowInstruction = SvmInstruction<SvmInstructionParams, FlowTransaction>;
+type FlowHandler = (a: { instruction: FlowInstruction; context: FlowContext }) => Promise<void>;
 
 const addrPath = (a: readonly number[]): string => a.join(".");
 const parentOf = (a: readonly number[]): string | undefined =>
   a.length <= 1 ? undefined : a.slice(0, -1).join(".");
 
-function writeTokenDeltas(instruction: SvmInstruction, context: FlowContext, txSig: string): void {
+function writeTokenDeltas(instruction: FlowInstruction, context: FlowContext, txSig: string): void {
   for (const b of instruction.transaction?.tokenBalances ?? []) {
     if (!b.account) continue;
     const pre = BigInt(b.preAmount ?? "0");
@@ -68,7 +85,7 @@ function writeTokenDeltas(instruction: SvmInstruction, context: FlowContext, txS
   }
 }
 
-function writeFlowTx(instruction: SvmInstruction, context: FlowContext, txSig: string): void {
+function writeFlowTx(instruction: FlowInstruction, context: FlowContext, txSig: string): void {
   context.FlowTx.set({
     id: txSig,
     slot: instruction.block.slot,
@@ -79,7 +96,7 @@ function writeFlowTx(instruction: SvmInstruction, context: FlowContext, txSig: s
   });
 }
 
-async function bumpStats(instruction: SvmInstruction, context: FlowContext): Promise<void> {
+async function bumpStats(instruction: FlowInstruction, context: FlowContext): Promise<void> {
   const prev = await context.IndexerStats.get(STATS_ID);
   context.IndexerStats.set({
     id: STATS_ID,
@@ -89,7 +106,7 @@ async function bumpStats(instruction: SvmInstruction, context: FlowContext): Pro
 }
 
 function writeNode(
-  instruction: SvmInstruction,
+  instruction: FlowInstruction,
   context: FlowContext,
   program: string,
   instructionName: string,
