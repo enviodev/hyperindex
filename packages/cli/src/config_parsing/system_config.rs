@@ -24,7 +24,7 @@ use crate::{
 };
 use alloy_json_abi::{Event as AlloyEvent, JsonAbi};
 use anyhow::{anyhow, Context, Result};
-use dotenvy::{EnvLoader, EnvMap, EnvSequence};
+use crate::utils::dotenv::{self, EnvMap};
 use itertools::Itertools;
 
 use super::abi_compat::EventParam;
@@ -80,17 +80,14 @@ impl EnvState {
                 let result = match &self.maybe_dotenv {
                     Some(env_map) => env_map.var(name),
                     None => {
-                        match EnvLoader::with_path(self.project_root.join(".env"))
-                            .sequence(EnvSequence::InputOnly)
-                            .load()
-                        {
+                        match dotenv::from_path(self.project_root.join(".env")) {
                             Ok(env_map) => {
                                 self.maybe_dotenv = Some(env_map.clone());
                                 env_map.var(name)
                             }
                             Err(err) => {
                                 match err {
-                                    dotenvy::Error::Io(_, _) => (),
+                                    dotenv::Error::Io(_, _) => (),
                                     _ => println!(
                                         "Warning: Failed loading .env file with unexpected error: \
                                          {err}"

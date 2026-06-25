@@ -9,7 +9,7 @@ use bollard::query_parameters::{
     RemoveContainerOptionsBuilder, StopContainerOptionsBuilder,
 };
 use bollard::{Docker, API_DEFAULT_VERSION};
-use dotenvy::{EnvLoader, EnvMap, EnvSequence};
+use crate::utils::dotenv::{self, EnvMap};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -283,10 +283,7 @@ impl ClickHouseUrl {
 
 impl EnvConfig {
     fn from_project(project_root: &Path) -> Self {
-        let dotenv = EnvLoader::with_path(project_root.join(".env"))
-            .sequence(EnvSequence::InputOnly)
-            .load()
-            .ok();
+        let dotenv = dotenv::from_path(project_root.join(".env")).ok();
 
         let var_opt = |name: &str| -> Option<String> {
             std::env::var(name)
