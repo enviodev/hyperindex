@@ -264,11 +264,19 @@ let runBatchHandlersOrThrow = async (
   }
 }
 
-let registerProcessEventBatchMetrics = (~logger, ~loadDuration, ~handlerDuration) => {
-  logger->Logging.childTrace({
-    "msg": "Finished processing batch",
-    "loader_time_elapsed": loadDuration,
-    "handlers_time_elapsed": handlerDuration,
+let registerProcessEventBatchMetrics = (
+  ~logger,
+  ~batch: Batch.t,
+  ~loadDuration,
+  ~handlerDuration,
+) => {
+  batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
+    logger->Logging.childTrace({
+      "msg": "Finished processing",
+      "chainId": chainId->Int.fromString->Option.getUnsafe,
+      "batchSize": chainAfterBatch.batchSize,
+      "progress": chainAfterBatch.progressBlockNumber,
+    })
   })
 
   Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration)
@@ -289,20 +297,17 @@ let processEventBatch = async (
   ~config: Config.t,
   ~chainStates: dict<ChainState.t>,
 ) => {
-  let totalBatchSize = batch.totalBatchSize
   // Compute chains state for this batch
   let chains: Internal.chains = chainStates->computeChainsState
 
   let logger = Logging.getLogger()
-  logger->Logging.childTrace({
-    "msg": "Started processing batch",
-    "totalBatchSize": totalBatchSize,
-    "chains": batch.progressedChainsById->Utils.Dict.mapValues(chainAfterBatch => {
-      {
-        "batchSize": chainAfterBatch.batchSize,
-        "progress": chainAfterBatch.progressBlockNumber,
-      }
-    }),
+
+  batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
+    logger->Logging.childTrace({
+      "msg": "Started processing",
+      "chainId": chainId->Int.fromString->Option.getUnsafe,
+      "batchSize": chainAfterBatch.batchSize,
+    })
   })
 
   try {
@@ -333,7 +338,12 @@ let processEventBatch = async (
 
     let loaderDuration = elapsedTimeAfterLoaders
     let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
-    registerProcessEventBatchMetrics(~logger, ~loadDuration=loaderDuration, ~handlerDuration)
+    registerProcessEventBatchMetrics(
+      ~logger,
+      ~batch,
+      ~loadDuration=loaderDuration,
+      ~handlerDuration,
+    )
     Ok()
   } catch {
   | Persistence.StorageError({message, reason}) =>
