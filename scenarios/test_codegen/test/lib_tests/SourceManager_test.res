@@ -424,7 +424,7 @@ describe("SourceManager fetchNext", () => {
       },
       selection: normalSelection,
       addressesByContractName,
-      contractNameByAddress: Dict.make(), // derived in make
+      contractNameByAddress: FetchState.deriveContractNameByAddress(addressesByContractName),
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
@@ -520,7 +520,6 @@ describe("SourceManager fetchNext", () => {
     let withPending = count => {
       let p = {
         ...mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
-        contractNameByAddress: Dict.make(), // derived in make
         mutPendingQueries: Array.fromInitializer(~length=count, pendingChunk),
         prevQueryRange: 10,
         prevRangeSize: 0,
@@ -580,6 +579,7 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition2.addressesByContractName,
+          contractNameByAddress: partition2.contractNameByAddress,
         },
         {
           ...defaultQuery,
@@ -590,6 +590,7 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition0.addressesByContractName,
+          contractNameByAddress: partition0.contractNameByAddress,
         },
         {
           ...defaultQuery,
@@ -600,6 +601,7 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition1.addressesByContractName,
+          contractNameByAddress: partition1.contractNameByAddress,
         },
       ])
 

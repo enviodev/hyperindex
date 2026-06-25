@@ -180,7 +180,7 @@ describe("FetchState.make", () => {
             },
             selection: fetchState.normalSelection,
             addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
             mergeBlock: None,
             dynamicContract: None,
             mutPendingQueries: [],
@@ -300,7 +300,7 @@ describe("FetchState.make", () => {
             addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])]),
             mergeBlock: None,
             dynamicContract: Some("Gravatar"),
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])])),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -359,7 +359,7 @@ describe("FetchState.make", () => {
               addressesByContractName: Dict.fromArray([("ContractA", [mockAddress1])]),
               mergeBlock: None,
               dynamicContract: None,
-              contractNameByAddress: Dict.make(), // derived in make
+              contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("ContractA", [mockAddress1])])),
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevRangeSize: 0,
@@ -376,7 +376,7 @@ describe("FetchState.make", () => {
               addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress2])]),
               mergeBlock: None,
               dynamicContract: Some("Gravatar"),
-              contractNameByAddress: Dict.make(), // derived in make
+              contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress2])])),
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevRangeSize: 0,
@@ -448,7 +448,7 @@ describe("FetchState.make", () => {
               addressesByContractName: Dict.fromArray([("ContractA", [mockAddress1])]),
               mergeBlock: None,
               dynamicContract: None,
-              contractNameByAddress: Dict.make(), // derived in make
+              contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("ContractA", [mockAddress1])])),
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevRangeSize: 0,
@@ -465,7 +465,7 @@ describe("FetchState.make", () => {
               addressesByContractName: Dict.fromArray([("ContractA", [mockAddress2])]),
               mergeBlock: None,
               dynamicContract: None,
-              contractNameByAddress: Dict.make(), // derived in make
+              contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("ContractA", [mockAddress2])])),
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevRangeSize: 0,
@@ -482,7 +482,7 @@ describe("FetchState.make", () => {
               addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
               mergeBlock: None,
               dynamicContract: Some("Gravatar"),
-              contractNameByAddress: Dict.make(), // derived in make
+              contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress3])])),
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevRangeSize: 0,
@@ -499,7 +499,7 @@ describe("FetchState.make", () => {
               addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress4])]),
               mergeBlock: None,
               dynamicContract: Some("Gravatar"),
-              contractNameByAddress: Dict.make(), // derived in make
+              contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress4])])),
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevRangeSize: 0,
@@ -1212,7 +1212,9 @@ describe("FetchState.registerDynamicContracts", () => {
         ]),
         mergeBlock: None,
         dynamicContract: Some("Gravatar"),
-        contractNameByAddress: Dict.make(), // derived in make
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([
+          ("Gravatar", [mockAddress1, mockAddress2, mockAddress3]),
+        ])),
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevRangeSize: 0,
@@ -1229,7 +1231,7 @@ describe("FetchState.registerDynamicContracts", () => {
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress4, mockAddress0])]),
         mergeBlock: None,
         dynamicContract: Some("Gravatar"),
-        contractNameByAddress: Dict.make(), // derived in make
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress4, mockAddress0])])),
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevRangeSize: 0,
@@ -1277,7 +1279,7 @@ describe("FetchState.registerDynamicContracts", () => {
         addressesByContractName: Dict.fromArray([("NftFactory", [mockAddress1, mockAddress4])]),
         mergeBlock: None,
         dynamicContract: Some("NftFactory"),
-        contractNameByAddress: Dict.make(), // derived in make
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("NftFactory", [mockAddress1, mockAddress4])])),
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevRangeSize: 0,
@@ -1296,7 +1298,9 @@ describe("FetchState.registerDynamicContracts", () => {
         ]),
         mergeBlock: None,
         dynamicContract: Some("Gravatar"),
-        contractNameByAddress: Dict.make(), // derived in make
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([
+          ("Gravatar", [mockAddress2, mockAddress3, mockAddress0]),
+        ])),
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevRangeSize: 0,
@@ -1452,7 +1456,7 @@ describe("FetchState.registerDynamicContracts", () => {
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1, mockAddress0])]),
         mergeBlock: None,
         dynamicContract: Some("Gravatar"),
-        contractNameByAddress: Dict.make(), // derived in make
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress1, mockAddress0])])),
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevRangeSize: 0,
@@ -1503,7 +1507,9 @@ describe("FetchState.registerDynamicContracts", () => {
           ("Gravatar", [mockAddress1, mockAddress2, mockAddress0]),
         ]),
         dynamicContract: Some("Gravatar"),
-        contractNameByAddress: Dict.make(), // derived in make
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([
+          ("Gravatar", [mockAddress1, mockAddress2, mockAddress0]),
+        ])),
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevRangeSize: 0,
@@ -1521,7 +1527,7 @@ describe("FetchState.registerDynamicContracts", () => {
         // The partition is too far, so we don't merge addresses from the prev partition too early
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
         dynamicContract: Some("Gravatar"),
-        contractNameByAddress: Dict.make(), // derived in make
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress3])])),
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevRangeSize: 0,
@@ -1602,7 +1608,7 @@ describe("FetchState.registerDynamicContracts", () => {
               addressesByContractName: Dict.make(),
               mergeBlock: None,
               dynamicContract: None,
-              contractNameByAddress: Dict.make(), // derived in make
+              contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevRangeSize: 0,
@@ -1624,7 +1630,9 @@ describe("FetchState.registerDynamicContracts", () => {
               ]),
               mergeBlock: None,
               dynamicContract: Some("NftFactory"),
-              contractNameByAddress: Dict.make(), // derived in make
+              contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([
+                ("NftFactory", [mockAddress0, mockAddress1, mockAddress5]),
+              ])),
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevRangeSize: 0,
@@ -1671,7 +1679,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockTimestamp: 10,
             },
             dynamicContract: None,
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -1726,7 +1734,9 @@ describe("FetchState.getNextQuery & integration", () => {
               blockTimestamp: 10,
             },
             dynamicContract: Some("Gravatar"),
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([
+              ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
+            ])),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -1745,7 +1755,9 @@ describe("FetchState.getNextQuery & integration", () => {
               blockTimestamp: 0,
             },
             dynamicContract: Some("Gravatar"),
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([
+              ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
+            ])),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -1816,6 +1828,7 @@ describe("FetchState.getNextQuery & integration", () => {
           toBlock: None,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
           isChunk: false,
         },
       ]),
@@ -1916,6 +1929,7 @@ describe("FetchState.getNextQuery & integration", () => {
           toBlock: Some(8),
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
           fromBlock: 0,
           isChunk: false,
         },
@@ -1935,6 +1949,7 @@ describe("FetchState.getNextQuery & integration", () => {
           toBlock: Some(8),
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
           fromBlock: 0,
           isChunk: false,
         },
@@ -1995,7 +2010,7 @@ describe("FetchState.getNextQuery & integration", () => {
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])]),
         mergeBlock: Some(10),
         dynamicContract: Some("Gravatar"),
-        contractNameByAddress: Dict.make(), // derived in make
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])])),
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevRangeSize: 0,
@@ -2013,7 +2028,7 @@ describe("FetchState.getNextQuery & integration", () => {
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
         mergeBlock: None,
         dynamicContract: Some("Gravatar"),
-        contractNameByAddress: Dict.make(), // derived in make
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress3])])),
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevRangeSize: 0,
@@ -2035,6 +2050,7 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])]),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])])),
           fromBlock: 1,
         },
         {
@@ -2046,6 +2062,7 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress3])])),
         },
         // Partition 0 is not included since it's below knownHeight
       ]),
@@ -2094,6 +2111,7 @@ describe("FetchState.getNextQuery & integration", () => {
       toBlock: None,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress3])])),
       isChunk: false,
     }
     let expectedPartition0Query: FetchState.query = {
@@ -2105,6 +2123,9 @@ describe("FetchState.getNextQuery & integration", () => {
       addressesByContractName: Dict.fromArray([
         ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
       ]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([
+        ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
+      ])),
       fromBlock: 11,
       isChunk: false,
     }
@@ -2149,6 +2170,7 @@ describe("FetchState.getNextQuery & integration", () => {
           toBlock: None,
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress3])])),
           fromBlock: 3,
           isChunk: false,
         },
@@ -2161,6 +2183,9 @@ describe("FetchState.getNextQuery & integration", () => {
           addressesByContractName: Dict.fromArray([
             ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
           ]),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([
+            ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
+          ])),
           fromBlock: 11,
           isChunk: false,
         },
@@ -2182,6 +2207,7 @@ describe("FetchState.getNextQuery & integration", () => {
           toBlock: Some(10),
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress3])])),
           fromBlock: 3,
           isChunk: false,
         },
@@ -2194,6 +2220,9 @@ describe("FetchState.getNextQuery & integration", () => {
           addressesByContractName: Dict.fromArray([
             ("Gravatar", [mockAddress0, mockAddress1, mockAddress2, mockAddress3]),
           ]),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([
+            ("Gravatar", [mockAddress0, mockAddress1, mockAddress2, mockAddress3]),
+          ])),
           fromBlock: 11,
           isChunk: false,
         },
@@ -2267,7 +2296,9 @@ describe("FetchState.getNextQuery & integration", () => {
           {
             id: "0",
             dynamicContract: Some("Gravatar"),
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([
+              ("Gravatar", [mockAddress0, mockAddress1, mockAddress2, mockAddress3]),
+            ])),
             mutPendingQueries: [
               {
                 fromBlock: 11,
@@ -2350,6 +2381,7 @@ describe("FetchState.getNextQuery & integration", () => {
             eventConfigs: [wildcard],
           },
           addressesByContractName: Dict.make(),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
         },
         {
           ...defaultQuery,
@@ -2360,6 +2392,7 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("ContractA", [mockAddress1])]),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("ContractA", [mockAddress1])])),
         },
         {
           ...defaultQuery,
@@ -2370,6 +2403,7 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress2])]),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress2])])),
         },
       ]),
     )
@@ -2396,7 +2430,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockTimestamp: 0,
             },
             dynamicContract: Some("Gravatar"),
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress3])])),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -2413,7 +2447,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockTimestamp: 0,
             },
             dynamicContract: Some("Gravatar"),
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress3])])),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -2450,7 +2484,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockTimestamp: 0,
             },
             dynamicContract: Some("Gravatar"),
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0, mockAddress1])])),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -2489,7 +2523,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockTimestamp: 0,
             },
             dynamicContract: Some("Gravatar"),
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -2547,6 +2581,7 @@ describe("FetchState.getNextQuery & integration", () => {
             eventConfigs: wildcardEventConfigs,
           },
           addressesByContractName: Dict.make(),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
           fromBlock: 0,
           isChunk: false,
         },
@@ -2577,7 +2612,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockTimestamp: 0,
             },
             dynamicContract: None,
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -2615,7 +2650,7 @@ describe("FetchState unit tests for specific cases", () => {
               blockTimestamp: 10,
             },
             dynamicContract: None,
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -2632,7 +2667,7 @@ describe("FetchState unit tests for specific cases", () => {
               blockTimestamp: 0,
             },
             dynamicContract: None,
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -2665,6 +2700,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -2708,6 +2744,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -2764,6 +2801,7 @@ describe("FetchState unit tests for specific cases", () => {
         eventConfigs: [wildcard],
       },
       addressesByContractName: Dict.make(),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
     }
     let query1: FetchState.query = {
       ...defaultQuery,
@@ -2774,6 +2812,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query0, query1])
@@ -2811,6 +2850,7 @@ describe("FetchState unit tests for specific cases", () => {
             eventConfigs: [wildcard],
           },
           addressesByContractName: Dict.make(),
+          contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
         },
       ]),
     )
@@ -2847,6 +2887,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -2914,6 +2955,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -2944,7 +2986,7 @@ describe("FetchState unit tests for specific cases", () => {
             id: "0",
             latestFetchedBlock,
             dynamicContract: None,
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -2958,7 +3000,7 @@ describe("FetchState unit tests for specific cases", () => {
             id: "1",
             latestFetchedBlock,
             dynamicContract: None,
-            contractNameByAddress: Dict.make(), // derived in make
+            contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevRangeSize: 0,
@@ -3032,6 +3074,7 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: makeInitial().normalSelection,
       addressesByContractName: Dict.make(),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     t.expect(
@@ -3057,6 +3100,7 @@ describe("FetchState unit tests for specific cases", () => {
         isChunk: false,
         selection: fetchState.normalSelection,
         addressesByContractName: Dict.make(),
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
       }
       fetchState->FetchState.startFetchingQueries(~queries=[query])
       fetchState->FetchState.handleQueryResult(
@@ -3110,6 +3154,7 @@ describe("FetchState unit tests for specific cases", () => {
         estResponseSize: 10000.,
         selection: fetchState.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1])]),
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress1])])),
         fromBlock: 0,
         toBlock: None,
         isChunk: false,
@@ -3173,6 +3218,7 @@ describe("FetchState unit tests for specific cases", () => {
       let partition2Query = {
         ...queries->Array.getUnsafe(0),
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress3])])),
         partitionId: "2",
         toBlock: None, // Didn't merge because reached max addresses in partition
         fromBlock: 200,
@@ -3228,6 +3274,7 @@ describe("FetchState.sortForBatch", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
       fromBlock: 0,
     }
   }
@@ -3547,6 +3594,7 @@ describe("FetchState progress tracking", () => {
       isChunk: false,
       selection: fs0.normalSelection,
       addressesByContractName: Dict.make(),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
       fromBlock: 0,
     }
     fs0->FetchState.startFetchingQueries(~queries=[query])
@@ -3621,6 +3669,7 @@ describe("FetchState buffer overflow prevention", () => {
         isChunk: false,
         selection: fetchStateWithTwoPartitions.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
         fromBlock: 0,
       }
 
@@ -3668,6 +3717,7 @@ describe("FetchState buffer overflow prevention", () => {
         isChunk: false,
         selection: fetchState.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+        contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
         fromBlock: 0,
       }
       fetchState->FetchState.startFetchingQueries(~queries=[query3])

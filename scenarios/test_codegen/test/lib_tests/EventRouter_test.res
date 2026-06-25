@@ -173,9 +173,9 @@ describe("EventRouter", () => {
   it(
     "get falls back to wildcard when the address is indexed for a contract without a matching event",
     t => {
-      // Covers the case where FetchState seeds indexingAddresses with an
-      // address for a contract that has no events (persisted for future config
-      // changes). A wildcard event at that address should still fire.
+      // Covers the case where contractNameByAddress maps an address to a
+      // contract that has no events (persisted for future config changes).
+      // A wildcard event at that address should still fire.
       let indexedAddress = mockAddress1
       let noEventsContractName = "UnknownContract"
 

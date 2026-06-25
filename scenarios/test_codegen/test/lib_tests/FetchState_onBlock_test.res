@@ -97,6 +97,7 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -145,6 +146,7 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -194,6 +196,7 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -247,6 +250,7 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -303,6 +307,7 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])

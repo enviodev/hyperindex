@@ -278,6 +278,7 @@ describe("IndexerState", () => {
                 isChunk: false,
                 selection: {dependsOnAddresses: false, eventConfigs},
                 addressesByContractName: Dict.make(),
+                contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
               }
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
               fetchState :=
