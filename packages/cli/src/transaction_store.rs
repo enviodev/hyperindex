@@ -250,7 +250,7 @@ impl ToNapiValue for Columns {
             if sys::napi_create_string_utf8(
                 env,
                 name.as_ptr() as *const std::os::raw::c_char,
-                name.len(),
+                name.len() as isize,
                 &mut key,
             ) != sys::Status::napi_ok
             {
