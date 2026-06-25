@@ -283,7 +283,14 @@ impl ClickHouseUrl {
 
 impl EnvConfig {
     fn from_project(project_root: &Path) -> Self {
-        let dotenv = dotenv::from_path(project_root.join(".env")).ok();
+        let dotenv = match dotenv::from_path(project_root.join(".env")) {
+            Ok(map) => Some(map),
+            Err(dotenv::Error::Io(_, _)) => None,
+            Err(err) => {
+                println!("Warning: Failed loading .env file with unexpected error: {err}");
+                None
+            }
+        };
 
         let var_opt = |name: &str| -> Option<String> {
             std::env::var(name)
