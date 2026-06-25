@@ -277,7 +277,7 @@ let checkAndFetch = async (
         query.partitionId,
         {
           "fromBlock": query.fromBlock,
-          "toBlock": query.toBlock,
+          "targetBlock": query.toBlock,
         },
       )
     )
