@@ -3882,17 +3882,9 @@ describe("Stale query response should not overwrite block range", () => {
 
     let p3 = fs3.optimizedPartitions.entities->Dict.getUnsafe("0")
     t.expect(
-      p3.prevQueryRange,
-      ~message="Chunk B response should update prevQueryRange to 600",
-    ).toBe(600)
-    t.expect(
-      p3.prevPrevQueryRange,
-      ~message="Chunk B response should shift prevPrevQueryRange to 500",
-    ).toBe(500)
-    t.expect(
-      p3.latestBlockRangeUpdateBlock,
-      ~message="latestBlockRangeUpdateBlock should update to 2500",
-    ).toBe(2500)
+      (p3.prevQueryRange, p3.prevPrevQueryRange, p3.latestBlockRangeUpdateBlock),
+      ~message="Chunk B response should set prevQueryRange=600, shift prevPrevQueryRange=500, update latestBlockRangeUpdateBlock=2500",
+    ).toEqual((600, 500, 2500))
 
     // -- Now respond to the EARLIER chunk (A) --
     // Partial response: latestFetchedBlock=1500 < toBlock=1900
@@ -3907,16 +3899,8 @@ describe("Stale query response should not overwrite block range", () => {
 
     let p4 = fs4.optimizedPartitions.entities->Dict.getUnsafe("0")
     t.expect(
-      p4.prevQueryRange,
-      ~message="Earlier chunk A response should NOT overwrite prevQueryRange (still 600)",
-    ).toBe(600)
-    t.expect(
-      p4.prevPrevQueryRange,
-      ~message="Earlier chunk A response should NOT overwrite prevPrevQueryRange (still 500)",
-    ).toBe(500)
-    t.expect(
-      p4.latestBlockRangeUpdateBlock,
-      ~message="latestBlockRangeUpdateBlock should remain 2500 after stale response",
-    ).toBe(2500)
+      (p4.prevQueryRange, p4.prevPrevQueryRange, p4.latestBlockRangeUpdateBlock),
+      ~message="Earlier chunk A stale response should not overwrite range bookkeeping (still 600, 500, 2500)",
+    ).toEqual((600, 500, 2500))
   })
 })

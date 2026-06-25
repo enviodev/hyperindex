@@ -1329,6 +1329,7 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
   }
 }
 
+// Most parallel in-flight chunk queries a single partition may have at once.
 let maxPendingChunksPerPartition = 10
 
 @inline
@@ -1339,12 +1340,13 @@ let pushQueriesForRange = (
   ~rangeEndBlock: option<int>,
   ~maxQueryBlockNumber: int,
   ~maybeChunkRange: option<int>,
+  ~maxChunks: int,
   ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
   ~indexingAddresses: dict<indexingAddress>,
 ) => {
-  if rangeFromBlock <= maxQueryBlockNumber {
+  if rangeFromBlock <= maxQueryBlockNumber && maxChunks > 0 {
     switch rangeEndBlock {
     | Some(endBlock) if rangeFromBlock > endBlock => ()
     | _ =>
@@ -1377,8 +1379,7 @@ let pushQueriesForRange = (
           let chunkFromBlock = ref(rangeFromBlock)
           let chunkIdx = ref(0)
           while (
-            chunkIdx.contents < maxPendingChunksPerPartition &&
-              chunkFromBlock.contents + chunkSize - 1 <= maxBlock
+            chunkIdx.contents < maxChunks && chunkFromBlock.contents + chunkSize - 1 <= maxBlock
           ) {
             let chunkToBlock = chunkFromBlock.contents + chunkSize - 1
             queries->Array.push({
@@ -1426,7 +1427,6 @@ let pushQueriesForRange = (
   }
 }
 
-// Most parallel in-flight chunk queries a single partition may have at once.
 let getNextQuery = (
   {
     buffer,
@@ -1529,6 +1529,10 @@ let getNextQuery = (
             ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
             ~maxQueryBlockNumber,
             ~maybeChunkRange,
+            ~maxChunks=maxPendingChunksPerPartition -
+            pendingCount -
+            (queries->Array.length -
+            partitionQueriesStart),
             ~partition=p,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
@@ -1554,26 +1558,15 @@ let getNextQuery = (
           ~rangeEndBlock=queryEndBlock,
           ~maxQueryBlockNumber,
           ~maybeChunkRange,
+          ~maxChunks=maxPendingChunksPerPartition -
+          pendingCount -
+          (queries->Array.length -
+          partitionQueriesStart),
           ~partition=p,
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
           ~indexingAddresses,
         )
-      }
-
-      // Cap parallel in-flight chunks per partition so a single partition can't
-      // monopolize fetching. Keep the earliest new chunks; the furthest-ahead
-      // ones wait for the next round once these resolve.
-      let maxNewChunks = Pervasives.max(0, maxPendingChunksPerPartition - pendingCount)
-      let generatedCount = queries->Array.length - partitionQueriesStart
-      if generatedCount > maxNewChunks {
-        queries
-        ->Array.splice(
-          ~start=partitionQueriesStart + maxNewChunks,
-          ~remove=generatedCount - maxNewChunks,
-          ~insert=[],
-        )
-        ->ignore
       }
 
       idxRef := idxRef.contents + 1
