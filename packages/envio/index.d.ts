@@ -1035,9 +1035,9 @@ export type SvmInstruction<
   readonly params?: Params;
   /** Parent transaction. Carries only the fields selected via this
    * instruction's `field_selection`; unselected fields are typed as
-   * `FieldNotSelected<...>` so reading them is a compile error. Absent when
-   * no fields are selected. */
-  readonly transaction?: Tx;
+   * `FieldNotSelected<...>` so reading them is a compile error. Always present
+   * (`{}` when no fields are selected). */
+  readonly transaction: Tx;
   /** Present when the instruction's `include_logs` is `true`; only logs
    * scoped to this exact instruction (matching `instruction_address`). */
   readonly logs?: readonly SvmLog[];
