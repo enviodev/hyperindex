@@ -688,9 +688,6 @@ let updateInternal = (
   ~mutItems=?,
   ~blockLag=fetchState.blockLag,
   ~knownHeight=fetchState.knownHeight,
-  // Force the address-count metric refresh when indexingAddresses was mutated in
-  // place (same ref), since the referential check below can't detect that.
-  ~recountAddresses=false,
 ): t => {
   let mutItemsRef = ref(mutItems)
 
@@ -771,7 +768,7 @@ let updateInternal = (
     ~blockNumber=updatedFetchState->bufferBlockNumber,
     ~chainId=fetchState.chainId,
   )
-  if recountAddresses || indexingAddresses !== fetchState.indexingAddresses {
+  if indexingAddresses !== fetchState.indexingAddresses {
     Prometheus.IndexingAddresses.set(
       ~addressesCount=updatedFetchState->numAddresses,
       ~chainId=fetchState.chainId,
@@ -1175,13 +1172,13 @@ let registerDynamicContracts = (
   | ([], true) =>
     // Only dcs for contracts without events. Track them on
     // indexingAddresses so subsequent registrations see them, but don't touch
-    // partitions since there's nothing to fetch for them. Mutated in place — the
-    // index is never snapshotted onto a query, so there's no version to preserve.
-    let _ = Utils.Dict.mergeInPlace(indexingAddresses, noEventsAddresses)
-    fetchState->updateInternal(~recountAddresses=true)
+    // partitions since there's nothing to fetch for them.
+    let newIndexingContracts = indexingAddresses->Utils.Dict.shallowCopy
+    let _ = Utils.Dict.mergeInPlace(newIndexingContracts, noEventsAddresses)
+    fetchState->updateInternal(~indexingAddresses=newIndexingContracts)
   | (_, _) => {
       let newPartitions = []
-      let newIndexingAddresses = indexingAddresses
+      let newIndexingAddresses = indexingAddresses->Utils.Dict.shallowCopy
       let dynamicContractsRef = ref(fetchState.optimizedPartitions.dynamicContracts)
       let mutExistingPartitions = fetchState.optimizedPartitions.entities->Dict.valuesToArray
 
@@ -1280,10 +1277,7 @@ let registerDynamicContracts = (
         ~progressBlockNumber=0,
       )
 
-      // newIndexingAddresses aliases fetchState.indexingAddresses (mutated in
-      // place), so signal the recount explicitly — the referential check can't.
-      let _ = newIndexingAddresses
-      fetchState->updateInternal(~optimizedPartitions, ~recountAddresses=true)
+      fetchState->updateInternal(~optimizedPartitions, ~indexingAddresses=newIndexingAddresses)
     }
   }
 }

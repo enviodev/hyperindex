@@ -1999,6 +1999,9 @@ describe("FetchState.getNextQuery & integration", () => {
         addressesByContractName: Dict.fromArray([
           ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
         ]),
+        contractNameByAddress: FetchState.deriveContractNameByAddress(
+          Dict.fromArray([("Gravatar", [mockAddress0, mockAddress1, mockAddress2])]),
+        ),
       },
       {
         id: "1",
