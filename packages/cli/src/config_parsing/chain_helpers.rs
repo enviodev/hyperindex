@@ -59,7 +59,6 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     AuroraTestnet = 1313161555,
 
-    #[subenum(HypersyncChain)]
     AuroraTurbo = 1313161567,
 
     #[subenum(HypersyncChain, GraphNetwork, NetworkWithExplorer)]
