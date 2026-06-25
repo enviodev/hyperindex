@@ -228,7 +228,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~indexingAddresses,
+    ~contractNameByAddress,
     ~knownHeight,
     ~partitionId as _,
     ~selection,
@@ -362,9 +362,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
             ~sighash=item.topic0->EvmTypes.Hex.toString,
             ~topicCount=item.topicCount,
           ),
-          ~indexingAddresses,
+          ~contractNameByAddress,
           ~contractAddress=item.srcAddress,
-          ~blockNumber=item.blockNumber,
         )
 
       switch maybeEventConfig {

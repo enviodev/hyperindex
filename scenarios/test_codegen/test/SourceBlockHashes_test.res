@@ -73,21 +73,6 @@ let pairCreatedEventParams: HyperSyncClient.Decoder.eventParamsInput = {
   params: pairCreatedAbi,
 }
 
-let makeIndexingAddresses = () =>
-  Dict.fromArray([
-    (
-      uniswapV2FactoryAddress->Address.toString,
-      (
-        {
-          address: uniswapV2FactoryAddress,
-          contractName: "UniswapV2Factory",
-          registrationBlock: -1,
-          effectiveStartBlock: 0,
-        }: FetchState.indexingAddress
-      ),
-    ),
-  ])
-
 let makeAddressesByContractName = () =>
   Dict.fromArray([("UniswapV2Factory", [uniswapV2FactoryAddress])])
 
@@ -128,7 +113,7 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
     ~fromBlock,
     ~toBlock=Some(toBlock),
     ~addressesByContractName=makeAddressesByContractName(),
-    ~indexingAddresses=makeIndexingAddresses(),
+    ~contractNameByAddress=FetchState.deriveContractNameByAddress(makeAddressesByContractName()),
     ~knownHeight=toBlock + 1000,
     ~partitionId="0",
     ~selection=makeSelection(),

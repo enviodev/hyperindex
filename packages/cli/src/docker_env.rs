@@ -1,3 +1,4 @@
+use crate::utils::dotenv::{self, EnvMap};
 use anyhow::Context;
 use bollard::models::{
     ContainerCreateBody, EndpointSettings, HealthConfig, HostConfig, Mount, MountTypeEnum,
@@ -9,7 +10,6 @@ use bollard::query_parameters::{
     RemoveContainerOptionsBuilder, StopContainerOptionsBuilder,
 };
 use bollard::{Docker, API_DEFAULT_VERSION};
-use crate::utils::dotenv::{self, EnvMap};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;

@@ -195,6 +195,78 @@ let findEventConfig = (~config: Config.t, ~contractName: string, ~eventName: str
   found.contents
 }
 
+let dummySrcAddress = Address.unsafeFromString("0x0000000000000000000000000000000000000000")
+
+// First address configured for `contractName` on the simulated chain. Only the
+// simulated chain is consulted — a contract's address on another chain has no
+// meaning here.
+let firstContractAddress = (~chainConfig: Config.chain, ~contractName: string): option<
+  Address.t,
+> => {
+  let found = ref(None)
+  chainConfig.contracts->Array.forEach(contract => {
+    if found.contents->Option.isNone && contract.name === contractName {
+      found := contract.addresses->Array.get(0)
+    }
+  })
+  found.contents
+}
+
+let deriveSrcAddress = (
+  ~providedSrcAddress: option<Address.t>,
+  ~eventConfig: Internal.eventConfig,
+  ~chainConfig: Config.chain,
+): Address.t => {
+  switch providedSrcAddress {
+  | Some(addr) => addr
+  | None =>
+    if eventConfig.isWildcard {
+      dummySrcAddress
+    } else {
+      switch firstContractAddress(~chainConfig, ~contractName=eventConfig.contractName) {
+      | Some(addr) => addr
+      | None => dummySrcAddress
+      }
+    }
+  }
+}
+
+// A non-wildcard event is gated by `clientAddressFilter` on srcAddress ownership,
+// so a simulate item whose srcAddress isn't indexed on this chain would be
+// silently dropped (handler never runs). Fail loudly instead.
+let validateSrcAddresses = (
+  ~simulateItems: array<JSON.t>,
+  ~config: Config.t,
+  ~chainConfig: Config.chain,
+  ~indexingAddresses: array<Internal.indexingAddress>,
+): unit => {
+  let known = Utils.Set.make()
+  indexingAddresses->Array.forEach(ia => known->Utils.Set.add(ia.address->Address.toString)->ignore)
+  simulateItems->Array.forEach(rawJson => {
+    let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
+    switch (raw->getContract, raw->getEvent) {
+    | (Some(contractName), Some(eventName)) =>
+      switch findEventConfig(~config, ~contractName, ~eventName) {
+      | Some(eventConfig) if !eventConfig.isWildcard =>
+        let item = rawJson->(Utils.magic: JSON.t => Envio.evmSimulateItem)
+        let srcAddress = deriveSrcAddress(
+          ~providedSrcAddress=item.srcAddress,
+          ~eventConfig,
+          ~chainConfig,
+        )
+        if !(known->Utils.Set.has(srcAddress->Address.toString)) {
+          JsError.throwWithMessage(
+            `simulate: ${contractName}.${eventName} resolved to address ${srcAddress->Address.toString}, which isn't indexed on chain ${chainConfig.id->Int.toString}. ` ++
+            `Provide a "srcAddress" configured or registered for ${contractName} on this chain, or use a wildcard event.`,
+          )
+        }
+      | _ => ()
+      }
+    | _ => ()
+    }
+  })
+}
+
 let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Config.chain): array<
   Internal.item,
 > => {
@@ -238,21 +310,11 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
         li
       }
 
-      let srcAddress = switch item.srcAddress {
-      | Some(addr) => addr
-      | None =>
-        // Use first address from contract config
-        let addr = ref(Address.unsafeFromString("0x0000000000000000000000000000000000000000"))
-        chainConfig.contracts->Array.forEach(contract => {
-          if contract.name === contractName {
-            switch contract.addresses->Array.get(0) {
-            | Some(a) => addr := a
-            | None => ()
-            }
-          }
-        })
-        addr.contents
-      }
+      let srcAddress = deriveSrcAddress(
+        ~providedSrcAddress=item.srcAddress,
+        ~eventConfig,
+        ~chainConfig,
+      )
 
       let rawItem = rawJson->(Utils.magic: JSON.t => {..})
       let blockJson: option<JSON.t> =

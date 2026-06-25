@@ -121,19 +121,7 @@ let makeSource = (~eventConfigs=[makeEventConfig()]) => {
   source
 }
 
-let indexingAddresses = Dict.fromArray([
-  (
-    metaplexProgramId,
-    (
-      {
-        address: metaplexProgramId->Address.unsafeFromString,
-        contractName: "TokenMetadata",
-        registrationBlock: -1,
-        effectiveStartBlock: 0,
-      }: FetchState.indexingAddress
-    ),
-  ),
-])
+let contractNameByAddress = Dict.fromArray([(metaplexProgramId, "TokenMetadata")])
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   Async.it("joins blockTime onto items and requests opted-in table columns", async t => {
@@ -146,7 +134,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ~addressesByContractName=Dict.fromArray([
         ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
       ]),
-      ~indexingAddresses,
+      ~contractNameByAddress,
       ~knownHeight=slot + 1000,
       ~partitionId="0",
       ~selection={
@@ -221,7 +209,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         ~addressesByContractName=Dict.fromArray([
           ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
         ]),
-        ~indexingAddresses,
+        ~contractNameByAddress,
         ~knownHeight=slot + 1000,
         ~partitionId="0",
         ~selection={

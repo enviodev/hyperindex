@@ -235,7 +235,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~indexingAddresses,
+    ~contractNameByAddress,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -332,9 +332,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
       let eventConfig = switch selectionConfig.eventRouter->EventRouter.get(
         ~tag=eventId,
-        ~indexingAddresses,
+        ~contractNameByAddress,
         ~contractAddress,
-        ~blockNumber=block.height,
       ) {
       | None => {
           let logger = Logging.createChildFrom(

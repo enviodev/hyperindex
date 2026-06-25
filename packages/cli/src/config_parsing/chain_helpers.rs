@@ -199,6 +199,8 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Harmony = 1666600000,
 
+    // HyperSync no longer serves Holesky (17000.hypersync.xyz no longer
+    // resolves), so it's not a HypersyncChain. Still resolvable via explorer.
     #[subenum(NetworkWithExplorer)]
     Holesky = 17000,
 

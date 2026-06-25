@@ -219,35 +219,133 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
   })
 })
 
+describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddress events", () => {
+  // Non-wildcard Transfer for ERC20, effective from block 5 (contract startBlock).
+  // A merged partition can over-fetch an address before its effectiveStartBlock;
+  // the codegen'd srcAddress check in clientAddressFilter drops those.
+  let registeredAddr = "0x3333333333333333333333333333333333333333"->Address.unsafeFromString
+  let eventConfig = EventConfigBuilder.buildEvmEventConfig(
+    ~contractName="ERC20",
+    ~eventName="Transfer",
+    ~sighash=transferSighash,
+    ~params=[
+      {name: "from", abiType: "address", indexed: true},
+      {name: "to", abiType: "address", indexed: true},
+      {name: "value", abiType: "uint256", indexed: false},
+    ],
+    ~isWildcard=false,
+    ~handler=None,
+    ~contractRegister=None,
+    ~eventFilters=None,
+    ~probeChainId=1,
+    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+    ~startBlock=5,
+  )
+
+  let makeItem = (~srcAddress, ~blockNumber): Internal.item =>
+    Internal.Event({
+      timestamp: blockNumber * 15,
+      chain: ChainMap.Chain.makeUnsafe(~chainId=1),
+      blockNumber,
+      blockHash: `0x${blockNumber->Int.toString}`,
+      eventConfig: (eventConfig :> Internal.eventConfig),
+      logIndex: 0,
+      transactionIndex: 0,
+      payload: {"srcAddress": srcAddress}->(
+        Utils.magic: {"srcAddress": Address.t} => Internal.eventPayload
+      ),
+    })
+
+  it("keeps events at/after effectiveStartBlock, drops earlier ones", t => {
+    let fetchState = FetchState.make(
+      ~eventConfigs=[(eventConfig :> Internal.eventConfig)],
+      ~addresses=[{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~maxOnBlockBufferSize=5000,
+      ~chainId=1,
+      ~knownHeight=1000,
+    )
+    let query = switch fetchState->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.) {
+    | Ready([q]) => q
+    | _ => JsError.throwWithMessage("expected a single ready query")
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
+    let updated =
+      fetchState->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
+        ~newItems=[
+          makeItem(~srcAddress=registeredAddr, ~blockNumber=10),
+          makeItem(~srcAddress=registeredAddr, ~blockNumber=3),
+        ],
+      )
+    t.expect(updated.buffer->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
+  })
+})
+
 // Locks the exact generated predicate source so any codegen change is visible
 // in review. Snapshots the body (what we generate) rather than the compiled
 // function's `.toString()`, which would depend on the JS engine's formatting.
 describe("buildAddressFilterBody — generated predicate source", () => {
-  it("single group, single param", t => {
-    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"]])).toEqual(
+  it("wildcard, single group, single param", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"]], ~isWildcard=true)).toEqual(
       Some(
         `var p = event.params, ic; return ((ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber);`,
       ),
     )
   })
 
-  it("OR of single-param groups", t => {
-    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"], ["from"]])).toEqual(
+  it("wildcard, OR of single-param groups", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"], ["from"]], ~isWildcard=true)).toEqual(
       Some(
         `var p = event.params, ic; return ((ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber) || ((ic = indexingAddresses[p["from"]]) !== undefined && ic.effectiveStartBlock <= blockNumber);`,
       ),
     )
   })
 
-  it("AND within a group", t => {
-    t.expect(EventConfigBuilder.buildAddressFilterBody([["from", "to"]])).toEqual(
+  it("wildcard, AND within a group", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([["from", "to"]], ~isWildcard=true)).toEqual(
       Some(
         `var p = event.params, ic; return ((ic = indexingAddresses[p["from"]]) !== undefined && ic.effectiveStartBlock <= blockNumber && (ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber);`,
       ),
     )
   })
 
-  it("None when there are no groups", t => {
-    t.expect(EventConfigBuilder.buildAddressFilterBody([])).toEqual(None)
+  it("wildcard, None when there are no groups", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=true)).toEqual(None)
+  })
+
+  it("non-wildcard, no groups — checks only srcAddress", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=false)).toEqual(
+      Some(
+        `var ic; return (ic = indexingAddresses[event.srcAddress]) !== undefined && ic.effectiveStartBlock <= blockNumber;`,
+      ),
+    )
+  })
+
+  it("non-wildcard, with a param group — ANDs srcAddress and the DNF", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"]], ~isWildcard=false)).toEqual(
+      Some(
+        `var p = event.params, ic; return (ic = indexingAddresses[event.srcAddress]) !== undefined && ic.effectiveStartBlock <= blockNumber && (((ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber));`,
+      ),
+    )
+  })
+
+  it("non-wildcard SVM — gates on event.programId ownership", t => {
+    t.expect(
+      EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=false, ~srcAddressExpr="event.programId"),
+    ).toEqual(
+      Some(
+        `var ic; return (ic = indexingAddresses[event.programId]) !== undefined && ic.effectiveStartBlock <= blockNumber;`,
+      ),
+    )
+  })
+
+  it("wildcard SVM — None when there are no account groups", t => {
+    t.expect(
+      EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=true, ~srcAddressExpr="event.programId"),
+    ).toEqual(None)
   })
 })

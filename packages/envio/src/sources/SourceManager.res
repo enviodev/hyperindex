@@ -676,7 +676,7 @@ let executeQuery = async (
         ~fromBlock=query.fromBlock,
         ~toBlock,
         ~addressesByContractName=query.addressesByContractName,
-        ~indexingAddresses=query.indexingAddresses,
+        ~contractNameByAddress=query.contractNameByAddress,
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection,

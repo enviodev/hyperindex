@@ -15,7 +15,7 @@ let defaultQuery: FetchState.query = {
   progress: 0.,
   selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
   addressesByContractName: Dict.make(),
-  indexingAddresses: Dict.make(),
+  contractNameByAddress: Dict.make(),
 }
 
 let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
@@ -98,8 +98,8 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
-      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -147,8 +147,8 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
-      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -197,8 +197,8 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
-      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -251,8 +251,8 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
-      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -308,8 +308,8 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
-      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =

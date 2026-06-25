@@ -13,7 +13,7 @@ let defaultQuery: FetchState.query = {
   progress: 0.,
   selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
   addressesByContractName: Dict.make(),
-  indexingAddresses: Dict.make(),
+  contractNameByAddress: Dict.make(),
 }
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
@@ -99,7 +99,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             eventConfigs,
           },
           addressesByContractName: Dict.make(),
-          indexingAddresses: fetchState.contents.indexingAddresses,
+          contractNameByAddress: Dict.make(),
         }
 
         fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
@@ -280,7 +280,7 @@ describe("IndexerState", () => {
                 isChunk: false,
                 selection: {dependsOnAddresses: false, eventConfigs},
                 addressesByContractName: Dict.make(),
-                indexingAddresses: fetchState.contents.indexingAddresses,
+                contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.make()),
               }
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
               fetchState :=
@@ -363,7 +363,7 @@ describe("IndexerState", () => {
           isChunk: false,
           selection: {dependsOnAddresses: false, eventConfigs},
           addressesByContractName: Dict.make(),
-          indexingAddresses: cs->ChainState.indexingAddresses,
+          contractNameByAddress: Dict.make(),
         }
         cs->ChainState.startFetchingQueries(~queries=[concurrentQuery])
         cs->ChainState.handleQueryResult(

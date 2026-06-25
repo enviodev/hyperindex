@@ -13,6 +13,7 @@ use super::{
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
+use crate::utils::dotenv::{self, EnvMap};
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
@@ -24,7 +25,6 @@ use crate::{
 };
 use alloy_json_abi::{Event as AlloyEvent, JsonAbi};
 use anyhow::{anyhow, Context, Result};
-use crate::utils::dotenv::{self, EnvMap};
 use itertools::Itertools;
 
 use super::abi_compat::EventParam;
@@ -79,25 +79,23 @@ impl EnvState {
             Err(_) => {
                 let result = match &self.maybe_dotenv {
                     Some(env_map) => env_map.var(name),
-                    None => {
-                        match dotenv::from_path(self.project_root.join(".env")) {
-                            Ok(env_map) => {
-                                self.maybe_dotenv = Some(env_map.clone());
-                                env_map.var(name)
-                            }
-                            Err(err) => {
-                                match err {
-                                    dotenv::Error::Io(_, _) => (),
-                                    _ => println!(
-                                        "Warning: Failed loading .env file with unexpected error: \
-                                         {err}"
-                                    ),
-                                };
-                                self.maybe_dotenv = Some(EnvMap::new());
-                                Err(err)
-                            }
+                    None => match dotenv::from_path(self.project_root.join(".env")) {
+                        Ok(env_map) => {
+                            self.maybe_dotenv = Some(env_map.clone());
+                            env_map.var(name)
                         }
-                    }
+                        Err(err) => {
+                            match err {
+                                dotenv::Error::Io(_, _) => (),
+                                _ => println!(
+                                    "Warning: Failed loading .env file with unexpected error: \
+                                         {err}"
+                                ),
+                            };
+                            self.maybe_dotenv = Some(EnvMap::new());
+                            Err(err)
+                        }
+                    },
                 };
                 result.ok()
             }

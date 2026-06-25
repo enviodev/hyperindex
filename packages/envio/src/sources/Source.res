@@ -60,7 +60,7 @@ type t = {
     ~fromBlock: int,
     ~toBlock: option<int>,
     ~addressesByContractName: dict<array<Address.t>>,
-    ~indexingAddresses: dict<FetchState.indexingAddress>,
+    ~contractNameByAddress: dict<string>,
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,
