@@ -55,7 +55,6 @@ env_logger = "0.11"
 arrayvec = "0.7"
 schemars = { version = "1.2", features = ["preserve_order"] }
 convert_case = "0.6.0"
-dotenvy = { git = "https://github.com/enviodev/dotenvy", rev = "e2da110668572cf2d67178f192eb1fc285224040" }
 bollard = "0.20"
 futures-util = "0.3"
 tar = "0.4"

@@ -84,7 +84,7 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Blast = 81457,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     BlastSepolia = 168587773,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
