@@ -1329,6 +1329,8 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
   }
 }
 
+let maxPendingChunksPerPartition = 10
+
 @inline
 let pushQueriesForRange = (
   queries: array<query>,
@@ -1371,18 +1373,14 @@ let pushQueriesForRange = (
         | None => maxQueryBlockNumber
         }
         let chunkSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 1.8)
-        // Probe with two smaller chunks first so their responses come back
-        // quickly and refresh the chunking heuristic, then three full-size chunks.
-        let probeSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 0.9)
-        let getChunkSize = chunkIdx => chunkIdx < 2 ? probeSize : chunkSize
-        if rangeFromBlock + getChunkSize(0) + getChunkSize(1) - 1 <= maxBlock {
+        if rangeFromBlock + chunkSize * 2 - 1 <= maxBlock {
           let chunkFromBlock = ref(rangeFromBlock)
           let chunkIdx = ref(0)
           while (
-            chunkIdx.contents < 5 &&
-              chunkFromBlock.contents + getChunkSize(chunkIdx.contents) - 1 <= maxBlock
+            chunkIdx.contents < maxPendingChunksPerPartition &&
+              chunkFromBlock.contents + chunkSize - 1 <= maxBlock
           ) {
-            let chunkToBlock = chunkFromBlock.contents + getChunkSize(chunkIdx.contents) - 1
+            let chunkToBlock = chunkFromBlock.contents + chunkSize - 1
             queries->Array.push({
               partitionId,
               fromBlock: chunkFromBlock.contents,
@@ -1429,8 +1427,6 @@ let pushQueriesForRange = (
 }
 
 // Most parallel in-flight chunk queries a single partition may have at once.
-let maxPendingChunksPerPartition = 10
-
 let getNextQuery = (
   {
     buffer,
