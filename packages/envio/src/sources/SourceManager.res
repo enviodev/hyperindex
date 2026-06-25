@@ -15,7 +15,7 @@ type sourceState = {
 // with a mutable state for easier reasoning and testing.
 type t = {
   sourcesState: array<sourceState>,
-  mutable statusStart: Hrtime.timeRef,
+  mutable statusStart: Performance.timeRef,
   mutable status: sourceManagerStatus,
   newBlockStallTimeout: int,
   newBlockStallTimeoutRealtime: int,
@@ -198,7 +198,7 @@ let make = (
     reducedPollingInterval,
     getHeightRetryInterval,
     recoveryTimeout,
-    statusStart: Hrtime.makeTimer(),
+    statusStart: Performance.now(),
     status: Idle,
     hasRealtime,
     committedRateLimitTimeMs: 0.0,
@@ -216,9 +216,9 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   }
   promCounter->Prometheus.SafeCounter.handleFloat(
     ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-    ~value=sourceManager.statusStart->Hrtime.timeSince->Hrtime.toSecondsFloat,
+    ~value=sourceManager.statusStart->Performance.secondsSince,
   )
-  sourceManager.statusStart = Hrtime.makeTimer()
+  sourceManager.statusStart = Performance.now()
   sourceManager.status = newStatus
 }
 

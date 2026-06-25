@@ -57,7 +57,7 @@ let totalReadyCount = (crossChainState: t) => {
   let total = ref(0)
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
-    total := total.contents + cs->ChainState.fetchState->FetchState.bufferReadyCount
+    total := total.contents + cs->ChainState.bufferReadyCount
   }
   total.contents
 }
@@ -65,9 +65,7 @@ let totalReadyCount = (crossChainState: t) => {
 // --- Derived (pure). ---
 
 let nextItemIsNone = (crossChainState: t): bool =>
-  !Batch.hasReadyItem(
-    crossChainState.chainStates->Dict.valuesToArray->Array.map(ChainState.fetchState),
-  )
+  !(crossChainState.chainStates->Dict.valuesToArray->Array.some(ChainState.hasReadyItem))
 
 let getSafeCheckpointId = (crossChainState: t) => {
   let result: ref<option<bigint>> = ref(None)
@@ -79,7 +77,7 @@ let getSafeCheckpointId = (crossChainState: t) => {
     | Some(safeCheckpointTracking) =>
       let safeCheckpointId =
         safeCheckpointTracking->SafeCheckpointTracking.getSafeCheckpointId(
-          ~sourceBlockNumber=(cs->ChainState.fetchState).knownHeight,
+          ~sourceBlockNumber=cs->ChainState.knownHeight,
         )
       switch result.contents {
       | None => result := Some(safeCheckpointId)
@@ -111,16 +109,9 @@ let createBatch = (
       // in an append-only ClickHouse insert.
       isRollback ? 1n : 0n,
     ),
-    ~chainsBeforeBatch=crossChainState.chainStates->Utils.Dict.mapValues((
-      cs
-    ): Batch.chainBeforeBatch => {
-      fetchState: cs->ChainState.fetchState,
-      progressBlockNumber: cs->ChainState.committedProgressBlockNumber,
-      totalEventsProcessed: cs->ChainState.numEventsProcessed,
-      sourceBlockNumber: (cs->ChainState.fetchState).knownHeight,
-      reorgDetection: cs->ChainState.reorgDetection,
-      chainConfig: cs->ChainState.chainConfig,
-    }),
+    ~chainsBeforeBatch=crossChainState.chainStates->Utils.Dict.mapValues(
+      ChainState.toChainBeforeBatch,
+    ),
     ~batchSizeTarget,
   )
 }
@@ -184,10 +175,7 @@ let priorityOrder = (crossChainState: t) =>
   crossChainState.chainStates
   ->Dict.valuesToArray
   ->Array.toSorted((a, b) =>
-    Float.compare(
-      a->ChainState.fetchState->FetchState.getProgressPercentage,
-      b->ChainState.fetchState->FetchState.getProgressPercentage,
-    )
+    Float.compare(a->ChainState.getProgressPercentage, b->ChainState.getProgressPercentage)
   )
 
 // In-flight estimated items across every chain — the live draw against
@@ -235,11 +223,7 @@ let checkAndFetch = async (
   for i in 0 to chainIds->Array.length - 1 {
     let chainId = chainIds->Array.getUnsafe(i)
     let cs = crossChainState->getChainState(chainId)
-    let fetchState = cs->ChainState.fetchState
-    switch fetchState->FetchState.getNextQuery(
-      ~budget=remaining,
-      ~chainPendingBudget=cs->ChainState.pendingBudget,
-    ) {
+    switch cs->ChainState.getNextQuery(~budget=remaining) {
     | (WaitingForNewBlock | NothingToQuery) as action =>
       actionByChain->Utils.Dict.setByInt(chainId, action)
     | Ready(queries) =>
@@ -247,8 +231,7 @@ let checkAndFetch = async (
       actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
       queries->Array.forEach(query => {
         query.chainId = chainId
-        query.progress =
-          fetchState->FetchState.getProgressPercentageAt(~blockNumber=query.fromBlock)
+        query.progress = cs->ChainState.getProgressPercentageAt(~blockNumber=query.fromBlock)
         candidates->Array.push(query)
       })
     }

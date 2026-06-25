@@ -39,7 +39,7 @@ let runEventHandlerOrThrow = async (
   let eventItem = item->Internal.castUnsafeEventItem
 
   //Include the load in time before handler
-  let timeBeforeHandler = Hrtime.makeTimer()
+  let timeBeforeHandler = Performance.now()
 
   try {
     let contextParams: UserContext.contextParams = {
@@ -72,7 +72,7 @@ let runEventHandlerOrThrow = async (
       }),
     )
   }
-  let handlerDuration = timeBeforeHandler->Hrtime.timeSince->Hrtime.toSecondsFloat
+  let handlerDuration = timeBeforeHandler->Performance.secondsSince
   Prometheus.ProcessingHandler.increment(
     ~contract=eventItem.eventConfig.contractName,
     ~event=eventItem.eventConfig.name,
@@ -315,13 +315,13 @@ let processEventBatch = async (
     // Backpressure: keep processing within keepLatestChangesLimit of the cycle.
     await indexerState->Writing.awaitCapacity
 
-    let timeRef = Hrtime.makeTimer()
+    let timeRef = Performance.now()
 
     if batch.items->Utils.Array.notEmpty {
       await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
     }
 
-    let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let elapsedTimeAfterLoaders = timeRef->Performance.secondsSince
 
     if batch.items->Utils.Array.notEmpty {
       await batch->runBatchHandlersOrThrow(
@@ -333,7 +333,7 @@ let processEventBatch = async (
       )
     }
 
-    let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let elapsedTimeAfterProcessing = timeRef->Performance.secondsSince
 
     indexerState->Writing.commitBatch(~batch)
 

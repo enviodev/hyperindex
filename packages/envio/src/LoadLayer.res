@@ -85,7 +85,7 @@ let callEffect = (
   )
 
   if hadActiveCalls {
-    let elapsed = Hrtime.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef)
+    let elapsed = Performance.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef)
     if elapsed > 0. {
       Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
         ~labels=effectName,
@@ -113,17 +113,17 @@ let callEffect = (
       ~labels=effectName,
       ~value=effect.activeCallsCount,
     )
-    let newTimer = Hrtime.makeTimer()
+    let newTimer = Performance.now()
     Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
       ~labels=effectName,
-      ~value=Hrtime.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
+      ~value=Performance.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
     )
     effect.prevCallStartTimerRef = newTimer
 
     Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(~labels=effectName)
     Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.handleFloat(
       ~labels=effectName,
-      ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+      ~value=timerRef->Performance.secondsSince,
     )
   })
 }
@@ -137,7 +137,7 @@ let rec executeWithRateLimit = (
 ) => {
   let effectName = effect.name
 
-  let timerRef = Hrtime.makeTimer()
+  let timerRef = Performance.now()
   let promises = []
 
   switch effect.rateLimit {

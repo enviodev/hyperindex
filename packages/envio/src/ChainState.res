@@ -19,6 +19,24 @@ type t = {
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
 }
 
+// Per-chain shape returned by the status API.
+type chainData = {
+  chainId: float,
+  poweredByHyperSync: bool,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  numEventsProcessed: float,
+  latestFetchedBlockNumber: int,
+  // Need this for API backwards compatibility
+  @as("currentBlockHeight")
+  knownHeight: int,
+  numBatchesFetched: int,
+  startBlock: int,
+  endBlock: option<int>,
+  numAddresses: int,
+}
+
 let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
   let addresses = []
   chainConfig.contracts->Array.forEach(contract => {
@@ -377,7 +395,6 @@ let makeFromDbState = (
 // --- Read accessors. ---
 
 let logger = (cs: t) => cs.logger
-let fetchState = (cs: t) => cs.fetchState
 let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
 let reorgDetection = (cs: t) => cs.reorgDetection
@@ -387,6 +404,19 @@ let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let pendingBudget = (cs: t) => cs.pendingBudget
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
+
+// Fetch-frontier reads. The FetchState is owned here; callers go through these
+// rather than reaching into it.
+let knownHeight = (cs: t) => cs.fetchState.knownHeight
+let indexingAddresses = (cs: t) => cs.fetchState.indexingAddresses
+let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
+let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
+let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
+let getProgressPercentageAt = (cs: t, ~blockNumber) =>
+  cs.fetchState->FetchState.getProgressPercentageAt(~blockNumber)
+let hasReadyItem = (cs: t) =>
+  cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
+let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyToEnterReorgThreshold
 
 // Mark queries as in flight and reserve their estimated size against the shared
 // buffer budget in one step, so the counter stays in sync with the pending
@@ -403,6 +433,30 @@ let resetPendingQueries = (cs: t) => {
   cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
   cs.pendingBudget = 0.
 }
+
+// Propose the chain's candidate queries against the shared buffer budget,
+// accounting for this chain's own in-flight reservations.
+let getNextQuery = (cs: t, ~budget) =>
+  cs.fetchState->FetchState.getNextQuery(~budget, ~chainPendingBudget=cs.pendingBudget)
+
+// Run a fetch tick for this chain against its sources, feeding the owned fetch
+// frontier to the source manager.
+let dispatch = (
+  cs: t,
+  ~executeQuery,
+  ~waitForNewBlock,
+  ~onNewBlock,
+  ~action: FetchState.nextQuery,
+  ~stateId,
+) =>
+  cs.sourceManager->SourceManager.dispatch(
+    ~fetchState=cs.fetchState,
+    ~executeQuery,
+    ~waitForNewBlock,
+    ~onNewBlock,
+    ~action,
+    ~stateId,
+  )
 
 // --- Derived (pure). ---
 
@@ -425,6 +479,11 @@ let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None
 
 // True once the fetch frontier has reached the head/endBlock for this chain.
 let isFetchingAtHead = (cs: t) => cs.fetchState->FetchState.isFetchingAtHead
+
+// Reached head on a chain with no configured endBlock — used by auto-exit to
+// detect that no events were found in the start..head range.
+let isAtHeadWithoutEndBlock = (cs: t) =>
+  cs.isProgressAtHead && cs.fetchState.endBlock->Option.isNone
 
 // --- State transitions. The chain state is mutated only through these; each
 // owns a cohesive update so callers don't juggle individual fields. ---
@@ -490,6 +549,56 @@ let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
 // Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
 let enterReorgThreshold = (cs: t) =>
   cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
+
+// Snapshot the chain's metadata fields for staging into the chains table.
+let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
+  firstEventBlockNumber: cs.fetchState.firstEventBlock->Null.fromOption,
+  isHyperSync: (cs.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
+  latestFetchedBlockNumber: cs.fetchState->FetchState.bufferBlockNumber,
+  timestampCaughtUpToHeadOrEndblock: cs.timestampCaughtUpToHeadOrEndblock->Null.fromOption,
+}
+
+// Snapshot the chain's view for the status API.
+let toChainData = (cs: t): chainData => {
+  chainId: cs.chainConfig.id->Int.toFloat,
+  poweredByHyperSync: (cs.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
+  firstEventBlockNumber: cs.fetchState.firstEventBlock,
+  latestProcessedBlock: cs.committedProgressBlockNumber === -1
+    ? None
+    : Some(cs.committedProgressBlockNumber),
+  timestampCaughtUpToHeadOrEndblock: cs.timestampCaughtUpToHeadOrEndblock,
+  numEventsProcessed: cs.numEventsProcessed,
+  latestFetchedBlockNumber: Pervasives.max(cs.fetchState->FetchState.bufferBlockNumber, 0),
+  knownHeight: cs->hasProcessedToEndblock
+    ? cs.fetchState.endBlock->Option.getOr(cs.fetchState.knownHeight)
+    : cs.fetchState.knownHeight,
+  numBatchesFetched: 0,
+  startBlock: cs.fetchState.startBlock,
+  endBlock: cs.fetchState.endBlock,
+  numAddresses: cs.fetchState->FetchState.numAddresses,
+}
+
+// Snapshot the inputs a batch build needs from this chain.
+let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
+  fetchState: cs.fetchState,
+  progressBlockNumber: cs.committedProgressBlockNumber,
+  totalEventsProcessed: cs.numEventsProcessed,
+  sourceBlockNumber: cs.fetchState.knownHeight,
+  reorgDetection: cs.reorgDetection,
+  chainConfig: cs.chainConfig,
+}
+
+// Whether the chain's post-batch fetch frontier is ready to cross into the reorg
+// threshold, using the batch's progressed frontier when this chain advanced.
+let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
+  let fetchState = switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+    cs.fetchState.chainId,
+  ) {
+  | Some(chainAfterBatch) => chainAfterBatch.fetchState
+  | None => cs.fetchState
+  }
+  fetchState->FetchState.isReadyToEnterReorgThreshold
+}
 
 // Commit the post-batch fetch frontier for a chain that progressed in the batch,
 // applying blockLag when this batch also crosses into the reorg threshold.
