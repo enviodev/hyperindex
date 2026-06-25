@@ -327,6 +327,7 @@ let fetchChain = async (
     // Accumulated across all queries dispatched in this tick so their per-query
     // results collapse into a single completion log instead of one per query.
     let fetchedByPartition = Dict.make()
+    let fetchedCount = ref(0)
     let timeRef = Hrtime.makeTimer()
 
     // Owns its error boundary: launch doesn't catch, so any failure here (the
@@ -363,6 +364,7 @@ let fetchChain = async (
               ~scheduleProcessing,
               ~scheduleRollback,
             )
+            fetchedCount := fetchedCount.contents + 1
             fetchedByPartition->Dict.set(
               query.partitionId,
               {
@@ -378,7 +380,7 @@ let fetchChain = async (
         ~action,
         ~stateId,
       )
-      if fetchedByPartition->Dict.keysToArray->Array.length > 0 {
+      if fetchedCount.contents > 0 {
         Logging.trace({
           "msg": "Finished querying",
           "chainId": chain->ChainMap.Chain.toChainId,
