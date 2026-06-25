@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 3167
 expression: project_template.envio_types_dts
 ---
 /**
@@ -33,8 +32,199 @@ declare module "envio" {
   "0": { id: 0 };
       }; programs: {
         "TokenMetadata": {
-          "CreateMetadataAccountV3": { readonly args: { readonly data: { readonly name: string; readonly symbol: string; readonly uri: string; readonly seller_fee_basis_points: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly use_method: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }; readonly is_mutable: boolean; readonly collection_details: ({ readonly V1: { readonly size: string } }) | null }; readonly accounts: { readonly metadata: string; readonly mint: string; readonly mint_authority: string; readonly payer: string; readonly update_authority: string; readonly system_program: string; readonly rent: string } };
-          "UpdateMetadataAccountV2": { readonly args: { readonly data: ({ readonly name: string; readonly symbol: string; readonly uri: string; readonly seller_fee_basis_points: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly use_method: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }) | null; readonly update_authority: (string) | null; readonly primary_sale_happened: (boolean) | null; readonly is_mutable: (boolean) | null }; readonly accounts: { readonly metadata: string; readonly update_authority: string } };
+          "CreateMetadataAccountV3": { readonly args: { readonly data: { readonly name: string; readonly symbol: string; readonly uri: string; readonly seller_fee_basis_points: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly use_method: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }; readonly is_mutable: boolean; readonly collection_details: ({ readonly V1: { readonly size: string } }) | null }; readonly accounts: { readonly metadata: string; readonly mint: string; readonly mint_authority: string; readonly payer: string; readonly update_authority: string; readonly system_program: string; readonly rent: string }; readonly transaction: {
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - transactionIndex
+             * ```
+             */
+            readonly transactionIndex: FieldNotSelected<"Field 'transactionIndex' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - signatures
+             * ```
+             */
+            readonly signatures: FieldNotSelected<"Field 'signatures' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - feePayer
+             * ```
+             */
+            readonly feePayer: FieldNotSelected<"Field 'feePayer' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - success
+             * ```
+             */
+            readonly success: FieldNotSelected<"Field 'success' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - err
+             * ```
+             */
+            readonly err: FieldNotSelected<"Field 'err' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - fee
+             * ```
+             */
+            readonly fee: FieldNotSelected<"Field 'fee' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - computeUnitsConsumed
+             * ```
+             */
+            readonly computeUnitsConsumed: FieldNotSelected<"Field 'computeUnitsConsumed' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - accountKeys
+             * ```
+             */
+            readonly accountKeys: FieldNotSelected<"Field 'accountKeys' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - recentBlockhash
+             * ```
+             */
+            readonly recentBlockhash: FieldNotSelected<"Field 'recentBlockhash' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - version
+             * ```
+             */
+            readonly version: FieldNotSelected<"Field 'version' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   token_balance_fields: true
+             * ```
+             */
+            readonly tokenBalances: FieldNotSelected<"Field 'tokenBalances' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.token_balance_fields in config.yaml.">;
+          } };
+          "UpdateMetadataAccountV2": { readonly args: { readonly data: ({ readonly name: string; readonly symbol: string; readonly uri: string; readonly seller_fee_basis_points: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly use_method: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }) | null; readonly update_authority: (string) | null; readonly primary_sale_happened: (boolean) | null; readonly is_mutable: (boolean) | null }; readonly accounts: { readonly metadata: string; readonly update_authority: string }; readonly transaction: {
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - transactionIndex
+             * ```
+             */
+            readonly transactionIndex: FieldNotSelected<"Field 'transactionIndex' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /** The signatures field. */
+            readonly signatures: readonly string[];
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - feePayer
+             * ```
+             */
+            readonly feePayer: FieldNotSelected<"Field 'feePayer' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - success
+             * ```
+             */
+            readonly success: FieldNotSelected<"Field 'success' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - err
+             * ```
+             */
+            readonly err: FieldNotSelected<"Field 'err' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - fee
+             * ```
+             */
+            readonly fee: FieldNotSelected<"Field 'fee' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - computeUnitsConsumed
+             * ```
+             */
+            readonly computeUnitsConsumed: FieldNotSelected<"Field 'computeUnitsConsumed' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - accountKeys
+             * ```
+             */
+            readonly accountKeys: FieldNotSelected<"Field 'accountKeys' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - recentBlockhash
+             * ```
+             */
+            readonly recentBlockhash: FieldNotSelected<"Field 'recentBlockhash' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - version
+             * ```
+             */
+            readonly version: FieldNotSelected<"Field 'version' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   token_balance_fields: true
+             * ```
+             */
+            readonly tokenBalances: FieldNotSelected<"Field 'tokenBalances' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.token_balance_fields in config.yaml.">;
+          } };
         };
       } };
       entities: Entities;

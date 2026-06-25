@@ -6,9 +6,12 @@
 # Schema verified against packages/envio/svm.schema.json:
 #   instruction keys = { name, discriminator, args:[{name,type}], accounts:[str], field_selection, is_inner, account_filters }
 #   args .type accepts bare-string primitives ("u64","u8",...).
-#   field_selection.token_balance_fields: true  implies transaction_fields: true.
+#   field_selection.token_balance_fields: true  adds transaction.tokenBalances;
+#     other transaction fields require field_selection.transaction_fields: [...].
 #
-# Every instruction below sets field_selection.token_balance_fields: true per spec.
+# Every instruction below selects the transaction_fields the flow.ts handler
+# reads (signatures/feePayer/success/fee/computeUnitsConsumed) plus
+# token_balance_fields, matching config.yaml.
 # is_inner is left absent on all (== null == matches both inner+outer), per spec.
 
         # ---------------------------------------------------------------------
@@ -23,6 +26,7 @@
                 - { name: amount, type: u64 }
               accounts: [source, destination, authority]
               field_selection:
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
             - name: TransferChecked
               discriminator: "0x0c"
@@ -31,6 +35,7 @@
                 - { name: decimals, type: u8 }
               accounts: [source, mint, destination, authority]
               field_selection:
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
             - name: MintTo
               discriminator: "0x07"
@@ -38,6 +43,7 @@
                 - { name: amount, type: u64 }
               accounts: [mint, destination, authority]
               field_selection:
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
             - name: Burn
               discriminator: "0x08"
@@ -45,6 +51,7 @@
                 - { name: amount, type: u64 }
               accounts: [account, mint, authority]
               field_selection:
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
 
         # ---------------------------------------------------------------------
@@ -60,6 +67,7 @@
                 - { name: lamports, type: u64 }
               accounts: [source, destination]
               field_selection:
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true
 
         # ---------------------------------------------------------------------
@@ -102,4 +110,5 @@
                 - userDestTokenAccount   # 16
                 - userSourceOwner        # 17 (signer)
               field_selection:
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true

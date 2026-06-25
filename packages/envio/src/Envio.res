@@ -48,6 +48,7 @@ type svmTokenBalance = {
 }
 
 type svmTransaction = {
+  transactionIndex?: int,
   signatures: array<string>,
   feePayer?: SvmTypes.Pubkey.t,
   success?: bool,
@@ -104,8 +105,8 @@ type svmInstruction = {
   d8?: string,
   /** Borsh-decoded params view. See [[svmInstructionParams]]. */
   params?: svmInstructionParams,
-  /** Parent transaction. Absent when the per-instruction
-   `include_transaction` flag is `false`. */
+  /** Parent transaction. Carries only the fields selected via
+   `field_selection.transaction_fields`; absent when none are selected. */
   transaction?: svmTransaction,
   /** Program log entries scoped to this instruction. Absent when the
    per-instruction `include_logs` flag is `false`. */

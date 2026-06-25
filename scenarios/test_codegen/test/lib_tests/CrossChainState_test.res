@@ -10,6 +10,7 @@ let mockEvent = (~blockNumber): Internal.item =>
     blockHash: `0x${blockNumber->Int.toString}`,
     eventConfig: "Mock eventConfig in CrossChainState test"->(Utils.magic: string => Internal.eventConfig),
     logIndex: 0,
+    transactionIndex: 0,
     payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
   })
 

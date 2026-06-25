@@ -288,6 +288,9 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
           blockNumber,
           blockHash,
           logIndex,
+          // Simulate keeps the transaction inline on the payload, so the store
+          // key is unused.
+          transactionIndex: 0,
           payload: (
             {
               contractName: eventConfig.contractName,

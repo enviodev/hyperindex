@@ -49,6 +49,7 @@ module Make = () => {
     logIndex: int,
     srcAddress: Address.t,
     eventConfig: Internal.evmEventConfig,
+    transactionIndex: int,
   }
 
   type composedEventConstructor = (
@@ -85,6 +86,7 @@ module Make = () => {
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
 
+    let transaction = makeTransaction(~transactionIndex, ~transactionHash)
     let makeEvent: makeEvent = (~blockHash) => {
       let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
       {
@@ -94,7 +96,7 @@ module Make = () => {
         srcAddress,
         chainId,
         block,
-        transaction: makeTransaction(~transactionIndex, ~transactionHash),
+        transaction,
         logIndex,
       }->Evm.fromPayload
     }
@@ -105,6 +107,7 @@ module Make = () => {
       logIndex,
       srcAddress,
       eventConfig,
+      transactionIndex,
     }
   }
 
@@ -166,6 +169,7 @@ module Make = () => {
       srcAddress,
       transactionHash,
       eventConfig,
+      transactionIndex,
     }): log => {
       let log = Internal.Event({
         eventConfig: (eventConfig :> Internal.eventConfig),
@@ -175,6 +179,7 @@ module Make = () => {
         blockNumber,
         blockHash,
         logIndex,
+        transactionIndex,
       })
       {item: log, srcAddress, transactionHash}
     })
@@ -230,7 +235,7 @@ module Make = () => {
           },
         )
         if isLogInConfig {
-          Some(l.item)
+          Some(l)
         } else {
           None
         }
@@ -267,12 +272,16 @@ module Make = () => {
       }
     })
 
-    let parsedQueueItems = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
+    let pageLogs = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
+    let parsedQueueItems = pageLogs->Array.map(l => l.item)
 
     {
       knownHeight,
       blockHashes,
       parsedQueueItems,
+      // Mock events carry their transaction inline on the payload, so there's no
+      // page store to merge.
+      transactionStore: None,
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,

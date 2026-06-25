@@ -21,8 +21,6 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Fuel,
-  blockFields: ["id", "height", "time"],
-  transactionFields: ["id"],
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "id",
@@ -41,7 +39,9 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))))
   ),
   logger,
-  toEvent: eventItem => eventItem.payload->Internal.payloadToEvent,
+  // Fuel carries the transaction inline on the payload.
+  transactionFieldMask: _ => 0.,
+  toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem =>
     Logging.createChildFrom(
       ~logger,

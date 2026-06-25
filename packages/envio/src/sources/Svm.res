@@ -4,10 +4,26 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.time
   }`)
 
+// Ordered transaction field names. The index of each is the field code shared
+// with the Rust store (`SvmTxField`) — keep this order in sync.
+let transactionFields = [
+  "transactionIndex",
+  "signatures",
+  "feePayer",
+  "success",
+  "err",
+  "fee",
+  "computeUnitsConsumed",
+  "accountKeys",
+  "recentBlockhash",
+  "version",
+  "tokenBalances",
+]
+
+let transactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
+
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
-  blockFields: ["slot"],
-  transactionFields: [],
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "hash",
@@ -20,7 +36,8 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // parse. The schema is a no-op object that always surfaces `None`.
   onEventBlockFilterSchema: S.object(_ => None),
   logger,
-  toEvent: eventItem => eventItem.payload->Internal.payloadToEvent,
+  transactionFieldMask,
+  toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem => {
     let instruction =
       eventItem.payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
