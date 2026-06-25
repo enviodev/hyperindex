@@ -1693,11 +1693,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenvy"
-version = "0.15.7"
-source = "git+https://github.com/enviodev/dotenvy?rev=e2da110668572cf2d67178f192eb1fc285224040#e2da110668572cf2d67178f192eb1fc285224040"
-
-[[package]]
 name = "dtor"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1854,7 +1849,6 @@ dependencies = [
  "clap-markdown",
  "colored",
  "convert_case 0.6.0",
- "dotenvy",
  "env_logger",
  "faster-hex",
  "fuel-abi-types",
