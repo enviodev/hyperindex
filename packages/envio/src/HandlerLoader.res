@@ -103,6 +103,7 @@ let applyRegistrations = (~config: Config.t): Config.t => {
               isWildcard,
               handler,
               contractRegister,
+              clientAddressFilter: ?EventConfigBuilder.buildAddressFilter([], ~isWildcard),
               dependsOnAddresses: Internal.dependsOnAddresses(
                 ~isWildcard,
                 ~filterByAddresses=false,
@@ -158,6 +159,11 @@ let applyRegistrations = (~config: Config.t): Config.t => {
               isWildcard,
               handler,
               contractRegister,
+              clientAddressFilter: ?EventConfigBuilder.buildAddressFilter(
+                [],
+                ~isWildcard,
+                ~srcAddressExpr="event.programId",
+              ),
               dependsOnAddresses: Internal.dependsOnAddresses(
                 ~isWildcard,
                 ~filterByAddresses=false,

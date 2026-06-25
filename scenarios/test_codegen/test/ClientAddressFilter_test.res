@@ -330,4 +330,20 @@ describe("buildAddressFilterBody — generated predicate source", () => {
       ),
     )
   })
+
+  it("non-wildcard SVM — gates on event.programId ownership", t => {
+    t.expect(
+      EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=false, ~srcAddressExpr="event.programId"),
+    ).toEqual(
+      Some(
+        `var ic; return (ic = indexingAddresses[event.programId]) !== undefined && ic.effectiveStartBlock <= blockNumber;`,
+      ),
+    )
+  })
+
+  it("wildcard SVM — None when there are no account groups", t => {
+    t.expect(
+      EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=true, ~srcAddressExpr="event.programId"),
+    ).toEqual(None)
+  })
 })

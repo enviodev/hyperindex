@@ -327,7 +327,13 @@ let compileAddressFilter: string => (
 // DNF is fixed here, so it's unrolled into one boolean expression — no per-event
 // closure, loop, or array. `None` only for wildcard events without a param
 // filter. Exposed for snapshotting.
-let buildAddressFilterBody = (groups: array<array<string>>, ~isWildcard: bool): option<string> => {
+// `srcAddressExpr` is the JS expression for the event's owning address: EVM and
+// Fuel events expose `event.srcAddress`; SVM instructions expose `event.programId`.
+let buildAddressFilterBody = (
+  groups: array<array<string>>,
+  ~isWildcard: bool,
+  ~srcAddressExpr: string="event.srcAddress",
+): option<string> => {
   let paramLeaf = name =>
     `(ic = indexingAddresses[p[${JSON.stringify(
         JSON.String(name),
@@ -341,7 +347,7 @@ let buildAddressFilterBody = (groups: array<array<string>>, ~isWildcard: bool): 
       ->Array.join(" || "),
     )
   }
-  let srcLeaf = "(ic = indexingAddresses[event.srcAddress]) !== undefined && ic.effectiveStartBlock <= blockNumber"
+  let srcLeaf = `(ic = indexingAddresses[${srcAddressExpr}]) !== undefined && ic.effectiveStartBlock <= blockNumber`
   switch (isWildcard, paramDnf) {
   | (true, None) => None
   | (true, Some(dnf)) => Some("var p = event.params, ic; return " ++ dnf ++ ";")
@@ -351,9 +357,12 @@ let buildAddressFilterBody = (groups: array<array<string>>, ~isWildcard: bool): 
   }
 }
 
-let buildAddressFilter = (groups: array<array<string>>, ~isWildcard: bool): option<
-  (Internal.eventPayload, int, dict<Internal.indexingContract>) => bool,
-> => buildAddressFilterBody(groups, ~isWildcard)->Option.map(compileAddressFilter)
+let buildAddressFilter = (
+  groups: array<array<string>>,
+  ~isWildcard: bool,
+  ~srcAddressExpr: string="event.srcAddress",
+): option<(Internal.eventPayload, int, dict<Internal.indexingContract>) => bool> =>
+  buildAddressFilterBody(groups, ~isWildcard, ~srcAddressExpr)->Option.map(compileAddressFilter)
 
 // ============== Build complete EVM event config ==============
 
@@ -471,6 +480,7 @@ let buildSvmInstructionEventConfig = (
     simulateParamsSchema: paramsSchema,
     filterByAddresses: false,
     dependsOnAddresses: !isWildcard,
+    clientAddressFilter: ?buildAddressFilter([], ~isWildcard, ~srcAddressExpr="event.programId"),
     startBlock,
     programId,
     discriminator,
@@ -542,6 +552,7 @@ let buildFuelEventConfig = (
     simulateParamsSchema: paramsSchema,
     filterByAddresses: false,
     dependsOnAddresses: !isWildcard,
+    clientAddressFilter: ?buildAddressFilter([], ~isWildcard),
     startBlock,
     kind: fuelKind,
   }
