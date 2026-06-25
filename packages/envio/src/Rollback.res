@@ -94,7 +94,7 @@ and executeRollback = async (
   ~scheduleFetch,
   ~scheduleProcessing,
 ) => {
-  let startTime = Hrtime.makeTimer()
+  let startTime = Performance.now()
 
   let chainState = state->IndexerState.getChainState(~chain=reorgChain)
 
@@ -194,7 +194,7 @@ and executeRollback = async (
     "targetCheckpointId": rollbackTargetCheckpointId,
   })
   Prometheus.RollbackSuccess.increment(
-    ~timeSeconds=Hrtime.timeSince(startTime)->Hrtime.toSecondsFloat,
+    ~timeSeconds=Performance.secondsSince(startTime),
     ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
   )
 

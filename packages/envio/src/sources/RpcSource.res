@@ -1041,7 +1041,7 @@ let make = (
     ~retry,
     ~logger as _,
   ) => {
-    let startFetchingBatchTimeRef = Hrtime.makeTimer()
+    let startFetchingBatchTimeRef = Performance.now()
 
     let suggestedBlockInterval = switch mutSuggestedBlockIntervals->Utils.Dict.dangerouslyGetNonOption(
       maxSuggestedBlockIntervalKey,
@@ -1222,7 +1222,7 @@ let make = (
 
     let optFirstBlockParent = await firstBlockParentPromise
 
-    let totalTimeElapsed = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let totalTimeElapsed = startFetchingBatchTimeRef->Performance.secondsSince
 
     // Every fetched block carries `hash` and `parentHash`, so each one yields
     // two confirmed (number, hash) pairs for reorg detection at no extra cost.
@@ -1303,12 +1303,12 @@ let make = (
     getBlockHashes,
     onReorg,
     getHeightOrThrow: async () => {
-      let timerRef = Hrtime.makeTimer()
+      let timerRef = Performance.now()
       let height = try {
         await rpcClient.getHeight()
       } catch {
       | exn =>
-        let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+        let seconds = timerRef->Performance.secondsSince
         Prometheus.SourceRequestCount.increment(
           ~sourceName=name,
           ~chainId=chain->ChainMap.Chain.toChainId,
@@ -1322,7 +1322,7 @@ let make = (
         )
         exn->throw
       }
-      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+      let seconds = timerRef->Performance.secondsSince
       Prometheus.SourceRequestCount.increment(
         ~sourceName=name,
         ~chainId=chain->ChainMap.Chain.toChainId,

@@ -232,7 +232,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~retry,
     ~logger,
   ) => {
-    let totalTimeRef = Hrtime.makeTimer()
+    let totalTimeRef = Performance.now()
 
     let selectionConfig = selection->getSelectionConfig
 
@@ -241,7 +241,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed getting log selection for the query")
     }
 
-    let startFetchingBatchTimeRef = Hrtime.makeTimer()
+    let startFetchingBatchTimeRef = Performance.now()
 
     //fetch batch
     Prometheus.SourceRequestCount.increment(
@@ -301,7 +301,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       )
     }
 
-    let pageFetchTime = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -311,7 +311,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     //In the query
     let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-    let parsingTimeRef = Hrtime.makeTimer()
+    let parsingTimeRef = Performance.now()
 
     //Parse page items into queue items
     let parsedQueueItems = []
@@ -374,7 +374,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       }
     })
 
-    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
     // Collect (blockNumber, blockHash) pairs we already have from the response —
     // one per item's block plus, when present, the rollbackGuard's head block
@@ -415,7 +415,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       }
     }
 
-    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     let stats = {
       totalTimeElapsed,
@@ -451,7 +451,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {
-      let timerRef = Hrtime.makeTimer()
+      let timerRef = Performance.now()
       let result = try {
         await client.getHeight()
       } catch {
@@ -465,7 +465,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         | _ => throw(JsExn(e))
         }
       }
-      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+      let seconds = timerRef->Performance.secondsSince
       Prometheus.SourceRequestCount.increment(
         ~sourceName=name,
         ~chainId=chain->ChainMap.Chain.toChainId,
