@@ -326,6 +326,10 @@ let fetchChain = async (
 
     // Accumulated across all queries dispatched in this tick so their per-query
     // results collapse into a single completion log instead of one per query.
+    let dispatchedCount = switch action {
+    | FetchState.Ready(queries) => queries->Array.length
+    | WaitingForNewBlock | NothingToQuery => 0
+    }
     let fetchedByPartition = Dict.make()
     let fetchedCount = ref(0)
     let timeRef = Hrtime.makeTimer()
@@ -380,7 +384,7 @@ let fetchChain = async (
         ~action,
         ~stateId,
       )
-      if fetchedCount.contents > 0 {
+      if dispatchedCount > 0 && fetchedCount.contents === dispatchedCount {
         Logging.trace({
           "msg": "Finished querying",
           "chainId": chain->ChainMap.Chain.toChainId,

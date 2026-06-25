@@ -270,15 +270,12 @@ let registerProcessEventBatchMetrics = (
   ~loadDuration,
   ~handlerDuration,
 ) => {
-  // Durations are batch-wide; repeated on each chain's line so it stays self-contained.
   batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
     logger->Logging.childTrace({
-      "msg": "Processed batch",
+      "msg": "Finished processing",
       "chainId": chainId->Int.fromString->Option.getUnsafe,
       "batchSize": chainAfterBatch.batchSize,
       "progress": chainAfterBatch.progressBlockNumber,
-      "loader_time_elapsed": loadDuration,
-      "handlers_time_elapsed": handlerDuration,
     })
   })
 
@@ -304,6 +301,15 @@ let processEventBatch = async (
   let chains: Internal.chains = chainStates->computeChainsState
 
   let logger = Logging.getLogger()
+
+  batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
+    logger->Logging.childTrace({
+      "msg": "Started processing",
+      "chainId": chainId->Int.fromString->Option.getUnsafe,
+      "batchSize": chainAfterBatch.batchSize,
+      "progress": chainAfterBatch.progressBlockNumber,
+    })
+  })
 
   try {
     // Backpressure: keep processing within keepLatestChangesLimit of the cycle.
