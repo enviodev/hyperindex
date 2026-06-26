@@ -1009,33 +1009,25 @@ let registerDynamicContracts = (
   // Might contain duplicates which we should filter out
   items: array<Internal.item>,
 ) => {
-  // === Batch dynamic-contract registration invariant (senior dev note) ===
-  // For every address we process in this call we must guarantee:
-  //   - At most one DC remains attached to any item.
-  //   - The attached DC (if any) comes from the sighting with the *smallest*
-  //     registrationBlock seen for that address *anywhere in this call*.
-  // This single value is what ends up in indexingAddresses (for effectiveStartBlock
-  // filtering) and in the envio_addresses row (for persistence and restart).
+  // The logic below ensures that for any address processed in one call to this
+  // function, at most one dynamic contract registration survives (the one whose
+  // registrationBlock is the smallest seen anywhere in the items passed to this
+  // call). That value is used both for the effectiveStartBlock that controls
+  // filtering and for the row that gets written to envio_addresses.
   //
-  // Because a single registerDynamicContracts call can receive items from multiple
-  // partitions (and the array order is not guaranteed), we maintain two pieces of
-  // per-address "best so far" state for the current call:
-  //   registeringAddresses / correctedAddresses  – the best indexingAddress seen
-  //   chosenDcItemByAddress                       – which item currently "owns" that best DC
+  // A single call can contain items coming from several partitions, and the order
+  // of items inside the array is not guaranteed to be sorted by block number.
+  // We therefore keep per-address "best so far" state for the duration of the call
+  // and, when a strictly earlier sighting is found later in the array, we remove
+  // the DC that was attached to an earlier item. This makes the final result
+  // independent of the order in which the items happened to arrive.
   //
-  // When a strictly better sighting is found later in the array we splice the old DC
-  // off its item's dcs list (see the two places below). This makes the result
-  // independent of input order.
-  //
-  // The two universes for an address inside one call are:
-  // 1. Not present in the pre-call indexingAddresses snapshot (None arm below).
-  // 2. Present before the call, but this sighting is earlier than that snapshot value
-  //    (Some arm, the "correction" path).
-  // Both must feed the same within-call min + splice logic.
-  //
-  // Corrections deliberately avoid registeringContractsByContract (we already own
-  // partitions for the address) but still go through registeringAddresses so later
-  // sightings in the same call see them for dedup.
+  // An address can be seen for the first time in this call in two ways:
+  // - It was not present in the snapshot of indexingAddresses taken on entry.
+  // - It was already known before the call, but the current sighting has an
+  //   earlier block than the value we had recorded.
+  // Both situations must go through the same within-call deduplication so that
+  // the earliest block always wins.
   if fetchState.normalSelection.eventConfigs->Utils.Array.isEmpty {
     // Can the normalSelection be empty?
     JsError.throwWithMessage(
