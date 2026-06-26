@@ -1009,6 +1009,25 @@ let registerDynamicContracts = (
   // Might contain duplicates which we should filter out
   items: array<Internal.item>,
 ) => {
+  // The logic below ensures that for any address processed in one call to this
+  // function, at most one dynamic contract registration survives (the one whose
+  // registrationBlock is the smallest seen anywhere in the items passed to this
+  // call). That value is used both for the effectiveStartBlock that controls
+  // filtering and for the row that gets written to envio_addresses.
+  //
+  // A single call can contain items coming from several partitions, and the order
+  // of items inside the array is not guaranteed to be sorted by block number.
+  // We therefore keep per-address "best so far" state for the duration of the call
+  // and, when a strictly earlier sighting is found later in the array, we remove
+  // the DC that was attached to an earlier item. This makes the final result
+  // independent of the order in which the items happened to arrive.
+  //
+  // An address can be seen for the first time in this call in two ways:
+  // - It was not present in the snapshot of indexingAddresses taken on entry.
+  // - It was already known before the call, but the current sighting has an
+  //   earlier block than the value we had recorded.
+  // Both situations must go through the same within-call deduplication so that
+  // the earliest block always wins.
   if fetchState.normalSelection.eventConfigs->Utils.Array.isEmpty {
     // Can the normalSelection be empty?
     JsError.throwWithMessage(
@@ -1018,7 +1037,6 @@ let registerDynamicContracts = (
 
   let indexingAddresses = fetchState.indexingAddresses
   let registeringContractsByContract: dict<dict<indexingAddress>> = Dict.make()
-  let earliestRegisteringEventBlockNumber = ref(%raw(`Infinity`))
   // Addresses registered for contracts without matching events. These are not
   // added to partitions, but they are tracked on fetchState.indexingAddresses
   // so that later conflicting registrations are detected, and are persisted
@@ -1028,6 +1046,15 @@ let registerDynamicContracts = (
   // including no-events ones), so two contracts registering the same address
   // within one batch conflict the same way as against indexingAddresses.
   let registeringAddresses: dict<indexingAddress> = Dict.make()
+  // Track the item carrying the current earliest dc sighting *within this batch* (register call).
+  // Lets us splice the dc off a superseded (later-block) item when a better earlier sighting
+  // appears later in the items array (makes within-batch min selection order-independent and
+  // ensures only the early DC reaches setBatchDcs).
+  let chosenDcItemByAddress: dict<Internal.item> = Dict.make()
+  // Corrections: addresses for which an earlier effectiveStartBlock was accepted
+  // (for already-tracked addresses). We merge the updated record to indexingAddresses
+  // and lower lfb on their partition(s) to drive gap re-fetch. (See registerDynamicContracts.)
+  let correctedAddresses: dict<indexingAddress> = Dict.make()
 
   for itemIdx in 0 to items->Array.length - 1 {
     let item = items->Array.getUnsafe(itemIdx)
@@ -1056,24 +1083,83 @@ let registerDynamicContracts = (
             dc.address->Address.toString,
           ) {
           | Some(existingContract) =>
-            // FIXME: Instead of filtering out duplicates,
-            // we should check the block number first.
-            // If new registration with earlier block number
-            // we should register it for the missing block range
             if existingContract.contractName != dc.contractName {
               fetchState->warnDifferentContractType(~existingContract, ~dc=dcWithStartBlock)
-            } else if existingContract.effectiveStartBlock > dcWithStartBlock.effectiveStartBlock {
-              let logger = Logging.createChild(
-                ~params={
-                  "chainId": fetchState.chainId,
-                  "contractAddress": dc.address->Address.toString,
-                  "existingBlockNumber": existingContract.effectiveStartBlock,
-                  "newBlockNumber": dcWithStartBlock.effectiveStartBlock,
-                },
-              )
-              logger->Logging.childWarn(`Skipping contract registration: Contract address is already registered at a later block number. Currently registration of the same contract address is not supported by Envio. Reach out to us if it's a problem for you.`)
+              shouldRemove := true
+            } else if existingContract.effectiveStartBlock <= dcWithStartBlock.effectiveStartBlock {
+              // We already have an equal or earlier registration for this address.
+              // Keep the earliest. Sighting at a later block is a no-op for start time.
+              // (If incoming later than recorded: skip as before. Equal: silent dedup.)
+              shouldRemove := true
+            } else {
+              // New sighting has an *earlier* effectiveStartBlock than the one recorded before
+              // this registerDynamicContracts call.
+              //
+              // We must still participate in *within-batch* min selection for this address.
+              // A later item in the same `items` array may contain an even earlier sighting
+              // for the same address. We use the same chosenDcItemByAddress + splice pattern
+              // as the new-address path so that only the single earliest DC in the whole call
+              // survives to setBatchDcs, and the min block is what gets persisted.
+              //
+              // (We deliberately keep corrections out of registeringContractsByContract to
+              // avoid creating unnecessary new partitions for an address we already own;
+              // we only update correctedAddresses and later lower LFBs on existing partitions.)
+              let addrStr = dc.address->Address.toString
+              let shouldKeep = switch registeringAddresses->Utils.Dict.dangerouslyGetNonOption(addrStr) {
+              | Some(existingInBatch) if existingInBatch.effectiveStartBlock <= dcWithStartBlock.effectiveStartBlock =>
+                false
+              | Some(existingInBatch) => {
+                // This is earlier than a sighting we already accepted earlier in this batch.
+                // Splice the superseded DC off the old item.
+                switch chosenDcItemByAddress->Utils.Dict.dangerouslyGetNonOption(addrStr) {
+                | Some(oldItem) =>
+                  switch oldItem->Internal.getItemDcs {
+                  | Some(oldDcs) => {
+                      let k = ref(0)
+                      let spliced = ref(false)
+                      while k.contents < oldDcs->Array.length && !spliced.contents {
+                        let oldDc = oldDcs->Array.getUnsafe(k.contents)
+                        if oldDc.address === dc.address {
+                          let _ = oldDcs->Array.splice(~start=k.contents, ~remove=1, ~insert=[])
+                          spliced := true
+                        } else {
+                          k := k.contents + 1
+                        }
+                      }
+                    }
+                  | None => ()
+                  }
+                | None => ()
+                }
+                chosenDcItemByAddress->Dict.set(addrStr, item)
+                true
+              }
+              | None => {
+                // First sighting in this batch that is also earlier than the pre-call value.
+                // Remember the item so a worse sighting later in the array can splice us.
+                chosenDcItemByAddress->Dict.set(addrStr, item)
+                true
+              }
+              }
+              if shouldKeep {
+                let logger = Logging.createChild(
+                  ~params={
+                    "chainId": fetchState.chainId,
+                    "contractAddress": dc.address->Address.toString,
+                    "previousBlockNumber": existingContract.effectiveStartBlock,
+                    "correctedToBlockNumber": dcWithStartBlock.effectiveStartBlock,
+                  },
+                )
+                logger->Logging.childInfo(
+                  `Correcting dynamic contract registration to earlier block number. The address will now be considered active from the earlier point.`,
+                )
+                correctedAddresses->Dict.set(dc.address->Address.toString, dcWithStartBlock)
+                registeringAddresses->Dict.set(dc.address->Address.toString, dcWithStartBlock)
+                // do NOT set shouldRemove
+              } else {
+                shouldRemove := true
+              }
             }
-            shouldRemove := true
           | None =>
             let shouldUpdate = switch registeringAddresses->Utils.Dict.dangerouslyGetNonOption(
               dc.address->Address.toString,
@@ -1084,22 +1170,49 @@ let registerDynamicContracts = (
                 ~dc=dcWithStartBlock,
               )
               false
-            | Some(_) => // Since the DC is registered by an earlier item in the query
-              // FIXME: This unsafely relies on the asc order of the items
-              // which is 99% true, but there were cases when the source ordering was wrong
-              false
+            | Some(existingInBatch) =>
+              if existingInBatch.effectiveStartBlock <= dcWithStartBlock.effectiveStartBlock {
+                // Already have earlier-or-equal in this batch; keep that one.
+                // (later: skip; equal: silent dedup per within-batch registeringAddresses check)
+                false
+              } else {
+                // This is an earlier sighting than the one recorded for this batch so far.
+                // Splice the (now-superseded) later dc off its previous item's dcs array.
+                // This ensures only the min registrationBlock's DC survives to setBatchDcs
+                // (order-independent within the batch; prevents later set of higher block).
+                let addrStr = dc.address->Address.toString
+                switch chosenDcItemByAddress->Utils.Dict.dangerouslyGetNonOption(addrStr) {
+                | Some(oldItem) =>
+                  switch oldItem->Internal.getItemDcs {
+                  | Some(oldDcs) => {
+                      let k = ref(0)
+                      let spliced = ref(false)
+                      while k.contents < oldDcs->Array.length && !spliced.contents {
+                        let oldDc = oldDcs->Array.getUnsafe(k.contents)
+                        if oldDc.address === dc.address {
+                          let _ = oldDcs->Array.splice(~start=k.contents, ~remove=1, ~insert=[])
+                          spliced := true
+                        } else {
+                          k := k.contents + 1
+                        }
+                      }
+                    }
+                  | None => ()
+                  }
+                | None => ()
+                }
+                chosenDcItemByAddress->Dict.set(addrStr, item)
+                // choose min (true) so record early to registering* . This (early) item kept.
+                true
+              }
             | None => true
             }
             if shouldUpdate {
-              earliestRegisteringEventBlockNumber :=
-                Pervasives.min(
-                  earliestRegisteringEventBlockNumber.contents,
-                  dcWithStartBlock.effectiveStartBlock,
-                )
               registeringContractsByContract
               ->Utils.Dict.getOrInsertEmptyDict(dc.contractName)
               ->Dict.set(dc.address->Address.toString, dcWithStartBlock)
               registeringAddresses->Dict.set(dc.address->Address.toString, dcWithStartBlock)
+              chosenDcItemByAddress->Dict.set(dc.address->Address.toString, item)
             } else {
               shouldRemove := true
             }
@@ -1123,8 +1236,63 @@ let registerDynamicContracts = (
           | Some(existingContract) =>
             if existingContract.contractName != dc.contractName {
               fetchState->warnDifferentContractType(~existingContract, ~dc=dcAsIndexingAddress)
+              shouldRemove := true
+            } else if existingContract.effectiveStartBlock <= dcAsIndexingAddress.effectiveStartBlock {
+              shouldRemove := true
+            } else {
+              // Earlier sighting for a no-events address: update tracking + persist the early block.
+              // Participate in within-batch min selection using chosenDcItemByAddress so that
+              // two sightings in one call for a pre-known no-events address only keep the min.
+              let addrStr = dc.address->Address.toString
+              let shouldKeep = switch registeringAddresses->Utils.Dict.dangerouslyGetNonOption(addrStr) {
+              | Some(existingInBatch) if existingInBatch.effectiveStartBlock <= dcAsIndexingAddress.effectiveStartBlock =>
+                false
+              | Some(existingInBatch) => {
+                switch chosenDcItemByAddress->Utils.Dict.dangerouslyGetNonOption(addrStr) {
+                | Some(oldItem) =>
+                  switch oldItem->Internal.getItemDcs {
+                  | Some(oldDcs) => {
+                      let k = ref(0)
+                      let spliced = ref(false)
+                      while k.contents < oldDcs->Array.length && !spliced.contents {
+                        let oldDc = oldDcs->Array.getUnsafe(k.contents)
+                        if oldDc.address === dc.address {
+                          let _ = oldDcs->Array.splice(~start=k.contents, ~remove=1, ~insert=[])
+                          spliced := true
+                        } else {
+                          k := k.contents + 1
+                        }
+                      }
+                    }
+                  | None => ()
+                  }
+                | None => ()
+                }
+                chosenDcItemByAddress->Dict.set(addrStr, item)
+                true
+              }
+              | None => {
+                chosenDcItemByAddress->Dict.set(addrStr, item)
+                true
+              }
+              }
+              if shouldKeep {
+                let logger = Logging.createChild(
+                  ~params={
+                    "chainId": fetchState.chainId,
+                    "contractAddress": dc.address->Address.toString,
+                    "previousBlockNumber": existingContract.effectiveStartBlock,
+                    "correctedToBlockNumber": dcAsIndexingAddress.effectiveStartBlock,
+                  },
+                )
+                logger->Logging.childInfo(`Correcting no-events contract registration to earlier block.`)
+                registeringAddresses->Dict.set(dc.address->Address.toString, dcAsIndexingAddress)
+                noEventsAddresses->Dict.set(dc.address->Address.toString, dcAsIndexingAddress)
+                // keep in item for persistence
+              } else {
+                shouldRemove := true
+              }
             }
-            shouldRemove := true
           | None =>
             switch registeringAddresses->Utils.Dict.dangerouslyGetNonOption(
               dc.address->Address.toString,
@@ -1132,9 +1300,36 @@ let registerDynamicContracts = (
             | Some(existingContract) =>
               if existingContract.contractName != dc.contractName {
                 fetchState->warnDifferentContractType(~existingContract, ~dc=dcAsIndexingAddress)
+                shouldRemove := true
+              } else if existingContract.effectiveStartBlock <= dcAsIndexingAddress.effectiveStartBlock {
+                shouldRemove := true
+              } else {
+                // within-batch correction for no-events: splice the previous (worse) one if present
+                let addrStr = dc.address->Address.toString
+                switch chosenDcItemByAddress->Utils.Dict.dangerouslyGetNonOption(addrStr) {
+                | Some(oldItem) =>
+                  switch oldItem->Internal.getItemDcs {
+                  | Some(oldDcs) => {
+                      let k = ref(0)
+                      let spliced = ref(false)
+                      while k.contents < oldDcs->Array.length && !spliced.contents {
+                        let oldDc = oldDcs->Array.getUnsafe(k.contents)
+                        if oldDc.address === dc.address {
+                          let _ = oldDcs->Array.splice(~start=k.contents, ~remove=1, ~insert=[])
+                          spliced := true
+                        } else {
+                          k := k.contents + 1
+                        }
+                      }
+                    }
+                  | None => ()
+                  }
+                | None => ()
+                }
+                chosenDcItemByAddress->Dict.set(addrStr, item)
+                registeringAddresses->Dict.set(dc.address->Address.toString, dcAsIndexingAddress)
+                noEventsAddresses->Dict.set(dc.address->Address.toString, dcAsIndexingAddress)
               }
-              // Otherwise already queued for persistence by an earlier item in this batch.
-              shouldRemove := true
             | None =>
               let logger = Logging.createChild(
                 ~params={
@@ -1166,17 +1361,18 @@ let registerDynamicContracts = (
 
   let dcContractNamesToStore = registeringContractsByContract->Dict.keysToArray
   let hasNoEventsUpdates = !(noEventsAddresses->Utils.Dict.isEmpty)
-  switch (dcContractNamesToStore, hasNoEventsUpdates) {
+  let hasCorrections = !(correctedAddresses->Utils.Dict.isEmpty)
+  switch (dcContractNamesToStore, hasNoEventsUpdates, hasCorrections) {
   // Dont update anything when everything was filter out
-  | ([], false) => fetchState
-  | ([], true) =>
+  | ([], false, false) => fetchState
+  | ([], true, false) =>
     // Only dcs for contracts without events. Track them on
     // indexingAddresses so subsequent registrations see them, but don't touch
     // partitions since there's nothing to fetch for them.
     let newIndexingContracts = indexingAddresses->Utils.Dict.shallowCopy
     let _ = Utils.Dict.mergeInPlace(newIndexingContracts, noEventsAddresses)
     fetchState->updateInternal(~indexingAddresses=newIndexingContracts)
-  | (_, _) => {
+  | _ => {
       let newPartitions = []
       let newIndexingAddresses = indexingAddresses->Utils.Dict.shallowCopy
       let dynamicContractsRef = ref(fetchState.optimizedPartitions.dynamicContracts)
@@ -1265,6 +1461,34 @@ let registerDynamicContracts = (
       }
       // Include no-events dcs so later batches detect conflicts against them.
       let _ = Utils.Dict.mergeInPlace(newIndexingAddresses, noEventsAddresses)
+      let _ = Utils.Dict.mergeInPlace(newIndexingAddresses, correctedAddresses)
+
+      // For each address corrected to a strictly earlier effectiveStartBlock,
+      // walk the (to-be-used) partitions and lower latestFetchedBlock to
+      // min(current, newEffective-1). This makes getNextQuery emit earlier
+      // fromBlock queries for the partition. (See recommended approach in task.)
+      correctedAddresses->Utils.Dict.forEachWithKey((correctedIa, addressStr) => {
+        let contractName = correctedIa.contractName
+        let target = correctedIa.effectiveStartBlock - 1
+        for pIdx in 0 to mutExistingPartitions->Array.length - 1 {
+          let p = mutExistingPartitions->Array.getUnsafe(pIdx)
+          switch p.addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(addrs) if addrs->Array.some(a => a->Address.toString === addressStr) =>
+            let curr = p.latestFetchedBlock.blockNumber
+            let newLfbBn = Pervasives.min(curr, target)
+            if newLfbBn < curr {
+              mutExistingPartitions->Array.setUnsafe(
+                pIdx,
+                {
+                  ...p,
+                  latestFetchedBlock: {blockNumber: newLfbBn, blockTimestamp: 0},
+                },
+              )
+            }
+          | _ => ()
+          }
+        }
+      })
 
       let optimizedPartitions = createPartitionsFromIndexingAddresses(
         ~registeringContractsByContract,

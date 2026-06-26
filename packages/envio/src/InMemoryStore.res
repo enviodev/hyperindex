@@ -178,11 +178,16 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
         let eventItem = item->Internal.castUnsafeEventItem
         for dcIdx in 0 to dcs->Array.length - 1 {
           let dc = dcs->Array.getUnsafe(dcIdx)
+          // Use the registrationBlock carried on the dc (set at contractRegister time from the
+          // triggering event's block). The registerDynamicContracts logic + splicing of superseded
+          // later sightings ensures that only the earliest sighting for an address reaches here
+          // with its DC still attached. This gives us the min registrationBlock for persistence
+          // (over the composite PK), which is the core of the #1188 fix.
           let entity: InternalTable.EnvioAddresses.t = {
             id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
             chainId,
             contractName: dc.contractName,
-            registrationBlock: eventItem.blockNumber,
+            registrationBlock: dc.registrationBlock,
             registrationLogIndex: eventItem.logIndex,
           }
 

@@ -1163,16 +1163,120 @@ describe("FetchState.registerDynamicContracts", () => {
         ~message="Calling it with the same dc for the second time shouldn't change anything",
       ).toBe(fetchStateWithDc1)
 
-      // This is an edge case we currently don't cover
-      // But show a warning in the logs
+      // Earlier registration sighting for a known address must be accepted:
+      // the recorded effectiveStartBlock must become the minimum, and the
+      // DC must be kept (for persistence of the corrected registrationBlock).
+      let earlierItem =
+        makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)->dcToItem
+      let afterEarlier =
+        fetchStateWithDc1->FetchState.registerDynamicContracts([earlierItem])
+
+      t.expect(afterEarlier === fetchStateWithDc1, ~message="Must return a new state for correction").toBe(false)
+
+      let corrected =
+        afterEarlier.indexingAddresses
+        ->Dict.get(mockAddress1->Address.toString)
+        ->Option.getUnsafe
+
       t.expect(
-        fetchStateWithDc1->FetchState.registerDynamicContracts([
-          makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)->dcToItem,
-        ]),
-        ~message=`BROKEN: Calling it with the same dc
-          but earlier block number should create a new short lived partition
-          for the specific contract from block 0 to 1. And update the dc in db`,
-      ).toBe(fetchStateWithDc1)
+        corrected.effectiveStartBlock,
+        ~message="Must have taken the earlier effective start block (0 in this case after derivation)",
+      ).toBe(0)
+
+      // The item should still carry the DC (not spliced) so persistence sees the early block.
+      t.expect(
+        earlierItem->Internal.getItemDcs->Option.isSome,
+        ~message="DC should remain on the item for the earlier registration (to update DB row)",
+      ).toBe(true)
+    },
+  )
+
+  it(
+    "Within one batch, later registration then earlier one takes the min and keeps the early DC for persistence",
+    t => {
+      let fetchState = makeInitial()
+
+      let lateDc = makeDynContractRegistration(~blockNumber=5, ~contractAddress=mockAddress1)
+      let earlyDc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)
+      let lateItem = lateDc->dcToItem
+      let earlyItem = earlyDc->dcToItem
+
+      // Simulate unsorted within a batch (later regBlock sighting appears before earlier in items)
+      let updated =
+        fetchState->FetchState.registerDynamicContracts([lateItem, earlyItem])
+
+      t.expect(
+        (lateItem->Internal.getItemDcs, earlyItem->Internal.getItemDcs),
+        ~message=`later (higher block) dc must be spliced even if listed first;
+          early kept so that setBatchDcs will emit the *early* registrationBlock/logIndex`,
+      ).toEqual((Some([]), Some([earlyDc])))
+
+      let ia =
+        updated.indexingAddresses
+        ->Dict.get(mockAddress1->Address.toString)
+        ->Option.getUnsafe
+
+      t.expect(
+        ia.effectiveStartBlock,
+        ~message="indexingAddresses must record the min effectiveStartBlock derived from earliest reg",
+      ).toBe(0)
+
+      // Full shape: earliest wins
+      t.expect(
+        updated.indexingAddresses,
+        ~message="indexingAddresses should reflect the early dc (and static)",
+      ).toEqual(makeIndexingContractsWithDynamics([earlyDc], ~static=[mockAddress0]))
+    },
+  )
+
+  it(
+    "Two successive registerDynamicContracts calls (simulating out-of-order partition responses) - second with earlier block corrects the first",
+    t => {
+      let fetchState = makeInitial()
+
+      let lateDc = makeDynContractRegistration(~blockNumber=5, ~contractAddress=mockAddress1)
+      let lateItem = lateDc->dcToItem
+      let afterLate = fetchState->FetchState.registerDynamicContracts([lateItem])
+
+      // First (later) sighting kept its DC and set its effective
+      t.expect(lateItem->Internal.getItemDcs, ~message="late sighting survived its register").toEqual(
+        Some([lateDc]),
+      )
+      t.expect(
+        afterLate.indexingAddresses
+        ->Dict.get(mockAddress1->Address.toString)
+        ->Option.map(ia => ia.effectiveStartBlock),
+      ).toEqual(Some(5))
+
+      // Now a later-arriving response carries an earlier registration sighting for same addr
+      let earlyDc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)
+      let earlyItem = earlyDc->dcToItem
+      let afterEarly = afterLate->FetchState.registerDynamicContracts([earlyItem])
+
+      t.expect(
+        afterEarly === afterLate,
+        ~message="second call with earlier must produce a distinct corrected state",
+      ).toBe(false)
+
+      // Early DC must survive filter (not spliced) so its item reaches setBatchDcs
+      t.expect(
+        earlyItem->Internal.getItemDcs,
+        ~message="early dc must be kept on its item",
+      ).toEqual(Some([earlyDc]))
+
+      let ia =
+        afterEarly.indexingAddresses
+        ->Dict.get(mockAddress1->Address.toString)
+        ->Option.getUnsafe
+      t.expect(
+        ia.effectiveStartBlock,
+        ~message="indexingAddresses corrected to min effectiveStartBlock",
+      ).toBe(0)
+
+      // Note on persistence: even if lateItem (from prior call) still carries its dc,
+      // setBatchDcs will process in batch order and later Set for same addr id
+      // (makeId by chain+address) using the early sighting's block/log will overwrite
+      // the higher one in the in-mem EnvioAddresses table (sink persists the last write).
     },
   )
 
