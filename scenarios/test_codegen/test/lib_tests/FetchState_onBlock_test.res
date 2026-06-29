@@ -61,7 +61,6 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
   let fetchState = FetchState.make(
     ~eventConfigs,
     ~contractConfigs,
-    ~indexingAddresses,
     ~addresses,
     ~startBlock,
     ~endBlock=None,

@@ -5,10 +5,8 @@
 let indexingAddressesName = "envio_indexing_addresses"
 let indexingAddressesHelp = "The number of addresses indexed on chain. Includes both static and dynamic addresses."
 
-// Single-pass exposition builder: indexed `for` loop with `getUnsafe` (no closure,
-// no bounds check), accumulating into one string via `++` — which compiles to JS
-// `+=`, grown as a ConsString so there's no O(n²) copying or intermediate `lines`
-// array/join. The line prefix is hoisted out of the loop.
+// Accumulate into one string rather than building a lines array to join: `++`
+// compiles to JS `+=`, which V8 grows as a ConsString instead of recopying.
 let renderGauge = (~name, ~help, ~samples: array<(string, int)>) => {
   let out = ref(`# HELP ${name} ${help}\n# TYPE ${name} gauge`)
   let prefix = `\n${name}{chainId="`

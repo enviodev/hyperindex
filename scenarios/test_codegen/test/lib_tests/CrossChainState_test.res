@@ -33,7 +33,6 @@ let makeChainState = (
     // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
     ~eventConfigs,
     ~contractConfigs,
-    ~indexingAddresses,
     ~addresses,
     ~onBlockConfigs=[
       {

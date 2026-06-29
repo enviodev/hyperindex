@@ -1618,7 +1618,6 @@ let make = (
   ~endBlock,
   ~eventConfigs: array<Internal.eventConfig>,
   ~contractConfigs: dict<IndexingAddresses.contractConfig>,
-  ~indexingAddresses: IndexingAddresses.t,
   ~addresses: array<Internal.indexingAddress>,
   ~maxAddrInPartition,
   ~chainId,
@@ -1683,13 +1682,26 @@ let make = (
     // Only addresses whose contract has events that depend on addresses get
     // registered for active fetching via partitions.
     if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-      let key = contract.address->Address.toString
+      let contractStartBlock = switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(
+        contractName,
+      ) {
+      | Some({startBlock}) => startBlock
+      | None => None
+      }
       let registeringContracts =
         registeringContractsByContract->Utils.Dict.getOrInsertEmptyDict(contractName)
-      switch indexingAddresses->IndexingAddresses.get(key) {
-      | Some(ia) => registeringContracts->Dict.set(key, ia)
-      | None => ()
-      }
+      registeringContracts->Dict.set(
+        contract.address->Address.toString,
+        {
+          address: contract.address,
+          contractName,
+          registrationBlock: contract.registrationBlock,
+          effectiveStartBlock: IndexingAddresses.deriveEffectiveStartBlock(
+            ~registrationBlock=contract.registrationBlock,
+            ~contractStartBlock,
+          ),
+        },
+      )
 
       // Detect dynamic contracts by registrationBlock
       if contract.registrationBlock !== -1 {

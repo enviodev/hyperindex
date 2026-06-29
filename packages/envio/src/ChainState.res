@@ -227,7 +227,6 @@ let makeInternal = (
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
     ~contractConfigs,
-    ~indexingAddresses=indexingAddressIndex,
     ~addresses=indexingAddresses,
     ~progressBlockNumber,
     ~startBlock,

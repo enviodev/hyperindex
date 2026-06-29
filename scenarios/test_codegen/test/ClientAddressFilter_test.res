@@ -200,7 +200,6 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
     let fetchState = FetchState.make(
       ~eventConfigs,
       ~contractConfigs,
-      ~indexingAddresses,
       ~addresses,
       ~startBlock=0,
       ~endBlock=None,
@@ -271,7 +270,6 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
     let fetchState = FetchState.make(
       ~eventConfigs,
       ~contractConfigs,
-      ~indexingAddresses,
       ~addresses,
       ~startBlock=0,
       ~endBlock=None,

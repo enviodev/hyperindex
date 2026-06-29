@@ -123,7 +123,6 @@ let makeInitial = (
   let fetchState = FetchState.make(
     ~eventConfigs,
     ~contractConfigs,
-    ~indexingAddresses,
     ~addresses,
     ~startBlock,
     ~endBlock=None,
@@ -168,7 +167,6 @@ let makeFs = (
   let fetchState = FetchState.make(
     ~eventConfigs,
     ~contractConfigs,
-    ~indexingAddresses,
     ~addresses,
     ~startBlock,
     ~endBlock,

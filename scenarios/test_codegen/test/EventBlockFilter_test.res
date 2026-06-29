@@ -342,7 +342,6 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
     FetchState.make(
       ~eventConfigs,
       ~contractConfigs,
-      ~indexingAddresses,
       ~addresses,
       ~startBlock=0,
       ~endBlock=None,

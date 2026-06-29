@@ -22,7 +22,6 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~endBlock=None,
       ~eventConfigs,
       ~contractConfigs,
-      ~indexingAddresses,
       ~addresses,
       ~startBlock=0,
       ~maxOnBlockBufferSize=5000,
