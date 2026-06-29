@@ -102,10 +102,16 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     ),
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
+    let eventConfig =
+      eventItem.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
     eventItem->RawEvent.make(
       ~block=payload.block,
       ~transaction=payload.transaction,
-      ~params=payload.params,
+      // The decoder emits `{}` for zero-parameter events, which the params
+      // schema rejects; pass unit so it serializes to the "null" sentinel.
+      ~params=eventConfig.paramsMetadata->Array.length == 0
+        ? ()->(Utils.magic: unit => Internal.eventParams)
+        : payload.params,
       ~srcAddress=payload.srcAddress,
       ~cleanUpRawEventFieldsInPlace,
     )
