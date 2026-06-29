@@ -899,14 +899,18 @@ let initTestWorker = () => {
     }
     Main.start(~persistence, ~isTest=true, ~patchConfig, ~exitAfterFirstEventBlock)
     ->Promise.catch(exn => {
-      // `Main.start` rejects on any fatal error — setup (e.g. patchConfig's
-      // srcAddress validation) or a runtime failure surfaced via its `onError`.
-      // The parent only learns of failures through the worker `error` event,
-      // which fires on an *uncaught* exception. Throwing synchronously in this
-      // catch would just reject the catch's own promise (swallowed by `ignore`);
-      // `setImmediate` re-throws outside the promise chain so it becomes uncaught
-      // and reaches the parent.
-      NodeJs.setImmediate(() => throw(exn->Utils.prettifyExn))
+      // `Main.start` rejects on any fatal error: a runtime failure arrives wrapped
+      // in `Main.FatalError` (already logged), a setup throw (e.g. patchConfig's
+      // srcAddress validation) arrives raw. The parent only learns of failures
+      // through the worker `error` event, which fires on an *uncaught* exception.
+      // Throwing synchronously in this catch would just reject the catch's own
+      // promise (swallowed by `ignore`); `setImmediate` re-throws outside the
+      // promise chain so it becomes uncaught and reaches the parent.
+      let toThrow = switch exn {
+      | Main.FatalError(inner) => inner
+      | _ => exn->Utils.prettifyExn
+      }
+      NodeJs.setImmediate(() => throw(toThrow))
       Promise.resolve()
     })
     ->ignore
