@@ -503,11 +503,7 @@ let materializeBatchItems = (cs: t, ~items: array<Internal.item>) =>
 // Materialise a fetch-response page's transactions onto its items before
 // contract-register handlers read them. `None` pages (RPC/Fuel/Simulate keep the
 // transaction inline) are a no-op.
-let materializePageItems = (
-  _cs: t,
-  ~items: array<Internal.item>,
-  ~page: option<TransactionStore.t>,
-) =>
+let materializePageItems = (~items: array<Internal.item>, ~page: option<TransactionStore.t>) =>
   switch page {
   | Some(store) => store->TransactionStore.materializeItems(~items)
   | None => Promise.resolve()

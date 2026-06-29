@@ -111,7 +111,6 @@ let handleQueryResult: (
 ) => unit
 let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
 let materializePageItems: (
-  t,
   ~items: array<Internal.item>,
   ~page: option<TransactionStore.t>,
 ) => promise<unit>
