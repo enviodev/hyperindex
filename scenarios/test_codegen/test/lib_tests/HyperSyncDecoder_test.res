@@ -142,6 +142,63 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
     t.expect(result).toEqual(%raw(`{}`))
   })
 
+  // Regression for https://github.com/enviodev/hyperindex/issues/1353
+  // The native decoder returns an empty object `{}` for a zero-parameter event,
+  // which the ecosystem's toRawEvent must serialize for the raw_events table
+  // without crashing the batch write.
+  Async.it("toRawEvent serializes empty params decoded by native decoder", async t => {
+    let params = await decodeSingle(
+      ~eventName="Empty",
+      ~params=[],
+      ~event=makeEvent(~topics=[toEventSelector("event Empty()")], ~data="0x"),
+    )
+    t.expect(params).toEqual(%raw(`{}`))
+
+    let srcAddress =
+      "0x00000000000000000000000000000000000000ab"->(Utils.magic: string => Address.t)
+    let blockNumber = 5
+    let logIndex = 3
+
+    let payload =
+      {
+        "block": %raw(`{"number": 5, "timestamp": 9999, "hash": "0xblockhash", "gasUsed": 99n, "miner": "0xminer"}`),
+        "transaction": %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+        "params": params,
+        "logIndex": logIndex,
+        "srcAddress": srcAddress,
+        "chainId": 137,
+        "contractName": "ERC20",
+        "eventName": "EventWithoutFields",
+      }->(Utils.magic: {..} => Internal.eventPayload)
+
+    let eventItem =
+      Internal.Event({
+        eventConfig: (MockIndexer.evmEventConfig(~contractName="ERC20") :> Internal.eventConfig),
+        timestamp: 1234,
+        chain: ChainMap.Chain.makeUnsafe(~chainId=137),
+        blockNumber,
+        blockHash: "0xblockhash",
+        logIndex,
+        transactionIndex: 0,
+        payload,
+      })->Internal.castUnsafeEventItem
+
+    t.expect(MockIndexer.config.ecosystem.toRawEvent(eventItem)).toEqual({
+      chain_id: 137,
+      event_id: EventUtils.packEventIndex(~logIndex, ~blockNumber),
+      event_name: "EventWithoutFields",
+      contract_name: "ERC20",
+      block_number: blockNumber,
+      log_index: logIndex,
+      src_address: srcAddress,
+      block_hash: "0xblockhash",
+      block_timestamp: 1234,
+      block_fields: %raw(`{"gasUsed": "99", "miner": "0xminer"}`),
+      transaction_fields: %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+      params: %raw(`"null"`),
+    })
+  })
+
   Async.it(
     "paramsRawEventSchema serializes struct/tuple params decoded by native decoder",
     async t => {
