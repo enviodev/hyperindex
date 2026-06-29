@@ -983,13 +983,15 @@ describe("Use Envio test framework to test event handlers", () => {
 
 
 
-  it("throws when a non-wildcard simulate event isn't indexed on the chain", () => {
+  it("throws when a non-wildcard simulate event isn't indexed on the chain", async () => {
     const indexer = createTestIndexer();
 
     // EventFiltersTest is configured on chains 100/137, not 1337, so its
     // non-wildcard FilterTestEvent has no indexing address on 1337 and the
-    // event would otherwise be silently dropped by clientAddressFilter.
-    assert.throws(
+    // event would otherwise be silently dropped by clientAddressFilter. The
+    // check runs in the worker (against the registration-applied config), so
+    // the failure surfaces as a rejected promise.
+    await assert.rejects(
       () =>
         indexer.process({
           chains: {
