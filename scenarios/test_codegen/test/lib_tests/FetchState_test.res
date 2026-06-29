@@ -308,8 +308,7 @@ describe("FetchState.make", () => {
       t.expect(
         (
           indexingAddresses->IndexingAddresses.size,
-          (indexingAddresses->IndexingAddresses.dict)
-          ->Dict.get(mockAddress1->Address.toString)
+          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           // No partition is created for the contract without events
           fetchState.optimizedPartitions.entities
@@ -904,9 +903,7 @@ describe("FetchState.registerDynamicContracts", () => {
           item->Internal.getItemDcs,
           // tracked on indexingAddresses so later conflicting registrations
           // are detected, and so numAddresses reflects it
-          indexingAddresses
-          ->IndexingAddresses.dict
-          ->Dict.get(mockAddress1->Address.toString)
+          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           // partitions unchanged - no fetching for contracts without events
           updatedFetchState.optimizedPartitions === fetchState.optimizedPartitions,
@@ -968,9 +965,7 @@ describe("FetchState.registerDynamicContracts", () => {
           // Third dc also spliced out - same contract name, already tracked.
           item3->Internal.getItemDcs,
           // First registration is the tracked one (first wins).
-          indexingAddresses
-          ->IndexingAddresses.dict
-          ->Dict.get(mockAddress1->Address.toString)
+          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           // No new partition created across any of the registrations.
           afterThird.optimizedPartitions.entities === fetchState.optimizedPartitions.entities,
@@ -1006,13 +1001,9 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          indexingAddresses
-          ->IndexingAddresses.dict
-          ->Dict.get(mockAddress2->Address.toString)
+          indexingAddresses->IndexingAddresses.get(mockAddress2->Address.toString)
           ->Option.map(ia => ia.contractName),
-          indexingAddresses
-          ->IndexingAddresses.dict
-          ->Dict.get(mockAddress1->Address.toString)
+          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           // Only the Gravatar address lands in a partition.
           updatedFetchState.optimizedPartitions.entities
@@ -1064,9 +1055,7 @@ describe("FetchState.registerDynamicContracts", () => {
           // dc spliced out - won't overwrite the existing Gravatar entry in db
           item->Internal.getItemDcs,
           // indexingAddresses still has the original contract name
-          indexingAddresses
-          ->IndexingAddresses.dict
-          ->Dict.get(mockAddress0->Address.toString)
+          indexingAddresses->IndexingAddresses.get(mockAddress0->Address.toString)
           ->Option.map(ia => ia.contractName),
           // fetchState unchanged - nothing new registered
           updatedFetchState === fetchState,
@@ -1098,9 +1087,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
     t.expect(
       (
-        indexingAddresses
-        ->IndexingAddresses.dict
-        ->Dict.get(mockAddress1->Address.toString)
+        indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
         ->Option.map(ia => ia.contractName),
         // dc spliced out - won't be persisted to envio_addresses
         item2->Internal.getItemDcs,
@@ -1145,9 +1132,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          indexingAddresses
-          ->IndexingAddresses.dict
-          ->Dict.get(mockAddress1->Address.toString)
+          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           noEventsItem->Internal.getItemDcs,
         ),
@@ -1182,9 +1167,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          indexingAddresses
-          ->IndexingAddresses.dict
-          ->Dict.get(mockAddress1->Address.toString)
+          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           eventsItem->Internal.getItemDcs,
           updatedFetchState.optimizedPartitions.entities
@@ -1222,15 +1205,9 @@ describe("FetchState.registerDynamicContracts", () => {
 
     // Verify that both DC2 and DC3 were registered correctly
     let hasAddress1 =
-      indexingAddresses
-      ->IndexingAddresses.dict
-      ->Dict.get(mockAddress1->Address.toString)
-      ->Option.isSome
+      indexingAddresses->IndexingAddresses.has(mockAddress1->Address.toString)
     let hasAddress2 =
-      indexingAddresses
-      ->IndexingAddresses.dict
-      ->Dict.get(mockAddress2->Address.toString)
-      ->Option.isSome
+      indexingAddresses->IndexingAddresses.has(mockAddress2->Address.toString)
 
     t.expect(hasAddress1, ~message="Address1 should be registered").toBe(true)
     t.expect(
@@ -1536,10 +1513,16 @@ describe("FetchState.registerDynamicContracts", () => {
       ~message=`Should choose the earliest dc from the batch
   And remove the dc from the later one, so they are not duplicated in the db`,
     ).toEqual((Some([]), Some([dc2])))
+    let sortByAddr = arr =>
+      arr->Array.toSorted((a: FetchState.indexingAddress, b) =>
+        String.compare(a.address->Address.toString, b.address->Address.toString)
+      )
     t.expect(
-      (indexingAddresses->IndexingAddresses.dict),
+      indexingAddresses->IndexingAddresses.toArray->sortByAddr,
       ~message="Should choose the earliest dc from the batch",
-    ).toEqual(makeIndexingContractsWithDynamics([dc2], ~static=[mockAddress0]))
+    ).toEqual(
+      makeIndexingContractsWithDynamics([dc2], ~static=[mockAddress0])->Dict.valuesToArray->sortByAddr,
+    )
     t.expect(
       updatedFetchState.optimizedPartitions.entities->Dict.valuesToArray,
       ~message="Adds dc and optimizes partitions",
@@ -1591,7 +1574,7 @@ describe("FetchState.registerDynamicContracts", () => {
       fetchState->FetchState.registerDynamicContracts(~indexingAddresses, // Order of dcs doesn't matter
       // but they are not sorted in fetch state
       [dc1->dcToItem, dc3->dcToItem, dc2->dcToItem])
-    t.expect((indexingAddresses->IndexingAddresses.dict)->Utils.Dict.size).toBe(4)
+    t.expect(indexingAddresses->IndexingAddresses.size).toBe(4)
     t.expect(updatedFetchState.optimizedPartitions.entities->Dict.valuesToArray).toEqual([
       {
         ...fetchState.optimizedPartitions.entities->Dict.getUnsafe("0"),
@@ -3615,16 +3598,13 @@ describe("Dynamic contracts with start blocks", () => {
 
     // The contract should be registered in indexingAddresses
     t.expect(
-      (indexingAddresses->IndexingAddresses.dict)
-      ->Dict.get(mockAddress1->Address.toString)
-      ->Option.isSome,
+      indexingAddresses->IndexingAddresses.has(mockAddress1->Address.toString),
       ~message="Dynamic contract should be registered in indexingAddresses",
     ).toBeTruthy()
 
     // Verify the startBlock is set correctly
     let registeredContract =
-      (indexingAddresses->IndexingAddresses.dict)
-      ->Dict.get(mockAddress1->Address.toString)
+      indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
       ->Option.getOrThrow
 
     t.expect(
@@ -3655,13 +3635,11 @@ describe("Dynamic contracts with start blocks", () => {
 
     // Verify both contracts are registered with correct startBlocks
     let contract1Registered =
-      (indexingAddresses->IndexingAddresses.dict)
-      ->Dict.get(mockAddress1->Address.toString)
+      indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
       ->Option.getOrThrow
 
     let contract2Registered =
-      (indexingAddresses->IndexingAddresses.dict)
-      ->Dict.get(mockAddress2->Address.toString)
+      indexingAddresses->IndexingAddresses.get(mockAddress2->Address.toString)
       ->Option.getOrThrow
 
     t.expect(

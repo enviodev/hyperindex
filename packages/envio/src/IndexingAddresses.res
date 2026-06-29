@@ -64,9 +64,28 @@ let make = (
 let get = (indexingAddresses: t, address) =>
   indexingAddresses->Utils.Dict.dangerouslyGetNonOption(address)
 
+let has = (indexingAddresses: t, address) =>
+  indexingAddresses->Utils.Dict.dangerouslyGetNonOption(address)->Option.isSome
+
 let size = (indexingAddresses: t) => indexingAddresses->Utils.Dict.size
 
-let dict = (indexingAddresses: t): dict<indexingAddress> => indexingAddresses
+let toArray = (indexingAddresses: t): array<indexingAddress> =>
+  indexingAddresses->Dict.valuesToArray
+
+let getContractAddresses = (indexingAddresses: t, ~contractName): array<Address.t> => {
+  let addresses = []
+  indexingAddresses->Utils.Dict.forEach(ia => {
+    if ia.contractName === contractName {
+      addresses->Array.push(ia.address)
+    }
+  })
+  addresses
+}
+
+// Underlying dict for the precompiled `clientAddressFilter` only — it does raw
+// `indexingAddresses[srcAddress]` access in generated JS and can't take the opaque
+// type. Don't reach for this elsewhere; use the domain accessors above.
+let rawForFilter = (indexingAddresses: t): dict<indexingAddress> => indexingAddresses
 
 let register = (indexingAddresses: t, additions: dict<indexingAddress>) => {
   let _ = Utils.Dict.mergeInPlace(indexingAddresses, additions)

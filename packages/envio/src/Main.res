@@ -168,18 +168,7 @@ let buildChainsObject = (~config: Config.t) => {
             | Some(state) => {
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
                 let chainState = state->IndexerState.getChainState(~chain)
-                let indexingAddresses = chainState->ChainState.indexingAddresses
-
-                // Collect all addresses for this contract name from indexingAddresses
-                let addresses = []
-                let values = indexingAddresses->Dict.valuesToArray
-                for idx in 0 to values->Array.length - 1 {
-                  let indexingContract = values->Array.getUnsafe(idx)
-                  if indexingContract.contractName === contract.name {
-                    addresses->Array.push(indexingContract.address)->ignore
-                  }
-                }
-                addresses
+                chainState->ChainState.contractAddresses(~contractName=contract.name)
               }
             // Before the global state is available (eg during handler
             // module load after resume), combine static addresses from config

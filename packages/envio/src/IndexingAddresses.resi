@@ -12,11 +12,18 @@ let make: (~contractConfigs: dict<contractConfig>, ~addresses: array<Internal.in
 
 let get: (t, string) => option<indexingAddress>
 
+let has: (t, string) => bool
+
 let size: t => int
 
-// Underlying dict for raw `obj[address]` access (the generated `clientAddressFilter`)
-// and the public chain accessor. Zero-cost: `t` is represented as a dict.
-let dict: t => dict<indexingAddress>
+let toArray: t => array<indexingAddress>
+
+let getContractAddresses: (t, ~contractName: string) => array<Address.t>
+
+// Underlying dict for the precompiled `clientAddressFilter` only, which does raw
+// `indexingAddresses[srcAddress]` access in generated JS. Don't use elsewhere —
+// prefer the domain accessors so the opaque type stays enforced.
+let rawForFilter: t => dict<indexingAddress>
 
 let register: (t, dict<indexingAddress>) => unit
 

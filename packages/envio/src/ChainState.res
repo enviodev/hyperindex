@@ -424,7 +424,9 @@ let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrE
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
-let indexingAddresses = (cs: t) => cs.indexingAddresses->IndexingAddresses.dict
+let contractAddresses = (cs: t, ~contractName) =>
+  cs.indexingAddresses->IndexingAddresses.getContractAddresses(~contractName)
+let numIndexingAddresses = (cs: t) => cs.indexingAddresses->IndexingAddresses.size
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
