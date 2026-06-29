@@ -93,13 +93,13 @@ let register = (indexingAddresses: t, additions: dict<indexingAddress>) => {
 
 let rollback = (indexingAddresses: t, ~targetBlockNumber: int): Utils.Set.t<Address.t> => {
   let removed = Utils.Set.make()
-  let keysToDelete = []
+  // forEachWithKey is a `for..in`, so deleting the key currently being visited is
+  // safe — it doesn't affect enumeration of the remaining keys.
   indexingAddresses->Utils.Dict.forEachWithKey((indexingContract, address) => {
     if indexingContract.registrationBlock > targetBlockNumber {
       removed->Utils.Set.add(address->Address.unsafeFromString)->ignore
-      keysToDelete->Array.push(address)
+      indexingAddresses->Utils.Dict.deleteInPlace(address)
     }
   })
-  keysToDelete->Array.forEach(key => indexingAddresses->Utils.Dict.deleteInPlace(key))
   removed
 }
