@@ -184,11 +184,9 @@ let rec componentsToDefaultValue = (abiType: string, components: array<paramMeta
 
 let buildParamsSchema = (params: array<paramMeta>): S.t<Internal.eventParams> => {
   if params->Array.length == 0 {
-    // The decoder emits an empty object `{}` for zero-parameter events, but
-    // raw_events keeps no params for them — serialize any decoded value to null.
     S.literal(%raw(`null`))
-    ->S.transform(_ => {serializer: (_: unknown) => %raw(`null`)})
-    ->(Utils.magic: S.t<unknown> => S.t<Internal.eventParams>)
+    ->S.shape(_ => ())
+    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>)
   } else {
     S.object(s => {
       let dict = Dict.make()
