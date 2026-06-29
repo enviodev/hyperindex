@@ -21,6 +21,9 @@ type t = {
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
   transactionStore: TransactionStore.t,
+  // Holds this chain's blocks (kept in Rust) keyed by block number. Same merge /
+  // prune / rollback lifecycle as the transaction store.
+  blockStore: BlockStore.t,
 }
 
 // Per-chain shape returned by the status API.
@@ -79,6 +82,7 @@ let make = (
   reorgDetection,
   safeCheckpointTracking,
   transactionStore: TransactionStore.make(),
+  blockStore: BlockStore.make(),
 }
 
 let makeInternal = (
@@ -495,19 +499,34 @@ let isAtHeadWithoutEndBlock = (cs: t) =>
 
 // Apply a fetch response: register any new dynamic contracts, append the items
 // to the buffer and advance the known head.
-// Materialise the chain store's selected transaction fields onto a batch's
-// items at batch prep (the persistent-store path).
-let materializeBatchItems = (cs: t, ~items: array<Internal.item>) =>
-  cs.transactionStore->TransactionStore.materializeItems(~items)
+// Materialise the chain stores' selected transaction and block fields onto a
+// batch's items at batch prep (the persistent-store path).
+let materializeBatchItems = async (cs: t, ~items: array<Internal.item>) => {
+  let _ = await Promise.all2((
+    cs.transactionStore->TransactionStore.materializeItems(~items),
+    cs.blockStore->BlockStore.materializeItems(~items),
+  ))
+}
 
-// Materialise a fetch-response page's transactions onto its items before
-// contract-register handlers read them. `None` pages (RPC/Fuel/Simulate keep the
-// transaction inline) are a no-op.
-let materializePageItems = (~items: array<Internal.item>, ~page: option<TransactionStore.t>) =>
-  switch page {
-  | Some(store) => store->TransactionStore.materializeItems(~items)
-  | None => Promise.resolve()
-  }
+// Materialise a fetch-response page's transactions and blocks onto its items
+// before contract-register handlers read them. `None` pages (RPC/Fuel/Simulate
+// keep them inline) are a no-op.
+let materializePageItems = async (
+  ~items: array<Internal.item>,
+  ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
+) => {
+  let _ = await Promise.all2((
+    switch transactionStore {
+    | Some(store) => store->TransactionStore.materializeItems(~items)
+    | None => Promise.resolve()
+    },
+    switch blockStore {
+    | Some(store) => store->BlockStore.materializeItems(~items)
+    | None => Promise.resolve()
+    },
+  ))
+}
 
 let handleQueryResult = (
   cs: t,
@@ -516,12 +535,17 @@ let handleQueryResult = (
   ~newItemsWithDcs,
   ~latestFetchedBlock,
   ~knownHeight,
-  ~transactionStore as page: option<TransactionStore.t>,
+  ~transactionStore as txPage: option<TransactionStore.t>,
+  ~blockStore as blockPage: option<BlockStore.t>,
 ) => {
-  // Merge this response's page into the chain store in lockstep with appending
-  // its items to the buffer. Inline-transaction sources contribute no page.
-  switch page {
+  // Merge this response's pages into the chain stores in lockstep with appending
+  // its items to the buffer. Inline sources contribute no page.
+  switch txPage {
   | Some(page) => cs.transactionStore->TransactionStore.merge(page)
+  | None => ()
+  }
+  switch blockPage {
+  | Some(page) => cs.blockStore->BlockStore.merge(page)
   | None => ()
   }
 
@@ -687,8 +711,9 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber
       cs.numEventsProcessed = chainAfterBatch.totalEventsProcessed
-      // Processed blocks' transactions are no longer needed.
+      // Processed blocks' transactions and blocks are no longer needed.
       cs.transactionStore->TransactionStore.prune(chainAfterBatch.progressBlockNumber)
+      cs.blockStore->BlockStore.prune(chainAfterBatch.progressBlockNumber)
       cs.isProgressAtHead = cs.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated
       switch cs.safeCheckpointTracking {
       | Some(safeCheckpointTracking) =>
@@ -763,6 +788,7 @@ let rollback = (
     }
     cs.fetchState = cs.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
+    cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
   | None =>
@@ -774,6 +800,7 @@ let rollback = (
       cs.fetchState =
         cs.fetchState->FetchState.rollback(~targetBlockNumber=rollbackTargetBlockNumber)
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
+      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber)
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,

@@ -312,6 +312,11 @@ type eventPayload
 @get external getPayloadTransaction: eventPayload => Nullable.t<eventTransaction> = "transaction"
 @set external setPayloadTransaction: (eventPayload, eventTransaction) => unit = "transaction"
 
+// Generic access to the payload's `block`, written at batch prep for store-backed
+// ecosystems (EVM HyperSync) and present inline otherwise.
+@get external getPayloadBlock: eventPayload => Nullable.t<eventBlock> = "block"
+@set external setPayloadBlock: (eventPayload, eventBlock) => unit = "block"
+
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
@@ -425,6 +430,12 @@ type eventConfig = private {
   // so each transaction decodes only the fields its event selected. `0.` when
   // nothing is selected or the ecosystem carries the transaction inline (Fuel).
   transactionFieldMask: float,
+  // Selected block fields precompiled to the block-store selection bitmask (bit
+  // per ecosystem field code). `0.` for ecosystems that carry the block inline
+  // (RPC/Fuel/SVM). Even for store-backed events the always-included
+  // number/timestamp/hash are stamped from the item, so this only drives whether
+  // the store is consulted for further fields.
+  blockFieldMask: float,
 }
 
 type fuelEventKind =

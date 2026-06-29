@@ -51,6 +51,7 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
   selectedBlockFields: Utils.Set.fromArray(([Number, Hash]: array<Internal.evmBlockField>)),
   selectedTransactionFields: Utils.Set.make(),
   transactionFieldMask: 0.,
+  blockFieldMask: 0.,
   sighash: pairCreatedTopic0,
   topicCount: 3,
   paramsMetadata: [],

@@ -22,6 +22,10 @@ type blockRangeFetchResponse = {
   // transactionIndex); merged into the chain's store on apply. `None` for
   // sources that keep the transaction inline on the payload (RPC/Fuel/Simulate).
   transactionStore: option<TransactionStore.t>,
+  // Page of blocks for this response's items, keyed by block number; merged into
+  // the chain's store on apply. `None` for sources that keep the block inline on
+  // the payload (RPC/Fuel/Simulate/SVM).
+  blockStore: option<BlockStore.t>,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
   latestFetchedBlockTimestamp: int,

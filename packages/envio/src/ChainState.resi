@@ -108,11 +108,13 @@ let handleQueryResult: (
   ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight: int,
   ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
 ) => unit
 let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
 let materializePageItems: (
   ~items: array<Internal.item>,
-  ~page: option<TransactionStore.t>,
+  ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
 ) => promise<unit>
 let registerReorgGuard: (
   t,

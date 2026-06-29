@@ -11,12 +11,17 @@ type partitionQueryResponse = {
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
-  ~page: option<TransactionStore.t>,
+  ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
 ) => {
-  // contractRegister handlers can read event.transaction, so materialise the
-  // selected fields onto the payloads before running them. All items belong to
-  // the chain being fetched, hence its single page store and mask.
-  await ChainState.materializePageItems(~items=itemsWithContractRegister, ~page)
+  // contractRegister handlers can read event.transaction and event.block, so
+  // materialise the selected fields onto the payloads before running them. All
+  // items belong to the chain being fetched, hence its single page stores.
+  await ChainState.materializePageItems(
+    ~items=itemsWithContractRegister,
+    ~transactionStore,
+    ~blockStore,
+  )
 
   let itemsWithDcs = []
 
@@ -113,6 +118,7 @@ let rec onQueryResponse = async (
     let {
       parsedQueueItems,
       transactionStore,
+      blockStore,
       latestFetchedBlockNumber,
       latestFetchedBlockTimestamp,
       stats,
@@ -220,6 +226,7 @@ let rec onQueryResponse = async (
             },
             ~query,
             ~transactionStore,
+            ~blockStore,
           )
           ChainMetadata.stage(state)
           scheduleFetch()
@@ -232,7 +239,8 @@ let rec onQueryResponse = async (
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
-          ~page=transactionStore,
+          ~transactionStore,
+          ~blockStore,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
         | newItemsWithDcs => proceed(~newItemsWithDcs)
@@ -250,6 +258,7 @@ and applyQueryResponse = (
   ~latestFetchedBlock,
   ~query,
   ~transactionStore,
+  ~blockStore,
 ) => {
   let chainState = state->IndexerState.getChainState(~chain)
   let wasFetchingAtHead = chainState->ChainState.isFetchingAtHead
@@ -261,6 +270,7 @@ and applyQueryResponse = (
     ~newItemsWithDcs,
     ~knownHeight,
     ~transactionStore,
+    ~blockStore,
   )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.

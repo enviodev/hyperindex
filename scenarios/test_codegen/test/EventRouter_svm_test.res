@@ -49,6 +49,7 @@ describe("EventRouter SVM helpers", () => {
       includeLogs: false,
       selectedTransactionFields: Utils.Set.make(),
       transactionFieldMask: 0.,
+      blockFieldMask: 0.,
       accountFilters: [],
       isInner: None,
       accounts: [],

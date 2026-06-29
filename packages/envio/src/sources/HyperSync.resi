@@ -1,10 +1,11 @@
 type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
-  blocks: array<HyperSyncClient.ResponseTypes.block>,
+  blocks: array<HyperSyncClient.EventItems.blockHeader>,
   nextBlock: int,
   archiveHeight: int,
   rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
   transactionStore: TransactionStore.t,
+  blockStore: BlockStore.t,
 }
 
 type missingParams = {

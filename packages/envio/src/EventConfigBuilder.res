@@ -443,6 +443,11 @@ let buildEvmEventConfig = (
     selectedBlockFields,
     selectedTransactionFields,
     transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
+    blockFieldMask: Evm.eventBlockFieldMask(
+      selectedBlockFields->(
+        Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
+      ),
+    ),
     sighash,
     topicCount,
     paramsMetadata: params,
@@ -502,6 +507,8 @@ let buildSvmInstructionEventConfig = (
     includeLogs,
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
+    // SVM carries the block inline on the payload; nothing to materialise.
+    blockFieldMask: 0.,
     accountFilters,
     isInner,
     accounts,
@@ -568,9 +575,11 @@ let buildFuelEventConfig = (
     dependsOnAddresses: !isWildcard,
     clientAddressFilter: ?buildAddressFilter([], ~isWildcard),
     startBlock,
-    // Fuel keeps the transaction inline on the payload; nothing to materialise.
+    // Fuel keeps the transaction and block inline on the payload; nothing to
+    // materialise.
     selectedTransactionFields: Utils.Set.make(),
     transactionFieldMask: 0.,
+    blockFieldMask: 0.,
     kind: fuelKind,
   }
 }

@@ -10,6 +10,7 @@ type evmDecoderCtor
 type svmHypersyncClientCtor
 type hyperfuelClientCtor
 type transactionStoreCtor
+type blockStoreCtor
 
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
@@ -26,10 +27,15 @@ type addon = {
   hyperfuelClient: hyperfuelClientCtor,
   @as("TransactionStore")
   transactionStore: transactionStoreCtor,
+  @as("BlockStore")
+  blockStore: blockStoreCtor,
   // Ordered transaction-field names exposed for the field-code contract test
   // (the ReScript `transactionFields` arrays must match the Rust ordinals).
   evmTransactionFieldNames: unit => array<string>,
   svmTransactionFieldNames: unit => array<string>,
+  // Ordered block-field names for the same contract test (`blockFields` arrays
+  // must match the Rust ordinals).
+  evmBlockFieldNames: unit => array<string>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"

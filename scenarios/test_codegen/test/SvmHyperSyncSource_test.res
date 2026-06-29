@@ -49,6 +49,7 @@ let makeEventConfig = (
     includeLogs: false,
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
+    blockFieldMask: 0.,
     accountFilters: [],
     isInner: None,
     accounts: [],

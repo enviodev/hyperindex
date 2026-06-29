@@ -289,11 +289,19 @@ module EventItems = {
     params: Nullable.t<dict<Internal.eventParams>>,
   }
 
+  // The always-needed block fields, one per block number. The block's remaining
+  // fields live raw in the block store and are materialised on demand.
+  type blockHeader = {
+    number: int,
+    timestamp: int,
+    hash: string,
+  }
+
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    // One entry per block number referenced by `items`.
-    blocks: array<ResponseTypes.block>,
+    // One header per block number referenced by `items`.
+    blocks: array<blockHeader>,
     items: array<item>,
     rollbackGuard: option<ResponseTypes.rollbackGuard>,
   }
@@ -301,8 +309,11 @@ module EventItems = {
 
 type t = {
   get: (~query: query) => promise<queryResponse>,
-  // Returns the response plus a page store owning this page's raw transactions.
-  getEventItems: (~query: query) => promise<(EventItems.response, TransactionStore.t)>,
+  // Returns the response plus page stores owning this page's raw transactions
+  // and blocks.
+  getEventItems: (
+    ~query: query,
+  ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
 }
 

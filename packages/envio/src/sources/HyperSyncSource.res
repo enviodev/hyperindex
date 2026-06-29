@@ -197,7 +197,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
   let makeEventBatchQueueItem = (
     item: HyperSyncClient.EventItems.item,
-    ~block: HyperSyncClient.ResponseTypes.block,
+    ~block: HyperSyncClient.EventItems.blockHeader,
     ~params: Internal.eventParams,
     ~eventConfig: Internal.evmEventConfig,
   ): Internal.item => {
@@ -206,18 +206,19 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     Internal.Event({
       eventConfig: (eventConfig :> Internal.eventConfig),
-      timestamp: block.timestamp->Option.getUnsafe,
+      timestamp: block.timestamp,
       chain,
       blockNumber: item.blockNumber,
-      blockHash: block.hash->Option.getUnsafe,
+      blockHash: block.hash,
       logIndex,
       transactionIndex,
+      // `block` and `transaction` are omitted; they're materialised from the
+      // per-chain stores onto the payload at batch prep.
       payload: {
         contractName: eventConfig.contractName,
         eventName: eventConfig.name,
         chainId,
         params,
-        block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
         srcAddress,
         logIndex,
       }->Evm.fromPayload,
@@ -319,13 +320,10 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     //Parse page items into queue items
     let parsedQueueItems = []
 
-    // Blocks are returned once per number; items reference them by blockNumber.
+    // Block headers are returned once per number; items reference them by blockNumber.
     let blocksByNumber = Utils.Map.make()
     pageUnsafe.blocks->Array.forEach(block => {
-      switch block.number {
-      | Some(number) => blocksByNumber->Utils.Map.set(number, block)->ignore
-      | None => ()
-      }
+      blocksByNumber->Utils.Map.set(block.number, block)->ignore
     })
     let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
 
@@ -398,11 +396,9 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     // detection notices same-block-number-different-hash collisions itself.
     let blockHashes = []
     pageUnsafe.blocks->Array.forEach(block => {
-      switch (block.number, block.hash) {
-      | (Some(blockNumber), Some(blockHash)) =>
-        blockHashes->Array.push({ReorgDetection.blockNumber, blockHash})->ignore
-      | _ => ()
-      }
+      blockHashes
+      ->Array.push({ReorgDetection.blockNumber: block.number, blockHash: block.hash})
+      ->ignore
     })
     switch pageUnsafe.rollbackGuard {
     | None => ()
@@ -426,7 +422,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     | None =>
       switch pageUnsafe.items->Array.get(pageUnsafe.items->Array.length - 1) {
       | Some(item) if item.blockNumber == heighestBlockQueried =>
-        getBlock(item.blockNumber).timestamp->Option.getUnsafe
+        getBlock(item.blockNumber).timestamp
       | _ => 0
       }
     }
@@ -443,6 +439,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       latestFetchedBlockTimestamp,
       parsedQueueItems,
       transactionStore: Some(pageUnsafe.transactionStore),
+      blockStore: Some(pageUnsafe.blockStore),
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
