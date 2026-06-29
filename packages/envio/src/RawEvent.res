@@ -18,14 +18,12 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
 }
 
 // Zero-parameter events decode to an empty object, which the params schema is
-// built to reject (it expects no params at all). They carry no data to store,
-// so they're detected here and short-circuited to the "null" sentinel.
-let isEmptyParams = (params: Internal.eventParams): bool => {
-  let raw = params->(Utils.magic: Internal.eventParams => unknown)
-  typeof(raw) === #object &&
-  raw !== %raw(`null`) &&
-  raw->(Utils.magic: unknown => dict<unknown>)->Dict.keysToArray->Array.length == 0
-}
+// built to reject. They carry no data, so store the "null" sentinel directly.
+let isEmptyParams = (params: Internal.eventParams): bool =>
+  switch params->(Utils.magic: Internal.eventParams => Nullable.t<dict<unknown>>) {
+  | Value(dict) => dict->Dict.keysToArray->Array.length == 0
+  | _ => true
+  }
 
 // Block and transaction are passed already extracted from the ecosystem's
 // concrete payload (EVM or Fuel) — `RawEvent` stays payload-shape-agnostic and
@@ -52,17 +50,13 @@ let make = (
 
   blockFields->cleanUpRawEventFieldsInPlace
 
-  // Should probably make the params field nullable, but the "null" sentinel is
-  // currently needed to make events with empty params work.
   let params = if params->isEmptyParams {
     %raw(`"null"`)
   } else {
     // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
-    let params =
-      params
-      ->S.reverseConvertOrThrow(eventConfig.paramsRawEventSchema)
-      ->(Utils.magic: unknown => JSON.t)
-    params === %raw(`null`) ? %raw(`"null"`) : params
+    params
+    ->S.reverseConvertOrThrow(eventConfig.paramsRawEventSchema)
+    ->(Utils.magic: unknown => JSON.t)
   }
 
   {
