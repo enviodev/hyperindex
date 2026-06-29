@@ -28,7 +28,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       ~retry as _,
       ~logger as _,
     ) => {
-      // Return all items on first call, empty on subsequent calls
+      // Return all items on the first call, empty on subsequent.
       let result = if delivered.contents {
         []
       } else {
@@ -41,6 +41,8 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
         Source.knownHeight: reportedHeight,
         blockHashes: [],
         parsedQueueItems: result,
+        // Simulate keeps the transaction inline on the payload; no store page.
+        transactionStore: None,
         fromBlockQueried: 0,
         latestFetchedBlockNumber: reportedHeight,
         latestFetchedBlockTimestamp: 0,

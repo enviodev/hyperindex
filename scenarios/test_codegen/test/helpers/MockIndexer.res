@@ -73,10 +73,7 @@ module Storage = {
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,
     resolveLoadInitialState: Persistence.initialState => unit,
-    loadOrThrowCalls: array<{
-      "filter": EntityFilter.t,
-      "tableName": string,
-    }>,
+    loadOrThrowCalls: array<{"filter": EntityFilter.t, "tableName": string}>,
     dumpEffectCacheCalls: ref<int>,
     storage: Persistence.storage,
   }
@@ -166,10 +163,9 @@ module Storage = {
               "tableName": table.tableName,
             })
             ->ignore
-            let rows = switch dbEntities->Array.find(((
-              entityConfig: Internal.entityConfig,
-              _,
-            )) => entityConfig.table.tableName === table.tableName) {
+            let rows = switch dbEntities->Array.find(((entityConfig: Internal.entityConfig, _)) =>
+              entityConfig.table.tableName === table.tableName
+            ) {
             | Some((_, rows)) =>
               rows->Array.filter(row =>
                 filter->EntityFilter.matches(
@@ -383,10 +379,10 @@ module Indexer = {
               ()
             } else {
               idleChecks := if isIdle {
-                idleChecks.contents + 1
-              } else {
-                0
-              }
+                  idleChecks.contents + 1
+                } else {
+                  0
+                }
               await Utils.delay(1)
               await wait()
             }
@@ -835,16 +831,13 @@ module Source = {
                                 Internal.contractRegister,
                               >
                             ),
-                            paramsRawEventSchema: S.literal(%raw(`null`))
-                            ->S.shape(_ => ())
-                            ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-                            simulateParamsSchema: S.unknown
-                            ->S.shape(_ => ())
-                            ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+                            paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
+                            simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
                             getEventFiltersOrThrow: _ =>
                               JsError.throwWithMessage("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
                             selectedTransactionFields: Utils.Set.make(),
+                            transactionFieldMask: 0.,
                             sighash: "",
                             topicCount: 1,
                             paramsMetadata: [],
@@ -854,6 +847,7 @@ module Source = {
                           blockNumber: item.blockNumber,
                           blockHash: `0x${item.blockNumber->Int.toString}`,
                           logIndex: item.logIndex,
+                          transactionIndex: 0,
                           payload: {
                             contractName: "MockContract",
                             eventName: "MockEvent",
@@ -861,7 +855,6 @@ module Source = {
                             chainId: chain->ChainMap.Chain.toChainId,
                             srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
                             logIndex: item.logIndex,
-                            transaction: %raw(`null`),
                             block: {
                               "number": item.blockNumber,
                               "timestamp": item.blockNumber,
@@ -871,6 +864,7 @@ module Source = {
                         })
                       },
                     ),
+                    transactionStore: None,
                     fromBlockQueried: fromBlock,
                     latestFetchedBlockNumber,
                     latestFetchedBlockTimestamp: latestFetchedBlockNumber,
@@ -958,23 +952,22 @@ let evmEventConfig = (
   ~filterByAddresses=false,
   ~startBlock: option<int>=?,
 ): Internal.evmEventConfig => {
+  let selectedTransactionFields =
+    Utils.Set.fromArray(transactionFieldNames)->(
+      Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
+    )
   {
     id,
     contractName,
     name: "EventWithoutFields",
     isWildcard,
     filterByAddresses,
-    dependsOnAddresses: filterByAddresses ||
-    dependsOnAddresses->Option.getOr(!isWildcard),
+    dependsOnAddresses: filterByAddresses || dependsOnAddresses->Option.getOr(!isWildcard),
     startBlock,
     handler: None,
     contractRegister: None,
-    paramsRawEventSchema: S.literal(%raw(`null`))
-    ->S.shape(_ => ())
-    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-    simulateParamsSchema: S.unknown
-    ->S.shape(_ => ())
-    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
+    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
     getEventFiltersOrThrow: _ =>
       switch dependsOnAddresses {
       | Some(true) =>
@@ -1005,7 +998,8 @@ let evmEventConfig = (
         ])
       },
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
-    selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
+    selectedTransactionFields,
+    transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
     sighash: id,
     topicCount: 1,
     paramsMetadata: [],

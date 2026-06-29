@@ -18,6 +18,10 @@ type blockRangeFetchResponse = {
   // a within-array hash mismatch on the same block number as a reorg.
   blockHashes: array<ReorgDetection.blockData>,
   parsedQueueItems: array<Internal.item>,
+  // Page of transactions for this response's items, keyed by (blockNumber,
+  // transactionIndex); merged into the chain's store on apply. `None` for
+  // sources that keep the transaction inline on the payload (RPC/Fuel/Simulate).
+  transactionStore: option<TransactionStore.t>,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
   latestFetchedBlockTimestamp: int,

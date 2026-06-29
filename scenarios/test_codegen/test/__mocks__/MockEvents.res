@@ -196,6 +196,7 @@ let newGravatarEventToBatchItem = (
   blockNumber: event.block.number,
   blockHash: event.block.hash,
   logIndex: event.logIndex,
+  transactionIndex: 0,
   eventConfig: MockConfig.getEventConfig(~contractName="Gravatar", ~eventName="NewGravatar"),
   payload: event->(Utils.magic: Internal.genericEvent<_, _, _> => Internal.eventPayload),
 })
@@ -212,6 +213,7 @@ let updatedGravatarEventToBatchItem = (
   blockNumber: event.block.number,
   blockHash: event.block.hash,
   logIndex: event.logIndex,
+  transactionIndex: 0,
   eventConfig: MockConfig.getEventConfig(~contractName="Gravatar", ~eventName="UpdatedGravatar"),
   payload: event->(Utils.magic: Internal.genericEvent<_, _, _> => Internal.eventPayload),
 })

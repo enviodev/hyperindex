@@ -188,7 +188,6 @@ let toSvmInstruction = (
   instr: SvmHyperSyncClient.ResponseTypes.instruction,
   ~programName,
   ~instructionName,
-  ~transaction,
   ~logs,
   ~block,
 ): Envio.svmInstruction => {
@@ -204,33 +203,8 @@ let toSvmInstruction = (
   d4: ?instr.d4,
   d8: ?instr.d8,
   params: ?(instr.decoded->Option.map(parseDecoded)),
-  ?transaction,
   ?logs,
   block,
-}
-
-let toSvmTransaction = (tx: SvmHyperSyncClient.ResponseTypes.transaction): Envio.svmTransaction => {
-  signatures: tx.signatures,
-  accountKeys: tx.accountKeys->SvmTypes.Pubkey.fromStringsUnsafe,
-  feePayer: ?(tx.feePayer->Option.map(SvmTypes.Pubkey.fromStringUnsafe)),
-  success: ?tx.success,
-  err: ?tx.err,
-  // u64 lamports / compute units arrive as `int` over napi. Convert to
-  // `bigint` so the public type stays defensible even for pathological values.
-  fee: ?(tx.fee->Option.map(BigInt.fromInt)),
-  computeUnitsConsumed: ?(tx.computeUnitsConsumed->Option.map(BigInt.fromInt)),
-  recentBlockhash: ?tx.recentBlockhash,
-  version: ?tx.version,
-}
-
-let toSvmTokenBalance = (
-  tb: SvmHyperSyncClient.ResponseTypes.tokenBalance,
-): Envio.svmTokenBalance => {
-  account: ?(tb.account->Option.map(SvmTypes.Pubkey.fromStringUnsafe)),
-  mint: ?(tb.mint->Option.map(SvmTypes.Pubkey.fromStringUnsafe)),
-  owner: ?(tb.owner->Option.map(SvmTypes.Pubkey.fromStringUnsafe)),
-  preAmount: ?tb.preAmount,
-  postAmount: ?tb.postAmount,
 }
 
 // Probe the discriminator byte-length ordering longest-first. Stops at the
@@ -273,6 +247,27 @@ let probeRouter = (
   }
 }
 
+// Map a selected transaction field to the extra query-side column it needs.
+// `transactionIndex` is always fetched as the store key, and `tokenBalances`
+// lives in a separate table (requested via `needsTokenBalances`), so neither
+// adds a transaction column here.
+let toQueryTxField = (field: Internal.svmTransactionField): option<
+  SvmHyperSyncClient.QueryTypes.transactionField,
+> =>
+  switch field {
+  | TransactionIndex => None
+  | Signatures => Some(Signatures)
+  | FeePayer => Some(FeePayer)
+  | Success => Some(Success)
+  | Err => Some(Err)
+  | Fee => Some(Fee)
+  | ComputeUnitsConsumed => Some(ComputeUnitsConsumed)
+  | AccountKeys => Some(AccountKeys)
+  | RecentBlockhash => Some(RecentBlockhash)
+  | Version => Some(Version)
+  | TokenBalances => None
+  }
+
 let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: options): t => {
   let name = "SvmHyperSync"
   let chainId = chain->ChainMap.Chain.toChainId
@@ -298,9 +293,44 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     orderingByProgram->Dict.set(o.programId->SvmTypes.Pubkey.toString, o.byteLengthsDesc)
   )
 
-  let needsTransactions = eventConfigs->Array.some(cfg => cfg.includeTransaction)
   let needsLogs = eventConfigs->Array.some(cfg => cfg.includeLogs)
-  let needsTokenBalances = eventConfigs->Array.some(cfg => cfg.includeTokenBalances)
+
+  // Union of selected transaction fields across the chain's events. Drives both
+  // the query column selection (fetch only what's used) and the materialisation
+  // mask. `slot`/`transactionIndex` are always fetched as the store key.
+  let selectedTxFields = Utils.Set.make()
+  eventConfigs->Array.forEach(cfg =>
+    cfg.selectedTransactionFields
+    ->(Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.svmTransactionField>)
+    ->Utils.Set.forEach(field => selectedTxFields->Utils.Set.add(field)->ignore)
+  )
+  let needsTokenBalances = selectedTxFields->Utils.Set.has(Internal.TokenBalances)
+  let txQueryFields = {
+    // Slot + TransactionIndex are always fetched so the store can be keyed by
+    // (slot, transactionIndex).
+    let fields: array<SvmHyperSyncClient.QueryTypes.transactionField> = [Slot, TransactionIndex]
+    selectedTxFields
+    ->Utils.Set.toArray
+    ->Array.forEach(field =>
+      switch toQueryTxField(field) {
+      | Some(queryField) => fields->Array.push(queryField)
+      | None => ()
+      }
+    )
+    fields
+  }
+  // The transaction table is fetched only when a selected field is actually read
+  // off a stored transaction record. `transactionIndex` materialises from the
+  // store key and `tokenBalances` lives in its own table, so neither requires it.
+  let needsTransactions =
+    selectedTxFields
+    ->Utils.Set.toArray
+    ->Array.some(field =>
+      switch field {
+      | Internal.TransactionIndex | Internal.TokenBalances => false
+      | _ => true
+      }
+    )
 
   let getItemsOrThrow = async (
     ~fromBlock,
@@ -323,23 +353,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     // opted-into table needs its columns spelled out here.
     let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = {
       block: [Slot, Blockhash, BlockTime],
-      transaction: ?(
-        needsTransactions
-          ? Some([
-              Slot,
-              TransactionIndex,
-              Signatures,
-              FeePayer,
-              Success,
-              Err,
-              Fee,
-              ComputeUnitsConsumed,
-              AccountKeys,
-              RecentBlockhash,
-              Version,
-            ])
-          : None
-      ),
+      transaction: ?(needsTransactions ? Some(txQueryFields) : None),
       log: ?(needsLogs ? Some([Slot, TransactionIndex, InstructionAddress, Kind, Message]) : None),
       tokenBalance: ?(
         needsTokenBalances
@@ -358,7 +372,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
     Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")
 
-    let resp = try await client.get(~query) catch {
+    let (resp, transactionStore) = try await client.get(~query) catch {
     | exn =>
       throw(
         Source.GetItemsError(
@@ -390,13 +404,6 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       }
     })
 
-    // Per (slot, transaction_index) lookup for parent transactions.
-    let txByKey = Dict.make()
-    resp.data.transactions->Array.forEach(tx => {
-      let key = tx.slot->Int.toString ++ ":" ++ tx.transactionIndex->Int.toString
-      txByKey->Dict.set(key, tx)
-    })
-
     // Per (slot, transaction_index, instruction_address) lookup for logs
     // scoped to a single instruction. `instructionAddress: None` logs are
     // attached to no instruction (rare; usually only system messages).
@@ -417,21 +424,6 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       | _ => ()
       }
     })
-
-    let tokenBalancesByTx = Dict.make()
-    if needsTokenBalances {
-      resp.data.tokenBalances->Array.forEach(tb => {
-        switch tb.transactionIndex {
-        | Some(txIdx) =>
-          let key = tb.slot->Int.toString ++ ":" ++ txIdx->Int.toString
-          switch tokenBalancesByTx->Dict.get(key) {
-          | Some(existing) => existing->Array.push(tb)
-          | None => tokenBalancesByTx->Dict.set(key, [tb])
-          }
-        | None => ()
-        }
-      })
-    }
 
     let parsedQueueItems = []
     resp.data.instructions->Array.forEach(instr => {
@@ -454,20 +446,6 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       switch maybeConfig {
       | None => ()
       | Some(eventConfig) =>
-        let txKey = instr.slot->Int.toString ++ ":" ++ instr.transactionIndex->Int.toString
-        let maybeTx =
-          txByKey->Utils.Dict.dangerouslyGetNonOption(txKey)->Option.map(toSvmTransaction)
-        let maybeTx = if eventConfig.includeTokenBalances {
-          maybeTx->Option.map(tx => {
-            let maybeBalances =
-              tokenBalancesByTx
-              ->Utils.Dict.dangerouslyGetNonOption(txKey)
-              ->Option.map(bals => bals->Array.map(toSvmTokenBalance))
-            {...tx, tokenBalances: ?maybeBalances}
-          })
-        } else {
-          maybeTx
-        }
         let logKey =
           instr.slot->Int.toString ++
           ":" ++
@@ -492,7 +470,6 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
           instr,
           ~programName=eventConfig.contractName,
           ~instructionName=eventConfig.name,
-          ~transaction=eventConfig.includeTransaction ? maybeTx : None,
           ~logs=eventConfig.includeLogs ? maybeLogs : None,
           ~block={
             slot: instr.slot,
@@ -510,6 +487,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
             blockNumber: instr.slot,
             blockHash: "",
             logIndex: synthLogIndex(instr),
+            // The parent transaction is materialised from the store at batch prep.
+            transactionIndex: instr.transactionIndex,
             payload: payload->(Utils.magic: Envio.svmInstruction => Internal.eventPayload),
           }),
         )
@@ -539,6 +518,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     {
       latestFetchedBlockTimestamp: latestBlockTime,
       parsedQueueItems,
+      // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
+      transactionStore: Some(transactionStore),
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
@@ -563,7 +544,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
         maxNumBlocks: 1000,
       }
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getBlockHashes")
-      let resp = await client.get(~query)
+      // Block-only query; the store page is empty.
+      let (resp, _) = await client.get(~query)
       resp.data.blocks->Array.forEach(b =>
         blockDatas
         ->Array.push({

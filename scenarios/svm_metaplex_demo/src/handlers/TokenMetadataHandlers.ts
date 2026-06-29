@@ -39,7 +39,7 @@ indexer.onInstruction(
     if (metadataPda === undefined) return;
     const mint = accounts.mint ?? "";
     const updateAuthority = accounts.update_authority;
-    const txSig = instruction.transaction?.signatures[0];
+    const txSig = instruction.transaction.signatures[0];
 
     console.log(
       `[Create] slot=${instruction.block.slot} name='${args.data.name}' symbol='${args.data.symbol}' mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
@@ -71,7 +71,7 @@ indexer.onInstruction(
     const metadataPda = accounts.metadata;
     if (metadataPda === undefined) return;
     const updateAuthority = args.update_authority ?? accounts.update_authority;
-    const txSig = instruction.transaction?.signatures[0];
+    const txSig = instruction.transaction.signatures[0];
 
     console.log(
       `[Update] slot=${instruction.block.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,

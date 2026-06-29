@@ -186,6 +186,7 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
       blockHash: `0x${blockNumber->Int.toString}`,
       eventConfig: (eventConfig :> Internal.eventConfig),
       logIndex: 0,
+      transactionIndex: 0,
       payload: {"params": {"to": to}}->(
         Utils.magic: {"params": {"to": Address.t}} => Internal.eventPayload
       ),
@@ -256,6 +257,7 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
       blockHash: `0x${blockNumber->Int.toString}`,
       eventConfig: (eventConfig :> Internal.eventConfig),
       logIndex: 0,
+      transactionIndex: 0,
       payload: {"srcAddress": srcAddress}->(
         Utils.magic: {"srcAddress": Address.t} => Internal.eventPayload
       ),
@@ -343,5 +345,21 @@ describe("buildAddressFilterBody — generated predicate source", () => {
         `var p = event.params, ic; return (ic = indexingAddresses[event.srcAddress]) !== undefined && ic.effectiveStartBlock <= blockNumber && (((ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber));`,
       ),
     )
+  })
+
+  it("non-wildcard SVM — gates on event.programId ownership", t => {
+    t.expect(
+      EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=false, ~srcAddressExpr="event.programId"),
+    ).toEqual(
+      Some(
+        `var ic; return (ic = indexingAddresses[event.programId]) !== undefined && ic.effectiveStartBlock <= blockNumber;`,
+      ),
+    )
+  })
+
+  it("wildcard SVM — None when there are no account groups", t => {
+    t.expect(
+      EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=true, ~srcAddressExpr="event.programId"),
+    ).toEqual(None)
   })
 })

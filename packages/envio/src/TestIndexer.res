@@ -43,6 +43,33 @@ let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingA
   registrationBlock: dc.registrationBlock,
 }
 
+// All indexing addresses (config-seeded + dynamically registered) grouped by
+// chain id string, derived from the envio_addresses entities.
+let getIndexingAddressesByChain = (state: testIndexerState): dict<
+  array<Internal.indexingAddress>,
+> => {
+  let byChain = Dict.make()
+  switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
+  | Some(dcDict) =>
+    dcDict
+    ->Dict.valuesToArray
+    ->Array.forEach(entity => {
+      let dc = entity->castToEnvioAddresses
+      let chainIdStr = dc.chainId->Int.toString
+      let contracts = switch byChain->Dict.get(chainIdStr) {
+      | Some(arr) => arr
+      | None =>
+        let arr = []
+        byChain->Dict.set(chainIdStr, arr)
+        arr
+      }
+      contracts->Array.push(dc->toIndexingAddress)->ignore
+    })
+  | None => ()
+  }
+  byChain
+}
+
 let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFilter.t): JSON.t => {
   // Loads for non-entity tables (e.g. effect caches `envio_effect_<name>`) reach
   // here too. TestIndexer never persists those, so there's nothing to return —
@@ -566,22 +593,10 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                   `Cannot access ${contract.name}.addresses while indexer.process() is running. ` ++ "Wait for process() to complete before reading contract addresses.",
                 )
               }
-              let addresses = []
-              switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
-              | Some(dcDict) =>
-                dcDict
-                ->Dict.valuesToArray
-                ->Array.forEach(
-                  entity => {
-                    let dc = entity->castToEnvioAddresses
-                    if dc.contractName === contract.name && dc.chainId === chainConfig.id {
-                      addresses->Array.push(dc->Config.EnvioAddresses.getAddress)->ignore
-                    }
-                  },
-                )
-              | None => ()
-              }
-              addresses
+              getIndexingAddressesByChain(state)
+              ->Dict.get(chainConfig.id->Int.toString)
+              ->Option.getOr([])
+              ->Array.filterMap(ia => ia.contractName === contract.name ? Some(ia.address) : None)
             },
           },
         )
@@ -653,6 +668,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
           })
 
           // Parse and validate all chain configs upfront before starting any workers
+          let preflightAddressesByChain = getIndexingAddressesByChain(state)
           let chainEntries = sortedChainKeys->Array.map(chainIdStr => {
             let rawChainConfig = rawChains->Dict.getUnsafe(chainIdStr)
             let chainId = switch chainIdStr->Int.fromString {
@@ -668,6 +684,19 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
               ~rawChainConfig,
               ~progressBlock=state.progressBlockByChain->Dict.get(chainIdStr),
             )
+            switch rawChainConfig.simulate {
+            | Some(simulateItems) =>
+              let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId))
+              SimulateItems.validateSrcAddresses(
+                ~simulateItems,
+                ~config,
+                ~chainConfig,
+                ~indexingAddresses=preflightAddressesByChain
+                ->Dict.get(chainIdStr)
+                ->Option.getOr([]),
+              )
+            | None => ()
+            }
             (chainIdStr, chainId, rawChainConfig, processChainConfig)
           })
 
@@ -684,60 +713,9 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             let chains: dict<chainConfig> = Dict.make()
             chains->Dict.set(chainIdStr, processChainConfig)
 
-            // Extract dynamic contracts from state.entities for each chain
-            let indexingAddressesByChain: dict<array<Internal.indexingAddress>> = Dict.make()
-            switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
-            | Some(dcDict) =>
-              dcDict
-              ->Dict.valuesToArray
-              ->Array.forEach(entity => {
-                let dc = entity->castToEnvioAddresses
-                let dcChainIdStr = dc.chainId->Int.toString
-                let contracts = switch indexingAddressesByChain->Dict.get(dcChainIdStr) {
-                | Some(arr) => arr
-                | None =>
-                  let arr = []
-                  indexingAddressesByChain->Dict.set(dcChainIdStr, arr)
-                  arr
-                }
-                contracts->Array.push(dc->toIndexingAddress)->ignore
-              })
-            | None => ()
-            }
-
-            // Register the simulated events' srcAddresses so non-wildcard events
-            // injected for a contract not configured on this chain still pass the
-            // clientAddressFilter's srcAddress ownership check.
-            switch rawChainConfig.simulate {
-            | Some(simulateItems) =>
-              let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId))
-              let simAddresses = SimulateItems.indexingAddresses(
-                ~simulateItems,
-                ~config,
-                ~chainConfig,
-              )
-              if simAddresses->Array.length > 0 {
-                let existing = switch indexingAddressesByChain->Dict.get(chainIdStr) {
-                | Some(arr) => arr
-                | None =>
-                  let arr = []
-                  indexingAddressesByChain->Dict.set(chainIdStr, arr)
-                  arr
-                }
-                let seen = Utils.Set.make()
-                existing->Array.forEach(ia =>
-                  seen->Utils.Set.add(ia.address->Address.toString)->ignore
-                )
-                simAddresses->Array.forEach(ia => {
-                  let key = ia.address->Address.toString
-                  if !(seen->Utils.Set.has(key)) {
-                    seen->Utils.Set.add(key)->ignore
-                    existing->Array.push(ia)->ignore
-                  }
-                })
-              }
-            | None => ()
-            }
+            // Rebuilt per chain so workers see contracts registered by earlier
+            // chains in the same process() call.
+            let indexingAddressesByChain = getIndexingAddressesByChain(state)
 
             let initialState = makeInitialState(
               ~config,

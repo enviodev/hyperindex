@@ -2,8 +2,6 @@ type name = | @as("evm") Evm | @as("fuel") Fuel | @as("svm") Svm
 
 type t = {
   name: name,
-  blockFields: array<string>,
-  transactionFields: array<string>,
   blockNumberName: string,
   blockTimestampName: string,
   blockHashName: string,
@@ -33,7 +31,8 @@ type t = {
       loggers (see `getItemLogger`). */
   logger: Pino.t,
   /** Materialise the user-facing event handed to handlers and contract
-      registration from an item's opaque payload. */
+      registration from an item's opaque payload. `event.transaction` is written
+      onto the payload at batch prep (HyperSync) or inline (RPC/simulate). */
   toEvent: Internal.eventItem => Internal.event,
   /** Build the per-item child logger for an event item, with
       ecosystem-specific log fields (EVM/Fuel: contract/event/address; SVM:

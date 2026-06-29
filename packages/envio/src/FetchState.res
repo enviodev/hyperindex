@@ -76,16 +76,17 @@ type query = {
   mutable progress: float,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
-  // The owning partition's reverse index, referenced (not copied) so routing
-  // resolves ownership without a chain-wide snapshot.
-  contractNameByAddress: dict<string>,
 }
 
-// Invert addressesByContractName into address→contractName. 1:1 today (each
-// address belongs to one contract), so no key collisions.
-let deriveContractNameByAddress = (addressesByContractName: dict<array<Address.t>>): dict<
+// Invert addressesByContractName into address→contractName for log-ownership
+// routing. 1:1 today (each address belongs to one contract), so no key
+// collisions. Memoized on the addressesByContractName object so a partition's
+// many responses share one derivation and a large factory never rebuilds the
+// whole index; sound because the dict is immutable after construction (every
+// mutation produces a new dict).
+let deriveContractNameByAddress: dict<array<Address.t>> => dict<
   string,
-> => {
+> = Utils.WeakMap.memoize(addressesByContractName => {
   let result = Dict.make()
   addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
     for i in 0 to addresses->Array.length - 1 {
@@ -93,7 +94,7 @@ let deriveContractNameByAddress = (addressesByContractName: dict<array<Address.t
     }
   })
   result
-}
+})
 
 // Default estimate for a query whose partition hasn't responded yet, so the
 // shared budget still accounts for unknown queries instead of treating them as
@@ -1373,7 +1374,6 @@ let pushQueriesForRange = (
           chainId: 0,
           progress: 0.,
           addressesByContractName,
-          contractNameByAddress: partition.contractNameByAddress,
         })
       | Some(chunkRange) =>
         let maxBlock = switch rangeEndBlock {
@@ -1403,7 +1403,6 @@ let pushQueriesForRange = (
               chainId: 0,
               progress: 0.,
               addressesByContractName,
-              contractNameByAddress: partition.contractNameByAddress,
             })
             chunkFromBlock := chunkToBlock + 1
             chunkIdx := chunkIdx.contents + 1
@@ -1425,7 +1424,6 @@ let pushQueriesForRange = (
             chainId: 0,
             progress: 0.,
             addressesByContractName,
-            contractNameByAddress: partition.contractNameByAddress,
           })
         }
       }

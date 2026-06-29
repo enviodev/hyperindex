@@ -1159,7 +1159,9 @@ let make = (
                 let (block, transaction) = try await Promise.all2((
                   log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
                   log->getEventTransactionOrThrow(
-                    ~selectedTransactionFields=eventConfig.selectedTransactionFields,
+                    ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
+                      Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
+                    ),
                   ),
                 )) catch {
                 | TransactionDataNotFound({message}) =>
@@ -1199,13 +1201,14 @@ let make = (
                   blockHash: block->getBlockHash,
                   chain,
                   logIndex: log.logIndex,
+                  transactionIndex: log.transactionIndex,
                   payload: {
                     contractName: eventConfig.contractName,
                     eventName: eventConfig.name,
                     chainId: chain->ChainMap.Chain.toChainId,
                     params: decoded,
-                    transaction,
                     block,
+                    transaction,
                     srcAddress: routedAddress,
                     logIndex: log.logIndex,
                   }->Evm.fromPayload,
@@ -1249,6 +1252,8 @@ let make = (
       latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
+      // RPC keeps the transaction inline on the payload; no store page.
+      transactionStore: None,
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },

@@ -15,7 +15,6 @@ let defaultQuery: FetchState.query = {
   progress: 0.,
   selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
   addressesByContractName: Dict.make(),
-  contractNameByAddress: Dict.make(),
 }
 
 let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
@@ -82,6 +81,7 @@ let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
   blockHash: `0x${blockNumber->Int.toString}`,
   eventConfig: Utils.magic("Mock eventConfig in fetchstate test"),
   logIndex,
+  transactionIndex: 0,
   payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),
 })
 
@@ -104,7 +104,6 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
-      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -154,7 +153,6 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
-      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -205,7 +203,6 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
-      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -260,7 +257,6 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
-      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -318,7 +314,6 @@ describe("FetchState onBlock functionality", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
-      contractNameByAddress: FetchState.deriveContractNameByAddress(Dict.fromArray([("Gravatar", [mockAddress0])])),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])

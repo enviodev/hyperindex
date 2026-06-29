@@ -345,7 +345,7 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Rsk = 30,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Saakuru = 7225878,
 
     #[subenum(GraphNetwork, HypersyncChain, NetworkWithExplorer)]
@@ -385,7 +385,6 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     SophonTestnet = 531050104,
 
-    #[subenum(HypersyncChain)]
     StatusSepolia = 1660990954,
 
     #[subenum(HypersyncChain)]

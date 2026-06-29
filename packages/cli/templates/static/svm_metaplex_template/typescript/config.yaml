@@ -17,8 +17,8 @@ chains:
             - name: CreateMetadataAccountV3
               discriminator: "0x21"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures]
             - name: UpdateMetadataAccountV2
               discriminator: "0x0f"
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures]
