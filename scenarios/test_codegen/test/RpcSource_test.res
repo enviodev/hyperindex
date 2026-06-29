@@ -1046,70 +1046,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
 
   // eth_getLogs runs through the Rust client's own HTTP stack, so a
   // globalThis.fetch stub can't intercept it; route every method through a
-  // real local JSON-RPC server instead.
-  module MockRpcServer = {
-    type server
-    type req
-    type res
-
-    @module("node:http")
-    external createServer: ((req, res) => unit) => server = "createServer"
-    @send external listen: (server, int, unit => unit) => unit = "listen"
-    @send external closeAllConnections: server => unit = "closeAllConnections"
-    @send external close: (server, unit => unit) => unit = "close"
-
-    type address = {port: int}
-    @send external address: server => address = "address"
-
-    @send external setEncoding: (req, string) => unit = "setEncoding"
-    @send external onData: (req, @as("data") _, string => unit) => unit = "on"
-    @send external onEnd: (req, @as("end") _, unit => unit) => unit = "on"
-
-    @send external writeHead: (res, int, dict<string>) => unit = "writeHead"
-    @send external end_: (res, string) => unit = "end"
-
-    type t = {url: string, close: unit => unit}
-
-    let make = (~getResult: string => JSON.t) =>
-      Promise.make((resolve, _reject) => {
-        let server = createServer((req, res) => {
-          req->setEncoding("utf8")
-          let data = ref("")
-          req->onData(chunk => data := data.contents ++ chunk)
-          req->onEnd(() => {
-            let method =
-              data.contents
-              ->JSON.parseOrThrow
-              ->JSON.Decode.object
-              ->Option.flatMap(Dict.get(_, "method"))
-              ->Option.flatMap(JSON.Decode.string)
-              ->Option.getOr("")
-            res->writeHead(200, Dict.fromArray([("Content-Type", "application/json")]))
-            res->end_(
-              JSON.stringify(
-                JSON.Object(
-                  Dict.fromArray([
-                    ("jsonrpc", JSON.String("2.0")),
-                    ("id", JSON.Number(1.)),
-                    ("result", getResult(method)),
-                  ]),
-                ),
-              ),
-            )
-          })
-        })
-        server->listen(0, () => {
-          resolve({
-            url: `http://127.0.0.1:${(server->address).port->Int.toString}`,
-            close: () => {
-              server->closeAllConnections
-              server->close(() => ())
-            },
-          })
-        })
-      })
-  }
-
+  // real local JSON-RPC server (MockRpcServer helper) instead.
   Async.it(
     "Throws a retryable error instead of a source-disabling one when the receipt is null",
     async t => {

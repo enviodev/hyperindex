@@ -7,11 +7,9 @@ use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
-use napi_derive::napi;
 
-use crate::evm_hypersync_source::{
-    map_err,
-    types::{sol_value_to_param, Event, EventParamsInput, Log, ParamMeta, ParamValue},
+use crate::evm_hypersync_source::types::{
+    sol_value_to_param, EventParamsInput, Log, ParamMeta, ParamValue,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -260,38 +258,6 @@ fn same_decode_layout(a: &[ParamMeta], b: &[ParamMeta]) -> bool {
                     _ => false,
                 }
         })
-}
-
-#[napi]
-#[derive(Clone)]
-pub struct EvmDecoder {
-    core: DecoderCore,
-}
-
-#[napi]
-impl EvmDecoder {
-    #[napi(factory)]
-    pub fn from_params(
-        event_params: Vec<EventParamsInput>,
-        checksum_addresses: Option<bool>,
-    ) -> napi::Result<EvmDecoder> {
-        let core = DecoderCore::from_params(event_params, checksum_addresses.unwrap_or(false))
-            .map_err(map_err)?;
-        Ok(Self { core })
-    }
-
-    #[napi]
-    pub async fn decode_logs(&self, events: Vec<Event>) -> napi::Result<Vec<Option<ParamValue>>> {
-        let core = self.core.clone();
-        tokio::task::spawn_blocking(move || {
-            events
-                .iter()
-                .map(|event| core.decode_napi(&event.log).ok().flatten())
-                .collect::<Vec<_>>()
-        })
-        .await
-        .map_err(|e| map_err(anyhow::anyhow!("decode_logs worker join failure: {e}")))
-    }
 }
 
 #[cfg(test)]
