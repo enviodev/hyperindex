@@ -15,7 +15,6 @@ let make: (
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
-  ~transactionFieldMask: float=?,
   ~logger: Pino.t,
 ) => t
 
@@ -112,7 +111,6 @@ let handleQueryResult: (
 ) => unit
 let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
 let materializePageItems: (
-  t,
   ~items: array<Internal.item>,
   ~page: option<TransactionStore.t>,
 ) => promise<unit>

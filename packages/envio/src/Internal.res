@@ -420,6 +420,11 @@ type eventConfig = private {
   // string set so the shared mask logic is ecosystem-agnostic; sources recover
   // the typed view where they need it.
   selectedTransactionFields: Utils.Set.t<string>,
+  // `selectedTransactionFields` precompiled to the transaction-store selection
+  // bitmask (bit per ecosystem field code). Materialisation reads this per item
+  // so each transaction decodes only the fields its event selected. `0.` when
+  // nothing is selected or the ecosystem carries the transaction inline (Fuel).
+  transactionFieldMask: float,
 }
 
 type fuelEventKind =
