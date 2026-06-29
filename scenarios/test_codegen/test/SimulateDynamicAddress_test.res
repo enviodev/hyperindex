@@ -1,8 +1,8 @@
 open Vitest
 
 // NftFactory.SimpleNftCreated's contractRegister adds the emitted
-// `contractAddress` as a SimpleNft, and SimpleNft.Transfer is a non-wildcard
-// event whose srcAddress must be an indexed address.
+// `contractAddress` as a SimpleNft; SimpleNft.Transfer is a non-wildcard event
+// for that dynamically-registered contract (SimpleNft has no configured address).
 let nftFactory = Address.unsafeFromString("0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC") // configured on chain 1337
 let newNft = Address.unsafeFromString("0x1111111111111111111111111111111111111111")
 let owner = Address.unsafeFromString("0x2222222222222222222222222222222222222222")
@@ -35,9 +35,10 @@ let expectedToken: Indexer.Entities.Token.t = {
   owner_id: owner->Address.toString,
 }
 
-// Validation reads the live indexing-address state, so an address registered in
-// an earlier process() call is accepted by a later one.
-Async.it("accepts a srcAddress registered by an earlier process() call", async t => {
+// SimpleNft has no configured address; it's registered dynamically by
+// NftFactory.SimpleNftCreated. A non-wildcard SimpleNft.Transfer for an address
+// registered in an earlier process() call routes to the handler unchanged.
+Async.it("routes a non-wildcard event for a contract registered in an earlier process() call", async t => {
   let indexer = Indexer.createTestIndexer()
   let _ = await indexer.process({
     chains: {\"1337": {startBlock: 1, endBlock: 100, simulate: [createNft]}},
@@ -50,11 +51,10 @@ Async.it("accepts a srcAddress registered by an earlier process() call", async t
   t.expect(tokens).toEqual([expectedToken])
 })
 
-// Known limitation: the pre-flight check runs before the batch, so an address a
-// factory item registers in the *same* process() call isn't visible yet and the
-// later item is rejected. (Validating against in-batch registrations would mean
-// running the batch first.)
-Async.it("rejects a srcAddress registered earlier in the same process() call", async t => {
+// A contract registered within the same process() call is accepted too: the
+// simulate path no longer pre-checks srcAddress against a static snapshot, so the
+// non-wildcard event reaches its handler instead of being rejected.
+Async.it("accepts a non-wildcard event for a contract registered in the same process() call", async t => {
   let indexer = Indexer.createTestIndexer()
 
   let error = try {
@@ -66,9 +66,5 @@ Async.it("rejects a srcAddress registered earlier in the same process() call", a
   | JsExn(err) => err->JsExn.message
   }
 
-  t.expect(error).toEqual(
-    Some(
-      `simulate: SimpleNft.Transfer resolved to address ${newNft->Address.toString}, which isn't indexed on chain 1337. Provide a "srcAddress" configured or registered for SimpleNft on this chain, or use a wildcard event.`,
-    ),
-  )
+  t.expect(error).toEqual(None)
 })

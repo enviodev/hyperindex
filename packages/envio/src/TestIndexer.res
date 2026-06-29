@@ -667,11 +667,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             Int.compare(aId, bId)
           })
 
-          // Parse and validate the block ranges upfront before starting any
-          // workers. srcAddress validation can't run here: it depends on which
-          // events are wildcard, and `config` reflects config.yaml only —
-          // handler-level `wildcard: true` takes effect only once registrations
-          // are applied.
+          // Parse and validate the block ranges upfront before starting any workers.
           let chainEntries = sortedChainKeys->Array.map(chainIdStr => {
             let rawChainConfig = rawChains->Dict.getUnsafe(chainIdStr)
             let chainId = switch chainIdStr->Int.fromString {
@@ -868,26 +864,6 @@ let initTestWorker = () => {
     }
 
     let patchConfig = (config: Config.t, _registrations) => {
-      // `config` here has handler registrations applied, so `isWildcard`
-      // reflects `indexer.onEvent({ wildcard: true })` — which the main thread
-      // can't see. Validate srcAddresses against it before patching in the
-      // simulate source.
-      switch simulate {
-      | Some(simulateItems) =>
-        let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId))
-        let indexingAddresses =
-          initialState.chains
-          ->Array.find(c => c.id == chainId)
-          ->Option.mapOr([], c => c.indexingAddresses)
-        SimulateItems.validateSrcAddresses(
-          ~simulateItems,
-          ~config,
-          ~chainConfig,
-          ~indexingAddresses,
-        )
-      | None => ()
-      }
-
       let config = SimulateItems.patchConfig(~config, ~processConfig)
 
       // In auto-exit mode, set batchSize=1 to process one block checkpoint at a time
@@ -900,8 +876,8 @@ let initTestWorker = () => {
     Main.start(~persistence, ~isTest=true, ~patchConfig, ~exitAfterFirstEventBlock)
     ->Promise.catch(exn => {
       // `Main.start` rejects on any fatal error: a runtime failure arrives wrapped
-      // in `Main.FatalError` (already logged), a setup throw (e.g. patchConfig's
-      // srcAddress validation) arrives raw. The parent only learns of failures
+      // in `Main.FatalError` (already logged), a setup throw (e.g. an invalid
+      // simulate item) arrives raw. The parent only learns of failures
       // through the worker `error` event, which fires on an *uncaught* exception.
       // Throwing synchronously in this catch would just reject the catch's own
       // promise (swallowed by `ignore`); `setImmediate` re-throws outside the

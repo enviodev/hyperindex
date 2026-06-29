@@ -231,46 +231,6 @@ let deriveSrcAddress = (
   }
 }
 
-// A non-wildcard event is gated by `clientAddressFilter` on srcAddress ownership,
-// so a simulate item whose srcAddress isn't indexed on this chain would be
-// silently dropped (handler never runs). Fail loudly instead.
-//
-// `config` must already have handler registrations applied, otherwise an event
-// made wildcard purely through `indexer.onEvent({ wildcard: true })` reads back
-// as non-wildcard and gets wrongly rejected.
-let validateSrcAddresses = (
-  ~simulateItems: array<JSON.t>,
-  ~config: Config.t,
-  ~chainConfig: Config.chain,
-  ~indexingAddresses: array<Internal.indexingAddress>,
-): unit => {
-  let known = Utils.Set.make()
-  indexingAddresses->Array.forEach(ia => known->Utils.Set.add(ia.address->Address.toString)->ignore)
-  simulateItems->Array.forEach(rawJson => {
-    let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
-    switch (raw->getContract, raw->getEvent) {
-    | (Some(contractName), Some(eventName)) =>
-      switch findEventConfig(~config, ~contractName, ~eventName) {
-      | Some(eventConfig) if !eventConfig.isWildcard =>
-        let item = rawJson->(Utils.magic: JSON.t => Envio.evmSimulateItem)
-        let srcAddress = deriveSrcAddress(
-          ~providedSrcAddress=item.srcAddress,
-          ~eventConfig,
-          ~chainConfig,
-        )
-        if !(known->Utils.Set.has(srcAddress->Address.toString)) {
-          JsError.throwWithMessage(
-            `simulate: ${contractName}.${eventName} resolved to address ${srcAddress->Address.toString}, which isn't indexed on chain ${chainConfig.id->Int.toString}. ` ++
-            `Provide a "srcAddress" configured or registered for ${contractName} on this chain, or use a wildcard event.`,
-          )
-        }
-      | _ => ()
-      }
-    | _ => ()
-    }
-  })
-}
-
 let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Config.chain): array<
   Internal.item,
 > => {
