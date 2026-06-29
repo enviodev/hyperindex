@@ -385,7 +385,6 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     SophonTestnet = 531050104,
 
-    #[subenum(HypersyncChain)]
     StatusSepolia = 1660990954,
 
     #[subenum(HypersyncChain)]
