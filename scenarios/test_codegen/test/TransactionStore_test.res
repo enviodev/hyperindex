@@ -31,17 +31,8 @@ let rawTx = (item: Internal.item) =>
 describe("TransactionStore field-code contract", () => {
   // The selection mask is built in ReScript from these arrays' order and decoded
   // in Rust by EvmTxField/SvmTxField ordinal, so a drift silently materialises
-  // the wrong field. Pin both against the Rust ordering (the source of truth).
-  it("EVM transactionFields match the Rust EvmTxField order", t => {
-    t.expect(Evm.transactionFields).toEqual(Core.getAddon().evmTransactionFieldNames())
-  })
-
-  it("SVM transactionFields match the Rust SvmTxField order", t => {
-    t.expect(Svm.transactionFields).toEqual(Core.getAddon().svmTransactionFieldNames())
-  })
-
-  // `Internal` holds a third copy of each field list (the schema enums); pin it
-  // to the same Rust ordering so all three stay aligned.
+  // the wrong field. `Evm.transactionFields`/`Svm.transactionFields` derive from
+  // these typed lists, so pinning them to the Rust ordering covers both.
   it("EVM Internal.allEvmTransactionFields match the Rust EvmTxField order", t => {
     t.expect(
       Internal.allEvmTransactionFields->(
