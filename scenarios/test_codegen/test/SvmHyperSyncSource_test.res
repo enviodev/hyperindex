@@ -45,6 +45,11 @@ let makeEventConfig = (
   selectedTransactionFields: Utils.Set.fromArray(selectedTransactionFields)->(
     Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
   ),
+  transactionFieldMask: Svm.eventTransactionFieldMask(
+    Utils.Set.fromArray(selectedTransactionFields)->(
+      Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
+    ),
+  ),
   accountFilters: [],
   isInner: None,
   accounts: [],

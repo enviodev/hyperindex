@@ -52,7 +52,9 @@ let transactionFields = [
   "authorizationList",
 ]
 
-let transactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
+// One event's selected transaction fields → store selection bitmask. Computed
+// per event at config build and cached on the event config.
+let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
@@ -83,7 +85,6 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))))
   ),
   logger,
-  transactionFieldMask,
   // The payload carries `transaction` by batch prep (HyperSync) or inline
   // (RPC/simulate), so the event is the payload as-is.
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),

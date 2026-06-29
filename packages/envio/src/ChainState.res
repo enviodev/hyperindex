@@ -21,8 +21,6 @@ type t = {
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
   transactionStore: TransactionStore.t,
-  // Bitmask of the transaction fields the store materialises at batch prep.
-  transactionFieldMask: float,
 }
 
 // Per-chain shape returned by the status API.
@@ -67,7 +65,6 @@ let make = (
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
-  ~transactionFieldMask=0.,
   ~logger: Pino.t,
 ): t => {
   logger,
@@ -82,7 +79,6 @@ let make = (
   reorgDetection,
   safeCheckpointTracking,
   transactionStore: TransactionStore.make(),
-  transactionFieldMask,
 }
 
 let makeInternal = (
@@ -328,7 +324,6 @@ let makeInternal = (
     ~committedProgressBlockNumber=progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
-    ~transactionFieldMask=config.ecosystem.transactionFieldMask(eventConfigs),
     ~logger,
   )
 }
@@ -503,18 +498,18 @@ let isAtHeadWithoutEndBlock = (cs: t) =>
 // Materialise the chain store's selected transaction fields onto a batch's
 // items at batch prep (the persistent-store path).
 let materializeBatchItems = (cs: t, ~items: array<Internal.item>) =>
-  cs.transactionStore->TransactionStore.materializeItems(~items, ~mask=cs.transactionFieldMask)
+  cs.transactionStore->TransactionStore.materializeItems(~items)
 
 // Materialise a fetch-response page's transactions onto its items before
 // contract-register handlers read them. `None` pages (RPC/Fuel/Simulate keep the
 // transaction inline) are a no-op.
 let materializePageItems = (
-  cs: t,
+  _cs: t,
   ~items: array<Internal.item>,
   ~page: option<TransactionStore.t>,
 ) =>
   switch page {
-  | Some(store) => store->TransactionStore.materializeItems(~items, ~mask=cs.transactionFieldMask)
+  | Some(store) => store->TransactionStore.materializeItems(~items)
   | None => Promise.resolve()
   }
 

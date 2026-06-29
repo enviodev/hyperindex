@@ -3,11 +3,14 @@ open Vitest
 // Build an `Internal.item` Event with the given store key. The payload is a bare
 // object so getPayloadTransaction/setPayloadTransaction (which read/write its
 // `transaction` property) behave like a real store-backed EVM payload.
-let makeStoreBackedItem = (~blockNumber, ~transactionIndex): Internal.item =>
+// `mask` mirrors the per-event `eventConfig.transactionFieldMask` that
+// materializeItems reads to decide which fields to materialise for the item.
+let makeStoreBackedItem = (~blockNumber, ~transactionIndex, ~mask=2.): Internal.item =>
   {
     "kind": 0,
     "blockNumber": blockNumber,
     "transactionIndex": transactionIndex,
+    "eventConfig": {"transactionFieldMask": mask},
     "payload": (Dict.make(): dict<Internal.eventTransaction>),
   }->(Utils.magic: {..} => Internal.item)
 
@@ -65,8 +68,8 @@ describe("TransactionStore field-code contract", () => {
 describe("TransactionStore.materializeItems", () => {
   Async.it("stamps an empty transaction object when the mask is 0", async t => {
     let store = TransactionStore.make()
-    let item = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=0)
-    await store->TransactionStore.materializeItems(~items=[item], ~mask=0.)
+    let item = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=0, ~mask=0.)
+    await store->TransactionStore.materializeItems(~items=[item])
     // Store-backed items always get a transaction object (matching the inline
     // sources) — an empty object rather than `undefined` — even with no fields.
     t.expect(rawTx(item)->Nullable.toOption).toEqual(Some(%raw(`{}`)))
@@ -82,7 +85,7 @@ describe("TransactionStore.materializeItems", () => {
     let b = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=1)
     let c = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=2)
 
-    await store->TransactionStore.materializeItems(~items=[inline, a, b, c], ~mask=2.)
+    await store->TransactionStore.materializeItems(~items=[inline, a, b, c])
 
     t.expect({
       "inlineUntouched": rawTx(inline) === inlineTx->Nullable.make,

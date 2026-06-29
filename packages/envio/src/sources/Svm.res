@@ -20,7 +20,9 @@ let transactionFields = [
   "tokenBalances",
 ]
 
-let transactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
+// One instruction's selected transaction fields → store selection bitmask.
+// Computed per event at config build and cached on the event config.
+let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
@@ -36,7 +38,6 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // parse. The schema is a no-op object that always surfaces `None`.
   onEventBlockFilterSchema: S.object(_ => None),
   logger,
-  transactionFieldMask,
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem => {
     let instruction =

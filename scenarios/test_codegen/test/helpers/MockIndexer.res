@@ -845,6 +845,7 @@ module Source = {
                               JsError.throwWithMessage("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
                             selectedTransactionFields: Utils.Set.make(),
+                            transactionFieldMask: 0.,
                             sighash: "",
                             topicCount: 1,
                             paramsMetadata: [],
@@ -1008,6 +1009,11 @@ let evmEventConfig = (
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames)->(
       Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
+    ),
+    transactionFieldMask: Evm.eventTransactionFieldMask(
+      Utils.Set.fromArray(transactionFieldNames)->(
+        Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
+      ),
     ),
     sighash: id,
     topicCount: 1,
