@@ -78,15 +78,12 @@ type query = {
   addressesByContractName: dict<array<Address.t>>,
 }
 
-// Invert addressesByContractName into address→contractName. 1:1 today (each
-// address belongs to one contract), so no key collisions.
-//
-// Resolved lazily when a response needs routing (SourceManager hands it to the
-// source's EventRouter), not stored on the partition. Memoized on the
-// addressesByContractName object so a partition's many responses share one
-// derivation, and a factory with millions of addresses never rebuilds the whole
-// index. The dict is immutable after construction (every mutation produces a new
-// dict), so identity is sound.
+// Invert addressesByContractName into address→contractName for log-ownership
+// routing. 1:1 today (each address belongs to one contract), so no key
+// collisions. Memoized on the addressesByContractName object so a partition's
+// many responses share one derivation and a large factory never rebuilds the
+// whole index; sound because the dict is immutable after construction (every
+// mutation produces a new dict).
 let deriveContractNameByAddress: dict<array<Address.t>> => dict<
   string,
 > = Utils.WeakMap.memoize(addressesByContractName => {
