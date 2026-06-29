@@ -142,12 +142,10 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
     t.expect(result).toEqual(%raw(`{}`))
   })
 
-  // Reproduction for https://github.com/enviodev/hyperindex/issues/1353
-  // With raw_events enabled, a zero-parameter event crashes the batch write.
-  // The native decoder returns an empty object `{}` for such events, which the
-  // ecosystem's toRawEvent serializes via paramsRawEventSchema. That schema
-  // (built by buildParamsSchema([])) expects unit/`null`, so serialization
-  // throws "Expected undefined, received {}" on the real decoder output.
+  // Regression for https://github.com/enviodev/hyperindex/issues/1353
+  // The native decoder returns an empty object `{}` for a zero-parameter event,
+  // which the ecosystem's toRawEvent must serialize for the raw_events table
+  // without crashing the batch write.
   Async.it("toRawEvent serializes empty params decoded by native decoder", async t => {
     let params = await decodeSingle(
       ~eventName="Empty",
