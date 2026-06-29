@@ -5,24 +5,19 @@
 let indexingAddressesName = "envio_indexing_addresses"
 let indexingAddressesHelp = "The number of addresses indexed on chain. Includes both static and dynamic addresses."
 
-// Single-pass exposition builder: indexed `for` loop, string `+=` (V8 grows these
-// as ConsStrings — no O(n²) copying), direct tuple-slot access, and the `int`
-// value coerced by `+` instead of an Int.toString round-trip. Avoids the
-// intermediate `lines` array, the per-line closure, and the join an idiomatic
-// ReScript version would allocate.
-let renderGauge: (
-  ~name: string,
-  ~help: string,
-  ~samples: array<(string, int)>,
-) => string = %raw(`function (name, help, samples) {
-  var out = "# HELP " + name + " " + help + "\n# TYPE " + name + " gauge";
-  var prefix = "\n" + name + '{chainId="';
-  for (var i = 0, n = samples.length; i < n; i++) {
-    var s = samples[i];
-    out += prefix + s[0] + '"} ' + s[1];
+// Single-pass exposition builder: indexed `for` loop with `getUnsafe` (no closure,
+// no bounds check), accumulating into one string via `++` — which compiles to JS
+// `+=`, grown as a ConsString so there's no O(n²) copying or intermediate `lines`
+// array/join. The line prefix is hoisted out of the loop.
+let renderGauge = (~name, ~help, ~samples: array<(string, int)>) => {
+  let out = ref(`# HELP ${name} ${help}\n# TYPE ${name} gauge`)
+  let prefix = `\n${name}{chainId="`
+  for i in 0 to samples->Array.length - 1 {
+    let (chainId, value) = samples->Array.getUnsafe(i)
+    out := out.contents ++ prefix ++ chainId ++ `"} ` ++ value->Int.toString
   }
-  return out;
-}`)
+  out.contents
+}
 
 let collect = async (~state: option<IndexerState.t>) => {
   let base = await PromClient.defaultRegister->PromClient.metrics
