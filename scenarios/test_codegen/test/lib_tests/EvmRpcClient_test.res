@@ -149,3 +149,112 @@ describe("EvmRpcClient - getHeight via napi", () => {
     t.expect(message->Option.getOr("no error")).toMatch(/parse eth_blockNumber result/)
   })
 })
+
+describe("EvmRpcClient - getLogs via napi", () => {
+  let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  let transferParams: array<Internal.paramMeta> = [
+    {name: "from", abiType: "address", indexed: true},
+    {name: "to", abiType: "address", indexed: true},
+    {name: "value", abiType: "uint256", indexed: false},
+  ]
+
+  Async.it("Decodes event params and parses hex log fields", async t => {
+    let mock = await MockJsonRpcServer.make(
+      ~status=200,
+      ~body=`{"jsonrpc":"2.0","id":1,"result":[{"address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","topics":["${transferSighash}","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockNumber":"0x64","transactionHash":"0xabc","transactionIndex":"0x1","blockHash":"0xb64","logIndex":"0x2","removed":false}]}`,
+    )
+    let client = EvmRpcClient.make(
+      ~url=mock.url,
+      ~allEventParams=[
+        {
+          sighash: transferSighash,
+          topicCount: 3,
+          eventName: "Transfer",
+          contractName: "ERC20",
+          params: transferParams,
+        },
+      ],
+    )
+
+    let items = await client.getLogs({
+      fromBlock: 100,
+      toBlock: 100,
+      topics: [Nullable.make([transferSighash])],
+    })
+    mock.close()
+
+    t.expect(
+      items->Array.map(({log, params}) => {
+        let decoded =
+          params
+          ->Nullable.toOption
+          ->Option.getUnsafe
+          ->Dict.getUnsafe("ERC20")
+          ->(Utils.magic: Internal.eventParams => {..})
+        {
+          "blockNumber": log.blockNumber,
+          "transactionIndex": log.transactionIndex,
+          "logIndex": log.logIndex,
+          "topicCount": log.topics->Array.length,
+          "from": decoded["from"],
+          "to": decoded["to"],
+          "value": decoded["value"]->BigInt.toString,
+        }
+      }),
+    ).toEqual([
+      {
+        "blockNumber": 100,
+        "transactionIndex": 1,
+        "logIndex": 2,
+        "topicCount": 3,
+        "from": "0x0000000000000000000000000000000000000001",
+        "to": "0x0000000000000000000000000000000000000002",
+        "value": "1000",
+      },
+    ])
+  })
+
+  Async.it("Leaves params null when no registered signature matches", async t => {
+    let mock = await MockJsonRpcServer.make(
+      ~status=200,
+      ~body=`{"jsonrpc":"2.0","id":1,"result":[{"address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","topics":["0x0000000000000000000000000000000000000000000000000000000000000009"],"data":"0x","blockNumber":"0x1","transactionHash":"0xabc","transactionIndex":"0x0","blockHash":"0xb01","logIndex":"0x0","removed":false}]}`,
+    )
+    let client = EvmRpcClient.make(
+      ~url=mock.url,
+      ~allEventParams=[
+        {
+          sighash: transferSighash,
+          topicCount: 3,
+          eventName: "Transfer",
+          contractName: "ERC20",
+          params: transferParams,
+        },
+      ],
+    )
+
+    let items = await client.getLogs({fromBlock: 1, toBlock: 1, topics: []})
+    mock.close()
+
+    t.expect(items->Array.map(({params}) => params->Nullable.toOption->Option.isNone)).toEqual([
+      true,
+    ])
+  })
+
+  Async.it("Transfers a JSON-RPC error as structured Rpc.JsonRpcError", async t => {
+    let mock = await MockJsonRpcServer.make(
+      ~status=200,
+      ~body=`{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"eth_getLogs is limited to a 1000 blocks range"}}`,
+    )
+    let client = EvmRpcClient.make(~url=mock.url)
+
+    let error = try {
+      let _ = await client.getLogs({fromBlock: 0, toBlock: 5000, topics: []})
+      None
+    } catch {
+    | Rpc.JsonRpcError(e) => Some(e)
+    }
+    mock.close()
+
+    t.expect(error).toEqual(Some({code: -32005, message: "eth_getLogs is limited to a 1000 blocks range"}))
+  })
+})

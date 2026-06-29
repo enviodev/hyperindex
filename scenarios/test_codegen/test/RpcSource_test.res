@@ -1044,21 +1044,71 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
   let transactionHash = "0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"
   let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
 
-  // Replaces globalThis.fetch with a JSON-RPC stub routed by request method.
-  // Returns a restore function.
-  let stubJsonRpcFetch: (string => JSON.t) => unit => unit = %raw(`(getResult) => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async (_url, args) => {
-      const method = JSON.parse(args.body).method;
-      return new Response(
-        JSON.stringify({ jsonrpc: "2.0", id: 1, result: getResult(method) }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    };
-    return () => {
-      globalThis.fetch = originalFetch;
-    };
-  }`)
+  // eth_getLogs runs through the Rust client's own HTTP stack, so a
+  // globalThis.fetch stub can't intercept it; route every method through a
+  // real local JSON-RPC server instead.
+  module MockRpcServer = {
+    type server
+    type req
+    type res
+
+    @module("node:http")
+    external createServer: ((req, res) => unit) => server = "createServer"
+    @send external listen: (server, int, unit => unit) => unit = "listen"
+    @send external closeAllConnections: server => unit = "closeAllConnections"
+    @send external close: (server, unit => unit) => unit = "close"
+
+    type address = {port: int}
+    @send external address: server => address = "address"
+
+    @send external setEncoding: (req, string) => unit = "setEncoding"
+    @send external onData: (req, @as("data") _, string => unit) => unit = "on"
+    @send external onEnd: (req, @as("end") _, unit => unit) => unit = "on"
+
+    @send external writeHead: (res, int, dict<string>) => unit = "writeHead"
+    @send external end_: (res, string) => unit = "end"
+
+    type t = {url: string, close: unit => unit}
+
+    let make = (~getResult: string => JSON.t) =>
+      Promise.make((resolve, _reject) => {
+        let server = createServer((req, res) => {
+          req->setEncoding("utf8")
+          let data = ref("")
+          req->onData(chunk => data := data.contents ++ chunk)
+          req->onEnd(() => {
+            let method =
+              data.contents
+              ->JSON.parseOrThrow
+              ->JSON.Decode.object
+              ->Option.flatMap(Dict.get(_, "method"))
+              ->Option.flatMap(JSON.Decode.string)
+              ->Option.getOr("")
+            res->writeHead(200, Dict.fromArray([("Content-Type", "application/json")]))
+            res->end_(
+              JSON.stringify(
+                JSON.Object(
+                  Dict.fromArray([
+                    ("jsonrpc", JSON.String("2.0")),
+                    ("id", JSON.Number(1.)),
+                    ("result", getResult(method)),
+                  ]),
+                ),
+              ),
+            )
+          })
+        })
+        server->listen(0, () => {
+          resolve({
+            url: `http://127.0.0.1:${(server->address).port->Int.toString}`,
+            close: () => {
+              server->closeAllConnections
+              server->close(() => ())
+            },
+          })
+        })
+      })
+  }
 
   Async.it(
     "Throws a retryable error instead of a source-disabling one when the receipt is null",
@@ -1067,23 +1117,6 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
         ~id=`${sighash}_1`,
         ~transactionFieldNames=[GasUsed],
       )
-      let source = RpcSource.make({
-        url: "http://localhost:8545",
-        chain,
-        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
-        sourceFor: Sync,
-        syncConfig: EvmChain.getSyncConfig({}),
-        allEventParams: [
-          {
-            sighash,
-            topicCount: 1,
-            eventName: eventConfig.name,
-            contractName: eventConfig.contractName,
-            params: [],
-          },
-        ],
-        lowercaseAddresses: false,
-      })
 
       let logJson = JSON.Object(
         Dict.fromArray([
@@ -1107,7 +1140,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
         ]),
       )
 
-      let restoreFetch = stubJsonRpcFetch(method =>
+      let mock = await MockRpcServer.make(~getResult=method =>
         switch method {
         | "eth_getLogs" => JSON.Array([logJson])
         | "eth_getBlockByNumber" => blockJson
@@ -1116,6 +1149,24 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
         | _ => JSON.Null
         }
       )
+
+      let source = RpcSource.make({
+        url: mock.url,
+        chain,
+        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventParams: [
+          {
+            sighash,
+            topicCount: 1,
+            eventName: eventConfig.name,
+            contractName: eventConfig.contractName,
+            params: [],
+          },
+        ],
+        lowercaseAddresses: false,
+      })
 
       let caught = try {
         let callGetItemsOrThrow = async (~retry) =>
@@ -1141,11 +1192,11 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
           | Source.GetItemsError(error) => Some(error)
           }
         let result = (await callGetItemsOrThrow(~retry=0), await callGetItemsOrThrow(~retry=2))
-        restoreFetch()
+        mock.close()
         result
       } catch {
       | exn =>
-        restoreFetch()
+        mock.close()
         throw(exn)
       }
 

@@ -1,9 +1,34 @@
 type cfg = {url: string, httpReqTimeoutMillis?: int}
 
-type t = {getHeight: unit => promise<int>}
+// `addresses` omitted matches any address (a wildcard selection). Each `topics`
+// position is `null` (match any) or a list of accepted topic hashes; the
+// single-match case is a one-element list.
+type getLogsParams = {
+  fromBlock: int,
+  toBlock: int,
+  addresses?: array<Address.t>,
+  topics: array<Nullable.t<array<string>>>,
+}
+
+// Decoded `params` keyed by contract name, matching the HyperSync decoder's
+// shape so the caller routes by address then picks its contract's params.
+type rpcEventItem = {
+  log: Rpc.GetLogs.log,
+  params: Nullable.t<dict<Internal.eventParams>>,
+}
+
+type t = {
+  getHeight: unit => promise<int>,
+  getLogs: getLogsParams => promise<array<rpcEventItem>>,
+}
 
 @send
-external classNew: (Core.evmRpcClientCtor, cfg) => t = "new"
+external classNew: (
+  Core.evmRpcClientCtor,
+  cfg,
+  array<HyperSyncClient.Decoder.eventParamsInput>,
+  ~checksumAddresses: bool=?,
+) => t = "new"
 
 // Rust encodes JSON-RPC errors as a JSON payload in the napi error's
 // message: `{"kind":"JsonRpcError","code":-32005,"message":"..."}`.
@@ -34,9 +59,15 @@ let coerceErrorOrThrow = exn =>
   | None => exn->throw
   }
 
-let make = (~url, ~httpReqTimeoutMillis=?) => {
-  let client = Core.getAddon().evmRpcClient->classNew({url, ?httpReqTimeoutMillis})
+let make = (~url, ~httpReqTimeoutMillis=?, ~allEventParams=[], ~checksumAddresses=false) => {
+  let client =
+    Core.getAddon().evmRpcClient->classNew(
+      {url, ?httpReqTimeoutMillis},
+      allEventParams,
+      ~checksumAddresses,
+    )
   {
     getHeight: () => client.getHeight()->Promise.catch(coerceErrorOrThrow),
+    getLogs: params => client.getLogs(params)->Promise.catch(coerceErrorOrThrow),
   }
 }
