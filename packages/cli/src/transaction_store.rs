@@ -715,8 +715,8 @@ impl TransactionStore {
     /// whose bit is set in that row's own `masks[i]`. Per-row masks let each event
     /// pull just the transaction fields it selected, so a large field (e.g.
     /// `input`) is materialised only on the rows that asked for it. Each mask is a
-    /// JS number (`f64`); the ReScript side builds it arithmetically to dodge
-    /// 32-bit JS bitwise ops. Async + `block_in_place` so the bulk decode runs off
+    /// JS number (`f64`) carrying a selection bitmask over field codes 0..31 (so
+    /// it fits in 32 bits). Async + `block_in_place` so the bulk decode runs off
     /// the JS thread without monopolising an async worker; the brief lock only
     /// clones `Arc`s. Missing keys yield an empty object. Result is aligned with
     /// input.

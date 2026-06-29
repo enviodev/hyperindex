@@ -73,10 +73,7 @@ module Storage = {
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,
     resolveLoadInitialState: Persistence.initialState => unit,
-    loadOrThrowCalls: array<{
-      "filter": EntityFilter.t,
-      "tableName": string,
-    }>,
+    loadOrThrowCalls: array<{"filter": EntityFilter.t, "tableName": string}>,
     dumpEffectCacheCalls: ref<int>,
     storage: Persistence.storage,
   }
@@ -166,10 +163,9 @@ module Storage = {
               "tableName": table.tableName,
             })
             ->ignore
-            let rows = switch dbEntities->Array.find(((
-              entityConfig: Internal.entityConfig,
-              _,
-            )) => entityConfig.table.tableName === table.tableName) {
+            let rows = switch dbEntities->Array.find(((entityConfig: Internal.entityConfig, _)) =>
+              entityConfig.table.tableName === table.tableName
+            ) {
             | Some((_, rows)) =>
               rows->Array.filter(row =>
                 filter->EntityFilter.matches(
@@ -383,10 +379,10 @@ module Indexer = {
               ()
             } else {
               idleChecks := if isIdle {
-                idleChecks.contents + 1
-              } else {
-                0
-              }
+                  idleChecks.contents + 1
+                } else {
+                  0
+                }
               await Utils.delay(1)
               await wait()
             }
@@ -956,14 +952,17 @@ let evmEventConfig = (
   ~filterByAddresses=false,
   ~startBlock: option<int>=?,
 ): Internal.evmEventConfig => {
+  let selectedTransactionFields =
+    Utils.Set.fromArray(transactionFieldNames)->(
+      Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
+    )
   {
     id,
     contractName,
     name: "EventWithoutFields",
     isWildcard,
     filterByAddresses,
-    dependsOnAddresses: filterByAddresses ||
-    dependsOnAddresses->Option.getOr(!isWildcard),
+    dependsOnAddresses: filterByAddresses || dependsOnAddresses->Option.getOr(!isWildcard),
     startBlock,
     handler: None,
     contractRegister: None,
@@ -999,14 +998,8 @@ let evmEventConfig = (
         ])
       },
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
-    selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames)->(
-      Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
-    ),
-    transactionFieldMask: Evm.eventTransactionFieldMask(
-      Utils.Set.fromArray(transactionFieldNames)->(
-        Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
-      ),
-    ),
+    selectedTransactionFields,
+    transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
     sighash: id,
     topicCount: 1,
     paramsMetadata: [],

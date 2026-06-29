@@ -20,8 +20,9 @@ let fieldCodes = (fields: array<string>): dict<int> => {
 let pow2: int => float = %raw(`c => Math.pow(2, c)`)
 
 // One event's selected transaction fields as a bitmask float (bit `code` set ⇔
-// selected). A field appears at most once, so summing `pow2(code)` is exact and
-// dodges 32-bit JS bitwise ops.
+// selected). Each field appears once, so summing `pow2(code)` sets distinct bits
+// with no overlap; the result stays exact in f64 (codes span 0..31, so a mask is
+// at most 2^32-1).
 let maskFromFields = (selectedTransactionFields: Utils.Set.t<string>, ~codes: dict<int>): float => {
   let mask = ref(0.)
   selectedTransactionFields->Utils.Set.forEach(name =>

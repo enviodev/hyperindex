@@ -63,6 +63,23 @@ describe("TransactionStore field-code contract", () => {
       Dict.fromArray([("transactionIndex", 0), ("hash", 1), ("from", 2)]),
     )
   })
+
+  it("orMask combines field masks as unsigned 32-bit values", t => {
+    // The highest EVM field code is 31, so the highest mask bit is 2^31. A plain
+    // JS `|` renders that bit negative; orMask's `>>> 0` recovers the unsigned
+    // value. These pin both the disjoint/overlapping cases and the bit-31 edge.
+    t.expect({
+      "disjoint": TransactionStore.orMask(1., 2.),
+      "overlapping": TransactionStore.orMask(3., 6.),
+      "bit31WithLowBit": TransactionStore.orMask(2147483648., 1.),
+      "allBits": TransactionStore.orMask(4294967295., 2147483648.),
+    }).toEqual({
+      "disjoint": 3.,
+      "overlapping": 7.,
+      "bit31WithLowBit": 2147483649.,
+      "allBits": 4294967295.,
+    })
+  })
 })
 
 describe("TransactionStore.materializeItems", () => {
@@ -75,28 +92,54 @@ describe("TransactionStore.materializeItems", () => {
     t.expect(rawTx(item)->Nullable.toOption).toEqual(Some(%raw(`{}`)))
   })
 
-  Async.it("skips inline txs, materialises store-backed items, and dedupes by adjacency", async t => {
-    // Empty store ⇒ every key is a miss ⇒ materialize returns one distinct empty
-    // object per group, which is enough to assert the grouping/scatter logic.
-    let store = TransactionStore.make()
-    let inlineTx = {"hash": "0xinline"}->(Utils.magic: {..} => Internal.eventTransaction)
-    let inline = makeInlineItem(~blockNumber=1, ~transactionIndex=0, ~transaction=inlineTx)
-    let a = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=1)
-    let b = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=1)
-    let c = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=2)
+  Async.it(
+    "skips inline txs, materialises store-backed items, and dedupes by adjacency",
+    async t => {
+      // Empty store ⇒ every key is a miss ⇒ materialize returns one distinct empty
+      // object per group, which is enough to assert the grouping/scatter logic.
+      let store = TransactionStore.make()
+      let inlineTx = {"hash": "0xinline"}->(Utils.magic: {..} => Internal.eventTransaction)
+      let inline = makeInlineItem(~blockNumber=1, ~transactionIndex=0, ~transaction=inlineTx)
+      let a = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=1)
+      let b = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=1)
+      let c = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=2)
 
-    await store->TransactionStore.materializeItems(~items=[inline, a, b, c])
+      await store->TransactionStore.materializeItems(~items=[inline, a, b, c])
+
+      t.expect({
+        "inlineUntouched": rawTx(inline) === inlineTx->Nullable.make,
+        "storeBackedMaterialised": rawTx(a)->Nullable.toOption->Option.isSome,
+        "adjacentSameKeyShared": rawTx(a) === rawTx(b),
+        "differentKeySeparate": rawTx(a) !== rawTx(c),
+      }).toEqual({
+        "inlineUntouched": true,
+        "storeBackedMaterialised": true,
+        "adjacentSameKeyShared": true,
+        "differentKeySeparate": true,
+      })
+    },
+  )
+
+  Async.it("groups adjacent events on one transaction even when their masks differ", async t => {
+    // Two events on the same (block, tx) but with different per-event masks must
+    // still share one row (their masks OR'd together), while an event on another
+    // tx stays separate. Exercises the orMask union path through materializeItems
+    // (the empty store yields one distinct empty object per row).
+    let store = TransactionStore.make()
+    let a = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=1, ~mask=2.)
+    let b = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=1, ~mask=4.)
+    let c = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=2, ~mask=0.)
+
+    await store->TransactionStore.materializeItems(~items=[a, b, c])
 
     t.expect({
-      "inlineUntouched": rawTx(inline) === inlineTx->Nullable.make,
-      "storeBackedMaterialised": rawTx(a)->Nullable.toOption->Option.isSome,
-      "adjacentSameKeyShared": rawTx(a) === rawTx(b),
-      "differentKeySeparate": rawTx(a) !== rawTx(c),
+      "differentMasksSameTxShared": rawTx(a) === rawTx(b),
+      "zeroMaskStillStamped": rawTx(c)->Nullable.toOption->Option.isSome,
+      "differentTxSeparate": rawTx(a) !== rawTx(c),
     }).toEqual({
-      "inlineUntouched": true,
-      "storeBackedMaterialised": true,
-      "adjacentSameKeyShared": true,
-      "differentKeySeparate": true,
+      "differentMasksSameTxShared": true,
+      "zeroMaskStillStamped": true,
+      "differentTxSeparate": true,
     })
   })
 })
