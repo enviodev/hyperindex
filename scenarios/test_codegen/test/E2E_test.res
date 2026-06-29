@@ -1125,20 +1125,21 @@ describe("E2E tests", () => {
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
     await indexerMock.getBatchWritePromise()
 
-    // Chunking activates: chunkRange=min(300,501)=300. Cold start probes with
-    // two 0.9-size chunks (270) before full 1.8-size chunks (540).
+    // Chunking activates: chunkRange=min(300,500)=300, chunkSize=ceil(300*1.8)=540.
+    // Uniform chunks are tiled from the range start (no probes).
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=3),
-      ~message="Should start with two probe chunks then a full-size chunk",
+      ~message="Should tile uniform 540-size chunks from the range start",
     ).toEqual([
-      {"fromBlock": 801, "toBlock": Some(1070), "retry": 0, "p": "0"},
-      {"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"},
+      {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
       {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
+      {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
     ])
 
     // Phase A — chunks grow:
-    // Resolve the probes and the first full-size chunk in order. Full-range
-    // split chunks of size 540 update the block range (540 >= chunkRange 300).
+    // Resolve the first three chunks at their full 540 boundaries. Full-size
+    // responses update the heuristic (540 >= chunkRange 300), climbing chunkRange
+    // to 540 so the next tail chunks grow to ceil(540*1.8)=972.
     let calls = sourceMock.getItemsOrThrowCalls
     if calls->Array.length < 3 {
       JsError.throwWithMessage("Expected at least 3 chunks")
@@ -1146,25 +1147,12 @@ describe("E2E tests", () => {
     let chunk1 = calls->Array.getUnsafe(0)
     let chunk2 = calls->Array.getUnsafe(1)
     let chunk3 = calls->Array.getUnsafe(2)
-    // Resolve the two probes and the first full-size (540) chunk. The 540
-    // response sets prevQueryRange=540 (the 270 probes are below chunkRange so
-    // they don't update the heuristic).
-    chunk1.resolve([], ~latestFetchedBlockNumber=1070)
-    chunk2.resolve([], ~latestFetchedBlockNumber=1340)
-    chunk3.resolve([], ~latestFetchedBlockNumber=1880)
-    await indexerMock.getBatchWritePromise()
-    // Resolve the next full-size (540) chunk so prevPrevQueryRange also reaches
-    // 540 (ascending block order keeps the heuristic update). chunkRange becomes
-    // 540 and the next tail chunks grow to ceil(540*1.8)=972.
-    let next540 =
-      sourceMock.getItemsOrThrowCalls
-      ->Array.find(c => c.payload["fromBlock"] === 1881)
-      ->Option.getOrThrow
-    next540.resolve([], ~latestFetchedBlockNumber=2420)
+    chunk1.resolve([], ~latestFetchedBlockNumber=1340)
+    chunk2.resolve([], ~latestFetchedBlockNumber=1880)
+    chunk3.resolve([], ~latestFetchedBlockNumber=2420)
     await indexerMock.getBatchWritePromise()
     // Drain the in-flight 540-chunk backlog so the partition regenerates its
-    // tail at the grown chunkRange (540) instead of waiting out the per-partition
-    // cap. Full-size tail chunks then reach ceil(540*1.8)=972.
+    // tail at the grown chunkRange (540). New tail chunks reach ceil(540*1.8)=972.
     sourceMock.getItemsOrThrowCalls
     ->Array.copy
     ->Array.forEach(c =>
@@ -1172,8 +1160,7 @@ describe("E2E tests", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    // Assert: full-size responses grew the chunk size beyond the initial 540
-    // (chunkRange climbed from 300 toward 540, so chunks approach ceil(540*1.8)).
+    // Assert: full-size responses grew the chunk size beyond the initial 540.
     let maxChunkSize =
       sourceMock.getItemsOrThrowCalls->Array.reduce(0, (max, c) =>
         switch c.payload["toBlock"] {
@@ -1186,22 +1173,22 @@ describe("E2E tests", () => {
     )
 
     // Phase B — chunks shrink on partial response:
-    // Resolve the first pending chunk (at queue front) at partial range so the
-    // partition actually advances and a batch is written.
+    // Resolve the first pending chunk (at queue front) at a small partial range
+    // (100 blocks) so the partition advances and the heuristic shrinks.
     let firstPending = sourceMock.getItemsOrThrowCalls->Array.get(0)->Option.getOrThrow
     firstPending.resolve([], ~latestFetchedBlockNumber=firstPending.payload["fromBlock"] + 99)
     await indexerMock.getBatchWritePromise()
 
-    // After: prevQueryRange=100, prevPrevQueryRange=540
-    // chunkRange=min(100,540)=100. The gap-fill for the partial range has no
-    // earlier in-flight chunk, so it is a 0.9 probe of size ceil(100*0.9)=90.
+    // After the partial response prevQueryRange=100, so chunkRange drops to
+    // min(100, 540)=100 and the regenerated chunks shrink to ceil(100*1.8)=180,
+    // well below the grown 972-size tail.
     let shrunkChunks =
       sourceMock.getItemsOrThrowCalls->Array.filter(
-        c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(90),
+        c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(180),
       )
     t.expect(
       shrunkChunks->Array.length >= 1,
-      ~message="New chunks should have shrunk to the 0.9 probe size 90",
+      ~message="New chunks should have shrunk to the uniform size 180",
     ).toBeTruthy()
   })
 
@@ -1237,14 +1224,15 @@ describe("E2E tests", () => {
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
     await indexerMock.getBatchWritePromise()
 
-    // Cold start probes with two 0.9-size chunks (270) then a full-size chunk.
+    // Chunking activates: chunkRange=300, chunkSize=540. Uniform chunks tiled
+    // from the range start.
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=3),
-      ~message="Should start with two probe chunks then a full-size chunk",
+      ~message="Should tile uniform 540-size chunks from the range start",
     ).toEqual([
-      {"fromBlock": 801, "toBlock": Some(1070), "retry": 0, "p": "0"},
-      {"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"},
+      {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
       {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
+      {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
     ])
     let calls = sourceMock.getItemsOrThrowCalls
     if calls->Array.length < 3 {
@@ -1253,13 +1241,14 @@ describe("E2E tests", () => {
     let chunk1 = calls->Array.getUnsafe(0)
     let chunk3 = calls->Array.getUnsafe(2)
 
-    // Step 1: Resolve the later chunk3 FIRST (out of order) with item at block 1500
+    // Step 1: Resolve the later chunk3 (1881-2420) FIRST (out of order) with item
+    // at block 2000
     chunk3.resolve([
       {
-        blockNumber: 1500,
+        blockNumber: 2000,
         logIndex: 0,
         handler: async ({context}) => {
-          context.\"SimpleEntity".set({id: "item-1500", value: "from-chunk3"})
+          context.\"SimpleEntity".set({id: "item-2000", value: "from-chunk3"})
         },
       },
     ])
@@ -1267,19 +1256,19 @@ describe("E2E tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    // Item at 1500 should NOT be in DB yet — earlier chunks haven't completed,
-    // so bufferBlockNumber=800 and 1500 > 800 means it's not ready.
+    // Item at 2000 should NOT be in DB yet — earlier chunks haven't completed,
+    // so bufferBlockNumber=800 and 2000 > 800 means it's not ready.
     t.expect(
       await indexerMock.query(SimpleEntity),
-      ~message="Item at block 1500 should not be ready while earlier chunks are pending",
+      ~message="Item at block 2000 should not be ready while earlier chunks are pending",
     ).toEqual([])
 
-    // Step 2: Resolve chunk1 with item at block 850. Buffer advances to 1070,
-    // but chunk2 is still pending so the item at 1500 stays blocked.
+    // Step 2: Resolve chunk1 with item at block 850. Buffer advances to 1340,
+    // but chunk2 is still pending so the item at 2000 stays blocked.
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=1),
       ~message="After chunk3 resolved, chunk1 should remain pending",
-    ).toEqual([{"fromBlock": 801, "toBlock": Some(1070), "retry": 0, "p": "0"}])
+    ).toEqual([{"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"}])
     chunk1.resolve(
       [
         {
@@ -1290,28 +1279,28 @@ describe("E2E tests", () => {
           },
         },
       ],
-      ~latestFetchedBlockNumber=1070,
+      ~latestFetchedBlockNumber=1340,
     )
     await indexerMock.getBatchWritePromise()
 
     // Only item-850 should be in DB — chunk2 hasn't completed,
-    // so chunk3's item at 1500 is still beyond the buffer.
+    // so chunk3's item at 2000 is still beyond the buffer.
     t.expect(
       await indexerMock.query(SimpleEntity),
       ~message="Only item-850 should be in DB while chunk2 is pending",
     ).toEqual([{Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}])
 
-    // Step 3: chunk2 (1071-1340) bridging chunk1 and chunk3 should still be pending.
+    // Step 3: chunk2 (1341-1880) bridging chunk1 and chunk3 should still be pending.
     let bridgingQuery =
-      sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["fromBlock"] === 1071)
+      sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["fromBlock"] === 1341)
     t.expect(
       bridgingQuery->Option.map(c => c.payload),
       ~message="Should still have the bridging chunk2 query",
-    ).toEqual(Some({"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"}))
+    ).toEqual(Some({"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"}))
 
     // Step 4: Resolve chunk2 — now the range is contiguous through chunk3,
-    // bufferBlockNumber advances to 1880 and the item at 1500 becomes ready.
-    (bridgingQuery->Option.getOrThrow).resolve([], ~latestFetchedBlockNumber=1340)
+    // bufferBlockNumber advances to 2420 and the item at 2000 becomes ready.
+    (bridgingQuery->Option.getOrThrow).resolve([], ~latestFetchedBlockNumber=1880)
     await indexerMock.getBatchWritePromise()
 
     // Both items should now be in DB
@@ -1320,7 +1309,7 @@ describe("E2E tests", () => {
       ~message="Both items should be in DB after chunk1 fully completes",
     ).toEqual([
       {Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"},
-      {Indexer.Entities.SimpleEntity.id: "item-1500", value: "from-chunk3"},
+      {Indexer.Entities.SimpleEntity.id: "item-2000", value: "from-chunk3"},
     ])
   })
 
@@ -1403,8 +1392,8 @@ describe("E2E tests", () => {
     ).toEqual([("2", 5000), ("0", 25101), ("3", 25601)])
 
     // Step 4: Resolve DC2 at lfb=25900 (range=300) → chunking activates.
-    // Cold start probes with two 0.9-size chunks (270) then three full-size (540):
-    // (25901,26170),(26171,26440),(26441,26980),(26981,27520),(27521,28060)
+    // chunkRange=min(300,500)=300, chunkSize=ceil(300*1.8)=540. Uniform chunks
+    // tiled from 25901 up to the per-partition cap of 10 chunks (→ 31300).
     // Buffer block stays 4999 → no batch write
     let dc2Call2 =
       sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "3")->Option.getOrThrow
@@ -1417,59 +1406,68 @@ describe("E2E tests", () => {
       sourceMock.getItemsOrThrowCalls
       ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
       ->Array.toSorted(((_, a, _), (_, b, _)) => Int.compare(a, b)),
-      ~message="Step 4: DC2 has 5 chunks (two 270 probes then three 540 chunks)",
+      ~message="Step 4: DC2 has 10 uniform 540-size chunks",
     ).toEqual([
       ("2", 5000, Some(99800)),
       ("0", 25101, Some(99800)),
-      ("3", 25901, Some(26170)),
-      ("3", 26171, Some(26440)),
+      ("3", 25901, Some(26440)),
       ("3", 26441, Some(26980)),
       ("3", 26981, Some(27520)),
       ("3", 27521, Some(28060)),
+      ("3", 28061, Some(28600)),
+      ("3", 28601, Some(29140)),
+      ("3", 29141, Some(29680)),
+      ("3", 29681, Some(30220)),
+      ("3", 30221, Some(30760)),
+      ("3", 30761, Some(31300)),
     ])
 
-    // Step 5: Resolve DC1 at lfb=8100 → merge triggers
-    // DC1 mergeBlock=8100 (idle), DC2 mergeBlock=28060 (last chunk toBlock)
-    // 8100 + 20000 = 28100 > 28060 → within range → MERGE
-    // Both lfb < mergeBlock → (true,true): both get mergeBlock=28060, new partition "4"
+    // Step 5: Resolve DC1 at lfb=11400 → merge triggers
+    // DC1 mergeBlock=11400 (idle), DC2 mergeBlock=31300 (last chunk toBlock)
+    // 11400 + 20000 = 31400 > 31300 → within range → MERGE
+    // Both lfb < mergeBlock → (true,true): both get mergeBlock=31300, new partition "4"
     // Buffer empty → no batch write
     let dc1Call =
       sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "2")->Option.getOrThrow
-    dc1Call.resolve([], ~latestFetchedBlockNumber=8100)
+    dc1Call.resolve([], ~latestFetchedBlockNumber=11400)
     await Utils.delay(0)
     await Utils.delay(0)
     await Utils.delay(0)
 
     // After merge:
-    // DC1("2"): mergeBlock=28060, query 8101→28060
-    // DC2("3"): mergeBlock=28060, chunks still pending
+    // DC1("2"): mergeBlock=31300, single query 11401→31300 (no chunk history)
+    // DC2("3"): mergeBlock=31300, chunks still pending
     // P0("0"): still pending 25101→99800
-    // New("4"): lfb=28060, both addresses, inherits minRange=300 from DC2 history.
-    //   Cold start probes with two 0.9-size chunks (270) then three full-size (540),
-    //   repeated for a second round up to the per-partition cap.
+    // New("4"): lfb=31300, both addresses, inherits minRange=300 from DC2 history.
+    //   chunkSize=540, uniform chunks from 31301 up to the per-partition cap of 10.
     t.expect(
       sourceMock.getItemsOrThrowCalls
       ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
       ->Array.toSorted(((_, a, _), (_, b, _)) => Int.compare(a, b)),
       ~message="After merge: DC1 queries to mergeBlock, DC2 chunks pending, new partition '4'",
     ).toEqual([
-      ("2", 8101, Some(28060)),
+      ("2", 11401, Some(31300)),
       ("0", 25101, Some(99800)),
-      ("3", 25901, Some(26170)),
-      ("3", 26171, Some(26440)),
+      ("3", 25901, Some(26440)),
       ("3", 26441, Some(26980)),
       ("3", 26981, Some(27520)),
       ("3", 27521, Some(28060)),
-      ("4", 28061, Some(28330)),
-      ("4", 28331, Some(28600)),
-      ("4", 28601, Some(29140)),
-      ("4", 29141, Some(29680)),
-      ("4", 29681, Some(30220)),
-      ("4", 30221, Some(30490)),
-      ("4", 30491, Some(30760)),
-      ("4", 30761, Some(31300)),
+      ("3", 28061, Some(28600)),
+      ("3", 28601, Some(29140)),
+      ("3", 29141, Some(29680)),
+      ("3", 29681, Some(30220)),
+      ("3", 30221, Some(30760)),
+      ("3", 30761, Some(31300)),
       ("4", 31301, Some(31840)),
       ("4", 31841, Some(32380)),
+      ("4", 32381, Some(32920)),
+      ("4", 32921, Some(33460)),
+      ("4", 33461, Some(34000)),
+      ("4", 34001, Some(34540)),
+      ("4", 34541, Some(35080)),
+      ("4", 35081, Some(35620)),
+      ("4", 35621, Some(36160)),
+      ("4", 36161, Some(36700)),
     ])
 
     // Verify merged partition "4" has both DC addresses

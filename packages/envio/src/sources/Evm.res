@@ -1,5 +1,7 @@
 // EVM's concrete item payload. Erased to `Internal.eventPayload` on the item
-// and recovered here via `toPayload`.
+// and recovered here via `toPayload`. HyperSync omits `transaction` (it lives
+// raw in the per-chain store and is written onto the payload at batch prep);
+// RPC/simulate build it inline.
 type payload = {
   contractName: string,
   eventName: string,
@@ -7,11 +9,50 @@ type payload = {
   chainId: int,
   srcAddress: Address.t,
   logIndex: int,
-  transaction: Internal.eventTransaction,
+  transaction?: Internal.eventTransaction,
   block: Internal.eventBlock,
 }
 external fromPayload: payload => Internal.eventPayload = "%identity"
 external toPayload: Internal.eventPayload => payload = "%identity"
+
+// Ordered transaction field names. The index of each is the field code shared
+// with the Rust store (`EvmTxField`) — keep this order in sync.
+let transactionFields = [
+  "transactionIndex",
+  "hash",
+  "from",
+  "to",
+  "gas",
+  "gasPrice",
+  "maxPriorityFeePerGas",
+  "maxFeePerGas",
+  "cumulativeGasUsed",
+  "effectiveGasPrice",
+  "gasUsed",
+  "input",
+  "nonce",
+  "value",
+  "v",
+  "r",
+  "s",
+  "contractAddress",
+  "logsBloom",
+  "root",
+  "status",
+  "yParity",
+  "maxFeePerBlobGas",
+  "blobVersionedHashes",
+  "type",
+  "l1Fee",
+  "l1GasPrice",
+  "l1GasUsed",
+  "l1FeeScalar",
+  "gasUsedForL1",
+  "accessList",
+  "authorizationList",
+]
+
+let transactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
@@ -21,70 +62,6 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Evm,
-  blockFields: [
-    "number",
-    "timestamp",
-    "hash",
-    "parentHash",
-    "nonce",
-    "sha3Uncles",
-    "logsBloom",
-    "transactionsRoot",
-    "stateRoot",
-    "receiptsRoot",
-    "miner",
-    "difficulty",
-    "totalDifficulty",
-    "extraData",
-    "size",
-    "gasLimit",
-    "gasUsed",
-    "uncles",
-    "baseFeePerGas",
-    "blobGasUsed",
-    "excessBlobGas",
-    "parentBeaconBlockRoot",
-    "withdrawalsRoot",
-    "l1BlockNumber",
-    "sendCount",
-    "sendRoot",
-    "mixHash",
-  ],
-  transactionFields: [
-    "transactionIndex",
-    "hash",
-    "from",
-    "to",
-    "gas",
-    "gasPrice",
-    "maxPriorityFeePerGas",
-    "maxFeePerGas",
-    "cumulativeGasUsed",
-    "effectiveGasPrice",
-    "gasUsed",
-    "input",
-    "nonce",
-    "value",
-    "v",
-    "r",
-    "s",
-    "contractAddress",
-    "logsBloom",
-    "root",
-    "status",
-    "yParity",
-    "chainId",
-    "maxFeePerBlobGas",
-    "blobVersionedHashes",
-    "type",
-    "l1Fee",
-    "l1GasPrice",
-    "l1GasUsed",
-    "l1FeeScalar",
-    "gasUsedForL1",
-    "accessList",
-    "authorizationList",
-  ],
   blockNumberName: "number",
   blockTimestampName: "timestamp",
   blockHashName: "hash",
@@ -106,7 +83,10 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))))
   ),
   logger,
-  toEvent: eventItem => eventItem.payload->Internal.payloadToEvent,
+  transactionFieldMask,
+  // The payload carries `transaction` by batch prep (HyperSync) or inline
+  // (RPC/simulate), so the event is the payload as-is.
+  toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem =>
     Logging.createChildFrom(
       ~logger,
@@ -121,10 +101,16 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     ),
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
+    let eventConfig =
+      eventItem.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
     eventItem->RawEvent.make(
       ~block=payload.block,
       ~transaction=payload.transaction,
-      ~params=payload.params,
+      // The decoder emits `{}` for zero-parameter events, which the params
+      // schema rejects; pass unit so it serializes to the "null" sentinel.
+      ~params=eventConfig.paramsMetadata->Array.length == 0
+        ? ()->(Utils.magic: unit => Internal.eventParams)
+        : payload.params,
       ~srcAddress=payload.srcAddress,
       ~cleanUpRawEventFieldsInPlace,
     )

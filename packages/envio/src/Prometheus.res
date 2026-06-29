@@ -212,7 +212,7 @@ module PreloadHandler = {
 
   type operationRef = {
     mutable pendingCount: int,
-    timerRef: Hrtime.timeRef,
+    timerRef: Performance.timeRef,
   }
   let operations: dict<operationRef> = Dict.make()
 
@@ -227,11 +227,11 @@ module PreloadHandler = {
         key,
         {
           pendingCount: 1,
-          timerRef: Hrtime.makeTimer(),
+          timerRef: Performance.now(),
         },
       )
     }
-    Hrtime.makeTimer()
+    Performance.now()
   }
 
   let endOperation = (timerRef, ~contract, ~event) => {
@@ -242,13 +242,13 @@ module PreloadHandler = {
     if operationRef.pendingCount === 0 {
       timeCounter->SafeCounter.handleFloat(
         ~labels,
-        ~value=operationRef.timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+        ~value=operationRef.timerRef->Performance.secondsSince,
       )
       operations->Utils.Dict.deleteInPlace(key)
     }
     sumTimeCounter->SafeCounter.handleFloat(
       ~labels,
-      ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+      ~value=timerRef->Performance.secondsSince,
     )
     count->SafeCounter.increment(~labels)
   }
@@ -764,7 +764,7 @@ module StorageLoad = {
 
   type operationRef = {
     mutable pendingCount: int,
-    timerRef: Hrtime.timeRef,
+    timerRef: Performance.timeRef,
   }
   let operations = Dict.make()
 
@@ -780,12 +780,12 @@ module StorageLoad = {
         (
           {
             pendingCount: 1,
-            timerRef: Hrtime.makeTimer(),
+            timerRef: Performance.now(),
           }: operationRef
         ),
       )
     }
-    Hrtime.makeTimer()
+    Performance.now()
   }
 
   let endOperation = (timerRef, ~storage, ~operation, ~whereSize, ~size) => {
@@ -796,13 +796,13 @@ module StorageLoad = {
     if operationRef.pendingCount === 0 {
       timeCounter->SafeCounter.handleFloat(
         ~labels,
-        ~value=operationRef.timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+        ~value=operationRef.timerRef->Performance.secondsSince,
       )
       operations->Utils.Dict.deleteInPlace(key)
     }
     sumTimeCounter->SafeCounter.handleFloat(
       ~labels,
-      ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+      ~value=timerRef->Performance.secondsSince,
     )
     counter->SafeCounter.increment(~labels)
     whereSizeCounter->SafeCounter.handleInt(~labels, ~value=whereSize)

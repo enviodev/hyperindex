@@ -15,7 +15,7 @@ type sourceState = {
 // with a mutable state for easier reasoning and testing.
 type t = {
   sourcesState: array<sourceState>,
-  mutable statusStart: Hrtime.timeRef,
+  mutable statusStart: Performance.timeRef,
   mutable status: sourceManagerStatus,
   newBlockStallTimeout: int,
   newBlockStallTimeoutRealtime: int,
@@ -24,6 +24,10 @@ type t = {
   getHeightRetryInterval: (~retry: int) => int,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
+  // Dedupes the "waiting for new blocks" trace so it fires once per contiguous
+  // wait period instead of on every epoch that re-enters the wait before any
+  // new block is found. Reset when blocks are found.
+  mutable waitingLogged: bool,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
   recoveryTimeout: float,
@@ -186,6 +190,7 @@ let make = (
     }),
     activeSource: initialActiveSource,
     waitingForNewBlockStateId: None,
+    waitingLogged: false,
     fetchingPartitionsCount: 0,
     newBlockStallTimeout,
     newBlockStallTimeoutRealtime,
@@ -193,7 +198,7 @@ let make = (
     reducedPollingInterval,
     getHeightRetryInterval,
     recoveryTimeout,
-    statusStart: Hrtime.makeTimer(),
+    statusStart: Performance.now(),
     status: Idle,
     hasRealtime,
     committedRateLimitTimeMs: 0.0,
@@ -211,9 +216,9 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   }
   promCounter->Prometheus.SafeCounter.handleFloat(
     ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-    ~value=sourceManager.statusStart->Hrtime.timeSince->Hrtime.toSecondsFloat,
+    ~value=sourceManager.statusStart->Performance.secondsSince,
   )
-  sourceManager.statusStart = Hrtime.makeTimer()
+  sourceManager.statusStart = Performance.now()
   sourceManager.status = newStatus
 }
 
@@ -496,13 +501,14 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
       "knownHeight": knownHeight,
     },
   )
-  if reducedPolling {
+  if !sourceManager.waitingLogged {
     logger->Logging.childTrace(
-      `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval / 1000)
-          ->Int.toString}s). Chain is caught up, waiting for other chains to backfill.`,
+      reducedPolling
+        ? `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval / 1000)
+              ->Int.toString}s). Chain is caught up, waiting for other chains to backfill.`
+        : "Initiating check for new blocks.",
     )
-  } else {
-    logger->Logging.childTrace("Initiating check for new blocks.")
+    sourceManager.waitingLogged = true
   }
 
   let mainSources = sourceManager->getNextSources(~isRealtime)
@@ -600,6 +606,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
     "source": source.name,
     "newBlockHeight": newBlockHeight,
   })
+  sourceManager.waitingLogged = false
 
   status := Done
 
@@ -669,19 +676,13 @@ let executeQuery = async (
         ~fromBlock=query.fromBlock,
         ~toBlock,
         ~addressesByContractName=query.addressesByContractName,
-        ~indexingAddresses=query.indexingAddresses,
+        ~contractNameByAddress=query.addressesByContractName->FetchState.deriveContractNameByAddress,
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection,
         ~retry,
         ~logger,
       )
-      logger->Logging.childTrace({
-        "msg": "Fetched block range from server",
-        "toBlock": response.latestFetchedBlockNumber,
-        "numEvents": response.parsedQueueItems->Array.length,
-        "stats": response.stats,
-      })
       sourceState.lastFailedAt = None
       responseRef := Some(response)
     } catch {

@@ -17,7 +17,6 @@ let defaultQuery: FetchState.query = {
   progress: 0.,
   selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
   addressesByContractName: Dict.make(),
-  indexingAddresses: Dict.make(),
 }
 
 // Keep for backward compatibility of tests
@@ -84,6 +83,7 @@ let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.item => Intern
   blockHash: `0x${blockNumber->Int.toString}`,
   eventConfig: Utils.magic("Mock eventConfig in fetchstate test"),
   logIndex,
+  transactionIndex: 0,
   payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),
 })
 
@@ -774,6 +774,31 @@ describe("FetchState.make", () => {
       (partitions.entities->Dict.getUnsafe("0")).mergeBlock,
       ~message="filterByAddresses: merged partition has no mergeBlock",
     ).toEqual(None)
+  })
+})
+
+describe("FetchState.deriveContractNameByAddress", () => {
+  // The reverse index is derived lazily at routing time, not stored on the
+  // partition. Memoization on the addressesByContractName object is what keeps a
+  // factory with millions of addresses from rebuilding it on every one of a
+  // partition's responses, so guard the cache: the same addresses object reuses
+  // the same index, a different object derives its own, and both are correct.
+  it("Memoizes the reverse index by addressesByContractName identity", t => {
+    let addressesByContractName = Dict.fromArray([("Gravatar", [mockAddress0, mockAddress1])])
+    let first = addressesByContractName->FetchState.deriveContractNameByAddress
+    let again = addressesByContractName->FetchState.deriveContractNameByAddress
+    let other =
+      Dict.fromArray([("Gravatar", [mockAddress2])])->FetchState.deriveContractNameByAddress
+
+    t.expect(
+      (
+        first === again,
+        first === other,
+        first->Dict.get(mockAddress0->Address.toString),
+        other->Dict.get(mockAddress2->Address.toString),
+      ),
+      ~message="same addresses object reuses the cached index; a new object derives its own",
+    ).toEqual((true, false, Some("Gravatar"), Some("Gravatar")))
   })
 })
 
@@ -1796,7 +1821,6 @@ describe("FetchState.getNextQuery & integration", () => {
           toBlock: None,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
-          indexingAddresses: fetchState.indexingAddresses,
           isChunk: false,
         },
       ]),
@@ -1898,7 +1922,6 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
-          indexingAddresses: fetchState.indexingAddresses,
           isChunk: false,
         },
       ]),
@@ -1918,7 +1941,6 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
-          indexingAddresses: fetchState.indexingAddresses,
           isChunk: false,
         },
       ]),
@@ -2017,7 +2039,6 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])]),
           fromBlock: 1,
-          indexingAddresses: fetchStateWithDcs.indexingAddresses,
         },
         {
           ...defaultQuery,
@@ -2028,7 +2049,6 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
-          indexingAddresses: fetchStateWithDcs.indexingAddresses,
         },
         // Partition 0 is not included since it's below knownHeight
       ]),
@@ -2077,7 +2097,6 @@ describe("FetchState.getNextQuery & integration", () => {
       toBlock: None,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
-      indexingAddresses: fetchStateWithDcs.indexingAddresses,
       isChunk: false,
     }
     let expectedPartition0Query: FetchState.query = {
@@ -2090,7 +2109,6 @@ describe("FetchState.getNextQuery & integration", () => {
         ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
       ]),
       fromBlock: 11,
-      indexingAddresses: fetchStateWithDcs.indexingAddresses,
       isChunk: false,
     }
 
@@ -2135,7 +2153,6 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
           fromBlock: 3,
-          indexingAddresses: originalFetchState.indexingAddresses,
           isChunk: false,
         },
         {
@@ -2148,7 +2165,6 @@ describe("FetchState.getNextQuery & integration", () => {
             ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
           ]),
           fromBlock: 11,
-          indexingAddresses: originalFetchState.indexingAddresses,
           isChunk: false,
         },
       ]),
@@ -2170,7 +2186,6 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
           fromBlock: 3,
-          indexingAddresses: fetchState.indexingAddresses,
           isChunk: false,
         },
         {
@@ -2183,7 +2198,6 @@ describe("FetchState.getNextQuery & integration", () => {
             ("Gravatar", [mockAddress0, mockAddress1, mockAddress2, mockAddress3]),
           ]),
           fromBlock: 11,
-          indexingAddresses: originalFetchState.indexingAddresses,
           isChunk: false,
         },
       ]),
@@ -2338,7 +2352,6 @@ describe("FetchState.getNextQuery & integration", () => {
             eventConfigs: [wildcard],
           },
           addressesByContractName: Dict.make(),
-          indexingAddresses: fetchState.indexingAddresses,
         },
         {
           ...defaultQuery,
@@ -2349,7 +2362,6 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("ContractA", [mockAddress1])]),
-          indexingAddresses: fetchState.indexingAddresses,
         },
         {
           ...defaultQuery,
@@ -2360,7 +2372,6 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress2])]),
-          indexingAddresses: fetchState.indexingAddresses,
         },
       ]),
     )
@@ -2535,7 +2546,6 @@ describe("FetchState.getNextQuery & integration", () => {
           },
           addressesByContractName: Dict.make(),
           fromBlock: 0,
-          indexingAddresses: fetchState.indexingAddresses,
           isChunk: false,
         },
       ],
@@ -2650,7 +2660,6 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
-      indexingAddresses: fetchState.indexingAddresses,
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -2694,7 +2703,6 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
-      indexingAddresses: fetchState.indexingAddresses,
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -2751,7 +2759,6 @@ describe("FetchState unit tests for specific cases", () => {
         eventConfigs: [wildcard],
       },
       addressesByContractName: Dict.make(),
-      indexingAddresses: fetchState.indexingAddresses,
     }
     let query1: FetchState.query = {
       ...defaultQuery,
@@ -2762,7 +2769,6 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
-      indexingAddresses: fetchState.indexingAddresses,
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query0, query1])
@@ -2800,7 +2806,6 @@ describe("FetchState unit tests for specific cases", () => {
             eventConfigs: [wildcard],
           },
           addressesByContractName: Dict.make(),
-          indexingAddresses: fetchState.indexingAddresses,
         },
       ]),
     )
@@ -2837,7 +2842,6 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
-      indexingAddresses: fetchState.indexingAddresses,
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -2905,7 +2909,6 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
-      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
@@ -3022,7 +3025,6 @@ describe("FetchState unit tests for specific cases", () => {
       isChunk: false,
       selection: makeInitial().normalSelection,
       addressesByContractName: Dict.make(),
-      indexingAddresses: fetchState.indexingAddresses,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     t.expect(
@@ -3048,7 +3050,6 @@ describe("FetchState unit tests for specific cases", () => {
         isChunk: false,
         selection: fetchState.normalSelection,
         addressesByContractName: Dict.make(),
-        indexingAddresses: fetchState.indexingAddresses,
       }
       fetchState->FetchState.startFetchingQueries(~queries=[query])
       fetchState->FetchState.handleQueryResult(
@@ -3102,7 +3103,6 @@ describe("FetchState unit tests for specific cases", () => {
         estResponseSize: 10000.,
         selection: fetchState.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1])]),
-        indexingAddresses: fetchState.indexingAddresses,
         fromBlock: 0,
         toBlock: None,
         isChunk: false,
@@ -3166,7 +3166,6 @@ describe("FetchState unit tests for specific cases", () => {
       let partition2Query = {
         ...queries->Array.getUnsafe(0),
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
-        indexingAddresses: fetchStateWithDcB.indexingAddresses,
         partitionId: "2",
         toBlock: None, // Didn't merge because reached max addresses in partition
         fromBlock: 200,
@@ -3200,7 +3199,6 @@ describe("FetchState unit tests for specific cases", () => {
             // Partition responded with no items, so its density is 0 and the
             // estimate is 0 (empty queries don't fill the buffer).
             ...queryA,
-            indexingAddresses: fetchStateWithBothDcsAndQueryAResponse.indexingAddresses,
             partitionId: "1",
             estResponseSize: 0.,
             toBlock: Some(500),
@@ -3224,7 +3222,6 @@ describe("FetchState.sortForBatch", () => {
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.make(),
       fromBlock: 0,
-      indexingAddresses: fetchState.indexingAddresses,
     }
   }
 
@@ -3544,7 +3541,6 @@ describe("FetchState progress tracking", () => {
       selection: fs0.normalSelection,
       addressesByContractName: Dict.make(),
       fromBlock: 0,
-      indexingAddresses: fs0.indexingAddresses,
     }
     fs0->FetchState.startFetchingQueries(~queries=[query])
     fs0->FetchState.handleQueryResult(
@@ -3619,7 +3615,6 @@ describe("FetchState buffer overflow prevention", () => {
         selection: fetchStateWithTwoPartitions.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
         fromBlock: 0,
-        indexingAddresses: fetchStateWithTwoPartitions.indexingAddresses,
       }
 
       fetchStateWithTwoPartitions->FetchState.startFetchingQueries(~queries=[query0])
@@ -3667,7 +3662,6 @@ describe("FetchState buffer overflow prevention", () => {
         selection: fetchState.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
         fromBlock: 0,
-        indexingAddresses: fetchState.indexingAddresses,
       }
       fetchState->FetchState.startFetchingQueries(~queries=[query3])
       let fetchStateSmallQueue =
@@ -3855,8 +3849,7 @@ describe("Stale query response should not overwrite block range", () => {
     t.expect(p2.latestBlockRangeUpdateBlock).toBe(1000)
 
     // Now chunking is active: getMinHistoryRange = Some(min(500, 501)) = Some(500)
-    // Cold start (no earlier pending), so the first two chunks use the 0.9 probe
-    // size = ceil(500 * 0.9) = 450. Chunks: [1001..1450], [1451..1900], [1901..2800]
+    // chunkSize = ceil(500 * 1.8) = 900. Chunks: [1001..1900], [1901..2800], ...
 
     // -- Query 3: get the first two chunk queries from the parallel set --
     let (chunkA, chunkB) = switch fs2->getNextQuery {
@@ -3865,59 +3858,43 @@ describe("Stale query response should not overwrite block range", () => {
     }
 
     t.expect(chunkA.fromBlock, ~message="Chunk A should start at 1001").toBe(1001)
-    t.expect(chunkB.fromBlock, ~message="Chunk B should start at 1451").toBe(1451)
+    t.expect(chunkB.fromBlock, ~message="Chunk B should start at 1901").toBe(1901)
 
     fs2->FetchState.startFetchingQueries(~queries=[chunkA, chunkB])
 
     // -- Respond to the LATER chunk (B) first --
-    // Partial response: latestFetchedBlock=1700 < toBlock=1900
-    // shouldUpdateBlockRange: 1700 > 1000 (latestBlockRangeUpdateBlock) = true,
-    //   then 1700 < 1900 = true (partial response)
-    // blockRange = 1700 - 1451 + 1 = 250
+    // Partial response: latestFetchedBlock=2500 < toBlock=2800
+    // shouldUpdateBlockRange: 2500 > 1000 (latestBlockRangeUpdateBlock) = true,
+    //   then 2500 < 2800 = true (partial response)
+    // blockRange = 2500 - 1901 + 1 = 600
     let fs3 =
       fs2->FetchState.handleQueryResult(
         ~query=chunkB,
-        ~latestFetchedBlock={blockNumber: 1700, blockTimestamp: 1700 * 15},
+        ~latestFetchedBlock={blockNumber: 2500, blockTimestamp: 2500 * 15},
         ~newItems=[],
       )
 
     let p3 = fs3.optimizedPartitions.entities->Dict.getUnsafe("0")
     t.expect(
-      p3.prevQueryRange,
-      ~message="Chunk B response should update prevQueryRange to 250",
-    ).toBe(250)
-    t.expect(
-      p3.prevPrevQueryRange,
-      ~message="Chunk B response should shift prevPrevQueryRange to 500",
-    ).toBe(500)
-    t.expect(
-      p3.latestBlockRangeUpdateBlock,
-      ~message="latestBlockRangeUpdateBlock should update to 1700",
-    ).toBe(1700)
+      (p3.prevQueryRange, p3.prevPrevQueryRange, p3.latestBlockRangeUpdateBlock),
+      ~message="Chunk B response should set prevQueryRange=600, shift prevPrevQueryRange=500, update latestBlockRangeUpdateBlock=2500",
+    ).toEqual((600, 500, 2500))
 
     // -- Now respond to the EARLIER chunk (A) --
-    // Partial response: latestFetchedBlock=1400 < toBlock=1450
-    // shouldUpdateBlockRange: 1400 > 1700 (latestBlockRangeUpdateBlock) = FALSE
+    // Partial response: latestFetchedBlock=1500 < toBlock=1900
+    // shouldUpdateBlockRange: 1500 > 2500 (latestBlockRangeUpdateBlock) = FALSE
     // So prevQueryRange should NOT change
     let fs4 =
       fs3->FetchState.handleQueryResult(
         ~query=chunkA,
-        ~latestFetchedBlock={blockNumber: 1400, blockTimestamp: 1400 * 15},
+        ~latestFetchedBlock={blockNumber: 1500, blockTimestamp: 1500 * 15},
         ~newItems=[],
       )
 
     let p4 = fs4.optimizedPartitions.entities->Dict.getUnsafe("0")
     t.expect(
-      p4.prevQueryRange,
-      ~message="Earlier chunk A response should NOT overwrite prevQueryRange (still 250)",
-    ).toBe(250)
-    t.expect(
-      p4.prevPrevQueryRange,
-      ~message="Earlier chunk A response should NOT overwrite prevPrevQueryRange (still 500)",
-    ).toBe(500)
-    t.expect(
-      p4.latestBlockRangeUpdateBlock,
-      ~message="latestBlockRangeUpdateBlock should remain 1700 after stale response",
-    ).toBe(1700)
+      (p4.prevQueryRange, p4.prevPrevQueryRange, p4.latestBlockRangeUpdateBlock),
+      ~message="Earlier chunk A stale response should not overwrite range bookkeeping (still 600, 500, 2500)",
+    ).toEqual((600, 500, 2500))
   })
 })

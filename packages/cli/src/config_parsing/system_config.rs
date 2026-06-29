@@ -13,6 +13,7 @@ use super::{
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
+use crate::utils::dotenv::{self, EnvMap};
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
@@ -24,7 +25,6 @@ use crate::{
 };
 use alloy_json_abi::{Event as AlloyEvent, JsonAbi};
 use anyhow::{anyhow, Context, Result};
-use dotenvy::{EnvLoader, EnvMap, EnvSequence};
 use itertools::Itertools;
 
 use super::abi_compat::EventParam;
@@ -79,28 +79,23 @@ impl EnvState {
             Err(_) => {
                 let result = match &self.maybe_dotenv {
                     Some(env_map) => env_map.var(name),
-                    None => {
-                        match EnvLoader::with_path(self.project_root.join(".env"))
-                            .sequence(EnvSequence::InputOnly)
-                            .load()
-                        {
-                            Ok(env_map) => {
-                                self.maybe_dotenv = Some(env_map.clone());
-                                env_map.var(name)
-                            }
-                            Err(err) => {
-                                match err {
-                                    dotenvy::Error::Io(_, _) => (),
-                                    _ => println!(
-                                        "Warning: Failed loading .env file with unexpected error: \
-                                         {err}"
-                                    ),
-                                };
-                                self.maybe_dotenv = Some(EnvMap::new());
-                                Err(err)
-                            }
+                    None => match dotenv::from_path(self.project_root.join(".env")) {
+                        Ok(env_map) => {
+                            self.maybe_dotenv = Some(env_map.clone());
+                            env_map.var(name)
                         }
-                    }
+                        Err(err) => {
+                            match err {
+                                dotenv::Error::Io(_, _) => (),
+                                _ => println!(
+                                    "Warning: Failed loading .env file with unexpected error: \
+                                         {err}"
+                                ),
+                            };
+                            self.maybe_dotenv = Some(EnvMap::new());
+                            Err(err)
+                        }
+                    },
                 };
                 result.ok()
             }
@@ -1259,21 +1254,13 @@ impl SystemConfig {
                                         format!("Layout for instruction '{}'", instr.name)
                                     })?;
                                 let fs = instr.field_selection.as_ref();
-                                let include_token_balances = fs
-                                    .and_then(|f| f.token_balance_fields.as_ref())
-                                    .is_some_and(|v| v.is_enabled());
-                                let include_transaction = fs
-                                    .and_then(|f| f.transaction_fields.as_ref())
-                                    .is_some_and(|v| v.is_enabled())
-                                    || include_token_balances;
-                                let include_logs = fs
-                                    .and_then(|f| f.log_fields.as_ref())
-                                    .is_some_and(|v| v.is_enabled());
+                                let selected_transaction_fields =
+                                    resolve_svm_transaction_fields(fs);
+                                let include_logs = fs.and_then(|f| f.log_fields).unwrap_or(false);
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
-                                    include_token_balances,
-                                    include_transaction,
+                                    selected_transaction_fields,
                                     include_logs,
                                     account_filters: instr
                                         .account_filters
@@ -2063,6 +2050,28 @@ pub struct SvmAccountFilter {
     pub values: Vec<String>,
 }
 
+/// Resolve an instruction's field selection into the selected transaction-field
+/// names (camelCase). The listed `transaction_fields` are deduplicated in
+/// declared order, then `token_balance_fields` appends `tokenBalances`.
+fn resolve_svm_transaction_fields(
+    fs: Option<&human_config::svm::SvmFieldSelection>,
+) -> Vec<String> {
+    let mut selected: Vec<String> = Vec::new();
+    let Some(fs) = fs else {
+        return selected;
+    };
+    for field in fs.transaction_fields.iter().flatten() {
+        let name = field.to_string();
+        if !selected.contains(&name) {
+            selected.push(name);
+        }
+    }
+    if fs.token_balance_fields == Some(true) {
+        selected.push("tokenBalances".to_string());
+    }
+    selected
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
@@ -2072,9 +2081,10 @@ pub struct SvmEventKind {
     /// router precomputes a per-program ordering on this so dispatch tries
     /// longest first.
     pub discriminator_byte_len: u8,
-    pub include_transaction: bool,
+    /// Selected parent-transaction fields (camelCase names matching the public
+    /// `svmTransaction` shape, incl. `tokenBalances`). Empty = no transaction.
+    pub selected_transaction_fields: Vec<String>,
     pub include_logs: bool,
-    pub include_token_balances: bool,
     /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
     /// AND across positions. An empty outer list means "no account filter".
     pub account_filters: Vec<Vec<SvmAccountFilter>>,
@@ -4025,6 +4035,12 @@ type Foo {
             assert!(matches!(token_metadata.abi, Abi::Svm(_)));
             assert_eq!(token_metadata.events.len(), 2);
 
+            let to_strings = |fields: &[&str]| {
+                fields
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<String>>()
+            };
             let kinds: Vec<_> = token_metadata
                 .events
                 .iter()
@@ -4033,9 +4049,8 @@ type Foo {
                         e.name.as_str(),
                         k.discriminator.as_deref(),
                         k.discriminator_byte_len,
-                        k.include_transaction,
+                        k.selected_transaction_fields.clone(),
                         k.include_logs,
-                        k.include_token_balances,
                         k.account_filters.len(),
                     ),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
@@ -4048,8 +4063,7 @@ type Foo {
                         "CreateMetadataAccountV3",
                         Some("0x21"),
                         1,
-                        false,
-                        false,
+                        to_strings(&[]),
                         false,
                         0
                     ),
@@ -4057,8 +4071,7 @@ type Foo {
                         "UpdateMetadataAccountV2",
                         Some("0x0f"),
                         1,
-                        true,
-                        false,
+                        to_strings(&["signatures"]),
                         false,
                         1
                     ),

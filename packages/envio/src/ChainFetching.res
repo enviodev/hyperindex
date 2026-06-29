@@ -11,7 +11,14 @@ type partitionQueryResponse = {
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
+  ~chainState: ChainState.t,
+  ~page: option<TransactionStore.t>,
 ) => {
+  // contractRegister handlers can read event.transaction, so materialise the
+  // selected fields onto the payloads before running them. All items belong to
+  // the chain being fetched, hence its single page store and mask.
+  await chainState->ChainState.materializePageItems(~items=itemsWithContractRegister, ~page)
+
   let itemsWithDcs = []
 
   let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
@@ -106,6 +113,7 @@ let rec onQueryResponse = async (
     let chainState = state->IndexerState.getChainState(~chain)
     let {
       parsedQueueItems,
+      transactionStore,
       latestFetchedBlockNumber,
       latestFetchedBlockTimestamp,
       stats,
@@ -212,6 +220,7 @@ let rec onQueryResponse = async (
               blockTimestamp: latestFetchedBlockTimestamp,
             },
             ~query,
+            ~transactionStore,
           )
           ChainMetadata.stage(state)
           scheduleFetch()
@@ -224,6 +233,8 @@ let rec onQueryResponse = async (
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
+          ~chainState,
+          ~page=transactionStore,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
         | newItemsWithDcs => proceed(~newItemsWithDcs)
@@ -240,6 +251,7 @@ and applyQueryResponse = (
   ~knownHeight,
   ~latestFetchedBlock,
   ~query,
+  ~transactionStore,
 ) => {
   let chainState = state->IndexerState.getChainState(~chain)
   let wasFetchingAtHead = chainState->ChainState.isFetchingAtHead
@@ -250,6 +262,7 @@ and applyQueryResponse = (
     ~newItems,
     ~newItemsWithDcs,
     ~knownHeight,
+    ~transactionStore,
   )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
@@ -323,6 +336,15 @@ let fetchChain = async (
     // there's nothing to fetch. During backfill any such chain is idle.
     let reducedPolling = !isRealtime
 
+    // Accumulated across all queries dispatched in this tick so their per-query
+    // results collapse into a single completion log instead of one per query.
+    let dispatchedCount = switch action {
+    | FetchState.Ready(queries) => queries->Array.length
+    | WaitingForNewBlock | NothingToQuery => 0
+    }
+    let fetchedByPartition = Dict.make()
+    let fetchedCount = ref(0)
+
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
     try {
@@ -348,6 +370,22 @@ let fetchChain = async (
               ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
             )
+            fetchedCount := fetchedCount.contents + 1
+            fetchedByPartition->Dict.set(
+              query.partitionId,
+              {
+                "fromBlock": response.fromBlockQueried,
+                "toBlock": response.latestFetchedBlockNumber,
+                "numEvents": response.parsedQueueItems->Array.length,
+              },
+            )
+            if dispatchedCount > 0 && fetchedCount.contents === dispatchedCount {
+              Logging.trace({
+                "msg": "Finished querying",
+                "chainId": chain->ChainMap.Chain.toChainId,
+                "partitions": fetchedByPartition,
+              })
+            }
             await onQueryResponse(
               state,
               {chain, response, query},

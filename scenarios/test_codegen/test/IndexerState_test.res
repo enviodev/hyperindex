@@ -13,7 +13,6 @@ let defaultQuery: FetchState.query = {
   progress: 0.,
   selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
   addressesByContractName: Dict.make(),
-  indexingAddresses: Dict.make(),
 }
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
@@ -77,6 +76,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           blockNumber: currentBlockNumber.contents,
           blockHash: `0x${currentBlockNumber.contents->Int.toString}`,
           logIndex,
+          transactionIndex: 0,
           eventConfig: "Mock eventConfig in IndexerState test"->(
             Utils.magic: string => Internal.eventConfig
           ),
@@ -98,7 +98,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             eventConfigs,
           },
           addressesByContractName: Dict.make(),
-          indexingAddresses: fetchState.contents.indexingAddresses,
         }
 
         fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
@@ -186,6 +185,7 @@ describe("IndexerState", () => {
           blockNumber: 0,
           blockHash: "0x0",
           logIndex: 0,
+          transactionIndex: 0,
           eventConfig: "Mock eventConfig in IndexerState test"->(
             Utils.magic: string => Internal.eventConfig
           ),
@@ -278,7 +278,6 @@ describe("IndexerState", () => {
                 isChunk: false,
                 selection: {dependsOnAddresses: false, eventConfigs},
                 addressesByContractName: Dict.make(),
-                indexingAddresses: fetchState.contents.indexingAddresses,
               }
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
               fetchState :=
@@ -292,6 +291,7 @@ describe("IndexerState", () => {
                       blockNumber,
                       blockHash: `0x${blockNumber->Int.toString}`,
                       logIndex: 0,
+                      transactionIndex: 0,
                       eventConfig: "Mock eventConfig"->(
                         Utils.magic: string => Internal.eventConfig
                       ),
@@ -360,7 +360,6 @@ describe("IndexerState", () => {
           isChunk: false,
           selection: {dependsOnAddresses: false, eventConfigs},
           addressesByContractName: Dict.make(),
-          indexingAddresses: cs->ChainState.indexingAddresses,
         }
         cs->ChainState.startFetchingQueries(~queries=[concurrentQuery])
         cs->ChainState.handleQueryResult(
@@ -374,11 +373,13 @@ describe("IndexerState", () => {
               blockNumber: 15,
               blockHash: "0x15",
               logIndex: 0,
+              transactionIndex: 0,
               eventConfig: "Mock eventConfig"->(Utils.magic: string => Internal.eventConfig),
               payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
             }),
           ],
           ~knownHeight=cs->ChainState.knownHeight,
+          ~transactionStore=None,
         )
 
         state->IndexerState.applyBatchProgress(~batch)

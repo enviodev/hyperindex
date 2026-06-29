@@ -89,7 +89,9 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~selectedTransactionFields=Utils.Set.fromArray([TransactionIndex]),
+        ~selectedTransactionFields=Utils.Set.fromArray([
+          (TransactionIndex: Internal.evmTransactionField),
+        ]),
       ),
     ).toEqual({
       "transactionIndex": 1,
@@ -119,7 +121,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~selectedTransactionFields=Utils.Set.fromArray([Hash, TransactionIndex]),
+        ~selectedTransactionFields=Utils.Set.fromArray([
+          Hash,
+          (TransactionIndex: Internal.evmTransactionField),
+        ]),
       ),
     ).toEqual({
       "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
@@ -134,7 +139,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~selectedTransactionFields=Utils.Set.fromArray([TransactionIndex, Hash]),
+        ~selectedTransactionFields=Utils.Set.fromArray([
+          (TransactionIndex: Internal.evmTransactionField),
+          Hash,
+        ]),
       ),
     ).toEqual({
       "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
@@ -165,7 +173,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
         ~selectedTransactionFields=Utils.Set.fromArray([
           Hash,
-          TransactionIndex,
+          (TransactionIndex: Internal.evmTransactionField),
           From,
           To,
           Gas,
@@ -1116,19 +1124,9 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
               ~fromBlock=0,
               ~toBlock=Some(100),
               ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
-              ~indexingAddresses=Dict.fromArray([
-                (
-                  mockAddress->Address.toString,
-                  (
-                    {
-                      contractName: eventConfig.contractName,
-                      address: mockAddress,
-                      registrationBlock: -1,
-                      effectiveStartBlock: 0,
-                    }: FetchState.indexingAddress
-                  ),
-                ),
-              ]),
+              ~contractNameByAddress=FetchState.deriveContractNameByAddress(
+                Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+              ),
               ~knownHeight=100,
               ~partitionId="0",
               ~selection={

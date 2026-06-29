@@ -4,10 +4,26 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.time
   }`)
 
+// Ordered transaction field names. The index of each is the field code shared
+// with the Rust store (`SvmTxField`) — keep this order in sync.
+let transactionFields = [
+  "transactionIndex",
+  "signatures",
+  "feePayer",
+  "success",
+  "err",
+  "fee",
+  "computeUnitsConsumed",
+  "accountKeys",
+  "recentBlockhash",
+  "version",
+  "tokenBalances",
+]
+
+let transactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
+
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
-  blockFields: ["slot"],
-  transactionFields: [],
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "hash",
@@ -20,7 +36,8 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // parse. The schema is a no-op object that always surfaces `None`.
   onEventBlockFilterSchema: S.object(_ => None),
   logger,
-  toEvent: eventItem => eventItem.payload->Internal.payloadToEvent,
+  transactionFieldMask,
+  toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem => {
     let instruction =
       eventItem.payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
@@ -71,9 +88,9 @@ let makeRPCSource = (~chain, ~rpc: string, ~sourceFor: Source.sourceFor=Sync): S
     getBlockHashes: (~blockNumbers as _, ~logger as _) =>
       JsError.throwWithMessage("Svm does not support getting block hashes"),
     getHeightOrThrow: async () => {
-      let timerRef = Hrtime.makeTimer()
+      let timerRef = Performance.now()
       let height = await GetFinalizedSlot.route->Rest.fetch((), ~client)
-      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+      let seconds = timerRef->Performance.secondsSince
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getSlot")
       Prometheus.SourceRequestCount.addSeconds(
         ~sourceName=name,
@@ -87,7 +104,7 @@ let makeRPCSource = (~chain, ~rpc: string, ~sourceFor: Source.sourceFor=Sync): S
       ~fromBlock as _,
       ~toBlock as _,
       ~addressesByContractName as _,
-      ~indexingAddresses as _,
+      ~contractNameByAddress as _,
       ~knownHeight as _,
       ~partitionId as _,
       ~selection as _,

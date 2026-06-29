@@ -13,7 +13,6 @@ let defaultQuery: FetchState.query = {
   progress: 0.,
   selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
   addressesByContractName: Dict.make(),
-  indexingAddresses: Dict.make(),
 }
 
 type executeQueryMock = {
@@ -190,7 +189,6 @@ describe("SourceManager source priority with Live sources", () => {
     isChunk: false,
     selection,
     addressesByContractName,
-    indexingAddresses: Dict.make(),
   }
 
   Async.it(
@@ -578,7 +576,6 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition2.addressesByContractName,
-          indexingAddresses: fetchState.indexingAddresses,
         },
         {
           ...defaultQuery,
@@ -589,7 +586,6 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition0.addressesByContractName,
-          indexingAddresses: fetchState.indexingAddresses,
         },
         {
           ...defaultQuery,
@@ -600,7 +596,6 @@ describe("SourceManager fetchNext", () => {
           isChunk: false,
           selection: normalSelection,
           addressesByContractName: partition1.addressesByContractName,
-          indexingAddresses: fetchState.indexingAddresses,
         },
       ])
 
@@ -1478,7 +1473,6 @@ describe("SourceManager.executeQuery", () => {
     isChunk: false,
     selection,
     addressesByContractName,
-    indexingAddresses: Dict.make(),
   }
 
   Async.it("Successfully executes the query", async t => {

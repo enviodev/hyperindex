@@ -16,9 +16,13 @@ let reraisIfRateLimited = exn =>
 
 type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
+  // Blocks referenced by `items`, deduplicated by block number.
+  blocks: array<HyperSyncClient.ResponseTypes.block>,
   nextBlock: int,
   archiveHeight: int,
   rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
+  // Page store owning this page's raw transactions.
+  transactionStore: TransactionStore.t,
 }
 
 type missingParams = {
@@ -121,7 +125,7 @@ module GetLogs = {
       ~fieldSelection,
     )
 
-    let res = switch await client.getEventItems(~query) {
+    let (res, transactionStore) = switch await client.getEventItems(~query) {
     | res => res
     | exception exn =>
       reraisIfRateLimited(exn)
@@ -137,9 +141,11 @@ module GetLogs = {
 
     {
       items: res.items,
+      blocks: res.blocks,
       nextBlock: res.nextBlock,
       archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
       rollbackGuard: res.rollbackGuard,
+      transactionStore,
     }
   }
 }

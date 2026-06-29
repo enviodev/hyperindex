@@ -13,9 +13,20 @@ let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 
 let blockTime = 1778064393
 let slot = 417950033
-let txSignature = "5tuam3k7KxWf4Zxk42oDyZwztZGcHJ4eqkKS3DtCLSiqjGn4EdDGqnaQc5ymU6fFH99UMSvuSjhL4usZgJjquaQD"
 
-let makeEventConfig = (): Internal.svmInstructionEventConfig => {
+let makeEventConfig = (
+  ~selectedTransactionFields=[
+    Internal.Signatures,
+    FeePayer,
+    Success,
+    Err,
+    Fee,
+    ComputeUnitsConsumed,
+    AccountKeys,
+    RecentBlockhash,
+    Version,
+  ],
+): Internal.svmInstructionEventConfig => {
   id: "0x21",
   name: "CreateMetadataAccountV3",
   contractName: "TokenMetadata",
@@ -30,9 +41,10 @@ let makeEventConfig = (): Internal.svmInstructionEventConfig => {
   programId: metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe,
   discriminator: Some("0x21"),
   discriminatorByteLen: 1,
-  includeTransaction: true,
   includeLogs: false,
-  includeTokenBalances: false,
+  selectedTransactionFields: Utils.Set.fromArray(selectedTransactionFields)->(
+    Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
+  ),
   accountFilters: [],
   isInner: None,
   accounts: [],
@@ -51,16 +63,6 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
         blockTime,
       },
     ],
-    transactions: [
-      {
-        slot,
-        transactionIndex: 965,
-        signatures: [txSignature],
-        accountKeys: [],
-        loadedAddressesWritable: [],
-        loadedAddressesReadonly: [],
-      },
-    ],
     instructions: [
       {
         slot,
@@ -75,7 +77,6 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
       },
     ],
     logs: [],
-    tokenBalances: [],
   },
 }
 
@@ -85,14 +86,17 @@ let mockClient: SvmHyperSyncClient.t = {
   getHeight: () => Promise.resolve(slot + 1000),
   get: (~query) => {
     capturedQueries->Array.push(query)
-    Promise.resolve(mockResponse)
+    // The real Rust client builds the store from raw transactions; the mock
+    // returns an empty page (transaction materialisation is covered by the Rust
+    // unit tests). This test asserts the item shape and the query columns.
+    Promise.resolve((mockResponse, TransactionStore.make()))
   },
 }
 
 // The source captures its client at construction, so the mock addon only
 // needs to be in place for the `make` call; restore the previous addon right
 // after to avoid leaking the mock into other tests.
-let makeSource = () => {
+let makeSource = (~eventConfigs=[makeEventConfig()]) => {
   let prevAddon = Core.addonRef.contents
   Core.addonRef :=
     Some(
@@ -106,7 +110,7 @@ let makeSource = () => {
     chain,
     endpointUrl: "https://solana.hypersync.xyz",
     apiToken: None,
-    eventConfigs: [makeEventConfig()],
+    eventConfigs,
     clientTimeoutMillis: 10_000,
   }) catch {
   | exn =>
@@ -117,19 +121,7 @@ let makeSource = () => {
   source
 }
 
-let indexingAddresses = Dict.fromArray([
-  (
-    metaplexProgramId,
-    (
-      {
-        address: metaplexProgramId->Address.unsafeFromString,
-        contractName: "TokenMetadata",
-        registrationBlock: -1,
-        effectiveStartBlock: 0,
-      }: FetchState.indexingAddress
-    ),
-  ),
-])
+let contractNameByAddress = Dict.fromArray([(metaplexProgramId, "TokenMetadata")])
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   Async.it("joins blockTime onto items and requests opted-in table columns", async t => {
@@ -142,7 +134,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ~addressesByContractName=Dict.fromArray([
         ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
       ]),
-      ~indexingAddresses,
+      ~contractNameByAddress,
       ~knownHeight=slot + 1000,
       ~partitionId="0",
       ~selection={
@@ -160,7 +152,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         "timestamp": timestamp,
         "blockNumber": blockNumber,
         "block": instruction.block,
-        "transactionSignatures": instruction.transaction->Option.map(tx => tx.signatures),
       })
     | _ => None
     }
@@ -173,7 +164,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         "timestamp": blockTime,
         "blockNumber": slot,
         "block": ({slot, time: blockTime, hash: ""}: Envio.svmInstructionBlock),
-        "transactionSignatures": Some([txSignature]),
       }),
       // Default merge mode: requesting a table's columns opts the matched
       // result set into that join, so selections carry no include flags.
@@ -203,4 +193,35 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ),
     })
   })
+
+  // `transactionIndex` is materialised from the store key (the instruction's
+  // own index), not from a stored transaction record, so selecting it alone does
+  // not need the transaction table fetched.
+  Async.it(
+    "does not fetch the transaction table when only transactionIndex is selected",
+    async t => {
+      let eventConfig = makeEventConfig(~selectedTransactionFields=[TransactionIndex])
+      let source = makeSource(~eventConfigs=[eventConfig])
+
+      let _ = await source.getItemsOrThrow(
+        ~fromBlock=slot - 10,
+        ~toBlock=Some(slot + 10),
+        ~addressesByContractName=Dict.fromArray([
+          ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
+        ]),
+        ~contractNameByAddress,
+        ~knownHeight=slot + 1000,
+        ~partitionId="0",
+        ~selection={
+          eventConfigs: [(eventConfig :> Internal.eventConfig)],
+          dependsOnAddresses: true,
+        },
+        ~retry=0,
+        ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+      )
+
+      let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
+      t.expect(query.fields->Option.flatMap(fields => fields.transaction)).toEqual(None)
+    },
+  )
 })
