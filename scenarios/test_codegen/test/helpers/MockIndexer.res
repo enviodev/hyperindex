@@ -835,12 +835,8 @@ module Source = {
                                 Internal.contractRegister,
                               >
                             ),
-                            paramsRawEventSchema: S.literal(%raw(`null`))
-                            ->S.shape(_ => ())
-                            ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-                            simulateParamsSchema: S.unknown
-                            ->S.shape(_ => ())
-                            ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+                            paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
+                            simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
                             getEventFiltersOrThrow: _ =>
                               JsError.throwWithMessage("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
@@ -970,12 +966,8 @@ let evmEventConfig = (
     startBlock,
     handler: None,
     contractRegister: None,
-    paramsRawEventSchema: S.literal(%raw(`null`))
-    ->S.shape(_ => ())
-    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-    simulateParamsSchema: S.unknown
-    ->S.shape(_ => ())
-    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
+    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
     getEventFiltersOrThrow: _ =>
       switch dependsOnAddresses {
       | Some(true) =>
