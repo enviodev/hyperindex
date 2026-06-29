@@ -1205,9 +1205,9 @@ describe("FetchState.registerDynamicContracts", () => {
 
     // Verify that both DC2 and DC3 were registered correctly
     let hasAddress1 =
-      indexingAddresses->IndexingAddresses.has(mockAddress1->Address.toString)
+      indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)->Option.isSome
     let hasAddress2 =
-      indexingAddresses->IndexingAddresses.has(mockAddress2->Address.toString)
+      indexingAddresses->IndexingAddresses.get(mockAddress2->Address.toString)->Option.isSome
 
     t.expect(hasAddress1, ~message="Address1 should be registered").toBe(true)
     t.expect(
@@ -1513,16 +1513,19 @@ describe("FetchState.registerDynamicContracts", () => {
       ~message=`Should choose the earliest dc from the batch
   And remove the dc from the later one, so they are not duplicated in the db`,
     ).toEqual((Some([]), Some([dc2])))
-    let sortByAddr = arr =>
-      arr->Array.toSorted((a: FetchState.indexingAddress, b) =>
-        String.compare(a.address->Address.toString, b.address->Address.toString)
-      )
+    let expected = makeIndexingContractsWithDynamics([dc2], ~static=[mockAddress0])
     t.expect(
-      indexingAddresses->IndexingAddresses.toArray->sortByAddr,
+      (
+        indexingAddresses->IndexingAddresses.size,
+        indexingAddresses->IndexingAddresses.get(mockAddress0->Address.toString),
+        indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString),
+      ),
       ~message="Should choose the earliest dc from the batch",
-    ).toEqual(
-      makeIndexingContractsWithDynamics([dc2], ~static=[mockAddress0])->Dict.valuesToArray->sortByAddr,
-    )
+    ).toEqual((
+      expected->Utils.Dict.size,
+      expected->Dict.get(mockAddress0->Address.toString),
+      expected->Dict.get(mockAddress1->Address.toString),
+    ))
     t.expect(
       updatedFetchState.optimizedPartitions.entities->Dict.valuesToArray,
       ~message="Adds dc and optimizes partitions",
@@ -3598,7 +3601,7 @@ describe("Dynamic contracts with start blocks", () => {
 
     // The contract should be registered in indexingAddresses
     t.expect(
-      indexingAddresses->IndexingAddresses.has(mockAddress1->Address.toString),
+      indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)->Option.isSome,
       ~message="Dynamic contract should be registered in indexingAddresses",
     ).toBeTruthy()
 

@@ -64,13 +64,7 @@ let make = (
 let get = (indexingAddresses: t, address) =>
   indexingAddresses->Utils.Dict.dangerouslyGetNonOption(address)
 
-let has = (indexingAddresses: t, address) =>
-  indexingAddresses->Utils.Dict.dangerouslyGetNonOption(address)->Option.isSome
-
 let size = (indexingAddresses: t) => indexingAddresses->Utils.Dict.size
-
-let toArray = (indexingAddresses: t): array<indexingAddress> =>
-  indexingAddresses->Dict.valuesToArray
 
 let getContractAddresses = (indexingAddresses: t, ~contractName): array<Address.t> => {
   let addresses = []

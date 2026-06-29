@@ -12,11 +12,7 @@ let make: (~contractConfigs: dict<contractConfig>, ~addresses: array<Internal.in
 
 let get: (t, string) => option<indexingAddress>
 
-let has: (t, string) => bool
-
 let size: t => int
-
-let toArray: t => array<indexingAddress>
 
 let getContractAddresses: (t, ~contractName: string) => array<Address.t>
 
