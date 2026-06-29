@@ -53,23 +53,23 @@ let start = (~handler: string => (int, string)) =>
 let makeRaw = (~status, ~body) => start(~handler=_ => (status, body))
 
 // Reply 200 with a JSON-RPC envelope whose `result` is routed by the request's
-// `method`.
+// `method`, echoing the request's `id` back.
 let make = (~getResult: string => JSON.t) =>
   start(~handler=requestBody => {
+    let parsed = requestBody->JSON.parseOrThrow->JSON.Decode.object
     let method =
-      requestBody
-      ->JSON.parseOrThrow
-      ->JSON.Decode.object
+      parsed
       ->Option.flatMap(Dict.get(_, "method"))
       ->Option.flatMap(JSON.Decode.string)
       ->Option.getOr("")
+    let id = parsed->Option.flatMap(Dict.get(_, "id"))->Option.getOr(JSON.Number(1.))
     (
       200,
       JSON.stringify(
         JSON.Object(
           Dict.fromArray([
             ("jsonrpc", JSON.String("2.0")),
-            ("id", JSON.Number(1.)),
+            ("id", id),
             ("result", getResult(method)),
           ]),
         ),

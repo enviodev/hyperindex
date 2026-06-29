@@ -133,6 +133,15 @@ impl EvmRpcClient {
 
     #[napi]
     pub async fn get_logs(&self, params: GetLogsParams) -> napi::Result<Vec<RpcEventItem>> {
+        // Hex-formatting a negative i64 yields a two's-complement quantity, which
+        // would silently widen the queried range; reject it at the boundary.
+        if params.from_block < 0 || params.to_block < 0 {
+            return Err(map_err(anyhow::anyhow!(
+                "block bounds must be non-negative, got from_block={}, to_block={}",
+                params.from_block,
+                params.to_block,
+            )));
+        }
         let mut filter = json!({
             "fromBlock": format!("0x{:x}", params.from_block),
             "toBlock": format!("0x{:x}", params.to_block),

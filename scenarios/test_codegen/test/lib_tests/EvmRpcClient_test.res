@@ -128,9 +128,12 @@ describe("EvmRpcClient - getLogs via napi", () => {
       toBlock: 100,
       topics: [Nullable.make([transferSighash])],
     })
+    // Lock down the outgoing request contract (hex block bounds + topic nesting)
+    // alongside the decoded response.
+    let sentRequest = mock.requests->Array.getUnsafe(0)->JSON.parseOrThrow
     mock.close()
 
-    t.expect(
+    t.expect((
       items->Array.map(({log, params}) => {
         let decoded =
           params
@@ -148,17 +151,21 @@ describe("EvmRpcClient - getLogs via napi", () => {
           "value": decoded["value"]->BigInt.toString,
         }
       }),
-    ).toEqual([
-      {
-        "blockNumber": 100,
-        "transactionIndex": 1,
-        "logIndex": 2,
-        "topicCount": 3,
-        "from": "0x0000000000000000000000000000000000000001",
-        "to": "0x0000000000000000000000000000000000000002",
-        "value": "1000",
-      },
-    ])
+      sentRequest,
+    )).toEqual((
+      [
+        {
+          "blockNumber": 100,
+          "transactionIndex": 1,
+          "logIndex": 2,
+          "topicCount": 3,
+          "from": "0x0000000000000000000000000000000000000001",
+          "to": "0x0000000000000000000000000000000000000002",
+          "value": "1000",
+        },
+      ],
+      `{"method":"eth_getLogs","params":[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${transferSighash}"]]}],"id":1,"jsonrpc":"2.0"}`->JSON.parseOrThrow,
+    ))
   })
 
   Async.it("Leaves params null when no registered signature matches", async t => {
