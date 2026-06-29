@@ -42,11 +42,16 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         ~isWildcard=true,
       ) :> Internal.eventConfig),
     ]
+    let addresses = []
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+    let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     let fetcherStateInit: FetchState.t = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~eventConfigs,
-      ~addresses=[],
+      ~contractConfigs,
+      ~indexingAddresses,
+      ~addresses,
       ~startBlock=0,
       ~maxOnBlockBufferSize=5000,
       ~chainId=1,
@@ -105,6 +110,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
         fetchState :=
           fetchState.contents->FetchState.handleQueryResult(
+            ~indexingAddresses,
             ~query,
             ~latestFetchedBlock={
               blockNumber: currentBlockNumber.contents,
@@ -127,6 +133,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let mockChainState = ChainState.make(
       ~chainConfig,
       ~fetchState=fetchState.contents,
+      ~indexingAddresses,
       ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
       // This is quite a hack - but it works!
       ~reorgDetection=ReorgDetection.make(
@@ -255,12 +262,17 @@ describe("IndexerState", () => {
         ]
 
         let makeFetchState = (~chainId, ~eventBlocks) => {
+          let addresses = []
+          let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+          let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
           let fetchState = ref(
             FetchState.make(
               ~maxAddrInPartition=Env.maxAddrInPartition,
               ~endBlock=None,
               ~eventConfigs,
-              ~addresses=[],
+              ~contractConfigs,
+              ~indexingAddresses,
+              ~addresses,
               ~startBlock=0,
               ~maxOnBlockBufferSize=5000,
               ~chainId,
@@ -283,6 +295,7 @@ describe("IndexerState", () => {
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
               fetchState :=
                 fetchState.contents->FetchState.handleQueryResult(
+                  ~indexingAddresses,
                   ~query,
                   ~latestFetchedBlock={blockNumber, blockTimestamp: blockNumber * 15},
                   ~newItems=[
@@ -301,7 +314,7 @@ describe("IndexerState", () => {
                 )
             },
           )
-          fetchState.contents
+          (fetchState.contents, indexingAddresses)
         }
 
         let makeState = (~eventBlocks): IndexerState.t => {
@@ -311,9 +324,11 @@ describe("IndexerState", () => {
           ->Array.forEach(
             chainConfig => {
               let mockSource = MockIndexer.Source.make([], ~chain=#1)
+              let (fetchState, indexingAddresses) = makeFetchState(~chainId=chainConfig.id, ~eventBlocks)
               let chainState = ChainState.make(
                 ~chainConfig,
-                ~fetchState=makeFetchState(~chainId=chainConfig.id, ~eventBlocks),
+                ~fetchState,
+                ~indexingAddresses,
                 ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
                 ~reorgDetection=ReorgDetection.make(
                   ~chainReorgCheckpoints=[],

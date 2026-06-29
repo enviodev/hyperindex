@@ -442,34 +442,12 @@ describe("SourceManager fetchNext", () => {
     ~targetBufferSize=5000,
     ~knownHeight,
   ): FetchState.t => {
-    let indexingAddresses = Dict.make()
     let latestFullyFetchedBlock = ref((partitions->Utils.Array.firstUnsafe).latestFetchedBlock)
 
     partitions->Array.forEach(partition => {
       if latestFullyFetchedBlock.contents.blockNumber > partition.latestFetchedBlock.blockNumber {
         latestFullyFetchedBlock := partition.latestFetchedBlock
       }
-      partition.addressesByContractName
-      ->Dict.toArray
-      ->Array.forEach(
-        ((contractName, addresses)) => {
-          addresses->Array.forEach(
-            address => {
-              indexingAddresses->Dict.set(
-                address->Address.toString,
-                (
-                  {
-                    contractName,
-                    address,
-                    registrationBlock: -1,
-                    effectiveStartBlock: 0,
-                  }: FetchState.indexingAddress
-                ),
-              )
-            },
-          )
-        },
-      )
     })
 
     let optimizedPartitions = FetchState.OptimizedPartitions.make(
@@ -488,7 +466,6 @@ describe("SourceManager fetchNext", () => {
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
       maxOnBlockBufferSize: targetBufferSize,
       chainId: 0,
-      indexingAddresses,
       contractConfigs: Dict.make(),
       blockLag: 0,
       onBlockConfigs: [],

@@ -23,11 +23,17 @@ let makeChainState = (
   ~bufferBlocks=[],
   ~isProgressAtHead=false,
 ) => {
+  let eventConfigs = []
+  let addresses = []
+  let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+  let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
   let base = FetchState.make(
     // An onBlock config (no address partition) satisfies "something to fetch"
     // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
-    ~eventConfigs=[],
-    ~addresses=[],
+    ~eventConfigs,
+    ~contractConfigs,
+    ~indexingAddresses,
+    ~addresses,
     ~onBlockConfigs=[
       {
         Internal.index: 0,
@@ -57,6 +63,7 @@ let makeChainState = (
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
+    ~indexingAddresses,
     ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints=[],
@@ -90,12 +97,13 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
     prevRangeSize: 0,
     latestBlockRangeUpdateBlock: 0,
   }
-  let indexingAddresses = Dict.fromArray([
-    (
-      address->Address.toString,
-      ({contractName: "MockContract", address, registrationBlock: -1, effectiveStartBlock: 0}: Internal.indexingContract),
-    ),
-  ])
+  let indexingAddresses =
+    Dict.fromArray([
+      (
+        address->Address.toString,
+        ({contractName: "MockContract", address, registrationBlock: -1, effectiveStartBlock: 0}: Internal.indexingContract),
+      ),
+    ])->(Utils.magic: dict<Internal.indexingContract> => IndexingAddresses.t)
   let fetchState: FetchState.t = {
     optimizedPartitions: FetchState.OptimizedPartitions.make(
       ~partitions=[partition],
@@ -110,7 +118,6 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
     latestOnBlockBlockNumber: latestFetchedBlock,
     maxOnBlockBufferSize: 10000,
     chainId,
-    indexingAddresses,
     contractConfigs: Dict.make(),
     blockLag: 0,
     onBlockConfigs: [],
@@ -121,6 +128,7 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
+    ~indexingAddresses,
     ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints=[],

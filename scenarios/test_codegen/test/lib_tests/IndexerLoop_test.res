@@ -7,17 +7,23 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
   config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig => {
+    let eventConfigs = [
+      (MockIndexer.evmEventConfig(
+        ~id="0",
+        ~contractName="Gravatar",
+        ~isWildcard=true,
+      ) :> Internal.eventConfig),
+    ]
+    let addresses = []
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+    let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     let fetchState = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
-      ~eventConfigs=[
-        (MockIndexer.evmEventConfig(
-          ~id="0",
-          ~contractName="Gravatar",
-          ~isWildcard=true,
-        ) :> Internal.eventConfig),
-      ],
-      ~addresses=[],
+      ~eventConfigs,
+      ~contractConfigs,
+      ~indexingAddresses,
+      ~addresses,
       ~startBlock=0,
       ~maxOnBlockBufferSize=5000,
       ~chainId=chainConfig.id,
@@ -27,6 +33,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
     let chainState = ChainState.make(
       ~chainConfig,
       ~fetchState,
+      ~indexingAddresses,
       ~sourceManager=SourceManager.make(
         ~sources=[mockSource.source],
         ~isRealtime=false,

@@ -627,9 +627,9 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
   app->get("/metrics", (_req, res) => {
     res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
     let _ =
-      PromClient.defaultRegister
-      ->PromClient.metrics
-      ->Promise.thenResolve(metrics => res->endWithData(metrics))
+      Metrics.collect(~state=indexerStateRef.contents)->Promise.thenResolve(metrics =>
+        res->endWithData(metrics)
+      )
   })
 
   app->get("/metrics/runtime", (_req, res) => {

@@ -328,16 +328,22 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       ~startBlock?,
     )
 
-  let makeFetchState = (~contractStartBlock: option<int>) =>
+  let makeFetchState = (~contractStartBlock: option<int>) => {
+    let eventConfigs = [(buildEvmTransfer(~startBlock=contractStartBlock) :> Internal.eventConfig)]
+    let addresses = [
+      {
+        Internal.address: mockAddress,
+        contractName: "ERC20",
+        registrationBlock: -1,
+      },
+    ]
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+    let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     FetchState.make(
-      ~eventConfigs=[(buildEvmTransfer(~startBlock=contractStartBlock) :> Internal.eventConfig)],
-      ~addresses=[
-        {
-          Internal.address: mockAddress,
-          contractName: "ERC20",
-          registrationBlock: -1,
-        },
-      ],
+      ~eventConfigs,
+      ~contractConfigs,
+      ~indexingAddresses,
+      ~addresses,
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=3,
@@ -345,6 +351,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       ~chainId=1,
       ~knownHeight=10000,
     )
+  }
 
   // Pull the first query the scheduler would dispatch. `updateKnownHeight`
   // is needed so `getNextQuery` sees a non-zero head.

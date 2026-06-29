@@ -8,6 +8,7 @@ let configAddresses: Config.chain => array<Internal.indexingAddress>
 let make: (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
   ~reorgDetection: ReorgDetection.t,
   ~committedProgressBlockNumber: int,
