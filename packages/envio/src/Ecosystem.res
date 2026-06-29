@@ -34,10 +34,6 @@ type t = {
       registration from an item's opaque payload. `event.transaction` is written
       onto the payload at batch prep (HyperSync) or inline (RPC/simulate). */
   toEvent: Internal.eventItem => Internal.event,
-  /** Bitmask (as a float) of the transaction fields selected across the chain's
-      events — the set the store materialises at batch prep. `0.` when the
-      ecosystem carries transactions inline. */
-  transactionFieldMask: array<Internal.eventConfig> => float,
   /** Build the per-item child logger for an event item, with
       ecosystem-specific log fields (EVM/Fuel: contract/event/address; SVM:
       program/instruction/programId). Closes over the injected logger. */

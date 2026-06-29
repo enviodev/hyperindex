@@ -442,6 +442,7 @@ let buildEvmEventConfig = (
     startBlock: resolvedStartBlock,
     selectedBlockFields,
     selectedTransactionFields,
+    transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
     sighash,
     topicCount,
     paramsMetadata: params,
@@ -500,6 +501,7 @@ let buildSvmInstructionEventConfig = (
     discriminatorByteLen,
     includeLogs,
     selectedTransactionFields,
+    transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
     accountFilters,
     isInner,
     accounts,
@@ -568,6 +570,7 @@ let buildFuelEventConfig = (
     startBlock,
     // Fuel keeps the transaction inline on the payload; nothing to materialise.
     selectedTransactionFields: Utils.Set.make(),
+    transactionFieldMask: 0.,
     kind: fuelKind,
   }
 }

@@ -11,13 +11,12 @@ type partitionQueryResponse = {
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
-  ~chainState: ChainState.t,
   ~page: option<TransactionStore.t>,
 ) => {
   // contractRegister handlers can read event.transaction, so materialise the
   // selected fields onto the payloads before running them. All items belong to
   // the chain being fetched, hence its single page store and mask.
-  await chainState->ChainState.materializePageItems(~items=itemsWithContractRegister, ~page)
+  await ChainState.materializePageItems(~items=itemsWithContractRegister, ~page)
 
   let itemsWithDcs = []
 
@@ -233,7 +232,6 @@ let rec onQueryResponse = async (
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
-          ~chainState,
           ~page=transactionStore,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)

@@ -27,29 +27,34 @@ let makeEventConfig = (
     Version,
   ],
 ): Internal.svmInstructionEventConfig => {
-  id: "0x21",
-  name: "CreateMetadataAccountV3",
-  contractName: "TokenMetadata",
-  isWildcard: false,
-  filterByAddresses: false,
-  dependsOnAddresses: true,
-  handler: None,
-  contractRegister: None,
-  paramsRawEventSchema: %raw(`null`),
-  simulateParamsSchema: %raw(`null`),
-  startBlock: None,
-  programId: metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe,
-  discriminator: Some("0x21"),
-  discriminatorByteLen: 1,
-  includeLogs: false,
-  selectedTransactionFields: Utils.Set.fromArray(selectedTransactionFields)->(
-    Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
-  ),
-  accountFilters: [],
-  isInner: None,
-  accounts: [],
-  args: JSON.Null,
-  definedTypes: JSON.Null,
+  let selectedTransactionFields =
+    Utils.Set.fromArray(selectedTransactionFields)->(
+      Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
+    )
+  {
+    id: "0x21",
+    name: "CreateMetadataAccountV3",
+    contractName: "TokenMetadata",
+    isWildcard: false,
+    filterByAddresses: false,
+    dependsOnAddresses: true,
+    handler: None,
+    contractRegister: None,
+    paramsRawEventSchema: %raw(`null`),
+    simulateParamsSchema: %raw(`null`),
+    startBlock: None,
+    programId: metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe,
+    discriminator: Some("0x21"),
+    discriminatorByteLen: 1,
+    includeLogs: false,
+    selectedTransactionFields,
+    transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
+    accountFilters: [],
+    isInner: None,
+    accounts: [],
+    args: JSON.Null,
+    definedTypes: JSON.Null,
+  }
 }
 
 let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {

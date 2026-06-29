@@ -39,8 +39,6 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))))
   ),
   logger,
-  // Fuel carries the transaction inline on the payload.
-  transactionFieldMask: _ => 0.,
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem =>
     Logging.createChildFrom(

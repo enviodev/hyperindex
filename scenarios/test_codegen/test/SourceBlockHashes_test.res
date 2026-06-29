@@ -50,6 +50,7 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
   // otherwise blockHashes harvested from items would crash on undefined `block`.
   selectedBlockFields: Utils.Set.fromArray(([Number, Hash]: array<Internal.evmBlockField>)),
   selectedTransactionFields: Utils.Set.make(),
+  transactionFieldMask: 0.,
   sighash: pairCreatedTopic0,
   topicCount: 3,
   paramsMetadata: [],

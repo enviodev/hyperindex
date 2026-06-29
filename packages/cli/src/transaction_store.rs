@@ -269,17 +269,28 @@ impl ToNapiValue for Columns {
     }
 }
 
-/// Build one column by extracting a field from each record. `None` rows (a key
-/// missing from the store) yield `None` cells.
-fn fill<R, T>(
+/// Build one column by extracting a field from each record, but only for rows
+/// whose per-row `mask` has `bit` set; every other row (or a key missing from
+/// the store) yields a `None` cell. This is what lets a field be materialised on
+/// exactly the rows that selected it, rather than on every row in the batch —
+/// and it skips `extract` (e.g. hex-encoding a large `input`) on unselected rows.
+fn fill_masked<R, T>(
     records: &[Option<Arc<R>>],
+    masks: &[u64],
+    bit: u64,
     extract: impl Fn(&R) -> Result<Option<T>>,
 ) -> Result<Vec<Option<T>>> {
     records
         .iter()
-        .map(|rec| match rec {
-            Some(r) => extract(r.as_ref()),
-            None => Ok(None),
+        .zip(masks)
+        .map(|(rec, &m)| {
+            if m & bit == 0 {
+                return Ok(None);
+            }
+            match rec {
+                Some(r) => extract(r.as_ref()),
+                None => Ok(None),
+            }
         })
         .collect()
 }
@@ -309,120 +320,161 @@ fn build_columns<F: Copy>(
     Ok(Columns { len, columns })
 }
 
-/// Decode the mask-selected fields of the given EVM transactions into columns.
-/// Large fields (e.g. `input`) are only touched when their bit is set, and the
-/// whole thing runs off the JS thread. `transaction_indices` is the requested
+/// Decode the per-row mask-selected fields of the given EVM transactions into
+/// columns. A field's column is built when any row selects it (the union of
+/// `masks`); within that column a row whose own mask lacks the field gets a
+/// `None` cell, so a large field (e.g. `input`) is only touched on the rows that
+/// asked for it. Runs off the JS thread. `transaction_indices` is the requested
 /// key per row, so `transactionIndex` resolves from the key (always known)
 /// rather than a stored record.
 fn decode_evm_columns(
     records: &[Option<Arc<simple_types::Transaction>>],
     transaction_indices: &[u32],
-    mask: u64,
+    masks: &[u64],
     should_checksum: bool,
 ) -> Result<Columns> {
+    let union = masks.iter().fold(0u64, |acc, &m| acc | m);
     build_columns(
         EvmTxField::VARIANTS,
-        mask,
+        union,
         records.len(),
         |f| f as u32,
         |f| f.name(),
-        |f| decode_evm_field(f, records, transaction_indices, should_checksum),
+        |f| decode_evm_field(f, records, transaction_indices, masks, should_checksum),
     )
 }
 
-/// Decode a single selected EVM field across all rows. Exhaustive match: adding
-/// an `EvmTxField` variant fails to compile until it is decoded here.
+/// Decode a single EVM field, materialising it only on the rows whose mask has
+/// the field's bit set. Exhaustive match: adding an `EvmTxField` variant fails
+/// to compile until it is decoded here.
 fn decode_evm_field(
     field: EvmTxField,
     records: &[Option<Arc<simple_types::Transaction>>],
     transaction_indices: &[u32],
+    masks: &[u64],
     should_checksum: bool,
 ) -> Result<Column> {
+    let bit = 1u64 << (field as u32);
     Ok(match field {
         // The within-block index is the store key, so it's always available
         // regardless of whether the transaction row was fetched.
         EvmTxField::TransactionIndex => Column::I64(
             transaction_indices
                 .iter()
-                .map(|&i| Some(i as i64))
+                .zip(masks)
+                .map(|(&i, &m)| (m & bit != 0).then_some(i as i64))
                 .collect(),
         ),
-        EvmTxField::Hash => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.hash)))?),
-        EvmTxField::From => Column::Str(fill(records, |tx| {
+        EvmTxField::Hash => Column::Str(fill_masked(records, masks, bit, |tx| {
+            Ok(map_hex_string(&tx.hash))
+        })?),
+        EvmTxField::From => Column::Str(fill_masked(records, masks, bit, |tx| {
             Ok(map_address_string(&tx.from, should_checksum))
         })?),
-        EvmTxField::To => Column::Str(fill(records, |tx| {
+        EvmTxField::To => Column::Str(fill_masked(records, masks, bit, |tx| {
             Ok(map_address_string(&tx.to, should_checksum))
         })?),
-        EvmTxField::Gas => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas)))?),
-        EvmTxField::GasPrice => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_price)))?),
-        EvmTxField::MaxPriorityFeePerGas => Column::Big(fill(records, |tx| {
+        EvmTxField::Gas => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.gas))
+        })?),
+        EvmTxField::GasPrice => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.gas_price))
+        })?),
+        EvmTxField::MaxPriorityFeePerGas => Column::Big(fill_masked(records, masks, bit, |tx| {
             Ok(map_bigint(&tx.max_priority_fee_per_gas))
         })?),
-        EvmTxField::MaxFeePerGas => {
-            Column::Big(fill(records, |tx| Ok(map_bigint(&tx.max_fee_per_gas)))?)
-        }
-        EvmTxField::CumulativeGasUsed => {
-            Column::Big(fill(records, |tx| Ok(map_bigint(&tx.cumulative_gas_used)))?)
-        }
-        EvmTxField::EffectiveGasPrice => {
-            Column::Big(fill(records, |tx| Ok(map_bigint(&tx.effective_gas_price)))?)
-        }
-        EvmTxField::GasUsed => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_used)))?),
-        EvmTxField::Input => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.input)))?),
-        EvmTxField::Nonce => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.nonce)))?),
-        EvmTxField::Value => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.value)))?),
-        EvmTxField::V => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.v)))?),
-        EvmTxField::R => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.r)))?),
-        EvmTxField::S => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.s)))?),
-        EvmTxField::ContractAddress => Column::Str(fill(records, |tx| {
+        EvmTxField::MaxFeePerGas => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.max_fee_per_gas))
+        })?),
+        EvmTxField::CumulativeGasUsed => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.cumulative_gas_used))
+        })?),
+        EvmTxField::EffectiveGasPrice => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.effective_gas_price))
+        })?),
+        EvmTxField::GasUsed => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.gas_used))
+        })?),
+        EvmTxField::Input => Column::Str(fill_masked(records, masks, bit, |tx| {
+            Ok(map_hex_string(&tx.input))
+        })?),
+        EvmTxField::Nonce => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.nonce))
+        })?),
+        EvmTxField::Value => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.value))
+        })?),
+        EvmTxField::V => Column::Str(fill_masked(records, masks, bit, |tx| {
+            Ok(map_hex_string(&tx.v))
+        })?),
+        EvmTxField::R => Column::Str(fill_masked(records, masks, bit, |tx| {
+            Ok(map_hex_string(&tx.r))
+        })?),
+        EvmTxField::S => Column::Str(fill_masked(records, masks, bit, |tx| {
+            Ok(map_hex_string(&tx.s))
+        })?),
+        EvmTxField::ContractAddress => Column::Str(fill_masked(records, masks, bit, |tx| {
             Ok(map_address_string(&tx.contract_address, should_checksum))
         })?),
-        EvmTxField::LogsBloom => {
-            Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.logs_bloom)))?)
-        }
-        EvmTxField::Root => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.root)))?),
-        EvmTxField::Status => {
-            Column::I64(fill(records, |tx| Ok(tx.status.map(|v| v.to_u8() as i64)))?)
-        }
-        EvmTxField::YParity => Column::Str(fill(records, |tx| Ok(map_hex_string(&tx.y_parity)))?),
-        EvmTxField::MaxFeePerBlobGas => Column::Big(fill(records, |tx| {
+        EvmTxField::LogsBloom => Column::Str(fill_masked(records, masks, bit, |tx| {
+            Ok(map_hex_string(&tx.logs_bloom))
+        })?),
+        EvmTxField::Root => Column::Str(fill_masked(records, masks, bit, |tx| {
+            Ok(map_hex_string(&tx.root))
+        })?),
+        EvmTxField::Status => Column::I64(fill_masked(records, masks, bit, |tx| {
+            Ok(tx.status.map(|v| v.to_u8() as i64))
+        })?),
+        EvmTxField::YParity => Column::Str(fill_masked(records, masks, bit, |tx| {
+            Ok(map_hex_string(&tx.y_parity))
+        })?),
+        EvmTxField::MaxFeePerBlobGas => Column::Big(fill_masked(records, masks, bit, |tx| {
             Ok(map_bigint(&tx.max_fee_per_blob_gas))
         })?),
-        EvmTxField::BlobVersionedHashes => Column::StrVec(fill(records, |tx| {
-            Ok(tx
-                .blob_versioned_hashes
-                .as_ref()
-                .map(|arr| arr.iter().map(|h| h.encode_hex()).collect()))
-        })?),
-        EvmTxField::Type => Column::I64(fill(records, |tx| {
+        EvmTxField::BlobVersionedHashes => {
+            Column::StrVec(fill_masked(records, masks, bit, |tx| {
+                Ok(tx
+                    .blob_versioned_hashes
+                    .as_ref()
+                    .map(|arr| arr.iter().map(|h| h.encode_hex()).collect()))
+            })?)
+        }
+        EvmTxField::Type => Column::I64(fill_masked(records, masks, bit, |tx| {
             Ok(tx.type_.map(|v| u8::from(v) as i64))
         })?),
-        EvmTxField::L1Fee => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_fee)))?),
-        EvmTxField::L1GasPrice => {
-            Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_gas_price)))?)
+        EvmTxField::L1Fee => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.l1_fee))
+        })?),
+        EvmTxField::L1GasPrice => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.l1_gas_price))
+        })?),
+        EvmTxField::L1GasUsed => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.l1_gas_used))
+        })?),
+        EvmTxField::L1FeeScalar => {
+            Column::F64(fill_masked(records, masks, bit, |tx| Ok(tx.l1_fee_scalar))?)
         }
-        EvmTxField::L1GasUsed => Column::Big(fill(records, |tx| Ok(map_bigint(&tx.l1_gas_used)))?),
-        EvmTxField::L1FeeScalar => Column::F64(fill(records, |tx| Ok(tx.l1_fee_scalar))?),
-        EvmTxField::GasUsedForL1 => {
-            Column::Big(fill(records, |tx| Ok(map_bigint(&tx.gas_used_for_l1)))?)
-        }
-        EvmTxField::AccessList => Column::AccessList(fill(records, |tx| {
+        EvmTxField::GasUsedForL1 => Column::Big(fill_masked(records, masks, bit, |tx| {
+            Ok(map_bigint(&tx.gas_used_for_l1))
+        })?),
+        EvmTxField::AccessList => Column::AccessList(fill_masked(records, masks, bit, |tx| {
             Ok(tx
                 .access_list
                 .as_ref()
                 .map(|arr| arr.iter().map(AccessListItem::from).collect()))
         })?),
-        EvmTxField::AuthorizationList => Column::AuthList(fill(records, |tx| {
-            tx.authorization_list
-                .as_ref()
-                .map(|al| {
-                    al.iter()
-                        .map(AuthorizationItem::try_from)
-                        .collect::<Result<_>>()
-                })
-                .transpose()
-        })?),
+        EvmTxField::AuthorizationList => {
+            Column::AuthList(fill_masked(records, masks, bit, |tx| {
+                tx.authorization_list
+                    .as_ref()
+                    .map(|al| {
+                        al.iter()
+                            .map(AuthorizationItem::try_from)
+                            .collect::<Result<_>>()
+                    })
+                    .transpose()
+            })?)
+        }
     })
 }
 
@@ -433,65 +485,85 @@ pub struct SvmStored {
     token_balances: Vec<solana_simple::TokenBalance>,
 }
 
-/// Decode the mask-selected fields of the given SVM transactions into columns.
-/// Large fields (e.g. `accountKeys`) are only cloned when their bit is set.
+/// Decode the per-row mask-selected fields of the given SVM transactions into
+/// columns. A field's column is built when any row selects it (the union of
+/// `masks`); within it a row whose own mask lacks the field gets a `None` cell,
+/// so a large field (e.g. `accountKeys`) is only cloned for the rows that asked.
 /// `transaction_indices` is the requested key per row, so `transactionIndex`
 /// resolves from the key (always known) rather than a stored record.
 fn decode_svm_columns(
     records: &[Option<Arc<SvmStored>>],
     transaction_indices: &[u32],
-    mask: u64,
+    masks: &[u64],
 ) -> Result<Columns> {
+    let union = masks.iter().fold(0u64, |acc, &m| acc | m);
     build_columns(
         SvmTxField::VARIANTS,
-        mask,
+        union,
         records.len(),
         |f| f as u32,
         |f| f.name(),
-        |f| decode_svm_field(f, records, transaction_indices),
+        |f| decode_svm_field(f, records, transaction_indices, masks),
     )
 }
 
-/// Decode a single selected SVM field across all rows. Exhaustive match: adding
-/// an `SvmTxField` variant fails to compile until it is decoded here.
+/// Decode a single SVM field, materialising it only on the rows whose mask has
+/// the field's bit set. Exhaustive match: adding an `SvmTxField` variant fails
+/// to compile until it is decoded here.
 fn decode_svm_field(
     field: SvmTxField,
     records: &[Option<Arc<SvmStored>>],
     transaction_indices: &[u32],
+    masks: &[u64],
 ) -> Result<Column> {
+    let bit = 1u64 << (field as u32);
     Ok(match field {
         // The within-block index is the store key, so it's always available
         // regardless of whether the transaction row was fetched.
         SvmTxField::TransactionIndex => Column::I64(
             transaction_indices
                 .iter()
-                .map(|&i| Some(i as i64))
+                .zip(masks)
+                .map(|(&i, &m)| (m & bit != 0).then_some(i as i64))
                 .collect(),
         ),
-        SvmTxField::Signatures => {
-            Column::StrVec(fill(records, |r| Ok(Some(r.tx.signatures.clone())))?)
+        SvmTxField::Signatures => Column::StrVec(fill_masked(records, masks, bit, |r| {
+            Ok(Some(r.tx.signatures.clone()))
+        })?),
+        SvmTxField::FeePayer => Column::Str(fill_masked(records, masks, bit, |r| {
+            Ok(r.tx.fee_payer.clone())
+        })?),
+        SvmTxField::Success => {
+            Column::Bool(fill_masked(records, masks, bit, |r| Ok(r.tx.success))?)
         }
-        SvmTxField::FeePayer => Column::Str(fill(records, |r| Ok(r.tx.fee_payer.clone()))?),
-        SvmTxField::Success => Column::Bool(fill(records, |r| Ok(r.tx.success))?),
-        SvmTxField::Err => Column::Str(fill(records, |r| Ok(r.tx.err.clone()))?),
-        SvmTxField::Fee => Column::Big(fill(records, |r| Ok(r.tx.fee.map(bigint_u64)))?),
-        SvmTxField::ComputeUnitsConsumed => Column::Big(fill(records, |r| {
+        SvmTxField::Err => Column::Str(fill_masked(records, masks, bit, |r| Ok(r.tx.err.clone()))?),
+        SvmTxField::Fee => Column::Big(fill_masked(records, masks, bit, |r| {
+            Ok(r.tx.fee.map(bigint_u64))
+        })?),
+        SvmTxField::ComputeUnitsConsumed => Column::Big(fill_masked(records, masks, bit, |r| {
             Ok(r.tx.compute_units_consumed.map(bigint_u64))
         })?),
-        SvmTxField::AccountKeys => {
-            Column::StrVec(fill(records, |r| Ok(Some(r.tx.account_keys.clone())))?)
-        }
-        SvmTxField::RecentBlockhash => {
-            Column::Str(fill(records, |r| Ok(r.tx.recent_blockhash.clone()))?)
-        }
-        SvmTxField::Version => Column::Str(fill(records, |r| Ok(r.tx.version.clone()))?),
-        // Always materialise an array when selected: a record absent from the
+        SvmTxField::AccountKeys => Column::StrVec(fill_masked(records, masks, bit, |r| {
+            Ok(Some(r.tx.account_keys.clone()))
+        })?),
+        SvmTxField::RecentBlockhash => Column::Str(fill_masked(records, masks, bit, |r| {
+            Ok(r.tx.recent_blockhash.clone())
+        })?),
+        SvmTxField::Version => Column::Str(fill_masked(records, masks, bit, |r| {
+            Ok(r.tx.version.clone())
+        })?),
+        // Always materialise an array on a selected row: a record absent from the
         // store (its transaction had no token balances, so it was never
-        // inserted) means "no balances" → `[]`, not a missing field.
+        // inserted) means "no balances" → `[]`, not a missing field. A row that
+        // didn't select the field still gets `None` (skipped on the JS object).
         SvmTxField::TokenBalances => Column::TokenBalances(
             records
                 .iter()
-                .map(|rec| {
+                .zip(masks)
+                .map(|(rec, &m)| {
+                    if m & bit == 0 {
+                        return None;
+                    }
                     Some(match rec {
                         Some(r) => r
                             .token_balances
@@ -638,30 +710,34 @@ impl TransactionStore {
         }
     }
 
-    /// Bulk-materialise the selected fields (one bit per ecosystem field code in
-    /// `mask`) of the given transactions, returned in columnar form. The mask is
-    /// a JS number (`f64`): its exact-integer range (2^53) dwarfs the field
-    /// count, and the ReScript side builds it arithmetically to dodge 32-bit JS
-    /// bitwise ops. Async + `block_in_place` so the bulk decode runs off the JS
-    /// thread without monopolising an async worker; the brief lock only clones
-    /// `Arc`s. Missing keys yield an empty object. Result is aligned with input.
+    /// Bulk-materialise transactions in columnar form, one row per
+    /// `(block_numbers[i], transaction_indices[i])` key, decoding only the fields
+    /// whose bit is set in that row's own `masks[i]`. Per-row masks let each event
+    /// pull just the transaction fields it selected, so a large field (e.g.
+    /// `input`) is materialised only on the rows that asked for it. Each mask is a
+    /// JS number (`f64`) carrying a selection bitmask over field codes 0..31 (so
+    /// it fits in 32 bits). Async + `block_in_place` so the bulk decode runs off
+    /// the JS thread without monopolising an async worker; the brief lock only
+    /// clones `Arc`s. Missing keys yield an empty object. Result is aligned with
+    /// input.
     #[napi(ts_return_type = "Promise<object[]>")]
     pub async fn materialize(
         &self,
         block_numbers: Vec<i64>,
         transaction_indices: Vec<u32>,
-        mask: f64,
+        masks: Vec<f64>,
     ) -> napi::Result<Columns> {
-        // The two key vectors are zipped into the output; a length mismatch would
-        // silently truncate and misalign the result with the caller's items.
-        if block_numbers.len() != transaction_indices.len() {
+        // The three columns are zipped row-wise into the output; a length mismatch
+        // would silently truncate and misalign the result with the caller's items.
+        if block_numbers.len() != transaction_indices.len() || block_numbers.len() != masks.len() {
             return Err(napi::Error::from_reason(format!(
-                "block_numbers and transaction_indices length mismatch: {} != {}",
+                "materialize column length mismatch: block_numbers={}, transaction_indices={}, masks={}",
                 block_numbers.len(),
-                transaction_indices.len()
+                transaction_indices.len(),
+                masks.len()
             )));
         }
-        let mask = mask as u64;
+        let masks: Vec<u64> = masks.iter().map(|&m| m as u64).collect();
 
         match self.ecosystem.load(Ordering::Relaxed) {
             ECO_EVM => {
@@ -676,7 +752,7 @@ impl TransactionStore {
                     );
                 let should_checksum = self.should_checksum.load(Ordering::Relaxed);
                 tokio::task::block_in_place(|| {
-                    decode_evm_columns(&records, &transaction_indices, mask, should_checksum)
+                    decode_evm_columns(&records, &transaction_indices, &masks, should_checksum)
                 })
                 .map_err(map_err)
             }
@@ -691,7 +767,7 @@ impl TransactionStore {
                         },
                     );
                 tokio::task::block_in_place(|| {
-                    decode_svm_columns(&records, &transaction_indices, mask)
+                    decode_svm_columns(&records, &transaction_indices, &masks)
                 })
                 .map_err(map_err)
             }
@@ -841,7 +917,7 @@ mod tests {
     fn decode_selected_only_materialises_masked_fields() {
         // Select only `input` via the bitmask.
         let mask = 1u64 << (EvmTxField::Input as u32);
-        let cols = decode_evm_columns(&[Some(Arc::new(raw_tx()))], &[0], mask, false)
+        let cols = decode_evm_columns(&[Some(Arc::new(raw_tx()))], &[0], &[mask], false)
             .expect("decode columns");
 
         // Exactly one column (input) is present; transactionIndex (present on the
@@ -858,12 +934,46 @@ mod tests {
     }
 
     #[test]
+    fn decode_applies_each_rows_own_mask() {
+        // Row 0 selects `input`; row 1 selects only `transactionIndex`. The union
+        // builds both columns, but each field is present only on its row.
+        let input_mask = 1u64 << (EvmTxField::Input as u32);
+        let index_mask = 1u64 << (EvmTxField::TransactionIndex as u32);
+        let cols = decode_evm_columns(
+            &[Some(Arc::new(raw_tx())), Some(Arc::new(raw_tx()))],
+            &[0, 1],
+            &[input_mask, index_mask],
+            false,
+        )
+        .expect("decode columns");
+
+        // `input` decoded only for row 0; row 1 is `None` (skipped on its object).
+        match column(&cols, "input") {
+            Some(Column::Str(v)) => assert_eq!(v, &vec![Some("0xabcd".to_string()), None]),
+            other => panic!("expected input column, got present={}", other.is_some()),
+        }
+        // `transactionIndex` resolves from the key only for row 1.
+        match column(&cols, "transactionIndex") {
+            Some(Column::I64(v)) => assert_eq!(v, &vec![None, Some(1)]),
+            other => panic!(
+                "expected transactionIndex column, got present={}",
+                other.is_some()
+            ),
+        }
+    }
+
+    #[test]
     fn evm_transaction_index_comes_from_key_even_on_miss() {
         // A missing record (None) still materialises the requested key as
         // `transactionIndex`, so it never depends on a fetched transaction row.
         let mask = 1u64 << (EvmTxField::TransactionIndex as u32);
-        let cols = decode_evm_columns(&[None, Some(Arc::new(raw_tx()))], &[7, 3], mask, false)
-            .expect("decode columns");
+        let cols = decode_evm_columns(
+            &[None, Some(Arc::new(raw_tx()))],
+            &[7, 3],
+            &[mask, mask],
+            false,
+        )
+        .expect("decode columns");
         match column(&cols, "transactionIndex") {
             Some(Column::I64(v)) => assert_eq!(v, &vec![Some(7), Some(3)]),
             other => panic!(
@@ -962,7 +1072,7 @@ mod tests {
 
         // Select only accountKeys.
         let mask = 1u64 << (SvmTxField::AccountKeys as u32);
-        let cols = decode_svm_columns(&[Some(rec)], &[0], mask).expect("decode columns");
+        let cols = decode_svm_columns(&[Some(rec)], &[0], &[mask]).expect("decode columns");
 
         match column(&cols, "accountKeys") {
             Some(Column::StrVec(v)) => {
