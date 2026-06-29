@@ -198,20 +198,6 @@ describe("EventConfigBuilder", () => {
     t.expect(json).toEqual(%raw(`null`))
   })
 
-  // Reproduction for https://github.com/enviodev/hyperindex/issues/1353
-  // With raw_events enabled, a zero-parameter event (e.g. `event Enabled();`)
-  // crashes the batch write. The decoder hands the runtime an empty object `{}`
-  // for zero-param events (see HyperSyncDecoder_test "handles empty params"),
-  // but buildParamsSchema([]) builds a schema expecting unit/`null`, so the
-  // reverse conversion done by RawEvent.make throws
-  // "Expected undefined, received {}".
-  it("buildParamsSchema serializes the empty object the decoder produces", t => {
-    let schema = EventConfigBuilder.buildParamsSchema([])
-    let testParams: Internal.eventParams = %raw(`{}`)
-    let json = testParams->S.reverseConvertToJsonOrThrow(schema)
-    t.expect(json).toEqual(%raw(`null`))
-  })
-
   it("buildParamsSchema handles tuple params", t => {
     let params: array<EventConfigBuilder.paramMeta> = [
       {name: "id", abiType: "uint256", indexed: false},
