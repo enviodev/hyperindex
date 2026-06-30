@@ -268,6 +268,16 @@ let toQueryTxField = (field: Internal.svmTransactionField): option<
   | TokenBalances => None
   }
 
+// Map a selected block field to its HyperSync query column. `slot`/`time`/`hash`
+// are requested unconditionally (as Slot/BlockTime/Blockhash) so they're not
+// here.
+let toQueryBlockField = (field: Internal.svmBlockField): SvmHyperSyncClient.QueryTypes.blockField =>
+  switch field {
+  | Height => BlockHeight
+  | ParentSlot => ParentSlot
+  | ParentHash => ParentBlockhash
+  }
+
 let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: options): t => {
   let name = "SvmHyperSync"
   let chainId = chain->ChainMap.Chain.toChainId
@@ -332,6 +342,19 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       }
     )
 
+  // Union of selected block fields across the chain's events. `slot`/`time`/
+  // `hash` are always fetched (as Slot/BlockTime/Blockhash); the rest are added
+  // only when an instruction selected them.
+  let blockQueryFields = {
+    let fields: array<SvmHyperSyncClient.QueryTypes.blockField> = [Slot, Blockhash, BlockTime]
+    let selected = Utils.Set.make()
+    eventConfigs->Array.forEach(cfg =>
+      cfg.selectedBlockFields->Utils.Set.forEach(field => selected->Utils.Set.add(field)->ignore)
+    )
+    selected->Utils.Set.forEach(field => fields->Array.push(field->toQueryBlockField)->ignore)
+    fields
+  }
+
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
@@ -352,7 +375,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     // field list returns no rows (instructions and blocks are exempt), so each
     // opted-into table needs its columns spelled out here.
     let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = {
-      block: [Slot, Blockhash, BlockTime, BlockHeight, ParentSlot, ParentBlockhash],
+      block: blockQueryFields,
       transaction: ?(needsTransactions ? Some(txQueryFields) : None),
       log: ?(needsLogs ? Some([Slot, TransactionIndex, InstructionAddress, Kind, Message]) : None),
       tokenBalance: ?(

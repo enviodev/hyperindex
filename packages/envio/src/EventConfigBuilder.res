@@ -464,6 +464,7 @@ let buildSvmInstructionEventConfig = (
   ~discriminatorByteLen: int,
   ~includeLogs: bool,
   ~transactionFields: array<Internal.svmTransactionField>=[],
+  ~blockFields: array<Internal.svmBlockField>=[],
   ~accountFilters: array<Internal.svmAccountFilterGroup>,
   ~isInner: option<bool>,
   ~isWildcard: bool,
@@ -485,6 +486,17 @@ let buildSvmInstructionEventConfig = (
     Utils.Set.fromArray(transactionFields)->(
       Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
     )
+  // The block-store mask covers the always-included trio plus the selected
+  // fields; `slot`/`time` are stamped from the item, the rest decoded from the
+  // store.
+  let blockFieldMask = Svm.eventBlockFieldMask(
+    Utils.Set.fromArray(
+      Array.concat(
+        Svm.alwaysIncludedBlockFields,
+        blockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>),
+      ),
+    ),
+  )
   {
     id: switch discriminator {
     | Some(d) => d
@@ -507,9 +519,8 @@ let buildSvmInstructionEventConfig = (
     includeLogs,
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
-    // SVM enriches every instruction's inline block with the full set of block
-    // fields from the store.
-    blockFieldMask: Svm.blockFieldMask,
+    selectedBlockFields: Utils.Set.fromArray(blockFields),
+    blockFieldMask,
     accountFilters,
     isInner,
     accounts,

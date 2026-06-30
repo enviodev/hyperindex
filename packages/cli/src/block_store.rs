@@ -102,9 +102,9 @@ pub enum SvmBlockField {
     Slot = 0,
     Time = 1,
     Hash = 2,
-    BlockHeight = 3,
+    Height = 3,
     ParentSlot = 4,
-    ParentBlockhash = 5,
+    ParentHash = 5,
 }
 
 impl SvmBlockField {
@@ -115,9 +115,9 @@ impl SvmBlockField {
             Slot => "slot",
             Time => "time",
             Hash => "hash",
-            BlockHeight => "blockHeight",
+            Height => "height",
             ParentSlot => "parentSlot",
-            ParentBlockhash => "parentBlockhash",
+            ParentHash => "parentHash",
         }
     }
 }
@@ -294,11 +294,11 @@ fn decode_svm_block_field(
         SvmBlockField::Hash => Column::Str(fill_masked(records, masks, bit, |b| {
             Ok(Some(b.blockhash.clone()))
         })?),
-        SvmBlockField::BlockHeight => Column::I64(fill_masked(records, masks, bit, |b| {
+        SvmBlockField::Height => Column::I64(fill_masked(records, masks, bit, |b| {
             b.block_height
                 .map(i64::try_from)
                 .transpose()
-                .context("blockHeight overflow")
+                .context("height overflow")
         })?),
         SvmBlockField::ParentSlot => Column::I64(fill_masked(records, masks, bit, |b| {
             b.parent_slot
@@ -306,7 +306,7 @@ fn decode_svm_block_field(
                 .transpose()
                 .context("parentSlot overflow")
         })?),
-        SvmBlockField::ParentBlockhash => Column::Str(fill_masked(records, masks, bit, |b| {
+        SvmBlockField::ParentHash => Column::Str(fill_masked(records, masks, bit, |b| {
             Ok(b.parent_blockhash.clone())
         })?),
     })
@@ -664,7 +664,7 @@ mod tests {
 
     #[test]
     fn svm_decode_selected_only_materialises_masked_fields() {
-        // Select slot (from key) + hash + time; blockHeight stays absent.
+        // Select slot (from key) + hash + time; height stays absent.
         let mask = (1u64 << (SvmBlockField::Slot as u32))
             | (1u64 << (SvmBlockField::Hash as u32))
             | (1u64 << (SvmBlockField::Time as u32));
@@ -684,7 +684,7 @@ mod tests {
                 Some(Column::I64(v)) => v.clone(),
                 _ => panic!("expected time column"),
             },
-            column(&cols, "blockHeight").is_some(),
+            column(&cols, "height").is_some(),
         );
         assert_eq!(
             summary,
@@ -775,14 +775,7 @@ mod tests {
         let svm_names: Vec<&str> = SvmBlockField::VARIANTS.iter().map(|f| f.name()).collect();
         assert_eq!(
             svm_names,
-            vec![
-                "slot",
-                "time",
-                "hash",
-                "blockHeight",
-                "parentSlot",
-                "parentBlockhash"
-            ]
+            vec!["slot", "time", "hash", "height", "parentSlot", "parentHash"]
         );
     }
 }

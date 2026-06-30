@@ -3328,6 +3328,7 @@ mod test {
                 discriminator: Some("0x21".to_string()),
                 discriminator_byte_len: 1,
                 selected_transaction_fields: vec![],
+                selected_block_fields: vec![],
                 include_logs: false,
                 account_filters: vec![],
                 is_inner: None,

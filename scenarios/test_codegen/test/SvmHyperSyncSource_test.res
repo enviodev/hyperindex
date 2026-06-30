@@ -15,6 +15,7 @@ let blockTime = 1778064393
 let slot = 417950033
 
 let makeEventConfig = (
+  ~selectedBlockFields: array<Internal.svmBlockField>=[],
   ~selectedTransactionFields=[
     Internal.Signatures,
     FeePayer,
@@ -49,6 +50,7 @@ let makeEventConfig = (
     includeLogs: false,
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
+    selectedBlockFields: Utils.Set.fromArray(selectedBlockFields),
     blockFieldMask: 0.,
     accountFilters: [],
     isInner: None,
@@ -180,7 +182,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           toSlot: slot + 11,
           instructions: [{programId: [metaplexProgramId], d1: ["0x21"]}],
           fields: {
-            block: [Slot, Blockhash, BlockTime, BlockHeight, ParentSlot, ParentBlockhash],
+            block: [Slot, Blockhash, BlockTime],
             transaction: [
               Slot,
               TransactionIndex,
@@ -230,4 +232,32 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       t.expect(query.fields->Option.flatMap(fields => fields.transaction)).toEqual(None)
     },
   )
+
+  // Selected block fields are added to the query's block columns on top of the
+  // always-fetched slot/blockhash/blockTime trio.
+  Async.it("requests the selected block fields' columns", async t => {
+    let eventConfig = makeEventConfig(~selectedBlockFields=[Height, ParentHash])
+    let source = makeSource(~eventConfigs=[eventConfig])
+
+    let _ = await source.getItemsOrThrow(
+      ~fromBlock=slot - 10,
+      ~toBlock=Some(slot + 10),
+      ~addressesByContractName=Dict.fromArray([
+        ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
+      ]),
+      ~contractNameByAddress,
+      ~knownHeight=slot + 1000,
+      ~partitionId="0",
+      ~selection={
+        eventConfigs: [(eventConfig :> Internal.eventConfig)],
+        dependsOnAddresses: true,
+      },
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+    )
+
+    let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
+    let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = query.fields->Option.getUnsafe
+    t.expect(fields.block).toEqual(Some([Slot, Blockhash, BlockTime, BlockHeight, ParentBlockhash]))
+  })
 })

@@ -80,11 +80,11 @@ type svmInstructionBlock = {
   hash: string,
   /** Block height (distinct from slot). Absent when HyperSync didn't return a
    block for this slot, or the upstream omitted it. */
-  blockHeight?: int,
+  height?: int,
   /** Slot of the parent block. */
   parentSlot?: int,
   /** Hash of the parent block. */
-  parentBlockhash?: string,
+  parentHash?: string,
 }
 
 /** The per-instruction payload handlers receive as their `instruction`

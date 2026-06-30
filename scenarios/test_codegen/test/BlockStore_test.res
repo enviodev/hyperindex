@@ -95,7 +95,7 @@ describe("BlockStore materializeItems", () => {
 
   Async.it("enriches each slot's inline block in place and dedupes by slot", async t => {
     let store = BlockStore.make()
-    let mask = Svm.blockFieldMask
+    let mask = Svm.eventBlockFieldMask(Utils.Set.fromArray(Svm.blockFields))
     let a = makeSvmItem(~slot=5, ~time=50, ~mask)
     let b = makeSvmItem(~slot=5, ~time=50, ~mask)
     let c = makeSvmItem(~slot=6, ~time=60, ~mask)

@@ -704,6 +704,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
                   "discriminator": option<string>,
                   "discriminatorByteLen": int,
                   "transactionFields": array<Internal.svmTransactionField>,
+                  "blockFields": option<array<Internal.svmBlockField>>,
                   "includeLogs": bool,
                   "accountFilters": option<
                     array<array<{"position": int, "values": array<string>}>>,
@@ -739,6 +740,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~discriminator=svm["discriminator"],
             ~discriminatorByteLen=svm["discriminatorByteLen"],
             ~transactionFields=svm["transactionFields"],
+            ~blockFields=?svm["blockFields"],
             ~includeLogs=svm["includeLogs"],
             ~accountFilters,
             ~isInner=svm["isInner"],

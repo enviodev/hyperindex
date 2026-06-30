@@ -166,6 +166,16 @@ let allSvmTransactionFields: array<svmTransactionField> = [
 ]
 let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 
+// SVM block fields selectable via `field_selection.block_fields`. `slot`/`time`/
+// `hash` are always included, so they aren't part of this set.
+type svmBlockField =
+  | @as("height") Height
+  | @as("parentSlot") ParentSlot
+  | @as("parentHash") ParentHash
+
+let allSvmBlockFields: array<svmBlockField> = [Height, ParentSlot, ParentHash]
+let svmBlockFieldSchema = S.enum(allSvmBlockFields)
+
 // Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
 let evmNullableBlockFields = Utils.Set.fromArray(
   (
@@ -501,6 +511,10 @@ type svmAccountFilterGroup = array<svmAccountFilter>
 
 type svmInstructionEventConfig = {
   ...eventConfig,
+  /** Block fields selected via `field_selection.block_fields` (the `slot`/`time`/
+   `hash` trio is always included and excluded from this set). Drives the block
+   query columns; precompiled to `blockFieldMask` for store materialisation. */
+  selectedBlockFields: Utils.Set.t<svmBlockField>,
   /** Base58 Solana program id this instruction belongs to. */
   programId: SvmTypes.Pubkey.t,
   /** Hex-encoded discriminator. `None` matches every instruction in the program. */
