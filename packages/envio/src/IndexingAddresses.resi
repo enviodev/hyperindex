@@ -23,6 +23,5 @@ let rawForFilter: t => dict<indexingAddress>
 
 let register: (t, dict<indexingAddress>) => unit
 
-// Deletes addresses registered after `targetBlockNumber` in place and returns them
-// so partitions can be pruned to match.
-let rollbackInPlace: (t, ~targetBlockNumber: int) => Utils.Set.t<Address.t>
+// Deletes addresses registered after `targetBlockNumber` from the index in place.
+let rollbackInPlace: (t, ~targetBlockNumber: int) => unit

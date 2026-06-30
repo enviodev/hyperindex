@@ -1821,9 +1821,10 @@ Always recreates optimized partitions to avoid duplicate addresses:
 - Non-wildcard with lfb > target: delete, track addresses for recreation
 */
 let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetBlockNumber) => {
-  // Step 1: Prune addresses registered after the target block; `addressesToRemove`
-  // drives partition pruning to match the surviving index.
-  let addressesToRemove = indexingAddresses->IndexingAddresses.rollbackInPlace(~targetBlockNumber)
+  // Step 1: Prune addresses registered after the target block. The pruned index is
+  // then the source of truth for partition cleanup below — an address survives iff
+  // it's still in the index.
+  indexingAddresses->IndexingAddresses.rollbackInPlace(~targetBlockNumber)
 
   // Step 2: Categorize partitions
   let keptPartitions = []
@@ -1853,9 +1854,7 @@ let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetB
     | _ if p.latestFetchedBlock.blockNumber > targetBlockNumber =>
       p.addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
         addresses->Array.forEach(address => {
-          switch addressesToRemove->Utils.Set.has(address)
-            ? None
-            : indexingAddresses->IndexingAddresses.get(address->Address.toString) {
+          switch indexingAddresses->IndexingAddresses.get(address->Address.toString) {
           | Some(indexingContract) =>
             let registeringContracts =
               registeringContractsByContract->Utils.Dict.getOrInsertEmptyDict(contractName)
@@ -1873,11 +1872,13 @@ let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetB
         | other => other
         }
 
-        // Remove addresses that should be removed
+        // Drop addresses pruned from the index
         let rollbackedAddressesByContractName = Dict.make()
         addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
           let keptAddresses =
-            addresses->Array.filter(address => !(addressesToRemove->Utils.Set.has(address)))
+            addresses->Array.filter(address =>
+              indexingAddresses->IndexingAddresses.get(address->Address.toString)->Option.isSome
+            )
           if keptAddresses->Array.length > 0 {
             rollbackedAddressesByContractName->Dict.set(contractName, keptAddresses)
           }
