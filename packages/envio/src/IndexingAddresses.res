@@ -35,28 +35,37 @@ let makeContractConfigs = (~eventConfigs: array<Internal.eventConfig>): dict<con
   contractConfigs
 }
 
+let makeIndexingAddress = (
+  ~contract: Internal.indexingAddress,
+  ~contractConfigs: dict<contractConfig>,
+): indexingAddress => {
+  let contractStartBlock = switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(
+    contract.contractName,
+  ) {
+  | Some({startBlock}) => startBlock
+  | None => None
+  }
+  {
+    address: contract.address,
+    contractName: contract.contractName,
+    registrationBlock: contract.registrationBlock,
+    effectiveStartBlock: deriveEffectiveStartBlock(
+      ~registrationBlock=contract.registrationBlock,
+      ~contractStartBlock,
+    ),
+  }
+}
+
 let make = (
   ~contractConfigs: dict<contractConfig>,
   ~addresses: array<Internal.indexingAddress>,
 ): t => {
   let indexingAddresses = Dict.make()
   addresses->Array.forEach(contract => {
-    let contractStartBlock = switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(
-      contract.contractName,
-    ) {
-    | Some({startBlock}) => startBlock
-    | None => None
-    }
-    let ia: indexingAddress = {
-      address: contract.address,
-      contractName: contract.contractName,
-      registrationBlock: contract.registrationBlock,
-      effectiveStartBlock: deriveEffectiveStartBlock(
-        ~registrationBlock=contract.registrationBlock,
-        ~contractStartBlock,
-      ),
-    }
-    indexingAddresses->Dict.set(contract.address->Address.toString, ia)
+    indexingAddresses->Dict.set(
+      contract.address->Address.toString,
+      makeIndexingAddress(~contract, ~contractConfigs),
+    )
   })
   indexingAddresses
 }

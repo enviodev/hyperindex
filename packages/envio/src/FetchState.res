@@ -1667,25 +1667,11 @@ let make = (
     // Only addresses whose contract has events that depend on addresses get
     // registered for active fetching via partitions.
     if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-      let contractStartBlock = switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(
-        contractName,
-      ) {
-      | Some({startBlock}) => startBlock
-      | None => None
-      }
-      let registeringContracts =
-        registeringContractsByContract->Utils.Dict.getOrInsertEmptyDict(contractName)
-      registeringContracts->Dict.set(
+      registeringContractsByContract
+      ->Utils.Dict.getOrInsertEmptyDict(contractName)
+      ->Dict.set(
         contract.address->Address.toString,
-        {
-          address: contract.address,
-          contractName,
-          registrationBlock: contract.registrationBlock,
-          effectiveStartBlock: IndexingAddresses.deriveEffectiveStartBlock(
-            ~registrationBlock=contract.registrationBlock,
-            ~contractStartBlock,
-          ),
-        },
+        IndexingAddresses.makeIndexingAddress(~contract, ~contractConfigs),
       )
 
       // Detect dynamic contracts by registrationBlock

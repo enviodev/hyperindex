@@ -8,6 +8,11 @@ let deriveEffectiveStartBlock: (~registrationBlock: int, ~contractStartBlock: op
 
 let makeContractConfigs: (~eventConfigs: array<Internal.eventConfig>) => dict<contractConfig>
 
+let makeIndexingAddress: (
+  ~contract: Internal.indexingAddress,
+  ~contractConfigs: dict<contractConfig>,
+) => indexingAddress
+
 let make: (~contractConfigs: dict<contractConfig>, ~addresses: array<Internal.indexingAddress>) => t
 
 let get: (t, string) => option<indexingAddress>
