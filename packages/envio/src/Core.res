@@ -6,7 +6,6 @@
 // tighter `Null.t` captures the exact boundary shape.
 type evmHypersyncClientCtor
 type evmRpcClientCtor
-type evmDecoderCtor
 type svmHypersyncClientCtor
 type hyperfuelClientCtor
 type transactionStoreCtor
@@ -18,8 +17,6 @@ type addon = {
   evmHypersyncClient: evmHypersyncClientCtor,
   @as("EvmRpcClient")
   evmRpcClient: evmRpcClientCtor,
-  @as("EvmDecoder")
-  evmDecoder: evmDecoderCtor,
   @as("SvmHypersyncClient")
   svmHypersyncClient: svmHypersyncClientCtor,
   @as("HyperfuelClient")

@@ -193,6 +193,8 @@ struct RpcConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     ws: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    headers: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     initial_block_interval: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     backoff_multiplicative: Option<f64>,
@@ -413,6 +415,7 @@ impl SystemConfig {
                                     ),
                                 },
                                 ws: rpc.ws.clone(),
+                                headers: rpc.headers.clone(),
                                 initial_block_interval: rpc.initial_block_interval,
                                 backoff_multiplicative: rpc.backoff_multiplicative,
                                 acceleration_additive: rpc.acceleration_additive,
