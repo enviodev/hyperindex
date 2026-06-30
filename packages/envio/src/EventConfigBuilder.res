@@ -507,8 +507,9 @@ let buildSvmInstructionEventConfig = (
     includeLogs,
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
-    // SVM carries the block inline on the payload; nothing to materialise.
-    blockFieldMask: 0.,
+    // SVM enriches every instruction's inline block with the full set of block
+    // fields from the store.
+    blockFieldMask: Svm.blockFieldMask,
     accountFilters,
     isInner,
     accounts,

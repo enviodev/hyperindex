@@ -352,7 +352,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     // field list returns no rows (instructions and blocks are exempt), so each
     // opted-into table needs its columns spelled out here.
     let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = {
-      block: [Slot, Blockhash, BlockTime],
+      block: [Slot, Blockhash, BlockTime, BlockHeight, ParentSlot, ParentBlockhash],
       transaction: ?(needsTransactions ? Some(txQueryFields) : None),
       log: ?(needsLogs ? Some([Slot, TransactionIndex, InstructionAddress, Kind, Message]) : None),
       tokenBalance: ?(
@@ -372,7 +372,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
     Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")
 
-    let (resp, transactionStore) = try await client.get(~query) catch {
+    let (resp, transactionStore, blockStore) = try await client.get(~query) catch {
     | exn =>
       throw(
         Source.GetItemsError(
@@ -520,8 +520,9 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       parsedQueueItems,
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
       transactionStore: Some(transactionStore),
-      // SVM keeps the block inline on the payload; no store page.
-      blockStore: None,
+      // Raw blocks kept in Rust; the inline block is enriched with the selected
+      // fields at batch prep.
+      blockStore: Some(blockStore),
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
@@ -546,8 +547,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
         maxNumBlocks: 1000,
       }
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getBlockHashes")
-      // Block-only query; the store page is empty.
-      let (resp, _) = await client.get(~query)
+      // Block-only query; the store pages are empty.
+      let (resp, _, _) = await client.get(~query)
       resp.data.blocks->Array.forEach(b =>
         blockDatas
         ->Array.push({

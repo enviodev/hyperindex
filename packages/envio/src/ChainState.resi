@@ -110,11 +110,16 @@ let handleQueryResult: (
   ~transactionStore: option<TransactionStore.t>,
   ~blockStore: option<BlockStore.t>,
 ) => unit
-let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
+let materializeBatchItems: (
+  t,
+  ~items: array<Internal.item>,
+  ~ecosystem: Ecosystem.name,
+) => promise<unit>
 let materializePageItems: (
   ~items: array<Internal.item>,
   ~transactionStore: option<TransactionStore.t>,
   ~blockStore: option<BlockStore.t>,
+  ~ecosystem: Ecosystem.name,
 ) => promise<unit>
 let registerReorgGuard: (
   t,

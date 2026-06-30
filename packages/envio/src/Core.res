@@ -36,6 +36,7 @@ type addon = {
   // Ordered block-field names for the same contract test (`blockFields` arrays
   // must match the Rust ordinals).
   evmBlockFieldNames: unit => array<string>,
+  svmBlockFieldNames: unit => array<string>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"

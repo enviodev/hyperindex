@@ -68,16 +68,23 @@ type svmLog = {
 
 /** Block context for a matched instruction. `time`/`hash` follow the
  EVM/Fuel field names so the shared `Ecosystem.t` getters in `Svm.res` read
- them uniformly. */
+ them uniformly. `slot`/`time` come from the item; the remaining fields are
+ materialised from the per-chain block store at batch prep. */
 type svmInstructionBlock = {
   /** Slot this instruction's block was matched in. */
   slot: int,
   /** Unix block time (seconds). `0` when HyperSync didn't return a block
    for this instruction's slot. */
   time: int,
-  /** Block hash. Currently always empty — populated by the future
-   reorg-guard `queryBlockHash(slot)` route. */
+  /** Block hash. Empty when HyperSync didn't return a block for this slot. */
   hash: string,
+  /** Block height (distinct from slot). Absent when HyperSync didn't return a
+   block for this slot, or the upstream omitted it. */
+  blockHeight?: int,
+  /** Slot of the parent block. */
+  parentSlot?: int,
+  /** Hash of the parent block. */
+  parentBlockhash?: string,
 }
 
 /** The per-instruction payload handlers receive as their `instruction`

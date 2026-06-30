@@ -206,9 +206,9 @@ type queryResponse = ResponseTypes.queryResponse
 
 type t = {
   getHeight: unit => promise<int>,
-  // Returns the response plus a page of raw transactions (kept in Rust),
-  // keyed by (slot, transactionIndex), materialised at batch prep.
-  get: (~query: query) => promise<(queryResponse, TransactionStore.t)>,
+  // Returns the response plus pages of raw transactions and blocks (kept in
+  // Rust), keyed by (slot, transactionIndex) / slot, materialised at batch prep.
+  get: (~query: query) => promise<(queryResponse, TransactionStore.t, BlockStore.t)>,
 }
 
 @send

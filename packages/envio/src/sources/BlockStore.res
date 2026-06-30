@@ -54,13 +54,19 @@ let setBlockHeader: (
     b.hash = hash
   }`)
 
-// Materialise each store-backed item's selected block fields and write the
+// Merge a materialised field bag onto an existing block object in place. Used by
+// the SVM path, where the source already attached a minimal inline block.
+let enrichBlock: (Internal.eventBlock, Internal.eventBlock) => unit = %raw(`(block, fields) => {
+    Object.assign(block, fields)
+  }`)
+
+// EVM: materialise each store-backed item's selected block fields and write the
 // resulting block onto its payload. Items that already carry an inline block
 // (RPC/simulate/Fuel) are skipped. Store-backed items always get a block object
 // carrying at least number/timestamp/hash (stamped from the item), plus any
 // further fields their events selected. Deduped per block number; each block's
 // mask is the OR of the masks of the events sharing it.
-let materializeItems = async (store: t, ~items: array<Internal.item>) => {
+let materializeEvmItems = async (store: t, ~items: array<Internal.item>) => {
   // Store-backed items arrive in (block, logIndex) order, so events sharing a
   // block are adjacent. Group them by extending the current run rather than
   // hashing a key per item.
@@ -111,6 +117,48 @@ let materializeItems = async (store: t, ~items: array<Internal.item>) => {
       let block = anyExtra.contents ? materialized->Array.getUnsafe(i) : %raw(`{}`)
       block->setBlockHeader(~number, ~timestamp, ~hash)
       payloads->Array.forEach(payload => payload->Internal.setPayloadBlock(block))
+    })
+  }
+}
+
+// SVM: the source attaches a minimal inline block (`slot`/`time`, `hash` empty)
+// to each item. Here we enrich it in place with the fields kept raw in the store
+// — the real `hash` plus `blockHeight`/`parentSlot`/`parentBlockhash` — so a slot
+// missing from the store (no block row) keeps the inline `slot`/`time`. Deduped
+// per slot; the block object is shared by every instruction in that slot.
+let materializeSvmItems = async (store: t, ~items: array<Internal.item>) => {
+  let blockNumbers = []
+  let masks = []
+  let blockGroups = []
+
+  items->Array.forEach(item =>
+    switch item {
+    | Internal.Event(_) =>
+      let eventItem = item->Internal.castUnsafeEventItem
+      switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
+      | None => () // SVM always carries an inline block; nothing to enrich.
+      | Some(block) =>
+        let {blockNumber} = eventItem
+        let mask = eventItem.eventConfig.blockFieldMask
+        let last = blockGroups->Array.length - 1
+        if last >= 0 && blockNumbers->Array.getUnsafe(last) == blockNumber {
+          blockGroups->Array.getUnsafe(last)->Array.push(block)
+          masks->Array.setUnsafe(last, orMask(masks->Array.getUnsafe(last), mask))
+        } else {
+          blockNumbers->Array.push(blockNumber)
+          masks->Array.push(mask)
+          blockGroups->Array.push([block])
+        }
+      }
+    | Internal.Block(_) => ()
+    }
+  )
+
+  if blockGroups->Utils.Array.notEmpty {
+    let materialized = await store->materialize(~blockNumbers, ~masks)
+    blockGroups->Array.forEachWithIndex((blocks, i) => {
+      let fields = materialized->Array.getUnsafe(i)
+      blocks->Array.forEach(block => block->enrichBlock(fields))
     })
   }
 }

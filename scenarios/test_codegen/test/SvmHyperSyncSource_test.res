@@ -92,10 +92,10 @@ let mockClient: SvmHyperSyncClient.t = {
   getHeight: () => Promise.resolve(slot + 1000),
   get: (~query) => {
     capturedQueries->Array.push(query)
-    // The real Rust client builds the store from raw transactions; the mock
-    // returns an empty page (transaction materialisation is covered by the Rust
-    // unit tests). This test asserts the item shape and the query columns.
-    Promise.resolve((mockResponse, TransactionStore.make()))
+    // The real Rust client builds the stores from raw transactions/blocks; the
+    // mock returns empty pages (materialisation is covered by the Rust unit
+    // tests). This test asserts the item shape and the query columns.
+    Promise.resolve((mockResponse, TransactionStore.make(), BlockStore.make()))
   },
 }
 
@@ -180,7 +180,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           toSlot: slot + 11,
           instructions: [{programId: [metaplexProgramId], d1: ["0x21"]}],
           fields: {
-            block: [Slot, Blockhash, BlockTime],
+            block: [Slot, Blockhash, BlockTime, BlockHeight, ParentSlot, ParentBlockhash],
             transaction: [
               Slot,
               TransactionIndex,

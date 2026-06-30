@@ -1,19 +1,20 @@
 //! Per-chain block store. Blocks are kept as raw upstream structs (their large
-//! fields, e.g. `logsBloom`/`extraData`, never cross the napi boundary until
-//! they are read), keyed by block number. One block per number — many logs share
-//! it — so a plain insert deduplicates. At batch preparation the fields a chain's
+//! fields never cross the napi boundary until they are read), keyed by block
+//! number (slot on SVM). One block per number — many logs/instructions share it —
+//! so a plain insert deduplicates. At batch preparation the fields a chain's
 //! events selected are decoded in bulk, off the JS thread, into columnar form;
 //! the main thread zips the columns into plain JS objects. The store lives on the
 //! ReScript `ChainState`; fetch responses merge in, and entries are pruned/rolled
 //! back by block.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use hypersync_client::format::Hex;
 use hypersync_client::simple_types;
+use hypersync_client_solana::simple_types as solana_simple;
 use napi_derive::napi;
 use strum::VariantArray;
 
@@ -93,12 +94,37 @@ impl EvmBlockField {
     }
 }
 
+/// SVM block field codes, mirroring `Svm.res` `blockFields` by ordinal (the bit
+/// position in the selection mask). Keep the two in sync.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, VariantArray)]
+#[repr(i32)]
+pub enum SvmBlockField {
+    Slot = 0,
+    Time = 1,
+    Hash = 2,
+    BlockHeight = 3,
+    ParentSlot = 4,
+    ParentBlockhash = 5,
+}
+
+impl SvmBlockField {
+    /// JS property name; must match `Svm.res` `blockFields`.
+    pub fn name(self) -> &'static str {
+        use SvmBlockField::*;
+        match self {
+            Slot => "slot",
+            Time => "time",
+            Hash => "hash",
+            BlockHeight => "blockHeight",
+            ParentSlot => "parentSlot",
+            ParentBlockhash => "parentBlockhash",
+        }
+    }
+}
+
 /// Decode the per-row mask-selected fields of the given EVM blocks into columns.
-/// A field's column is built when any row selects it (the union of `masks`);
-/// within it a row whose own mask lacks the field gets a `None` cell, so a large
-/// field (e.g. `logsBloom`) is only touched on the rows that asked for it. Runs
-/// off the JS thread. `block_numbers` is the requested key per row, so `number`
-/// resolves from the key (always known) rather than a stored record.
+/// `block_numbers` is the requested key per row, so `number` resolves from the
+/// key (always known) rather than a stored record.
 fn decode_evm_block_columns(
     records: &[Option<Arc<simple_types::Block>>],
     block_numbers: &[i64],
@@ -225,11 +251,79 @@ fn decode_evm_block_field(
     })
 }
 
-/// Blocks keyed by number. One block per number deduplicates the many logs that
-/// share it; the `BTreeMap` keeps prune and rollback cheap range splits.
+/// Decode the per-row mask-selected fields of the given SVM blocks into columns.
+/// `block_numbers` is the requested slot per row, so `slot` resolves from the key
+/// (always known) rather than a stored record.
+fn decode_svm_block_columns(
+    records: &[Option<Arc<solana_simple::Block>>],
+    block_numbers: &[i64],
+    masks: &[u64],
+) -> Result<Columns> {
+    let union = masks.iter().fold(0u64, |acc, &m| acc | m);
+    build_columns(
+        SvmBlockField::VARIANTS,
+        union,
+        records.len(),
+        |f| f as u32,
+        |f| f.name(),
+        |f| decode_svm_block_field(f, records, block_numbers, masks),
+    )
+}
+
+/// Decode a single SVM block field, materialising it only on the rows whose mask
+/// has the field's bit set. Exhaustive match: adding an `SvmBlockField` variant
+/// fails to compile until it is decoded here.
+fn decode_svm_block_field(
+    field: SvmBlockField,
+    records: &[Option<Arc<solana_simple::Block>>],
+    block_numbers: &[i64],
+    masks: &[u64],
+) -> Result<Column> {
+    let bit = 1u64 << (field as u32);
+    Ok(match field {
+        // The slot is the store key, so it's always available regardless of
+        // whether the block row was fetched.
+        SvmBlockField::Slot => Column::I64(
+            block_numbers
+                .iter()
+                .zip(masks)
+                .map(|(&n, &m)| (m & bit != 0).then_some(n))
+                .collect(),
+        ),
+        SvmBlockField::Time => Column::I64(fill_masked(records, masks, bit, |b| Ok(b.block_time))?),
+        SvmBlockField::Hash => Column::Str(fill_masked(records, masks, bit, |b| {
+            Ok(Some(b.blockhash.clone()))
+        })?),
+        SvmBlockField::BlockHeight => Column::I64(fill_masked(records, masks, bit, |b| {
+            b.block_height
+                .map(i64::try_from)
+                .transpose()
+                .context("blockHeight overflow")
+        })?),
+        SvmBlockField::ParentSlot => Column::I64(fill_masked(records, masks, bit, |b| {
+            b.parent_slot
+                .map(i64::try_from)
+                .transpose()
+                .context("parentSlot overflow")
+        })?),
+        SvmBlockField::ParentBlockhash => Column::Str(fill_masked(records, masks, bit, |b| {
+            Ok(b.parent_blockhash.clone())
+        })?),
+    })
+}
+
+/// One stored block, kept in its ecosystem's compact raw form.
+enum StoredBlock {
+    Evm(Arc<simple_types::Block>),
+    Svm(Arc<solana_simple::Block>),
+}
+
+/// Blocks keyed by number (slot on SVM). One block per number deduplicates the
+/// many logs/instructions that share it; the `BTreeMap` keeps prune and rollback
+/// cheap range splits.
 #[derive(Default)]
 struct Blocks {
-    map: BTreeMap<u64, Arc<simple_types::Block>>,
+    map: BTreeMap<u64, StoredBlock>,
 }
 
 impl Blocks {
@@ -258,23 +352,36 @@ impl Blocks {
 }
 
 /// Gather the stored blocks matching the requested numbers, in input order;
-/// missing numbers yield `None`.
-fn collect(store: &Blocks, block_numbers: &[i64]) -> Vec<Option<Arc<simple_types::Block>>> {
+/// missing numbers (or a record `pick` rejects) yield `None`. Shared by both
+/// ecosystems — only the `pick` closure differs.
+fn collect<T>(
+    store: &Blocks,
+    block_numbers: &[i64],
+    pick: impl Fn(&StoredBlock) -> Option<T>,
+) -> Vec<Option<T>> {
     block_numbers
         .iter()
         .map(|n| {
             let n = u64::try_from(*n).ok()?;
-            store.map.get(&n).cloned()
+            store.map.get(&n).and_then(&pick)
         })
         .collect()
 }
 
+// Ecosystem tag selecting `materialize`'s decoder. A store is per-chain, hence
+// single-ecosystem; the tag is set on the first insert/merge so an empty store
+// never falls back to the wrong decoder.
+const ECO_UNKNOWN: u8 = 0;
+const ECO_EVM: u8 = 1;
+const ECO_SVM: u8 = 2;
+
 #[napi]
 pub struct BlockStore {
     inner: Mutex<Blocks>,
-    // Address checksumming is a per-chain EVM setting (only `miner` uses it), so
-    // it lives on the store rather than on every block; learned once on the first
-    // merge.
+    // Set on the first insert/merge; drives the decoder in `materialize`.
+    ecosystem: AtomicU8,
+    // Address checksumming is a per-chain EVM setting (only `miner` uses it),
+    // learned once on the first merge. SVM ignores it.
     should_checksum: AtomicBool,
 }
 
@@ -290,6 +397,7 @@ impl BlockStore {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(Blocks::new()),
+            ecosystem: AtomicU8::new(ECO_UNKNOWN),
             should_checksum: AtomicBool::new(false),
         }
     }
@@ -307,21 +415,26 @@ impl BlockStore {
             let mut src = page.inner.lock().unwrap();
             src.drain_into(&mut dst);
         }
-        self.should_checksum.store(
-            page.should_checksum.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
+        // Ecosystem + checksum are per-chain constants; learn them once from the
+        // first page that carries them.
+        if self.ecosystem.load(Ordering::Relaxed) == ECO_UNKNOWN {
+            let page_ecosystem = page.ecosystem.load(Ordering::Relaxed);
+            if page_ecosystem != ECO_UNKNOWN {
+                self.ecosystem.store(page_ecosystem, Ordering::Relaxed);
+                self.should_checksum.store(
+                    page.should_checksum.load(Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+            }
+        }
     }
 
     /// Bulk-materialise blocks in columnar form, one row per `block_numbers[i]`
     /// key, decoding only the fields whose bit is set in that row's own
-    /// `masks[i]`. Per-row masks let each event pull just the block fields it
-    /// selected, so a large field (e.g. `logsBloom`) is materialised only on the
-    /// rows that asked for it. Each mask is a JS number (`f64`) carrying a
-    /// selection bitmask over field codes. Async + `block_in_place` so the bulk
-    /// decode runs off the JS thread without monopolising an async worker; the
-    /// brief lock only clones `Arc`s. Missing keys yield an empty object. Result
-    /// is aligned with input.
+    /// `masks[i]`. Each mask is a JS number (`f64`) carrying a selection bitmask
+    /// over field codes. Async + `block_in_place` so the bulk decode runs off the
+    /// JS thread without monopolising an async worker; the brief lock only clones
+    /// `Arc`s. Missing keys yield an empty object. Result is aligned with input.
     #[napi(ts_return_type = "Promise<object[]>")]
     pub async fn materialize(
         &self,
@@ -339,15 +452,35 @@ impl BlockStore {
         }
         let masks: Vec<u64> = masks.iter().map(|&m| m as u64).collect();
 
-        let records = {
-            let inner = self.inner.lock().unwrap();
-            collect(&inner, &block_numbers)
-        };
-        let should_checksum = self.should_checksum.load(Ordering::Relaxed);
-        tokio::task::block_in_place(|| {
-            decode_evm_block_columns(&records, &block_numbers, &masks, should_checksum)
-        })
-        .map_err(map_err)
+        match self.ecosystem.load(Ordering::Relaxed) {
+            ECO_EVM => {
+                let records = self.collect_locked(&block_numbers, |stored| match stored {
+                    StoredBlock::Evm(b) => Some(b.clone()),
+                    _ => None,
+                });
+                let should_checksum = self.should_checksum.load(Ordering::Relaxed);
+                tokio::task::block_in_place(|| {
+                    decode_evm_block_columns(&records, &block_numbers, &masks, should_checksum)
+                })
+                .map_err(map_err)
+            }
+            ECO_SVM => {
+                let records = self.collect_locked(&block_numbers, |stored| match stored {
+                    StoredBlock::Svm(b) => Some(b.clone()),
+                    _ => None,
+                });
+                tokio::task::block_in_place(|| {
+                    decode_svm_block_columns(&records, &block_numbers, &masks)
+                })
+                .map_err(map_err)
+            }
+            // Empty store (no ecosystem learned yet): every key is a miss, so the
+            // result is `len` empty objects regardless of the decoder.
+            _ => Ok(Columns {
+                len: block_numbers.len(),
+                columns: Vec::new(),
+            }),
+        }
     }
 
     /// Drop blocks at or below `up_to_block` (already processed).
@@ -370,13 +503,33 @@ impl BlockStore {
 }
 
 impl BlockStore {
+    /// Lock the store and gather the records for the requested keys. The lock is
+    /// held only for the `Arc` clones; decoding runs after it is released.
+    fn collect_locked<T>(
+        &self,
+        block_numbers: &[i64],
+        pick: impl Fn(&StoredBlock) -> Option<T>,
+    ) -> Vec<Option<T>> {
+        let inner = self.inner.lock().unwrap();
+        collect(&inner, block_numbers, pick)
+    }
+
     /// Create a page store for an EVM source, carrying that chain's
     /// address-checksumming setting (copied into the persistent store on merge).
     pub(crate) fn with_checksum(should_checksum: bool) -> Self {
         let store = Self::new();
+        store.ecosystem.store(ECO_EVM, Ordering::Relaxed);
         store
             .should_checksum
             .store(should_checksum, Ordering::Relaxed);
+        store
+    }
+
+    /// Create an SVM page store. The ecosystem is tagged here (not inferred from
+    /// records) so even an empty page selects the SVM decoder after merge.
+    pub(crate) fn new_svm() -> Self {
+        let store = Self::new();
+        store.ecosystem.store(ECO_SVM, Ordering::Relaxed);
         store
     }
 
@@ -384,7 +537,23 @@ impl BlockStore {
     /// page). One block per number, so a plain insert deduplicates the many logs
     /// that share it. Not exposed to JS.
     pub(crate) fn insert_evm_raw(&self, number: u64, block: Arc<simple_types::Block>) {
-        self.inner.lock().unwrap().map.insert(number, block);
+        self.ecosystem.store(ECO_EVM, Ordering::Relaxed);
+        self.inner
+            .lock()
+            .unwrap()
+            .map
+            .insert(number, StoredBlock::Evm(block));
+    }
+
+    /// Insert a raw SVM block keyed by slot (called by the SVM HyperSync source
+    /// while building a page). Not exposed to JS.
+    pub(crate) fn insert_svm_raw(&self, slot: u64, block: Arc<solana_simple::Block>) {
+        self.ecosystem.store(ECO_SVM, Ordering::Relaxed);
+        self.inner
+            .lock()
+            .unwrap()
+            .map
+            .insert(slot, StoredBlock::Svm(block));
     }
 }
 
@@ -399,13 +568,31 @@ pub fn evm_block_field_names() -> Vec<String> {
         .collect()
 }
 
+/// Ordered SVM block-field names; `Svm.res blockFields` is tested against this.
+#[napi]
+pub fn svm_block_field_names() -> Vec<String> {
+    SvmBlockField::VARIANTS
+        .iter()
+        .map(|f| f.name().to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn raw_block(number: u64) -> simple_types::Block {
+    fn raw_evm_block(number: u64) -> simple_types::Block {
         simple_types::Block {
             number: Some(number),
+            ..Default::default()
+        }
+    }
+
+    fn raw_svm_block(slot: u64) -> solana_simple::Block {
+        solana_simple::Block {
+            slot,
+            blockhash: "hash".to_string(),
+            block_time: Some(123),
             ..Default::default()
         }
     }
@@ -421,8 +608,9 @@ mod tests {
     fn decode_selected_only_materialises_masked_fields() {
         // Select only `logsBloom` via the bitmask.
         let mask = 1u64 << (EvmBlockField::LogsBloom as u32);
-        let cols = decode_evm_block_columns(&[Some(Arc::new(raw_block(1)))], &[1], &[mask], false)
-            .expect("decode columns");
+        let cols =
+            decode_evm_block_columns(&[Some(Arc::new(raw_evm_block(1)))], &[1], &[mask], false)
+                .expect("decode columns");
 
         // Exactly one column (logsBloom) is present; number (resolvable from the
         // key but unselected) and gasUsed are absent.
@@ -437,7 +625,7 @@ mod tests {
         // `number`, so it never depends on a fetched block row.
         let mask = 1u64 << (EvmBlockField::Number as u32);
         let cols = decode_evm_block_columns(
-            &[None, Some(Arc::new(raw_block(3)))],
+            &[None, Some(Arc::new(raw_evm_block(3)))],
             &[7, 3],
             &[mask, mask],
             false,
@@ -458,7 +646,10 @@ mod tests {
         // column is present only on the row whose own mask has the bit set.
         let number_mask = 1u64 << (EvmBlockField::Number as u32);
         let cols = decode_evm_block_columns(
-            &[Some(Arc::new(raw_block(1))), Some(Arc::new(raw_block(2)))],
+            &[
+                Some(Arc::new(raw_evm_block(1))),
+                Some(Arc::new(raw_evm_block(2))),
+            ],
             &[1, 2],
             &[number_mask, 0],
             false,
@@ -472,10 +663,45 @@ mod tests {
     }
 
     #[test]
+    fn svm_decode_selected_only_materialises_masked_fields() {
+        // Select slot (from key) + hash + time; blockHeight stays absent.
+        let mask = (1u64 << (SvmBlockField::Slot as u32))
+            | (1u64 << (SvmBlockField::Hash as u32))
+            | (1u64 << (SvmBlockField::Time as u32));
+        let cols = decode_svm_block_columns(&[Some(Arc::new(raw_svm_block(9)))], &[9], &[mask])
+            .expect("decode columns");
+
+        let summary = (
+            match column(&cols, "slot") {
+                Some(Column::I64(v)) => v.clone(),
+                _ => panic!("expected slot column"),
+            },
+            match column(&cols, "hash") {
+                Some(Column::Str(v)) => v.clone(),
+                _ => panic!("expected hash column"),
+            },
+            match column(&cols, "time") {
+                Some(Column::I64(v)) => v.clone(),
+                _ => panic!("expected time column"),
+            },
+            column(&cols, "blockHeight").is_some(),
+        );
+        assert_eq!(
+            summary,
+            (
+                vec![Some(9)],
+                vec![Some("hash".to_string())],
+                vec![Some(123)],
+                false
+            )
+        );
+    }
+
+    #[test]
     fn prune_and_rollback_drop_by_block() {
         let store = BlockStore::new();
         for block in [10u64, 20, 30] {
-            store.insert_evm_raw(block, Arc::new(raw_block(block)));
+            store.insert_evm_raw(block, Arc::new(raw_evm_block(block)));
         }
 
         store.prune(10);
@@ -499,17 +725,17 @@ mod tests {
     #[test]
     fn field_codes_match_names_in_order() {
         // The bit position (`field as i32`) must equal the field's index in
-        // `VARIANTS`, and the names must match the ReScript `blockFields` array in
+        // `VARIANTS`, and the names must match the ReScript `blockFields` arrays in
         // that same order. Pin both so a reordered or misnumbered variant fails
         // here rather than silently corrupting the shared mask.
-        let codes: Vec<i32> = EvmBlockField::VARIANTS.iter().map(|&f| f as i32).collect();
+        let evm_codes: Vec<i32> = EvmBlockField::VARIANTS.iter().map(|&f| f as i32).collect();
         assert_eq!(
-            codes,
+            evm_codes,
             Vec::from_iter(0..EvmBlockField::VARIANTS.len() as i32)
         );
-        let names: Vec<&str> = EvmBlockField::VARIANTS.iter().map(|f| f.name()).collect();
+        let evm_names: Vec<&str> = EvmBlockField::VARIANTS.iter().map(|f| f.name()).collect();
         assert_eq!(
-            names,
+            evm_names,
             vec![
                 "number",
                 "timestamp",
@@ -538,6 +764,24 @@ mod tests {
                 "sendCount",
                 "sendRoot",
                 "mixHash",
+            ]
+        );
+
+        let svm_codes: Vec<i32> = SvmBlockField::VARIANTS.iter().map(|&f| f as i32).collect();
+        assert_eq!(
+            svm_codes,
+            Vec::from_iter(0..SvmBlockField::VARIANTS.len() as i32)
+        );
+        let svm_names: Vec<&str> = SvmBlockField::VARIANTS.iter().map(|f| f.name()).collect();
+        assert_eq!(
+            svm_names,
+            vec![
+                "slot",
+                "time",
+                "hash",
+                "blockHeight",
+                "parentSlot",
+                "parentBlockhash"
             ]
         );
     }
