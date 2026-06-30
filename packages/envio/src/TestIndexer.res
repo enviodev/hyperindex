@@ -667,8 +667,11 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             Int.compare(aId, bId)
           })
 
-          // Parse and validate all chain configs upfront before starting any workers
-          let preflightAddressesByChain = getIndexingAddressesByChain(state)
+          // Parse and validate the block ranges upfront before starting any
+          // workers. srcAddress validation can't run here: it depends on which
+          // events are wildcard, and `config` reflects config.yaml only —
+          // handler-level `wildcard: true` takes effect only once registrations
+          // are applied.
           let chainEntries = sortedChainKeys->Array.map(chainIdStr => {
             let rawChainConfig = rawChains->Dict.getUnsafe(chainIdStr)
             let chainId = switch chainIdStr->Int.fromString {
@@ -684,19 +687,6 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
               ~rawChainConfig,
               ~progressBlock=state.progressBlockByChain->Dict.get(chainIdStr),
             )
-            switch rawChainConfig.simulate {
-            | Some(simulateItems) =>
-              let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId))
-              SimulateItems.validateSrcAddresses(
-                ~simulateItems,
-                ~config,
-                ~chainConfig,
-                ~indexingAddresses=preflightAddressesByChain
-                ->Dict.get(chainIdStr)
-                ->Option.getOr([]),
-              )
-            | None => ()
-            }
             (chainIdStr, chainId, rawChainConfig, processChainConfig)
           })
 
@@ -877,7 +867,27 @@ let initTestWorker = () => {
     | Some(_) => ()
     }
 
-    let patchConfig = (config, _registrations) => {
+    let patchConfig = (config: Config.t, _registrations) => {
+      // `config` here has handler registrations applied, so `isWildcard`
+      // reflects `indexer.onEvent({ wildcard: true })` — which the main thread
+      // can't see. Validate srcAddresses against it before patching in the
+      // simulate source.
+      switch simulate {
+      | Some(simulateItems) =>
+        let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId))
+        let indexingAddresses =
+          initialState.chains
+          ->Array.find(c => c.id == chainId)
+          ->Option.mapOr([], c => c.indexingAddresses)
+        SimulateItems.validateSrcAddresses(
+          ~simulateItems,
+          ~config,
+          ~chainConfig,
+          ~indexingAddresses,
+        )
+      | None => ()
+      }
+
       let config = SimulateItems.patchConfig(~config, ~processConfig)
 
       // In auto-exit mode, set batchSize=1 to process one block checkpoint at a time
@@ -887,7 +897,23 @@ let initTestWorker = () => {
         config
       }
     }
-    Main.start(~persistence, ~isTest=true, ~patchConfig, ~exitAfterFirstEventBlock)->ignore
+    Main.start(~persistence, ~isTest=true, ~patchConfig, ~exitAfterFirstEventBlock)
+    ->Promise.catch(exn => {
+      // `Main.start` rejects on any fatal error: a runtime failure arrives wrapped
+      // in `Main.FatalError` (already logged), a setup throw (e.g. patchConfig's
+      // srcAddress validation) arrives raw. The parent only learns of failures
+      // through the worker `error` event, which fires on an *uncaught* exception.
+      // Throwing synchronously in this catch would just reject the catch's own
+      // promise (swallowed by `ignore`); `setImmediate` re-throws outside the
+      // promise chain so it becomes uncaught and reaches the parent.
+      let toThrow = switch exn {
+      | Main.FatalError(inner) => inner
+      | _ => exn->Utils.prettifyExn
+      }
+      NodeJs.setImmediate(() => throw(toThrow))
+      Promise.resolve()
+    })
+    ->ignore
   | None =>
     Logging.error("TestIndexerWorker: No worker data provided")
     NodeJs.process->NodeJs.exitWithCode(Failure)

@@ -234,6 +234,10 @@ let deriveSrcAddress = (
 // A non-wildcard event is gated by `clientAddressFilter` on srcAddress ownership,
 // so a simulate item whose srcAddress isn't indexed on this chain would be
 // silently dropped (handler never runs). Fail loudly instead.
+//
+// `config` must already have handler registrations applied, otherwise an event
+// made wildcard purely through `indexer.onEvent({ wildcard: true })` reads back
+// as non-wildcard and gets wrongly rejected.
 let validateSrcAddresses = (
   ~simulateItems: array<JSON.t>,
   ~config: Config.t,

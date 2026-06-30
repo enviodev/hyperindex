@@ -15,42 +15,13 @@ type payload = {
 external fromPayload: payload => Internal.eventPayload = "%identity"
 external toPayload: Internal.eventPayload => payload = "%identity"
 
-// Ordered transaction field names. The index of each is the field code shared
-// with the Rust store (`EvmTxField`) — keep this order in sync.
-let transactionFields = [
-  "transactionIndex",
-  "hash",
-  "from",
-  "to",
-  "gas",
-  "gasPrice",
-  "maxPriorityFeePerGas",
-  "maxFeePerGas",
-  "cumulativeGasUsed",
-  "effectiveGasPrice",
-  "gasUsed",
-  "input",
-  "nonce",
-  "value",
-  "v",
-  "r",
-  "s",
-  "contractAddress",
-  "logsBloom",
-  "root",
-  "status",
-  "yParity",
-  "maxFeePerBlobGas",
-  "blobVersionedHashes",
-  "type",
-  "l1Fee",
-  "l1GasPrice",
-  "l1GasUsed",
-  "l1FeeScalar",
-  "gasUsedForL1",
-  "accessList",
-  "authorizationList",
-]
+// Ordered transaction field names, the field codes shared with the Rust store
+// (`EvmTxField`). Derived from the typed field list so the two can't drift;
+// `Internal.allEvmTransactionFields` is pinned to the Rust ordinal order by a test.
+let transactionFields =
+  Internal.allEvmTransactionFields->(
+    Utils.magic: array<Internal.evmTransactionField> => array<string>
+  )
 
 // One event's selected transaction fields → store selection bitmask. Computed
 // per event at config build and cached on the event config.

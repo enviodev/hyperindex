@@ -65,6 +65,7 @@ let make = (
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
+  ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~logger: Pino.t,
 ): t => {
   logger,
@@ -78,7 +79,7 @@ let make = (
   pendingBudget: 0.,
   reorgDetection,
   safeCheckpointTracking,
-  transactionStore: TransactionStore.make(),
+  transactionStore,
 }
 
 let makeInternal = (
@@ -324,6 +325,10 @@ let makeInternal = (
     ~committedProgressBlockNumber=progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
+    ~transactionStore=TransactionStore.make(
+      ~ecosystem=config.ecosystem.name,
+      ~shouldChecksum=!lowercaseAddresses,
+    ),
     ~logger,
   )
 }
