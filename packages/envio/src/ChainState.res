@@ -21,6 +21,11 @@ type t = {
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
   transactionStore: TransactionStore.t,
+  // Simulate runs only: when true, non-wildcard items the address filter drops
+  // are recorded in `skippedItems` (their handler never ran) so the run can fail
+  // loudly on a dead simulate input instead of exiting clean.
+  isSimulate: bool,
+  skippedItems: array<Internal.item>,
 }
 
 // Per-chain shape returned by the status API.
@@ -65,6 +70,7 @@ let make = (
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
+  ~isSimulate=false,
   ~logger: Pino.t,
 ): t => {
   logger,
@@ -79,6 +85,8 @@ let make = (
   reorgDetection,
   safeCheckpointTracking,
   transactionStore: TransactionStore.make(),
+  isSimulate,
+  skippedItems: [],
 }
 
 let makeInternal = (
@@ -216,6 +224,12 @@ let makeInternal = (
   | None => ()
   }
 
+  let isSimulate = switch chainConfig.sourceConfig {
+  | Config.CustomSources(sources) =>
+    sources->Array.some(source => source.name === SimulateSource.sourceName)
+  | _ => false
+  }
+
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
     ~addresses=indexingAddresses,
@@ -324,6 +338,7 @@ let makeInternal = (
     ~committedProgressBlockNumber=progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
+    ~isSimulate,
     ~logger,
   )
 }
@@ -414,6 +429,7 @@ let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrE
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
 let indexingAddresses = (cs: t) => cs.fetchState.indexingAddresses
+let skippedSimulateItems = (cs: t) => cs.skippedItems
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
@@ -528,6 +544,25 @@ let handleQueryResult = (
   let fs = switch newItemsWithDcs {
   | [] => cs.fetchState
   | _ => cs.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
+  }
+
+  // Mirror FetchState.handleQueryResult's address filter: a non-wildcard simulate
+  // item whose srcAddress isn't indexed (after this response's dynamic
+  // registrations) is about to be dropped, so its handler never runs. Record it
+  // for the caught-up check to surface as a dead simulate input.
+  if cs.isSimulate {
+    newItems->Array.forEach(item =>
+      switch item {
+      | Internal.Event({eventConfig, payload, blockNumber}) =>
+        switch eventConfig.clientAddressFilter {
+        | Some(filter)
+          if !eventConfig.isWildcard && !filter(payload, blockNumber, fs.indexingAddresses) =>
+          cs.skippedItems->Array.push(item)->ignore
+        | _ => ()
+        }
+      | _ => ()
+      }
+    )
   }
 
   cs.fetchState =

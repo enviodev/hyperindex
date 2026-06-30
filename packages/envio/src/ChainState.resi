@@ -15,6 +15,7 @@ let make: (
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
+  ~isSimulate: bool=?,
   ~logger: Pino.t,
 ) => t
 
@@ -52,6 +53,7 @@ let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 // Fetch-frontier reads.
 let knownHeight: t => int
 let indexingAddresses: t => dict<FetchState.indexingAddress>
+let skippedSimulateItems: t => array<Internal.item>
 let bufferSize: t => int
 let bufferReadyCount: t => int
 let getProgressPercentage: t => float

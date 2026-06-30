@@ -68,3 +68,25 @@ Async.it("accepts a non-wildcard event for a contract registered in the same pro
 
   t.expect(error).toEqual(None)
 })
+
+// With nothing registering newNft (no factory item, no earlier process() call),
+// the address filter drops the non-wildcard Transfer and its handler never runs.
+// The run reports the dead simulate input instead of passing silently.
+Async.it("reports a non-wildcard simulate item whose srcAddress is never indexed", async t => {
+  let indexer = Indexer.createTestIndexer()
+
+  let error = try {
+    let _ = await indexer.process({
+      chains: {\"1337": {startBlock: 1, endBlock: 100, simulate: [transferNft]}},
+    })
+    None
+  } catch {
+  | JsExn(err) => err->JsExn.message
+  }
+
+  t.expect(error).toEqual(
+    Some(
+      `simulate: 1 event(s) were never routed to a handler — their srcAddress isn't indexed for the contract on this chain (after config addresses, earlier process() calls, and registrations in this run). Register the contract before the event, pass a configured or registered srcAddress, or use a wildcard event. Skipped: SimpleNft.Transfer (srcAddress ${newNft->Address.toString}, chain 1337, block 1)`,
+    ),
+  )
+})
