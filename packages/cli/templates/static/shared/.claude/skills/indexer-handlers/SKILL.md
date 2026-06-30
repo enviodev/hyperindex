@@ -75,7 +75,7 @@ context.Entity.deleteUnsafe(id);     // delete (sync — no await)
 context.chain.id           // number — current chain ID
 context.chain.isRealtime   // boolean — true when ALL chains have caught up to head
 context.isPreload      // boolean — true during preload phase
-context.log            // { debug, info, warn, error, errorWithExn }
+context.log            // { debug, info, warn, error }
 context.effect(fn, input)  // external call via Effect API (see indexer-external-calls)
 ```
 
