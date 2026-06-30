@@ -21,10 +21,10 @@ type t = {
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
   transactionStore: TransactionStore.t,
-  // Simulate runs only: the non-wildcard items a test fed in, minus the ones that
-  // reached a batch (and so a handler). Whatever remains on completion never ran
-  // — a dead simulate input the run reports instead of exiting clean. Always
-  // empty off the simulate path.
+  // Simulate runs only: the items a test fed in, minus the ones that reached a
+  // batch (and so a handler). Whatever remains on completion never ran — a dead
+  // simulate input the run reports instead of exiting clean. Always empty off the
+  // simulate path.
   mutable unprocessedSimulateItems: array<Internal.item>,
 }
 
@@ -223,21 +223,13 @@ let makeInternal = (
   | None => ()
   }
 
-  // Seed the simulate dead-input tracker with the non-wildcard items the test
-  // fed in. Wildcard items route regardless of srcAddress, so an unrouted one
-  // isn't a dead input; only non-wildcard items are worth reporting.
+  // Seed the simulate dead-input tracker with every item the test fed in. Each is
+  // dropped once it reaches a batch (and so a handler); whatever is left on
+  // completion never ran and is reported.
   let unprocessedSimulateItems = switch chainConfig.sourceConfig {
   | Config.CustomSources(sources) =>
     switch sources->Array.find(source => source.simulateItems->Option.isSome) {
-    | Some(source) =>
-      source.simulateItems
-      ->Option.getOr([])
-      ->Array.filter(item =>
-        switch item {
-        | Internal.Event({eventConfig}) => !eventConfig.isWildcard
-        | _ => false
-        }
-      )
+    | Some(source) => source.simulateItems->Option.getOr([])
     | None => []
     }
   | _ => []

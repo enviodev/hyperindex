@@ -16,9 +16,10 @@ let run = async (state: IndexerState.t) => {
   ChainMetadata.stage(state)
   await state->Writing.flush
   if !(state->IndexerState.isStopped) && !(state->IndexerState.isResolvingReorg) {
-    // Simulate runs collect non-wildcard items the address filter dropped. If one
-    // never reached its handler, fail loudly instead of exiting clean — a simulate
-    // input that runs nothing is dead test code. Always empty off the simulate path.
+    // A simulate run tracks the items a test fed in and drops each as it reaches a
+    // handler. Anything left never ran — fail loudly instead of exiting clean, since
+    // a simulate input that runs nothing is dead test code. Always empty off the
+    // simulate path.
     switch state
     ->IndexerState.chainStates
     ->Dict.valuesToArray
@@ -32,7 +33,7 @@ let run = async (state: IndexerState.t) => {
           Utils.Error.make(
             `simulate: ${skipped
               ->Array.length
-              ->Int.toString} event(s) were never routed to a handler — their srcAddress isn't indexed for the contract on this chain (after config addresses, earlier process() calls, and registrations in this run). Register the contract before the event, pass a configured or registered srcAddress, or use a wildcard event. Skipped: ${skipped
+              ->Int.toString} item(s) provided to simulate never reached a handler (filtered out first — e.g. a non-wildcard srcAddress not indexed for the contract, or a where/block filter that excluded the event). Skipped: ${skipped
               ->Array.map(describeSkippedItem)
               ->Array.join("; ")}`,
           ),
