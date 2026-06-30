@@ -425,7 +425,6 @@ let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrE
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
 let contractAddresses = (cs: t, ~contractName) =>
   cs.indexingAddresses->IndexingAddresses.getContractAddresses(~contractName)
-let numIndexingAddresses = (cs: t) => cs.indexingAddresses->IndexingAddresses.size
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage

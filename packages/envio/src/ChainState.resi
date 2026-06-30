@@ -53,7 +53,6 @@ let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 // Fetch-frontier reads.
 let knownHeight: t => int
 let contractAddresses: (t, ~contractName: string) => array<Address.t>
-let numIndexingAddresses: t => int
 let bufferSize: t => int
 let bufferReadyCount: t => int
 let getProgressPercentage: t => float

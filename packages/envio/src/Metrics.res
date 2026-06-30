@@ -26,7 +26,7 @@ let collect = async (~state: option<IndexerState.t>) => {
     state
     ->IndexerState.chainStates
     ->Utils.Dict.forEachWithKey((cs, chainId) => {
-      samples->Array.push((chainId, cs->ChainState.numIndexingAddresses))
+      samples->Array.push((chainId, (cs->ChainState.toChainData).numAddresses))
     })
     `${base}${renderGauge(~name=indexingAddressesName, ~help=indexingAddressesHelp, ~samples)}\n`
   }
