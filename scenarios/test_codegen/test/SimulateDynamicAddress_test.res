@@ -86,7 +86,7 @@ Async.it("reports a non-wildcard simulate item whose srcAddress is never indexed
 
   t.expect(error).toEqual(
     Some(
-      `simulate: 1 item(s) provided to simulate never reached a handler (filtered out first — e.g. a non-wildcard srcAddress not indexed for the contract, or a where/block filter that excluded the event). Skipped: SimpleNft.Transfer (srcAddress ${newNft->Address.toString}, chain 1337, block 1)`,
+      `simulate: 1 item you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler — usually a non-wildcard srcAddress that isn't indexed for the contract, or a where/block filter that excluded the event. Unrouted items, by index in each chain's simulate array:` ++ "\n  - chain 1337: 0",
     ),
   )
 })
