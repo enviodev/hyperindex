@@ -5,7 +5,8 @@ describe("Metrics.renderGauge", () => {
     let rendered = Metrics.renderGauge(
       ~name="envio_indexing_addresses",
       ~help="The number of addresses indexed on chain.",
-      ~samples=[("1", 3), ("137", 0)],
+      ~chains=Dict.fromArray([("1", 3), ("137", 0)]),
+      ~value=count => count,
     )
 
     t.expect(rendered).toBe(
@@ -17,7 +18,12 @@ envio_indexing_addresses{chainId="137"} 0`,
   })
 
   it("Renders only the header when there are no chains", t => {
-    let rendered = Metrics.renderGauge(~name="envio_indexing_addresses", ~help="help", ~samples=[])
+    let rendered = Metrics.renderGauge(
+      ~name="envio_indexing_addresses",
+      ~help="help",
+      ~chains=Dict.make(),
+      ~value=count => count,
+    )
 
     t.expect(rendered).toBe(`# HELP envio_indexing_addresses help
 # TYPE envio_indexing_addresses gauge`)

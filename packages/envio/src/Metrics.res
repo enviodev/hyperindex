@@ -5,15 +5,16 @@
 let indexingAddressesName = "envio_indexing_addresses"
 let indexingAddressesHelp = "The number of addresses indexed on chain. Includes both static and dynamic addresses."
 
-// Accumulate into one string rather than building a lines array to join: `++`
-// compiles to JS `+=`, which V8 grows as a ConsString instead of recopying.
-let renderGauge = (~name, ~help, ~samples: array<(string, int)>) => {
+// Render a gauge straight from the per-chain dict, one sample per key, without
+// materialising an intermediate samples array. Accumulate into one string rather
+// than building a lines array to join: `++` compiles to JS `+=`, which V8 grows
+// as a ConsString instead of recopying.
+let renderGauge = (~name, ~help, ~chains: dict<'a>, ~value: 'a => int) => {
   let out = ref(`# HELP ${name} ${help}\n# TYPE ${name} gauge`)
   let prefix = `\n${name}{chainId="`
-  for i in 0 to samples->Array.length - 1 {
-    let (chainId, value) = samples->Array.getUnsafe(i)
-    out := out.contents ++ prefix ++ chainId ++ `"} ` ++ value->Int.toString
-  }
+  chains->Utils.Dict.forEachWithKey((chain, chainId) => {
+    out := out.contents ++ prefix ++ chainId ++ `"} ` ++ value(chain)->Int.toString
+  })
   out.contents
 }
 
@@ -22,12 +23,11 @@ let collect = async (~state: option<IndexerState.t>) => {
   switch state {
   | None => base
   | Some(state) =>
-    let samples = []
-    state
-    ->IndexerState.chainStates
-    ->Utils.Dict.forEachWithKey((cs, chainId) => {
-      samples->Array.push((chainId, (cs->ChainState.toChainData).numAddresses))
-    })
-    `${base}${renderGauge(~name=indexingAddressesName, ~help=indexingAddressesHelp, ~samples)}\n`
+    `${base}${renderGauge(
+        ~name=indexingAddressesName,
+        ~help=indexingAddressesHelp,
+        ~chains=state->IndexerState.chainStates,
+        ~value=cs => (cs->ChainState.toChainData).numAddresses,
+      )}\n`
   }
 }

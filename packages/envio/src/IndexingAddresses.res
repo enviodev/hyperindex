@@ -85,7 +85,7 @@ let register = (indexingAddresses: t, additions: dict<indexingAddress>) => {
   let _ = Utils.Dict.mergeInPlace(indexingAddresses, additions)
 }
 
-let rollback = (indexingAddresses: t, ~targetBlockNumber: int): Utils.Set.t<Address.t> => {
+let rollbackInPlace = (indexingAddresses: t, ~targetBlockNumber: int): Utils.Set.t<Address.t> => {
   let removed = Utils.Set.make()
   // forEachWithKey is a `for..in`, so deleting the key currently being visited is
   // safe — it doesn't affect enumeration of the remaining keys.

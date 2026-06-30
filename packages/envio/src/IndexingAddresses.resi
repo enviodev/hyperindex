@@ -25,4 +25,4 @@ let register: (t, dict<indexingAddress>) => unit
 
 // Deletes addresses registered after `targetBlockNumber` in place and returns them
 // so partitions can be pruned to match.
-let rollback: (t, ~targetBlockNumber: int) => Utils.Set.t<Address.t>
+let rollbackInPlace: (t, ~targetBlockNumber: int) => Utils.Set.t<Address.t>

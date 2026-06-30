@@ -1823,7 +1823,7 @@ Always recreates optimized partitions to avoid duplicate addresses:
 let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetBlockNumber) => {
   // Step 1: Prune addresses registered after the target block; `addressesToRemove`
   // drives partition pruning to match the surviving index.
-  let addressesToRemove = indexingAddresses->IndexingAddresses.rollback(~targetBlockNumber)
+  let addressesToRemove = indexingAddresses->IndexingAddresses.rollbackInPlace(~targetBlockNumber)
 
   // Step 2: Categorize partitions
   let keptPartitions = []
