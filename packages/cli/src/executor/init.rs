@@ -254,7 +254,7 @@ pub async fn run_init_args(
         Ecosystem::Evm {
             init_flow:
                 init_config::evm::InitFlow::Template(init_config::evm::Template::FeatureExternalCalls),
-        } => vec![("viem".to_string(), "^2.0.0".to_string())],
+        } => vec![("viem".to_string(), "2.54.0".to_string())],
         _ => vec![],
     };
 
