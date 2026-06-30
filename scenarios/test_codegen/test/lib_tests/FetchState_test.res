@@ -1889,8 +1889,23 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(WaitingForNewBlock)
     t.expect(
       updatedFetchState->getNextQuery(~budget=2, ~knownHeight=11),
-      ~message=`Should do nothing if the case above is not waiting for new block`,
-    ).toEqual(NothingToQuery)
+      ~message=`Should fetch the head block once the partition is behind the head:
+      budget is measured past the ready frontier, so the 2 already-ready items
+      don't eat the budget and pin the target block below the frontier`,
+    ).toEqual(
+      Ready([
+        {
+          ...defaultQuery,
+          partitionId: "0",
+          estResponseSize: 10000.,
+          fromBlock: 11,
+          toBlock: None,
+          selection: updatedFetchState.normalSelection,
+          addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
+          isChunk: false,
+        },
+      ]),
+    )
 
     updatedFetchState->FetchState.startFetchingQueries(~queries=[query])
     t.expect(
@@ -2240,9 +2255,10 @@ describe("FetchState.getNextQuery & integration", () => {
 
     t.expect(
       fetchStateWithResponse1->getNextQuery(~budget=1),
-      ~message=`Even if we have a partition with toBlock which wants to merge
-      if it's outside of the budget, we should return NothingToQuery`,
-    ).toEqual(NothingToQuery)
+      ~message=`Buffer has no items past the ready frontier, so a tight budget no
+      longer caps the proposal here (the shared budget is enforced by cross-chain
+      admission); the merge continuation is proposed the same as with a full budget`,
+    ).toEqual(fetchStateWithResponse1->getNextQuery)
 
     let queries = switch fetchStateWithResponse1->getNextQuery {
     | Ready(queries) => queries
@@ -2813,9 +2829,10 @@ describe("FetchState unit tests for specific cases", () => {
       {
         ...fetchState,
         knownHeight: 2,
-      }->FetchState.getNextQuery(~budget=2, ~chainPendingBudget=0.),
-      ~message=`Should wait until queue is processed, to continue fetching.
-      Don't wait for new block, until all partitions reached the head`,
+      }->FetchState.getNextQuery(~budget=1, ~chainPendingBudget=0.),
+      ~message=`Budget is measured past the ready frontier; the item already
+      buffered past it consumes the single-item budget, so the behind partition
+      stays capped and nothing new is fetched until the queue drains`,
     ).toEqual(NothingToQuery)
   })
 
