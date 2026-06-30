@@ -5,6 +5,7 @@ mod commands;
 pub mod config_parsing;
 pub mod constants;
 pub mod docker_env;
+mod event_routing;
 mod evm;
 mod evm_hypersync_source;
 mod evm_rpc_source;
