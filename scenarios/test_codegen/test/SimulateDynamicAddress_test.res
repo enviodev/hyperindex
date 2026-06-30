@@ -90,3 +90,30 @@ Async.it("reports a non-wildcard simulate item whose srcAddress is never indexed
     ),
   )
 })
+
+// Two items resolving to the same (block, logIndex) is an ambiguous input that
+// the dead-input tracker and event ordering both key on — rejected at parse.
+Async.it("rejects simulate items that resolve to the same block and logIndex", async t => {
+  let indexer = Indexer.createTestIndexer()
+
+  let error = try {
+    let _ = await indexer.process({
+      chains: {
+        \"1337": {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [{...createNft, logIndex: 0}, {...transferNft, logIndex: 0}],
+        },
+      },
+    })
+    None
+  } catch {
+  | JsExn(err) => err->JsExn.message
+  }
+
+  t.expect(error).toEqual(
+    Some(
+      `simulate: items at index 0 and 1 on chain 1337 both resolve to block 1, logIndex 0. Give each item a distinct logIndex (or omit logIndex so they auto-increment).`,
+    ),
+  )
+})

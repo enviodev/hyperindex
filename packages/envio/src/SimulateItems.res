@@ -241,8 +241,11 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
   let currentLogIndex = ref(0)
 
   let items = []
+  // Coordinate "block:logIndex" -> the index of the first item that claimed it,
+  // used to reject two items resolving to the same (block, logIndex).
+  let seenCoordinates = Dict.make()
 
-  simulateItems->Array.forEach(rawJson => {
+  simulateItems->Array.forEachWithIndex((rawJson, itemIndex) => {
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
     switch (raw->getContract, raw->getEvent) {
@@ -304,6 +307,18 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
 
       // Update currentBlock for subsequent items
       currentBlock := blockNumber
+
+      // A simulate item must land on a distinct (block, logIndex): event ordering
+      // and the dead-input tracker both key on it. Catch explicit duplicates and
+      // explicit-vs-auto-increment collisions here, naming both offending indices.
+      let coordinate = `${blockNumber->Int.toString}:${logIndex->Int.toString}`
+      switch seenCoordinates->Dict.get(coordinate) {
+      | Some(firstIndex) =>
+        JsError.throwWithMessage(
+          `simulate: items at index ${firstIndex->Int.toString} and ${itemIndex->Int.toString} on chain ${chainId->Int.toString} both resolve to block ${blockNumber->Int.toString}, logIndex ${logIndex->Int.toString}. Give each item a distinct logIndex (or omit logIndex so they auto-increment).`,
+        )
+      | None => seenCoordinates->Dict.set(coordinate, itemIndex)
+      }
 
       items
       ->Array.push(
