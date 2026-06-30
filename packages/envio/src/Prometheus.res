@@ -246,10 +246,7 @@ module PreloadHandler = {
       )
       operations->Utils.Dict.deleteInPlace(key)
     }
-    sumTimeCounter->SafeCounter.handleFloat(
-      ~labels,
-      ~value=timerRef->Performance.secondsSince,
-    )
+    sumTimeCounter->SafeCounter.handleFloat(~labels, ~value=timerRef->Performance.secondsSince)
     count->SafeCounter.increment(~labels)
   }
 }
@@ -336,18 +333,6 @@ module ProcessStartTimeSeconds = {
 
   let set = () => {
     gauge->PromClient.Gauge.setFloat(Date.now() /. 1000.0)
-  }
-}
-
-module IndexingAddresses = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_indexing_addresses",
-    ~help="The number of addresses indexed on chain. Includes both static and dynamic addresses.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
-
-  let set = (~addressesCount, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=addressesCount)
   }
 }
 
@@ -800,10 +785,7 @@ module StorageLoad = {
       )
       operations->Utils.Dict.deleteInPlace(key)
     }
-    sumTimeCounter->SafeCounter.handleFloat(
-      ~labels,
-      ~value=timerRef->Performance.secondsSince,
-    )
+    sumTimeCounter->SafeCounter.handleFloat(~labels, ~value=timerRef->Performance.secondsSince)
     counter->SafeCounter.increment(~labels)
     whereSizeCounter->SafeCounter.handleInt(~labels, ~value=whereSize)
     sizeCounter->SafeCounter.handleInt(~labels, ~value=size)

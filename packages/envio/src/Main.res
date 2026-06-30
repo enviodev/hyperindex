@@ -168,18 +168,7 @@ let buildChainsObject = (~config: Config.t) => {
             | Some(state) => {
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
                 let chainState = state->IndexerState.getChainState(~chain)
-                let indexingAddresses = chainState->ChainState.indexingAddresses
-
-                // Collect all addresses for this contract name from indexingAddresses
-                let addresses = []
-                let values = indexingAddresses->Dict.valuesToArray
-                for idx in 0 to values->Array.length - 1 {
-                  let indexingContract = values->Array.getUnsafe(idx)
-                  if indexingContract.contractName === contract.name {
-                    addresses->Array.push(indexingContract.address)->ignore
-                  }
-                }
-                addresses
+                chainState->ChainState.contractAddresses(~contractName=contract.name)
               }
             // Before the global state is available (eg during handler
             // module load after resume), combine static addresses from config
@@ -627,9 +616,9 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
   app->get("/metrics", (_req, res) => {
     res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
     let _ =
-      PromClient.defaultRegister
-      ->PromClient.metrics
-      ->Promise.thenResolve(metrics => res->endWithData(metrics))
+      Metrics.collect(~state=indexerStateRef.contents)->Promise.thenResolve(metrics =>
+        res->endWithData(metrics)
+      )
   })
 
   app->get("/metrics/runtime", (_req, res) => {
