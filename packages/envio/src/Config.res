@@ -23,6 +23,7 @@ type evmRpcConfig = {
   sourceFor: Source.sourceFor,
   syncConfig: option<sourceSyncOptions>,
   ws: option<string>,
+  headers: option<dict<string>>,
 }
 
 type sourceConfig =
@@ -156,6 +157,7 @@ let rpcConfigSchema = S.schema(s =>
     "url": s.matches(S.string),
     "for": s.matches(rpcSourceForSchema),
     "ws": s.matches(S.option(S.string)),
+    "headers": s.matches(S.option(S.dict(S.string))),
     "initialBlockInterval": s.matches(S.option(S.int)),
     "backoffMultiplicative": s.matches(S.option(S.float)),
     "accelerationAdditive": s.matches(S.option(S.int)),
@@ -907,6 +909,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               sourceFor: parseRpcSourceFor(rpcConfig["for"]),
               syncConfig,
               ws: rpcConfig["ws"],
+              headers: rpcConfig["headers"],
             }
           })
         EvmSourceConfig({hypersync: publicChainConfig["hypersync"], rpcs})

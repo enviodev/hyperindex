@@ -1492,6 +1492,7 @@ impl DataSource {
                 url: url.to_string(),
                 source_for: Some(default_for.clone()),
                 ws: None,
+                headers: None,
                 initial_block_interval: None,
                 backoff_multiplicative: None,
                 acceleration_additive: None,

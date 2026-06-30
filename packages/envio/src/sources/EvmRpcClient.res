@@ -1,4 +1,4 @@
-type cfg = {url: string, httpReqTimeoutMillis?: int}
+type cfg = {url: string, httpReqTimeoutMillis?: int, headers?: dict<string>}
 
 // `addresses` omitted matches any address (a wildcard selection). Each `topics`
 // position is `null` (match any) or a list of accepted topic hashes; the
@@ -59,10 +59,10 @@ let coerceErrorOrThrow = exn =>
   | None => exn->throw
   }
 
-let make = (~url, ~checksumAddresses, ~httpReqTimeoutMillis=?, ~allEventParams=[]) => {
+let make = (~url, ~checksumAddresses, ~httpReqTimeoutMillis=?, ~headers=?, ~allEventParams=[]) => {
   let client =
     Core.getAddon().evmRpcClient->classNew(
-      {url, ?httpReqTimeoutMillis},
+      {url, ?httpReqTimeoutMillis, ?headers},
       allEventParams,
       ~checksumAddresses,
     )

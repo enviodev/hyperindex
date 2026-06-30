@@ -271,11 +271,13 @@ let makeInternal = (
     let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
       let syncConfig = rpc.syncConfig
       let ws = rpc.ws
+      let headers = rpc.headers
       {
         url: rpc.url,
         sourceFor: rpc.sourceFor,
         ?syncConfig,
         ?ws,
+        ?headers,
       }
     })
     EvmChain.makeSources(
