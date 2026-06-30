@@ -105,106 +105,160 @@ impl EnvState {
 
 mod interpolation {
     use anyhow::{anyhow, Result};
-    use regex::{Captures, Regex};
 
-    #[derive(PartialEq)]
-    enum InterpolationResult {
-        DirectSubstitution,
-        InvalidName,
-        DefaultForMissing(String),
-        DefaultForMissingAndEmpty(String),
+    enum DefaultExpr<'a> {
+        None,
+        ForMissing(&'a str),
+        ForMissingAndEmpty(&'a str),
     }
 
-    fn parse_capture(inner: &str) -> (String, InterpolationResult) {
-        let (name, result) = match (inner.find(":-"), inner.find('-')) {
-            (Some(pos1), Some(pos2)) if pos1 < pos2 => {
-                let name = &inner[..pos1];
-                let default_value = inner[pos1 + 2..].to_string();
-                (
-                    name,
-                    InterpolationResult::DefaultForMissingAndEmpty(default_value),
-                )
+    /// Byte index of the `}` closing the `${` opened just before `from`,
+    /// accounting for nested `${...}`. None if the expression is unbalanced.
+    fn find_close(input: &str, from: usize) -> Option<usize> {
+        let bytes = input.as_bytes();
+        let mut depth = 1usize;
+        let mut j = from;
+        while j < bytes.len() {
+            if bytes[j] == b'$' && bytes.get(j + 1) == Some(&b'{') {
+                depth += 1;
+                j += 2;
+            } else if bytes[j] == b'}' {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(j);
+                }
+                j += 1;
+            } else {
+                j += 1;
             }
-            (_, Some(pos)) => {
-                let name = &inner[..pos];
-                let default_value = inner[pos + 1..].to_string();
-                (name, InterpolationResult::DefaultForMissing(default_value))
-            }
-            (Some(pos), _) => {
-                let name = &inner[..pos];
-                let default_value = inner[pos + 2..].to_string();
-                (
-                    name,
-                    InterpolationResult::DefaultForMissingAndEmpty(default_value),
-                )
-            }
-            (None, None) => (inner, InterpolationResult::DirectSubstitution),
-        };
+        }
+        None
+    }
 
-        if name.is_empty()
-            || name.chars().next().is_some_and(|c| c.is_ascii_digit())
-            || !name.chars().all(|c| {
-                matches!(c,
-                'a'..='z' | 'A'..='Z' | '0'..='9' | '_')
-            })
-        {
-            return (name.to_string(), InterpolationResult::InvalidName);
+    /// Splits `inner` at the first top-level `-` (ignoring any `-` nested
+    /// inside `${...}`). A `:` immediately before it selects the `:-` form.
+    fn split(inner: &str) -> (&str, DefaultExpr<'_>) {
+        let bytes = inner.as_bytes();
+        let mut depth = 0usize;
+        let mut j = 0;
+        while j < bytes.len() {
+            if bytes[j] == b'$' && bytes.get(j + 1) == Some(&b'{') {
+                depth += 1;
+                j += 2;
+            } else if bytes[j] == b'}' {
+                depth = depth.saturating_sub(1);
+                j += 1;
+            } else if bytes[j] == b'-' && depth == 0 {
+                if j > 0 && bytes[j - 1] == b':' {
+                    return (
+                        &inner[..j - 1],
+                        DefaultExpr::ForMissingAndEmpty(&inner[j + 1..]),
+                    );
+                }
+                return (&inner[..j], DefaultExpr::ForMissing(&inner[j + 1..]));
+            } else {
+                j += 1;
+            }
+        }
+        (inner, DefaultExpr::None)
+    }
+
+    struct Interpolator<F: FnMut(&str) -> Option<String>> {
+        get_env: F,
+        missing_vars: Vec<String>,
+        invalid_vars: Vec<String>,
+    }
+
+    impl<F: FnMut(&str) -> Option<String>> Interpolator<F> {
+        /// Walks `input`, copying text verbatim and resolving every top-level
+        /// `${...}`. A `${` with no matching `}` is a hard error rather than
+        /// being left in place, since it always indicates a malformed config.
+        fn interpolate(&mut self, input: &str) -> Result<String> {
+            let bytes = input.as_bytes();
+            let mut output = String::with_capacity(input.len());
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'{') {
+                    let inner_start = i + 2;
+                    let close = find_close(input, inner_start).ok_or_else(|| {
+                        anyhow!(
+                            "Failed to interpolate variables into your config file. Unbalanced \
+                             '${{' expression: {}",
+                            &input[i..]
+                        )
+                    })?;
+                    let resolved = self.eval(&input[inner_start..close])?;
+                    output.push_str(&resolved);
+                    i = close + 1;
+                } else {
+                    let ch = input[i..].chars().next().unwrap();
+                    output.push(ch);
+                    i += ch.len_utf8();
+                }
+            }
+            Ok(output)
         }
 
-        (name.to_string(), result)
+        /// Resolves the contents of a single `${...}`. The default expression
+        /// is itself interpolated, and only when its value is actually needed —
+        /// so `${SET:-${UNSET}}` never evaluates UNSET.
+        fn eval(&mut self, inner: &str) -> Result<String> {
+            let (name, default) = split(inner);
+
+            if name.is_empty()
+                || name.chars().next().is_some_and(|c| c.is_ascii_digit())
+                || !name
+                    .chars()
+                    .all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_'))
+            {
+                // Wrap invalid names in quotes so spaces are visible in the error.
+                self.invalid_vars.push(format!("\"{name}\""));
+                return Ok(String::new());
+            }
+
+            match ((self.get_env)(name), default) {
+                (Some(val), DefaultExpr::ForMissingAndEmpty(default)) if val.is_empty() => {
+                    self.interpolate(default)
+                }
+                (Some(val), _) => Ok(val),
+                (None, DefaultExpr::ForMissing(default))
+                | (None, DefaultExpr::ForMissingAndEmpty(default)) => self.interpolate(default),
+                (None, DefaultExpr::None) => {
+                    self.missing_vars.push(name.to_string());
+                    Ok(String::new())
+                }
+            }
+        }
     }
 
     pub fn interpolate_config_variables(
         config_string: String,
-        mut get_env: impl FnMut(&str) -> Option<String>,
+        get_env: impl FnMut(&str) -> Option<String>,
     ) -> Result<String> {
-        let mut missing_vars = Vec::new();
-        let mut invalid_vars = Vec::new();
+        let mut interpolator = Interpolator {
+            get_env,
+            missing_vars: Vec::new(),
+            invalid_vars: Vec::new(),
+        };
+        let result = interpolator.interpolate(&config_string)?;
 
-        // If we don't have `[^}]` and simpley use `.` in the regex, it will match the last `}` and the rest of the string until the last `}`
-        let re = Regex::new(r"\$\{([^}]*)\}").unwrap();
-        let config_string = re.replace_all(&config_string, |caps: &Captures| {
-            let name = &caps[1];
-            let (name, interpolation_result) = parse_capture(name);
-            if interpolation_result == InterpolationResult::InvalidName {
-                // Wrap invalid vars with quotes to make them more visible in the error message
-                // Don't need to do this for missing ones, because they won't have spaces in the name
-                invalid_vars.push(format!("\"{name}\""));
-                return "".to_string();
-            }
-            match (get_env(&name), interpolation_result) {
-                (Some(val), InterpolationResult::DefaultForMissingAndEmpty(default))
-                    if val.is_empty() =>
-                {
-                    default
-                }
-                (Some(val), _) => val,
-                (None, InterpolationResult::DefaultForMissing(default))
-                | (None, InterpolationResult::DefaultForMissingAndEmpty(default)) => default,
-                (None, _) => {
-                    missing_vars.push(name.to_string());
-                    "".to_string()
-                }
-            }
-        });
-
-        if !invalid_vars.is_empty() {
+        if !interpolator.invalid_vars.is_empty() {
             return Err(anyhow!(
                 "Failed to interpolate variables into your config file. Invalid environment \
                  variables are present: {}",
-                invalid_vars.join(", ")
+                interpolator.invalid_vars.join(", ")
             ));
         }
 
-        if !missing_vars.is_empty() {
+        if !interpolator.missing_vars.is_empty() {
             return Err(anyhow!(
                 "Failed to interpolate variables into your config file. Environment variables are \
                  not present: {}",
-                missing_vars.join(", ")
+                interpolator.missing_vars.join(", ")
             ));
         }
 
-        Ok(config_string.to_string())
+        Ok(result)
     }
 
     #[cfg(test)]
@@ -367,6 +421,58 @@ DefaultForMissingAndEmpty with empty env: "default"
 DefaultForMissingAndEmpty with empty env and many dashes: "---:---"
 DefaultForMissingAndEmpty with empty env and empty default: ""
 "#
+            );
+        }
+
+        #[test]
+        fn test_interpolate_nested_default_expressions() {
+            let config_string = r#"
+outer present, inner missing: "${EXISTING_ENV:-${MISSING_ENV}}"
+outer missing, inner present: "${MISSING_ENV:-${EXISTING_ENV}}"
+hyphen form, outer missing: "${MISSING_ENV-${EXISTING_ENV}}"
+two levels, all missing: "${MISSING_ENV:-${OTHER_MISSING:-fallback}}"
+empty outer, inner present: "${EMPTY_ENV:-${EXISTING_ENV}}"
+trailing brace after expr: "${MISSING_ENV:-x}}"
+"#;
+            let interpolated_config_string =
+                super::interpolate_config_variables(config_string.to_string(), |name| match name {
+                    "EXISTING_ENV" => Some("val".to_string()),
+                    "EMPTY_ENV" => Some("".to_string()),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(
+                interpolated_config_string,
+                r#"
+outer present, inner missing: "val"
+outer missing, inner present: "val"
+hyphen form, outer missing: "val"
+two levels, all missing: "fallback"
+empty outer, inner present: "val"
+trailing brace after expr: "x}"
+"#
+            );
+        }
+
+        #[test]
+        fn test_interpolate_nested_reports_only_evaluated_missing_var() {
+            let config_string = r#"url: ${MISSING_OUTER:-${MISSING_INNER}}"#;
+            let err = super::interpolate_config_variables(config_string.to_string(), |_| None)
+                .unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Failed to interpolate variables into your config file. Environment variables are not present: MISSING_INNER"
+            );
+        }
+
+        #[test]
+        fn test_interpolate_unbalanced_expression_is_hard_error() {
+            let config_string = r#"url: ${MISSING:-${FALLBACK}"#;
+            let err = super::interpolate_config_variables(config_string.to_string(), |_| None)
+                .unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Failed to interpolate variables into your config file. Unbalanced '${' expression: ${MISSING:-${FALLBACK}"
             );
         }
     }
