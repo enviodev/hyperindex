@@ -8,7 +8,7 @@ use napi_derive::napi;
 use crate::transaction_store::TransactionStore;
 
 mod config;
-mod decode;
+pub(crate) mod decode;
 mod query;
 pub(crate) mod types;
 

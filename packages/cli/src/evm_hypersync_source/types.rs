@@ -10,15 +10,6 @@ use hypersync_client::{
 use napi::bindgen_prelude::{BigInt, FromNapiValue, ToNapiValue};
 use napi_derive::napi;
 
-/// Data relating to a single event (log). Only the log is needed: params are
-/// decoded from it, and the transaction/block are served from the store.
-#[napi(object)]
-#[derive(Default, Clone)]
-pub struct Event {
-    /// Evm log data
-    pub log: Log,
-}
-
 /// Evm log object
 ///
 /// See ethereum rpc spec for the meaning of fields
@@ -245,38 +236,6 @@ impl Block {
             send_count: map_hex_string(&b.send_count),
             send_root: map_hex_string(&b.send_root),
             mix_hash: map_hex_string(&b.mix_hash),
-        })
-    }
-}
-
-impl Log {
-    pub fn from_simple(l: &simple_types::Log, should_checksum: bool) -> Result<Self> {
-        Ok(Self {
-            removed: l.removed,
-            log_index: l
-                .log_index
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping log.log_index")?,
-            transaction_index: l
-                .transaction_index
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping log.transaction_index")?,
-            transaction_hash: map_hex_string(&l.transaction_hash),
-            block_hash: map_hex_string(&l.block_hash),
-            block_number: l
-                .block_number
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping log.block_number")?,
-            address: map_address_string(&l.address, should_checksum),
-            data: map_hex_string(&l.data),
-            topics: l
-                .topics
-                .iter()
-                .map(|t| t.as_ref().map(|v| v.encode_hex()))
-                .collect(),
         })
     }
 }

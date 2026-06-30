@@ -8,44 +8,38 @@ external toEventSelector: string => string = "toEventSelector"
 
 // Reproduces https://github.com/enviodev/hyperindex/issues/1285
 // An event given a `name:` that differs from its on-chain name must still
-// decode over HyperSync. The native decoder rebuilds the inner signature from
-// the display `name:` (`reconstruct_signature` in decode.rs), so its topic0
-// becomes keccak256("ApprovalRenamed(address,uint256)") and never matches the
-// real log's keccak256("Approval(address,uint256)"); the log decodes as null.
+// decode. The decoder keys on the on-chain sighash, not the keccak of the
+// display `name:`, so the real log still matches.
 let onChainSighash = toEventSelector("event Approval(address owner, uint256 value)")
 
 let owner = "0x000000000000000000000000000000000000aaaa"
 let value = 42n
 
-let makeEvent = (~topics: array<string>, ~data: string): HyperSyncClient.ResponseTypes.event =>
-  {"log": {"topics": topics, "data": data}}->(
-    Utils.magic: {..} => HyperSyncClient.ResponseTypes.event
-  )
-
-let approvalLog = makeEvent(
-  ~topics=[onChainSighash],
-  ~data=encodeAbiParameters(
+let approvalLog = (
+  [onChainSighash],
+  encodeAbiParameters(
     %raw(`[{"type":"address"},{"type":"uint256"}]`),
     %raw(`["0x000000000000000000000000000000000000aaaa",42n]`),
   ),
 )
 
-describe("Renamed event decoding over HyperSync (issue #1285)", () => {
+describe("Renamed event decoding (issue #1285)", () => {
   Async.it("decodes a renamed event under its real on-chain signature", async t => {
-    let decoder = HyperSyncClient.Decoder.fromParams([
-      {
-        sighash: onChainSighash,
-        topicCount: 1,
-        eventName: "ApprovalRenamed",
-        contractName: "TestContract",
-        params: [
-          {name: "owner", abiType: "address", indexed: false},
-          {name: "value", abiType: "uint256", indexed: false},
-        ],
-      },
-    ])
-
-    let decoded = await decoder.decodeLogs([approvalLog])
+    let decoded = await NativeDecoder.decodeLogs(
+      ~eventParams=[
+        {
+          sighash: onChainSighash,
+          topicCount: 1,
+          eventName: "ApprovalRenamed",
+          contractName: "TestContract",
+          params: [
+            {name: "owner", abiType: "address", indexed: false},
+            {name: "value", abiType: "uint256", indexed: false},
+          ],
+        },
+      ],
+      ~logs=[approvalLog],
+    )
     let paramsByContractName = decoded[0]->Option.getUnsafe->Nullable.toOption
 
     t

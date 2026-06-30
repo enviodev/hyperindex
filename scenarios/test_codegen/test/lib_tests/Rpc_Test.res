@@ -40,48 +40,4 @@ describe_skip("Rpc Test", () => {
       }),
     )
   })
-
-  Async.it("GetLogs rpc call wildcard call", async t => {
-    let logs = await Rpc.GetLogs.route->Rest.fetch(
-      {
-        fromBlock: 20742567,
-        toBlock: 20742567,
-        address: [],
-        topics: [Single("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")],
-      },
-      ~client,
-    )
-
-    t.expect(logs->Array.length, ~message="Should have 88 transfer logs").toEqual(88)
-  })
-
-  Async.it("GetLogs rpc call with address", async t => {
-    let logs = await Rpc.GetLogs.route->Rest.fetch(
-      {
-        fromBlock: 20742567,
-        toBlock: 20742567,
-        address: ["0xF57e7e7C23978C3cAEC3C3548E3D615c346e79fF"->Address.Evm.fromStringOrThrow],
-        topics: [Single("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")],
-      },
-      ~client,
-    )
-
-    t.expect(logs, ~message="Should have 1 transfer logs").toEqual([
-      {
-        address: "0xf57e7e7c23978c3caec3c3548e3d615c346e79ff"->Address.unsafeFromString,
-        blockHash: "0xd6b9a4d49a8ae1af5a13d2de596d0c045ec80b2cc41754ff09547521eca7bf66",
-        blockNumber: 20742567,
-        data: "0x000000000000000000000000000000000000000000000009c2007651b2500000",
-        logIndex: 125,
-        removed: false,
-        topics: [
-          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-          "0x00000000000000000000000074dec05e5b894b0efec69cdf6316971802a2f9a1",
-          "0x0000000000000000000000008eadea389180f8d21393d6c7e9a914b4bb23cbca",
-        ],
-        transactionHash: "0x32461781e65b36f321fb8c9532a2729d6e16026a8f5b242401ff9993ddc0bf27",
-        transactionIndex: 101,
-      },
-    ])
-  })
 })
