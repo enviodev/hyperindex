@@ -111,9 +111,23 @@ describe("EvmRpcClient - getHeight via napi", () => {
     mock.close()
 
     // Node lowercases header names on the way in.
-    t.expect(mock.requestHeaders->Array.getUnsafe(0)->Dict.get("authorization")).toEqual(
-      Some("Bearer test-token"),
-    )
+    t.expect(
+      MockRpcServer.getHeader(mock.requestHeaders->Array.getUnsafe(0), "authorization"),
+    ).toEqual(Some("Bearer test-token"))
+  })
+
+  it("Rejects an invalid header value at construction with a clear error", t => {
+    let message = try {
+      let _ = EvmRpcClient.make(
+        ~url="http://127.0.0.1:1",
+        ~checksumAddresses=false,
+        ~headers=Dict.fromArray([("Authorization", "Bearer bad\nvalue")]),
+      )
+      None
+    } catch {
+    | JsExn(e) => e->JsExn.message
+    }
+    t.expect(message->Option.getOr("no error")).toMatch(/invalid value for RPC header/)
   })
 })
 

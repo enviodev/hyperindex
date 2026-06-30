@@ -20,8 +20,8 @@ describe("Rpc.makeClient - headers", () => {
     mock.close()
 
     // Node lowercases header names on the way in.
-    t.expect(mock.requestHeaders->Array.getUnsafe(0)->Dict.get("authorization")).toEqual(
-      Some("Bearer rest-token"),
-    )
+    t.expect(
+      MockRpcServer.getHeader(mock.requestHeaders->Array.getUnsafe(0), "authorization"),
+    ).toEqual(Some("Bearer rest-token"))
   })
 })

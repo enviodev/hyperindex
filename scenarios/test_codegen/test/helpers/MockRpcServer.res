@@ -17,7 +17,10 @@ type address = {port: int}
 @send external setEncoding: (req, string) => unit = "setEncoding"
 @send external onData: (req, @as("data") _, string => unit) => unit = "on"
 @send external onEnd: (req, @as("end") _, unit => unit) => unit = "on"
-@get external reqHeaders: req => dict<string> = "headers"
+// Node's IncomingHttpHeaders values are `string | string[]` (duplicated headers
+// arrive as arrays); model both and expose a single-value accessor below.
+@unboxed type headerValue = Single(string) | Multiple(array<string>)
+@get external reqHeaders: req => dict<headerValue> = "headers"
 
 @send external writeHead: (res, int, dict<string>) => unit = "writeHead"
 @send external end_: (res, string) => unit = "end"
@@ -25,9 +28,17 @@ type address = {port: int}
 type t = {
   url: string,
   requests: array<string>,
-  requestHeaders: array<dict<string>>,
+  requestHeaders: array<dict<headerValue>>,
   close: unit => unit,
 }
+
+// Read a single-valued request header (first value if it was repeated).
+let getHeader = (headers: dict<headerValue>, name: string): option<string> =>
+  switch headers->Dict.get(name) {
+  | Some(Single(value)) => Some(value)
+  | Some(Multiple(values)) => values->Array.get(0)
+  | None => None
+  }
 
 let start = (~handler: string => (int, string)) =>
   Promise.make((resolve, _reject) => {

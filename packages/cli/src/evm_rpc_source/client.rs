@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
@@ -39,7 +40,6 @@ struct JsonRpcResponse {
 pub struct JsonRpcClient {
     http: reqwest::Client,
     url: String,
-    headers: Option<HashMap<String, String>>,
 }
 
 impl JsonRpcClient {
@@ -52,11 +52,21 @@ impl JsonRpcClient {
         http_req_timeout_millis: u64,
         headers: Option<HashMap<String, String>>,
     ) -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(http_req_timeout_millis))
-            .build()
-            .context("build http client")?;
-        Ok(Self { http, url, headers })
+        let mut builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(http_req_timeout_millis));
+        if let Some(headers) = headers {
+            let mut header_map = HeaderMap::with_capacity(headers.len());
+            for (name, value) in headers {
+                let header_name = HeaderName::try_from(name.as_str())
+                    .with_context(|| format!("invalid RPC header name {name:?}"))?;
+                let header_value = HeaderValue::try_from(value.as_str())
+                    .with_context(|| format!("invalid value for RPC header {name:?}"))?;
+                header_map.insert(header_name, header_value);
+            }
+            builder = builder.default_headers(header_map);
+        }
+        let http = builder.build().context("build http client")?;
+        Ok(Self { http, url })
     }
 
     pub async fn request<T: DeserializeOwned>(
@@ -70,13 +80,10 @@ impl JsonRpcClient {
             "id": 1,
             "jsonrpc": "2.0",
         });
-        let mut request = self.http.post(&self.url).json(&body);
-        if let Some(headers) = &self.headers {
-            for (key, value) in headers {
-                request = request.header(key.as_str(), value.as_str());
-            }
-        }
-        let response = request
+        let response = self
+            .http
+            .post(&self.url)
+            .json(&body)
             .send()
             .await
             .with_context(|| format!("send {method} request"))
