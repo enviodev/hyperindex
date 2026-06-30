@@ -1,13 +1,22 @@
-// Tracks the items a simulate run was given and drops each as it lands in a
-// processed batch, so the run can report inputs that never reached a handler
-// (dead test code) instead of exiting clean. Built only when the run has a
-// simulate source; absent otherwise, which keeps this test concern out of the
-// core indexing state — IndexerState holds the tracker and feeds it the
-// processed batches, ChainState and the fetch loop stay simulate-agnostic.
+// Reports the items a simulate run was given that never reached a handler (dead
+// test inputs). Lives on IndexerState and is fed each processed batch, so
+// ChainState and the fetch loop carry no simulate-specific state.
 
-// `index` is the item's position in its chain's `simulate` array, which is what
-// gets reported back so a user can find it without echoing its fields.
-type entry = {chainId: int, index: int, item: Internal.item}
+// Match a provided item to a processed one by its (chain, block, logIndex)
+// coordinate rather than object identity, so matching survives any copy or
+// transform of the item between the source and the batch.
+let itemKey = (item: Internal.item): string =>
+  switch item {
+  | Internal.Event({chain, blockNumber, logIndex}) =>
+    `${chain
+      ->ChainMap.Chain.toChainId
+      ->Int.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
+  | _ => "" // non-event items are never a provided simulate input
+  }
+
+// `index` is the item's position in its chain's `simulate` array, reported back
+// so a user finds it without echoing its fields.
+type entry = {chainId: int, index: int, key: string}
 
 type t = {mutable unprocessed: array<entry>}
 
@@ -18,13 +27,17 @@ let makeFromConfig = (config: Config.t): option<t> => {
     ->Array.flatMap(chainConfig =>
       switch chainConfig.sourceConfig {
       | Config.CustomSources(sources) =>
-        switch sources->Array.find(source => source.simulateItems->Option.isSome) {
-        | Some(source) =>
+        sources->Array.flatMap(source =>
           source.simulateItems
           ->Option.getOr([])
-          ->Array.mapWithIndex((item, index) => {chainId: chainConfig.id, index, item})
-        | None => []
-        }
+          ->Array.mapWithIndex(
+            (item, index) => {
+              chainId: chainConfig.id,
+              index,
+              key: itemKey(item),
+            },
+          )
+        )
       | _ => []
       }
     )
@@ -34,28 +47,40 @@ let makeFromConfig = (config: Config.t): option<t> => {
   }
 }
 
-// A batch holds the same item references the simulate source provided, so an
-// item that never appears in one never ran.
-let recordProcessed = (t: t, ~batch: Batch.t) =>
-  t.unprocessed =
-    t.unprocessed->Array.filter(entry =>
-      !(batch.items->Array.some(processed => processed === entry.item))
-    )
+let recordProcessed = (t: t, ~batch: Batch.t) => {
+  let processedKeys = batch.items->Array.map(itemKey)->Utils.Set.fromArray
+  t.unprocessed = t.unprocessed->Array.filter(entry => !(processedKeys->Utils.Set.has(entry.key)))
+}
 
+// Unrouted item indices grouped by chain, in the order chains were first seen.
 let unroutedByChain = (t: t): array<(int, array<int>)> => {
   let indicesByChain = Dict.make()
   let chainOrder = []
   t.unprocessed->Array.forEach(entry => {
     let key = entry.chainId->Int.toString
-    switch indicesByChain->Dict.get(key) {
-    | Some(indices) => indices->Array.push(entry.index)->ignore
-    | None =>
-      indicesByChain->Dict.set(key, [entry.index])
+    if indicesByChain->Dict.get(key)->Option.isNone {
       chainOrder->Array.push(entry.chainId)->ignore
     }
+    indicesByChain->Utils.Dict.push(key, entry.index)
   })
-  chainOrder->Array.map(chainId => (
-    chainId,
-    indicesByChain->Dict.get(chainId->Int.toString)->Option.getOr([]),
-  ))
+  chainOrder->Array.map(chainId => (chainId, indicesByChain->Dict.getUnsafe(chainId->Int.toString)))
 }
+
+let failureMessage = (t: t): option<string> =>
+  switch t->unroutedByChain {
+  | [] => None
+  | byChain =>
+    let count = byChain->Array.reduce(0, (acc, (_chainId, indices)) => acc + indices->Array.length)
+    let itemWord = count === 1 ? "item" : "items"
+    let lines =
+      byChain
+      ->Array.map(((chainId, indices)) =>
+        `  - chain ${chainId->Int.toString}: ${indices
+          ->Array.map(index => index->Int.toString)
+          ->Array.join(", ")}`
+      )
+      ->Array.join("\n")
+    Some(
+      `simulate: ${count->Int.toString} ${itemWord} you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler — usually a non-wildcard srcAddress that isn't indexed for the contract, or a where/block filter that excluded the event. Unrouted items, by index in each chain's simulate array:\n${lines}`,
+    )
+  }

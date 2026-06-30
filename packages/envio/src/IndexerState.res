@@ -108,8 +108,7 @@ type t = {
   // waitForNewBlock waiter is bound to the old, pre-realtime source). A fetch
   // response or waiter carrying an older epoch than this is discarded.
   mutable epoch: int,
-  // Simulate runs only: tracks which provided items never reached a handler,
-  // fed the processed batches by ProcessEventBatch. None off the simulate path.
+  // None off the simulate path.
   simulateDeadInputTracker: option<SimulateDeadInputTracker.t>,
 }
 
