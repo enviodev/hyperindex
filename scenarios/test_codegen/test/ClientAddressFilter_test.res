@@ -193,9 +193,14 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
     })
 
   it("drops over-fetched events before the param-address's registration block", t => {
+    let eventConfigs = [(eventConfig :> Internal.eventConfig)]
+    let addresses = [{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}]
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+    let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     let fetchState = FetchState.make(
-      ~eventConfigs=[(eventConfig :> Internal.eventConfig)],
-      ~addresses=[{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}],
+      ~eventConfigs,
+      ~contractConfigs,
+      ~addresses,
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=10,
@@ -210,6 +215,7 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updated =
       fetchState->FetchState.handleQueryResult(
+        ~indexingAddresses,
         ~query,
         ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
         // to=registeredAddr (effectiveStartBlock 5): block 10 kept, block 3 dropped.
@@ -257,9 +263,14 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
     })
 
   it("keeps events at/after effectiveStartBlock, drops earlier ones", t => {
+    let eventConfigs = [(eventConfig :> Internal.eventConfig)]
+    let addresses = [{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}]
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+    let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     let fetchState = FetchState.make(
-      ~eventConfigs=[(eventConfig :> Internal.eventConfig)],
-      ~addresses=[{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}],
+      ~eventConfigs,
+      ~contractConfigs,
+      ~addresses,
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=10,
@@ -274,6 +285,7 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updated =
       fetchState->FetchState.handleQueryResult(
+        ~indexingAddresses,
         ~query,
         ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
         ~newItems=[

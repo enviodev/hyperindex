@@ -5,6 +5,9 @@
 type t = {
   logger: Pino.t,
   mutable fetchState: FetchState.t,
+  // The chain-wide address index. Not `mutable`: the dict is mutated in place by
+  // register/rollback, so the reference is stable across fetchState versions.
+  indexingAddresses: IndexingAddresses.t,
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
   mutable isProgressAtHead: bool,
@@ -58,6 +61,7 @@ let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddres
 let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
   ~reorgDetection: ReorgDetection.t,
   ~committedProgressBlockNumber: int,
@@ -70,6 +74,7 @@ let make = (
 ): t => {
   logger,
   fetchState,
+  indexingAddresses,
   sourceManager,
   chainConfig,
   isProgressAtHead,
@@ -217,8 +222,12 @@ let makeInternal = (
   | None => ()
   }
 
+  let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+  let indexingAddressIndex = IndexingAddresses.make(~contractConfigs, ~addresses=indexingAddresses)
+
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
+    ~contractConfigs,
     ~addresses=indexingAddresses,
     ~progressBlockNumber,
     ~startBlock,
@@ -311,6 +320,7 @@ let makeInternal = (
   make(
     ~chainConfig,
     ~fetchState,
+    ~indexingAddresses=indexingAddressIndex,
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints,
@@ -418,7 +428,8 @@ let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrE
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
-let indexingAddresses = (cs: t) => cs.fetchState.indexingAddresses
+let contractAddresses = (cs: t, ~contractName) =>
+  cs.indexingAddresses->IndexingAddresses.getContractAddresses(~contractName)
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
@@ -532,12 +543,21 @@ let handleQueryResult = (
 
   let fs = switch newItemsWithDcs {
   | [] => cs.fetchState
-  | _ => cs.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
+  | _ =>
+    cs.fetchState->FetchState.registerDynamicContracts(
+      ~indexingAddresses=cs.indexingAddresses,
+      newItemsWithDcs,
+    )
   }
 
   cs.fetchState =
     fs
-    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
+    ->FetchState.handleQueryResult(
+      ~indexingAddresses=cs.indexingAddresses,
+      ~query,
+      ~latestFetchedBlock,
+      ~newItems,
+    )
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
@@ -607,7 +627,7 @@ let toChainData = (cs: t): chainData => {
   numBatchesFetched: 0,
   startBlock: cs.fetchState.startBlock,
   endBlock: cs.fetchState.endBlock,
-  numAddresses: cs.fetchState->FetchState.numAddresses,
+  numAddresses: cs.indexingAddresses->IndexingAddresses.size,
 }
 
 // Snapshot the inputs a batch build needs from this chain.
@@ -766,7 +786,11 @@ let rollback = (
       )
     | None => ()
     }
-    cs.fetchState = cs.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
+    cs.fetchState =
+      cs.fetchState->FetchState.rollback(
+        ~indexingAddresses=cs.indexingAddresses,
+        ~targetBlockNumber=newProgressBlockNumber,
+      )
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
@@ -777,7 +801,10 @@ let rollback = (
           ~blockNumber=rollbackTargetBlockNumber,
         )
       cs.fetchState =
-        cs.fetchState->FetchState.rollback(~targetBlockNumber=rollbackTargetBlockNumber)
+        cs.fetchState->FetchState.rollback(
+          ~indexingAddresses=cs.indexingAddresses,
+          ~targetBlockNumber=rollbackTargetBlockNumber,
+        )
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,

@@ -8,6 +8,7 @@ let configAddresses: Config.chain => array<Internal.indexingAddress>
 let make: (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
   ~reorgDetection: ReorgDetection.t,
   ~committedProgressBlockNumber: int,
@@ -52,7 +53,7 @@ let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
 // Fetch-frontier reads.
 let knownHeight: t => int
-let indexingAddresses: t => dict<FetchState.indexingAddress>
+let contractAddresses: (t, ~contractName: string) => array<Address.t>
 let bufferSize: t => int
 let bufferReadyCount: t => int
 let getProgressPercentage: t => float
