@@ -175,7 +175,9 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "item": Some({
         "timestamp": blockTime,
         "blockNumber": slot,
-        "block": ({slot, time: blockTime, hash: ""}: Envio.svmInstructionBlock),
+        // The source stamps only `slot` inline; selected fields are materialised
+        // from the store at batch prep (not exercised by this source-level test).
+        "block": ({slot: slot}: Envio.svmInstructionBlock),
       }),
       // Default merge mode: requesting a table's columns opts the matched
       // result set into that join, so selections carry no include flags.

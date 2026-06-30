@@ -166,14 +166,16 @@ let allSvmTransactionFields: array<svmTransactionField> = [
 ]
 let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 
-// SVM block fields selectable via `field_selection.block_fields`. `slot`/`time`/
-// `hash` are always included, so they aren't part of this set.
+// SVM block fields selectable via `field_selection.block_fields`. Only `slot` is
+// always included (it's the key), so everything else is opt-in.
 type svmBlockField =
+  | @as("time") Time
+  | @as("hash") Hash
   | @as("height") Height
   | @as("parentSlot") ParentSlot
   | @as("parentHash") ParentHash
 
-let allSvmBlockFields: array<svmBlockField> = [Height, ParentSlot, ParentHash]
+let allSvmBlockFields: array<svmBlockField> = [Time, Hash, Height, ParentSlot, ParentHash]
 let svmBlockFieldSchema = S.enum(allSvmBlockFields)
 
 // Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable

@@ -133,16 +133,17 @@ let materializeEvmItems = async (store: t, ~items: array<Internal.item>) => {
   }
 }
 
-// SVM: the source attaches a minimal inline block (`slot`/`time`, `hash` empty)
-// to each item. Here we enrich it in place with the fields kept raw in the store
-// — the real `hash` plus any selected `height`/`parentSlot`/`parentHash` — so a
-// slot missing from the store (no block row) keeps the inline `slot`/`time`.
+// SVM: the source attaches a minimal inline block (`slot` only) to each item.
+// When an instruction selected block fields, enrich its block in place with the
+// fields kept raw in the store (`time`/`hash`/`height`/`parentSlot`/`parentHash`)
+// — a slot missing from the store (no block row) keeps just the inline `slot`.
 // Grouped per slot so the store is consulted once per slot; each instruction's
 // own inline block is enriched in place.
 let materializeSvmItems = async (store: t, ~items: array<Internal.item>) => {
   let blockNumbers = []
   let masks = []
   let blockGroups = []
+  let anySelected = ref(false)
 
   items->Array.forEach(item =>
     switch item {
@@ -153,6 +154,9 @@ let materializeSvmItems = async (store: t, ~items: array<Internal.item>) => {
       | Some(block) =>
         let {blockNumber} = eventItem
         let mask = eventItem.eventConfig.blockFieldMask
+        if mask != 0. {
+          anySelected := true
+        }
         let last = blockGroups->Array.length - 1
         if last >= 0 && blockNumbers->Array.getUnsafe(last) == blockNumber {
           blockGroups->Array.getUnsafe(last)->Array.push(block)
@@ -167,7 +171,8 @@ let materializeSvmItems = async (store: t, ~items: array<Internal.item>) => {
     }
   )
 
-  if blockGroups->Utils.Array.notEmpty {
+  // No instruction selected a block field, so the inline `slot`-only block stands.
+  if anySelected.contents {
     let materialized = await store->materialize(~blockNumbers, ~masks)
     blockGroups->Array.forEachWithIndex((blocks, i) => {
       let fields = materialized->Array.getUnsafe(i)

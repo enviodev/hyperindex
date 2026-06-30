@@ -2184,6 +2184,7 @@ type testIndexer = {{
                 // Built once; the canonical field list is the same for every
                 // instruction (only the per-instruction `selected` set differs).
                 let svm_tx_specs = svm_transaction_field_specs();
+                let svm_block_specs = svm_block_field_specs();
                 let mut program_entries: Vec<String> = Vec::new();
                 for contract in cfg.contracts.values() {
                     use crate::config_parsing::system_config::{Abi, EventKind};
@@ -2234,12 +2235,19 @@ type testIndexer = {{
                             &event.name,
                             "            ",
                         );
+                        let block_ts = svm_block_ts_type(
+                            &svm_block_specs,
+                            &svm_kind.selected_block_fields,
+                            &event.name,
+                            "            ",
+                        );
                         instruction_entries.push(format!(
-                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: {accs}; readonly transaction: {tx} }};",
+                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: {accs}; readonly transaction: {tx}; readonly block: {block} }};",
                             instr = event.name,
                             args = args_ts,
                             accs = accounts_ts,
                             tx = transaction_ts,
+                            block = block_ts,
                         ));
                     }
                     if !instruction_entries.is_empty() {
@@ -2700,6 +2708,75 @@ fn svm_transaction_ts_type(
             }
         })
         .collect();
+    wrap_ts_record(&fields, indent)
+}
+
+/// One selectable SVM block field: TS value type and whether it can be
+/// `undefined` even when selected (the upstream column is nullable, or the slot
+/// may lack a block row).
+struct SvmBlockFieldSpec {
+    name: String,
+    ts_type: &'static str,
+    optional: bool,
+}
+
+fn svm_block_field_specs() -> Vec<SvmBlockFieldSpec> {
+    use crate::config_parsing::human_config::svm::SvmBlockField;
+    use strum::IntoEnumIterator;
+
+    SvmBlockField::iter()
+        .map(|field| {
+            let (ts_type, optional) = match field {
+                SvmBlockField::Time => ("number", true),
+                SvmBlockField::Hash => ("string", false),
+                SvmBlockField::Height => ("number", true),
+                SvmBlockField::ParentSlot => ("number", true),
+                SvmBlockField::ParentHash => ("string", true),
+            };
+            SvmBlockFieldSpec {
+                name: field.to_string(),
+                ts_type,
+                optional,
+            }
+        })
+        .collect()
+}
+
+/// Per-instruction SVM block TS type for the generated program table. `slot` is
+/// always present; selected fields get their real type (nullable ones as
+/// `T | undefined`); unselected fields get an `@deprecated` hint plus
+/// `FieldNotSelected<...>`. Mirrors `svm_transaction_ts_type`.
+fn svm_block_ts_type(
+    specs: &[SvmBlockFieldSpec],
+    selected: &[String],
+    instruction_name: &str,
+    indent: &str,
+) -> String {
+    let selected: std::collections::HashSet<&str> = selected.iter().map(String::as_str).collect();
+    let mut fields: Vec<String> = vec![ts_selected_field("slot", "number", indent)];
+    for spec in specs {
+        if selected.contains(spec.name.as_str()) {
+            let value = if spec.optional {
+                format!("{} | undefined", spec.ts_type)
+            } else {
+                spec.ts_type.to_string()
+            };
+            fields.push(ts_selected_field(&spec.name, &value, indent));
+        } else {
+            let yaml_body = format!(
+                "{indent} * field_selection:\n{indent} *   block_fields:\n{indent} *     - {}",
+                spec.name
+            );
+            fields.push(ts_unselected_field(
+                &spec.name,
+                "block_fields",
+                "instruction",
+                instruction_name,
+                &yaml_body,
+                indent,
+            ));
+        }
+    }
     wrap_ts_record(&fields, indent)
 }
 
@@ -3297,6 +3374,41 @@ mod test {
             .map(|spec| spec.name)
             .collect();
         assert_eq!(spec_fields, res_fields);
+    }
+
+    #[test]
+    fn svm_block_field_specs_match_runtime() {
+        // The codegen block specs (selectable fields) must match the public
+        // `svmInstructionBlock` shape, excluding the always-present `slot`.
+        let res = std::fs::read_to_string(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../envio/src/Envio.res"),
+        )
+        .expect("read Envio.res");
+        let res_fields: Vec<String> = parse_type_fields(&res, "type svmInstructionBlock = {", "")
+            .into_iter()
+            .map(|(name, _optional)| name)
+            .filter(|name| name != "slot")
+            .collect();
+        let spec_fields: Vec<String> = svm_block_field_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        assert_eq!(spec_fields, res_fields);
+    }
+
+    #[test]
+    fn svm_block_ts_type_renders_optionality_and_unselected() {
+        // `slot` is always present (no `| undefined`); a selected required field
+        // (`hash`) has no `| undefined`; a nullable selected field (`height`) is
+        // `number | undefined`; unselected fields get the `@deprecated` hint +
+        // `FieldNotSelected`.
+        let generated = svm_block_ts_type(
+            &svm_block_field_specs(),
+            &["hash".to_string(), "height".to_string()],
+            "Swap",
+            "  ",
+        );
+        insta::assert_snapshot!(generated);
     }
 
     #[test]

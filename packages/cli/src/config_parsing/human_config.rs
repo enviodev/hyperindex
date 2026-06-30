@@ -1275,8 +1275,8 @@ pub mod svm {
     }
 
     /// Selectable block field names (camelCase), matching the public
-    /// `instruction.block` shape. `slot`/`time`/`hash` are always included, so
-    /// they aren't listed here.
+    /// `instruction.block` shape. Only `slot` is always included (the key), so
+    /// everything else is opt-in.
     #[derive(
         Debug,
         Serialize,
@@ -1292,6 +1292,8 @@ pub mod svm {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
     pub enum SvmBlockField {
+        Time,
+        Hash,
         Height,
         ParentSlot,
         ParentHash,
@@ -1307,8 +1309,9 @@ pub mod svm {
         pub transaction_fields: Option<Vec<SvmTransactionField>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Block fields to include on each matched instruction's \
-                           `block`, as a list of field names. `slot`/`time`/`hash` are \
-                           always included; this adds `height`/`parentSlot`/`parentHash`.")]
+                           `block`, as a list of field names. Only `slot` is always \
+                           included; this adds `time`/`hash`/`height`/`parentSlot`/\
+                           `parentHash`.")]
         pub block_fields: Option<Vec<SvmBlockField>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Set to `true` to include program logs scoped to each \

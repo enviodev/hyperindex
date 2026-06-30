@@ -20,10 +20,10 @@ let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 // Rust store (`SvmBlockField`) — keep this order in sync.
 let blockFields = ["slot", "time", "hash", "height", "parentSlot", "parentHash"]
 
-// `slot`/`time`/`hash` are always materialised (the first two from the item, the
-// hash from the store); `field_selection.block_fields` adds the rest.
-let alwaysIncludedBlockFields = ["slot", "time", "hash"]
-
+// Only `slot` is always present (the source stamps it on the inline block);
+// every other block field is opt-in via `field_selection.block_fields` and
+// materialised from the store.
+//
 // One instruction's selected block fields → store selection bitmask. Computed per
 // event at config build and cached on the event config.
 let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)

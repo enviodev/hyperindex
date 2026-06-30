@@ -486,16 +486,10 @@ let buildSvmInstructionEventConfig = (
     Utils.Set.fromArray(transactionFields)->(
       Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
     )
-  // The block-store mask covers the always-included trio plus the selected
-  // fields; `slot`/`time` are stamped from the item, the rest decoded from the
-  // store.
+  // `slot` is stamped on the inline block by the source; only the selected
+  // fields are decoded from the store, so the mask is the selection alone.
   let blockFieldMask = Svm.eventBlockFieldMask(
-    Utils.Set.fromArray(
-      Array.concat(
-        Svm.alwaysIncludedBlockFields,
-        blockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>),
-      ),
-    ),
+    Utils.Set.fromArray(blockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>)),
   )
   {
     id: switch discriminator {

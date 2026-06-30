@@ -268,14 +268,17 @@ let toQueryTxField = (field: Internal.svmTransactionField): option<
   | TokenBalances => None
   }
 
-// Map a selected block field to its HyperSync query column. `slot`/`time`/`hash`
-// are requested unconditionally (as Slot/BlockTime/Blockhash) so they're not
-// here.
-let toQueryBlockField = (field: Internal.svmBlockField): SvmHyperSyncClient.QueryTypes.blockField =>
+// Map a selected block field to its HyperSync query column. Slot/Blockhash/
+// BlockTime are requested unconditionally (needed for reorg detection and the
+// item's slot/timestamp), so selecting `time`/`hash` adds no extra column.
+let toQueryBlockField = (field: Internal.svmBlockField): option<
+  SvmHyperSyncClient.QueryTypes.blockField,
+> =>
   switch field {
-  | Height => BlockHeight
-  | ParentSlot => ParentSlot
-  | ParentHash => ParentBlockhash
+  | Time | Hash => None
+  | Height => Some(BlockHeight)
+  | ParentSlot => Some(ParentSlot)
+  | ParentHash => Some(ParentBlockhash)
   }
 
 let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: options): t => {
@@ -351,7 +354,12 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     eventConfigs->Array.forEach(cfg =>
       cfg.selectedBlockFields->Utils.Set.forEach(field => selected->Utils.Set.add(field)->ignore)
     )
-    selected->Utils.Set.forEach(field => fields->Array.push(field->toQueryBlockField)->ignore)
+    selected->Utils.Set.forEach(field =>
+      switch field->toQueryBlockField {
+      | Some(queryField) => fields->Array.push(queryField)->ignore
+      | None => ()
+      }
+    )
     fields
   }
 
@@ -494,10 +502,10 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
           ~programName=eventConfig.contractName,
           ~instructionName=eventConfig.name,
           ~logs=eventConfig.includeLogs ? maybeLogs : None,
+          // Only `slot` is stamped inline; the selected block fields are
+          // materialised onto the block from the store at batch prep.
           ~block={
             slot: instr.slot,
-            time: blockTime->Option.getOr(0),
-            hash: "",
           },
         )
 

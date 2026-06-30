@@ -104,7 +104,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~selectedTransactionFields=Utils.Set.fromArray([Hash]),
+        ~selectedTransactionFields=Utils.Set.fromArray(([Hash]: array<Internal.evmTransactionField>)),
       ),
     ).toEqual({
       "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
@@ -119,10 +119,9 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~selectedTransactionFields=Utils.Set.fromArray([
-          Hash,
-          (TransactionIndex: Internal.evmTransactionField),
-        ]),
+        ~selectedTransactionFields=Utils.Set.fromArray(
+          ([Hash, TransactionIndex]: array<Internal.evmTransactionField>),
+        ),
       ),
     ).toEqual({
       "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
@@ -170,8 +169,8 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     t.expect(
       await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
         ~selectedTransactionFields=Utils.Set.fromArray([
-          Hash,
-          (TransactionIndex: Internal.evmTransactionField),
+          (Hash: Internal.evmTransactionField),
+          TransactionIndex,
           From,
           To,
           Gas,
@@ -238,7 +237,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       t.expect(
         await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
           ~selectedTransactionFields=Utils.Set.fromArray([
-            Hash,
+            (Hash: Internal.evmTransactionField),
             From,
             To,
             Gas,
@@ -350,7 +349,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
           ~selectedTransactionFields=Utils.Set.fromArray([
-            Hash,
+            (Hash: Internal.evmTransactionField),
             Gas,
             GasUsed,
             EffectiveGasPrice,
