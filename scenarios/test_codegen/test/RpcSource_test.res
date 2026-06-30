@@ -11,9 +11,7 @@ let mockLog = (
 ): Rpc.GetLogs.log => {
   blockNumber: 123456,
   blockHash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-  removed: false,
   address: Address.Evm.fromStringOrThrow("0x1234567890abcdef1234567890abcdef12345678"),
-  data: "0xdeadbeefdeadbeefdeadbeefdeadbeef",
   topics: [
     "0xd78ad95fa46c994b6551d0da85fc275fe613dbe680204dd5837f03aa2f863b9b",
     "0x0000000000000000000000000000000000000000000000000000000000000000",

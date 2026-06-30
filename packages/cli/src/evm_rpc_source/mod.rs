@@ -29,17 +29,18 @@ pub struct GetLogsParams {
 /// A log returned from `eth_getLogs`, with hex quantities decoded to integers.
 /// Field names cross the napi boundary as camelCase, matching the ReScript
 /// `Rpc.GetLogs.log` record.
+// Only the fields the ReScript side reads cross the boundary. `data` is consumed
+// by the decoder on the Rust side (see `to_decoder_log`) and `removed` is unused,
+// so neither is carried here.
 #[napi(object)]
 pub struct RpcLog {
     pub address: String,
     pub topics: Vec<String>,
-    pub data: String,
     pub block_number: i64,
     pub transaction_hash: String,
     pub transaction_index: i64,
     pub block_hash: String,
     pub log_index: i64,
-    pub removed: bool,
 }
 
 #[napi(object)]
@@ -63,7 +64,6 @@ struct RawLog {
     transaction_index: String,
     block_hash: String,
     log_index: String,
-    removed: bool,
 }
 
 impl RawLog {
@@ -79,10 +79,8 @@ impl RawLog {
             log_index: to_i64(&self.log_index).context("log.logIndex")?,
             address: self.address,
             topics: self.topics,
-            data: self.data,
             transaction_hash: self.transaction_hash,
             block_hash: self.block_hash,
-            removed: self.removed,
         })
     }
 
@@ -107,7 +105,7 @@ impl EvmRpcClient {
     pub fn new(
         cfg: EvmRpcClientConfig,
         event_params: Vec<EventParamsInput>,
-        checksum_addresses: Option<bool>,
+        checksum_addresses: bool,
     ) -> napi::Result<EvmRpcClient> {
         let http_req_timeout_millis = cfg
             .http_req_timeout_millis
@@ -116,7 +114,7 @@ impl EvmRpcClient {
                 v as u64
             });
         let inner = JsonRpcClient::new(cfg.url, http_req_timeout_millis).map_err(map_err)?;
-        let decoder = DecoderCore::from_params(event_params, checksum_addresses.unwrap_or(false))
+        let decoder = DecoderCore::from_params(event_params, checksum_addresses)
             .context("build decoder")
             .map_err(map_err)?;
         Ok(EvmRpcClient { inner, decoder })

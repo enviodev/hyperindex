@@ -27,7 +27,7 @@ external classNew: (
   Core.evmRpcClientCtor,
   cfg,
   array<HyperSyncClient.Decoder.eventParamsInput>,
-  ~checksumAddresses: bool=?,
+  ~checksumAddresses: bool,
 ) => t = "new"
 
 // Rust encodes JSON-RPC errors as a JSON payload in the napi error's
@@ -59,7 +59,7 @@ let coerceErrorOrThrow = exn =>
   | None => exn->throw
   }
 
-let make = (~url, ~httpReqTimeoutMillis=?, ~allEventParams=[], ~checksumAddresses=false) => {
+let make = (~url, ~checksumAddresses, ~httpReqTimeoutMillis=?, ~allEventParams=[]) => {
   let client =
     Core.getAddon().evmRpcClient->classNew(
       {url, ?httpReqTimeoutMillis},

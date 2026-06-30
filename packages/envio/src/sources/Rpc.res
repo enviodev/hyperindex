@@ -103,13 +103,11 @@ module GetLogs = {
   type log = {
     address: Address.t,
     topics: array<hex>,
-    data: hex,
     blockNumber: int,
     transactionHash: hex,
     transactionIndex: int,
     blockHash: hex,
     logIndex: int,
-    removed: bool,
   }
 }
 

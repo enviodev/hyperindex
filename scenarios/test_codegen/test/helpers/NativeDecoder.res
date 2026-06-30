@@ -27,7 +27,7 @@ let decodeLogs = async (
     | _ => JSON.Null
     }
   )
-  let client = EvmRpcClient.make(~url=mock.url, ~allEventParams=eventParams)
+  let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false, ~allEventParams=eventParams)
   let items = try await client.getLogs({fromBlock: 0, toBlock: 0, topics: []}) catch {
   | exn =>
     mock.close()

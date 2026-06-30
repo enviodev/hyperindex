@@ -22,7 +22,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
       ~status=200,
       ~body=`{"jsonrpc":"2.0","id":1,"result":"0x1b4"}`,
     )
-    let client = EvmRpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false)
 
     let height = await client.getHeight()
     mock.close()
@@ -38,7 +38,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
       ~status=200,
       ~body=`{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"limited to a 1000 blocks range"}}`,
     )
-    let client = EvmRpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false)
 
     let error = await getHeightJsonRpcError(client)
     mock.close()
@@ -51,7 +51,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
       ~status=429,
       ~body=`{"jsonrpc":"2.0","id":1,"error":{"code":-32029,"message":"rate limited"}}`,
     )
-    let client = EvmRpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false)
 
     let error = await getHeightJsonRpcError(client)
     mock.close()
@@ -61,7 +61,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
 
   Async.it("Reports HTTP status and body snippet for a non-JSON response", async t => {
     let mock = await MockRpcServer.makeRaw(~status=502, ~body="upstream exploded")
-    let client = EvmRpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false)
 
     let message = await getHeightErrorMessage(client)
     mock.close()
@@ -73,7 +73,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
 
   Async.it("Fails when the response has neither result nor error", async t => {
     let mock = await MockRpcServer.makeRaw(~status=200, ~body=`{"jsonrpc":"2.0","id":1}`)
-    let client = EvmRpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false)
 
     let message = await getHeightErrorMessage(client)
     mock.close()
@@ -88,7 +88,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
       ~status=200,
       ~body=`{"jsonrpc":"2.0","id":1,"result":null}`,
     )
-    let client = EvmRpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false)
 
     let message = await getHeightErrorMessage(client)
     mock.close()
@@ -112,6 +112,7 @@ describe("EvmRpcClient - getLogs via napi", () => {
     )
     let client = EvmRpcClient.make(
       ~url=mock.url,
+      ~checksumAddresses=false,
       ~allEventParams=[
         {
           sighash: transferSighash,
@@ -175,6 +176,7 @@ describe("EvmRpcClient - getLogs via napi", () => {
     )
     let client = EvmRpcClient.make(
       ~url=mock.url,
+      ~checksumAddresses=false,
       ~allEventParams=[
         {
           sighash: transferSighash,
@@ -199,7 +201,7 @@ describe("EvmRpcClient - getLogs via napi", () => {
       ~status=200,
       ~body=`{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"eth_getLogs is limited to a 1000 blocks range"}}`,
     )
-    let client = EvmRpcClient.make(~url=mock.url)
+    let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false)
 
     let error = try {
       let _ = await client.getLogs({fromBlock: 0, toBlock: 5000, topics: []})
