@@ -18,12 +18,10 @@ let run = async (state: IndexerState.t) => {
   if !(state->IndexerState.isStopped) && !(state->IndexerState.isResolvingReorg) {
     // A simulate run tracks the items a test fed in and drops each as it reaches a
     // handler. Anything left never ran — fail loudly instead of exiting clean, since
-    // a simulate input that runs nothing is dead test code. Always empty off the
-    // simulate path.
+    // a simulate input that runs nothing is dead test code. None off the simulate path.
     switch state
-    ->IndexerState.chainStates
-    ->Dict.valuesToArray
-    ->Array.flatMap(cs => cs->ChainState.skippedSimulateItems) {
+    ->IndexerState.simulateDeadInputTracker
+    ->Option.mapOr([], SimulateDeadInputTracker.unprocessedItems) {
     | [] =>
       Logging.info("Exiting with success")
       NodeJs.process->NodeJs.exitWithCode(Success)

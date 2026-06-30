@@ -21,11 +21,6 @@ type t = {
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
   transactionStore: TransactionStore.t,
-  // Simulate runs only: the items a test fed in, minus the ones that reached a
-  // batch (and so a handler). Whatever remains on completion never ran — a dead
-  // simulate input the run reports instead of exiting clean. Always empty off the
-  // simulate path.
-  mutable unprocessedSimulateItems: array<Internal.item>,
 }
 
 // Per-chain shape returned by the status API.
@@ -70,7 +65,6 @@ let make = (
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
-  ~unprocessedSimulateItems=[],
   ~logger: Pino.t,
 ): t => {
   logger,
@@ -85,7 +79,6 @@ let make = (
   reorgDetection,
   safeCheckpointTracking,
   transactionStore: TransactionStore.make(),
-  unprocessedSimulateItems,
 }
 
 let makeInternal = (
@@ -223,18 +216,6 @@ let makeInternal = (
   | None => ()
   }
 
-  // Seed the simulate dead-input tracker with every item the test fed in. Each is
-  // dropped once it reaches a batch (and so a handler); whatever is left on
-  // completion never ran and is reported.
-  let unprocessedSimulateItems = switch chainConfig.sourceConfig {
-  | Config.CustomSources(sources) =>
-    switch sources->Array.find(source => source.simulateItems->Option.isSome) {
-    | Some(source) => source.simulateItems->Option.getOr([])
-    | None => []
-    }
-  | _ => []
-  }
-
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
     ~addresses=indexingAddresses,
@@ -343,7 +324,6 @@ let makeInternal = (
     ~committedProgressBlockNumber=progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
-    ~unprocessedSimulateItems,
     ~logger,
   )
 }
@@ -434,7 +414,6 @@ let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrE
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
 let indexingAddresses = (cs: t) => cs.fetchState.indexingAddresses
-let skippedSimulateItems = (cs: t) => cs.unprocessedSimulateItems
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
@@ -658,16 +637,6 @@ let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
     cs.fetchState = enteringReorgThreshold
       ? chainAfterBatch.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
       : chainAfterBatch.fetchState
-
-    // Drop this chain's just-processed items from the dead-input tracker. The
-    // batch holds the same item references the simulate source provided, so what
-    // never appears in a batch is what never ran.
-    if cs.unprocessedSimulateItems->Array.length > 0 {
-      cs.unprocessedSimulateItems =
-        cs.unprocessedSimulateItems->Array.filter(provided =>
-          !(batch.items->Array.some(processed => processed === provided))
-        )
-    }
   | None => ()
   }
 

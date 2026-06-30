@@ -108,6 +108,9 @@ type t = {
   // waitForNewBlock waiter is bound to the old, pre-realtime source). A fetch
   // response or waiter carrying an older epoch than this is discarded.
   mutable epoch: int,
+  // Simulate runs only: tracks which provided items never reached a handler,
+  // fed the processed batches by ProcessEventBatch. None off the simulate path.
+  simulateDeadInputTracker: option<SimulateDeadInputTracker.t>,
 }
 
 let make = (
@@ -169,6 +172,7 @@ let make = (
     onError,
     isStopped: false,
     epoch: 0,
+    simulateDeadInputTracker: SimulateDeadInputTracker.makeFromConfig(config),
   }
 }
 
@@ -400,6 +404,7 @@ let exitAfterFirstEventBlock = (state: t) => state.exitAfterFirstEventBlock
 let isStopped = (state: t) => state.isStopped
 let epoch = (state: t) => state.epoch
 let pruneStaleEntityHistoryThrottler = (state: t) => state.writeThrottlers.pruneStaleEntityHistory
+let simulateDeadInputTracker = (state: t) => state.simulateDeadInputTracker
 
 // --- Store domain operations. ---
 
