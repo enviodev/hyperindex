@@ -1,5 +1,3 @@
-let sourceName = "SimulateSource"
-
 let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain.t): Source.t => {
   // getItemsOrThrow might be called multiple times with different partition ids.
   // Return all items on the first call and empty on subsequent calls to prevent
@@ -7,7 +5,8 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
   let delivered = ref(false)
 
   {
-    name: sourceName,
+    name: "SimulateSource",
+    simulateItems: items,
     sourceFor: Sync,
     chain,
     poweredByHyperSync: false,

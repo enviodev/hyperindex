@@ -15,7 +15,7 @@ let make: (
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
-  ~isSimulate: bool=?,
+  ~unprocessedSimulateItems: array<Internal.item>=?,
   ~logger: Pino.t,
 ) => t
 

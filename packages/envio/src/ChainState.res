@@ -21,11 +21,11 @@ type t = {
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
   transactionStore: TransactionStore.t,
-  // Simulate runs only: when true, non-wildcard items the address filter drops
-  // are recorded in `skippedItems` (their handler never ran) so the run can fail
-  // loudly on a dead simulate input instead of exiting clean.
-  isSimulate: bool,
-  skippedItems: array<Internal.item>,
+  // Simulate runs only: the non-wildcard items a test fed in, minus the ones that
+  // reached a batch (and so a handler). Whatever remains on completion never ran
+  // — a dead simulate input the run reports instead of exiting clean. Always
+  // empty off the simulate path.
+  mutable unprocessedSimulateItems: array<Internal.item>,
 }
 
 // Per-chain shape returned by the status API.
@@ -70,7 +70,7 @@ let make = (
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
-  ~isSimulate=false,
+  ~unprocessedSimulateItems=[],
   ~logger: Pino.t,
 ): t => {
   logger,
@@ -85,8 +85,7 @@ let make = (
   reorgDetection,
   safeCheckpointTracking,
   transactionStore: TransactionStore.make(),
-  isSimulate,
-  skippedItems: [],
+  unprocessedSimulateItems,
 }
 
 let makeInternal = (
@@ -224,10 +223,24 @@ let makeInternal = (
   | None => ()
   }
 
-  let isSimulate = switch chainConfig.sourceConfig {
+  // Seed the simulate dead-input tracker with the non-wildcard items the test
+  // fed in. Wildcard items route regardless of srcAddress, so an unrouted one
+  // isn't a dead input; only non-wildcard items are worth reporting.
+  let unprocessedSimulateItems = switch chainConfig.sourceConfig {
   | Config.CustomSources(sources) =>
-    sources->Array.some(source => source.name === SimulateSource.sourceName)
-  | _ => false
+    switch sources->Array.find(source => source.simulateItems->Option.isSome) {
+    | Some(source) =>
+      source.simulateItems
+      ->Option.getOr([])
+      ->Array.filter(item =>
+        switch item {
+        | Internal.Event({eventConfig}) => !eventConfig.isWildcard
+        | _ => false
+        }
+      )
+    | None => []
+    }
+  | _ => []
   }
 
   let fetchState = FetchState.make(
@@ -338,7 +351,7 @@ let makeInternal = (
     ~committedProgressBlockNumber=progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
-    ~isSimulate,
+    ~unprocessedSimulateItems,
     ~logger,
   )
 }
@@ -429,7 +442,7 @@ let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrE
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
 let indexingAddresses = (cs: t) => cs.fetchState.indexingAddresses
-let skippedSimulateItems = (cs: t) => cs.skippedItems
+let skippedSimulateItems = (cs: t) => cs.unprocessedSimulateItems
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
@@ -546,25 +559,6 @@ let handleQueryResult = (
   | _ => cs.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
   }
 
-  // Mirror FetchState.handleQueryResult's address filter: a non-wildcard simulate
-  // item whose srcAddress isn't indexed (after this response's dynamic
-  // registrations) is about to be dropped, so its handler never runs. Record it
-  // for the caught-up check to surface as a dead simulate input.
-  if cs.isSimulate {
-    newItems->Array.forEach(item =>
-      switch item {
-      | Internal.Event({eventConfig, payload, blockNumber}) =>
-        switch eventConfig.clientAddressFilter {
-        | Some(filter)
-          if !eventConfig.isWildcard && !filter(payload, blockNumber, fs.indexingAddresses) =>
-          cs.skippedItems->Array.push(item)->ignore
-        | _ => ()
-        }
-      | _ => ()
-      }
-    )
-  }
-
   cs.fetchState =
     fs
     ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
@@ -672,6 +666,16 @@ let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
     cs.fetchState = enteringReorgThreshold
       ? chainAfterBatch.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
       : chainAfterBatch.fetchState
+
+    // Drop this chain's just-processed items from the dead-input tracker. The
+    // batch holds the same item references the simulate source provided, so what
+    // never appears in a batch is what never ran.
+    if cs.unprocessedSimulateItems->Array.length > 0 {
+      cs.unprocessedSimulateItems =
+        cs.unprocessedSimulateItems->Array.filter(provided =>
+          !(batch.items->Array.some(processed => processed === provided))
+        )
+    }
   | None => ()
   }
 
