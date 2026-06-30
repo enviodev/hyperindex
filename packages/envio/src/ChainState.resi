@@ -16,6 +16,7 @@ let make: (
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
+  ~transactionStore: TransactionStore.t=?,
   ~logger: Pino.t,
 ) => t
 

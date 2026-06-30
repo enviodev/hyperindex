@@ -676,6 +676,10 @@ let dropSchema = async () => {
   await persistence.storage.close()
 }
 
+// Rejection carried by `onError`: the failure is already logged with full
+// context, so callers should act on it (exit / re-throw) without logging again.
+exception FatalError(exn)
+
 let start = async (
   ~persistence: option<Persistence.t>=?,
   ~reset=false,
@@ -731,17 +735,20 @@ let start = async (
   | None => config
   }
   // The single fatal-error handler, invoked once via IndexerState.errorExit.
+  // It logs the failure once (with chain context) and rejects the run wrapped in
+  // `FatalError` so callers know it's already logged — `Bin.res` just exits, the
+  // test worker unwraps and re-throws it to the parent thread. `runUntilFatalError`
+  // only ever rejects: on a clean run it stays pending and the process exits via
+  // ExitOnCaughtUp / when the indexer loop drains.
+  let onErrorReject = ref(None)
+  let runUntilFatalError: promise<unit> = Promise.make((_resolve, reject) =>
+    onErrorReject := Some(reject)
+  )
+  // `onErrorReject` is filled synchronously by `Promise.make` above, before the
+  // indexer can run and call `onError`, so it's always present here.
   let onError = (errHandler: ErrorHandling.t) => {
     errHandler->ErrorHandling.log
-    if isTest {
-      // The TestIndexer runs the indexer in a worker thread and reads the
-      // failure off the worker 'error' event. Re-throw the original error
-      // outside the promise chain on the next tick so the test sees its real
-      // message instead of a generic non-zero exit code.
-      NodeJs.setImmediate(() => errHandler->ErrorHandling.raiseExn)
-    } else {
-      NodeJs.process->NodeJs.exitWithCode(Failure)
-    }
+    (onErrorReject.contents->Option.getUnsafe)(FatalError(errHandler.exn->Utils.prettifyExn))
   }
   let envioVersion = Utils.EnvioPackage.value.version
   Prometheus.Info.set(~version=envioVersion)
@@ -782,4 +789,5 @@ let start = async (
   }
   indexerStateRef := Some(state)
   state->IndexerLoop.start
+  await runUntilFatalError
 }
