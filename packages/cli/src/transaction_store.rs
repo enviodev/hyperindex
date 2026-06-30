@@ -8,7 +8,6 @@
 //! back by block.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -649,60 +648,43 @@ fn collect<T>(
 }
 
 /// Ecosystem selecting `materialize`'s decoder. A store is per-chain, hence
-/// single-ecosystem; it's learned from the first inserted/merged page (the
-/// persistent per-chain store starts without one). Stored as a `u8` tag in an
-/// atomic where `0` means "not yet learned", so the enum needs no `Unknown`
-/// variant — the unset state is `None`.
+/// single-ecosystem, and is fixed at construction. `Evm` carries that chain's
+/// address-checksumming setting — a per-chain EVM constant the decoder needs,
+/// which the type ties to EVM so it can't be set without (or forgotten for) it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Ecosystem {
-    Evm,
+    Evm { should_checksum: bool },
     Svm,
-}
-
-impl Ecosystem {
-    fn to_tag(self) -> u8 {
-        match self {
-            Ecosystem::Evm => 1,
-            Ecosystem::Svm => 2,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Option<Self> {
-        match tag {
-            1 => Some(Ecosystem::Evm),
-            2 => Some(Ecosystem::Svm),
-            _ => None,
-        }
-    }
+    Fuel,
 }
 
 #[napi]
 pub struct TransactionStore {
     inner: Mutex<BlockTxs>,
-    // `0` until learned from the first inserted/merged page; drives the decoder
-    // in `materialize` (see `Ecosystem`).
-    ecosystem: AtomicU8,
-    // Address checksumming is a per-chain EVM setting, so it lives on the store
-    // rather than on every transaction; learned once on the first merge. SVM
-    // ignores it.
-    should_checksum: AtomicBool,
-}
-
-impl Default for TransactionStore {
-    fn default() -> Self {
-        Self::new()
-    }
+    // Fixed at construction; drives the decoder in `materialize`.
+    ecosystem: Ecosystem,
 }
 
 #[napi]
 impl TransactionStore {
+    /// EVM store, carrying that chain's address-checksumming setting. Used for
+    /// both fetch-response pages and the persistent per-chain store.
     #[napi(factory)]
-    pub fn new() -> Self {
-        Self {
-            inner: Mutex::new(BlockTxs::new()),
-            ecosystem: AtomicU8::new(0),
-            should_checksum: AtomicBool::new(false),
-        }
+    pub fn new_evm(should_checksum: bool) -> Self {
+        Self::with_ecosystem(Ecosystem::Evm { should_checksum })
+    }
+
+    /// SVM store. Used for both fetch-response pages and the persistent store.
+    #[napi(factory)]
+    pub fn new_svm() -> Self {
+        Self::with_ecosystem(Ecosystem::Svm)
+    }
+
+    /// Fuel store. Fuel keeps transactions inline, so this store is never merged
+    /// into or materialised through — it exists only because every chain holds one.
+    #[napi(factory)]
+    pub fn new_fuel() -> Self {
+        Self::with_ecosystem(Ecosystem::Fuel)
     }
 
     /// Move every entry from `page` into this store (merging a fetch-response
@@ -713,23 +695,12 @@ impl TransactionStore {
         if std::ptr::eq(self, page) {
             return;
         }
-        {
-            let mut dst = self.inner.lock().unwrap();
-            let mut src = page.inner.lock().unwrap();
-            src.drain_into(&mut dst);
-        }
-        // Ecosystem + checksum are per-chain constants; learn them once from the
-        // first merged page. Pages are tagged at construction, so a page always
-        // carries its ecosystem (even when empty); the persistent store starts unset.
-        if self.ecosystem().is_none() {
-            if let Some(page_ecosystem) = page.ecosystem() {
-                self.set_ecosystem(page_ecosystem);
-                self.should_checksum.store(
-                    page.should_checksum.load(Ordering::Relaxed),
-                    Ordering::Relaxed,
-                );
-            }
-        }
+        // A page and its persistent store are the same per-chain ecosystem (both
+        // derive it from the one chain config), so the decoder is unaffected by the merge.
+        debug_assert_eq!(self.ecosystem, page.ecosystem);
+        let mut dst = self.inner.lock().unwrap();
+        let mut src = page.inner.lock().unwrap();
+        src.drain_into(&mut dst);
     }
 
     /// Bulk-materialise transactions in columnar form, one row per
@@ -761,8 +732,8 @@ impl TransactionStore {
         }
         let masks: Vec<u64> = masks.iter().map(|&m| m as u64).collect();
 
-        match self.ecosystem() {
-            Some(Ecosystem::Evm) => {
+        match self.ecosystem {
+            Ecosystem::Evm { should_checksum } => {
                 let records =
                     self.collect_locked(
                         &block_numbers,
@@ -772,13 +743,12 @@ impl TransactionStore {
                             _ => None,
                         },
                     );
-                let should_checksum = self.should_checksum.load(Ordering::Relaxed);
                 tokio::task::block_in_place(|| {
                     decode_evm_columns(&records, &transaction_indices, &masks, should_checksum)
                 })
                 .map_err(map_err)
             }
-            Some(Ecosystem::Svm) => {
+            Ecosystem::Svm => {
                 let records =
                     self.collect_locked(
                         &block_numbers,
@@ -793,9 +763,9 @@ impl TransactionStore {
                 })
                 .map_err(map_err)
             }
-            // Empty store (no ecosystem learned yet): every key is a miss, so the
-            // result is `len` empty objects regardless of the decoder.
-            None => Ok(Columns {
+            // Fuel keeps transactions inline, so its store is never materialised
+            // through; should it be, every key is a miss → `len` empty objects.
+            Ecosystem::Fuel => Ok(Columns {
                 len: block_numbers.len(),
                 columns: Vec::new(),
             }),
@@ -834,31 +804,11 @@ impl TransactionStore {
         collect(&inner, block_numbers, transaction_indices, pick)
     }
 
-    fn ecosystem(&self) -> Option<Ecosystem> {
-        Ecosystem::from_tag(self.ecosystem.load(Ordering::Relaxed))
-    }
-
-    fn set_ecosystem(&self, ecosystem: Ecosystem) {
-        self.ecosystem.store(ecosystem.to_tag(), Ordering::Relaxed);
-    }
-
-    /// Create a page store for an EVM source, carrying that chain's
-    /// address-checksumming setting (copied into the persistent store on merge).
-    pub(crate) fn with_checksum(should_checksum: bool) -> Self {
-        let store = Self::new();
-        store.set_ecosystem(Ecosystem::Evm);
-        store
-            .should_checksum
-            .store(should_checksum, Ordering::Relaxed);
-        store
-    }
-
-    /// Create an SVM page store. The ecosystem is tagged here (not inferred from
-    /// records) so even an empty page selects the SVM decoder after merge.
-    pub(crate) fn new_svm() -> Self {
-        let store = Self::new();
-        store.set_ecosystem(Ecosystem::Svm);
-        store
+    fn with_ecosystem(ecosystem: Ecosystem) -> Self {
+        Self {
+            inner: Mutex::new(BlockTxs::new()),
+            ecosystem,
+        }
     }
 
     /// Insert a raw EVM transaction (called by the HyperSync source while
@@ -872,7 +822,6 @@ impl TransactionStore {
         transaction_index: u32,
         tx: Arc<simple_types::Transaction>,
     ) {
-        self.set_ecosystem(Ecosystem::Evm);
         self.inner
             .lock()
             .unwrap()
@@ -885,7 +834,6 @@ impl TransactionStore {
     /// Insert a raw SVM transaction with its joined token balances (called by the
     /// SVM HyperSync source while building a page). Not exposed to JS.
     pub(crate) fn insert_svm_raw(&self, slot: u64, transaction_index: u32, rec: Arc<SvmStored>) {
-        self.set_ecosystem(Ecosystem::Svm);
         self.inner
             .lock()
             .unwrap()
@@ -1120,7 +1068,7 @@ mod tests {
 
     #[test]
     fn prune_and_rollback_drop_by_block() {
-        let store = TransactionStore::new();
+        let store = TransactionStore::new_evm(false);
         for block in [10u64, 20, 30] {
             store.insert_evm_raw(block, 0, Arc::new(simple_types::Transaction::default()));
         }

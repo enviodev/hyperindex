@@ -75,7 +75,7 @@ describe("TransactionStore field-code contract", () => {
 
 describe("TransactionStore.materializeItems", () => {
   Async.it("stamps an empty transaction object when the mask is 0", async t => {
-    let store = TransactionStore.make()
+    let store = TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
     let item = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=0, ~mask=0.)
     await store->TransactionStore.materializeItems(~items=[item])
     // Store-backed items always get a transaction object (matching the inline
@@ -88,7 +88,7 @@ describe("TransactionStore.materializeItems", () => {
     async t => {
       // Empty store ⇒ every key is a miss ⇒ materialize returns one distinct empty
       // object per group, which is enough to assert the grouping/scatter logic.
-      let store = TransactionStore.make()
+      let store = TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
       let inlineTx = {"hash": "0xinline"}->(Utils.magic: {..} => Internal.eventTransaction)
       let inline = makeInlineItem(~blockNumber=1, ~transactionIndex=0, ~transaction=inlineTx)
       let a = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=1)
@@ -116,7 +116,7 @@ describe("TransactionStore.materializeItems", () => {
     // still share one row (their masks OR'd together), while an event on another
     // tx stays separate. Exercises the orMask union path through materializeItems
     // (the empty store yields one distinct empty object per row).
-    let store = TransactionStore.make()
+    let store = TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
     let a = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=1, ~mask=2.)
     let b = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=1, ~mask=4.)
     let c = makeStoreBackedItem(~blockNumber=1, ~transactionIndex=2, ~mask=0.)
