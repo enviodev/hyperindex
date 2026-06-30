@@ -74,6 +74,47 @@ let getKnownRawBlockWithBackoff = async (
   }
   result.contents->Option.getOrThrow
 }
+// Pulls the provider error message out of either a parsed Rpc.JsonRpcError or
+// the raw napi JsExn shape (`error.error.message`), so classifiers below don't
+// each have to re-derive it.
+let getErrorMessage = (exn: exn): option<string> =>
+  switch exn {
+  | Rpc.JsonRpcError({message}) => Some(message)
+  | JsExn(error) =>
+    try {
+      let message: string = (error->Obj.magic)["error"]["message"]
+      message->S.assertOrThrow(S.string)
+      Some(message)
+    } catch {
+    | _ => None
+    }
+  | _ => None
+  }
+
+// Deterministic "the range returned too much data" errors that carry no numeric
+// block-range suggestion (HyperRPC's 50k-log cap, response-size and result-count
+// limits). They depend on log density, not on a fixed block window, so waiting
+// never helps — the same range always re-trips the same cap. The reaction is to
+// shrink the range and retry immediately, ratcheting the max range down.
+let isResponseTooLargeError = {
+  let patterns = [
+    /more than \d+ logs/i, // HyperRPC: "More than 50000 logs returned"
+    /\d+ logs returned/i,
+    /too many logs/i,
+    /query returned more than \d+ results/i, // ZkEVM
+    /query exceeds max results/i, // LlamaRPC
+    /response size should not/i, // 1RPC
+    /(backend )?response too large/i, // Optimism
+    /logs matched by query exceeds limit/i, // Arbitrum
+    /block range is too wide/i, // Ankr
+  ]
+  (exn: exn) =>
+    switch exn->getErrorMessage {
+    | Some(message) => patterns->Array.some(re => re->RegExp.test(message))
+    | None => false
+    }
+}
+
 let getSuggestedBlockIntervalFromExn = {
   // Unknown provider: "retry with the range 123-456"
   let suggestedRangeRegExp = /retry with the range (\d+)-(\d+)/
@@ -209,17 +250,9 @@ let getSuggestedBlockIntervalFromExn = {
     // Whether it's the max range that the provider allows
     bool,
   )> =>
-    switch exn {
-    | Rpc.JsonRpcError({message}) => parseMessageForBlockRange(message)
-    | JsExn(error) =>
-      try {
-        let message: string = (error->Obj.magic)["error"]["message"]
-        message->S.assertOrThrow(S.string)
-        parseMessageForBlockRange(message)
-      } catch {
-      | _ => None
-      }
-    | _ => None
+    switch exn->getErrorMessage {
+    | Some(message) => parseMessageForBlockRange(message)
+    | None => None
     }
 }
 
@@ -274,12 +307,10 @@ let getNextPage = (
   [queryTimoutPromise, logsPromise]
   ->Promise.race
   ->Promise.catch(err => {
-    switch getSuggestedBlockIntervalFromExn(err) {
-    | Some((nextBlockIntervalTry, isMaxRange)) =>
-      mutSuggestedBlockIntervals->Dict.set(
-        isMaxRange ? maxSuggestedBlockIntervalKey : partitionId,
-        nextBlockIntervalTry,
-      )
+    let executedBlockInterval = toBlock - fromBlock + 1
+    let shrink = () =>
+      Pervasives.max(1, (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt)
+    let throwWithSuggestedToBlock = nextBlockIntervalTry =>
       throw(
         Source.GetItemsError(
           FailedGettingItems({
@@ -291,10 +322,25 @@ let getNextPage = (
           }),
         ),
       )
+
+    switch getSuggestedBlockIntervalFromExn(err) {
+    | Some((nextBlockIntervalTry, isMaxRange)) =>
+      mutSuggestedBlockIntervals->Dict.set(
+        isMaxRange ? maxSuggestedBlockIntervalKey : partitionId,
+        nextBlockIntervalTry,
+      )
+      throwWithSuggestedToBlock(nextBlockIntervalTry)
+    // Deterministic too-large response with no suggested range: shrink and retry
+    // immediately (no backoff wait). Ratchet the shared max range down so the
+    // acceleration_additive never grows it back across the provider's cap, which
+    // is what otherwise causes the re-pay-the-backoff oscillation. The interval>1
+    // guard avoids a no-progress tight loop on a single over-cap block.
+    | None if executedBlockInterval > 1 && err->isResponseTooLargeError =>
+      let nextBlockIntervalTry = shrink()
+      mutSuggestedBlockIntervals->Dict.set(maxSuggestedBlockIntervalKey, nextBlockIntervalTry)
+      throwWithSuggestedToBlock(nextBlockIntervalTry)
     | None =>
-      let executedBlockInterval = toBlock - fromBlock + 1
-      let nextBlockIntervalTry =
-        (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt
+      let nextBlockIntervalTry = shrink()
       mutSuggestedBlockIntervals->Dict.set(partitionId, nextBlockIntervalTry)
       throw(
         Source.GetItemsError(
