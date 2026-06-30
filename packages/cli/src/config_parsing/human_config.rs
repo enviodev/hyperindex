@@ -675,6 +675,13 @@ pub mod evm {
         )]
         pub ws: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional HTTP headers sent with every request to this RPC endpoint, \
+                           e.g. an Authorization bearer token for gated endpoints. Values support \
+                           ${ENV_VAR} interpolation."
+        )]
+        pub headers: Option<std::collections::BTreeMap<String, String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The starting interval in range of blocks per query")]
         pub initial_block_interval: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]

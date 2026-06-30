@@ -38,7 +38,21 @@ let jsonRpcFetcher: Rest.ApiFetcher.t = async args => {
   }
 }
 
-let makeClient = url => Rest.client(url, ~fetcher=jsonRpcFetcher)
+let makeClient = (url, ~headers=?) => {
+  let fetcher: Rest.ApiFetcher.t = switch headers {
+  | None => jsonRpcFetcher
+  | Some(customHeaders) =>
+    async args => {
+      let headers = switch args.headers {
+      | Some(headers) => headers
+      | None => Dict.make()
+      }
+      customHeaders->Dict.forEachWithKey((value, key) => headers->Dict.set(key, value->Obj.magic))
+      await jsonRpcFetcher({...args, headers: Some(headers)})
+    }
+  }
+  Rest.client(url, ~fetcher)
+}
 
 type hex = string
 let makeHexSchema = fromStr =>
@@ -70,13 +84,7 @@ let decimalFloatSchema: S.schema<float> = S.string->S.transform(s => {
 module GetLogs = {
   @unboxed
   type topicFilter = Single(hex) | Multiple(array<hex>) | @as(null) Null
-  let topicFilterSchema = S.union([
-    S.literal(Null),
-    S.schema(s => Multiple(s.matches(S.array(S.string)))),
-    S.schema(s => Single(s.matches(S.string))),
-  ])
   type topicQuery = array<topicFilter>
-  let topicQuerySchema = S.array(topicFilterSchema)
 
   let makeTopicQuery = (~topic0=[], ~topic1=[], ~topic2=[], ~topic3=[]) => {
     let topics = [topic0, topic1, topic2, topic3]
@@ -106,51 +114,15 @@ module GetLogs = {
   let mapTopicQuery = ({topic0, topic1, topic2, topic3}: Internal.topicSelection): topicQuery =>
     makeTopicQuery(~topic0, ~topic1, ~topic2, ~topic3)
 
-  type param = {
-    fromBlock: int,
-    toBlock: int,
-    address?: array<Address.t>,
-    topics: topicQuery,
-    // blockHash?: string,
-  }
-
-  let paramsSchema = S.object((s): param => {
-    fromBlock: s.field("fromBlock", hexIntSchema),
-    toBlock: s.field("toBlock", hexIntSchema),
-    address: ?s.field("address", S.option(S.array(Address.schema))),
-    topics: s.field("topics", topicQuerySchema),
-    // blockHash: ?s.field("blockHash", S.option(S.string)),
-  })
-
-  let fullParamsSchema = S.tuple1(paramsSchema)
-
   type log = {
     address: Address.t,
     topics: array<hex>,
-    data: hex,
     blockNumber: int,
     transactionHash: hex,
     transactionIndex: int,
     blockHash: hex,
     logIndex: int,
-    removed: bool,
   }
-
-  let logSchema = S.object((s): log => {
-    address: s.field("address", Address.schema),
-    topics: s.field("topics", S.array(S.string)),
-    data: s.field("data", S.string),
-    blockNumber: s.field("blockNumber", hexIntSchema),
-    transactionHash: s.field("transactionHash", S.string),
-    transactionIndex: s.field("transactionIndex", hexIntSchema),
-    blockHash: s.field("blockHash", S.string),
-    logIndex: s.field("logIndex", hexIntSchema),
-    removed: s.field("removed", S.bool),
-  })
-
-  let resultSchema = S.array(logSchema)
-
-  let route = makeRpcRoute("eth_getLogs", fullParamsSchema, resultSchema)
 }
 
 module GetBlockByNumber = {
@@ -228,10 +200,6 @@ module GetTransactionReceipt = {
     S.tuple1(S.string),
     S.null(S.json(~validate=false)),
   )
-}
-
-let getLogs = async (~client: Rest.client, ~param: GetLogs.param) => {
-  await GetLogs.route->Rest.fetch(param, ~client)
 }
 
 let getBlock = async (~client: Rest.client, ~blockNumber: int) => {
