@@ -35,12 +35,6 @@ type partition = {
   latestFetchedBlock: blockNumberAndTimestamp,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
-  // Reverse index address→contractName, derived from addressesByContractName.
-  // Used by EventRouter to resolve a log's owning contract from the partition
-  // that fetched it (instead of a chain-wide snapshot). Always recomputed in
-  // OptimizedPartitions.make, so partition literals can seed it with an empty
-  // dict.
-  contractNameByAddress: dict<string>,
   mergeBlock: option<int>,
   // When set, partition indexes a single dynamic contract type.
   // The addressesByContractName must contain only addresses for this contract.
@@ -209,7 +203,6 @@ module OptimizedPartitions = {
         latestFetchedBlock: {blockNumber: potentialMergeBlock, blockTimestamp: 0},
         mergeBlock: None,
         addressesByContractName: Dict.make(), // set below
-        contractNameByAddress: Dict.make(), // derived in make
         mutPendingQueries: [],
         prevQueryRange: minRange,
         prevPrevQueryRange: minRange,
@@ -392,12 +385,7 @@ module OptimizedPartitions = {
     for idx in 0 to partitionsCount - 1 {
       let p = newPartitions->Array.getUnsafe(idx)
       idsInAscOrder->Array.setUnsafe(idx, p.id)
-      // Single point where every partition's reverse index is (re)derived, so all
-      // construction paths (literals, spreads, merges, splits) stay consistent.
-      entities->Dict.set(
-        p.id,
-        {...p, contractNameByAddress: deriveContractNameByAddress(p.addressesByContractName)},
-      )
+      entities->Dict.set(p.id, p)
     }
 
     {
@@ -884,7 +872,6 @@ OptimizedPartitions.t => {
             selection: normalSelection,
             dynamicContract: isDynamic ? Some(contractName) : None,
             addressesByContractName,
-            contractNameByAddress: Dict.make(), // derived in make
             mergeBlock: None,
             mutPendingQueries: [],
             prevQueryRange: 0,
@@ -1221,7 +1208,6 @@ let registerDynamicContracts = (
                         selection: fetchState.normalSelection,
                         dynamicContract: Some(contractName),
                         addressesByContractName,
-                        contractNameByAddress: Dict.make(), // derived in make
                         mergeBlock: None,
                         mutPendingQueries: p.mutPendingQueries,
                         prevQueryRange: p.prevQueryRange,
@@ -1657,7 +1643,6 @@ let make = (
         eventConfigs: notDependingOnAddresses,
       },
       addressesByContractName: Dict.make(),
-      contractNameByAddress: Dict.make(), // derived in make
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],

@@ -422,7 +422,6 @@ describe("SourceManager fetchNext", () => {
       },
       selection: normalSelection,
       addressesByContractName,
-      contractNameByAddress: FetchState.deriveContractNameByAddress(addressesByContractName),
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
