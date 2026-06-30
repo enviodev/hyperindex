@@ -858,6 +858,7 @@ type options = {
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   lowercaseAddresses: bool,
   ws?: string,
+  headers?: dict<string>,
 }
 
 let make = (
@@ -870,6 +871,7 @@ let make = (
     allEventParams,
     lowercaseAddresses,
     ?ws,
+    ?headers,
   }: options,
 ): t => {
   let chainId = chain->ChainMap.Chain.toChainId
@@ -886,8 +888,13 @@ let make = (
 
   let mutSuggestedBlockIntervals = Dict.make()
 
-  let client = Rpc.makeClient(url)
-  let rpcClient = EvmRpcClient.make(~url, ~allEventParams, ~checksumAddresses=!lowercaseAddresses)
+  let client = Rpc.makeClient(url, ~headers?)
+  let rpcClient = EvmRpcClient.make(
+    ~url,
+    ~allEventParams,
+    ~checksumAddresses=!lowercaseAddresses,
+    ~headers?,
+  )
 
   let makeTransactionLoader = () =>
     LazyLoader.make(

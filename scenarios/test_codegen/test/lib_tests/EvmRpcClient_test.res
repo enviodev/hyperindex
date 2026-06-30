@@ -95,6 +95,26 @@ describe("EvmRpcClient - getHeight via napi", () => {
 
     t.expect(message->Option.getOr("no error")).toMatch(/parse eth_blockNumber result/)
   })
+
+  Async.it("Sends configured custom headers with the request", async t => {
+    let mock = await MockRpcServer.makeRaw(
+      ~status=200,
+      ~body=`{"jsonrpc":"2.0","id":1,"result":"0x1b4"}`,
+    )
+    let client = EvmRpcClient.make(
+      ~url=mock.url,
+      ~checksumAddresses=false,
+      ~headers=Dict.fromArray([("Authorization", "Bearer test-token")]),
+    )
+
+    let _ = await client.getHeight()
+    mock.close()
+
+    // Node lowercases header names on the way in.
+    t.expect(mock.requestHeaders->Array.getUnsafe(0)->Dict.get("authorization")).toEqual(
+      Some("Bearer test-token"),
+    )
+  })
 })
 
 describe("EvmRpcClient - getLogs via napi", () => {

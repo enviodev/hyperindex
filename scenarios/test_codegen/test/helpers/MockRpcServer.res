@@ -17,21 +17,29 @@ type address = {port: int}
 @send external setEncoding: (req, string) => unit = "setEncoding"
 @send external onData: (req, @as("data") _, string => unit) => unit = "on"
 @send external onEnd: (req, @as("end") _, unit => unit) => unit = "on"
+@get external reqHeaders: req => dict<string> = "headers"
 
 @send external writeHead: (res, int, dict<string>) => unit = "writeHead"
 @send external end_: (res, string) => unit = "end"
 
-type t = {url: string, requests: array<string>, close: unit => unit}
+type t = {
+  url: string,
+  requests: array<string>,
+  requestHeaders: array<dict<string>>,
+  close: unit => unit,
+}
 
 let start = (~handler: string => (int, string)) =>
   Promise.make((resolve, _reject) => {
     let requests = []
+    let requestHeaders = []
     let server = createServer((req, res) => {
       req->setEncoding("utf8")
       let data = ref("")
       req->onData(chunk => data := data.contents ++ chunk)
       req->onEnd(() => {
         requests->Array.push(data.contents)->ignore
+        requestHeaders->Array.push(req->reqHeaders)->ignore
         let (status, body) = handler(data.contents)
         res->writeHead(status, Dict.fromArray([("Content-Type", "application/json")]))
         res->end_(body)
@@ -41,6 +49,7 @@ let start = (~handler: string => (int, string)) =>
       resolve({
         url: `http://127.0.0.1:${(server->address).port->Int.toString}`,
         requests,
+        requestHeaders,
         close: () => {
           server->closeAllConnections
           server->close(() => ())

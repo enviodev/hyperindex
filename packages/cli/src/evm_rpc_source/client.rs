@@ -3,6 +3,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::value::RawValue;
+use std::collections::HashMap;
 
 /// JSON-RPC level errors are kept separate from transport/parse failures:
 /// provider error messages carry block-range hints the caller inspects.
@@ -38,6 +39,7 @@ struct JsonRpcResponse {
 pub struct JsonRpcClient {
     http: reqwest::Client,
     url: String,
+    headers: Option<HashMap<String, String>>,
 }
 
 impl JsonRpcClient {
@@ -45,12 +47,16 @@ impl JsonRpcClient {
         120_000
     }
 
-    pub fn new(url: String, http_req_timeout_millis: u64) -> Result<Self> {
+    pub fn new(
+        url: String,
+        http_req_timeout_millis: u64,
+        headers: Option<HashMap<String, String>>,
+    ) -> Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(http_req_timeout_millis))
             .build()
             .context("build http client")?;
-        Ok(Self { http, url })
+        Ok(Self { http, url, headers })
     }
 
     pub async fn request<T: DeserializeOwned>(
@@ -64,10 +70,13 @@ impl JsonRpcClient {
             "id": 1,
             "jsonrpc": "2.0",
         });
-        let response = self
-            .http
-            .post(&self.url)
-            .json(&body)
+        let mut request = self.http.post(&self.url).json(&body);
+        if let Some(headers) = &self.headers {
+            for (key, value) in headers {
+                request = request.header(key.as_str(), value.as_str());
+            }
+        }
+        let response = request
             .send()
             .await
             .with_context(|| format!("send {method} request"))
