@@ -208,22 +208,6 @@ module ResponseTypes = {
     mixHash?: string,
   }
 
-  type log = {
-    removed?: bool,
-    @as("logIndex") index?: int,
-    transactionIndex?: int,
-    transactionHash?: string,
-    blockHash?: string,
-    blockNumber?: int,
-    address?: Address.t,
-    data?: string,
-    topics?: array<Nullable.t<EvmTypes.Hex.t>>,
-  }
-
-  // Only the log is needed for decoding; the transaction/block are served from
-  // the store (event items) or unused (block-hash query).
-  type event = {log: log}
-
   type rollbackGuard = {
     blockNumber: int,
     timestamp: int,
@@ -253,25 +237,6 @@ module Decoder = {
     contractName: string,
     params: array<Internal.paramMeta>,
   }
-
-  // Decoded params keyed by contract name. Contracts that emit the same-signature
-  // event share one decode but get their own param names, so the caller picks the
-  // entry for the contract its router resolved the log to.
-  type tWithParams = {
-    decodeLogs: array<ResponseTypes.event> => promise<
-      array<Nullable.t<dict<Internal.eventParams>>>,
-    >,
-  }
-
-  @send
-  external classFromParams: (
-    Core.evmDecoderCtor,
-    array<eventParamsInput>,
-    ~checksumAddresses: bool=?,
-  ) => tWithParams = "fromParams"
-
-  let fromParams = (eventParams, ~checksumAddresses=?) =>
-    Core.getAddon().evmDecoder->classFromParams(eventParams, ~checksumAddresses?)
 }
 
 module EventItems = {

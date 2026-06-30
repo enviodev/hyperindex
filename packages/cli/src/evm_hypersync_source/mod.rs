@@ -9,7 +9,7 @@ use crate::block_store::BlockStore;
 use crate::transaction_store::TransactionStore;
 
 mod config;
-mod decode;
+pub(crate) mod decode;
 mod query;
 pub(crate) mod types;
 
@@ -155,8 +155,8 @@ impl EvmHypersyncClient {
             RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
         };
 
-        let transaction_store = TransactionStore::with_checksum(self.enable_checksum_addresses);
-        let block_store = BlockStore::with_checksum(self.enable_checksum_addresses);
+        let transaction_store = TransactionStore::new_evm(self.enable_checksum_addresses);
+        let block_store = BlockStore::new_evm(self.enable_checksum_addresses);
         let (items, blocks) = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,
@@ -685,8 +685,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
-            &TransactionStore::new(),
-            &BlockStore::new(),
+            &TransactionStore::new_evm(false),
+            &BlockStore::new_evm(false),
         )
         .err()
         .expect("expected MissingFields error");
@@ -712,8 +712,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
-            &TransactionStore::new(),
-            &BlockStore::new(),
+            &TransactionStore::new_evm(false),
+            &BlockStore::new_evm(false),
         )
         .err()
         .expect("expected MissingFields error");
@@ -744,8 +744,8 @@ mod tests {
             false,
             REQUIRED_BLOCK_FIELDS,
             &[],
-            &TransactionStore::new(),
-            &BlockStore::new(),
+            &TransactionStore::new_evm(false),
+            &BlockStore::new_evm(false),
         )
         .err()
         .expect("expected MissingFields error");
@@ -780,8 +780,8 @@ mod tests {
                 BlockField::BaseFeePerGas,
             ],
             &[],
-            &TransactionStore::new(),
-            &BlockStore::new(),
+            &TransactionStore::new_evm(false),
+            &BlockStore::new_evm(false),
         )
         .expect("expected success when only nullable fields are absent");
         assert_eq!(items.len(), 1);
@@ -806,8 +806,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::Hash],
-            &TransactionStore::new(),
-            &BlockStore::new(),
+            &TransactionStore::new_evm(false),
+            &BlockStore::new_evm(false),
         )
         .err()
         .expect("expected MissingFields error");
@@ -836,8 +836,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::Hash],
-            &TransactionStore::new(),
-            &BlockStore::new(),
+            &TransactionStore::new_evm(false),
+            &BlockStore::new_evm(false),
         )
         .err()
         .expect("expected MissingFields error");
@@ -864,7 +864,7 @@ mod tests {
         tx.block_number = Some(7u64.into());
         tx.transaction_index = Some(0u64.into());
 
-        let store = TransactionStore::new();
+        let store = TransactionStore::new_evm(false);
         let (items, blocks) = process_response(
             vec![vec![block]],
             vec![vec![tx]],
@@ -874,7 +874,7 @@ mod tests {
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::BlockNumber],
             &store,
-            &BlockStore::new(),
+            &BlockStore::new_evm(false),
         )
         .expect("expected success when block and transaction join");
 

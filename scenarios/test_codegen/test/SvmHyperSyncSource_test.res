@@ -97,7 +97,11 @@ let mockClient: SvmHyperSyncClient.t = {
     // The real Rust client builds the stores from raw transactions/blocks; the
     // mock returns empty pages (materialisation is covered by the Rust unit
     // tests). This test asserts the item shape and the query columns.
-    Promise.resolve((mockResponse, TransactionStore.make(), BlockStore.make()))
+    Promise.resolve((
+      mockResponse,
+      TransactionStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
+      BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
+    ))
   },
 }
 

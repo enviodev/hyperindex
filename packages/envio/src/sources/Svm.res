@@ -4,21 +4,13 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.time
   }`)
 
-// Ordered transaction field names. The index of each is the field code shared
-// with the Rust store (`SvmTxField`) — keep this order in sync.
-let transactionFields = [
-  "transactionIndex",
-  "signatures",
-  "feePayer",
-  "success",
-  "err",
-  "fee",
-  "computeUnitsConsumed",
-  "accountKeys",
-  "recentBlockhash",
-  "version",
-  "tokenBalances",
-]
+// Ordered transaction field names, the field codes shared with the Rust store
+// (`SvmTxField`). Derived from the typed field list so the two can't drift;
+// `Internal.allSvmTransactionFields` is pinned to the Rust ordinal order by a test.
+let transactionFields =
+  Internal.allSvmTransactionFields->(
+    Utils.magic: array<Internal.svmTransactionField> => array<string>
+  )
 
 // One instruction's selected transaction fields → store selection bitmask.
 // Computed per event at config build and cached on the event config.

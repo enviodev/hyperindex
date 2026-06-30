@@ -66,7 +66,7 @@ describe("BlockStore materializeItems", () => {
   Async.it(
     "skips inline blocks, stamps the trio on store-backed items, and dedupes by block",
     async t => {
-      let store = BlockStore.make()
+      let store = BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
       let inlineBlock = {"number": 1}->(Utils.magic: {..} => Internal.eventBlock)
       let inline = makeInlineItem(~blockNumber=1, ~timestamp=11, ~blockHash="0x1", ~block=inlineBlock)
       // No event selects a field beyond the trio, so the block is built from the
@@ -94,7 +94,7 @@ describe("BlockStore materializeItems", () => {
   )
 
   Async.it("enriches each slot's inline block in place and dedupes by slot", async t => {
-    let store = BlockStore.make()
+    let store = BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false)
     let mask = Svm.eventBlockFieldMask(Utils.Set.fromArray(Svm.blockFields))
     let a = makeSvmItem(~slot=5, ~time=50, ~mask)
     let b = makeSvmItem(~slot=5, ~time=50, ~mask)

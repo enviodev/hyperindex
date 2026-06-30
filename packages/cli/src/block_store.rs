@@ -8,7 +8,6 @@
 //! back by block.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -368,38 +367,45 @@ fn collect<T>(
         .collect()
 }
 
-// Ecosystem tag selecting `materialize`'s decoder. A store is per-chain, hence
-// single-ecosystem; the tag is set on the first insert/merge so an empty store
-// never falls back to the wrong decoder.
-const ECO_UNKNOWN: u8 = 0;
-const ECO_EVM: u8 = 1;
-const ECO_SVM: u8 = 2;
+/// Ecosystem selecting `materialize`'s decoder. A store is per-chain, hence
+/// single-ecosystem, and is fixed at construction. `Evm` carries that chain's
+/// address-checksumming setting (only `miner` uses it) — a per-chain EVM
+/// constant the decoder needs, tied to EVM so it can't be set without (or
+/// forgotten for) it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Ecosystem {
+    Evm { should_checksum: bool },
+    Svm,
+    Fuel,
+}
 
 #[napi]
 pub struct BlockStore {
     inner: Mutex<Blocks>,
-    // Set on the first insert/merge; drives the decoder in `materialize`.
-    ecosystem: AtomicU8,
-    // Address checksumming is a per-chain EVM setting (only `miner` uses it),
-    // learned once on the first merge. SVM ignores it.
-    should_checksum: AtomicBool,
-}
-
-impl Default for BlockStore {
-    fn default() -> Self {
-        Self::new()
-    }
+    // Fixed at construction; drives the decoder in `materialize`.
+    ecosystem: Ecosystem,
 }
 
 #[napi]
 impl BlockStore {
+    /// EVM store, carrying that chain's address-checksumming setting. Used for
+    /// both fetch-response pages and the persistent per-chain store.
     #[napi(factory)]
-    pub fn new() -> Self {
-        Self {
-            inner: Mutex::new(Blocks::new()),
-            ecosystem: AtomicU8::new(ECO_UNKNOWN),
-            should_checksum: AtomicBool::new(false),
-        }
+    pub fn new_evm(should_checksum: bool) -> Self {
+        Self::with_ecosystem(Ecosystem::Evm { should_checksum })
+    }
+
+    /// SVM store. Used for both fetch-response pages and the persistent store.
+    #[napi(factory)]
+    pub fn new_svm() -> Self {
+        Self::with_ecosystem(Ecosystem::Svm)
+    }
+
+    /// Fuel store. Fuel keeps the block inline, so this store is never merged
+    /// into or materialised through — it exists only because every chain holds one.
+    #[napi(factory)]
+    pub fn new_fuel() -> Self {
+        Self::with_ecosystem(Ecosystem::Fuel)
     }
 
     /// Move every entry from `page` into this store (merging a fetch-response
@@ -410,23 +416,13 @@ impl BlockStore {
         if std::ptr::eq(self, page) {
             return;
         }
-        {
-            let mut dst = self.inner.lock().unwrap();
-            let mut src = page.inner.lock().unwrap();
-            src.drain_into(&mut dst);
-        }
-        // Ecosystem + checksum are per-chain constants; learn them once from the
-        // first page that carries them.
-        if self.ecosystem.load(Ordering::Relaxed) == ECO_UNKNOWN {
-            let page_ecosystem = page.ecosystem.load(Ordering::Relaxed);
-            if page_ecosystem != ECO_UNKNOWN {
-                self.ecosystem.store(page_ecosystem, Ordering::Relaxed);
-                self.should_checksum.store(
-                    page.should_checksum.load(Ordering::Relaxed),
-                    Ordering::Relaxed,
-                );
-            }
-        }
+        // A page and its persistent store are the same per-chain ecosystem (both
+        // derive it from the one chain config), so the decoder is unaffected by
+        // the merge.
+        debug_assert_eq!(self.ecosystem, page.ecosystem);
+        let mut dst = self.inner.lock().unwrap();
+        let mut src = page.inner.lock().unwrap();
+        src.drain_into(&mut dst);
     }
 
     /// Bulk-materialise blocks in columnar form, one row per `block_numbers[i]`
@@ -452,19 +448,18 @@ impl BlockStore {
         }
         let masks: Vec<u64> = masks.iter().map(|&m| m as u64).collect();
 
-        match self.ecosystem.load(Ordering::Relaxed) {
-            ECO_EVM => {
+        match self.ecosystem {
+            Ecosystem::Evm { should_checksum } => {
                 let records = self.collect_locked(&block_numbers, |stored| match stored {
                     StoredBlock::Evm(b) => Some(b.clone()),
                     _ => None,
                 });
-                let should_checksum = self.should_checksum.load(Ordering::Relaxed);
                 tokio::task::block_in_place(|| {
                     decode_evm_block_columns(&records, &block_numbers, &masks, should_checksum)
                 })
                 .map_err(map_err)
             }
-            ECO_SVM => {
+            Ecosystem::Svm => {
                 let records = self.collect_locked(&block_numbers, |stored| match stored {
                     StoredBlock::Svm(b) => Some(b.clone()),
                     _ => None,
@@ -474,9 +469,9 @@ impl BlockStore {
                 })
                 .map_err(map_err)
             }
-            // Empty store (no ecosystem learned yet): every key is a miss, so the
-            // result is `len` empty objects regardless of the decoder.
-            _ => Ok(Columns {
+            // Fuel keeps the block inline, so its store is never materialised
+            // through; should it be, every key is a miss → `len` empty objects.
+            Ecosystem::Fuel => Ok(Columns {
                 len: block_numbers.len(),
                 columns: Vec::new(),
             }),
@@ -514,30 +509,17 @@ impl BlockStore {
         collect(&inner, block_numbers, pick)
     }
 
-    /// Create a page store for an EVM source, carrying that chain's
-    /// address-checksumming setting (copied into the persistent store on merge).
-    pub(crate) fn with_checksum(should_checksum: bool) -> Self {
-        let store = Self::new();
-        store.ecosystem.store(ECO_EVM, Ordering::Relaxed);
-        store
-            .should_checksum
-            .store(should_checksum, Ordering::Relaxed);
-        store
-    }
-
-    /// Create an SVM page store. The ecosystem is tagged here (not inferred from
-    /// records) so even an empty page selects the SVM decoder after merge.
-    pub(crate) fn new_svm() -> Self {
-        let store = Self::new();
-        store.ecosystem.store(ECO_SVM, Ordering::Relaxed);
-        store
+    fn with_ecosystem(ecosystem: Ecosystem) -> Self {
+        Self {
+            inner: Mutex::new(Blocks::new()),
+            ecosystem,
+        }
     }
 
     /// Insert a raw EVM block (called by the HyperSync source while building a
     /// page). One block per number, so a plain insert deduplicates the many logs
     /// that share it. Not exposed to JS.
     pub(crate) fn insert_evm_raw(&self, number: u64, block: Arc<simple_types::Block>) {
-        self.ecosystem.store(ECO_EVM, Ordering::Relaxed);
         self.inner
             .lock()
             .unwrap()
@@ -548,7 +530,6 @@ impl BlockStore {
     /// Insert a raw SVM block keyed by slot (called by the SVM HyperSync source
     /// while building a page). Not exposed to JS.
     pub(crate) fn insert_svm_raw(&self, slot: u64, block: Arc<solana_simple::Block>) {
-        self.ecosystem.store(ECO_SVM, Ordering::Relaxed);
         self.inner
             .lock()
             .unwrap()
@@ -699,7 +680,7 @@ mod tests {
 
     #[test]
     fn prune_and_rollback_drop_by_block() {
-        let store = BlockStore::new();
+        let store = BlockStore::new_evm(false);
         for block in [10u64, 20, 30] {
             store.insert_evm_raw(block, Arc::new(raw_evm_block(block)));
         }

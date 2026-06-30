@@ -50,30 +50,24 @@ let tokenB = makeContract(
   ]: array<Internal.paramMeta>),
 )
 
-let makeEvent = (~topics: array<string>, ~data: string): HyperSyncClient.ResponseTypes.event =>
-  {"log": {"topics": topics, "data": data}}->(
-    Utils.magic: {..} => HyperSyncClient.ResponseTypes.event
-  )
-
 let fromAddr = "0x000000000000000000000000000000000000aaaa"
 let toAddr = "0x000000000000000000000000000000000000bbbb"
 let value = 42n
 
-let transferLog = makeEvent(
-  ~topics=[transferSighash, fromAddr->pad, toAddr->pad],
-  ~data=encodeAbiParameters(%raw(`[{"type":"uint256"}]`), %raw(`[42n]`)),
+let transferLog = (
+  [transferSighash, fromAddr->pad, toAddr->pad],
+  encodeAbiParameters(%raw(`[{"type":"uint256"}]`), %raw(`[42n]`)),
 )
 
 describe("Same-signature event across contracts with different param names", () => {
   Async.it("decodes the shared Transfer under each contract's own param names", async t => {
-    // Full production path: collect the decoder inputs for both contracts,
-    // build the native decoder, decode the shared Transfer log. The decoder
-    // returns params keyed by contract name so each contract's router can pick
-    // its own names instead of the first-registered contract's.
+    // Full production path: collect the decoder inputs for both contracts and
+    // decode the shared Transfer log through EvmRpcClient. The decoder returns
+    // params keyed by contract name so each contract's router can pick its own
+    // names instead of the first-registered contract's.
     let allEventParams = EvmChain.collectEventParams([tokenA, tokenB])
-    let decoder = HyperSyncClient.Decoder.fromParams(allEventParams)
 
-    let decoded = await decoder.decodeLogs([transferLog])
+    let decoded = await NativeDecoder.decodeLogs(~eventParams=allEventParams, ~logs=[transferLog])
     let paramsByContractName = decoded[0]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
 
     t

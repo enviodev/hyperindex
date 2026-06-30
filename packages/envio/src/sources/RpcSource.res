@@ -224,7 +224,7 @@ let getSuggestedBlockIntervalFromExn = {
 }
 
 type eventBatchQuery = {
-  logs: array<Rpc.GetLogs.log>,
+  items: array<EvmRpcClient.rpcEventItem>,
   latestFetchedBlockInfo: blockInfo,
 }
 
@@ -234,10 +234,10 @@ let getNextPage = (
   ~fromBlock,
   ~toBlock,
   ~addresses,
-  ~topicQuery,
+  ~topicQuery: Rpc.GetLogs.topicQuery,
   ~loadBlock,
   ~syncConfig as sc: Config.sourceSync,
-  ~client,
+  ~rpcClient: EvmRpcClient.t,
   ~mutSuggestedBlockIntervals,
   ~partitionId,
   ~sourceName,
@@ -253,17 +253,20 @@ let getNextPage = (
 
   let latestFetchedBlockPromise = loadBlock(toBlock)
   Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
-  let logsPromise = Rpc.getLogs(
-    ~client,
-    ~param={
-      address: ?addresses,
-      topics: topicQuery,
-      fromBlock,
-      toBlock,
-    },
-  )->Promise.then(async logs => {
+  let logsPromise = rpcClient.getLogs({
+    fromBlock,
+    toBlock,
+    ?addresses,
+    topics: topicQuery->Array.map(filter =>
+      switch filter {
+      | Rpc.GetLogs.Null => Nullable.null
+      | Single(topic) => Nullable.make([topic])
+      | Multiple(topics) => Nullable.make(topics)
+      }
+    ),
+  })->Promise.then(async items => {
     {
-      logs,
+      items,
       latestFetchedBlockInfo: await latestFetchedBlockPromise,
     }
   })
@@ -855,6 +858,7 @@ type options = {
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   lowercaseAddresses: bool,
   ws?: string,
+  headers?: dict<string>,
 }
 
 let make = (
@@ -867,6 +871,7 @@ let make = (
     allEventParams,
     lowercaseAddresses,
     ?ws,
+    ?headers,
   }: options,
 ): t => {
   let chainId = chain->ChainMap.Chain.toChainId
@@ -883,8 +888,13 @@ let make = (
 
   let mutSuggestedBlockIntervals = Dict.make()
 
-  let client = Rpc.makeClient(url)
-  let rpcClient = EvmRpcClient.make(~url)
+  let client = Rpc.makeClient(url, ~headers?)
+  let rpcClient = EvmRpcClient.make(
+    ~url,
+    ~allEventParams,
+    ~checksumAddresses=!lowercaseAddresses,
+    ~headers?,
+  )
 
   let makeTransactionLoader = () =>
     LazyLoader.make(
@@ -1000,36 +1010,6 @@ let make = (
     ~lowercaseAddresses,
   )
 
-  let convertLogToHyperSyncEvent = (log: Rpc.GetLogs.log): HyperSyncClient.ResponseTypes.event => {
-    let hyperSyncLog: HyperSyncClient.ResponseTypes.log = {
-      removed: log.removed,
-      index: log.logIndex,
-      transactionIndex: log.transactionIndex,
-      transactionHash: log.transactionHash,
-      blockHash: log.blockHash,
-      blockNumber: log.blockNumber,
-      address: log.address,
-      data: log.data,
-      topics: log.topics->(Utils.magic: array<string> => array<Nullable.t<EvmTypes.Hex.t>>),
-    }
-    {log: hyperSyncLog}
-  }
-
-  let hscDecoder: ref<option<HyperSyncClient.Decoder.tWithParams>> = ref(None)
-  let getHscDecoder = () => {
-    switch hscDecoder.contents {
-    | Some(decoder) => decoder
-    | None => {
-        let decoder = HyperSyncClient.Decoder.fromParams(
-          allEventParams,
-          ~checksumAddresses=!lowercaseAddresses,
-        )
-        hscDecoder := Some(decoder)
-        decoder
-      }
-    }
-  }
-
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
@@ -1073,7 +1053,7 @@ let make = (
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
     let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
 
-    let {logs, latestFetchedBlockInfo} = await getNextPage(
+    let {items, latestFetchedBlockInfo} = await getNextPage(
       ~fromBlock,
       ~toBlock=suggestedToBlock,
       ~addresses,
@@ -1083,7 +1063,7 @@ let make = (
         ->LazyLoader.get(blockNumber)
         ->Promise.thenResolve(parseBlockInfo),
       ~syncConfig,
-      ~client,
+      ~rpcClient,
       ~mutSuggestedBlockIntervals,
       ~partitionId,
       ~sourceName=name,
@@ -1110,31 +1090,8 @@ let make = (
       )
     }
 
-    // Convert RPC logs to HyperSync events
-    let hyperSyncEvents = logs->Array.map(convertLogToHyperSyncEvent)
-
-    // Decode using HyperSyncClient decoder
-    let parsedEvents = try await getHscDecoder().decodeLogs(hyperSyncEvents) catch {
-    | exn =>
-      throw(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn,
-            attemptedToBlock: toBlock,
-            retry: ImpossibleForTheQuery({
-              message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
-            }),
-          }),
-        ),
-      )
-    }
-
-    let parsedQueueItems = await logs
-    ->Array.zip(parsedEvents)
-    ->Array.filterMap(((
-      log: Rpc.GetLogs.log,
-      maybeDecodedEvent: Nullable.t<dict<Internal.eventParams>>,
-    )) => {
+    let parsedQueueItems = await items
+    ->Array.filterMap(({log, params: maybeDecodedEvent}: EvmRpcClient.rpcEventItem) => {
       let topic0 = log.topics[0]->Option.getOr("0x0")
       let routedAddress = if lowercaseAddresses {
         log.address->Address.Evm.fromAddressLowercaseOrThrow
@@ -1242,7 +1199,7 @@ let make = (
     | Some(b) => pushBlockInfo(b)
     | None => ()
     }
-    logs->Array.forEach(log =>
+    items->Array.forEach(({log}) =>
       blockHashes
       ->Array.push({ReorgDetection.blockNumber: log.blockNumber, blockHash: log.blockHash})
       ->ignore

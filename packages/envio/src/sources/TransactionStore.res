@@ -6,8 +6,20 @@
 // in columnar form and zipped into plain JS objects on the main thread.
 type t
 
-@send external classNew: Core.transactionStoreCtor => t = "new"
-let make = (): t => Core.getAddon().transactionStore->classNew
+@send external newEvm: (Core.transactionStoreCtor, ~shouldChecksum: bool) => t = "newEvm"
+@send external newSvm: Core.transactionStoreCtor => t = "newSvm"
+@send external newFuel: Core.transactionStoreCtor => t = "newFuel"
+
+// The store's ecosystem is fixed here, from the chain's config. EVM carries the
+// chain's address-checksumming setting; SVM/Fuel need no extra data.
+let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool): t => {
+  let ctor = Core.getAddon().transactionStore
+  switch ecosystem {
+  | Evm => ctor->newEvm(~shouldChecksum)
+  | Svm => ctor->newSvm
+  | Fuel => ctor->newFuel
+  }
+}
 
 // One event's selected transaction fields → store selection bitmask, built from
 // the ecosystem's ordered field-name array (the bit index is the field code

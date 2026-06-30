@@ -5,6 +5,9 @@
 type t = {
   logger: Pino.t,
   mutable fetchState: FetchState.t,
+  // The chain-wide address index. Not `mutable`: the dict is mutated in place by
+  // register/rollback, so the reference is stable across fetchState versions.
+  indexingAddresses: IndexingAddresses.t,
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
   mutable isProgressAtHead: bool,
@@ -61,6 +64,7 @@ let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddres
 let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
   ~reorgDetection: ReorgDetection.t,
   ~committedProgressBlockNumber: int,
@@ -68,10 +72,13 @@ let make = (
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
+  ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+  ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~logger: Pino.t,
 ): t => {
   logger,
   fetchState,
+  indexingAddresses,
   sourceManager,
   chainConfig,
   isProgressAtHead,
@@ -81,8 +88,8 @@ let make = (
   pendingBudget: 0.,
   reorgDetection,
   safeCheckpointTracking,
-  transactionStore: TransactionStore.make(),
-  blockStore: BlockStore.make(),
+  transactionStore,
+  blockStore,
 }
 
 let makeInternal = (
@@ -220,8 +227,12 @@ let makeInternal = (
   | None => ()
   }
 
+  let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+  let indexingAddressIndex = IndexingAddresses.make(~contractConfigs, ~addresses=indexingAddresses)
+
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
+    ~contractConfigs,
     ~addresses=indexingAddresses,
     ~progressBlockNumber,
     ~startBlock,
@@ -265,11 +276,13 @@ let makeInternal = (
     let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
       let syncConfig = rpc.syncConfig
       let ws = rpc.ws
+      let headers = rpc.headers
       {
         url: rpc.url,
         sourceFor: rpc.sourceFor,
         ?syncConfig,
         ?ws,
+        ?headers,
       }
     })
     EvmChain.makeSources(
@@ -314,6 +327,7 @@ let makeInternal = (
   make(
     ~chainConfig,
     ~fetchState,
+    ~indexingAddresses=indexingAddressIndex,
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints,
@@ -328,6 +342,14 @@ let makeInternal = (
     ~committedProgressBlockNumber=progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
+    ~transactionStore=TransactionStore.make(
+      ~ecosystem=config.ecosystem.name,
+      ~shouldChecksum=!lowercaseAddresses,
+    ),
+    ~blockStore=BlockStore.make(
+      ~ecosystem=config.ecosystem.name,
+      ~shouldChecksum=!lowercaseAddresses,
+    ),
     ~logger,
   )
 }
@@ -417,7 +439,8 @@ let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrE
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
-let indexingAddresses = (cs: t) => cs.fetchState.indexingAddresses
+let contractAddresses = (cs: t, ~contractName) =>
+  cs.indexingAddresses->IndexingAddresses.getContractAddresses(~contractName)
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
@@ -562,12 +585,21 @@ let handleQueryResult = (
 
   let fs = switch newItemsWithDcs {
   | [] => cs.fetchState
-  | _ => cs.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
+  | _ =>
+    cs.fetchState->FetchState.registerDynamicContracts(
+      ~indexingAddresses=cs.indexingAddresses,
+      newItemsWithDcs,
+    )
   }
 
   cs.fetchState =
     fs
-    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
+    ->FetchState.handleQueryResult(
+      ~indexingAddresses=cs.indexingAddresses,
+      ~query,
+      ~latestFetchedBlock,
+      ~newItems,
+    )
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
@@ -637,7 +669,7 @@ let toChainData = (cs: t): chainData => {
   numBatchesFetched: 0,
   startBlock: cs.fetchState.startBlock,
   endBlock: cs.fetchState.endBlock,
-  numAddresses: cs.fetchState->FetchState.numAddresses,
+  numAddresses: cs.indexingAddresses->IndexingAddresses.size,
 }
 
 // Snapshot the inputs a batch build needs from this chain.
@@ -797,7 +829,11 @@ let rollback = (
       )
     | None => ()
     }
-    cs.fetchState = cs.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
+    cs.fetchState =
+      cs.fetchState->FetchState.rollback(
+        ~indexingAddresses=cs.indexingAddresses,
+        ~targetBlockNumber=newProgressBlockNumber,
+      )
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
     cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
     cs.committedProgressBlockNumber = newProgressBlockNumber
@@ -809,7 +845,10 @@ let rollback = (
           ~blockNumber=rollbackTargetBlockNumber,
         )
       cs.fetchState =
-        cs.fetchState->FetchState.rollback(~targetBlockNumber=rollbackTargetBlockNumber)
+        cs.fetchState->FetchState.rollback(
+          ~indexingAddresses=cs.indexingAddresses,
+          ~targetBlockNumber=rollbackTargetBlockNumber,
+        )
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
       cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber)
       cs.committedProgressBlockNumber = Pervasives.min(
