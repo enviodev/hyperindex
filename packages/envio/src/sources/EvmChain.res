@@ -3,6 +3,7 @@ type rpc = {
   sourceFor: Source.sourceFor,
   syncConfig?: Config.sourceSyncOptions,
   ws?: string,
+  headers?: dict<string>,
 }
 
 let getSyncConfig = (
@@ -89,7 +90,7 @@ let makeSources = (
     ]
   | _ => []
   }
-  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws}) => {
+  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws, ?headers}) => {
     let source = RpcSource.make({
       chain,
       sourceFor,
@@ -99,6 +100,7 @@ let makeSources = (
       allEventParams,
       lowercaseAddresses,
       ?ws,
+      ?headers,
     })
     let _ = sources->Array.push(source)
   })
