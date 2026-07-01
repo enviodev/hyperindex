@@ -95,16 +95,26 @@ let deriveContractNameByAddress: dict<array<Address.t>> => dict<
 // free.
 let defaultEstResponseSize = 10_000.
 
+// Floor for a query's estimate so cross-chain admission never treats it as free.
+// A density-0 partition (last response had no items) would otherwise estimate 0,
+// letting unlimited such queries be admitted in one tick and overshoot the buffer
+// before the prune can react.
+let minEstResponseSize = 100.
+
 // Estimated items a query will return, from the partition's event density
 // (items/block derived from its last response) and the query's block range.
 // toBlock None is the open-ended tail, capped at maxQueryBlockNumber. A partition
-// that responded with no items has density 0, so its queries cost 0 — correct,
-// they don't fill the buffer. Only a partition that has never responded
-// (prevQueryRange 0) has no signal, so it falls back to defaultEstResponseSize.
+// that responded with no items has density 0; its estimate is floored at
+// minEstResponseSize so admission still gates it. Only a partition that has never
+// responded (prevQueryRange 0) has no signal, so it falls back to
+// defaultEstResponseSize.
 let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~maxQueryBlockNumber) =>
   if p.prevQueryRange > 0 {
     let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
-    (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density
+    Pervasives.max(
+      minEstResponseSize,
+      (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density,
+    )
   } else {
     defaultEstResponseSize
   }

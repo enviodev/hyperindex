@@ -3312,11 +3312,12 @@ describe("FetchState unit tests for specific cases", () => {
         Ready([
           partition2Query,
           {
-            // Partition responded with no items, so its density is 0 and the
-            // estimate is 0 (empty queries don't fill the buffer).
+            // Partition responded with no items, so its density is 0; the
+            // estimate is floored at minEstResponseSize (100) so admission still
+            // gates it.
             ...queryA,
             partitionId: "1",
-            estResponseSize: 0.,
+            estResponseSize: 100.,
             toBlock: Some(500),
             fromBlock: 401,
           },
