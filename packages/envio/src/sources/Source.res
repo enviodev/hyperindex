@@ -71,4 +71,8 @@ type t = {
   // Invoked by SourceManager once a rollback target is known so the source can
   // drop any state that may now point at an orphaned chain (e.g. RPC block cache).
   onReorg?: (~rollbackTargetBlock: int) => unit,
+  // Present only on the simulate source: the items a test fed in. The chain
+  // tracks which of these never reach a handler so the run can report dead
+  // simulate inputs on completion.
+  simulateItems?: array<Internal.item>,
 }
