@@ -74,6 +74,47 @@ let getKnownRawBlockWithBackoff = async (
   }
   result.contents->Option.getOrThrow
 }
+// Pulls the provider error message out of either a parsed Rpc.JsonRpcError or
+// the raw napi JsExn shape (`error.error.message`), so classifiers below don't
+// each have to re-derive it.
+let getErrorMessage = (exn: exn): option<string> =>
+  switch exn {
+  | Rpc.JsonRpcError({message}) => Some(message)
+  | JsExn(error) =>
+    try {
+      let message: string = (error->Obj.magic)["error"]["message"]
+      message->S.assertOrThrow(S.string)
+      Some(message)
+    } catch {
+    | _ => None
+    }
+  | _ => None
+  }
+
+// Deterministic "the range returned too much data" errors that carry no numeric
+// block-range suggestion (HyperRPC's 50k-log cap, response-size and result-count
+// limits). They depend on log density, not on a fixed block window, so waiting
+// never helps — the same range always re-trips the same cap. The reaction is to
+// shrink the range and retry immediately, ratcheting the max range down.
+let isResponseTooLargeError = {
+  let patterns = [
+    /more than \d+ logs/i, // HyperRPC: "More than 50000 logs returned"
+    /\d+ logs returned/i,
+    /too many logs/i,
+    /query returned more than \d+ results/i, // ZkEVM
+    /query exceeds max results/i, // LlamaRPC
+    /response size should not/i, // 1RPC
+    /(backend )?response too large/i, // Optimism
+    /logs matched by query exceeds limit/i, // Arbitrum
+    /block range is too wide/i, // Ankr
+  ]
+  (exn: exn) =>
+    switch exn->getErrorMessage {
+    | Some(message) => patterns->Array.some(re => re->RegExp.test(message))
+    | None => false
+    }
+}
+
 let getSuggestedBlockIntervalFromExn = {
   // Unknown provider: "retry with the range 123-456"
   let suggestedRangeRegExp = /retry with the range (\d+)-(\d+)/
@@ -117,14 +158,6 @@ let getSuggestedBlockIntervalFromExn = {
   // TODO: Reproduce how the error message looks like
   // when we send request with numeric block range instead of hex
   // Infura, ZkSync: "Try with this block range [0x123,0x456]"
-
-  // Future handling needed for these providers that don't suggest ranges:
-  // - Ankr: "block range is too wide"
-  // - 1RPC: "response size should not greater than 10000000 bytes"
-  // - ZkEVM: "query returned more than 10000 results"
-  // - LlamaRPC: "query exceeds max results"
-  // - Optimism: "backend response too large" or "Block range is too large"
-  // - Arbitrum: "logs matched by query exceeds limit of 10000"
 
   let parseMessageForBlockRange = (message: string) => {
     // Helper to extract block range from regex match
@@ -209,17 +242,9 @@ let getSuggestedBlockIntervalFromExn = {
     // Whether it's the max range that the provider allows
     bool,
   )> =>
-    switch exn {
-    | Rpc.JsonRpcError({message}) => parseMessageForBlockRange(message)
-    | JsExn(error) =>
-      try {
-        let message: string = (error->Obj.magic)["error"]["message"]
-        message->S.assertOrThrow(S.string)
-        parseMessageForBlockRange(message)
-      } catch {
-      | _ => None
-      }
-    | _ => None
+    switch exn->getErrorMessage {
+    | Some(message) => parseMessageForBlockRange(message)
+    | None => None
     }
 }
 
@@ -229,6 +254,11 @@ type eventBatchQuery = {
 }
 
 let maxSuggestedBlockIntervalKey = "max"
+
+let getSourceMaxBlockInterval = (mutSuggestedBlockIntervals, ~intervalCeiling) =>
+  mutSuggestedBlockIntervals
+  ->Utils.Dict.dangerouslyGetNonOption(maxSuggestedBlockIntervalKey)
+  ->Option.getOr(intervalCeiling)
 
 type logSelection = {
   addresses: option<array<Address.t>>,
@@ -322,39 +352,43 @@ let getNextPage = (
   [queryTimoutPromise, logsPromise]
   ->Promise.race
   ->Promise.catch(err => {
+    let executedBlockInterval = toBlock - fromBlock + 1
+    let shrunkBlockInterval =
+      Pervasives.max(1, (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt)
+
+    let throwFailedGettingItems = retry =>
+      throw(Source.GetItemsError(FailedGettingItems({exn: err, attemptedToBlock: toBlock, retry})))
+    let throwResize = interval =>
+      throwFailedGettingItems(WithSuggestedToBlock({toBlock: fromBlock + interval - 1}))
+
     switch getSuggestedBlockIntervalFromExn(err) {
-    | Some((nextBlockIntervalTry, isMaxRange)) =>
-      mutSuggestedBlockIntervals->Dict.set(
-        isMaxRange ? maxSuggestedBlockIntervalKey : partitionId,
-        nextBlockIntervalTry,
+    // "limited to N blocks" — a structural cap on the whole source; only tighten.
+    | Some((interval, true)) =>
+      let capped = Pervasives.min(
+        mutSuggestedBlockIntervals->getSourceMaxBlockInterval(~intervalCeiling=sc.intervalCeiling),
+        interval,
       )
-      throw(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn: err,
-            attemptedToBlock: toBlock,
-            retry: WithSuggestedToBlock({
-              toBlock: fromBlock + nextBlockIntervalTry - 1,
-            }),
-          }),
-        ),
-      )
+      mutSuggestedBlockIntervals->Dict.set(maxSuggestedBlockIntervalKey, capped)
+      throwResize(capped)
+    // A one-off suggested range ("retry with range X-Y") — apply to this partition.
+    | Some((interval, false)) =>
+      mutSuggestedBlockIntervals->Dict.set(partitionId, interval)
+      throwResize(interval)
+    // Density cap with no suggested number (too many logs / response too large):
+    // shrink THIS partition and retry immediately (no wait); acceleration
+    // re-adapts on the next successful query. The interval>1 guard avoids a
+    // no-progress tight loop on a single over-cap block.
+    | None if executedBlockInterval > 1 && err->isResponseTooLargeError =>
+      mutSuggestedBlockIntervals->Dict.set(partitionId, shrunkBlockInterval)
+      throwResize(shrunkBlockInterval)
+    // Transient/unknown — shrink this partition and back off.
     | None =>
-      let executedBlockInterval = toBlock - fromBlock + 1
-      let nextBlockIntervalTry =
-        (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt
-      mutSuggestedBlockIntervals->Dict.set(partitionId, nextBlockIntervalTry)
-      throw(
-        Source.GetItemsError(
-          Source.FailedGettingItems({
-            exn: err,
-            attemptedToBlock: toBlock,
-            retry: WithBackoff({
-              message: `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
-              backoffMillis: sc.backoffMillis,
-            }),
-          }),
-        ),
+      mutSuggestedBlockIntervals->Dict.set(partitionId, shrunkBlockInterval)
+      throwFailedGettingItems(
+        WithBackoff({
+          message: `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
+          backoffMillis: sc.backoffMillis,
+        }),
       )
     }
   })
@@ -939,6 +973,10 @@ let make = (
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
+  // Per-partition adaptive block interval (AIMD), keyed by partitionId. The
+  // `max` key holds a source-wide ceiling that only ever tightens, set by
+  // structural provider limits ("limited to N blocks"). A partition's own entry
+  // can go stale when partitions merge/split — acceptable, it re-adapts.
   let mutSuggestedBlockIntervals = Dict.make()
 
   let client = Rpc.makeClient(url, ~headers?)
@@ -1076,15 +1114,14 @@ let make = (
   ) => {
     let startFetchingBatchTimeRef = Performance.now()
 
-    let suggestedBlockInterval = switch mutSuggestedBlockIntervals->Utils.Dict.dangerouslyGetNonOption(
-      maxSuggestedBlockIntervalKey,
-    ) {
-    | Some(maxSuggestedBlockInterval) => maxSuggestedBlockInterval
-    | None =>
+    let sourceMaxBlockInterval =
+      mutSuggestedBlockIntervals->getSourceMaxBlockInterval(~intervalCeiling=syncConfig.intervalCeiling)
+    let suggestedBlockInterval = Pervasives.min(
       mutSuggestedBlockIntervals
       ->Utils.Dict.dangerouslyGetNonOption(partitionId)
-      ->Option.getOr(syncConfig.initialBlockInterval)
-    }
+      ->Option.getOr(syncConfig.initialBlockInterval),
+      sourceMaxBlockInterval,
+    )
 
     // Always have a toBlock for an RPC worker
     let toBlock = switch toBlock {
@@ -1124,20 +1161,16 @@ let make = (
 
     let executedBlockInterval = suggestedToBlock - fromBlock + 1
 
-    // Increase the suggested block interval only when it was actually applied
-    // and we didn't query to a hard toBlock
-    // We also don't care about it when we have a hard max block interval
-    if (
-      executedBlockInterval >= suggestedBlockInterval &&
-        !(mutSuggestedBlockIntervals->Dict.has(maxSuggestedBlockIntervalKey))
-    ) {
-      // Increase batch size going forward, but do not increase past a configured maximum
-      // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+    // Grow this partition's interval only when the full suggested range was
+    // actually applied (not clamped by a hard toBlock). The min clamps to the
+    // source-wide ceiling, which also stops growth once a structural cap tightened it.
+    // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+    if executedBlockInterval >= suggestedBlockInterval {
       mutSuggestedBlockIntervals->Dict.set(
         partitionId,
         Pervasives.min(
           executedBlockInterval + syncConfig.accelerationAdditive,
-          syncConfig.intervalCeiling,
+          sourceMaxBlockInterval,
         ),
       )
     }
