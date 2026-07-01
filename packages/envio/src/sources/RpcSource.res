@@ -159,14 +159,6 @@ let getSuggestedBlockIntervalFromExn = {
   // when we send request with numeric block range instead of hex
   // Infura, ZkSync: "Try with this block range [0x123,0x456]"
 
-  // Future handling needed for these providers that don't suggest ranges:
-  // - Ankr: "block range is too wide"
-  // - 1RPC: "response size should not greater than 10000000 bytes"
-  // - ZkEVM: "query returned more than 10000 results"
-  // - LlamaRPC: "query exceeds max results"
-  // - Optimism: "backend response too large" or "Block range is too large"
-  // - Arbitrum: "logs matched by query exceeds limit of 10000"
-
   let parseMessageForBlockRange = (message: string) => {
     // Helper to extract block range from regex match
     let extractBlockRange = (execResult, ~isMaxRange) =>
