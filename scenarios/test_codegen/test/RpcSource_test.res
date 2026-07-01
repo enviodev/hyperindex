@@ -1375,3 +1375,87 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
     },
   )
 })
+
+describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
+  let sighash = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+
+  Async.it(
+    "Advances the range without an eth_getLogs when the filter resolves to no selections",
+    async t => {
+      // `where: false` compiles to an empty topic-selection set, so there is
+      // nothing to query — the batch must advance the cursor without issuing an
+      // eth_getLogs (and without throwing, which the pre-fan-out code did).
+      let eventConfig = MockIndexer.evmEventConfig(
+        ~id=`${sighash}_1`,
+        ~isWildcard=true,
+        ~eventFilters=Static([]),
+      )
+
+      let blockJson = JSON.Object(
+        Dict.fromArray([
+          ("number", JSON.String("0x64")),
+          ("timestamp", JSON.String("0x64")),
+          ("hash", JSON.String("0xb64")),
+          ("parentHash", JSON.String("0xb63")),
+        ]),
+      )
+
+      let mock = await MockRpcServer.make(~getResult=method =>
+        switch method {
+        | "eth_getBlockByNumber" => blockJson
+        | _ => JSON.Null
+        }
+      )
+
+      let source = RpcSource.make({
+        url: mock.url,
+        chain,
+        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventParams: [
+          {
+            sighash,
+            topicCount: 1,
+            eventName: eventConfig.name,
+            contractName: eventConfig.contractName,
+            params: [],
+          },
+        ],
+        lowercaseAddresses: false,
+      })
+
+      let result = try {
+        let page = await source.getItemsOrThrow(
+          ~fromBlock=0,
+          ~toBlock=Some(100),
+          ~addressesByContractName=Dict.make(),
+          ~contractNameByAddress=FetchState.deriveContractNameByAddress(Dict.make()),
+          ~knownHeight=100,
+          ~partitionId="0",
+          ~selection={
+            dependsOnAddresses: false,
+            eventConfigs: [(eventConfig :> Internal.eventConfig)],
+          },
+          ~retry=0,
+          ~logger=Logging.createChild(~params={"test": "RpcSource skip-all"}),
+        )
+        mock.close()
+        page
+      } catch {
+      | exn =>
+        mock.close()
+        throw(exn)
+      }
+
+      let getLogsRequestCount =
+        mock.requests->Array.filter(body => body->String.includes("eth_getLogs"))->Array.length
+
+      t.expect((
+        getLogsRequestCount,
+        result.parsedQueueItems->Array.length,
+        result.latestFetchedBlockNumber,
+      )).toEqual((0, 0, 100))
+    },
+  )
+})
