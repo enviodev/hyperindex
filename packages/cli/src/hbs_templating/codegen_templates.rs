@@ -2664,15 +2664,14 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
 
 /// Render one field line of a per-instruction SVM field record: the field's real
 /// type when selected (nullable as `T | undefined`), else an `@deprecated` config
-/// hint plus a `FieldNotSelected<...>` sentinel. `toggle` picks the boolean-knob
-/// YAML shape (`knob: true`) over the list shape (`knob:\n  - name`). Shared by
-/// the transaction and block record builders.
+/// hint plus a `FieldNotSelected<...>` sentinel. `token_balance_fields` is the one
+/// boolean-toggle knob (`knob: true`); every other knob takes a list
+/// (`knob:\n  - name`). Shared by the transaction and block record builders.
 fn svm_field_line(
     name: &str,
     ts_type: &str,
     optional: bool,
     knob: &str,
-    toggle: bool,
     selected: bool,
     instruction_name: &str,
     indent: &str,
@@ -2685,7 +2684,7 @@ fn svm_field_line(
         };
         ts_selected_field(name, &value, indent)
     } else {
-        let yaml_body = if toggle {
+        let yaml_body = if knob == "token_balance_fields" {
             format!("{indent} * field_selection:\n{indent} *   {knob}: true")
         } else {
             format!("{indent} * field_selection:\n{indent} *   {knob}:\n{indent} *     - {name}")
@@ -2721,8 +2720,6 @@ fn svm_transaction_ts_type(
                 spec.ts_type,
                 spec.optional,
                 spec.knob,
-                // `token_balance_fields` is a boolean toggle; the rest take a list.
-                spec.knob == "token_balance_fields",
                 selected.contains(spec.name.as_str()),
                 instruction_name,
                 indent,
@@ -2782,7 +2779,6 @@ fn svm_block_ts_type(
             spec.ts_type,
             spec.optional,
             "block_fields",
-            false,
             selected.contains(spec.name.as_str()),
             instruction_name,
             indent,
