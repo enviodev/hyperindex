@@ -24,10 +24,10 @@ Effect options:
 
 ## Using Effect
 
-To use the effect, use `context.effect` from your handlers, loaders, or other effects:
+To use the effect, use `context.effect` from your handlers or other effects:
 
 ```ts
-CONTRACT.EVENT.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "CONTRACT", event: "EVENT" }, async ({ event, context }) => {
   const effectOutput = await context.effect(YOUR_EFFECT, EFFECT_INPUTS);
 });
 ```
