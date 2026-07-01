@@ -230,11 +230,33 @@ type eventBatchQuery = {
 
 let maxSuggestedBlockIntervalKey = "max"
 
+type logSelection = {
+  addresses: option<array<Address.t>>,
+  topicQuery: Rpc.GetLogs.topicQuery,
+}
+
+// A log can satisfy more than one selection when a single event's `where` is an
+// OR of param groups, so dedup the fanned-out responses by (blockNumber,
+// logIndex) — unique per chain — keeping the first occurrence.
+let mergeAndDedupItems = (itemsPerSelection: array<array<EvmRpcClient.rpcEventItem>>) => {
+  let seen = Utils.Set.make()
+  let merged = []
+  itemsPerSelection->Array.forEach(items =>
+    items->Array.forEach((item: EvmRpcClient.rpcEventItem) => {
+      let key = `${item.log.blockNumber->Int.toString}-${item.log.logIndex->Int.toString}`
+      if seen->Utils.Set.has(key)->not {
+        seen->Utils.Set.add(key)->ignore
+        merged->Array.push(item)->ignore
+      }
+    })
+  )
+  merged
+}
+
 let getNextPage = (
   ~fromBlock,
   ~toBlock,
-  ~addresses,
-  ~topicQuery: Rpc.GetLogs.topicQuery,
+  ~logSelections: array<logSelection>,
   ~loadBlock,
   ~syncConfig as sc: Config.sourceSync,
   ~rpcClient: EvmRpcClient.t,
@@ -252,24 +274,50 @@ let getNextPage = (
     )
 
   let latestFetchedBlockPromise = loadBlock(toBlock)
-  Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
-  let logsPromise = rpcClient.getLogs({
-    fromBlock,
-    toBlock,
-    ?addresses,
-    topics: topicQuery->Array.map(filter =>
-      switch filter {
-      | Rpc.GetLogs.Null => Nullable.null
-      | Single(topic) => Nullable.make([topic])
-      | Multiple(topics) => Nullable.make(topics)
+
+  let queryLogs = ({addresses, topicQuery}: logSelection) => {
+    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
+    rpcClient.getLogs({
+      fromBlock,
+      toBlock,
+      ?addresses,
+      topics: topicQuery->Array.map(filter =>
+        switch filter {
+        | Rpc.GetLogs.Null => Nullable.null
+        | Single(topic) => Nullable.make([topic])
+        | Multiple(topics) => Nullable.make(topics)
+        }
+      ),
+    })
+  }
+
+  let logsPromise = switch logSelections {
+  | [] =>
+    latestFetchedBlockPromise->Promise.thenResolve((latestFetchedBlockInfo): eventBatchQuery => {
+      items: [],
+      latestFetchedBlockInfo,
+    })
+  // Fast path: a single selection needs no cross-request merge or dedup.
+  | [logSelection] =>
+    logSelection
+    ->queryLogs
+    ->Promise.then(async items => {
+      {
+        items,
+        latestFetchedBlockInfo: await latestFetchedBlockPromise,
       }
-    ),
-  })->Promise.then(async items => {
-    {
-      items,
-      latestFetchedBlockInfo: await latestFetchedBlockPromise,
-    }
-  })
+    })
+  | _ =>
+    logSelections
+    ->Array.map(queryLogs)
+    ->Promise.all
+    ->Promise.then(async itemsPerSelection => {
+      {
+        items: itemsPerSelection->mergeAndDedupItems,
+        latestFetchedBlockInfo: await latestFetchedBlockPromise,
+      }
+    })
+  }
 
   [queryTimoutPromise, logsPromise]
   ->Promise.race
@@ -312,33 +360,23 @@ let getNextPage = (
   })
 }
 
-type logSelection = {
-  addresses: option<array<Address.t>>,
-  topicQuery: Rpc.GetLogs.topicQuery,
-}
-
 type selectionConfig = {
-  getLogSelectionOrThrow: (~addressesByContractName: dict<array<Address.t>>) => logSelection,
+  getLogSelectionsOrThrow: (
+    ~addressesByContractName: dict<array<Address.t>>,
+  ) => array<logSelection>,
 }
 
 let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
-  let staticTopicSelections = []
-  let dynamicEventFilters = []
+  let entries =
+    selection.eventConfigs
+    ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
+    ->Array.map(({isWildcard, dependsOnAddresses, getEventFiltersOrThrow}) => (
+      isWildcard,
+      dependsOnAddresses,
+      getEventFiltersOrThrow(chain),
+    ))
 
-  selection.eventConfigs
-  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
-  ->Array.forEach(({getEventFiltersOrThrow}) => {
-    switch getEventFiltersOrThrow(chain) {
-    | Static(s) => staticTopicSelections->Array.pushMany(s)->ignore
-    | Dynamic(fn) => dynamicEventFilters->Array.push(fn)->ignore
-    }
-  })
-
-  let getLogSelectionOrThrow = switch (
-    staticTopicSelections->LogSelection.compressTopicSelections,
-    dynamicEventFilters,
-  ) {
-  | ([], []) =>
+  if entries->Utils.Array.isEmpty {
     throw(
       Source.GetItemsError(
         UnsupportedSelection({
@@ -346,48 +384,63 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         }),
       ),
     )
-  | ([topicSelection], []) => {
-      let topicQuery = topicSelection->Rpc.GetLogs.mapTopicQuery
-      (~addressesByContractName) => {
-        addresses: switch addressesByContractName->FetchState.addressesByContractNameGetAll {
-        | [] => None
-        | addresses => Some(addresses)
-        },
-        topicQuery,
-      }
-    }
-  | ([], [dynamicEventFilter]) if selection.eventConfigs->Array.length === 1 =>
-    let eventConfig = selection.eventConfigs->Utils.Array.firstUnsafe
+  }
 
-    (~addressesByContractName) => {
-      let addresses = addressesByContractName->FetchState.addressesByContractNameGetAll
-      {
-        addresses: eventConfig.isWildcard ? None : Some(addresses),
-        topicQuery: switch dynamicEventFilter(addresses) {
-        | [topicSelection] => topicSelection->Rpc.GetLogs.mapTopicQuery
-        | _ =>
-          throw(
-            Source.GetItemsError(
-              UnsupportedSelection({
-                message: "RPC data-source currently doesn't support an array of event filters. Please, create a GitHub issue if it's a blocker for you.",
-              }),
-            ),
-          )
-        },
+  // eth_getLogs expresses one topic selection per request, so fan out to one
+  // request per selection. Wildcard events match any address (their address
+  // constraint, if any, lives in the topics); address-bound events are scoped
+  // to the partition's addresses. `compressTopicSelections` folds the
+  // filter-less events into a single topic0 OR-set, keeping the common case at
+  // one request.
+  let toLogSelections = (~addresses, topicSelections): array<logSelection> =>
+    topicSelections
+    ->LogSelection.compressTopicSelections
+    ->Array.map(topicSelection => {
+      addresses,
+      topicQuery: topicSelection->Rpc.GetLogs.mapTopicQuery,
+    })
+
+  let buildLogSelections = (~addresses) => {
+    let wildcardTopicSelections = []
+    let addressedTopicSelections = []
+    entries->Array.forEach(((isWildcard, _, eventFilters)) => {
+      let topicSelections = switch eventFilters {
+      | Internal.Static(s) => s
+      | Dynamic(fn) => fn(addresses)
       }
+      (isWildcard ? wildcardTopicSelections : addressedTopicSelections)
+      ->Array.pushMany(topicSelections)
+      ->ignore
+    })
+
+    let logSelections = toLogSelections(~addresses=None, wildcardTopicSelections)
+    // Address-bound events have nothing to match without a concrete address set.
+    switch addresses {
+    | [] => ()
+    | _ =>
+      logSelections
+      ->Array.pushMany(toLogSelections(~addresses=Some(addresses), addressedTopicSelections))
+      ->ignore
     }
-  | _ =>
-    throw(
-      Source.GetItemsError(
-        UnsupportedSelection({
-          message: "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
-        }),
-      ),
-    )
+    logSelections
+  }
+
+  // When no event depends on addresses (the wildcard partition), the fanned
+  // selections are identical every batch, so build them once.
+  let getLogSelectionsOrThrow = if (
+    entries->Array.every(((_, dependsOnAddresses, _)) => !dependsOnAddresses)
+  ) {
+    let logSelections = buildLogSelections(~addresses=[])
+    (~addressesByContractName as _) => logSelections
+  } else {
+    (~addressesByContractName) =>
+      buildLogSelections(
+        ~addresses=addressesByContractName->FetchState.addressesByContractNameGetAll,
+      )
   }
 
   {
-    getLogSelectionOrThrow: getLogSelectionOrThrow,
+    getLogSelectionsOrThrow: getLogSelectionsOrThrow,
   }
 }
 
@@ -1050,14 +1103,13 @@ let make = (
           ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
         : Promise.resolve(None)
 
-    let {getLogSelectionOrThrow} = getSelectionConfig(selection)
-    let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
+    let {getLogSelectionsOrThrow} = getSelectionConfig(selection)
+    let logSelections = getLogSelectionsOrThrow(~addressesByContractName)
 
     let {items, latestFetchedBlockInfo} = await getNextPage(
       ~fromBlock,
       ~toBlock=suggestedToBlock,
-      ~addresses,
-      ~topicQuery,
+      ~logSelections,
       ~loadBlock=blockNumber =>
         blockLoader.contents
         ->LazyLoader.get(blockNumber)
