@@ -269,8 +269,14 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       }
       let params = paramsJson->S.convertOrThrow(eventConfig.simulateParamsSchema)
 
+      // An explicit logIndex advances the auto-increment counter past itself, so a
+      // later item that omits logIndex picks up after it instead of colliding.
       let logIndex = switch item.logIndex {
-      | Some(li) => li
+      | Some(li) =>
+        if li >= currentLogIndex.contents {
+          currentLogIndex := li + 1
+        }
+        li
       | None =>
         let li = currentLogIndex.contents
         currentLogIndex := li + 1

@@ -69,6 +69,21 @@ Async.it("accepts a non-wildcard event for a contract registered in the same pro
   t.expect(error).toEqual(None)
 })
 
+// Regression: an explicit logIndex on the first item must not steal the auto
+// item's slot. [explicit 0, auto] resolves to logIndex 0 then 1 (not two zeros),
+// so createNft registers newNft before transferNft routes and the token lands.
+Async.it("accepts an explicit logIndex followed by an auto-increment item", async t => {
+  let indexer = Indexer.createTestIndexer()
+  let _ = await indexer.process({
+    chains: {
+      \"1337": {startBlock: 1, endBlock: 100, simulate: [{...createNft, logIndex: 0}, transferNft]},
+    },
+  })
+
+  let tokens = await indexer.\"Token".getAll()
+  t.expect(tokens).toEqual([expectedToken])
+})
+
 // With nothing registering newNft (no factory item, no earlier process() call),
 // the address filter drops the non-wildcard Transfer and its handler never runs.
 // The run reports the dead simulate input instead of passing silently.

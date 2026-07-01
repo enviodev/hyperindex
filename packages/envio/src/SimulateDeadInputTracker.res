@@ -1,6 +1,5 @@
-// Reports the items a simulate run was given that never reached a handler (dead
-// test inputs). Lives on IndexerState and is fed each processed batch, so
-// ChainState and the fetch loop carry no simulate-specific state.
+// Lives on IndexerState and is fed each processed batch, so ChainState and the
+// fetch loop carry no simulate-specific state.
 
 // Match a provided item to a processed one by its (chain, block, logIndex)
 // coordinate rather than object identity, so matching survives any copy or
