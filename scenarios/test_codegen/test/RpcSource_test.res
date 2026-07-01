@@ -1391,18 +1391,23 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
         ~eventFilters=Static([]),
       )
 
-      let blockJson = JSON.Object(
-        Dict.fromArray([
-          ("number", JSON.String("0x64")),
-          ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0xb64")),
-          ("parentHash", JSON.String("0xb63")),
-        ]),
-      )
-
-      let mock = await MockRpcServer.make(~getResult=method =>
+      // Echo the requested block number so `latestFetchedBlockNumber` reflects
+      // the block the source actually loaded, not a constant baked into the mock.
+      let mock = await MockRpcServer.makeWithParams(~getResult=(~method, ~params) =>
         switch method {
-        | "eth_getBlockByNumber" => blockJson
+        | "eth_getBlockByNumber" =>
+          let requestedBlockHex = switch params {
+          | JSON.Array([JSON.String(hex), _]) => hex
+          | _ => "0x0"
+          }
+          JSON.Object(
+            Dict.fromArray([
+              ("number", JSON.String(requestedBlockHex)),
+              ("timestamp", JSON.String("0x64")),
+              ("hash", JSON.String("0xb64")),
+              ("parentHash", JSON.String("0xb63")),
+            ]),
+          )
         | _ => JSON.Null
         }
       )

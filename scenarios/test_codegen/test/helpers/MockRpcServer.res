@@ -73,8 +73,8 @@ let start = (~handler: string => (int, string)) =>
 let makeRaw = (~status, ~body) => start(~handler=_ => (status, body))
 
 // Reply 200 with a JSON-RPC envelope whose `result` is routed by the request's
-// `method`, echoing the request's `id` back.
-let make = (~getResult: string => JSON.t) =>
+// `method` and `params`, echoing the request's `id` back.
+let makeWithParams = (~getResult: (~method: string, ~params: JSON.t) => JSON.t) =>
   start(~handler=requestBody => {
     let parsed = requestBody->JSON.parseOrThrow->JSON.Decode.object
     let method =
@@ -82,6 +82,7 @@ let make = (~getResult: string => JSON.t) =>
       ->Option.flatMap(Dict.get(_, "method"))
       ->Option.flatMap(JSON.Decode.string)
       ->Option.getOr("")
+    let params = parsed->Option.flatMap(Dict.get(_, "params"))->Option.getOr(JSON.Null)
     let id = parsed->Option.flatMap(Dict.get(_, "id"))->Option.getOr(JSON.Number(1.))
     (
       200,
@@ -90,9 +91,14 @@ let make = (~getResult: string => JSON.t) =>
           Dict.fromArray([
             ("jsonrpc", JSON.String("2.0")),
             ("id", id),
-            ("result", getResult(method)),
+            ("result", getResult(~method, ~params)),
           ]),
         ),
       ),
     )
   })
+
+// Reply 200 with a JSON-RPC envelope whose `result` is routed by the request's
+// `method`, echoing the request's `id` back.
+let make = (~getResult: string => JSON.t) =>
+  makeWithParams(~getResult=(~method, ~params as _) => getResult(method))
