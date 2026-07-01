@@ -951,6 +951,7 @@ let evmEventConfig = (
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
   ~startBlock: option<int>=?,
+  ~eventFilters: option<Internal.eventFilters>=?,
 ): Internal.evmEventConfig => {
   let selectedTransactionFields =
     Utils.Set.fromArray(transactionFieldNames)->(
@@ -969,33 +970,37 @@ let evmEventConfig = (
     paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
     simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
     getEventFiltersOrThrow: _ =>
-      switch dependsOnAddresses {
-      | Some(true) =>
-        Dynamic(
-          addresses => [
+      switch eventFilters {
+      | Some(eventFilters) => eventFilters
+      | None =>
+        switch dependsOnAddresses {
+        | Some(true) =>
+          Dynamic(
+            addresses => [
+              {
+                topic0: [
+                  // This is a sighash in the original code
+                  id->EvmTypes.Hex.fromStringUnsafe,
+                ],
+                topic1: addresses->Utils.magic,
+                topic2: [],
+                topic3: [],
+              },
+            ],
+          )
+        | _ =>
+          Static([
             {
               topic0: [
                 // This is a sighash in the original code
                 id->EvmTypes.Hex.fromStringUnsafe,
               ],
-              topic1: addresses->Utils.magic,
+              topic1: [],
               topic2: [],
               topic3: [],
             },
-          ],
-        )
-      | _ =>
-        Static([
-          {
-            topic0: [
-              // This is a sighash in the original code
-              id->EvmTypes.Hex.fromStringUnsafe,
-            ],
-            topic1: [],
-            topic2: [],
-            topic3: [],
-          },
-        ])
+          ])
+        }
       },
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields,
