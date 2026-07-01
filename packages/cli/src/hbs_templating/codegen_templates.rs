@@ -2746,7 +2746,9 @@ fn svm_block_field_specs() -> Vec<SvmBlockFieldSpec> {
         .map(|field| {
             let (ts_type, optional) = match field {
                 SvmBlockField::Time => ("number", true),
-                SvmBlockField::Hash => ("string", false),
+                // A slot can lack a block row (skipped slot), so `hash` may be
+                // absent even when selected — matching `svmInstructionBlock.hash?`.
+                SvmBlockField::Hash => ("string", true),
                 SvmBlockField::Height => ("number", true),
                 SvmBlockField::ParentSlot => ("number", true),
                 SvmBlockField::ParentHash => ("string", true),
@@ -3386,29 +3388,30 @@ mod test {
     #[test]
     fn svm_block_field_specs_match_runtime() {
         // The codegen block specs (selectable fields) must match the public
-        // `svmInstructionBlock` shape, excluding the always-present `slot`.
+        // `svmInstructionBlock` shape — name and optionality — excluding the
+        // always-present `slot`. Optionality parity guards the generated TS type
+        // from narrowing a nullable field (e.g. `hash`) to non-optional.
         let res = std::fs::read_to_string(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../envio/src/Envio.res"),
         )
         .expect("read Envio.res");
-        let res_fields: Vec<String> = parse_type_fields(&res, "type svmInstructionBlock = {", "")
+        let res_fields: Vec<(String, bool)> =
+            parse_type_fields(&res, "type svmInstructionBlock = {", "")
+                .into_iter()
+                .filter(|(name, _optional)| name != "slot")
+                .collect();
+        let spec_fields: Vec<(String, bool)> = svm_block_field_specs()
             .into_iter()
-            .map(|(name, _optional)| name)
-            .filter(|name| name != "slot")
-            .collect();
-        let spec_fields: Vec<String> = svm_block_field_specs()
-            .into_iter()
-            .map(|spec| spec.name)
+            .map(|spec| (spec.name, spec.optional))
             .collect();
         assert_eq!(spec_fields, res_fields);
     }
 
     #[test]
     fn svm_block_ts_type_renders_optionality_and_unselected() {
-        // `slot` is always present (no `| undefined`); a selected required field
-        // (`hash`) has no `| undefined`; a nullable selected field (`height`) is
-        // `number | undefined`; unselected fields get the `@deprecated` hint +
-        // `FieldNotSelected`.
+        // `slot` is always present (no `| undefined`); selected nullable fields
+        // (`hash`, `height`) render as `T | undefined`; unselected fields get the
+        // `@deprecated` hint + `FieldNotSelected`.
         let generated = svm_block_ts_type(
             &svm_block_field_specs(),
             &["hash".to_string(), "height".to_string()],

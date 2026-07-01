@@ -29,10 +29,11 @@ let makeInlineItem = (~blockNumber, ~timestamp, ~blockHash, ~block): Internal.it
   }->(Utils.magic: {..} => Internal.item)
 }
 
-// SVM items carry a minimal inline block (`slot`/`time`, empty `hash`) that
-// materializeSvmItems enriches in place from the store.
-let makeSvmItem = (~slot, ~time, ~mask): Internal.item => {
-  let block = {"slot": slot, "time": time, "hash": ""}->(Utils.magic: {..} => Internal.eventBlock)
+// SVM items carry the always-available trio (`slot`/`time`/`hash`) inline; when a
+// field beyond the trio is selected, materializeSvmItems enriches the block in
+// place from the store.
+let makeSvmItem = (~slot, ~time, ~hash, ~mask): Internal.item => {
+  let block = {"slot": slot, "time": time, "hash": hash}->(Utils.magic: {..} => Internal.eventBlock)
   let payload: dict<Internal.eventBlock> = Dict.make()
   payload->Dict.set("block", block)
   {
@@ -66,6 +67,13 @@ describe("BlockStore field-code contract", () => {
 
   it("SVM blockFields match the Rust SvmBlockField order", t => {
     t.expect(Svm.blockFields).toEqual(Core.getAddon().svmBlockFieldNames())
+  })
+
+  // SVM shares `hasExtraFields`' `& ~7`, so its always-inline trio must occupy
+  // field codes 0/1/2 too. Pin it so a reorder can't silently route slot/time/
+  // hash through the store (which the SVM source never populates for them).
+  it("SVM always-inline trio occupies field codes 0/1/2", t => {
+    t.expect(Svm.blockFields->Array.slice(~start=0, ~end=3)).toEqual(["slot", "time", "hash"])
   })
 })
 
@@ -103,14 +111,14 @@ describe("BlockStore materializeItems", () => {
   Async.it("enriches each slot's inline block in place and dedupes by slot", async t => {
     let store = BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false)
     let mask = Svm.eventBlockFieldMask(Utils.Set.fromArray(Svm.blockFields))
-    let a = makeSvmItem(~slot=5, ~time=50, ~mask)
-    let b = makeSvmItem(~slot=5, ~time=50, ~mask)
-    let c = makeSvmItem(~slot=6, ~time=60, ~mask)
+    let a = makeSvmItem(~slot=5, ~time=50, ~hash="0x5", ~mask)
+    let b = makeSvmItem(~slot=5, ~time=50, ~hash="0x5", ~mask)
+    let c = makeSvmItem(~slot=6, ~time=60, ~hash="0x6", ~mask)
 
-    // The store is empty here, so the slot (the key) is all that materialises;
-    // each item's own inline block is enriched in place, keeping its slot/time/
-    // hash. This exercises the enrich/dedup path — field decoding itself is
-    // covered by the Rust unit tests.
+    // The store is empty here, so the extra fields don't materialise; each item's
+    // own inline block is enriched in place, keeping its slot/time/hash. This
+    // exercises the enrich/dedup path — field decoding itself is covered by the
+    // Rust unit tests.
     await store->BlockStore.materializeSvmItems(~items=[a, b, c])
 
     t.expect({
@@ -118,15 +126,33 @@ describe("BlockStore materializeItems", () => {
       "bBlock": rawBlock(b),
       "cBlock": rawBlock(c),
     }).toEqual({
-      "aBlock": {"slot": 5, "time": 50, "hash": ""}
+      "aBlock": {"slot": 5, "time": 50, "hash": "0x5"}
       ->(Utils.magic: {..} => Internal.eventBlock)
       ->Nullable.make,
-      "bBlock": {"slot": 5, "time": 50, "hash": ""}
+      "bBlock": {"slot": 5, "time": 50, "hash": "0x5"}
       ->(Utils.magic: {..} => Internal.eventBlock)
       ->Nullable.make,
-      "cBlock": {"slot": 6, "time": 60, "hash": ""}
+      "cBlock": {"slot": 6, "time": 60, "hash": "0x6"}
       ->(Utils.magic: {..} => Internal.eventBlock)
       ->Nullable.make,
     })
+  })
+
+  // Regression: selecting only trio fields (`time`/`hash`) must leave the inline
+  // block intact. The SVM source never populates the store for the trio, so a
+  // gate on `mask != 0.` would consult the empty store and drop time/hash;
+  // gating on `hasExtraFields` keeps them.
+  Async.it("keeps the inline trio when only time/hash are selected", async t => {
+    let store = BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false)
+    let mask = Svm.eventBlockFieldMask(Utils.Set.fromArray(["time", "hash"]))
+    let item = makeSvmItem(~slot=7, ~time=70, ~hash="0x7", ~mask)
+
+    await store->BlockStore.materializeSvmItems(~items=[item])
+
+    t.expect(rawBlock(item)).toEqual(
+      {"slot": 7, "time": 70, "hash": "0x7"}
+      ->(Utils.magic: {..} => Internal.eventBlock)
+      ->Nullable.make,
+    )
   })
 })

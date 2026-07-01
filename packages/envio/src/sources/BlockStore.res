@@ -27,11 +27,12 @@ let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool): t => {
 let makeMaskFn = FieldMask.makeMaskFn
 let orMask = FieldMask.orMask
 
-// `number`/`timestamp`/`hash` are always stamped onto `event.block` from the item
-// itself, so a block whose events selected only these needs no store lookup.
-// `hasExtraFields` is true once any other field is selected — only then is a
-// materialise call worthwhile. The `& ~7` clears the trio's bits, relying on
-// them being field codes 0/1/2; a test in BlockStore_test pins that ordering.
+// Each ecosystem's always-available trio sits at field codes 0/1/2 (EVM
+// number/timestamp/hash from the item; SVM slot/time/hash from the response),
+// stamped onto `event.block` without a store lookup. `hasExtraFields` is true
+// once any other field is selected — only then is a materialise call worthwhile.
+// The `& ~7` clears the trio's bits, relying on them being field codes 0/1/2;
+// tests in BlockStore_test pin both orderings.
 let hasExtraFields: float => bool = %raw(`m => ((m & ~7) >>> 0) !== 0`)
 
 // Drain another store (a fetch-response page) into this one.
@@ -138,20 +139,21 @@ let materializeEvmItems = async (store: t, ~items: array<Internal.item>) => {
   }
 }
 
-// SVM: the source attaches a minimal inline block (`slot` only) to each item.
-// When an instruction selected block fields, enrich its block in place with the
-// fields kept raw in the store (`time`/`hash`/`height`/`parentSlot`/`parentHash`)
-// — a slot missing from the store (no block row) keeps just the inline `slot`.
-// Grouped per slot so the store is consulted once per slot; each instruction's
-// own inline block is enriched in place.
+// SVM: the source stamps the always-available trio (`slot`/`time`/`hash`) inline
+// on each item. When an instruction selected a field beyond the trio, enrich its
+// block in place with the extra fields kept raw in the store (`height`/
+// `parentSlot`/`parentHash`) — a slot missing from the store (no block row) keeps
+// just the inline trio. Grouped per slot so the store is consulted once per slot;
+// each instruction's own inline block is enriched in place.
 let materializeSvmItems = async (store: t, ~items: array<Internal.item>) => {
   let (blockNumbers, masks, groups) =
     items->groupByBlock(~owns=eventItem =>
       eventItem.payload->Internal.getPayloadBlock->Nullable.toOption->Option.isSome
     )
 
-  // No instruction selected a block field, so the inline `slot`-only block stands.
-  if masks->Array.some(mask => mask != 0.) {
+  // slot/time/hash are already stamped inline; only fields beyond the trio need a
+  // store lookup. When none were selected the inline block stands.
+  if masks->Array.some(hasExtraFields) {
     let materialized = await store->materialize(~blockNumbers, ~masks)
     groups->Array.forEachWithIndex((group, i) => {
       let fields = materialized->Array.getUnsafe(i)

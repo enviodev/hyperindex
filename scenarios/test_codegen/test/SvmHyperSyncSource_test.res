@@ -13,6 +13,7 @@ let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 
 let blockTime = 1778064393
 let slot = 417950033
+let blockHash = "99K5yyU2jLxLDeRCJ9YSSMy6VBJTNcnePWUH9uCHAWCB"
 
 let makeEventConfig = (
   ~selectedBlockFields: array<Internal.svmBlockField>=[],
@@ -51,7 +52,11 @@ let makeEventConfig = (
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
     selectedBlockFields: Utils.Set.fromArray(selectedBlockFields),
-    blockFieldMask: 0.,
+    blockFieldMask: Svm.eventBlockFieldMask(
+      Utils.Set.fromArray(
+        selectedBlockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>),
+      ),
+    ),
     accountFilters: [],
     isInner: None,
     accounts: [],
@@ -67,7 +72,7 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
     blocks: [
       {
         slot,
-        blockhash: "99K5yyU2jLxLDeRCJ9YSSMy6VBJTNcnePWUH9uCHAWCB",
+        blockhash: blockHash,
         blockTime,
       },
     ],
@@ -175,9 +180,9 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "item": Some({
         "timestamp": blockTime,
         "blockNumber": slot,
-        // The source stamps only `slot` inline; selected fields are materialised
-        // from the store at batch prep (not exercised by this source-level test).
-        "block": ({slot: slot}: Envio.svmInstructionBlock),
+        // slot/time/hash are stamped inline from the response's block row;
+        // height/parentSlot/parentHash would be materialised from the store.
+        "block": ({slot, time: blockTime, hash: blockHash}: Envio.svmInstructionBlock),
       }),
       // Default merge mode: requesting a table's columns opts the matched
       // result set into that join, so selections carry no include flags.

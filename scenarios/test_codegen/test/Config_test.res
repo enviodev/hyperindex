@@ -176,6 +176,24 @@ describe("Field selection enum schemas", () => {
   })
 })
 
+describe("svmEventDescriptorSchema", () => {
+  // Regression: the schema must declare `blockFields`. rescript-schema strips
+  // undeclared keys on parse, so a missing declaration silently drops SVM
+  // block-field selection before it reaches the event config.
+  it("preserves blockFields through parse", t => {
+    let json: JSON.t = %raw(`{
+      "discriminator": "0x21",
+      "discriminatorByteLen": 1,
+      "transactionFields": [],
+      "blockFields": ["time", "hash", "height"],
+      "includeLogs": false
+    }`)
+    let parsed = json->S.parseOrThrow(Config.svmEventDescriptorSchema)
+    let expected: option<array<Internal.svmBlockField>> = Some([Time, Hash, Height])
+    t.expect(parsed["blockFields"]).toEqual(expected)
+  })
+})
+
 describe("EventConfigBuilder", () => {
   it("buildParamsSchema handles simple types", t => {
     let params: array<EventConfigBuilder.paramMeta> = [

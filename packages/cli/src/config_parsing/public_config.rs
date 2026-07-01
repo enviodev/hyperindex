@@ -323,8 +323,7 @@ struct SvmEventItem {
     discriminator_byte_len: u8,
     /// Selected parent-transaction fields (camelCase), incl. `tokenBalances`.
     transaction_fields: Vec<String>,
-    /// Selected block fields (camelCase), excluding the always-included
-    /// `slot`/`time`/`hash`.
+    /// Selected block fields (camelCase), excluding the always-included `slot`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     block_fields: Vec<String>,
     include_logs: bool,

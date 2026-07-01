@@ -15,7 +15,7 @@ expression: generated
    */
   readonly time: FieldNotSelected<"Field 'time' is not selected for the 'Swap' instruction. Add it under field_selection.block_fields in config.yaml.">;
   /** The hash field. */
-  readonly hash: string;
+  readonly hash: string | undefined;
   /** The height field. */
   readonly height: number | undefined;
   /**

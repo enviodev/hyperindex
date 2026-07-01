@@ -425,14 +425,17 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
     let parsingRef = Performance.now()
 
-    // Per-slot unix timestamp lookup from the response's `blocks` table. Slots
-    // without a block row (rare; usually skipped slots) fall back to `None`.
+    // Per-slot lookups from the response's `blocks` table for the always-fetched
+    // trio (time/hash). Slots without a block row (rare; usually skipped slots)
+    // fall back to `None`.
     let blockTimeBySlot = Dict.make()
+    let blockHashBySlot = Dict.make()
     resp.data.blocks->Array.forEach(b => {
       switch b.blockTime {
       | Some(t) => blockTimeBySlot->Dict.set(b.slot->Int.toString, t)
       | None => ()
       }
+      blockHashBySlot->Dict.set(b.slot->Int.toString, b.blockhash)
     })
 
     // Per (slot, transaction_index, instruction_address) lookup for logs
@@ -497,15 +500,19 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
         let slotKey = instr.slot->Int.toString
         let blockTime = blockTimeBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
+        let blockHash = blockHashBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
         let payload = toSvmInstruction(
           instr,
           ~programName=eventConfig.contractName,
           ~instructionName=eventConfig.name,
           ~logs=eventConfig.includeLogs ? maybeLogs : None,
-          // Only `slot` is stamped inline; the selected block fields are
-          // materialised onto the block from the store at batch prep.
+          // The always-fetched trio (slot/time/hash) is stamped inline from the
+          // response; height/parentSlot/parentHash are materialised from the store
+          // at batch prep.
           ~block={
             slot: instr.slot,
+            time: ?blockTime,
+            hash: ?blockHash,
           },
         )
 
