@@ -32,7 +32,7 @@ let getSyncConfig = (
     intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getOr(
       intervalCeiling->Option.getOr(10_000),
     ),
-    backoffMillis: backoffMillis->Option.getOr(5000),
+    backoffMillis: backoffMillis->Option.getOr(2000),
     queryTimeoutMillis,
     fallbackStallTimeout: fallbackStallTimeout->Option.getOr(queryTimeoutMillis / 2),
     pollingInterval: pollingInterval->Option.getOr(1000),

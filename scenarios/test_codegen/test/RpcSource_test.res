@@ -1135,6 +1135,301 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 })
 
+describe("RpcSource - isResponseTooLargeError", () => {
+  let isResponseTooLargeError = RpcSource.isResponseTooLargeError
+
+  it("Classifies deterministic too-large responses and ignores unrelated errors", t => {
+    let make = (code, message) => Rpc.JsonRpcError({code, message})
+    t.expect({
+      // HyperRPC 50k-log cap — the case the benchmark hits
+      "hyperRpc": make(-32005, "More than 50000 logs returned")->isResponseTooLargeError,
+      "zkEvm": make(-32000, "query returned more than 10000 results")->isResponseTooLargeError,
+      "llamaRpc": make(-32000, "query exceeds max results")->isResponseTooLargeError,
+      "optimism": make(-32000, "backend response too large")->isResponseTooLargeError,
+      "arbitrum": make(
+        -32000,
+        "logs matched by query exceeds limit of 10000",
+      )->isResponseTooLargeError,
+      // Block-range limits are handled by getSuggestedBlockIntervalFromExn, not here
+      "blockRangeLimit": make(
+        -32005,
+        "eth_getLogs is limited to a 1000 blocks range",
+      )->isResponseTooLargeError,
+      "rateLimit": make(-32029, "rate limited")->isResponseTooLargeError,
+      "notJsonRpc": JsExn(%raw(`new Error("boom")`))->isResponseTooLargeError,
+    }).toEqual({
+      "hyperRpc": true,
+      "zkEvm": true,
+      "llamaRpc": true,
+      "optimism": true,
+      "arbitrum": true,
+      "blockRangeLimit": false,
+      "rateLimit": false,
+      "notJsonRpc": false,
+    })
+  })
+})
+
+describe("RpcSource - getItemsOrThrow on response-too-large", () => {
+  let sighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+
+  Async.it(
+    "Shrinks the partition block interval immediately (no backoff) on each too-large retry",
+    async t => {
+      let eventConfig = MockIndexer.evmEventConfig(~id=`${sighash}_1`)
+
+      let blockJson = JSON.Object(
+        Dict.fromArray([
+          ("number", JSON.String("0x2710")),
+          ("timestamp", JSON.String("0x64")),
+          ("hash", JSON.String("0xb64")),
+          ("parentHash", JSON.String("0xb63")),
+        ]),
+      )
+
+      // eth_getLogs always trips the 50k-log cap; blocks resolve normally.
+      let mock = await MockRpcServer.start(~handler=requestBody => {
+        let method =
+          requestBody
+          ->JSON.parseOrThrow
+          ->JSON.Decode.object
+          ->Option.flatMap(Dict.get(_, "method"))
+          ->Option.flatMap(JSON.Decode.string)
+          ->Option.getOr("")
+        switch method {
+        | "eth_getLogs" => (
+            200,
+            `{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"More than 50000 logs returned"}}`,
+          )
+        | _ =>
+          (
+            200,
+            JSON.stringify(
+              JSON.Object(
+                Dict.fromArray([
+                  ("jsonrpc", JSON.String("2.0")),
+                  ("id", JSON.Number(1.)),
+                  ("result", blockJson),
+                ]),
+              ),
+            ),
+          )
+        }
+      })
+
+      let source = RpcSource.make({
+        url: mock.url,
+        chain,
+        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        sourceFor: Sync,
+        // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventParams: [
+          {
+            sighash,
+            topicCount: 1,
+            eventName: eventConfig.name,
+            contractName: eventConfig.contractName,
+            params: [],
+          },
+        ],
+        lowercaseAddresses: false,
+      })
+
+      let callGetItemsOrThrow = async (~toBlock) =>
+        try {
+          let _ = await source.getItemsOrThrow(
+            ~fromBlock=0,
+            ~toBlock,
+            ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+            ~contractNameByAddress=FetchState.deriveContractNameByAddress(
+              Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+            ),
+            ~knownHeight=1_000_000,
+            ~partitionId="0",
+            ~selection={
+              dependsOnAddresses: true,
+              eventConfigs: [(eventConfig :> Internal.eventConfig)],
+            },
+            ~retry=0,
+            ~logger=Logging.createChild(~params={"test": "RpcSource response too large"}),
+          )
+          None
+        } catch {
+        | Source.GetItemsError(error) => Some(error)
+        }
+
+      // Project away the live exn object (it carries a JS Error with a stack
+      // that a literal can't match); assert the resize behavior instead.
+      let summarize = opt =>
+        switch opt {
+        | Some(Source.FailedGettingItems({exn, attemptedToBlock, retry})) =>
+          {
+            "attemptedToBlock": attemptedToBlock,
+            "retry": switch retry {
+            | WithSuggestedToBlock({toBlock}) => `immediate-resize->${toBlock->Int.toString}`
+            | WithBackoff({backoffMillis}) => `backoff-${backoffMillis->Int.toString}ms`
+            | ImpossibleForTheQuery(_) => "impossible"
+            },
+            "errorMessage": exn->RpcSource.getErrorMessage,
+          }->Some
+        | _ => None
+        }
+
+      let caught = try {
+        // First attempt uses initialBlockInterval (10000) → suggests 8000.
+        // Second attempt uses the shrunk interval (8000) → suggests 6400.
+        let first = await callGetItemsOrThrow(~toBlock=Some(1_000_000))
+        let second = await callGetItemsOrThrow(~toBlock=Some(1_000_000))
+        mock.close()
+        (first->summarize, second->summarize)
+      } catch {
+      | exn =>
+        mock.close()
+        throw(exn)
+      }
+
+      t.expect(caught).toEqual((
+        Some({
+          "attemptedToBlock": 9999,
+          "retry": "immediate-resize->7999",
+          "errorMessage": Some("More than 50000 logs returned"),
+        }),
+        Some({
+          "attemptedToBlock": 7999,
+          "retry": "immediate-resize->6399",
+          "errorMessage": Some("More than 50000 logs returned"),
+        }),
+      ))
+    },
+  )
+
+  Async.it(
+    "Re-grows the partition interval on the next successful query after a density shrink",
+    async t => {
+      let eventConfig = MockIndexer.evmEventConfig(~id=`${sighash}_2`)
+
+      let blockJson = JSON.Object(
+        Dict.fromArray([
+          ("number", JSON.String("0x2710")),
+          ("timestamp", JSON.String("0x64")),
+          ("hash", JSON.String("0xb64")),
+          ("parentHash", JSON.String("0xb63")),
+        ]),
+      )
+
+      // Only the first eth_getLogs is too dense; the rest fit, so the interval
+      // shrinks once then re-adapts upward via acceleration.
+      let getLogsCount = ref(0)
+      let mock = await MockRpcServer.start(~handler=requestBody => {
+        let method =
+          requestBody
+          ->JSON.parseOrThrow
+          ->JSON.Decode.object
+          ->Option.flatMap(Dict.get(_, "method"))
+          ->Option.flatMap(JSON.Decode.string)
+          ->Option.getOr("")
+        switch method {
+        | "eth_getLogs" =>
+          getLogsCount := getLogsCount.contents + 1
+          getLogsCount.contents == 1
+            ? (
+                200,
+                `{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"More than 50000 logs returned"}}`,
+              )
+            : (200, `{"jsonrpc":"2.0","id":1,"result":[]}`)
+        | _ =>
+          (
+            200,
+            JSON.stringify(
+              JSON.Object(
+                Dict.fromArray([
+                  ("jsonrpc", JSON.String("2.0")),
+                  ("id", JSON.Number(1.)),
+                  ("result", blockJson),
+                ]),
+              ),
+            ),
+          )
+        }
+      })
+
+      let source = RpcSource.make({
+        url: mock.url,
+        chain,
+        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        sourceFor: Sync,
+        // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8, accelerationAdditive=500
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventParams: [
+          {
+            sighash,
+            topicCount: 1,
+            eventName: eventConfig.name,
+            contractName: eventConfig.contractName,
+            params: [],
+          },
+        ],
+        lowercaseAddresses: false,
+      })
+
+      let call = async () =>
+        try {
+          let _ = await source.getItemsOrThrow(
+            ~fromBlock=0,
+            ~toBlock=Some(1_000_000),
+            ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+            ~contractNameByAddress=FetchState.deriveContractNameByAddress(
+              Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+            ),
+            ~knownHeight=1_000_000,
+            ~partitionId="0",
+            ~selection={
+              dependsOnAddresses: true,
+              eventConfigs: [(eventConfig :> Internal.eventConfig)],
+            },
+            ~retry=0,
+            ~logger=Logging.createChild(~params={"test": "RpcSource re-grow"}),
+          )
+          ()
+        } catch {
+        | Source.GetItemsError(_) => ()
+        }
+
+      let toBlockOfLogsRequest = body =>
+        switch body->JSON.parseOrThrow->JSON.Decode.object {
+        | Some(obj) if obj->Dict.get("method")->Option.flatMap(JSON.Decode.string) == Some("eth_getLogs") =>
+          obj
+          ->Dict.get("params")
+          ->Option.flatMap(JSON.Decode.array)
+          ->Option.flatMap(a => a->Array.get(0))
+          ->Option.flatMap(JSON.Decode.object)
+          ->Option.flatMap(p => p->Dict.get("toBlock"))
+          ->Option.flatMap(JSON.Decode.string)
+          ->Option.flatMap(hex => hex->String.slice(~start=2)->Int.fromString(~radix=16))
+        | _ => None
+        }
+
+      let queriedToBlocks = try {
+        // shrink 10000→8000 (fail), grow 8000→8500 (success), grow 8500→9000 (success)
+        await call()
+        await call()
+        await call()
+        let result = mock.requests->Array.filterMap(toBlockOfLogsRequest)
+        mock.close()
+        result
+      } catch {
+      | exn =>
+        mock.close()
+        throw(exn)
+      }
+
+      t.expect(queriedToBlocks).toEqual([9999, 7999, 8499])
+    },
+  )
+})
+
 describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
   let sighash = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"
   let transactionHash = "0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"
