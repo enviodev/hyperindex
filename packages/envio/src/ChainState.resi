@@ -63,6 +63,9 @@ let isReadyToEnterReorgThreshold: t => bool
 
 // Fetch control.
 let getNextQuery: (t, ~budget: int) => FetchState.nextQuery
+let getPruneTarget: (t, ~progressThreshold: float) => (int, int)
+let pruneBuffer: (t, ~targetBlockNumber: int) => unit
+let resetPendingQueries: t => unit
 let dispatch: (
   t,
   ~executeQuery: FetchState.query => promise<unit>,

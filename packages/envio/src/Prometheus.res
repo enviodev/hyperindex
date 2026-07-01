@@ -407,6 +407,23 @@ module IndexingTargetBufferSize = {
   }
 }
 
+module IndexingBufferPrune = {
+  let counter = PromClient.Counter.makeCounter({
+    "name": "envio_indexing_buffer_prune_total",
+    "help": "Number of times fetched-ahead buffer items were pruned back to the processing frontier to keep memory bounded.",
+  })
+
+  let itemsCounter = PromClient.Counter.makeCounter({
+    "name": "envio_indexing_buffer_prune_items_total",
+    "help": "Total number of fetched-ahead buffer items dropped by buffer prunes.",
+  })
+
+  let increment = (~freed) => {
+    counter->PromClient.Counter.inc
+    itemsCounter->PromClient.Counter.incMany(freed)
+  }
+}
+
 module IndexingBufferBlockNumber = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_buffer_block",

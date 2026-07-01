@@ -174,10 +174,10 @@ let makeFs = (
     ~chainId,
     ~maxOnBlockBufferSize,
     ~knownHeight,
-    ~progressBlockNumber=?progressBlockNumber,
-    ~onBlockConfigs=?onBlockConfigs,
-    ~blockLag=?blockLag,
-    ~firstEventBlock=?firstEventBlock,
+    ~progressBlockNumber?,
+    ~onBlockConfigs?,
+    ~blockLag?,
+    ~firstEventBlock?,
   )
   (fetchState, indexingAddresses)
 }
@@ -305,7 +305,8 @@ describe("FetchState.make", () => {
       t.expect(
         (
           indexingAddresses->IndexingAddresses.size,
-          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
+          indexingAddresses
+          ->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           // No partition is created for the contract without events
           fetchState.optimizedPartitions.entities
@@ -865,9 +866,10 @@ describe("FetchState.registerDynamicContracts", () => {
     let (fetchState, indexingAddresses) = makeInitial()
 
     t.expect(
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
-        makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress0)->dcToItem,
-      ]),
+      fetchState->FetchState.registerDynamicContracts(
+        ~indexingAddresses,
+        [makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress0)->dcToItem],
+      ),
       ~message="Should return fetchState without updating it",
     ).toBe(fetchState)
   })
@@ -893,7 +895,8 @@ describe("FetchState.registerDynamicContracts", () => {
           item->Internal.getItemDcs,
           // tracked on indexingAddresses so later conflicting registrations
           // are detected, and so numAddresses reflects it
-          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
+          indexingAddresses
+          ->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           // partitions unchanged - no fetching for contracts without events
           updatedFetchState.optimizedPartitions === fetchState.optimizedPartitions,
@@ -955,7 +958,8 @@ describe("FetchState.registerDynamicContracts", () => {
           // Third dc also spliced out - same contract name, already tracked.
           item3->Internal.getItemDcs,
           // First registration is the tracked one (first wins).
-          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
+          indexingAddresses
+          ->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           // No new partition created across any of the registrations.
           afterThird.optimizedPartitions.entities === fetchState.optimizedPartitions.entities,
@@ -991,9 +995,11 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          indexingAddresses->IndexingAddresses.get(mockAddress2->Address.toString)
+          indexingAddresses
+          ->IndexingAddresses.get(mockAddress2->Address.toString)
           ->Option.map(ia => ia.contractName),
-          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
+          indexingAddresses
+          ->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           // Only the Gravatar address lands in a partition.
           updatedFetchState.optimizedPartitions.entities
@@ -1045,7 +1051,8 @@ describe("FetchState.registerDynamicContracts", () => {
           // dc spliced out - won't overwrite the existing Gravatar entry in db
           item->Internal.getItemDcs,
           // indexingAddresses still has the original contract name
-          indexingAddresses->IndexingAddresses.get(mockAddress0->Address.toString)
+          indexingAddresses
+          ->IndexingAddresses.get(mockAddress0->Address.toString)
           ->Option.map(ia => ia.contractName),
           // fetchState unchanged - nothing new registered
           updatedFetchState === fetchState,
@@ -1077,7 +1084,8 @@ describe("FetchState.registerDynamicContracts", () => {
 
     t.expect(
       (
-        indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
+        indexingAddresses
+        ->IndexingAddresses.get(mockAddress1->Address.toString)
         ->Option.map(ia => ia.contractName),
         // dc spliced out - won't be persisted to envio_addresses
         item2->Internal.getItemDcs,
@@ -1122,7 +1130,8 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
+          indexingAddresses
+          ->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           noEventsItem->Internal.getItemDcs,
         ),
@@ -1157,7 +1166,8 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
+          indexingAddresses
+          ->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           eventsItem->Internal.getItemDcs,
           updatedFetchState.optimizedPartitions.entities
@@ -1232,9 +1242,10 @@ describe("FetchState.registerDynamicContracts", () => {
       // This is an edge case we currently don't cover
       // But show a warning in the logs
       t.expect(
-        fetchStateWithDc1->FetchState.registerDynamicContracts(~indexingAddresses, [
-          makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)->dcToItem,
-        ]),
+        fetchStateWithDc1->FetchState.registerDynamicContracts(
+          ~indexingAddresses,
+          [makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)->dcToItem],
+        ),
         ~message=`BROKEN: Calling it with the same dc
           but earlier block number should create a new short lived partition
           for the specific contract from block 0 to 1. And update the dc in db`,
@@ -1251,12 +1262,10 @@ describe("FetchState.registerDynamicContracts", () => {
     let dc4 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress4)
 
     let updatedFetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
-        dc1->dcToItem,
-        dc2->dcToItem,
-        dc3->dcToItem,
-        dc4->dcToItem,
-      ])
+      fetchState->FetchState.registerDynamicContracts(
+        ~indexingAddresses,
+        [dc1->dcToItem, dc2->dcToItem, dc3->dcToItem, dc4->dcToItem],
+      )
 
     t.expect(
       updatedFetchState.optimizedPartitions.entities->Dict.valuesToArray,
@@ -1318,12 +1327,15 @@ describe("FetchState.registerDynamicContracts", () => {
     // the one already populated by the registration above.
     let (fetchState, indexingAddresses) = makeInitial()
     let updatedFetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
-        dc1FromAnotherContract->dcToItem,
-        dc2->dcToItem,
-        dc3->dcToItem,
-        dc4FromAnotherContract->dcToItem,
-      ])
+      fetchState->FetchState.registerDynamicContracts(
+        ~indexingAddresses,
+        [
+          dc1FromAnotherContract->dcToItem,
+          dc2->dcToItem,
+          dc3->dcToItem,
+          dc4FromAnotherContract->dcToItem,
+        ],
+      )
 
     t.expect(
       updatedFetchState.optimizedPartitions.entities->Dict.valuesToArray,
@@ -1438,13 +1450,10 @@ describe("FetchState.registerDynamicContracts", () => {
       )
 
       let updatedFetchState =
-        fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
-          dc1->dcToItem,
-          dc2->dcToItem,
-          dc3->dcToItem,
-          dc4->dcToItem,
-          dc5->dcToItem,
-        ])
+        fetchState->FetchState.registerDynamicContracts(
+          ~indexingAddresses,
+          [dc1->dcToItem, dc2->dcToItem, dc3->dcToItem, dc4->dcToItem, dc5->dcToItem],
+        )
 
       t.expect(
         updatedFetchState.optimizedPartitions.entities
@@ -1488,7 +1497,8 @@ describe("FetchState.registerDynamicContracts", () => {
     let dcItem1 = dc1->dcToItem
     let dcItem2 = dc2->dcToItem
 
-    let updatedFetchState = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dcItem2, dcItem1])
+    let updatedFetchState =
+      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dcItem2, dcItem1])
 
     t.expect(
       (dcItem1->Internal.getItemDcs, dcItem2->Internal.getItemDcs),
@@ -1554,10 +1564,11 @@ describe("FetchState.registerDynamicContracts", () => {
     // But for too big block difference, we create different partitions just in case
     let dc3 = makeDynContractRegistration(~blockNumber=300_000, ~contractAddress=mockAddress3)
 
-    let updatedFetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, // Order of dcs doesn't matter
+    let updatedFetchState = fetchState->FetchState.registerDynamicContracts(
+      ~indexingAddresses, // Order of dcs doesn't matter
       // but they are not sorted in fetch state
-      [dc1->dcToItem, dc3->dcToItem, dc2->dcToItem])
+      [dc1->dcToItem, dc3->dcToItem, dc2->dcToItem],
+    )
     t.expect(indexingAddresses->IndexingAddresses.size).toBe(4)
     t.expect(updatedFetchState.optimizedPartitions.entities->Dict.valuesToArray).toEqual([
       {
@@ -1843,16 +1854,15 @@ describe("FetchState.getNextQuery & integration", () => {
   }
 
   // The default configuration with ability to overwrite some values.
-  // Partitions here have no response yet, so the block window isn't constrained
-  // (the small test heights stay below the buffer-position cap) and query sizing
-  // falls back to FetchState.defaultEstResponseSize (10000).
+  // Partitions here have no response yet, so query sizing falls back to
+  // FetchState.defaultEstResponseSize (10000).
   let getNextQuery = (fs, ~endBlock=None, ~knownHeight=10, ~budget=10) =>
     switch endBlock {
     | Some(_) => {...fs, endBlock}
     | None => fs
     }
     ->FetchState.updateKnownHeight(~knownHeight)
-    ->FetchState.getNextQuery(~budget, ~chainPendingBudget=0.)
+    ->FetchState.getNextQuery(~budget)
 
   it("Returns NothingToQuery when the buffer budget is exhausted", t => {
     // Same state queries Ready with a positive budget (see the test below), so a
@@ -1951,9 +1961,8 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(WaitingForNewBlock)
     t.expect(
       updatedFetchState->getNextQuery(~budget=2, ~knownHeight=11),
-      ~message=`Should fetch the head block once the partition is behind the head:
-      budget is measured past the ready frontier, so the 2 already-ready items
-      don't eat the budget and pin the target block below the frontier`,
+      ~message=`Should fetch the head block once the partition is behind the head,
+      with an open-ended range: the query is no longer capped by buffer size`,
     ).toEqual(
       Ready([
         {
@@ -2407,17 +2416,15 @@ describe("FetchState.getNextQuery & integration", () => {
       ~knownHeight,
     )
     let fetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
-        makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)->dcToItem,
-      ])
+      fetchState->FetchState.registerDynamicContracts(
+        ~indexingAddresses,
+        [makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)->dcToItem],
+      )
 
     t.expect(fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count).toEqual(3)
 
     let nextQuery =
-      {...fetchState, knownHeight: 10}->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      )
+      {...fetchState, knownHeight: 10}->FetchState.getNextQuery(~budget=targetBufferSize)
 
     t.expect(
       nextQuery,
@@ -2470,7 +2477,8 @@ describe("FetchState.getNextQuery & integration", () => {
     // Rollback to block 2: both DCs survive (regBlock <= 2)
     // Partition "0" (lfb=10 > 2) -> DELETED, addresses recreated as partition "1"
     // Partition "2" (lfb=2 <= 2) -> KEPT as partition "0" (IDs reset)
-    let fetchStateAfterRollback1 = fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=2)
+    let fetchStateAfterRollback1 =
+      fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=2)
     t.expect(
       fetchStateAfterRollback1,
       ~message=`Rollbacks partitions: kept "0", recreated "1" from deleted`,
@@ -2521,7 +2529,8 @@ describe("FetchState.getNextQuery & integration", () => {
 
     // Rollback to block 1: dc2 and dc3 removed (regBlock=2 > 1)
     // Both partitions deleted (lfb > 1), surviving addresses [addr0, addr1] recreated
-    let fetchStateAfterRollback2 = fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=1)
+    let fetchStateAfterRollback2 =
+      fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=1)
     t.expect(
       fetchStateAfterRollback2,
       ~message=`Both partitions deleted, surviving addresses recreated as partition "0"`,
@@ -2558,7 +2567,8 @@ describe("FetchState.getNextQuery & integration", () => {
     })
 
     // Rollback to block -1: all DCs removed, only static addr0 survives
-    let fetchStateAfterRollback3 = fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=-1)
+    let fetchStateAfterRollback3 =
+      fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=-1)
     t.expect(
       fetchStateAfterRollback3,
       ~message=`All DCs removed, only static addr0 recreated as partition "0"`,
@@ -2614,9 +2624,10 @@ describe("FetchState.getNextQuery & integration", () => {
       ~knownHeight,
     )
     let fetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
-        makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)->dcToItem,
-      ])
+      fetchState->FetchState.registerDynamicContracts(
+        ~indexingAddresses,
+        [makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)->dcToItem],
+      )
 
     // Additionally test that state being reset
     fetchState->FetchState.startFetchingQueries(
@@ -2644,7 +2655,8 @@ describe("FetchState.getNextQuery & integration", () => {
 
     // resetPendingQueries must be called before rollback (removes in-flight queries)
     let fetchStateReset = fetchState->FetchState.resetPendingQueries
-    let fetchStateAfterRollback = fetchStateReset->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=1)
+    let fetchStateAfterRollback =
+      fetchStateReset->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=1)
 
     t.expect(
       fetchStateAfterRollback,
@@ -2875,10 +2887,7 @@ describe("FetchState unit tests for specific cases", () => {
       )
 
     t.expect(
-      {...fetchState, knownHeight: 2}->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ),
+      {...fetchState, knownHeight: 2}->FetchState.getNextQuery(~budget=targetBufferSize),
       ~message=`Should be possible to query wildcard partition,
       if it didn't reach max queue size limit`,
     ).toEqual(
@@ -2902,11 +2911,27 @@ describe("FetchState unit tests for specific cases", () => {
       {
         ...fetchState,
         knownHeight: 2,
-      }->FetchState.getNextQuery(~budget=1, ~chainPendingBudget=0.),
-      ~message=`Budget is measured past the ready frontier; the item already
-      buffered past it consumes the single-item budget, so the behind partition
-      stays capped and nothing new is fetched until the queue drains`,
-    ).toEqual(NothingToQuery)
+      }->FetchState.getNextQuery(~budget=1),
+      ~message=`With the buffer-size cap removed, a positive budget proposes the
+      full query range regardless of buffered-ahead items; the shared pool is now
+      enforced by cross-chain admission, not by capping the range here`,
+    ).toEqual(
+      Ready([
+        {
+          ...defaultQuery,
+          partitionId: "0",
+          estResponseSize: 10000.,
+          fromBlock: 2,
+          toBlock: None,
+          isChunk: false,
+          selection: {
+            dependsOnAddresses: false,
+            eventConfigs: [wildcard],
+          },
+          addressesByContractName: Dict.make(),
+        },
+      ]),
+    )
   })
 
   it("Allows to get event one block earlier than the dc registring event", t => {
@@ -2952,12 +2977,15 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     let fetchStateWithDc =
-      fetchStateWithEvents->FetchState.registerDynamicContracts(~indexingAddresses, [
-        makeDynContractRegistration(
-          ~contractAddress=mockAddress1,
-          ~blockNumber=registeringBlockNumber,
-        )->dcToItem,
-      ])
+      fetchStateWithEvents->FetchState.registerDynamicContracts(
+        ~indexingAddresses,
+        [
+          makeDynContractRegistration(
+            ~contractAddress=mockAddress1,
+            ~blockNumber=registeringBlockNumber,
+          )->dcToItem,
+        ],
+      )
 
     t.expect(
       fetchStateWithDc->getEarliestEvent->getItem,
@@ -3072,9 +3100,10 @@ describe("FetchState unit tests for specific cases", () => {
 
     t.expect(
       fetchState
-      ->FetchState.registerDynamicContracts(~indexingAddresses, [
-        makeDynContractRegistration(~contractAddress=mockAddress1, ~blockNumber=2)->dcToItem,
-      ])
+      ->FetchState.registerDynamicContracts(
+        ~indexingAddresses,
+        [makeDynContractRegistration(~contractAddress=mockAddress1, ~blockNumber=2)->dcToItem],
+      )
       ->getEarliestEvent,
       ~message=`Accounts for registered dynamic contracts`,
     ).toEqual(
@@ -3218,12 +3247,10 @@ describe("FetchState unit tests for specific cases", () => {
 
       //Dynamic contract A registered at block 100
       let dcA = makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=100)
-      let fetchStateWithDcA = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dcA->dcToItem])
+      let fetchStateWithDcA =
+        fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dcA->dcToItem])
 
-      let queries = switch fetchStateWithDcA->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ) {
+      let queries = switch fetchStateWithDcA->FetchState.getNextQuery(~budget=targetBufferSize) {
       | Ready(queries) => queries
       | _ => JsError.throwWithMessage("Expected Ready queries")
       }
@@ -3253,10 +3280,7 @@ describe("FetchState unit tests for specific cases", () => {
       let fetchStateWithDcB =
         fetchStateWithDcA->FetchState.registerDynamicContracts(~indexingAddresses, [dc3->dcToItem])
 
-      let queries = switch fetchStateWithDcB->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ) {
+      let queries = switch fetchStateWithDcB->FetchState.getNextQuery(~budget=targetBufferSize) {
       | Ready(queries) => queries
       | _ => JsError.throwWithMessage("Expected Ready queries")
       }
@@ -3268,10 +3292,7 @@ describe("FetchState unit tests for specific cases", () => {
         fromBlock: 200,
       }
       t.expect(
-        fetchStateWithDcB->FetchState.getNextQuery(
-          ~budget=targetBufferSize,
-          ~chainPendingBudget=0.,
-        ),
+        fetchStateWithDcB->FetchState.getNextQuery(~budget=targetBufferSize),
         ~message=`Create a new partition for the newly registered contract`,
       ).toEqual(Ready([partition2Query, queries->Array.getUnsafe(1)]))
 
@@ -3285,10 +3306,7 @@ describe("FetchState unit tests for specific cases", () => {
         )
 
       t.expect(
-        fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery(
-          ~budget=targetBufferSize,
-          ~chainPendingBudget=0.,
-        ),
+        fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery(~budget=targetBufferSize),
         ~message=`We don't merge partition 2 to partition 1, since it already has end block`,
       ).toEqual(
         Ready([
@@ -3563,7 +3581,10 @@ describe("Dynamic contracts with start blocks", () => {
 
     // Register the contract at block 100 (before its startBlock)
     let _ =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dynamicContract->dcToItem])
+      fetchState->FetchState.registerDynamicContracts(
+        ~indexingAddresses,
+        [dynamicContract->dcToItem],
+      )
 
     // The contract should be registered in indexingAddresses
     t.expect(
@@ -3573,7 +3594,8 @@ describe("Dynamic contracts with start blocks", () => {
 
     // Verify the startBlock is set correctly
     let registeredContract =
-      indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
+      indexingAddresses
+      ->IndexingAddresses.get(mockAddress1->Address.toString)
       ->Option.getOrThrow
 
     t.expect(
@@ -3600,15 +3622,20 @@ describe("Dynamic contracts with start blocks", () => {
     )
 
     let _ =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [contract1->dcToItem, contract2->dcToItem])
+      fetchState->FetchState.registerDynamicContracts(
+        ~indexingAddresses,
+        [contract1->dcToItem, contract2->dcToItem],
+      )
 
     // Verify both contracts are registered with correct startBlocks
     let contract1Registered =
-      indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
+      indexingAddresses
+      ->IndexingAddresses.get(mockAddress1->Address.toString)
       ->Option.getOrThrow
 
     let contract2Registered =
-      indexingAddresses->IndexingAddresses.get(mockAddress2->Address.toString)
+      indexingAddresses
+      ->IndexingAddresses.get(mockAddress2->Address.toString)
       ->Option.getOrThrow
 
     t.expect(
@@ -3685,20 +3712,20 @@ describe("FetchState progress tracking", () => {
   })
 })
 
-describe("FetchState buffer overflow prevention", () => {
+describe("FetchState query range is not capped by buffer size", () => {
   it(
-    "Should limit endBlock when maxQueryBlockNumber < knownHeight to prevent buffer overflow",
+    "Fetches to endBlock/head regardless of buffered-ahead items (cross-chain prune bounds memory instead)",
     t => {
       let (fetchState, indexingAddresses) = makeInitial(~maxAddrInPartition=1, ~targetBufferSize=10)
 
-      // Create a second partition to ensure buffer limiting logic is exercised across partitions
-      // Register at a later block, so partition "0" remains the earliest and is selected
+      // Create a second partition. Register at a later block, so partition "0"
+      // remains the earliest and is selected.
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)
       let fetchStateWithTwoPartitions =
         fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dc->dcToItem])
 
-      // Buffer 15 items (blocks 6..20). With budget 10 the cap is the block at
-      // buffer index 10-1=9, i.e. block 15 — below both knownHeight and endBlock.
+      // Buffer 15 items (blocks 6..20) far past the frontier. Previously a budget
+      // of 10 capped the query at block 15; now the range runs to endBlock/head.
       let largeQueueEvents = Array.fromInitializer(~length=15, i => mockEvent(~blockNumber=20 - i))
 
       let query0 = {
@@ -3721,31 +3748,30 @@ describe("FetchState buffer overflow prevention", () => {
           ~newItems=largeQueueEvents,
         )
 
-      // Test case 1: With endBlock set, should be limited by maxQueryBlockNumber
+      // Test case 1: With endBlock set, the query runs to endBlock (not a cap)
       let fetchStateWithEndBlock = {
         ...fetchStateWithLargeQueue,
         endBlock: Some(25),
         knownHeight: 30,
       }
 
-      switch fetchStateWithEndBlock->FetchState.getNextQuery(~budget=10, ~chainPendingBudget=0.) {
+      switch fetchStateWithEndBlock->FetchState.getNextQuery(~budget=10) {
       | Ready([q]) =>
-        t.expect(
-          q.toBlock,
-          ~message="Should limit endBlock to maxQueryBlockNumber (15) when both endBlock and maxQueryBlockNumber are present",
-        ).toBe(Some(15))
-      | _ => JsError.throwWithMessage("Expected Ready query when buffer limiting is active")
+        t.expect(q.toBlock, ~message="Query runs to endBlock (25), not a buffer-size cap").toBe(
+          Some(25),
+        )
+      | _ => JsError.throwWithMessage("Expected Ready query")
       }
 
-      // Test case 2: endBlock=None, maxQueryBlockNumber=15 -> Should use Some(15)
+      // Test case 2: endBlock=None -> open-ended query (no buffer-size cap)
       let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None, knownHeight: 30}
-      switch fetchStateNoEndBlock->FetchState.getNextQuery(~budget=10, ~chainPendingBudget=0.) {
+      switch fetchStateNoEndBlock->FetchState.getNextQuery(~budget=10) {
       | Ready([q]) =>
         t.expect(
           q.toBlock,
-          ~message="Should set endBlock to maxQueryBlockNumber (15) when no endBlock was specified",
-        ).toBe(Some(15))
-      | _ => JsError.throwWithMessage("Expected Ready query when buffer limiting is active")
+          ~message="Open-ended query when no endBlock is set, regardless of buffer size",
+        ).toBe(None)
+      | _ => JsError.throwWithMessage("Expected Ready query")
       }
 
       // Test case 3: Small queue, no buffer limiting -> Should use Head target
@@ -3770,10 +3796,7 @@ describe("FetchState buffer overflow prevention", () => {
         )
         ->FetchState.updateKnownHeight(~knownHeight=30)
 
-      switch fetchStateSmallQueue->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ) {
+      switch fetchStateSmallQueue->FetchState.getNextQuery(~budget=targetBufferSize) {
       | Ready([q]) =>
         t.expect(q.toBlock, ~message="Should use None when buffer is not limited").toBe(None)
       | _ => JsError.throwWithMessage("Expected Ready query")
@@ -3829,8 +3852,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
       ])
 
       // Test that getNextQuery returns WaitingForNewBlock when knownHeight is 0
-      let nextQuery =
-        fetchState->FetchState.getNextQuery(~budget=targetBufferSize, ~chainPendingBudget=0.)
+      let nextQuery = fetchState->FetchState.getNextQuery(~budget=targetBufferSize)
       t.expect(
         nextQuery,
         ~message="Should return WaitingForNewBlock when knownHeight is 0",
@@ -3872,8 +3894,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
       ])
 
       // Test that getNextQuery returns NothingToQuery (no partitions to query)
-      let nextQuery2 =
-        updatedFetchState->FetchState.getNextQuery(~budget=targetBufferSize, ~chainPendingBudget=0.)
+      let nextQuery2 = updatedFetchState->FetchState.getNextQuery(~budget=targetBufferSize)
       t.expect(
         nextQuery2,
         ~message="Should return NothingToQuery when there are no partitions to query",
@@ -3887,7 +3908,7 @@ describe("Stale query response should not overwrite block range", () => {
   let getNextQuery = (fs, ~knownHeight=100000, ~budget=targetBufferSize) =>
     fs
     ->FetchState.updateKnownHeight(~knownHeight)
-    ->FetchState.getNextQuery(~budget, ~chainPendingBudget=0.)
+    ->FetchState.getNextQuery(~budget)
 
   it("Out-of-order parallel query responses should not degrade chunking heuristic", t => {
     let (fetchState, indexingAddresses) = makeInitial(~knownHeight=100000)
@@ -3997,5 +4018,109 @@ describe("Stale query response should not overwrite block range", () => {
       (p4.prevQueryRange, p4.prevPrevQueryRange, p4.latestBlockRangeUpdateBlock),
       ~message="Earlier chunk A stale response should not overwrite range bookkeeping (still 600, 500, 2500)",
     ).toEqual((600, 500, 2500))
+  })
+})
+
+describe("FetchState.getPruneTarget", () => {
+  // No partitions, so the frontier is latestOnBlockBlockNumber. firstEventBlock=0
+  // and knownHeight=1000 make progress% == block/1000.
+  let makeBufferState = (~frontier, ~knownHeight, ~firstEventBlock, ~bufferBlocks): FetchState.t => {
+    ...makeInitialFs(),
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=[],
+      ~maxAddrInPartition=3,
+      ~nextPartitionIndex=0,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    latestOnBlockBlockNumber: frontier,
+    knownHeight,
+    firstEventBlock: Some(firstEventBlock),
+    buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
+  }
+
+  it("maps a progress threshold to a block target and freed count, clamped to frontier and reorg floor", t => {
+    let fs = makeBufferState(
+      ~frontier=100,
+      ~knownHeight=1000,
+      ~firstEventBlock=0,
+      ~bufferBlocks=[100, 200, 300, 400, 500, 600, 700, 800, 900, 1000],
+    )
+    t.expect({
+      // threshold 0.5 → block 500; items > 500 are {600..1000} = 5
+      "mid": fs->FetchState.getPruneTarget(~progressThreshold=0.5, ~maxReorgDepth=0),
+      // threshold 0.0 → clamped up to the frontier (100); items > 100 = 9
+      "all": fs->FetchState.getPruneTarget(~progressThreshold=0.0, ~maxReorgDepth=0),
+      // threshold 1.0 but reorg floor (1000 - 300 = 700) clamps the target down,
+      // so items in the reorg window {800, 900, 1000} = 3 are never the restart point
+      "reorgFloor": fs->FetchState.getPruneTarget(~progressThreshold=1.0, ~maxReorgDepth=300),
+    }).toEqual({
+      "mid": (500, 5),
+      "all": (100, 9),
+      "reorgFloor": (700, 3),
+    })
+  })
+})
+
+describe("FetchState.rollback consolidation", () => {
+  it("rolls far-apart partitions back to the target and re-merges them", t => {
+    // Two Gravatar dynamic-contract partitions that fetched millions of blocks
+    // apart (never merged), whose addresses were both registered below the
+    // rollback target. After rollback they collapse to the target and
+    // consolidate into a single partition — the de-fragmentation a buffer prune
+    // relies on.
+    let dcNear = makeDynContractRegistration(~blockNumber=1, ~contractAddress=mockAddress1)
+    let dcFar = makeDynContractRegistration(~blockNumber=50000, ~contractAddress=mockAddress2)
+    let (baseFs, indexingAddresses) = makeInitial(~maxAddrInPartition=3)
+    let _ =
+      baseFs->FetchState.registerDynamicContracts(
+        ~indexingAddresses,
+        [dcNear->dcToItem, dcFar->dcToItem],
+      )
+
+    let normalSelection = baseFs.normalSelection
+    let makePartition = (~id, ~blockNumber, ~address): FetchState.partition => {
+      id,
+      latestFetchedBlock: {blockNumber, blockTimestamp: 0},
+      dynamicContract: Some("Gravatar"),
+      mutPendingQueries: [],
+      prevQueryRange: 0,
+      prevPrevQueryRange: 0,
+      prevRangeSize: 0,
+      latestBlockRangeUpdateBlock: 0,
+      selection: normalSelection,
+      addressesByContractName: Dict.fromArray([("Gravatar", [address])]),
+      mergeBlock: None,
+    }
+    let fetchState: FetchState.t = {
+      ...baseFs,
+      knownHeight: 6_000_000,
+      buffer: [],
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          makePartition(~id="0", ~blockNumber=1_000_000, ~address=mockAddress1),
+          makePartition(~id="1", ~blockNumber=5_000_000, ~address=mockAddress2),
+        ],
+        ~nextPartitionIndex=2,
+        ~maxAddrInPartition=3,
+        ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
+      ),
+    }
+
+    let result = fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=60000)
+    let partitions = result.optimizedPartitions.entities->Dict.valuesToArray
+    let p = partitions->Array.getUnsafe(0)
+    t.expect({
+      "count": partitions->Array.length,
+      "lfb": p.latestFetchedBlock.blockNumber,
+      "contract": p.dynamicContract,
+      "mergeBlock": p.mergeBlock,
+      "addressCount": p.addressesByContractName->Dict.getUnsafe("Gravatar")->Array.length,
+    }).toEqual({
+      "count": 1,
+      "lfb": 60000,
+      "contract": Some("Gravatar"),
+      "mergeBlock": None,
+      "addressCount": 2,
+    })
   })
 })

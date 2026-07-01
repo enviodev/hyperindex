@@ -208,7 +208,7 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
       ~chainId=1,
       ~knownHeight=1000,
     )
-    let query = switch fetchState->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.) {
+    let query = switch fetchState->FetchState.getNextQuery(~budget=5000) {
     | Ready([q]) => q
     | _ => JsError.throwWithMessage("expected a single ready query")
     }
@@ -278,7 +278,7 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
       ~chainId=1,
       ~knownHeight=1000,
     )
-    let query = switch fetchState->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.) {
+    let query = switch fetchState->FetchState.getNextQuery(~budget=5000) {
     | Ready([q]) => q
     | _ => JsError.throwWithMessage("expected a single ready query")
     }

@@ -382,7 +382,7 @@ describe("SourceManager fetchNext", () => {
     ~budget=5000,
     ~stateId,
   ) => {
-    let action = fetchState->FetchState.getNextQuery(~budget, ~chainPendingBudget=0.)
+    let action = fetchState->FetchState.getNextQuery(~budget)
     // CrossChainState marks queries in flight when admitting them; dispatch no
     // longer does, so mirror that here before dispatching.
     switch action {
@@ -509,10 +509,10 @@ describe("SourceManager fetchNext", () => {
 
     t.expect({
       // 10 already pending: the partition is capped, so the scheduler issues nothing.
-      "atCap": withPending(10)->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.),
+      "atCap": withPending(10)->FetchState.getNextQuery(~budget=5000),
       // 9 pending: the two-chunk tail is trimmed down to the one remaining slot.
       "oneSlotLeft": withPending(9)
-      ->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.)
+      ->FetchState.getNextQuery(~budget=5000)
       ->newQueryCount,
     }).toEqual({"atCap": FetchState.NothingToQuery, "oneSlotLeft": 1})
   })
