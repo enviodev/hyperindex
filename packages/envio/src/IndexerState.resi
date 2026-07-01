@@ -107,6 +107,7 @@ let exitAfterFirstEventBlock: t => bool
 let isStopped: t => bool
 let epoch: t => int
 let pruneStaleEntityHistoryThrottler: t => Throttler.t
+let simulateDeadInputTracker: t => option<SimulateDeadInputTracker.t>
 
 // Store domain operations.
 let queueProcessedBatch: (t, ~batch: Batch.t) => unit
