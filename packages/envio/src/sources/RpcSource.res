@@ -367,16 +367,12 @@ type selectionConfig = {
 }
 
 let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
-  let entries =
-    selection.eventConfigs
-    ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
-    ->Array.map(({isWildcard, dependsOnAddresses, getEventFiltersOrThrow}) => (
-      isWildcard,
-      dependsOnAddresses,
-      getEventFiltersOrThrow(chain),
-    ))
+  let evmEventConfigs =
+    selection.eventConfigs->(
+      Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
+    )
 
-  if entries->Utils.Array.isEmpty {
+  if evmEventConfigs->Utils.Array.isEmpty {
     throw(
       Source.GetItemsError(
         UnsupportedSelection({
@@ -386,12 +382,51 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     )
   }
 
-  // eth_getLogs expresses one topic selection per request, so fan out to one
-  // request per selection. Wildcard events match any address (their address
-  // constraint, if any, lives in the topics); address-bound events are scoped
-  // to the partition's addresses. `compressTopicSelections` folds the
-  // filter-less events into a single topic0 OR-set, keeping the common case at
-  // one request.
+  // eth_getLogs takes one address list and one topic selection per request, so
+  // fan out to one request per selection. Each address-bound event is grouped by
+  // its contract and later scoped to that contract's own addresses — pooling all
+  // contracts' addresses would let one contract's query fetch a sibling's logs,
+  // which route back by address and bypass the sibling's filter (routing never
+  // re-applies it). Pure-wildcard events carry no address constraint, so they're
+  // pooled and resolved once.
+  let noAddressTopicSelections = []
+  let staticByContract = Dict.make()
+  let dynamicByContract = Dict.make()
+  let dynamicWildcardByContract = Dict.make()
+  let contractNames = Utils.Set.make()
+
+  evmEventConfigs->Array.forEach(({
+    contractName,
+    isWildcard,
+    dependsOnAddresses,
+    getEventFiltersOrThrow,
+  }) => {
+    let eventFilters = getEventFiltersOrThrow(chain)
+    if dependsOnAddresses {
+      contractNames->Utils.Set.add(contractName)->ignore
+      switch eventFilters {
+      | Internal.Static(topicSelections) =>
+        staticByContract->Utils.Dict.pushMany(contractName, topicSelections)
+      | Dynamic(fn) =>
+        (isWildcard ? dynamicWildcardByContract : dynamicByContract)->Utils.Dict.push(
+          contractName,
+          fn,
+        )
+      }
+    } else {
+      noAddressTopicSelections
+      ->Array.pushMany(
+        switch eventFilters {
+        | Static(s) => s
+        | Dynamic(fn) => fn([])
+        },
+      )
+      ->ignore
+    }
+  })
+
+  // `compressTopicSelections` folds the filter-less events into a single topic0
+  // OR-set, keeping the common case at one request.
   let toLogSelections = (~addresses, topicSelections): array<logSelection> =>
     topicSelections
     ->LogSelection.compressTopicSelections
@@ -400,43 +435,51 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       topicQuery: topicSelection->Rpc.GetLogs.mapTopicQuery,
     })
 
-  let buildLogSelections = (~addresses) => {
-    let wildcardTopicSelections = []
-    let addressedTopicSelections = []
-    entries->Array.forEach(((isWildcard, _, eventFilters)) => {
-      let topicSelections = switch eventFilters {
-      | Internal.Static(s) => s
-      | Dynamic(fn) => fn(addresses)
-      }
-      (isWildcard ? wildcardTopicSelections : addressedTopicSelections)
-      ->Array.pushMany(topicSelections)
-      ->ignore
-    })
+  // Address-independent, so resolve once (the wildcard partition reuses this).
+  let noAddressLogSelections = toLogSelections(~addresses=None, noAddressTopicSelections)
 
-    let logSelections = toLogSelections(~addresses=None, wildcardTopicSelections)
-    // Address-bound events have nothing to match without a concrete address set.
-    switch addresses {
-    | [] => ()
-    | _ =>
-      logSelections
-      ->Array.pushMany(toLogSelections(~addresses=Some(addresses), addressedTopicSelections))
-      ->ignore
-    }
-    logSelections
-  }
-
-  // When no event depends on addresses (the wildcard partition), the fanned
-  // selections are identical every batch, so build them once.
-  let getLogSelectionsOrThrow = if (
-    entries->Array.every(((_, dependsOnAddresses, _)) => !dependsOnAddresses)
-  ) {
-    let logSelections = buildLogSelections(~addresses=[])
-    (~addressesByContractName as _) => logSelections
+  let getLogSelectionsOrThrow = if contractNames->Utils.Set.size === 0 {
+    (~addressesByContractName as _) => noAddressLogSelections
   } else {
-    (~addressesByContractName) =>
-      buildLogSelections(
-        ~addresses=addressesByContractName->FetchState.addressesByContractNameGetAll,
-      )
+    (~addressesByContractName): array<logSelection> => {
+      let logSelections = noAddressLogSelections->Array.copy
+      contractNames->Utils.Set.forEach(contractName => {
+        switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
+        | None
+        | Some([]) => ()
+        | Some(addresses) =>
+          // Static + dynamic non-wildcard filters, scoped to this contract's addresses.
+          let addressedTopicSelections = []
+          switch staticByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(s) => addressedTopicSelections->Array.pushMany(s)->ignore
+          | None => ()
+          }
+          switch dynamicByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(fns) =>
+            fns->Array.forEach(fn =>
+              addressedTopicSelections->Array.pushMany(fn(addresses))->ignore
+            )
+          | None => ()
+          }
+          logSelections
+          ->Array.pushMany(toLogSelections(~addresses=Some(addresses), addressedTopicSelections))
+          ->ignore
+
+          // Dynamic wildcard-by-address filters fold the address into the topics,
+          // so they still match any address.
+          switch dynamicWildcardByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(fns) =>
+            logSelections
+            ->Array.pushMany(
+              toLogSelections(~addresses=None, fns->Array.flatMap(fn => fn(addresses))),
+            )
+            ->ignore
+          | None => ()
+          }
+        }
+      })
+      logSelections
+    }
   }
 
   {

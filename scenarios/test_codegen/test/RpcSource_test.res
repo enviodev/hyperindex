@@ -1465,24 +1465,20 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
   )
 })
 
-describe("RpcSource - getItemsOrThrow pooled selections leak across contracts", () => {
+describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresses", () => {
   let sighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
   let filterTopic1 = "0x0000000000000000000000000000000000000000000000000000000000000001"
   let addrA = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
   let addrB = Envio.TestHelpers.Addresses.mockAddresses[1]->Option.getOrThrow
 
-  // Reproduction of a filter-bypass bug: non-wildcard selections are pooled and
-  // queried against `addressesByContractNameGetAll` (every contract's addresses).
-  // ContractA filters on topic1; ContractB is unfiltered. Both share topic0, so
-  // ContractB's `[sig]` query is scoped to ContractA's address too and fetches a
-  // ContractA log — which routes back to ContractA (by address) and bypasses its
-  // filter, since routing never re-applies the topic filter.
-  //
-  // Uses `it_fails`: the assertion states the CORRECT behavior (no leak), which
-  // currently fails, so the test passes today and flips red once the selection
-  // logic scopes each contract's query to its own addresses.
-  Async.it_fails(
-    "a filtered contract must not receive a log fetched by another contract's pooled query",
+  // Regression guard against a cross-contract filter leak: ContractA filters on
+  // topic1, ContractB is unfiltered, and both share topic0. Each contract's query
+  // must be scoped to its own addresses — otherwise ContractB's `[sig]` query
+  // would also cover ContractA's address, fetch a ContractA log, and route it back
+  // to ContractA (by address), bypassing its filter since routing never re-applies
+  // the topic filter.
+  Async.it(
+    "a filtered contract must not receive a log fetched by another contract's query",
     async t => {
       let eventA = MockIndexer.evmEventConfig(
         ~contractName="ContractA",
@@ -1617,8 +1613,9 @@ describe("RpcSource - getItemsOrThrow pooled selections leak across contracts", 
         throw(exn)
       }
 
-      // Correct behavior: the addrA log matches neither contract's own scoped
-      // query, so nothing is emitted. Today the pooled query leaks it to ContractA.
+      // The addrA log matches neither contract's own scoped query (ContractA's
+      // filters it out on topic1; ContractB's query never covers addrA), so
+      // nothing is emitted.
       t.expect(result.parsedQueueItems->Array.length).toEqual(0)
     },
   )
