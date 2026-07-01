@@ -274,7 +274,7 @@ let maybePrune = (crossChainState: t, ~invalidateInflight) => {
           }
         }
 
-        Logging.info({
+        Logging.trace({
           "msg": "Pruned stale fetch buffer above the processing frontier",
           "bufferSize": total.contents,
           "freed": totalFreed.contents,
