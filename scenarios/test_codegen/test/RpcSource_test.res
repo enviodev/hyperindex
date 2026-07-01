@@ -1077,7 +1077,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
   let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
 
   Async.it(
-    "Shrinks the source block interval immediately (no backoff) on each too-large retry",
+    "Shrinks the partition block interval immediately (no backoff) on each too-large retry",
     async t => {
       let eventConfig = MockIndexer.evmEventConfig(~id=`${sighash}_1`)
 
@@ -1208,7 +1208,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
   )
 
   Async.it(
-    "Re-grows the source interval on the next successful query after a density shrink",
+    "Re-grows the partition interval on the next successful query after a density shrink",
     async t => {
       let eventConfig = MockIndexer.evmEventConfig(~id=`${sighash}_2`)
 

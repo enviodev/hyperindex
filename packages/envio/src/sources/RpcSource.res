@@ -253,6 +253,13 @@ type eventBatchQuery = {
   latestFetchedBlockInfo: blockInfo,
 }
 
+let maxSuggestedBlockIntervalKey = "max"
+
+let getSourceMaxBlockInterval = (mutSuggestedBlockIntervals, ~intervalCeiling) =>
+  mutSuggestedBlockIntervals
+  ->Utils.Dict.dangerouslyGetNonOption(maxSuggestedBlockIntervalKey)
+  ->Option.getOr(intervalCeiling)
+
 let getNextPage = (
   ~fromBlock,
   ~toBlock,
@@ -261,8 +268,8 @@ let getNextPage = (
   ~loadBlock,
   ~syncConfig as sc: Config.sourceSync,
   ~rpcClient: EvmRpcClient.t,
-  ~currentBlockInterval: ref<int>,
-  ~sourceMaxBlockInterval: ref<int>,
+  ~mutSuggestedBlockIntervals,
+  ~partitionId,
   ~sourceName,
   ~chainId,
 ): promise<eventBatchQuery> => {
@@ -309,23 +316,26 @@ let getNextPage = (
     switch getSuggestedBlockIntervalFromExn(err) {
     // "limited to N blocks" — a structural cap on the whole source; only tighten.
     | Some((interval, true)) =>
-      sourceMaxBlockInterval := Pervasives.min(sourceMaxBlockInterval.contents, interval)
-      currentBlockInterval := Pervasives.min(currentBlockInterval.contents, interval)
-      throwResize(sourceMaxBlockInterval.contents)
-    // A one-off suggested range ("retry with range X-Y") — apply to this query.
+      let capped = Pervasives.min(
+        mutSuggestedBlockIntervals->getSourceMaxBlockInterval(~intervalCeiling=sc.intervalCeiling),
+        interval,
+      )
+      mutSuggestedBlockIntervals->Dict.set(maxSuggestedBlockIntervalKey, capped)
+      throwResize(capped)
+    // A one-off suggested range ("retry with range X-Y") — apply to this partition.
     | Some((interval, false)) =>
-      currentBlockInterval := interval
+      mutSuggestedBlockIntervals->Dict.set(partitionId, interval)
       throwResize(interval)
     // Density cap with no suggested number (too many logs / response too large):
-    // shrink and retry immediately (no wait); acceleration re-adapts on the next
-    // successful query. The interval>1 guard avoids a no-progress tight loop on a
-    // single over-cap block.
+    // shrink THIS partition and retry immediately (no wait); acceleration
+    // re-adapts on the next successful query. The interval>1 guard avoids a
+    // no-progress tight loop on a single over-cap block.
     | None if executedBlockInterval > 1 && err->isResponseTooLargeError =>
-      currentBlockInterval := shrunkBlockInterval
+      mutSuggestedBlockIntervals->Dict.set(partitionId, shrunkBlockInterval)
       throwResize(shrunkBlockInterval)
-    // Transient/unknown — shrink and back off.
+    // Transient/unknown — shrink this partition and back off.
     | None =>
-      currentBlockInterval := shrunkBlockInterval
+      mutSuggestedBlockIntervals->Dict.set(partitionId, shrunkBlockInterval)
       throwFailedGettingItems(
         WithBackoff({
           message: `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
@@ -910,13 +920,11 @@ let make = (
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
-  // Source-wide adaptive block interval (AIMD). currentBlockInterval is the
-  // working range that grows on success and shrinks on failure;
-  // sourceMaxBlockInterval is a hard ceiling that only ever tightens, set by
-  // structural provider limits ("limited to N blocks"). Kept source-level rather
-  // than per-partition because partition ids churn on merge/split.
-  let currentBlockInterval = ref(syncConfig.initialBlockInterval)
-  let sourceMaxBlockInterval = ref(syncConfig.intervalCeiling)
+  // Per-partition adaptive block interval (AIMD), keyed by partitionId. The
+  // `max` key holds a source-wide ceiling that only ever tightens, set by
+  // structural provider limits ("limited to N blocks"). A partition's own entry
+  // can go stale when partitions merge/split — acceptable, it re-adapts.
+  let mutSuggestedBlockIntervals = Dict.make()
 
   let client = Rpc.makeClient(url, ~headers?)
   let rpcClient = EvmRpcClient.make(
@@ -1046,16 +1054,20 @@ let make = (
     ~addressesByContractName,
     ~contractNameByAddress,
     ~knownHeight,
-    ~partitionId as _,
+    ~partitionId,
     ~selection: FetchState.selection,
     ~retry,
     ~logger as _,
   ) => {
     let startFetchingBatchTimeRef = Performance.now()
 
+    let sourceMaxBlockInterval =
+      mutSuggestedBlockIntervals->getSourceMaxBlockInterval(~intervalCeiling=syncConfig.intervalCeiling)
     let suggestedBlockInterval = Pervasives.min(
-      currentBlockInterval.contents,
-      sourceMaxBlockInterval.contents,
+      mutSuggestedBlockIntervals
+      ->Utils.Dict.dangerouslyGetNonOption(partitionId)
+      ->Option.getOr(syncConfig.initialBlockInterval),
+      sourceMaxBlockInterval,
     )
 
     // Always have a toBlock for an RPC worker
@@ -1089,24 +1101,26 @@ let make = (
         ->Promise.thenResolve(parseBlockInfo),
       ~syncConfig,
       ~rpcClient,
-      ~currentBlockInterval,
-      ~sourceMaxBlockInterval,
+      ~mutSuggestedBlockIntervals,
+      ~partitionId,
       ~sourceName=name,
       ~chainId=chain->ChainMap.Chain.toChainId,
     )
 
     let executedBlockInterval = suggestedToBlock - fromBlock + 1
 
-    // Grow the interval only when the full suggested range was actually applied
-    // (not clamped by a hard toBlock). The min clamps to the source-wide ceiling,
-    // which also stops growth once a structural cap has tightened it.
+    // Grow this partition's interval only when the full suggested range was
+    // actually applied (not clamped by a hard toBlock). The min clamps to the
+    // source-wide ceiling, which also stops growth once a structural cap tightened it.
     // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
     if executedBlockInterval >= suggestedBlockInterval {
-      currentBlockInterval :=
+      mutSuggestedBlockIntervals->Dict.set(
+        partitionId,
         Pervasives.min(
           executedBlockInterval + syncConfig.accelerationAdditive,
-          sourceMaxBlockInterval.contents,
-        )
+          sourceMaxBlockInterval,
+        ),
+      )
     }
 
     let parsedQueueItems = await items
