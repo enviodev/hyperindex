@@ -138,13 +138,12 @@ module QueryTypes = {
 }
 
 module ResponseTypes = {
+  // Lean per-slot header for reorg detection and each item's slot/time; the
+  // selectable fields live in the block store and are materialised on demand.
   type block = {
     slot: int,
     blockhash: string,
-    parentSlot?: int,
-    parentBlockhash?: string,
     blockTime?: int,
-    blockHeight?: int,
   }
 
   /// Borsh-decoded view attached by the Rust client. `argsJson`/`accountsJson`

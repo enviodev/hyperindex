@@ -57,6 +57,13 @@ describe("BlockStore field-code contract", () => {
     t.expect(Evm.blockFields).toEqual(Core.getAddon().evmBlockFieldNames())
   })
 
+  // `BlockStore.hasExtraFields` clears the always-stamped trio with `& ~7`, which
+  // assumes number/timestamp/hash are field codes 0/1/2. Pin that here so a
+  // reorder of `blockFields` can't silently break the store short-circuit.
+  it("EVM always-stamped trio occupies field codes 0/1/2", t => {
+    t.expect(Evm.blockFields->Array.slice(~start=0, ~end=3)).toEqual(["number", "timestamp", "hash"])
+  })
+
   it("SVM blockFields match the Rust SvmBlockField order", t => {
     t.expect(Svm.blockFields).toEqual(Core.getAddon().svmBlockFieldNames())
   })

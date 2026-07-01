@@ -138,6 +138,20 @@ impl SvmHypersyncClient {
         &self,
         query: SvmQuery,
     ) -> napi::Result<(QueryResponse, TransactionStore, BlockStore)> {
+        // Whether any instruction selected a block field beyond the always-fetched
+        // slot/blockhash/blockTime (needed for reorg detection and each item's
+        // slot/time). Only then is the raw-block store worth populating — mirrors
+        // the EVM source's `has_extra_block_fields` gate.
+        let has_extra_block_fields = query
+            .fields
+            .as_ref()
+            .and_then(|f| f.block.as_ref())
+            .is_some_and(|block| {
+                block
+                    .iter()
+                    .any(|f| !matches!(f.as_str(), "slot" | "blockhash" | "block_time"))
+            });
+
         let q: hypersync_solana_net_types::query::SolanaQuery = query
             .try_into()
             .context("parse solana query")
@@ -179,13 +193,15 @@ impl SvmHypersyncClient {
             std::mem::take(&mut resp.token_balances),
         );
 
-        // Retain raw blocks in Rust keyed by slot; the block store materialises
-        // the selected block fields onto each instruction's `event.block` at
-        // batch prep. The response still carries lean block headers (used for
-        // reorg detection and per-instruction slot/time).
+        // Retain raw blocks in Rust keyed by slot so the block store can
+        // materialise the selected block fields onto each instruction's
+        // `event.block` at batch prep. Skipped when only slot/blockhash/blockTime
+        // were requested — those reach ReScript via the response's block table.
         let block_store = BlockStore::new_svm();
-        for b in &resp.blocks {
-            block_store.insert_svm_raw(b.slot, Arc::new(b.clone()));
+        if has_extra_block_fields {
+            for b in &resp.blocks {
+                block_store.insert_svm_raw(b.slot, Arc::new(b.clone()));
+            }
         }
 
         let mut out = QueryResponse::try_from(resp)

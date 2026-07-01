@@ -27,10 +27,11 @@ let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool): t => {
 let makeMaskFn = FieldMask.makeMaskFn
 let orMask = FieldMask.orMask
 
-// `number`/`timestamp`/`hash` (field codes 0/1/2) are always stamped onto
-// `event.block` from the item itself, so a block whose events selected only
-// these needs no store lookup. `hasExtraFields` is true once any other field is
-// selected — only then is a materialise call worthwhile.
+// `number`/`timestamp`/`hash` are always stamped onto `event.block` from the item
+// itself, so a block whose events selected only these needs no store lookup.
+// `hasExtraFields` is true once any other field is selected — only then is a
+// materialise call worthwhile. The `& ~7` clears the trio's bits, relying on
+// them being field codes 0/1/2; a test in BlockStore_test pins that ordering.
 let hasExtraFields: float => bool = %raw(`m => ((m & ~7) >>> 0) !== 0`)
 
 // Drain another store (a fetch-response page) into this one.
@@ -72,63 +73,67 @@ let enrichBlock: (Internal.eventBlock, Internal.eventBlock) => unit = %raw(`(blo
     Object.assign(block, fields)
   }`)
 
-// EVM: materialise each store-backed item's selected block fields and write the
-// resulting block onto its payload. Items that already carry an inline block
-// (RPC/simulate/Fuel) are skipped. Store-backed items always get a block object
-// carrying at least number/timestamp/hash (stamped from the item), plus any
-// further fields their events selected. Deduped per block number; each block's
-// mask is the OR of the masks of the events sharing it.
-let materializeEvmItems = async (store: t, ~items: array<Internal.item>) => {
-  // Store-backed items arrive in (block, logIndex) order, so events sharing a
-  // block are adjacent. Group them by extending the current run rather than
-  // hashing a key per item.
+// Group adjacent store-backed items into runs sharing a block number, OR-ing
+// their block-field masks. Items arrive in (block, logIndex) order, so events
+// sharing a block are adjacent; extending the current run avoids hashing a key
+// per item. `owns` selects which items this pass materialises (EVM: those with no
+// inline block; SVM: those carrying one). Each run's event items are returned for
+// the caller to apply the materialised block onto.
+let groupByBlock = (items: array<Internal.item>, ~owns: Internal.eventItem => bool): (
+  array<int>,
+  array<float>,
+  array<array<Internal.eventItem>>,
+) => {
   let blockNumbers = []
   let masks = []
-  let payloadGroups = []
-  // (number, timestamp, hash) per group, from the group's first item.
-  let headers = []
-  let anyExtra = ref(false)
-
+  let groups = []
   items->Array.forEach(item =>
     switch item {
     | Internal.Event(_) =>
       let eventItem = item->Internal.castUnsafeEventItem
-      switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
-      | Some(_) => () // RPC/simulate/Fuel carry the block inline.
-      | None =>
+      if owns(eventItem) {
         let {blockNumber} = eventItem
         let mask = eventItem.eventConfig.blockFieldMask
-        if hasExtraFields(mask) {
-          anyExtra := true
-        }
-        let last = payloadGroups->Array.length - 1
+        let last = groups->Array.length - 1
         if last >= 0 && blockNumbers->Array.getUnsafe(last) == blockNumber {
-          payloadGroups->Array.getUnsafe(last)->Array.push(eventItem.payload)
+          groups->Array.getUnsafe(last)->Array.push(eventItem)
           masks->Array.setUnsafe(last, orMask(masks->Array.getUnsafe(last), mask))
         } else {
           blockNumbers->Array.push(blockNumber)
           masks->Array.push(mask)
-          payloadGroups->Array.push([eventItem.payload])
-          headers->Array.push((blockNumber, eventItem.timestamp, eventItem.blockHash))
+          groups->Array.push([eventItem])
         }
       }
     | Internal.Block(_) => ()
     }
   )
+  (blockNumbers, masks, groups)
+}
 
-  if payloadGroups->Utils.Array.notEmpty {
-    // Only reach into the store when some event selected a field beyond the
-    // trio; otherwise every block is built from its item alone.
-    let materialized = if anyExtra.contents {
-      await store->materialize(~blockNumbers, ~masks)
-    } else {
-      []
-    }
-    payloadGroups->Array.forEachWithIndex((payloads, i) => {
-      let (number, timestamp, hash) = headers->Array.getUnsafe(i)
-      let block = anyExtra.contents ? materialized->Array.getUnsafe(i) : %raw(`{}`)
-      block->setBlockHeader(~number, ~timestamp, ~hash)
-      payloads->Array.forEach(payload => payload->Internal.setPayloadBlock(block))
+// EVM: materialise each store-backed item's selected block fields and write the
+// resulting block onto its payload. Items that already carry an inline block
+// (RPC/simulate/Fuel) are skipped. Store-backed items always get a block object
+// carrying at least number/timestamp/hash (stamped from the item), plus any
+// further fields their events selected. Deduped per block number.
+let materializeEvmItems = async (store: t, ~items: array<Internal.item>) => {
+  let (blockNumbers, masks, groups) =
+    items->groupByBlock(~owns=eventItem =>
+      eventItem.payload->Internal.getPayloadBlock->Nullable.toOption->Option.isNone
+    )
+  if groups->Utils.Array.notEmpty {
+    // Only reach into the store when some event selected a field beyond the trio;
+    // otherwise every block is built from its item alone.
+    let anyExtra = masks->Array.some(hasExtraFields)
+    let materialized = anyExtra ? await store->materialize(~blockNumbers, ~masks) : []
+    groups->Array.forEachWithIndex((group, i) => {
+      let eventItem = group->Array.getUnsafe(0)
+      let block = anyExtra ? materialized->Array.getUnsafe(i) : %raw(`{}`)
+      block->setBlockHeader(
+        ~number=eventItem.blockNumber,
+        ~timestamp=eventItem.timestamp,
+        ~hash=eventItem.blockHash,
+      )
+      group->Array.forEach(ei => ei.payload->Internal.setPayloadBlock(block))
     })
   }
 }
@@ -140,43 +145,22 @@ let materializeEvmItems = async (store: t, ~items: array<Internal.item>) => {
 // Grouped per slot so the store is consulted once per slot; each instruction's
 // own inline block is enriched in place.
 let materializeSvmItems = async (store: t, ~items: array<Internal.item>) => {
-  let blockNumbers = []
-  let masks = []
-  let blockGroups = []
-  let anySelected = ref(false)
-
-  items->Array.forEach(item =>
-    switch item {
-    | Internal.Event(_) =>
-      let eventItem = item->Internal.castUnsafeEventItem
-      switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
-      | None => () // SVM always carries an inline block; nothing to enrich.
-      | Some(block) =>
-        let {blockNumber} = eventItem
-        let mask = eventItem.eventConfig.blockFieldMask
-        if mask != 0. {
-          anySelected := true
-        }
-        let last = blockGroups->Array.length - 1
-        if last >= 0 && blockNumbers->Array.getUnsafe(last) == blockNumber {
-          blockGroups->Array.getUnsafe(last)->Array.push(block)
-          masks->Array.setUnsafe(last, orMask(masks->Array.getUnsafe(last), mask))
-        } else {
-          blockNumbers->Array.push(blockNumber)
-          masks->Array.push(mask)
-          blockGroups->Array.push([block])
-        }
-      }
-    | Internal.Block(_) => ()
-    }
-  )
+  let (blockNumbers, masks, groups) =
+    items->groupByBlock(~owns=eventItem =>
+      eventItem.payload->Internal.getPayloadBlock->Nullable.toOption->Option.isSome
+    )
 
   // No instruction selected a block field, so the inline `slot`-only block stands.
-  if anySelected.contents {
+  if masks->Array.some(mask => mask != 0.) {
     let materialized = await store->materialize(~blockNumbers, ~masks)
-    blockGroups->Array.forEachWithIndex((blocks, i) => {
+    groups->Array.forEachWithIndex((group, i) => {
       let fields = materialized->Array.getUnsafe(i)
-      blocks->Array.forEach(block => block->enrichBlock(fields))
+      group->Array.forEach(eventItem =>
+        switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
+        | Some(block) => block->enrichBlock(fields)
+        | None => ()
+        }
+      )
     })
   }
 }

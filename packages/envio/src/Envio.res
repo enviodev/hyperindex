@@ -68,16 +68,14 @@ type svmLog = {
 
 /** Block context for a matched instruction. `slot` is always present (the key);
  every other field is opt-in via `field_selection.block_fields` and materialised
- from the per-chain block store at batch prep. `time`/`hash` follow the EVM/Fuel
- field names so the shared `Ecosystem.t` getters in `Svm.res` read them
- uniformly. */
+ from the per-chain block store at batch prep — absent when not selected, or when
+ HyperSync returned no block row for the slot. */
 type svmInstructionBlock = {
   /** Slot this instruction's block was matched in. */
   slot: int,
-  /** Unix block time (seconds). `0` when HyperSync didn't return a block
-   for this instruction's slot. */
+  /** Unix block time (seconds). */
   time?: int,
-  /** Block hash. Empty when HyperSync didn't return a block for this slot. */
+  /** Block hash. */
   hash?: string,
   /** Block height (distinct from slot). Absent when HyperSync didn't return a
    block for this slot, or the upstream omitted it. */

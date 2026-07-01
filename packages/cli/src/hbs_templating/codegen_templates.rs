@@ -2662,6 +2662,45 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
     specs
 }
 
+/// Render one field line of a per-instruction SVM field record: the field's real
+/// type when selected (nullable as `T | undefined`), else an `@deprecated` config
+/// hint plus a `FieldNotSelected<...>` sentinel. `toggle` picks the boolean-knob
+/// YAML shape (`knob: true`) over the list shape (`knob:\n  - name`). Shared by
+/// the transaction and block record builders.
+fn svm_field_line(
+    name: &str,
+    ts_type: &str,
+    optional: bool,
+    knob: &str,
+    toggle: bool,
+    selected: bool,
+    instruction_name: &str,
+    indent: &str,
+) -> String {
+    if selected {
+        let value = if optional {
+            format!("{ts_type} | undefined")
+        } else {
+            ts_type.to_string()
+        };
+        ts_selected_field(name, &value, indent)
+    } else {
+        let yaml_body = if toggle {
+            format!("{indent} * field_selection:\n{indent} *   {knob}: true")
+        } else {
+            format!("{indent} * field_selection:\n{indent} *   {knob}:\n{indent} *     - {name}")
+        };
+        ts_unselected_field(
+            name,
+            knob,
+            "instruction",
+            instruction_name,
+            &yaml_body,
+            indent,
+        )
+    }
+}
+
 /// Per-instruction SVM parent-transaction TS type for the generated program
 /// table: selected fields get their real type (nullable ones as `T | undefined`);
 /// unselected fields get an `@deprecated` hint plus `FieldNotSelected<...>`.
@@ -2677,35 +2716,17 @@ fn svm_transaction_ts_type(
     let fields: Vec<String> = specs
         .iter()
         .map(|spec| {
-            if selected.contains(spec.name.as_str()) {
-                let value = if spec.optional {
-                    format!("{} | undefined", spec.ts_type)
-                } else {
-                    spec.ts_type.to_string()
-                };
-                ts_selected_field(&spec.name, &value, indent)
-            } else {
-                // `token_balance_fields` is a boolean toggle; the others take a list.
-                let yaml_body = if spec.knob == "token_balance_fields" {
-                    format!(
-                        "{indent} * field_selection:\n{indent} *   {}: true",
-                        spec.knob
-                    )
-                } else {
-                    format!(
-                        "{indent} * field_selection:\n{indent} *   {}:\n{indent} *     - {}",
-                        spec.knob, spec.name
-                    )
-                };
-                ts_unselected_field(
-                    &spec.name,
-                    spec.knob,
-                    "instruction",
-                    instruction_name,
-                    &yaml_body,
-                    indent,
-                )
-            }
+            svm_field_line(
+                &spec.name,
+                spec.ts_type,
+                spec.optional,
+                spec.knob,
+                // `token_balance_fields` is a boolean toggle; the rest take a list.
+                spec.knob == "token_balance_fields",
+                selected.contains(spec.name.as_str()),
+                instruction_name,
+                indent,
+            )
         })
         .collect();
     wrap_ts_record(&fields, indent)
@@ -2753,29 +2774,19 @@ fn svm_block_ts_type(
     indent: &str,
 ) -> String {
     let selected: std::collections::HashSet<&str> = selected.iter().map(String::as_str).collect();
+    // `slot` is always present (the store key), so it's seeded, not selectable.
     let mut fields: Vec<String> = vec![ts_selected_field("slot", "number", indent)];
     for spec in specs {
-        if selected.contains(spec.name.as_str()) {
-            let value = if spec.optional {
-                format!("{} | undefined", spec.ts_type)
-            } else {
-                spec.ts_type.to_string()
-            };
-            fields.push(ts_selected_field(&spec.name, &value, indent));
-        } else {
-            let yaml_body = format!(
-                "{indent} * field_selection:\n{indent} *   block_fields:\n{indent} *     - {}",
-                spec.name
-            );
-            fields.push(ts_unselected_field(
-                &spec.name,
-                "block_fields",
-                "instruction",
-                instruction_name,
-                &yaml_body,
-                indent,
-            ));
-        }
+        fields.push(svm_field_line(
+            &spec.name,
+            spec.ts_type,
+            spec.optional,
+            "block_fields",
+            false,
+            selected.contains(spec.name.as_str()),
+            instruction_name,
+            indent,
+        ));
     }
     wrap_ts_record(&fields, indent)
 }
