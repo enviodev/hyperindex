@@ -146,7 +146,7 @@ mod interpolation {
                 depth += 1;
                 j += 2;
             } else if bytes[j] == b'}' {
-                depth = depth.saturating_sub(1);
+                depth -= 1;
                 j += 1;
             } else if bytes[j] == b'-' && depth == 0 {
                 if j > 0 && bytes[j - 1] == b':' {
