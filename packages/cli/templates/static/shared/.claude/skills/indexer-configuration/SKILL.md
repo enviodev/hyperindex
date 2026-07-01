@@ -148,8 +148,4 @@ Add at top of file for IDE schema validation:
 - `rpc_config` — replaced by `rpc:` under chains
 - `unordered_multichain_mode` — removed
 
-## RPC Configuration
-
-RPC tuning parameters are documented in the `indexer-performance` skill.
-
 > If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
