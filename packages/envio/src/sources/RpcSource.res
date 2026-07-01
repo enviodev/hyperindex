@@ -361,8 +361,9 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let entries =
     selection.eventConfigs
     ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
-    ->Array.map(({isWildcard, getEventFiltersOrThrow}) => (
+    ->Array.map(({isWildcard, dependsOnAddresses, getEventFiltersOrThrow}) => (
       isWildcard,
+      dependsOnAddresses,
       getEventFiltersOrThrow(chain),
     ))
 
@@ -380,14 +381,20 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   // request per selection. Wildcard events match any address (their address
   // constraint, if any, lives in the topics); address-bound events are scoped
   // to the partition's addresses. `compressTopicSelections` folds the
-  // filter-less events of each bucket into a single topic0 OR-set, keeping the
-  // common case at one request.
-  let getLogSelectionsOrThrow = (~addressesByContractName): array<logSelection> => {
-    let addresses = addressesByContractName->FetchState.addressesByContractNameGetAll
+  // filter-less events into a single topic0 OR-set, keeping the common case at
+  // one request.
+  let toLogSelections = (~addresses, topicSelections): array<logSelection> =>
+    topicSelections
+    ->LogSelection.compressTopicSelections
+    ->Array.map(topicSelection => {
+      addresses,
+      topicQuery: topicSelection->Rpc.GetLogs.mapTopicQuery,
+    })
 
+  let buildLogSelections = (~addresses) => {
     let wildcardTopicSelections = []
     let addressedTopicSelections = []
-    entries->Array.forEach(((isWildcard, eventFilters)) => {
+    entries->Array.forEach(((isWildcard, _, eventFilters)) => {
       let topicSelections = switch eventFilters {
       | Internal.Static(s) => s
       | Dynamic(fn) => fn(addresses)
@@ -397,30 +404,30 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       ->ignore
     })
 
-    let logSelections = []
-    [(None, wildcardTopicSelections), (Some(addresses), addressedTopicSelections)]->Array.forEach(((
-      addressesOpt,
-      bucket,
-    )) =>
-      // Address-bound events need a concrete address set, so skip them when the
-      // partition has none; wildcard selections match any address via `None`.
-      switch addressesOpt {
-      | Some([]) => ()
-      | _ =>
-        bucket
-        ->LogSelection.compressTopicSelections
-        ->Array.forEach(topicSelection =>
-          logSelections
-          ->Array.push({
-            addresses: addressesOpt,
-            topicQuery: topicSelection->Rpc.GetLogs.mapTopicQuery,
-          })
-          ->ignore
-        )
-      }
-    )
-
+    let logSelections = toLogSelections(~addresses=None, wildcardTopicSelections)
+    // Address-bound events have nothing to match without a concrete address set.
+    switch addresses {
+    | [] => ()
+    | _ =>
+      logSelections
+      ->Array.pushMany(toLogSelections(~addresses=Some(addresses), addressedTopicSelections))
+      ->ignore
+    }
     logSelections
+  }
+
+  // When no event depends on addresses (the wildcard partition), the fanned
+  // selections are identical every batch, so build them once.
+  let getLogSelectionsOrThrow = if (
+    entries->Array.every(((_, dependsOnAddresses, _)) => !dependsOnAddresses)
+  ) {
+    let logSelections = buildLogSelections(~addresses=[])
+    (~addressesByContractName as _) => logSelections
+  } else {
+    (~addressesByContractName) =>
+      buildLogSelections(
+        ~addresses=addressesByContractName->FetchState.addressesByContractNameGetAll,
+      )
   }
 
   {
