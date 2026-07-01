@@ -302,41 +302,38 @@ let getNextPage = (
     let executedBlockInterval = toBlock - fromBlock + 1
     let shrink = () =>
       Pervasives.max(1, (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt)
-    let throwWithSuggestedToBlock = nextBlockIntervalTry =>
+
+    // Deterministic "range too large" errors resize and retry immediately (no
+    // backoff wait): either to the provider's suggested range, or — for
+    // response-size/log-count caps with no suggested number — to a shrunk range
+    // ratcheted into the shared max so acceleration_additive can't grow it back
+    // across the cap and re-trigger the oscillation. The interval>1 guard avoids
+    // a no-progress tight loop on a single over-cap block.
+    let resize = switch getSuggestedBlockIntervalFromExn(err) {
+    | Some((interval, isMaxRange)) =>
+      Some(interval, isMaxRange ? maxSuggestedBlockIntervalKey : partitionId)
+    | None if executedBlockInterval > 1 && err->isResponseTooLargeError =>
+      Some(shrink(), maxSuggestedBlockIntervalKey)
+    | None => None
+    }
+
+    switch resize {
+    | Some(interval, key) =>
+      mutSuggestedBlockIntervals->Dict.set(key, interval)
       throw(
         Source.GetItemsError(
           FailedGettingItems({
             exn: err,
             attemptedToBlock: toBlock,
-            retry: WithSuggestedToBlock({
-              toBlock: fromBlock + nextBlockIntervalTry - 1,
-            }),
+            retry: WithSuggestedToBlock({toBlock: fromBlock + interval - 1}),
           }),
         ),
       )
-
-    switch getSuggestedBlockIntervalFromExn(err) {
-    | Some((nextBlockIntervalTry, isMaxRange)) =>
-      mutSuggestedBlockIntervals->Dict.set(
-        isMaxRange ? maxSuggestedBlockIntervalKey : partitionId,
-        nextBlockIntervalTry,
-      )
-      throwWithSuggestedToBlock(nextBlockIntervalTry)
-    // Deterministic too-large response with no suggested range: shrink and retry
-    // immediately (no backoff wait). Ratchet the shared max range down so the
-    // acceleration_additive never grows it back across the provider's cap, which
-    // is what otherwise causes the re-pay-the-backoff oscillation. The interval>1
-    // guard avoids a no-progress tight loop on a single over-cap block.
-    | None if executedBlockInterval > 1 && err->isResponseTooLargeError =>
-      let nextBlockIntervalTry = shrink()
-      mutSuggestedBlockIntervals->Dict.set(maxSuggestedBlockIntervalKey, nextBlockIntervalTry)
-      throwWithSuggestedToBlock(nextBlockIntervalTry)
     | None =>
-      let nextBlockIntervalTry = shrink()
-      mutSuggestedBlockIntervals->Dict.set(partitionId, nextBlockIntervalTry)
+      mutSuggestedBlockIntervals->Dict.set(partitionId, shrink())
       throw(
         Source.GetItemsError(
-          Source.FailedGettingItems({
+          FailedGettingItems({
             exn: err,
             attemptedToBlock: toBlock,
             retry: WithBackoff({
