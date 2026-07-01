@@ -398,27 +398,27 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     })
 
     let logSelections = []
-    wildcardTopicSelections
-    ->LogSelection.compressTopicSelections
-    ->Array.forEach(topicSelection =>
-      logSelections
-      ->Array.push({addresses: None, topicQuery: topicSelection->Rpc.GetLogs.mapTopicQuery})
-      ->ignore
+    [(None, wildcardTopicSelections), (Some(addresses), addressedTopicSelections)]->Array.forEach(((
+      addressesOpt,
+      bucket,
+    )) =>
+      // Address-bound events need a concrete address set, so skip them when the
+      // partition has none; wildcard selections match any address via `None`.
+      switch addressesOpt {
+      | Some([]) => ()
+      | _ =>
+        bucket
+        ->LogSelection.compressTopicSelections
+        ->Array.forEach(topicSelection =>
+          logSelections
+          ->Array.push({
+            addresses: addressesOpt,
+            topicQuery: topicSelection->Rpc.GetLogs.mapTopicQuery,
+          })
+          ->ignore
+        )
+      }
     )
-    switch addresses {
-    | [] => ()
-    | _ =>
-      addressedTopicSelections
-      ->LogSelection.compressTopicSelections
-      ->Array.forEach(topicSelection =>
-        logSelections
-        ->Array.push({
-          addresses: Some(addresses),
-          topicQuery: topicSelection->Rpc.GetLogs.mapTopicQuery,
-        })
-        ->ignore
-      )
-    }
 
     logSelections
   }
