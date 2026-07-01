@@ -741,14 +741,16 @@ describe("RpcSource - getSelectionConfig", () => {
     }->RpcSource.getSelectionConfig(~chain)
 
     t.expect(
-      selectionConfig.getLogSelectionOrThrow(
+      selectionConfig.getLogSelectionsOrThrow(
         ~addressesByContractName=Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
       ~message=`Should include only single topic0 address`,
-    ).toEqual({
-      addresses: Some([mockAddress0]),
-      topicQuery: [Single(MockIndexer.eventId)],
-    })
+    ).toEqual([
+      {
+        addresses: Some([mockAddress0]),
+        topicQuery: [Single(MockIndexer.eventId)],
+      },
+    ])
   })
 
   it("Selection config with wildcard events", t => {
@@ -761,12 +763,14 @@ describe("RpcSource - getSelectionConfig", () => {
     }->RpcSource.getSelectionConfig(~chain)
 
     t.expect(
-      selectionConfig.getLogSelectionOrThrow(~addressesByContractName=Dict.make()),
-      ~message=`Should include only topic0 addresses`,
-    ).toEqual({
-      addresses: None,
-      topicQuery: [Multiple(["1", "2"])],
-    })
+      selectionConfig.getLogSelectionsOrThrow(~addressesByContractName=Dict.make()),
+      ~message=`Should compress filter-less wildcard events into one topic0 OR-set`,
+    ).toEqual([
+      {
+        addresses: None,
+        topicQuery: [Multiple(["1", "2"])],
+      },
+    ])
   })
 
   Async.it("Wildcard topic selection which depends on addresses", async t => {
@@ -782,13 +786,15 @@ describe("RpcSource - getSelectionConfig", () => {
     }->RpcSource.getSelectionConfig(~chain)
 
     t.expect(
-      selectionConfig.getLogSelectionOrThrow(
+      selectionConfig.getLogSelectionsOrThrow(
         ~addressesByContractName=Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
-    ).toEqual({
-      addresses: None,
-      topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
-    })
+    ).toEqual([
+      {
+        addresses: None,
+        topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
+      },
+    ])
   })
 
   Async.it("Non-wildcard topic selection which depends on addresses", async t => {
@@ -804,13 +810,99 @@ describe("RpcSource - getSelectionConfig", () => {
     }->RpcSource.getSelectionConfig(~chain)
 
     t.expect(
-      selectionConfig.getLogSelectionOrThrow(
+      selectionConfig.getLogSelectionsOrThrow(
         ~addressesByContractName=Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
-    ).toEqual({
-      addresses: Some([mockAddress0]),
-      topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
-    })
+    ).toEqual([
+      {
+        addresses: Some([mockAddress0]),
+        topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
+      },
+    ])
+  })
+
+  it("Fans out one selection per wildcard event that has filters", t => {
+    let selectionConfig = {
+      dependsOnAddresses: false,
+      eventConfigs: [
+        (MockIndexer.evmEventConfig(
+          ~id="1",
+          ~isWildcard=true,
+          ~eventFilters=Static([
+            {
+              topic0: ["1"->EvmTypes.Hex.fromStringUnsafe],
+              topic1: ["a"->EvmTypes.Hex.fromStringUnsafe],
+              topic2: [],
+              topic3: [],
+            },
+          ]),
+        ) :> Internal.eventConfig),
+        (MockIndexer.evmEventConfig(
+          ~id="2",
+          ~isWildcard=true,
+          ~eventFilters=Static([
+            {
+              topic0: ["2"->EvmTypes.Hex.fromStringUnsafe],
+              topic1: ["b"->EvmTypes.Hex.fromStringUnsafe],
+              topic2: [],
+              topic3: [],
+            },
+          ]),
+        ) :> Internal.eventConfig),
+      ],
+    }->RpcSource.getSelectionConfig(~chain)
+
+    t.expect(
+      selectionConfig.getLogSelectionsOrThrow(~addressesByContractName=Dict.make()),
+    ).toEqual([
+      {
+        addresses: None,
+        topicQuery: [Single("1"), Single("a")],
+      },
+      {
+        addresses: None,
+        topicQuery: [Single("2"), Single("b")],
+      },
+    ])
+  })
+
+  it("Fans out one selection per group of a single wildcard event's OR filter", t => {
+    let selectionConfig = {
+      dependsOnAddresses: false,
+      eventConfigs: [
+        (MockIndexer.evmEventConfig(
+          ~id="w",
+          ~isWildcard=true,
+          ~eventFilters=Static([
+            {
+              topic0: ["w"->EvmTypes.Hex.fromStringUnsafe],
+              topic1: ["a"->EvmTypes.Hex.fromStringUnsafe],
+              topic2: [],
+              topic3: [],
+            },
+            {
+              topic0: ["w"->EvmTypes.Hex.fromStringUnsafe],
+              topic1: [],
+              topic2: ["b"->EvmTypes.Hex.fromStringUnsafe],
+              topic3: [],
+            },
+          ]),
+        ) :> Internal.eventConfig),
+      ],
+    }->RpcSource.getSelectionConfig(~chain)
+
+    t.expect(
+      selectionConfig.getLogSelectionsOrThrow(~addressesByContractName=Dict.make()),
+    ).toEqual([
+      {
+        addresses: None,
+        topicQuery: [Single("w"), Single("a")],
+      },
+      {
+        addresses: None,
+        topicQuery: [Single("w"), Null, Single("b")],
+      },
+    ])
   })
 
   it("Panics when selection has empty event configs", t => {
@@ -829,23 +921,29 @@ describe("RpcSource - getSelectionConfig", () => {
     }
   })
 
-  it("Panics when selection has normal event and event with filters", t => {
-    try {
-      let _ = {
-        dependsOnAddresses: true,
-        eventConfigs: [
-          (MockIndexer.evmEventConfig(~id="1") :> Internal.eventConfig),
-          (MockIndexer.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
-        ],
-      }->RpcSource.getSelectionConfig(~chain)
-      JsError.throwWithMessage("Should have thrown")
-    } catch {
-    | Source.GetItemsError(UnsupportedSelection({message})) =>
-      t.expect(message).toBe(
-        "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
-      )
-    | _ => JsError.throwWithMessage("Should have thrown UnsupportedSelection")
-    }
+  it("Fans out one selection per event when a normal event is mixed with a filtered event", t => {
+    let selectionConfig = {
+      dependsOnAddresses: true,
+      eventConfigs: [
+        (MockIndexer.evmEventConfig(~id="1") :> Internal.eventConfig),
+        (MockIndexer.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
+      ],
+    }->RpcSource.getSelectionConfig(~chain)
+
+    t.expect(
+      selectionConfig.getLogSelectionsOrThrow(
+        ~addressesByContractName=Dict.fromArray([("ERC20", [mockAddress0])]),
+      ),
+    ).toEqual([
+      {
+        addresses: Some([mockAddress0]),
+        topicQuery: [Single("1")],
+      },
+      {
+        addresses: Some([mockAddress0]),
+        topicQuery: [Single("2"), Single(mockAddress0->Address.toString)],
+      },
+    ])
   })
 })
 
@@ -1452,6 +1550,212 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
           }),
         ),
       ))
+    },
+  )
+})
+
+describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
+  let sighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+
+  Async.it(
+    "Issues one eth_getLogs per selection and dedups a log matched by more than one",
+    async t => {
+      // A single event whose `where` is an OR of two param groups compiles to
+      // two topic selections → two eth_getLogs. The mock returns the same log
+      // for both, so the result must be deduped to one item.
+      let eventConfig = MockIndexer.evmEventConfig(
+        // `id` must equal the router key derived at lookup — `sighash_topicCount`
+        ~id=`${sighash}_1`,
+        ~eventFilters=Static([
+          {
+            topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+            topic1: [
+              "0x0000000000000000000000000000000000000000000000000000000000000001"->EvmTypes.Hex.fromStringUnsafe,
+            ],
+            topic2: [],
+            topic3: [],
+          },
+          {
+            topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+            topic1: [],
+            topic2: [
+              "0x0000000000000000000000000000000000000000000000000000000000000002"->EvmTypes.Hex.fromStringUnsafe,
+            ],
+            topic3: [],
+          },
+        ]),
+      )
+
+      let logJson = JSON.Object(
+        Dict.fromArray([
+          ("address", JSON.String(mockAddress->Address.toString)),
+          ("topics", JSON.Array([JSON.String(sighash)])),
+          ("data", JSON.String("0x")),
+          ("blockNumber", JSON.String("0x64")),
+          (
+            "transactionHash",
+            JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
+          ),
+          ("transactionIndex", JSON.String("0x1")),
+          ("blockHash", JSON.String("0xb64")),
+          ("logIndex", JSON.String("0x2")),
+          ("removed", JSON.Boolean(false)),
+        ]),
+      )
+      let blockJson = JSON.Object(
+        Dict.fromArray([
+          ("number", JSON.String("0x64")),
+          ("timestamp", JSON.String("0x64")),
+          ("hash", JSON.String("0xb64")),
+          ("parentHash", JSON.String("0xb63")),
+        ]),
+      )
+
+      let mock = await MockRpcServer.make(~getResult=method =>
+        switch method {
+        | "eth_getLogs" => JSON.Array([logJson])
+        | "eth_getBlockByNumber" => blockJson
+        | _ => JSON.Null
+        }
+      )
+
+      let source = RpcSource.make({
+        url: mock.url,
+        chain,
+        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventParams: [
+          {
+            sighash,
+            topicCount: 1,
+            eventName: eventConfig.name,
+            contractName: eventConfig.contractName,
+            params: [],
+          },
+        ],
+        lowercaseAddresses: false,
+      })
+
+      let result = try {
+        let page = await source.getItemsOrThrow(
+          ~fromBlock=0,
+          ~toBlock=Some(100),
+          ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+          ~contractNameByAddress=FetchState.deriveContractNameByAddress(
+            Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+          ),
+          ~knownHeight=100,
+          ~partitionId="0",
+          ~selection={
+            dependsOnAddresses: true,
+            eventConfigs: [(eventConfig :> Internal.eventConfig)],
+          },
+          ~retry=0,
+          ~logger=Logging.createChild(~params={"test": "RpcSource fan-out"}),
+        )
+        mock.close()
+        page
+      } catch {
+      | exn =>
+        mock.close()
+        throw(exn)
+      }
+
+      let getLogsRequestCount =
+        mock.requests->Array.filter(body => body->String.includes("eth_getLogs"))->Array.length
+
+      t.expect((getLogsRequestCount, result.parsedQueueItems->Array.length)).toEqual((2, 1))
+    },
+  )
+})
+
+describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
+  let sighash = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+
+  Async.it(
+    "Advances the range without an eth_getLogs when the filter resolves to no selections",
+    async t => {
+      // `where: false` compiles to an empty topic-selection set, so there is
+      // nothing to query — the batch must advance the cursor without issuing an
+      // eth_getLogs (and without throwing, which the pre-fan-out code did).
+      let eventConfig = MockIndexer.evmEventConfig(
+        ~id=`${sighash}_1`,
+        ~isWildcard=true,
+        ~eventFilters=Static([]),
+      )
+
+      // Echo the requested block number so `latestFetchedBlockNumber` reflects
+      // the block the source actually loaded, not a constant baked into the mock.
+      let mock = await MockRpcServer.makeWithParams(~getResult=(~method, ~params) =>
+        switch method {
+        | "eth_getBlockByNumber" =>
+          let requestedBlockHex = switch params {
+          | JSON.Array([JSON.String(hex), _]) => hex
+          | _ => "0x0"
+          }
+          JSON.Object(
+            Dict.fromArray([
+              ("number", JSON.String(requestedBlockHex)),
+              ("timestamp", JSON.String("0x64")),
+              ("hash", JSON.String("0xb64")),
+              ("parentHash", JSON.String("0xb63")),
+            ]),
+          )
+        | _ => JSON.Null
+        }
+      )
+
+      let source = RpcSource.make({
+        url: mock.url,
+        chain,
+        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventParams: [
+          {
+            sighash,
+            topicCount: 1,
+            eventName: eventConfig.name,
+            contractName: eventConfig.contractName,
+            params: [],
+          },
+        ],
+        lowercaseAddresses: false,
+      })
+
+      let result = try {
+        let page = await source.getItemsOrThrow(
+          ~fromBlock=0,
+          ~toBlock=Some(100),
+          ~addressesByContractName=Dict.make(),
+          ~contractNameByAddress=FetchState.deriveContractNameByAddress(Dict.make()),
+          ~knownHeight=100,
+          ~partitionId="0",
+          ~selection={
+            dependsOnAddresses: false,
+            eventConfigs: [(eventConfig :> Internal.eventConfig)],
+          },
+          ~retry=0,
+          ~logger=Logging.createChild(~params={"test": "RpcSource skip-all"}),
+        )
+        mock.close()
+        page
+      } catch {
+      | exn =>
+        mock.close()
+        throw(exn)
+      }
+
+      let getLogsRequestCount =
+        mock.requests->Array.filter(body => body->String.includes("eth_getLogs"))->Array.length
+
+      t.expect((
+        getLogsRequestCount,
+        result.parsedQueueItems->Array.length,
+        result.latestFetchedBlockNumber,
+      )).toEqual((0, 0, 100))
     },
   )
 })

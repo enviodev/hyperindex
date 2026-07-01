@@ -26,7 +26,7 @@ Chain-specific singleton IDs (e.g., Bundle): `${event.chainId}-1`
 ## Chain-Specific Logic
 
 ```ts
-Contract.Event.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "Contract", event: "Event" }, async ({ event, context }) => {
   const chainId = context.chain.id;
 
   const config = {
