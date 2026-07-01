@@ -238,23 +238,20 @@ type logSelection = {
 // A log can satisfy more than one selection when a single event's `where` is an
 // OR of param groups, so dedup the fanned-out responses by (blockNumber,
 // logIndex) — unique per chain — keeping the first occurrence.
-let mergeAndDedupItems = (itemsPerSelection: array<array<EvmRpcClient.rpcEventItem>>) =>
-  switch itemsPerSelection {
-  | [items] => items
-  | _ =>
-    let seen = Utils.Set.make()
-    let merged = []
-    itemsPerSelection->Array.forEach(items =>
-      items->Array.forEach((item: EvmRpcClient.rpcEventItem) => {
-        let key = `${item.log.blockNumber->Int.toString}-${item.log.logIndex->Int.toString}`
-        if seen->Utils.Set.has(key)->not {
-          seen->Utils.Set.add(key)->ignore
-          merged->Array.push(item)->ignore
-        }
-      })
-    )
-    merged
-  }
+let mergeAndDedupItems = (itemsPerSelection: array<array<EvmRpcClient.rpcEventItem>>) => {
+  let seen = Utils.Set.make()
+  let merged = []
+  itemsPerSelection->Array.forEach(items =>
+    items->Array.forEach((item: EvmRpcClient.rpcEventItem) => {
+      let key = `${item.log.blockNumber->Int.toString}-${item.log.logIndex->Int.toString}`
+      if seen->Utils.Set.has(key)->not {
+        seen->Utils.Set.add(key)->ignore
+        merged->Array.push(item)->ignore
+      }
+    })
+  )
+  merged
+}
 
 let getNextPage = (
   ~fromBlock,
@@ -278,29 +275,41 @@ let getNextPage = (
 
   let latestFetchedBlockPromise = loadBlock(toBlock)
 
+  let queryLogs = ({addresses, topicQuery}: logSelection) => {
+    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
+    rpcClient.getLogs({
+      fromBlock,
+      toBlock,
+      ?addresses,
+      topics: topicQuery->Array.map(filter =>
+        switch filter {
+        | Rpc.GetLogs.Null => Nullable.null
+        | Single(topic) => Nullable.make([topic])
+        | Multiple(topics) => Nullable.make(topics)
+        }
+      ),
+    })
+  }
+
   let logsPromise = switch logSelections {
   | [] =>
     latestFetchedBlockPromise->Promise.thenResolve((latestFetchedBlockInfo): eventBatchQuery => {
       items: [],
       latestFetchedBlockInfo,
     })
+  // Fast path: a single selection needs no cross-request merge or dedup.
+  | [logSelection] =>
+    logSelection
+    ->queryLogs
+    ->Promise.then(async items => {
+      {
+        items,
+        latestFetchedBlockInfo: await latestFetchedBlockPromise,
+      }
+    })
   | _ =>
     logSelections
-    ->Array.map(({addresses, topicQuery}) => {
-      Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
-      rpcClient.getLogs({
-        fromBlock,
-        toBlock,
-        ?addresses,
-        topics: topicQuery->Array.map(filter =>
-          switch filter {
-          | Rpc.GetLogs.Null => Nullable.null
-          | Single(topic) => Nullable.make([topic])
-          | Multiple(topics) => Nullable.make(topics)
-          }
-        ),
-      })
-    })
+    ->Array.map(queryLogs)
     ->Promise.all
     ->Promise.then(async itemsPerSelection => {
       {
