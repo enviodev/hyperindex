@@ -35,6 +35,15 @@ let expectedToken: Indexer.Entities.Token.t = {
   owner_id: owner->Address.toString,
 }
 
+let expectedCollection: Indexer.Entities.NftCollection.t = {
+  id: newNft->Address.toString,
+  contractAddress: newNft->Address.toString,
+  name: "n",
+  symbol: "s",
+  maxSupply: 0n,
+  currentSupply: 0,
+}
+
 // SimpleNft has no configured address; it's registered dynamically by
 // NftFactory.SimpleNftCreated. A non-wildcard SimpleNft.Transfer for an address
 // registered in an earlier process() call routes to the handler unchanged.
@@ -104,6 +113,31 @@ Async.it("reports a non-wildcard simulate item whose srcAddress is never indexed
       `simulate: 1 item you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler — usually a non-wildcard srcAddress that isn't indexed for the contract, or a where/block filter that excluded the event. Unrouted items, by index in each chain's simulate array:` ++ "\n  - chain 1337: 0",
     ),
   )
+})
+
+// config.yaml stores NftFactory's address checksummed; a simulate srcAddress in a
+// different casing (here lowercase) must still route the non-wildcard
+// SimpleNftCreated event. Before normalization the raw string compare dropped it,
+// leaving no way to construct a mixed-case routable address for simulate.
+Async.it("routes a simulate event whose srcAddress casing differs from the configured address", async t => {
+  let indexer = Indexer.createTestIndexer()
+  let _ = await indexer.process({
+    chains: {
+      \"1337": {
+        startBlock: 1,
+        endBlock: 100,
+        simulate: [
+          {
+            ...createNft,
+            srcAddress: Address.unsafeFromString("0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"),
+          },
+        ],
+      },
+    },
+  })
+
+  let collections = await indexer.\"NftCollection".getAll()
+  t.expect(collections).toEqual([expectedCollection])
 })
 
 // Two items resolving to the same (block, logIndex) is an ambiguous input that

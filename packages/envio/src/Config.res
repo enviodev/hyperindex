@@ -1018,6 +1018,22 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   }
 }
 
+// Canonicalize a user-provided address to the configured casing so it matches
+// addresses parsed from config.yaml during routing. HyperSync/RPC data arrives
+// already canonical; only user-land input (simulate srcAddress, contractRegister
+// add) can carry arbitrary casing and needs this before comparison.
+let normalizeUserAddress = (config: t, address: Address.t): Address.t =>
+  switch config.ecosystem.name {
+  | Ecosystem.Evm =>
+    if config.lowercaseAddresses {
+      address->Address.Evm.fromAddressLowercaseOrThrow
+    } else {
+      address->Address.Evm.fromAddressOrThrow
+    }
+  // TODO: Ideally we should do the same for other ecosystems
+  | Ecosystem.Fuel | Ecosystem.Svm => address
+  }
+
 // Look up an event config by (contract, event) name. When `chainId` is given,
 // returns that chain's per-chain event config (matters for where-callback
 // probe detection, which runs with the chain's real id). Without `chainId`,
