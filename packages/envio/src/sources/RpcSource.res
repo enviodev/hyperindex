@@ -300,7 +300,7 @@ let getNextPage = (
   ->Promise.race
   ->Promise.catch(err => {
     let executedBlockInterval = toBlock - fromBlock + 1
-    let shrink = () =>
+    let shrunkBlockInterval =
       Pervasives.max(1, (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt)
 
     // Deterministic "range too large" errors resize and retry immediately (no
@@ -313,7 +313,7 @@ let getNextPage = (
     | Some((interval, isMaxRange)) =>
       Some(interval, isMaxRange ? maxSuggestedBlockIntervalKey : partitionId)
     | None if executedBlockInterval > 1 && err->isResponseTooLargeError =>
-      Some(shrink(), maxSuggestedBlockIntervalKey)
+      Some(shrunkBlockInterval, maxSuggestedBlockIntervalKey)
     | None => None
     }
 
@@ -330,7 +330,7 @@ let getNextPage = (
         ),
       )
     | None =>
-      mutSuggestedBlockIntervals->Dict.set(partitionId, shrink())
+      mutSuggestedBlockIntervals->Dict.set(partitionId, shrunkBlockInterval)
       throw(
         Source.GetItemsError(
           FailedGettingItems({
