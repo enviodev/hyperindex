@@ -1759,3 +1759,159 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
     },
   )
 })
+
+describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresses", () => {
+  let sighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  let filterTopic1 = "0x0000000000000000000000000000000000000000000000000000000000000001"
+  let addrA = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+  let addrB = Envio.TestHelpers.Addresses.mockAddresses[1]->Option.getOrThrow
+
+  // Regression guard against a cross-contract filter leak: ContractA filters on
+  // topic1, ContractB is unfiltered, and both share topic0. Each contract's query
+  // must be scoped to its own addresses — otherwise ContractB's `[sig]` query
+  // would also cover ContractA's address, fetch a ContractA log, and route it back
+  // to ContractA (by address), bypassing its filter since routing never re-applies
+  // the topic filter.
+  Async.it(
+    "a filtered contract must not receive a log fetched by another contract's query",
+    async t => {
+      let eventA = MockIndexer.evmEventConfig(
+        ~contractName="ContractA",
+        ~id=`${sighash}_1`,
+        ~eventFilters=Static([
+          {
+            topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+            topic1: [filterTopic1->EvmTypes.Hex.fromStringUnsafe],
+            topic2: [],
+            topic3: [],
+          },
+        ]),
+      )
+      // Unfiltered, but pin topic0 to the bare sighash (MockIndexer otherwise
+      // derives it from `id`, which we set to the router key `sighash_1`).
+      let eventB = MockIndexer.evmEventConfig(
+        ~contractName="ContractB",
+        ~id=`${sighash}_1`,
+        ~eventFilters=Static([
+          {
+            topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+            topic1: [],
+            topic2: [],
+            topic3: [],
+          },
+        ]),
+      )
+
+      // A log emitted by ContractA's address, carrying only topic0 (so it does
+      // NOT match ContractA's topic1 filter). ContractA's own query would never
+      // return it; only ContractB's unfiltered query can.
+      let leakedLog = JSON.Object(
+        Dict.fromArray([
+          ("address", JSON.String(addrA->Address.toString)),
+          ("topics", JSON.Array([JSON.String(sighash)])),
+          ("data", JSON.String("0x")),
+          ("blockNumber", JSON.String("0x64")),
+          (
+            "transactionHash",
+            JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
+          ),
+          ("transactionIndex", JSON.String("0x1")),
+          ("blockHash", JSON.String("0xb64")),
+          ("logIndex", JSON.String("0x2")),
+          ("removed", JSON.Boolean(false)),
+        ]),
+      )
+      let blockJson = JSON.Object(
+        Dict.fromArray([
+          ("number", JSON.String("0x64")),
+          ("timestamp", JSON.String("0x64")),
+          ("hash", JSON.String("0xb64")),
+          ("parentHash", JSON.String("0xb63")),
+        ]),
+      )
+
+      // Honor the query's `address` and `topics` like a real eth_getLogs, so a
+      // per-contract-scoped query (the fix) would exclude addrA and return nothing.
+      let queryReturnsLeakedLog = (params: JSON.t) =>
+        switch params {
+        | JSON.Array([JSON.Object(filter)]) =>
+          let addressOk = switch filter->Dict.get("address") {
+          | Some(JSON.Array(addrs)) =>
+            addrs->Array.some(a =>
+              switch a {
+              | JSON.String(s) =>
+                s->String.toLowerCase == addrA->Address.toString->String.toLowerCase
+              | _ => false
+              }
+            )
+          | _ => true
+          }
+          let topics = switch filter->Dict.get("topics") {
+          | Some(JSON.Array(t)) => t
+          | _ => []
+          }
+          let topic0Ok = switch topics->Array.get(0) {
+          | Some(JSON.Array(hs)) => hs->Array.some(h => h == JSON.String(sighash))
+          | _ => true
+          }
+          // The leaked log has no topic1, so any topic1 constraint excludes it.
+          let topic1Ok = switch topics->Array.get(1) {
+          | Some(JSON.Array(_)) => false
+          | _ => true
+          }
+          addressOk && topic0Ok && topic1Ok
+        | _ => false
+        }
+
+      let mock = await MockRpcServer.makeWithParams(~getResult=(~method, ~params) =>
+        switch method {
+        | "eth_getLogs" => queryReturnsLeakedLog(params) ? JSON.Array([leakedLog]) : JSON.Array([])
+        | "eth_getBlockByNumber" => blockJson
+        | _ => JSON.Null
+        }
+      )
+
+      let addressesByContractName = Dict.fromArray([("ContractA", [addrA]), ("ContractB", [addrB])])
+      let source = RpcSource.make({
+        url: mock.url,
+        chain,
+        eventRouter: [eventA, eventB]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventParams: [
+          {sighash, topicCount: 1, eventName: eventA.name, contractName: "ContractA", params: []},
+          {sighash, topicCount: 1, eventName: eventB.name, contractName: "ContractB", params: []},
+        ],
+        lowercaseAddresses: false,
+      })
+
+      let result = try {
+        let page = await source.getItemsOrThrow(
+          ~fromBlock=0,
+          ~toBlock=Some(100),
+          ~addressesByContractName,
+          ~contractNameByAddress=FetchState.deriveContractNameByAddress(addressesByContractName),
+          ~knownHeight=100,
+          ~partitionId="0",
+          ~selection={
+            dependsOnAddresses: true,
+            eventConfigs: [(eventA :> Internal.eventConfig), (eventB :> Internal.eventConfig)],
+          },
+          ~retry=0,
+          ~logger=Logging.createChild(~params={"test": "RpcSource pooled leak"}),
+        )
+        mock.close()
+        page
+      } catch {
+      | exn =>
+        mock.close()
+        throw(exn)
+      }
+
+      // The addrA log matches neither contract's own scoped query (ContractA's
+      // filters it out on topic1; ContractB's query never covers addrA), so
+      // nothing is emitted.
+      t.expect(result.parsedQueueItems->Array.length).toEqual(0)
+    },
+  )
+})
