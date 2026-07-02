@@ -148,6 +148,9 @@ pub enum SelItem {
 pub struct AggregateSelection {
     pub table: String,
     pub items: Vec<AggSelItem>,
+    /// The public role's response limit caps the rows returned by `nodes`
+    /// while the aggregate itself is computed over the uncapped set.
+    pub nodes_limit: Option<i64>,
 }
 
 pub enum AggSelItem {

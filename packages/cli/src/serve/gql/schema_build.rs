@@ -300,59 +300,125 @@ impl<'a> Builder<'a> {
         let list_ty = TypeRef::list(TypeRef::non_null(value_ty.clone()));
 
         let mut fields: Vec<InputValueDef> = Vec::new();
-        let mut push = |n: &str, ty: TypeRef| {
-            fields.push(InputValueDef::new(n, None, ty));
+        let mut push = |n: &str, d: Option<&str>, ty: TypeRef| {
+            fields.push(InputValueDef::new(n, d, ty));
         };
 
         if c.is_array {
-            push("_contained_in", value_ty.clone());
-            push("_contains", value_ty.clone());
+            push(
+                "_contained_in",
+                Some("is the array contained in the given array value"),
+                value_ty.clone(),
+            );
+            push(
+                "_contains",
+                Some("does the array contain the given value"),
+                value_ty.clone(),
+            );
         }
         if c.scalar == Scalar::Jsonb && !c.is_array {
-            push("_cast", TypeRef::named("jsonb_cast_exp"));
+            push("_cast", None, TypeRef::named("jsonb_cast_exp"));
             self.build_jsonb_cast_exp();
-            push("_contained_in", value_ty.clone());
-            push("_contains", value_ty.clone());
+            push(
+                "_contained_in",
+                Some("is the column contained in the given json value"),
+                value_ty.clone(),
+            );
+            push(
+                "_contains",
+                Some("does the column contain the given json value at the top level"),
+                value_ty.clone(),
+            );
         }
-        push("_eq", value_ty.clone());
-        push("_gt", value_ty.clone());
-        push("_gte", value_ty.clone());
+        push("_eq", None, value_ty.clone());
+        push("_gt", None, value_ty.clone());
+        push("_gte", None, value_ty.clone());
         if c.scalar == Scalar::Jsonb && !c.is_array {
-            push("_has_key", TypeRef::named("String"));
+            push(
+                "_has_key",
+                Some("does the string exist as a top-level key in the column"),
+                TypeRef::named("String"),
+            );
             push(
                 "_has_keys_all",
+                Some("do all of these strings exist as top-level keys in the column"),
                 TypeRef::list(TypeRef::non_null(TypeRef::named("String"))),
             );
             push(
                 "_has_keys_any",
+                Some("do any of these strings exist as top-level keys in the column"),
                 TypeRef::list(TypeRef::non_null(TypeRef::named("String"))),
             );
         }
         if c.scalar == Scalar::String && !c.is_array {
-            push("_ilike", TypeRef::named(&scalar));
+            push(
+                "_ilike",
+                Some("does the column match the given case-insensitive pattern"),
+                TypeRef::named(&scalar),
+            );
         }
-        push("_in", list_ty.clone());
+        push("_in", None, list_ty.clone());
         if c.scalar == Scalar::String && !c.is_array {
-            push("_iregex", TypeRef::named(&scalar));
+            push(
+                "_iregex",
+                Some("does the column match the given POSIX regular expression, case insensitive"),
+                TypeRef::named(&scalar),
+            );
         }
-        push("_is_null", TypeRef::named("Boolean"));
+        push("_is_null", None, TypeRef::named("Boolean"));
         if c.scalar == Scalar::String && !c.is_array {
-            push("_like", TypeRef::named(&scalar));
+            push(
+                "_like",
+                Some("does the column match the given pattern"),
+                TypeRef::named(&scalar),
+            );
         }
-        push("_lt", value_ty.clone());
-        push("_lte", value_ty.clone());
-        push("_neq", value_ty.clone());
+        push("_lt", None, value_ty.clone());
+        push("_lte", None, value_ty.clone());
+        push("_neq", None, value_ty.clone());
         if c.scalar == Scalar::String && !c.is_array {
-            push("_nilike", TypeRef::named(&scalar));
+            push(
+                "_nilike",
+                Some("does the column NOT match the given case-insensitive pattern"),
+                TypeRef::named(&scalar),
+            );
         }
-        push("_nin", list_ty);
+        push("_nin", None, list_ty);
         if c.scalar == Scalar::String && !c.is_array {
-            push("_niregex", TypeRef::named(&scalar));
-            push("_nlike", TypeRef::named(&scalar));
-            push("_nregex", TypeRef::named(&scalar));
-            push("_nsimilar", TypeRef::named(&scalar));
-            push("_regex", TypeRef::named(&scalar));
-            push("_similar", TypeRef::named(&scalar));
+            push(
+                "_niregex",
+                Some(
+                    "does the column NOT match the given POSIX regular expression, case insensitive",
+                ),
+                TypeRef::named(&scalar),
+            );
+            push(
+                "_nlike",
+                Some("does the column NOT match the given pattern"),
+                TypeRef::named(&scalar),
+            );
+            push(
+                "_nregex",
+                Some(
+                    "does the column NOT match the given POSIX regular expression, case sensitive",
+                ),
+                TypeRef::named(&scalar),
+            );
+            push(
+                "_nsimilar",
+                Some("does the column NOT match the given SQL regular expression"),
+                TypeRef::named(&scalar),
+            );
+            push(
+                "_regex",
+                Some("does the column match the given POSIX regular expression, case sensitive"),
+                TypeRef::named(&scalar),
+            );
+            push(
+                "_similar",
+                Some("does the column match the given SQL regular expression"),
+                TypeRef::named(&scalar),
+            );
         }
 
         // Hasura sorts comparison-exp fields alphabetically.

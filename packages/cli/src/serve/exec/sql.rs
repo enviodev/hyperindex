@@ -753,7 +753,13 @@ fn emit_agg_select(
                 b.ident(&format!("_n{node_idx}"));
                 node_idx += 1;
                 emit_order_by_refs(b, &ra.order);
-                b.push("), '[]')");
+                b.push(")");
+                // The role's response limit caps nodes rows while the
+                // aggregates above stay uncapped.
+                if let Some(n) = sel.nodes_limit {
+                    b.push(&format!(" FILTER (WHERE \"_rn\" <= {n})"));
+                }
+                b.push(", '[]')");
             }
         }
     }
@@ -763,7 +769,8 @@ fn emit_agg_select(
         Out::Lateral => b.push(" AS \"_v\""),
     }
     b.push(" FROM (");
-    emit_agg_middle(b, table, ra, &cols, &nodes, corr);
+    let with_row_numbers = sel.nodes_limit.is_some() && !nodes.is_empty();
+    emit_agg_middle(b, table, ra, &cols, &nodes, corr, with_row_numbers);
     b.push(") AS \"_r\"");
 }
 
@@ -847,6 +854,7 @@ fn emit_agg_middle(
     cols: &[String],
     nodes: &[&ir::ObjectSelection],
     corr: Option<&Corr>,
+    with_row_numbers: bool,
 ) {
     let order_in_base = ra.order_in_base();
     let t = b.alias();
@@ -875,6 +883,14 @@ fn emit_agg_middle(
         emit_row_json(b, &t, sel, &node_rel_aliases[n]);
         b.push(" AS ");
         b.ident(&format!("_n{n}"));
+    }
+    if with_row_numbers {
+        if !first {
+            b.push(", ");
+        }
+        first = false;
+        // Row order follows the base subquery's ORDER BY.
+        b.push("row_number() OVER () AS \"_rn\"");
     }
     if first && ra.order.is_empty() {
         b.push("1");
@@ -1407,6 +1423,7 @@ mod tests {
                             },
                         },
                     ],
+                    nodes_limit: None,
                 },
             },
         };

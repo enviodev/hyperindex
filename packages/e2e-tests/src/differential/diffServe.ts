@@ -35,6 +35,7 @@ interface Snapshot {
 
 function firstDiff(a: unknown, b: unknown, path = "$"): string | undefined {
   if (a === b) return undefined;
+  if (JSON.stringify(a) === JSON.stringify(b)) return undefined;
   if (
     typeof a !== typeof b ||
     a === null ||

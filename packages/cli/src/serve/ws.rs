@@ -3,22 +3,592 @@
 //! - `graphql-transport-ws` (the modern graphql-ws protocol)
 //! - `graphql-ws` (the legacy subscriptions-transport-ws protocol)
 //!
-//! Live queries are implemented the way Hasura's multiplexed live queries
-//! behave observably: an immediate first result, then a ~1s poll loop that
-//! pushes a new payload whenever the result changes.
+//! Live queries behave like Hasura's multiplexed live queries observably:
+//! an immediate first result, then a ~1s poll loop that pushes a new
+//! payload whenever the result changes. `<T>_stream` roots advance their
+//! cursor after every non-empty batch.
+//!
+//! Protocol differences pinned by the differential suite:
+//! - subscribe/start message types (`subscribe` vs `start`), data types
+//!   (`next` vs `data`).
+//! - error frame payloads: the modern protocol carries a bare ARRAY of
+//!   GraphQL errors; the legacy protocol wraps them in `{"errors": [...]}`.
+//! - the legacy protocol emits `ka` keepalives.
 
+use super::exec::error::GraphQLError;
+use super::exec::{self, ir, GraphQLRequest, Transport};
+use super::gql::schema_build::Role;
 use super::http::AppState;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
+use futures_util::sink::SinkExt;
+use futures_util::stream::StreamExt;
+use serde_json::json;
+use std::collections::HashMap;
+use tokio::sync::mpsc;
+
+const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1000);
+const KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Protocol {
+    /// graphql-transport-ws
+    Modern,
+    /// subscriptions-transport-ws (legacy; subprotocol name "graphql-ws")
+    Legacy,
+}
+
+impl Protocol {
+    fn data_type(&self) -> &'static str {
+        match self {
+            Protocol::Modern => "next",
+            Protocol::Legacy => "data",
+        }
+    }
+    fn start_type(&self) -> &'static str {
+        match self {
+            Protocol::Modern => "subscribe",
+            Protocol::Legacy => "start",
+        }
+    }
+    fn stop_type(&self) -> &'static str {
+        match self {
+            Protocol::Modern => "complete",
+            Protocol::Legacy => "stop",
+        }
+    }
+}
 
 pub fn handle_upgrade(
-    _state: AppState,
+    state: AppState,
     _headers: HeaderMap,
-    upgrade: axum::extract::ws::WebSocketUpgrade,
+    upgrade: WebSocketUpgrade,
 ) -> axum::response::Response {
-    // Placeholder: accept and immediately close until implemented.
     upgrade
         .protocols(["graphql-transport-ws", "graphql-ws"])
-        .on_upgrade(|_socket| async {})
+        .on_upgrade(move |socket| async move {
+            let protocol = match socket.protocol().and_then(|p| p.to_str().ok()) {
+                Some("graphql-transport-ws") => Protocol::Modern,
+                _ => Protocol::Legacy,
+            };
+            run_connection(state, socket, protocol).await;
+        })
         .into_response()
+}
+
+struct Connection {
+    state: AppState,
+    protocol: Protocol,
+    sender: mpsc::UnboundedSender<Message>,
+    role: Option<Role>,
+    /// Live operations by client-assigned id; sending on the channel stops
+    /// the poll task.
+    operations: HashMap<String, tokio::task::JoinHandle<()>>,
+}
+
+async fn run_connection(state: AppState, socket: WebSocket, protocol: Protocol) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+
+    let writer = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if ws_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut conn = Connection {
+        state,
+        protocol,
+        sender: tx.clone(),
+        role: None,
+        operations: HashMap::new(),
+    };
+
+    let mut keepalive = tokio::time::interval(KEEPALIVE_INTERVAL);
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    loop {
+        tokio::select! {
+            _ = keepalive.tick() => {
+                if conn.protocol == Protocol::Legacy && conn.role.is_some() {
+                    let _ = conn.sender.send(Message::Text("{\"type\":\"ka\"}".into()));
+                }
+            }
+            incoming = ws_rx.next() => {
+                let Some(Ok(msg)) = incoming else { break };
+                match msg {
+                    Message::Text(text) => {
+                        if handle_frame(&mut conn, &text).await.is_err() {
+                            break;
+                        }
+                    }
+                    Message::Ping(_) | Message::Pong(_) => {}
+                    Message::Close(_) => break,
+                    Message::Binary(_) => {}
+                }
+            }
+        }
+    }
+
+    for (_, task) in conn.operations.drain() {
+        task.abort();
+    }
+    drop(tx);
+    let _ = writer.await;
+}
+
+/// Returns Err to close the connection.
+async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
+    let frame: serde_json::Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(_) => {
+            return if conn.protocol == Protocol::Modern {
+                Err(())
+            } else {
+                Ok(())
+            }
+        }
+    };
+    let frame_type = frame.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+    match frame_type {
+        "connection_init" => {
+            let secret = frame
+                .get("payload")
+                .and_then(|p| p.get("headers"))
+                .and_then(|h| {
+                    h.get("x-hasura-admin-secret")
+                        .or_else(|| h.get("X-Hasura-Admin-Secret"))
+                })
+                .and_then(|v| v.as_str());
+            let role = match secret {
+                None => Role::Public,
+                Some(s) if s == conn.state.serve.admin_secret => Role::Admin,
+                Some(_) => {
+                    let err = GraphQLError::access_denied();
+                    match conn.protocol {
+                        Protocol::Modern => {
+                            // graphql-ws: reject with a close frame.
+                            let _ = conn.sender.send(Message::Close(Some(
+                                axum::extract::ws::CloseFrame {
+                                    code: 4403,
+                                    reason: "Forbidden".into(),
+                                },
+                            )));
+                            return Err(());
+                        }
+                        Protocol::Legacy => {
+                            send_json(
+                                conn,
+                                json!({"type": "connection_error", "payload": err.response_body()}),
+                            );
+                            return Err(());
+                        }
+                    }
+                }
+            };
+            conn.role = Some(role);
+            send_json(conn, json!({"type": "connection_ack"}));
+            if conn.protocol == Protocol::Legacy {
+                let _ = conn.sender.send(Message::Text("{\"type\":\"ka\"}".into()));
+            }
+            Ok(())
+        }
+        "ping" => {
+            send_json(conn, json!({"type": "pong"}));
+            Ok(())
+        }
+        "pong" => Ok(()),
+        "connection_terminate" => Err(()),
+        t if t == conn.protocol.start_type() => {
+            let Some(role) = conn.role else {
+                // Operations before connection_init.
+                return match conn.protocol {
+                    Protocol::Modern => {
+                        let _ =
+                            conn.sender
+                                .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                                    code: 4401,
+                                    reason: "Unauthorized".into(),
+                                })));
+                        Err(())
+                    }
+                    Protocol::Legacy => Ok(()),
+                };
+            };
+            let Some(id) = frame.get("id").and_then(|v| v.as_str()).map(String::from) else {
+                return Ok(());
+            };
+            if conn.operations.contains_key(&id) {
+                if conn.protocol == Protocol::Modern {
+                    let _ = conn
+                        .sender
+                        .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                            code: 4409,
+                            reason: format!("Subscriber for {id} already exists").into(),
+                        })));
+                    return Err(());
+                }
+                return Ok(());
+            }
+            let payload = frame.get("payload").cloned().unwrap_or(json!({}));
+            let request = GraphQLRequest {
+                query: payload
+                    .get("query")
+                    .and_then(|q| q.as_str())
+                    .map(String::from),
+                variables: payload.get("variables").cloned(),
+                operation_name: payload
+                    .get("operationName")
+                    .and_then(|o| o.as_str())
+                    .map(String::from),
+            };
+            start_operation(conn, role, id, request);
+            Ok(())
+        }
+        t if t == conn.protocol.stop_type() => {
+            if let Some(id) = frame.get("id").and_then(|v| v.as_str()) {
+                if let Some(task) = conn.operations.remove(id) {
+                    task.abort();
+                    // The client asked to stop; the legacy protocol echoes a
+                    // complete frame, the modern one does not.
+                    if conn.protocol == Protocol::Legacy {
+                        send_json(conn, json!({"type": "complete", "id": id}));
+                    }
+                }
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn send_json(conn: &Connection, value: serde_json::Value) {
+    let _ = conn.sender.send(Message::Text(value.to_string().into()));
+}
+
+fn start_operation(conn: &mut Connection, role: Role, id: String, request: GraphQLRequest) {
+    let state = conn.state.clone();
+    let protocol = conn.protocol;
+    let sender = conn.sender.clone();
+    let op_id = id.clone();
+
+    let task = tokio::spawn(async move {
+        run_operation(state, protocol, role, op_id, request, sender).await;
+    });
+    conn.operations.insert(id, task);
+}
+
+fn send_frame(
+    sender: &mpsc::UnboundedSender<Message>,
+    frame_type: &str,
+    id: &str,
+    payload_json: Option<&str>,
+) {
+    let mut out = String::with_capacity(64 + payload_json.map_or(0, |p| p.len()));
+    out.push_str("{\"type\":");
+    out.push_str(&serde_json::to_string(frame_type).unwrap());
+    out.push_str(",\"id\":");
+    out.push_str(&serde_json::to_string(id).unwrap());
+    if let Some(p) = payload_json {
+        out.push_str(",\"payload\":");
+        out.push_str(p);
+    }
+    out.push('}');
+    let _ = sender.send(Message::Text(out.into()));
+}
+
+fn send_error(
+    sender: &mpsc::UnboundedSender<Message>,
+    protocol: Protocol,
+    id: &str,
+    error: &GraphQLError,
+) {
+    let payload = match protocol {
+        // Modern protocol: a bare array of GraphQL errors.
+        Protocol::Modern => serde_json::Value::Array(vec![error.to_json()]).to_string(),
+        // Legacy protocol: wrapped in an errors object.
+        Protocol::Legacy => error.response_body().to_string(),
+    };
+    send_frame(sender, "error", id, Some(&payload));
+}
+
+async fn run_operation(
+    state: AppState,
+    protocol: Protocol,
+    role: Role,
+    id: String,
+    request: GraphQLRequest,
+    sender: mpsc::UnboundedSender<Message>,
+) {
+    let schema = state.schemas.for_role(role);
+    let operation =
+        match exec::validate::plan_request(&state.serve.model, schema, &request, Transport::Ws) {
+            Ok(op) => op,
+            Err(e) => {
+                send_error(&sender, protocol, &id, &e);
+                return;
+            }
+        };
+
+    match operation.kind {
+        ir::OperationKind::Query => {
+            match exec::execute_operation(&state.serve, schema, &operation).await {
+                Ok(body) => {
+                    send_frame(&sender, protocol.data_type(), &id, Some(&body));
+                    send_frame(&sender, "complete", &id, None);
+                }
+                Err(e) => send_error(&sender, protocol, &id, &e),
+            }
+        }
+        ir::OperationKind::Subscription => {
+            run_subscription(state.clone(), protocol, role, id, operation, sender).await
+        }
+    }
+}
+
+/// Live query / stream loop: emit the first result immediately, then poll,
+/// pushing only when the payload changes (streams: when a batch is
+/// non-empty, advancing the cursor).
+async fn run_subscription(
+    state: AppState,
+    protocol: Protocol,
+    role: Role,
+    id: String,
+    mut operation: ir::Operation,
+    sender: mpsc::UnboundedSender<Message>,
+) {
+    let schema = state.schemas.for_role(role);
+    let is_stream = matches!(
+        operation.root_fields.first(),
+        Some(ir::RootField::Table(ir::TableRoot {
+            kind: ir::TableRootKind::Stream { .. },
+            ..
+        }))
+    );
+
+    let mut last_payload: Option<String> = None;
+    loop {
+        match exec::execute_operation(&state.serve, schema, &operation).await {
+            Ok(body) => {
+                if is_stream {
+                    match advance_stream_cursor(&state, &operation, &body).await {
+                        Ok(Some(new_cursor_values)) => {
+                            // Non-empty batch: emit and move the cursor.
+                            send_frame(&sender, protocol.data_type(), &id, Some(&body));
+                            apply_cursor(&mut operation, new_cursor_values);
+                        }
+                        Ok(None) => {} // empty batch: keep waiting
+                        Err(e) => {
+                            send_error(&sender, protocol, &id, &e);
+                            return;
+                        }
+                    }
+                } else if last_payload.as_deref() != Some(body.as_str()) {
+                    send_frame(&sender, protocol.data_type(), &id, Some(&body));
+                    last_payload = Some(body);
+                }
+            }
+            Err(e) => {
+                send_error(&sender, protocol, &id, &e);
+                return;
+            }
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+/// For `<T>_stream` roots: fetches the cursor-column values of the current
+/// batch's last row (via a parallel query on the same args) so the next
+/// poll starts after it. Returns None when the batch is empty.
+async fn advance_stream_cursor(
+    state: &AppState,
+    operation: &ir::Operation,
+    batch_body: &str,
+) -> Result<Option<Vec<String>>, GraphQLError> {
+    let Some(ir::RootField::Table(root)) = operation.root_fields.first() else {
+        return Ok(None);
+    };
+    let ir::TableRootKind::Stream {
+        batch_size,
+        cursor,
+        where_,
+        ..
+    } = &root.kind
+    else {
+        return Ok(None);
+    };
+
+    // Cheap emptiness check on the emitted batch: {"data":{"<alias>":[]}}
+    let parsed: serde_json::Value = serde_json::from_str(batch_body)
+        .map_err(|_| GraphQLError::unexpected_payload("internal: non-JSON batch"))?;
+    let rows = parsed
+        .get("data")
+        .and_then(|d| d.get(&root.alias))
+        .and_then(|v| v.as_array());
+    match rows {
+        Some(rows) if !rows.is_empty() => {}
+        _ => return Ok(None),
+    }
+
+    // Query the raw cursor values for the same batch (the emitted selection
+    // may not include the cursor columns, and its serialization may differ
+    // from PG's text form, so read them directly).
+    let selection_items = cursor
+        .iter()
+        .enumerate()
+        .map(|(i, c)| ir::SelItem::Column {
+            alias: format!("c{i}"),
+            column: c.column.clone(),
+            // Force text serialization for lossless round-tripping into the
+            // next batch's bind values.
+            scalar: crate::serve::model::Scalar::String,
+            pg_type: "text".to_string(),
+            is_array: false,
+            json_path: None,
+        })
+        .collect();
+
+    let probe = ir::TableRoot {
+        alias: "c".to_string(),
+        table: root.table.clone(),
+        kind: ir::TableRootKind::Stream {
+            batch_size: *batch_size,
+            cursor: cursor
+                .iter()
+                .map(|c| ir::StreamCursor {
+                    column: c.column.clone(),
+                    scalar: c.scalar,
+                    pg_type: c.pg_type.clone(),
+                    is_array: c.is_array,
+                    initial_value: c.initial_value.clone(),
+                    descending: c.descending,
+                })
+                .collect(),
+            where_: where_.as_ref().map(clone_bool_exp),
+            selection: ir::ObjectSelection {
+                table: root.table.clone(),
+                items: selection_items,
+            },
+        },
+    };
+
+    let batch_json = exec::sql::execute_root(&state.serve, &probe).await?;
+    let batch: serde_json::Value = serde_json::from_str(&batch_json)
+        .map_err(|_| GraphQLError::unexpected_payload("internal: non-JSON cursor batch"))?;
+    let last = match batch.as_array().and_then(|a| a.last()) {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    let mut values = Vec::new();
+    for (i, _) in cursor.iter().enumerate() {
+        let v = last.get(format!("c{i}"));
+        match v {
+            Some(serde_json::Value::String(s)) => values.push(s.clone()),
+            Some(other) if !other.is_null() => values.push(other.to_string()),
+            _ => return Ok(None),
+        }
+    }
+    Ok(Some(values))
+}
+
+fn apply_cursor(operation: &mut ir::Operation, values: Vec<String>) {
+    if let Some(ir::RootField::Table(root)) = operation.root_fields.first_mut() {
+        if let ir::TableRootKind::Stream { cursor, .. } = &mut root.kind {
+            for (c, v) in cursor.iter_mut().zip(values) {
+                c.initial_value = Some(ir::SqlValue::new(v, c.pg_type.clone()));
+            }
+        }
+    }
+}
+
+/// BoolExp isn't Clone (SqlValue params keep it cheap to move, not copy);
+/// the stream probe needs its own copy of the where clause.
+fn clone_bool_exp(e: &ir::BoolExp) -> ir::BoolExp {
+    use ir::BoolExp::*;
+    match e {
+        And(v) => And(v.iter().map(clone_bool_exp).collect()),
+        Or(v) => Or(v.iter().map(clone_bool_exp).collect()),
+        Not(inner) => Not(Box::new(clone_bool_exp(inner))),
+        Compare {
+            column,
+            scalar,
+            pg_type,
+            is_array,
+            op,
+        } => Compare {
+            column: column.clone(),
+            scalar: *scalar,
+            pg_type: pg_type.clone(),
+            is_array: *is_array,
+            op: clone_compare_op(op),
+        },
+        ObjectRel {
+            local_column,
+            remote_table,
+            exp,
+        } => ObjectRel {
+            local_column: local_column.clone(),
+            remote_table: remote_table.clone(),
+            exp: Box::new(clone_bool_exp(exp)),
+        },
+        ArrayRel {
+            remote_column,
+            remote_table,
+            exp,
+        } => ArrayRel {
+            remote_column: remote_column.clone(),
+            remote_table: remote_table.clone(),
+            exp: Box::new(clone_bool_exp(exp)),
+        },
+        ArrayRelAggregate {
+            remote_column,
+            remote_table,
+            pred,
+        } => ArrayRelAggregate {
+            remote_column: remote_column.clone(),
+            remote_table: remote_table.clone(),
+            pred: ir::AggregatePredicate {
+                op: pred.op.clone(),
+                columns: pred.columns.clone(),
+                distinct: pred.distinct,
+                filter: pred.filter.as_ref().map(|f| Box::new(clone_bool_exp(f))),
+                predicate: pred.predicate.iter().map(clone_compare_op).collect(),
+            },
+        },
+    }
+}
+
+fn clone_compare_op(op: &ir::CompareOp) -> ir::CompareOp {
+    use ir::CompareOp::*;
+    match op {
+        Eq(v) => Eq(v.clone()),
+        Neq(v) => Neq(v.clone()),
+        Gt(v) => Gt(v.clone()),
+        Gte(v) => Gte(v.clone()),
+        Lt(v) => Lt(v.clone()),
+        Lte(v) => Lte(v.clone()),
+        In(v) => In(v.clone()),
+        Nin(v) => Nin(v.clone()),
+        IsNull(b) => IsNull(*b),
+        Like(v) => Like(v.clone()),
+        Nlike(v) => Nlike(v.clone()),
+        Ilike(v) => Ilike(v.clone()),
+        Nilike(v) => Nilike(v.clone()),
+        Similar(v) => Similar(v.clone()),
+        Nsimilar(v) => Nsimilar(v.clone()),
+        Regex(v) => Regex(v.clone()),
+        Iregex(v) => Iregex(v.clone()),
+        Nregex(v) => Nregex(v.clone()),
+        Niregex(v) => Niregex(v.clone()),
+        Contains(v) => Contains(v.clone()),
+        ContainedIn(v) => ContainedIn(v.clone()),
+        HasKey(v) => HasKey(v.clone()),
+        HasKeysAll(v) => HasKeysAll(v.clone()),
+        HasKeysAny(v) => HasKeysAny(v.clone()),
+        CastText(v) => CastText(v.iter().map(clone_compare_op).collect()),
+    }
 }

@@ -83,17 +83,11 @@ async fn graphql_handler(
         }
     };
 
-    let request: GraphQLRequest = match serde_json::from_slice(&body) {
+    let request = match decode_request_body(&body) {
         Ok(r) => r,
-        Err(_) => {
-            let e = exec::error::GraphQLError {
-                message: "Error in $: Failed reading: not a valid json value".to_string(),
-                path: "$".to_string(),
-                code: exec::error::CODE_BAD_REQUEST,
-                status: 400,
-            };
+        Err(e) => {
             return (
-                StatusCode::BAD_REQUEST,
+                StatusCode::from_u16(e.status).unwrap_or(StatusCode::OK),
                 [("content-type", "application/json; charset=utf-8")],
                 e.response_body().to_string(),
             );
@@ -107,6 +101,133 @@ async fn graphql_handler(
         [("content-type", "application/json; charset=utf-8")],
         body,
     )
+}
+
+/// aeson's name for a JSON value's kind, as it appears in Hasura's
+/// parse-failed messages.
+fn aeson_kind(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "Null",
+        serde_json::Value::Bool(_) => "Boolean",
+        serde_json::Value::Number(_) => "Number",
+        serde_json::Value::String(_) => "String",
+        serde_json::Value::Array(_) => "Array",
+        serde_json::Value::Object(_) => "Object",
+    }
+}
+
+/// Decodes the POST body with Hasura's exact error shapes: invalid UTF-8
+/// and malformed JSON are `invalid-json`; structurally wrong GQLReq
+/// payloads are `parse-failed` with aeson-style messages.
+fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::GraphQLError> {
+    use exec::error::GraphQLError;
+
+    let invalid_json = |message: String| GraphQLError {
+        message,
+        path: "$".to_string(),
+        code: "invalid-json",
+        status: 200,
+    };
+    let parse_failed = |path: &str, message: String| GraphQLError {
+        message,
+        path: path.to_string(),
+        code: exec::error::CODE_PARSE_FAILED,
+        status: 200,
+    };
+
+    let text =
+        match std::str::from_utf8(body) {
+            Ok(t) => t,
+            Err(_) => return Err(invalid_json(
+                "Cannot decode input: Data.Text.Internal.Encoding.decodeUtf8: Invalid UTF-8 stream"
+                    .to_string(),
+            )),
+        };
+
+    let value: serde_json::Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        // Lone-surrogate escapes decode to invalid UTF-8 in Hasura's
+        // text pipeline; it reports them as a UTF-8 decoding failure.
+        // serde_json calls the same condition "unexpected end of hex
+        // escape" (no continuation escape after the lead surrogate).
+        Err(e)
+            if e.to_string().contains("surrogate")
+                || e.to_string().contains("unexpected end of hex escape") =>
+        {
+            return Err(invalid_json(
+                "Cannot decode input: Data.Text.Internal.Encoding.decodeUtf8: Invalid UTF-8 stream"
+                    .to_string(),
+            ))
+        }
+        Err(e) => return Err(invalid_json(e.to_string())),
+    };
+
+    let obj = match &value {
+        serde_json::Value::Object(o) => o,
+        other => {
+            return Err(parse_failed(
+                "$",
+                format!(
+                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered {}",
+                    aeson_kind(other)
+                ),
+            ))
+        }
+    };
+
+    let query = match obj.get("query") {
+        None => {
+            return Err(parse_failed(
+                "$",
+                "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, key \"query\" not found"
+                    .to_string(),
+            ))
+        }
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) => {
+            return Err(parse_failed(
+                "$.query",
+                format!(
+                    "parsing Text failed, expected String, but encountered {}",
+                    aeson_kind(other)
+                ),
+            ))
+        }
+    };
+
+    let operation_name = match obj.get("operationName") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(other) => {
+            return Err(parse_failed(
+                "$.operationName",
+                format!(
+                    "parsing Text failed, expected String, but encountered {}",
+                    aeson_kind(other)
+                ),
+            ))
+        }
+    };
+
+    let variables = match obj.get("variables") {
+        None => None,
+        Some(v @ (serde_json::Value::Object(_) | serde_json::Value::Null)) => Some(v.clone()),
+        Some(other) => {
+            return Err(parse_failed(
+                "$.variables",
+                format!(
+                    "parsing HashMap failed, expected Object, but encountered {}",
+                    aeson_kind(other)
+                ),
+            ))
+        }
+    };
+
+    Ok(GraphQLRequest {
+        query: Some(query),
+        variables,
+        operation_name,
+    })
 }
 
 /// GET /v1/graphql serves the WebSocket upgrade (subscriptions).

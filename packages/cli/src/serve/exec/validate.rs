@@ -1496,6 +1496,10 @@ fn aggregate_selection<'a>(
     Ok(ir::AggregateSelection {
         table: table_name.to_string(),
         items,
+        // Hasura computes the aggregate over the uncapped set but caps the
+        // rows `nodes` returns at the role's response limit
+        // (limits-public-aggregate-count-exceeds-limit).
+        nodes_limit: ctx.response_limit,
     })
 }
 

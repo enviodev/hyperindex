@@ -20,7 +20,6 @@ pub struct GraphQLError {
 
 pub const CODE_VALIDATION_FAILED: &str = "validation-failed";
 pub const CODE_PARSE_FAILED: &str = "parse-failed";
-pub const CODE_BAD_REQUEST: &str = "bad-request";
 pub const CODE_UNEXPECTED_PAYLOAD: &str = "unexpected-payload";
 pub const CODE_ACCESS_DENIED: &str = "access-denied";
 pub const CODE_POSTGRES_ERROR: &str = "postgres-error";
