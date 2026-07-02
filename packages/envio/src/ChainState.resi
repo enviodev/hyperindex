@@ -62,7 +62,7 @@ let hasReadyItem: t => bool
 let isReadyToEnterReorgThreshold: t => bool
 
 // Fetch control.
-let getNextQuery: (t, ~budget: int) => FetchState.nextQuery
+let getNextQuery: (t, ~hasBudget: bool) => FetchState.nextQuery
 let getPruneTarget: (t, ~progressThreshold: float) => (int, int)
 let pruneBuffer: (t, ~targetBlockNumber: int) => unit
 let resetPendingQueries: t => unit

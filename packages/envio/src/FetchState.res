@@ -555,8 +555,8 @@ type t = {
   // Buffer of items ordered from earliest to latest
   buffer: array<Internal.item>,
   // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
-  // size). Fetch depth is bounded separately by getNextQuery's itemBudget, the
-  // chain's per-tick slice of the indexer-wide pool.
+  // size). Fetch depth is bounded separately by cross-chain admission against
+  // the shared buffer pool.
   maxOnBlockBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
   knownHeight: int,
@@ -1447,14 +1447,16 @@ let pushQueriesForRange = (
   }
 }
 
+// The shared buffer pool is enforced by cross-chain admission, not here — only
+// whether any room is left matters, so the proposal isn't sized to a budget.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight} as fetchState: t,
-  ~budget,
+  ~hasBudget,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
     WaitingForNewBlock
-  } else if budget <= 0 {
+  } else if !hasBudget {
     // No room left in the shared buffer pool for this chain; wait for processing
     // to drain before fetching more.
     NothingToQuery
@@ -1470,9 +1472,9 @@ let getNextQuery = (
 
     // Partitions fetch all the way to the head. Per-query range stays bounded by
     // the per-partition chunk heuristic, and total buffer growth is bounded
-    // reactively by the cross-chain prune (CrossChainState.maybePrune) rather than
-    // an up-front block cap — the cap forced a single block ceiling on every
-    // partition, starving sparse ones into a storm of tiny queries.
+    // reactively by the cross-chain prune (CrossChainState.maybePrune) — a shared
+    // up-front block ceiling would starve sparse partitions into a storm of tiny
+    // queries.
     let maxQueryBlockNumber = knownHeight
 
     let queries = []

@@ -457,8 +457,8 @@ let resetPendingQueries = (cs: t) => {
   cs.pendingBudget = 0.
 }
 
-// Propose the chain's candidate queries against the shared buffer budget.
-let getNextQuery = (cs: t, ~budget) => cs.fetchState->FetchState.getNextQuery(~budget)
+// Propose the chain's candidate queries for cross-chain admission.
+let getNextQuery = (cs: t, ~hasBudget) => cs.fetchState->FetchState.getNextQuery(~hasBudget)
 
 // Block to prune above (and how many buffer items that frees) for a given
 // cross-chain progress threshold. See FetchState.getPruneTarget.

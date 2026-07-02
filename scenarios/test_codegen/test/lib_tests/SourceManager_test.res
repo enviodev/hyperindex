@@ -372,17 +372,16 @@ describe("SourceManager fetchNext", () => {
 
   // Selection (getNextQuery) now happens in CrossChainState; SourceManager only
   // dispatches the chosen action. This shim keeps the per-chain tests focused on
-  // dispatch by computing the action from the chain's own budget.
+  // dispatch by computing the action from the chain's own state.
   let fetchNext = (
     sourceManager,
     ~fetchState,
     ~executeQuery,
     ~waitForNewBlock,
     ~onNewBlock,
-    ~budget=5000,
     ~stateId,
   ) => {
-    let action = fetchState->FetchState.getNextQuery(~budget)
+    let action = fetchState->FetchState.getNextQuery(~hasBudget=true)
     // CrossChainState marks queries in flight when admitting them; dispatch no
     // longer does, so mirror that here before dispatching.
     switch action {
@@ -509,10 +508,10 @@ describe("SourceManager fetchNext", () => {
 
     t.expect({
       // 10 already pending: the partition is capped, so the scheduler issues nothing.
-      "atCap": withPending(10)->FetchState.getNextQuery(~budget=5000),
+      "atCap": withPending(10)->FetchState.getNextQuery(~hasBudget=true),
       // 9 pending: the two-chunk tail is trimmed down to the one remaining slot.
       "oneSlotLeft": withPending(9)
-      ->FetchState.getNextQuery(~budget=5000)
+      ->FetchState.getNextQuery(~hasBudget=true)
       ->newQueryCount,
     }).toEqual({"atCap": FetchState.NothingToQuery, "oneSlotLeft": 1})
   })
@@ -536,7 +535,6 @@ describe("SourceManager fetchNext", () => {
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
-          ~budget=5000,
           ~stateId=0,
         )
 
@@ -605,7 +603,6 @@ describe("SourceManager fetchNext", () => {
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
-          ~budget=5000,
           ~stateId=0,
         )
 
@@ -637,7 +634,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
-        ~budget=5000,
         ~stateId=0,
       )
 
@@ -658,7 +654,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
-        ~budget=5000,
         ~stateId=0,
       )
 
@@ -686,7 +681,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
-        ~budget=5000,
         ~stateId=0,
       )
 
@@ -713,7 +707,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
-        ~budget=5000,
         ~stateId=0,
       )
 
@@ -725,7 +718,6 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
-      ~budget=5000,
       ~stateId=0,
     )
 
@@ -755,7 +747,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=neverOnNewBlock,
-        ~budget=5000,
         ~stateId=0,
       )
 
@@ -767,7 +758,6 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
-      ~budget=5000,
       ~stateId=0,
     )
     t.expect(
@@ -781,7 +771,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
-        ~budget=5000,
         ~stateId=1,
       )
     t.expect(waitForNewBlockMock.calls, ~message=`Should add a new call after a rollback`).toEqual([
@@ -822,7 +811,6 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=executeQueryMock.fn,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
-      ~budget=5000,
       ~stateId=0,
     )
 
