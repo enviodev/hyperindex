@@ -28,19 +28,42 @@ pub struct ServeEnv {
     pub admin_secret: String,
     pub response_limit: Option<u32>,
     pub aggregate_entities: Vec<String>,
-    /// ENVIO_PG_QUERY_TIMEOUT_MS. Bounds every query both server-side
+    /// ENVIO_SERVE_QUERY_TIMEOUT_MS. Bounds every query both server-side
     /// (statement_timeout) and client-side (tokio timeout with slack, so a
     /// frozen/unreachable Postgres can't hang requests forever). 0 disables.
     pub query_timeout_ms: Option<u64>,
-    /// ENVIO_PG_POOL_WAIT_TIMEOUT_MS. Bounds how long a request waits for a
-    /// free pooled connection before erroring instead of queuing without
+    /// ENVIO_SERVE_POOL_WAIT_TIMEOUT_MS. Bounds how long a request waits for
+    /// a free pooled connection before erroring instead of queuing without
     /// limit. 0 disables.
     pub pool_wait_timeout_ms: Option<u64>,
-    /// ENVIO_PG_CONNECT_TIMEOUT_MS. Bounds TCP connect + handshake when the
-    /// pool opens a new connection. 0 disables.
+    /// ENVIO_SERVE_CONNECT_TIMEOUT_MS. Bounds TCP connect + handshake when
+    /// the pool opens a new connection. 0 disables.
     pub connect_timeout_ms: Option<u64>,
-    /// ENVIO_PG_POOL_MAX_SIZE. Defaults to min(cpu_count * 2, 10).
+    /// ENVIO_SERVE_POOL_MAX_SIZE. Defaults to min(cpu_count * 2, 10).
     pub pool_max_size: usize,
+    /// ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS. Total wall-clock budget for
+    /// retrying pool creation/introspection with exponential backoff when
+    /// Postgres isn't reachable yet at boot. 0 disables retrying (fail
+    /// immediately, the pre-existing behavior).
+    pub startup_retry_budget_ms: u64,
+    /// ENVIO_SERVE_HEALTHZ_TIMEOUT_MS. Bounds the /healthz DB probe.
+    pub healthz_timeout_ms: u64,
+    /// ENVIO_SERVE_WS_PING_INTERVAL_MS. How often idle WebSocket connections
+    /// are pinged; a connection that sends no pong/traffic within 2x this
+    /// interval is treated as dead and closed.
+    pub ws_ping_interval_ms: u64,
+    /// ENVIO_SERVE_MAX_CONCURRENT_REQUESTS. Caps in-flight HTTP requests
+    /// (tower ConcurrencyLimitLayer); requests above the cap are queued by
+    /// tower and time out via ENVIO_SERVE_REQUEST_TIMEOUT_MS instead of
+    /// piling unboundedly onto the Postgres pool.
+    pub max_concurrent_requests: usize,
+    /// ENVIO_SERVE_REQUEST_TIMEOUT_MS. Whole-HTTP-request bound (tower
+    /// TimeoutLayer), independent of the GraphQL query timeout.
+    pub request_timeout_ms: u64,
+    /// ENVIO_SERVE_RATE_LIMIT_PER_SEC. Optional per-IP request rate limit;
+    /// unset disables it (matches Hasura OSS, which has no built-in rate
+    /// limiting).
+    pub rate_limit_per_sec: Option<u32>,
 }
 
 /// deadpool_postgres::Config defaults to `cpu_core_count * 2` with no upper
@@ -165,27 +188,68 @@ impl ServeEnv {
                 r.var("ENVIO_HASURA_PUBLIC_AGGREGATE").as_deref(),
             )?,
             query_timeout_ms: parse_timeout_ms(
-                r.var("ENVIO_PG_QUERY_TIMEOUT_MS"),
-                "ENVIO_PG_QUERY_TIMEOUT_MS",
+                r.var("ENVIO_SERVE_QUERY_TIMEOUT_MS"),
+                "ENVIO_SERVE_QUERY_TIMEOUT_MS",
                 Some(120_000),
             )?,
             pool_wait_timeout_ms: parse_timeout_ms(
-                r.var("ENVIO_PG_POOL_WAIT_TIMEOUT_MS"),
-                "ENVIO_PG_POOL_WAIT_TIMEOUT_MS",
+                r.var("ENVIO_SERVE_POOL_WAIT_TIMEOUT_MS"),
+                "ENVIO_SERVE_POOL_WAIT_TIMEOUT_MS",
                 Some(15_000),
             )?,
             connect_timeout_ms: parse_timeout_ms(
-                r.var("ENVIO_PG_CONNECT_TIMEOUT_MS"),
-                "ENVIO_PG_CONNECT_TIMEOUT_MS",
+                r.var("ENVIO_SERVE_CONNECT_TIMEOUT_MS"),
+                "ENVIO_SERVE_CONNECT_TIMEOUT_MS",
                 Some(10_000),
             )?,
-            pool_max_size: match r.var("ENVIO_PG_POOL_MAX_SIZE") {
+            pool_max_size: match r.var("ENVIO_SERVE_POOL_MAX_SIZE") {
                 None => default_pool_max_size(),
                 Some(v) => v
                     .parse::<usize>()
                     .ok()
                     .filter(|n| *n > 0)
-                    .ok_or_else(|| anyhow!("Invalid ENVIO_PG_POOL_MAX_SIZE"))?,
+                    .ok_or_else(|| anyhow!("Invalid ENVIO_SERVE_POOL_MAX_SIZE"))?,
+            },
+            startup_retry_budget_ms: match r.var("ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS") {
+                None => 60_000,
+                Some(v) => v
+                    .parse::<u64>()
+                    .context("Invalid ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS")?,
+            },
+            healthz_timeout_ms: match r.var("ENVIO_SERVE_HEALTHZ_TIMEOUT_MS") {
+                None => 2_000,
+                Some(v) => v
+                    .parse::<u64>()
+                    .context("Invalid ENVIO_SERVE_HEALTHZ_TIMEOUT_MS")?,
+            },
+            ws_ping_interval_ms: match r.var("ENVIO_SERVE_WS_PING_INTERVAL_MS") {
+                None => 10_000,
+                Some(v) => v
+                    .parse::<u64>()
+                    .context("Invalid ENVIO_SERVE_WS_PING_INTERVAL_MS")?,
+            },
+            max_concurrent_requests: match r.var("ENVIO_SERVE_MAX_CONCURRENT_REQUESTS") {
+                None => default_pool_max_size() * 8,
+                Some(v) => v
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| anyhow!("Invalid ENVIO_SERVE_MAX_CONCURRENT_REQUESTS"))?,
+            },
+            request_timeout_ms: match r.var("ENVIO_SERVE_REQUEST_TIMEOUT_MS") {
+                None => 130_000,
+                Some(v) => v
+                    .parse::<u64>()
+                    .context("Invalid ENVIO_SERVE_REQUEST_TIMEOUT_MS")?,
+            },
+            rate_limit_per_sec: match r.var("ENVIO_SERVE_RATE_LIMIT_PER_SEC") {
+                None => None,
+                Some(v) => Some(
+                    v.parse::<u32>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .ok_or_else(|| anyhow!("Invalid ENVIO_SERVE_RATE_LIMIT_PER_SEC"))?,
+                ),
             },
         })
     }

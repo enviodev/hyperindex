@@ -19,6 +19,7 @@ use super::exec::error::GraphQLError;
 use super::exec::{self, ir, GraphQLRequest, Transport};
 use super::gql::schema_build::Role;
 use super::http::AppState;
+use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
@@ -26,10 +27,22 @@ use futures_util::sink::SinkExt;
 use futures_util::stream::StreamExt;
 use serde_json::json;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1000);
-const KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const POLL_INTERVAL: Duration = Duration::from_millis(1000);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
+/// How often the dead-connection check runs (independent of the
+/// server-configured ping interval, so detection latency doesn't depend on
+/// a large ENVIO_SERVE_WS_PING_INTERVAL_MS): a connection is only ever
+/// declared dead on one of these ticks, so this bounds how far past "2x
+/// ping interval" the actual close can lag.
+const DEAD_CHECK_INTERVAL: Duration = Duration::from_secs(2);
+/// Longest a graceful writer-task drain waits after the connection loop
+/// exits before the task is force-aborted. Guards against a peer that
+/// stopped reading (TCP send buffer full) leaving `ws_tx.send` blocked
+/// forever on close.
+const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 /// Consecutive connection-level Postgres failures a subscription survives
 /// (silently retrying on the poll interval) before it gives up with a
 /// terminal error frame. Without this, any 1-second Postgres blip
@@ -94,10 +107,13 @@ struct Connection {
 }
 
 async fn run_connection(state: AppState, socket: WebSocket, protocol: Protocol) {
+    let ping_interval = state.serve.ws_ping_interval;
+    let dead_after = ping_interval * 2;
+
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
 
-    let writer = tokio::spawn(async move {
+    let mut writer = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if ws_tx.send(msg).await.is_err() {
                 break;
@@ -116,6 +132,17 @@ async fn run_connection(state: AppState, socket: WebSocket, protocol: Protocol) 
     let mut keepalive = tokio::time::interval(KEEPALIVE_INTERVAL);
     keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+    // Server-driven protocol-level ping, independent of either GraphQL
+    // sub-protocol's own app-level keepalive frames: a client that stops
+    // reading (frozen, network black hole) never returns a pong or any
+    // other traffic, so the connection -- and every subscription poll task
+    // it's keeping alive -- gets torn down instead of running against
+    // Postgres forever in the background.
+    let mut dead_check = tokio::time::interval(std::cmp::min(ping_interval, DEAD_CHECK_INTERVAL));
+    dead_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last_activity = Instant::now();
+    let mut last_ping_sent = Instant::now();
+
     loop {
         tokio::select! {
             _ = keepalive.tick() => {
@@ -123,8 +150,24 @@ async fn run_connection(state: AppState, socket: WebSocket, protocol: Protocol) 
                     let _ = conn.sender.send(Message::Text("{\"type\":\"ka\"}".into()));
                 }
             }
+            _ = dead_check.tick() => {
+                let now = Instant::now();
+                if now.duration_since(last_activity) > dead_after {
+                    println!("envio serve: closing websocket, no pong/traffic for {:?}", now.duration_since(last_activity));
+                    let _ = conn.sender.send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                        code: 4408,
+                        reason: "ping timeout".into(),
+                    })));
+                    break;
+                }
+                if now.duration_since(last_ping_sent) >= ping_interval {
+                    last_ping_sent = now;
+                    let _ = conn.sender.send(Message::Ping(Bytes::new()));
+                }
+            }
             incoming = ws_rx.next() => {
                 let Some(Ok(msg)) = incoming else { break };
+                last_activity = Instant::now();
                 match msg {
                     Message::Text(text) => {
                         if handle_frame(&mut conn, &text).await.is_err() {
@@ -143,7 +186,12 @@ async fn run_connection(state: AppState, socket: WebSocket, protocol: Protocol) 
         task.abort();
     }
     drop(tx);
-    let _ = writer.await;
+    if tokio::time::timeout(WRITER_DRAIN_TIMEOUT, &mut writer)
+        .await
+        .is_err()
+    {
+        writer.abort();
+    }
 }
 
 /// Returns Err to close the connection.
