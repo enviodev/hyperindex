@@ -316,9 +316,10 @@ describe("CrossChainState buffer prune", () => {
     )
 
   Async.it("prunes the closest-to-head items across chains down to the low-water mark", async t => {
-    // targetBufferSize 20 → prune when the buffer exceeds 3x (60), down to 1.5x
-    // (30). Chain 1's items sit at ~0.8 progress, chain 2's at ~0.2, so the
-    // head-closest chain 1 is dropped entirely before chain 2 is touched.
+    // targetBufferSize 20 → prune when the buffer exceeds 3x (60), down to 2x
+    // (40). Chain 1's items sit at ~0.8 progress, chain 2's at ~0.2, so the
+    // head-closest chain 1 is dropped entirely (freeing exactly the needed 40)
+    // before chain 2 is touched.
     let cs1 = makeStuck(~chainId=1, ~fromBlock=8000)
     let cs2 = makeStuck(~chainId=2, ~fromBlock=2000)
     let cm = makeCrossChainState(~chainStatesList=[cs1, cs2], ~targetBufferSize=20)
@@ -335,7 +336,7 @@ describe("CrossChainState buffer prune", () => {
       "invalidateCalled": invalidateCalled.contents,
     }).toEqual({
       "chain1Buffer": 0,
-      "chain2Buffer": 30,
+      "chain2Buffer": 40,
       "invalidateCalled": true,
     })
   })

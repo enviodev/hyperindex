@@ -200,7 +200,7 @@ let compareByProgress = (a: FetchState.query, b: FetchState.query) =>
 // items accumulate as stuck buffer while a lagging partition holds the frontier.
 // This reclaims that memory reactively: once the indexer-wide buffer crosses 3x
 // targetBufferSize, drop the highest-progress% (closest-to-head) items across all
-// chains back down to 1.5x and roll back the partitions that fetched them. Prune
+// chains back down to 2x and roll back the partitions that fetched them. Prune
 // only during backfill — near the head blockLag keeps the buffer below the reorg
 // window and there is nothing far-ahead to reclaim.
 let maybePrune = (crossChainState: t, ~invalidateInflight) => {
@@ -216,7 +216,7 @@ let maybePrune = (crossChainState: t, ~invalidateInflight) => {
 
     let highWater = crossChainState.targetBufferSize * 3
     if total.contents > highWater {
-      let lowWater = crossChainState.targetBufferSize * 3 / 2
+      let lowWater = crossChainState.targetBufferSize * 2
       let need = total.contents - lowWater
 
       // Items freed by pruning everything above the given progress threshold,
