@@ -212,6 +212,28 @@ some_future_field:
     }
 
     #[test]
+    fn reads_real_2_21_5_config_fixtures() {
+        // Authentic v2.21.5 config shape (verbatim from the v2.21.5 tag,
+        // trimmed): networks/rpc_config keys, no schema field -> default.
+        let legacy = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/test/configs/serve-legacy-2.21.5.yaml"
+        ))
+        .unwrap();
+        assert_eq!(read_schema_field(&legacy).unwrap(), "schema.graphql");
+
+        let custom = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/test/configs/serve-legacy-2.21.5-custom-schema.yaml"
+        ))
+        .unwrap();
+        assert_eq!(
+            read_schema_field(&custom).unwrap(),
+            "./schemas/gravatar-schema.graphql"
+        );
+    }
+
+    #[test]
     fn parses_relationships() {
         let schema = r#"
 type User {
