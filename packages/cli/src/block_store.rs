@@ -18,7 +18,7 @@ use napi_derive::napi;
 use strum::VariantArray;
 
 use crate::evm_hypersync_source::map_err;
-use crate::evm_hypersync_source::types::{map_address_string, map_bigint, map_hex_string, map_i64};
+use crate::evm_hypersync_source::types::{map_address_string, map_bigint, map_hex_string};
 use crate::field_columns::{build_columns, fill_masked, Column, Columns};
 
 /// EVM block field codes shared with ReScript by ordinal value. The order is the
@@ -122,10 +122,9 @@ impl SvmBlockField {
 }
 
 /// Decode the per-row mask-selected fields of the given EVM blocks into
-/// columns, then set `number`/`timestamp`/`hash` unconditionally from each
-/// row's stored header — the trio is always known from the response (kept in
-/// the store's header independent of whether the full raw block was also
-/// retained), regardless of whether any mask selected it.
+/// columns. ReScript builds the masks from the config's field selection, which
+/// always includes number/timestamp/hash, so the trio's bits are set on every
+/// production mask.
 fn decode_evm_block_columns(
     records: &[Option<EvmRecord>],
     block_numbers: &[i64],
@@ -137,55 +136,32 @@ fn decode_evm_block_columns(
         .map(|r| r.as_ref().and_then(|(_, raw)| raw.clone()))
         .collect();
 
-    let mut cols = build_columns(
+    build_columns(
         EvmBlockField::VARIANTS,
         masks,
         records.len(),
         |f| f as u32,
         |f| f.name(),
-        |f| decode_evm_block_field(f, &raw, block_numbers, masks, should_checksum),
-    )?;
-    cols.columns.push((
-        EvmBlockField::Number.name(),
-        Column::I64(block_numbers.iter().map(|&n| Some(n)).collect()),
-    ));
-    cols.columns.push((
-        EvmBlockField::Timestamp.name(),
-        Column::I64(
-            records
-                .iter()
-                .map(|r| r.as_ref().map(|(h, _)| h.timestamp))
-                .collect(),
-        ),
-    ));
-    cols.columns.push((
-        EvmBlockField::Hash.name(),
-        Column::Str(
-            records
-                .iter()
-                .map(|r| r.as_ref().map(|(h, _)| h.hash.clone()))
-                .collect(),
-        ),
-    ));
-    Ok(cols)
+        |f| decode_evm_block_field(f, records, &raw, block_numbers, masks, should_checksum),
+    )
 }
 
 /// Decode a single EVM block field, materialising it only on the rows whose mask
-/// has the field's bit set. Exhaustive match: adding an `EvmBlockField` variant
-/// fails to compile until it is decoded here.
+/// has the field's bit set. Number/timestamp/hash resolve from the key and the
+/// stored header (known for every stored block); the rest decode from the raw
+/// block, retained only when a field beyond those three was selected. Exhaustive
+/// match: adding an `EvmBlockField` variant fails to compile until it is decoded
+/// here.
 fn decode_evm_block_field(
     field: EvmBlockField,
-    records: &[Option<Arc<simple_types::Block>>],
+    records: &[Option<EvmRecord>],
+    raw: &[Option<Arc<simple_types::Block>>],
     block_numbers: &[i64],
     masks: &[u64],
     should_checksum: bool,
 ) -> Result<Column> {
     let bit = 1u64 << (field as u32);
     Ok(match field {
-        // `decode_evm_block_columns` always overlays number/timestamp/hash from
-        // the caller's own per-row values afterward, so these three arms only
-        // run (and are immediately superseded) if a caller ever sets their bits
-        // — kept for an exhaustive match rather than a live path.
         EvmBlockField::Number => Column::I64(
             block_numbers
                 .iter()
@@ -193,89 +169,107 @@ fn decode_evm_block_field(
                 .map(|(&n, &m)| (m & bit != 0).then_some(n))
                 .collect(),
         ),
-        EvmBlockField::Timestamp => {
-            Column::I64(fill_masked(records, masks, bit, |b| map_i64(&b.timestamp))?)
-        }
-        EvmBlockField::Hash => Column::Str(fill_masked(records, masks, bit, |b| {
-            Ok(map_hex_string(&b.hash))
-        })?),
-        EvmBlockField::ParentHash => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::Timestamp => Column::I64(
+            records
+                .iter()
+                .zip(masks)
+                .map(|(r, &m)| {
+                    if m & bit == 0 {
+                        None
+                    } else {
+                        r.as_ref().map(|(h, _)| h.timestamp)
+                    }
+                })
+                .collect(),
+        ),
+        EvmBlockField::Hash => Column::Str(
+            records
+                .iter()
+                .zip(masks)
+                .map(|(r, &m)| {
+                    if m & bit == 0 {
+                        None
+                    } else {
+                        r.as_ref().map(|(h, _)| h.hash.clone())
+                    }
+                })
+                .collect(),
+        ),
+        EvmBlockField::ParentHash => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_hex_string(&b.parent_hash))
         })?),
-        EvmBlockField::Nonce => Column::Big(fill_masked(records, masks, bit, |b| {
-            Ok(map_bigint(&b.nonce))
-        })?),
-        EvmBlockField::Sha3Uncles => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::Nonce => {
+            Column::Big(fill_masked(raw, masks, bit, |b| Ok(map_bigint(&b.nonce)))?)
+        }
+        EvmBlockField::Sha3Uncles => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_hex_string(&b.sha3_uncles))
         })?),
-        EvmBlockField::LogsBloom => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::LogsBloom => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_hex_string(&b.logs_bloom))
         })?),
-        EvmBlockField::TransactionsRoot => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::TransactionsRoot => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_hex_string(&b.transactions_root))
         })?),
-        EvmBlockField::StateRoot => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::StateRoot => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_hex_string(&b.state_root))
         })?),
-        EvmBlockField::ReceiptsRoot => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::ReceiptsRoot => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_hex_string(&b.receipts_root))
         })?),
-        EvmBlockField::Miner => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::Miner => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_address_string(&b.miner, should_checksum))
         })?),
-        EvmBlockField::Difficulty => Column::Big(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::Difficulty => Column::Big(fill_masked(raw, masks, bit, |b| {
             Ok(map_bigint(&b.difficulty))
         })?),
-        EvmBlockField::TotalDifficulty => Column::Big(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::TotalDifficulty => Column::Big(fill_masked(raw, masks, bit, |b| {
             Ok(map_bigint(&b.total_difficulty))
         })?),
-        EvmBlockField::ExtraData => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::ExtraData => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_hex_string(&b.extra_data))
         })?),
-        EvmBlockField::Size => Column::Big(fill_masked(records, masks, bit, |b| {
-            Ok(map_bigint(&b.size))
-        })?),
-        EvmBlockField::GasLimit => Column::Big(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::Size => {
+            Column::Big(fill_masked(raw, masks, bit, |b| Ok(map_bigint(&b.size)))?)
+        }
+        EvmBlockField::GasLimit => Column::Big(fill_masked(raw, masks, bit, |b| {
             Ok(map_bigint(&b.gas_limit))
         })?),
-        EvmBlockField::GasUsed => Column::Big(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::GasUsed => Column::Big(fill_masked(raw, masks, bit, |b| {
             Ok(map_bigint(&b.gas_used))
         })?),
-        EvmBlockField::Uncles => Column::StrVec(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::Uncles => Column::StrVec(fill_masked(raw, masks, bit, |b| {
             Ok(b.uncles
                 .as_ref()
                 .map(|arr| arr.iter().map(|u| u.encode_hex()).collect()))
         })?),
-        EvmBlockField::BaseFeePerGas => Column::Big(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::BaseFeePerGas => Column::Big(fill_masked(raw, masks, bit, |b| {
             Ok(map_bigint(&b.base_fee_per_gas))
         })?),
-        EvmBlockField::BlobGasUsed => Column::Big(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::BlobGasUsed => Column::Big(fill_masked(raw, masks, bit, |b| {
             Ok(map_bigint(&b.blob_gas_used))
         })?),
-        EvmBlockField::ExcessBlobGas => Column::Big(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::ExcessBlobGas => Column::Big(fill_masked(raw, masks, bit, |b| {
             Ok(map_bigint(&b.excess_blob_gas))
         })?),
-        EvmBlockField::ParentBeaconBlockRoot => {
-            Column::Str(fill_masked(records, masks, bit, |b| {
-                Ok(map_hex_string(&b.parent_beacon_block_root))
-            })?)
-        }
-        EvmBlockField::WithdrawalsRoot => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::ParentBeaconBlockRoot => Column::Str(fill_masked(raw, masks, bit, |b| {
+            Ok(map_hex_string(&b.parent_beacon_block_root))
+        })?),
+        EvmBlockField::WithdrawalsRoot => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_hex_string(&b.withdrawals_root))
         })?),
-        EvmBlockField::L1BlockNumber => Column::I64(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::L1BlockNumber => Column::I64(fill_masked(raw, masks, bit, |b| {
             b.l1_block_number
                 .map(|n| i64::try_from(u64::from(n)))
                 .transpose()
                 .context("l1BlockNumber overflow")
         })?),
-        EvmBlockField::SendCount => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::SendCount => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_hex_string(&b.send_count))
         })?),
-        EvmBlockField::SendRoot => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::SendRoot => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_hex_string(&b.send_root))
         })?),
-        EvmBlockField::MixHash => Column::Str(fill_masked(records, masks, bit, |b| {
+        EvmBlockField::MixHash => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(map_hex_string(&b.mix_hash))
         })?),
     })
@@ -304,7 +298,7 @@ fn decode_svm_block_columns(
 /// fails to compile until it is decoded here.
 fn decode_svm_block_field(
     field: SvmBlockField,
-    records: &[Option<Arc<solana_simple::Block>>],
+    raw: &[Option<Arc<solana_simple::Block>>],
     block_numbers: &[i64],
     masks: &[u64],
 ) -> Result<Column> {
@@ -319,23 +313,23 @@ fn decode_svm_block_field(
                 .map(|(&n, &m)| (m & bit != 0).then_some(n))
                 .collect(),
         ),
-        SvmBlockField::Time => Column::I64(fill_masked(records, masks, bit, |b| Ok(b.block_time))?),
-        SvmBlockField::Hash => Column::Str(fill_masked(records, masks, bit, |b| {
+        SvmBlockField::Time => Column::I64(fill_masked(raw, masks, bit, |b| Ok(b.block_time))?),
+        SvmBlockField::Hash => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(Some(b.blockhash.clone()))
         })?),
-        SvmBlockField::Height => Column::I64(fill_masked(records, masks, bit, |b| {
+        SvmBlockField::Height => Column::I64(fill_masked(raw, masks, bit, |b| {
             b.block_height
                 .map(i64::try_from)
                 .transpose()
                 .context("height overflow")
         })?),
-        SvmBlockField::ParentSlot => Column::I64(fill_masked(records, masks, bit, |b| {
+        SvmBlockField::ParentSlot => Column::I64(fill_masked(raw, masks, bit, |b| {
             b.parent_slot
                 .map(i64::try_from)
                 .transpose()
                 .context("parentSlot overflow")
         })?),
-        SvmBlockField::ParentHash => Column::Str(fill_masked(records, masks, bit, |b| {
+        SvmBlockField::ParentHash => Column::Str(fill_masked(raw, masks, bit, |b| {
             Ok(b.parent_blockhash.clone())
         })?),
     })
@@ -675,46 +669,30 @@ mod tests {
         )
         .expect("decode columns");
 
-        // logsBloom is selected (present); gasUsed isn't (absent).
-        // number/timestamp/hash are always present from the header, regardless
-        // of the mask.
+        // Only the selected column is present — the trio is mask-gated like
+        // every other field (production masks always carry its bits).
         let summary = (
             column(&cols, "logsBloom").is_some(),
             column(&cols, "gasUsed").is_some(),
-            match column(&cols, "number") {
-                Some(Column::I64(v)) => v.clone(),
-                _ => panic!("expected number column"),
-            },
-            match column(&cols, "timestamp") {
-                Some(Column::I64(v)) => v.clone(),
-                _ => panic!("expected timestamp column"),
-            },
-            match column(&cols, "hash") {
-                Some(Column::Str(v)) => v.clone(),
-                _ => panic!("expected hash column"),
-            },
+            column(&cols, "number").is_some(),
+            column(&cols, "timestamp").is_some(),
+            column(&cols, "hash").is_some(),
         );
-        assert_eq!(
-            summary,
-            (
-                true,
-                false,
-                vec![Some(1)],
-                vec![Some(11)],
-                vec![Some("0x1".to_string())],
-            )
-        );
+        assert_eq!(summary, (true, false, false, false, false));
     }
 
     #[test]
-    fn trio_always_set_from_header_regardless_of_mask_or_raw_record() {
-        // mask=0 (nothing selected) and no raw record for either row; the trio
-        // still materialises from each row's stored header, since it never
-        // depends on the mask or a fetched raw block.
+    fn trio_decodes_from_key_and_header_without_raw_record() {
+        // The trio never needs the raw block: number resolves from the key and
+        // timestamp/hash from the stored header, so rows without a raw record
+        // (no field beyond the trio selected) still materialise it.
+        let trio_mask = (1u64 << (EvmBlockField::Number as u32))
+            | (1u64 << (EvmBlockField::Timestamp as u32))
+            | (1u64 << (EvmBlockField::Hash as u32));
         let cols = decode_evm_block_columns(
             &[evm_record(70, "0x7", None), evm_record(30, "0x3", None)],
             &[7, 3],
-            &[0, 0],
+            &[trio_mask, trio_mask],
             false,
         )
         .expect("decode columns");
@@ -905,16 +883,22 @@ mod tests {
         block.gas_used = Some(Quantity::from(555u64));
         store.insert_evm(10, 999, "0xhash".to_string(), Some(Arc::new(block)));
 
-        let mask = (1u64 << (EvmBlockField::GasUsed as u32)) as f64;
+        // A production-shaped mask: the config-extended trio plus a selected
+        // extra field. The trio resolves from the key/header, gasUsed from raw.
+        let mask = ((1u64 << (EvmBlockField::Number as u32))
+            | (1u64 << (EvmBlockField::Timestamp as u32))
+            | (1u64 << (EvmBlockField::Hash as u32))
+            | (1u64 << (EvmBlockField::GasUsed as u32))) as f64;
         let cols = store
             .materialize(vec![10], vec![mask])
             .await
             .expect("materialize");
-        // gasUsed (the selected extra field) round-trips through the store;
-        // the header (timestamp/hash) is always set too, regardless of the
-        // mask.
         let summary = (
             column(&cols, "gasUsed").is_some(),
+            match column(&cols, "number") {
+                Some(Column::I64(v)) => v.clone(),
+                _ => panic!("expected number column"),
+            },
             match column(&cols, "timestamp") {
                 Some(Column::I64(v)) => v.clone(),
                 _ => panic!("expected timestamp column"),
@@ -926,7 +910,12 @@ mod tests {
         );
         assert_eq!(
             summary,
-            (true, vec![Some(999)], vec![Some("0xhash".to_string())])
+            (
+                true,
+                vec![Some(10)],
+                vec![Some(999)],
+                vec![Some("0xhash".to_string())]
+            )
         );
     }
 
@@ -966,8 +955,9 @@ mod tests {
         page2.insert_evm(20, 200, "0x200".to_string(), None);
         persistent.merge(&page2);
 
+        let mask = (1u64 << (EvmBlockField::Timestamp as u32)) as f64;
         let cols = persistent
-            .materialize(vec![20], vec![0.])
+            .materialize(vec![20], vec![mask])
             .await
             .expect("materialize");
         match column(&cols, "timestamp") {

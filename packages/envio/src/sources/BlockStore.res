@@ -27,22 +27,6 @@ let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool): t => {
 let makeMaskFn = FieldMask.makeMaskFn
 let orMask = FieldMask.orMask
 
-// Each ecosystem's always-available trio sits at field codes 0/1/2 (EVM
-// number/timestamp/hash from the item; SVM slot/time/hash from the response),
-// stamped onto `event.block` without a store lookup. `hasExtraFields` is true
-// once any other field is selected — only then is a materialise call worthwhile.
-// The `& ~7` clears the trio's bits, relying on them being field codes 0/1/2;
-// tests in BlockStore_test pin both orderings.
-let hasExtraFields: float => bool = %raw(`m => ((m & ~7) >>> 0) !== 0`)
-
-// Clear the trio's bits (field codes 0/1/2) from a mask before a materialise
-// call. The Rust store always resolves number/timestamp/hash from its own
-// header regardless of the mask (`BlockStore::insert_evm`/
-// `decode_evm_block_columns`), so asking it to also decode them from the raw
-// block is wasted work — a full hash hex-encode per block for a value that's
-// immediately overwritten.
-let stripTrioBits: float => float = %raw(`m => (m & ~7) >>> 0`)
-
 // Drain another store (a fetch-response page) into this one.
 @send external merge: (t, t) => unit = "merge"
 
@@ -61,17 +45,6 @@ external materialize: (
 
 // Drop blocks above the given block (rolled back).
 @send external rollback: (t, int) => unit = "rollback"
-
-// Build a block object carrying just the always-present trio, straight from
-// the item. Used only for the no-store-lookup fast path (no event selected a
-// field beyond the trio) — when the store IS consulted, its own header
-// resolves number/timestamp/hash instead (see `BlockStore::insert_evm` on the
-// Rust side).
-let makeBlockHeader: (
-  ~number: int,
-  ~timestamp: int,
-  ~hash: string,
-) => Internal.eventBlock = %raw(`(number, timestamp, hash) => ({ number, timestamp, hash })`)
 
 // Merge a materialised field bag onto an existing block object in place. Used by
 // the SVM path, where the source already attached a minimal inline block.
@@ -118,30 +91,16 @@ let groupByBlock = (items: array<Internal.item>, ~owns: Internal.eventItem => bo
 
 // EVM: materialise each store-backed item's selected block fields and write the
 // resulting block onto its payload. Items that already carry an inline block
-// (RPC/simulate/Fuel) are skipped. Store-backed items always get a block object
-// carrying at least number/timestamp/hash, plus any further fields their
-// events selected. Deduped per block number.
+// (RPC/simulate/Fuel) are skipped. The config's field selection always includes
+// number/timestamp/hash, so every mask has bits set and every store-backed item
+// gets a block carrying at least the trio. Deduped per block number.
 let materializeEvmItems = async (store: t, ~items: array<Internal.item>) => {
   let (blockNumbers, masks, groups) =
     items->groupByBlock(~owns=eventItem =>
       eventItem.payload->Internal.getPayloadBlock->Nullable.toOption->Option.isNone
     )
   if groups->Utils.Array.notEmpty {
-    // Only reach into the store when some event selected a field beyond the
-    // trio; otherwise every block is built directly from its item. When the
-    // store IS consulted, its own header resolves number/timestamp/hash (see
-    // `stripTrioBits`), so the returned objects need no further stamping.
-    let anyExtra = masks->Array.some(hasExtraFields)
-    let blocks = anyExtra
-      ? await store->materialize(~blockNumbers, ~masks=masks->Array.map(stripTrioBits))
-      : groups->Array.map(group => {
-          let eventItem = group->Array.getUnsafe(0)
-          makeBlockHeader(
-            ~number=eventItem.blockNumber,
-            ~timestamp=eventItem.timestamp,
-            ~hash=eventItem.blockHash,
-          )
-        })
+    let blocks = await store->materialize(~blockNumbers, ~masks)
     groups->Array.forEachWithIndex((group, i) => {
       let block = blocks->Array.getUnsafe(i)
       group->Array.forEach(ei => ei.payload->Internal.setPayloadBlock(block))
@@ -149,21 +108,19 @@ let materializeEvmItems = async (store: t, ~items: array<Internal.item>) => {
   }
 }
 
-// SVM: the source stamps the always-available trio (`slot`/`time`/`hash`) inline
-// on each item. When an instruction selected a field beyond the trio, enrich its
-// block in place with the extra fields kept raw in the store (`height`/
-// `parentSlot`/`parentHash`) — a slot missing from the store (no block row) keeps
-// just the inline trio. Grouped per slot so the store is consulted once per slot;
-// each instruction's own inline block is enriched in place.
+// SVM: the source stamps the always-available `slot`/`time`/`hash` inline on
+// each item. Enrich each item's block in place with its selected fields from the
+// store — a slot missing from the store (no block row, or only inline fields
+// selected) yields an empty bag and the inline block stands. Grouped per slot so
+// the store is consulted once per slot.
 let materializeSvmItems = async (store: t, ~items: array<Internal.item>) => {
   let (blockNumbers, masks, groups) =
     items->groupByBlock(~owns=eventItem =>
       eventItem.payload->Internal.getPayloadBlock->Nullable.toOption->Option.isSome
     )
 
-  // slot/time/hash are already stamped inline; only fields beyond the trio need a
-  // store lookup. When none were selected the inline block stands.
-  if masks->Array.some(hasExtraFields) {
+  // Skip the store call when no instruction selected a block field at all.
+  if masks->Array.some(mask => mask !== 0.) {
     let materialized = await store->materialize(~blockNumbers, ~masks)
     groups->Array.forEachWithIndex((group, i) => {
       let fields = materialized->Array.getUnsafe(i)

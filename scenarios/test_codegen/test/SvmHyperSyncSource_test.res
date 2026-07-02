@@ -163,10 +163,9 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     )
 
     let item = switch response.parsedQueueItems {
-    | [Internal.Event({timestamp, blockNumber, payload})] =>
+    | [Internal.Event({blockNumber, payload})] =>
       let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
       Some({
-        "timestamp": timestamp,
         "blockNumber": blockNumber,
         "block": instruction.block,
       })
@@ -178,7 +177,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "query": capturedQueries->Array.getUnsafe(0),
     }).toEqual({
       "item": Some({
-        "timestamp": blockTime,
         "blockNumber": slot,
         // slot/time/hash are stamped inline from the response's block row;
         // height/parentSlot/parentHash would be materialised from the store.

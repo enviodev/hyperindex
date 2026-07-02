@@ -307,8 +307,8 @@ type genericEvent<'params, 'block, 'transaction> = {
   block: 'block,
 }
 
-// Opaque internally — block-level values needed by the runtime
-// (blockNumber, timestamp, blockHash) live on the item instead.
+// Opaque internally — the block number needed by the runtime lives on the
+// item instead.
 type event
 
 // Opaque payload an item carries. A source builds an ecosystem-specific
@@ -444,9 +444,9 @@ type eventConfig = private {
   transactionFieldMask: float,
   // Selected block fields precompiled to the block-store selection bitmask (bit
   // per ecosystem field code). `0.` for ecosystems that carry the block fully
-  // inline (RPC/Fuel). The always-available trio (EVM number/timestamp/hash from
-  // the item; SVM slot/time/hash from the response) is stamped without a store
-  // lookup, so this only drives whether the store is consulted for further fields.
+  // inline (RPC/Fuel). The EVM selection always includes number/timestamp/hash,
+  // so an EVM mask always has their bits set; SVM stamps slot/time/hash inline
+  // from the response and its mask is the user's selection alone.
   blockFieldMask: float,
 }
 
@@ -564,10 +564,8 @@ type dcs = array<indexingAddress>
 type eventItem = private {
   kind: [#0],
   eventConfig: eventConfig,
-  timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
-  blockHash: string,
   logIndex: int,
   // Within-block transaction index — the key into the per-chain transaction
   // store. Unused (0) for ecosystems that carry the transaction inline (Fuel).
@@ -619,10 +617,8 @@ type item =
   | @as(0)
   Event({
       eventConfig: eventConfig,
-      timestamp: int,
       chain: ChainMap.Chain.t,
       blockNumber: int,
-      blockHash: string,
       logIndex: int,
       transactionIndex: int,
       payload: eventPayload,

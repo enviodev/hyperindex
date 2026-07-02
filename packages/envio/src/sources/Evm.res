@@ -113,6 +113,14 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     let payload = eventItem.payload->toPayload
     let eventConfig =
       eventItem.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+    // Store-backed payloads get `block` written at batch prep and inline
+    // sources carry it from the start, with hash/timestamp always selected —
+    // so both are present by the time a raw event is built.
+    let header = switch payload.block {
+    | Some(block) => block->(Utils.magic: Internal.eventBlock => {"hash": string, "timestamp": int})
+    | None =>
+      JsError.throwWithMessage("Unexpected case: The event block is missing for a raw event")
+    }
     eventItem->RawEvent.make(
       ~block=payload.block,
       ~transaction=payload.transaction,
@@ -122,6 +130,8 @@ let make = (~logger: Pino.t): Ecosystem.t => {
         ? ()->(Utils.magic: unit => Internal.eventParams)
         : payload.params,
       ~srcAddress=payload.srcAddress,
+      ~blockHash=header["hash"],
+      ~blockTimestamp=header["timestamp"],
       ~cleanUpRawEventFieldsInPlace,
     )
   },

@@ -179,10 +179,8 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
     let eventItem =
       Internal.Event({
         eventConfig: (MockIndexer.evmEventConfig(~contractName="ERC20") :> Internal.eventConfig),
-        timestamp: 1234,
         chain: ChainMap.Chain.makeUnsafe(~chainId=137),
         blockNumber,
-        blockHash: "0xblockhash",
         logIndex,
         transactionIndex: 0,
         payload,
@@ -197,7 +195,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       log_index: logIndex,
       src_address: srcAddress,
       block_hash: "0xblockhash",
-      block_timestamp: 1234,
+      block_timestamp: 9999,
       block_fields: %raw(`{"gasUsed": "99", "miner": "0xminer"}`),
       transaction_fields: %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
       params: %raw(`"null"`),
