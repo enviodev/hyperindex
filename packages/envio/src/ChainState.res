@@ -457,10 +457,29 @@ let resetPendingQueries = (cs: t) => {
   cs.pendingBudget = 0.
 }
 
-// Propose the chain's candidate queries against the shared buffer budget,
-// accounting for this chain's own in-flight reservations.
-let getNextQuery = (cs: t, ~budget) =>
-  cs.fetchState->FetchState.getNextQuery(~budget, ~chainPendingBudget=cs.pendingBudget)
+// Propose the chain's candidate queries against the shared buffer budget.
+let getNextQuery = (cs: t, ~budget) => cs.fetchState->FetchState.getNextQuery(~budget)
+
+// Block to prune above (and how many buffer items that frees) for a given
+// cross-chain progress threshold. See FetchState.getPruneTarget.
+let getPruneTarget = (cs: t, ~progressThreshold) =>
+  cs.fetchState->FetchState.getPruneTarget(
+    ~progressThreshold,
+    ~maxReorgDepth=cs.chainConfig.maxReorgDepth,
+  )
+
+// Reclaim buffer memory by discarding fetched-ahead items above targetBlockNumber
+// and rolling the partitions that fetched them back to it, so they re-fetch later
+// once processing has caught up. Unlike a reorg rollback this touches only the
+// fetch frontier and transaction store — committed progress, reorg detection and
+// the DB are untouched, since nothing processed is being reverted. Callers must
+// first quiesce in-flight queries (resetPendingQueries + epoch bump); rolled-back
+// partitions collapse to targetBlockNumber and re-merge, de-fragmenting them.
+let pruneBuffer = (cs: t, ~targetBlockNumber) => {
+  cs.fetchState =
+    cs.fetchState->FetchState.rollback(~indexingAddresses=cs.indexingAddresses, ~targetBlockNumber)
+  cs.transactionStore->TransactionStore.rollback(targetBlockNumber)
+}
 
 // Run a fetch tick for this chain against its sources, feeding the owned fetch
 // frontier to the source manager.

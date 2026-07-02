@@ -80,7 +80,7 @@ let makeChainState = (
 // getNextQuery actually produces a Ready query (unlike the onBlock-only helper
 // above). The partition has no response yet, so each query estimates at the
 // default size.
-let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
+let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock, ~bufferBlocks=[]) => {
   let normalSelection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
   let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
   let partition: FetchState.partition = {
@@ -112,7 +112,7 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
     ),
     startBlock: 0,
     endBlock: None,
-    buffer: [],
+    buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
     normalSelection,
     latestOnBlockBlockNumber: latestFetchedBlock,
     maxOnBlockBufferSize: 10000,
@@ -183,7 +183,7 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime=true)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+    await cm->CrossChainState.checkAndFetch(~invalidateInflight=() => (), ~dispatchChain=(~chain, ~action) => {
       dispatched->Array.push((chain->ChainMap.Chain.toChainId, action))->ignore
       Promise.resolve()
     })
@@ -213,7 +213,7 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=100)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action as _) => {
+    await cm->CrossChainState.checkAndFetch(~invalidateInflight=() => (), ~dispatchChain=(~chain, ~action as _) => {
       dispatched->Array.push(chain->ChainMap.Chain.toChainId)->ignore
       Promise.resolve()
     })
@@ -229,7 +229,7 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=1)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+    await cm->CrossChainState.checkAndFetch(~invalidateInflight=() => (), ~dispatchChain=(~chain, ~action) => {
       dispatched
       ->Array.push((
         chain->ChainMap.Chain.toChainId,
@@ -299,6 +299,69 @@ describe("CrossChainState readiness", () => {
       "bReady": b->ChainState.isReady,
       "isRealtime": cm->CrossChainState.isRealtime,
     }).toEqual({"aReady": true, "bReady": true, "isRealtime": true})
+  })
+})
+
+describe("CrossChainState buffer prune", () => {
+  // knownHeight 10000, firstEventBlock 0 (from the helper) → progress% == block/10000.
+  // maxReorgDepth defaults to 200, so the reorg floor is 9800 — all the blocks
+  // below stay prunable. Both chains hold the frontier at block 100 with 40
+  // buffered-ahead items each.
+  let makeStuck = (~chainId, ~fromBlock) =>
+    makeFetchingChainState(
+      ~chainId,
+      ~knownHeight=10000,
+      ~latestFetchedBlock=100,
+      ~bufferBlocks=Array.fromInitializer(~length=40, i => fromBlock + i),
+    )
+
+  Async.it("prunes the closest-to-head items across chains down to the low-water mark", async t => {
+    // targetBufferSize 20 → prune when the buffer exceeds 3x (60), down to 2x
+    // (40). Chain 1's items sit at ~0.8 progress, chain 2's at ~0.2, so the
+    // head-closest chain 1 is dropped entirely (freeing exactly the needed 40)
+    // before chain 2 is touched.
+    let cs1 = makeStuck(~chainId=1, ~fromBlock=8000)
+    let cs2 = makeStuck(~chainId=2, ~fromBlock=2000)
+    let cm = makeCrossChainState(~chainStatesList=[cs1, cs2], ~targetBufferSize=20)
+
+    let invalidateCalled = ref(false)
+    await cm->CrossChainState.checkAndFetch(
+      ~invalidateInflight=() => invalidateCalled := true,
+      ~dispatchChain=(~chain as _, ~action as _) => Promise.resolve(),
+    )
+
+    t.expect({
+      "chain1Buffer": cs1->ChainState.bufferSize,
+      "chain2Buffer": cs2->ChainState.bufferSize,
+      "invalidateCalled": invalidateCalled.contents,
+    }).toEqual({
+      "chain1Buffer": 0,
+      "chain2Buffer": 40,
+      "invalidateCalled": true,
+    })
+  })
+
+  Async.it("leaves the buffer untouched below the high-water mark", async t => {
+    // 80 items total but targetBufferSize 100 → high-water 300, so no prune.
+    let cs1 = makeStuck(~chainId=1, ~fromBlock=8000)
+    let cs2 = makeStuck(~chainId=2, ~fromBlock=2000)
+    let cm = makeCrossChainState(~chainStatesList=[cs1, cs2], ~targetBufferSize=100)
+
+    let invalidateCalled = ref(false)
+    await cm->CrossChainState.checkAndFetch(
+      ~invalidateInflight=() => invalidateCalled := true,
+      ~dispatchChain=(~chain as _, ~action as _) => Promise.resolve(),
+    )
+
+    t.expect({
+      "chain1Buffer": cs1->ChainState.bufferSize,
+      "chain2Buffer": cs2->ChainState.bufferSize,
+      "invalidateCalled": invalidateCalled.contents,
+    }).toEqual({
+      "chain1Buffer": 40,
+      "chain2Buffer": 40,
+      "invalidateCalled": false,
+    })
   })
 })
 

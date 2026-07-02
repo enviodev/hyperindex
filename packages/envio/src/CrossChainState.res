@@ -196,6 +196,95 @@ let totalReservedSize = (crossChainState: t) => {
 let compareByProgress = (a: FetchState.query, b: FetchState.query) =>
   Float.compare(a.progress, b.progress)
 
+// Removing the up-front block cap lets queries run to the head, so fetched-ahead
+// items accumulate as stuck buffer while a lagging partition holds the frontier.
+// This reclaims that memory reactively: once the indexer-wide buffer crosses 3x
+// targetBufferSize, drop the highest-progress% (closest-to-head) items across all
+// chains back down to 2x and roll back the partitions that fetched them. Prune
+// only during backfill — near the head blockLag keeps the buffer below the reorg
+// window and there is nothing far-ahead to reclaim.
+let maybePrune = (crossChainState: t, ~invalidateInflight) => {
+  if !crossChainState.isInReorgThreshold {
+    let chainIds = crossChainState.chainIds
+
+    let total = ref(0)
+    for i in 0 to chainIds->Array.length - 1 {
+      total :=
+        total.contents +
+        crossChainState->getChainState(chainIds->Array.getUnsafe(i))->ChainState.bufferSize
+    }
+
+    let highWater = crossChainState.targetBufferSize * 3
+    if total.contents > highWater {
+      let lowWater = crossChainState.targetBufferSize * 2
+      let need = total.contents - lowWater
+
+      // Items freed by pruning everything above the given progress threshold,
+      // summed across chains. Non-increasing in the threshold (higher threshold =
+      // higher per-chain target = fewer items dropped).
+      let freedAt = progressThreshold => {
+        let freed = ref(0)
+        for i in 0 to chainIds->Array.length - 1 {
+          let (_, chainFreed) =
+            crossChainState
+            ->getChainState(chainIds->Array.getUnsafe(i))
+            ->ChainState.getPruneTarget(~progressThreshold)
+          freed := freed.contents + chainFreed
+        }
+        freed.contents
+      }
+
+      // Largest progress threshold that still frees `need` items, so we drop only
+      // the closest-to-head items across all chains. If even threshold 0 (drop all
+      // stuck items) can't reach `need`, we settle at 0 and free what we can.
+      let lo = ref(0.)
+      let hi = ref(1.)
+      for _ in 0 to 39 {
+        let mid = (lo.contents +. hi.contents) /. 2.
+        if freedAt(mid) >= need {
+          lo := mid
+        } else {
+          hi := mid
+        }
+      }
+      let progressThreshold = lo.contents
+
+      // Nothing above the frontier is prunable (e.g. the buffer is over the mark
+      // but full of ready items). Skip — quiescing in-flight fetches here would
+      // discard them every tick without making room, stalling progress.
+      if freedAt(progressThreshold) > 0 {
+        // Quiesce in-flight fetches before rolling partitions back: the epoch bump
+        // makes their responses stale (dropped on arrival) and resetPendingQueries
+        // clears them from every chain, since FetchState.rollback requires no
+        // in-flight queries.
+        invalidateInflight()
+        for i in 0 to chainIds->Array.length - 1 {
+          crossChainState
+          ->getChainState(chainIds->Array.getUnsafe(i))
+          ->ChainState.resetPendingQueries
+        }
+
+        let totalFreed = ref(0)
+        for i in 0 to chainIds->Array.length - 1 {
+          let cs = crossChainState->getChainState(chainIds->Array.getUnsafe(i))
+          let (target, freed) = cs->ChainState.getPruneTarget(~progressThreshold)
+          if freed > 0 {
+            cs->ChainState.pruneBuffer(~targetBlockNumber=target)
+            totalFreed := totalFreed.contents + freed
+          }
+        }
+
+        Logging.trace({
+          "msg": "Pruned stale fetch buffer above the processing frontier",
+          "bufferSize": total.contents,
+          "freed": totalFreed.contents,
+        })
+        Prometheus.IndexingBufferPrune.increment(~freed=totalFreed.contents)
+      }
+    }
+  }
+}
+
 // Dispatch a fetch tick across the whole indexer from one shared pool of
 // ~targetBufferSize ready events. Every chain proposes its candidate queries
 // (each carrying an estimated response size) against the full free budget; the
@@ -206,7 +295,10 @@ let compareByProgress = (a: FetchState.query, b: FetchState.query) =>
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
+  ~invalidateInflight: unit => unit,
 ) => {
+  crossChainState->maybePrune(~invalidateInflight)
+
   let remaining = Pervasives.max(
     0,
     crossChainState.targetBufferSize -

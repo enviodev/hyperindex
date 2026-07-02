@@ -95,16 +95,26 @@ let deriveContractNameByAddress: dict<array<Address.t>> => dict<
 // free.
 let defaultEstResponseSize = 10_000.
 
+// Floor for a query's estimate so cross-chain admission never treats it as free.
+// A density-0 partition (last response had no items) would otherwise estimate 0,
+// letting unlimited such queries be admitted in one tick and overshoot the buffer
+// before the prune can react.
+let minEstResponseSize = 100.
+
 // Estimated items a query will return, from the partition's event density
 // (items/block derived from its last response) and the query's block range.
 // toBlock None is the open-ended tail, capped at maxQueryBlockNumber. A partition
-// that responded with no items has density 0, so its queries cost 0 — correct,
-// they don't fill the buffer. Only a partition that has never responded
-// (prevQueryRange 0) has no signal, so it falls back to defaultEstResponseSize.
+// that responded with no items has density 0; its estimate is floored at
+// minEstResponseSize so admission still gates it. Only a partition that has never
+// responded (prevQueryRange 0) has no signal, so it falls back to
+// defaultEstResponseSize.
 let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~maxQueryBlockNumber) =>
   if p.prevQueryRange > 0 {
     let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
-    (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density
+    Pervasives.max(
+      minEstResponseSize,
+      (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density,
+    )
   } else {
     defaultEstResponseSize
   }
@@ -545,8 +555,8 @@ type t = {
   // Buffer of items ordered from earliest to latest
   buffer: array<Internal.item>,
   // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
-  // size). Fetch depth is bounded separately by getNextQuery's itemBudget, the
-  // chain's per-tick slice of the indexer-wide pool.
+  // size). Per-partition fetch range is no longer capped here; total buffer
+  // growth is instead bounded reactively by CrossChainState.maybePrune.
   maxOnBlockBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
   knownHeight: int,
@@ -1438,9 +1448,8 @@ let pushQueriesForRange = (
 }
 
 let getNextQuery = (
-  {buffer, optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight} as fetchState: t,
+  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight} as fetchState: t,
   ~budget,
-  ~chainPendingBudget,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
@@ -1459,22 +1468,12 @@ let getNextQuery = (
       !isOnBlockBehindTheHead,
     )
 
-    // Fetch at most `budget` items past the ready frontier (plus what's already
-    // in flight) so processing always has buffer without ballooning memory.
-    // budget already excludes items at/below the frontier (they're in the shared
-    // totalReadyCount), so offset the index by bufferReadyCount — otherwise the
-    // ready prefix is subtracted twice and the buffer caps at a fraction of its
-    // target. A partition that fetched further is skipped until the buffer drains.
-    let maxQueryBlockNumber = {
-      switch buffer->Array.get(
-        fetchState->bufferReadyCount + budget + chainPendingBudget->Float.toInt - 1,
-      ) {
-      | Some(item) =>
-        // Just in case check that we don't query beyond the current block
-        Pervasives.min(item->Internal.getItemBlockNumber, knownHeight)
-      | None => knownHeight
-      }
-    }
+    // Partitions fetch all the way to the head. Per-query range stays bounded by
+    // the per-partition chunk heuristic, and total buffer growth is bounded
+    // reactively by the cross-chain prune (CrossChainState.maybePrune) rather than
+    // an up-front block cap — the cap forced a single block ceiling on every
+    // partition, starving sparse ones into a storm of tiny queries.
+    let maxQueryBlockNumber = knownHeight
 
     let queries = []
 
@@ -1508,15 +1507,6 @@ let getNextQuery = (
         // Force head block as an endBlock when blockLag is set
         // because otherwise HyperSync might return bigger range
         Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock)
-      }
-      // Enforce the response range up until target block
-      // Otherwise for indexers with 100+ partitions
-      // we might blow up the buffer size to more than 600k events
-      // simply because of HyperSync returning extra blocks
-      let queryEndBlock = switch (queryEndBlock, maxQueryBlockNumber < knownHeight) {
-      | (Some(endBlock), true) => Some(Pervasives.min(maxQueryBlockNumber, endBlock))
-      | (None, true) => Some(maxQueryBlockNumber)
-      | (_, false) => queryEndBlock
       }
 
       let maybeChunkRange = getMinHistoryRange(p)
@@ -1618,6 +1608,40 @@ let getReadyItemsCount = (fetchState: t, ~targetSize: int, ~fromItem) => {
     }
   }
   acc.contents
+}
+
+// For a cross-chain progress threshold in [0.,1.], returns the block to prune
+// above (buffer items with a higher block number get dropped and their
+// partitions rolled back) together with how many items that frees. Clamped so we
+// never drop ready items (target >= the ready frontier) nor roll a partition back
+// into the reorg window (target <= knownHeight - maxReorgDepth), keeping restart
+// points on confirmed blocks. Higher progress% = closer to head = pruned first.
+let getPruneTarget = (fetchState: t, ~progressThreshold: float, ~maxReorgDepth: int) => {
+  let frontier = fetchState->bufferBlockNumber
+  let reorgFloor = fetchState.knownHeight - maxReorgDepth
+  let progressBlock = switch fetchState.firstEventBlock {
+  | Some(firstEventBlock) =>
+    let totalRange = fetchState.knownHeight - firstEventBlock
+    totalRange <= 0
+      ? fetchState.knownHeight
+      : firstEventBlock + (progressThreshold *. totalRange->Int.toFloat)->Float.toInt
+  | None => fetchState.knownHeight
+  }
+  let target = Pervasives.max(frontier, Pervasives.min(progressBlock, reorgFloor))
+
+  // Buffer is sorted by block asc; count items strictly above target in O(log n).
+  let buffer = fetchState.buffer
+  let lo = ref(0)
+  let hi = ref(buffer->Array.length)
+  while lo.contents < hi.contents {
+    let mid = (lo.contents + hi.contents) / 2
+    if buffer->Array.getUnsafe(mid)->Internal.getItemBlockNumber <= target {
+      lo := mid + 1
+    } else {
+      hi := mid
+    }
+  }
+  (target, buffer->Array.length - lo.contents)
 }
 
 /**
