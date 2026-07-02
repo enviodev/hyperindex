@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ viaRel: C(where: {d: {id: {_eq: \"d-4\"}}}, order_by: {id: asc}) { id } viaColumn: D(where: {c: {_eq: \"c-missing\"}}, order_by: {id: asc}) { id c } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "viaRel": [],
+   "viaColumn": [
+    {
+     "id": "d-4",
+     "c": "c-missing"
+    }
+   ]
+  }
+ }
+}

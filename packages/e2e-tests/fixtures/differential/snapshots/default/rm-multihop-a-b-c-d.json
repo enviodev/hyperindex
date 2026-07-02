@@ -1,0 +1,68 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ A(order_by: {id: asc}) { id optionalStringToTestLinkedEntities b { id c { id stringThatIsMirroredToA d(order_by: {id: asc}) { id c } } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "A": [
+    {
+     "id": "a-1",
+     "optionalStringToTestLinkedEntities": "linked",
+     "b": {
+      "id": "b-1",
+      "c": {
+       "id": "c-1",
+       "stringThatIsMirroredToA": "mirror-1",
+       "d": [
+        {
+         "id": "d-1",
+         "c": "c-1"
+        },
+        {
+         "id": "d-2",
+         "c": "c-1"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "id": "a-2",
+     "optionalStringToTestLinkedEntities": null,
+     "b": {
+      "id": "b-1",
+      "c": {
+       "id": "c-1",
+       "stringThatIsMirroredToA": "mirror-1",
+       "d": [
+        {
+         "id": "d-1",
+         "c": "c-1"
+        },
+        {
+         "id": "d-2",
+         "c": "c-1"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "id": "a-3",
+     "optionalStringToTestLinkedEntities": "",
+     "b": {
+      "id": "b-2",
+      "c": null
+     }
+    },
+    {
+     "id": "a-4",
+     "optionalStringToTestLinkedEntities": "dangling b",
+     "b": null
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {_and: [{accountType: {_eq: \"ADMIN\"}}, {tokens: {collection: {symbol: {_eq: \"ALPHA\"}}}}]}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-4"
+    }
+   ]
+  }
+ }
+}

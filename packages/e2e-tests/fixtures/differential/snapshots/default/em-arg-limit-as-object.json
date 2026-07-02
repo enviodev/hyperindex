@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(limit: {value: 5}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "expected a non-negative 32-bit integer for type 'Int', but found an object",
+    "extensions": {
+     "path": "$.selectionSet.User.args.limit",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

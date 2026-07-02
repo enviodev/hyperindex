@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "mutation { insert_Bogus(objects: []) { affected_rows } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'insert_Bogus' not found in type: 'mutation_root'",
+    "extensions": {
+     "path": "$.selectionSet.insert_Bogus",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

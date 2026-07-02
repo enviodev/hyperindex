@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: \"user-1\", bogus: 1) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "'User_by_pk' has no argument named 'bogus'",
+    "extensions": {
+     "path": "$.selectionSet.User_by_pk",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

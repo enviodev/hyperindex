@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ lt: raw_events(where: {event_id: {_lt: 2}}, order_by: {serial: asc}) { serial event_id } lte: raw_events(where: {event_id: {_lte: 2}}, order_by: {serial: asc}) { serial } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "lt": [
+    {
+     "serial": "4",
+     "event_id": "1"
+    }
+   ],
+   "lte": [
+    {
+     "serial": "4"
+    },
+    {
+     "serial": "5"
+    }
+   ]
+  }
+ }
+}

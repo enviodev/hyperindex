@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($b: Boolean!) { SimpleEntity(order_by: {id: asc}, limit: 1) { id value @include(if: $b) } }",
+  "variables": {
+   "b": "true"
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "expected a boolean for type 'Boolean', but found a string",
+    "extensions": {
+     "path": "$.selectionSet.SimpleEntity.selectionSet.include.args.if",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

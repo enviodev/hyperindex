@@ -1,0 +1,38 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ isNull: EntityWithAllTypes(where: {arrayOfStrings: {_is_null: true}}, order_by: {id: asc}) { id } notNull: EntityWithAllTypes(where: {arrayOfStrings: {_is_null: false}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "isNull": [],
+   "notNull": [
+    {
+     "id": "all-1"
+    },
+    {
+     "id": "all-array-edge"
+    },
+    {
+     "id": "all-empty-arrays"
+    },
+    {
+     "id": "all-json-bool"
+    },
+    {
+     "id": "all-json-null"
+    },
+    {
+     "id": "all-json-number"
+    },
+    {
+     "id": "all-json-string"
+    },
+    {
+     "id": "all-json-unicode"
+    }
+   ]
+  }
+ }
+}

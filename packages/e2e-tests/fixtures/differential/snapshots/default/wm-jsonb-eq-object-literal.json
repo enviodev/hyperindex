@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ raw_events(where: {params: {_eq: {from: \"0x0\", to: \"0x1\", value: \"100\"}}}, order_by: {serial: asc}) { serial params } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events": [
+    {
+     "serial": "1",
+     "params": {
+      "to": "0x1",
+      "from": "0x0",
+      "value": "100"
+     }
+    }
+   ]
+  }
+ }
+}

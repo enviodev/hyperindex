@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ iregex: User(where: {address: {_iregex: \"^0XAAAA.*[56]$\"}}, order_by: {id: asc}) { id } niregex: User(where: {address: {_niregex: \"^0XAAAA.*[56]$\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "iregex": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ],
+   "niregex": [
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-4"
+    }
+   ]
+  }
+ }
+}

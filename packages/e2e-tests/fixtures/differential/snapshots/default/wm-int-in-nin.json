@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ in: User(where: {updatesCountOnUserForTesting: {_in: [0, 7, 2147483647]}}, order_by: {id: asc}) { id } nin: User(where: {updatesCountOnUserForTesting: {_nin: [0, 7, 2147483647]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "in": [
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ],
+   "nin": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-4"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,59 @@
+{
+ "role": "public",
+ "request": {
+  "query": "fragment L1 on User { id ...L2 } fragment L2 on User { gravatar { ...L3 } } fragment L3 on Gravatar { id owner { ...L4 } } fragment L4 on User { address tokens(order_by: {id: asc}, limit: 1) { ...L5 } } fragment L5 on Token { id tokenId } { User(order_by: {id: asc}) { ...L1 } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "gravatar": null
+    },
+    {
+     "id": "user-1",
+     "gravatar": {
+      "id": "grav-1",
+      "owner": {
+       "address": "0xaaaa000000000000000000000000000000000001",
+       "tokens": [
+        {
+         "id": "tok-1",
+         "tokenId": "0"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "id": "user-2",
+     "gravatar": {
+      "id": "grav-2",
+      "owner": {
+       "address": "0xaaaa000000000000000000000000000000000002",
+       "tokens": [
+        {
+         "id": "tok-3",
+         "tokenId": "2"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "id": "user-3",
+     "gravatar": null
+    },
+    {
+     "id": "user-4",
+     "gravatar": null
+    },
+    {
+     "id": "user-dangling",
+     "gravatar": null
+    }
+   ]
+  }
+ }
+}

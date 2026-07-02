@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ raw_events_aggregate { aggregate { sum { params } } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'params' not found in type: 'raw_events_sum_fields'",
+    "extensions": {
+     "path": "$.selectionSet.raw_events_aggregate.selectionSet.aggregate.selectionSet.sum.selectionSet.params",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

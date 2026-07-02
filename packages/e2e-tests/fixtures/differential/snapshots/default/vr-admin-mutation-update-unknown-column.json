@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "mutation { update_User(where: {id: {_eq: \"no-such-user\"}}, _set: {notAColumn: 1}) { affected_rows } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'notAColumn' not found in type: 'User_set_input'",
+    "extensions": {
+     "path": "$.selectionSet.update_User.args._set.notAColumn",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

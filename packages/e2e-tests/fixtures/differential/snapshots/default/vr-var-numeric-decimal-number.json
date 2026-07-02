@@ -1,0 +1,20 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($n: numeric!) { EntityWithAllNonArrayTypes(where: {bigDecimal: {_eq: $n}}, order_by: {id: asc}) { id bigDecimal } }",
+  "variables": {
+   "n": 1.25
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-1",
+     "bigDecimal": "1.25"
+    }
+   ]
+  }
+ }
+}

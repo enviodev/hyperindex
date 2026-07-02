@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_by_pk(id: \"scalar-special-float\") { id string optString int_ optInt float_ optFloat bool optBool bigInt optBigInt bigDecimal optBigDecimal bigDecimalWithConfig enumField optEnumField timestamp optTimestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_by_pk": {
+    "id": "scalar-special-float",
+    "string": "inf and nan",
+    "optString": null,
+    "int_": -1,
+    "optInt": null,
+    "float_": "Infinity",
+    "optFloat": "NaN",
+    "bool": false,
+    "optBool": null,
+    "bigInt": "1",
+    "optBigInt": null,
+    "bigDecimal": "1.1000",
+    "optBigDecimal": null,
+    "bigDecimalWithConfig": "0.50000000",
+    "enumField": "USER",
+    "optEnumField": null,
+    "timestamp": "2000-02-29T00:00:00+00:00",
+    "optTimestamp": null
+   }
+  }
+ }
+}

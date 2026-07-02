@@ -1,0 +1,35 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ contains: EntityWithAllTypes(where: {arrayOfStrings: {_contains: [\"two\"]}}, order_by: {id: asc}) { id arrayOfStrings } containedIn: EntityWithAllTypes(where: {arrayOfStrings: {_contained_in: [\"a\", \"b\", \"one\", \"two\", \"three\"]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "contains": [
+    {
+     "id": "all-1",
+     "arrayOfStrings": [
+      "one",
+      "two",
+      "three"
+     ]
+    }
+   ],
+   "containedIn": [
+    {
+     "id": "all-1"
+    },
+    {
+     "id": "all-empty-arrays"
+    },
+    {
+     "id": "all-json-number"
+    },
+    {
+     "id": "all-json-string"
+    }
+   ]
+  }
+ }
+}

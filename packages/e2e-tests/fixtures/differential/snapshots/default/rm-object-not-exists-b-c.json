@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ B(where: {_not: {c: {}}}, order_by: {id: asc}) { id c_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "B": [
+    {
+     "id": "b-2",
+     "c_id": null
+    },
+    {
+     "id": "b-3",
+     "c_id": "c-missing"
+    }
+   ]
+  }
+ }
+}

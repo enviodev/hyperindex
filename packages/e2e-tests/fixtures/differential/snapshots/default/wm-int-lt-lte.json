@@ -1,0 +1,32 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ lt: User(where: {updatesCountOnUserForTesting: {_lt: 5}}, order_by: {id: asc}) { id updatesCountOnUserForTesting } lte: User(where: {updatesCountOnUserForTesting: {_lte: 5}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "lt": [
+    {
+     "id": "user-1",
+     "updatesCountOnUserForTesting": 0
+    },
+    {
+     "id": "user-4",
+     "updatesCountOnUserForTesting": -2147483648
+    }
+   ],
+   "lte": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-4"
+    }
+   ]
+  }
+ }
+}

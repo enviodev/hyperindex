@@ -1,0 +1,215 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ d1: EntityWithAllNonArrayTypes(order_by: [{optEnumField: asc}, {id: asc}]) { id optEnumField } d2: EntityWithAllNonArrayTypes(order_by: [{optEnumField: desc}, {id: asc}]) { id optEnumField } d3: EntityWithAllNonArrayTypes(order_by: [{optEnumField: asc_nulls_first}, {id: asc}]) { id optEnumField } d4: EntityWithAllNonArrayTypes(order_by: [{optEnumField: asc_nulls_last}, {id: asc}]) { id optEnumField } d5: EntityWithAllNonArrayTypes(order_by: [{optEnumField: desc_nulls_first}, {id: asc}]) { id optEnumField } d6: EntityWithAllNonArrayTypes(order_by: [{optEnumField: desc_nulls_last}, {id: asc}]) { id optEnumField } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "d1": [
+    {
+     "id": "scalar-empty",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-extremes",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-1",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-quotes",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-unicode",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optEnumField": null
+    }
+   ],
+   "d2": [
+    {
+     "id": "scalar-neg-inf",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-1",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-quotes",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-unicode",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-empty",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-extremes",
+     "optEnumField": "ADMIN"
+    }
+   ],
+   "d3": [
+    {
+     "id": "scalar-neg-inf",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-empty",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-extremes",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-1",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-quotes",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-unicode",
+     "optEnumField": "USER"
+    }
+   ],
+   "d4": [
+    {
+     "id": "scalar-empty",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-extremes",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-1",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-quotes",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-unicode",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optEnumField": null
+    }
+   ],
+   "d5": [
+    {
+     "id": "scalar-neg-inf",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-1",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-quotes",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-unicode",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-empty",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-extremes",
+     "optEnumField": "ADMIN"
+    }
+   ],
+   "d6": [
+    {
+     "id": "scalar-1",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-quotes",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-unicode",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-empty",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-extremes",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optEnumField": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optEnumField": null
+    }
+   ]
+  }
+ }
+}

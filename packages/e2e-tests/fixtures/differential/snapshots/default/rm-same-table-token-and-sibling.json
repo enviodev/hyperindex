@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(where: {_and: [{owner: {accountType: {_eq: \"ADMIN\"}}}, {collection: {tokens: {owner: {accountType: {_eq: \"USER\"}}}}}]}, order_by: {id: asc}) { id owner_id collection_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-1",
+     "owner_id": "user-1",
+     "collection_id": "coll-1"
+    },
+    {
+     "id": "tok-10",
+     "owner_id": "user-4",
+     "collection_id": "coll-1"
+    },
+    {
+     "id": "tok-2",
+     "owner_id": "user-1",
+     "collection_id": "coll-1"
+    },
+    {
+     "id": "tok-9",
+     "owner_id": "user-4",
+     "collection_id": "coll-2"
+    }
+   ]
+  }
+ }
+}

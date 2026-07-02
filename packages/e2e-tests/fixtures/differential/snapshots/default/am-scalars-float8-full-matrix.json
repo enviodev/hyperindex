@@ -1,0 +1,46 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate(where: {id: {_in: [\"scalar-1\", \"scalar-nulls\", \"scalar-unicode\", \"scalar-quotes\", \"scalar-empty\"]}}) { aggregate { count sum { float_ } avg { float_ } min { float_ } max { float_ } stddev { float_ } stddev_pop { float_ } stddev_samp { float_ } var_pop { float_ } var_samp { float_ } variance { float_ } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_aggregate": {
+    "aggregate": {
+     "count": 5,
+     "sum": {
+      "float_": "-2.04159"
+     },
+     "avg": {
+      "float_": "-0.40831799999999996"
+     },
+     "min": {
+      "float_": "-3.14159"
+     },
+     "max": {
+      "float_": "1.5"
+     },
+     "stddev": {
+      "float_": "1.698968053148734"
+     },
+     "stddev_pop": {
+      "float_": "1.5196032233764178"
+     },
+     "stddev_samp": {
+      "float_": "1.698968053148734"
+     },
+     "var_pop": {
+      "float_": "2.3091939564959993"
+     },
+     "var_samp": {
+      "float_": "2.886492445619999"
+     },
+     "variance": {
+      "float_": "2.886492445619999"
+     }
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,31 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ _meta_aggregate { aggregate { min { readyAt } max { readyAt } } } chain_metadata_aggregate { aggregate { min { timestamp_caught_up_to_head_or_endblock } max { timestamp_caught_up_to_head_or_endblock } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "_meta_aggregate": {
+    "aggregate": {
+     "min": {
+      "readyAt": "2024-11-01T10:20:30.456+00:00"
+     },
+     "max": {
+      "readyAt": "2024-11-01T10:20:30.456+00:00"
+     }
+    }
+   },
+   "chain_metadata_aggregate": {
+    "aggregate": {
+     "min": {
+      "timestamp_caught_up_to_head_or_endblock": "2024-11-01T10:20:30.456+00:00"
+     },
+     "max": {
+      "timestamp_caught_up_to_head_or_endblock": "2024-11-01T10:20:30.456+00:00"
+     }
+    }
+   }
+  }
+ }
+}

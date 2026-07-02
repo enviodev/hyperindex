@@ -1,0 +1,20 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($ts: timestamptz!) { EntityWithTimestamp(where: {timestamp: {_eq: $ts}}, order_by: {id: asc}) { id timestamp } }",
+  "variables": {
+   "ts": "2024-01-15T12:34:56.123456+00:00"
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithTimestamp": [
+    {
+     "id": "ts-micro",
+     "timestamp": "2024-01-15T12:34:56.123456+00:00"
+    }
+   ]
+  }
+ }
+}

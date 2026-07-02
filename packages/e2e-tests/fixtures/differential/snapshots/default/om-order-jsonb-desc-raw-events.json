@@ -1,0 +1,53 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ raw_events(order_by: [{params: desc}, {serial: asc}]) { serial params } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events": [
+    {
+     "serial": "2",
+     "params": {
+      "to": "0x2",
+      "from": "0x1",
+      "value": "9999999999999999999999999999"
+     }
+    },
+    {
+     "serial": "1",
+     "params": {
+      "to": "0x1",
+      "from": "0x0",
+      "value": "100"
+     }
+    },
+    {
+     "serial": "3",
+     "params": {
+      "id": "1",
+      "nested": {
+       "deep": [
+        1,
+        null,
+        "x"
+       ]
+      },
+      "displayName": "unicode 🚀"
+     }
+    },
+    {
+     "serial": "5",
+     "params": {
+      "addr": "0x5555555555555555555555555555555555555555"
+     }
+    },
+    {
+     "serial": "4",
+     "params": {}
+    }
+   ]
+  }
+ }
+}

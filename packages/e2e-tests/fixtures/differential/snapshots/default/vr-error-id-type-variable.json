@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($id: ID!) { User_by_pk(id: $id) { id } }",
+  "variables": {
+   "id": "user-1"
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "variable 'id' is declared as 'ID!', but used where 'String!' is expected",
+    "extensions": {
+     "path": "$.selectionSet.User_by_pk.args.id",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

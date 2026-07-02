@@ -1,0 +1,33 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ Token_aggregate(distinct_on: collection_id, order_by: [{collection_id: asc}, {id: asc}]) { aggregate { count sum { tokenId } } nodes { id collection_id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token_aggregate": {
+    "aggregate": {
+     "count": 3,
+     "sum": {
+      "tokenId": "1000000000000000000000000000007"
+     }
+    },
+    "nodes": [
+     {
+      "id": "tok-1",
+      "collection_id": "coll-1"
+     },
+     {
+      "id": "tok-4",
+      "collection_id": "coll-2"
+     },
+     {
+      "id": "tok-7",
+      "collection_id": "coll-missing"
+     }
+    ]
+   }
+  }
+ }
+}

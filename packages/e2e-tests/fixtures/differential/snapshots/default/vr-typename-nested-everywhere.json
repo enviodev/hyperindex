@@ -1,0 +1,129 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}) { __typename id gravatar { __typename id } tokens(order_by: {id: asc}) { __typename id collection { __typename id } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "__typename": "User",
+     "id": "user \"quoted\" 🚀",
+     "gravatar": null,
+     "tokens": [
+      {
+       "__typename": "Token",
+       "id": "tok-8",
+       "collection": {
+        "__typename": "NftCollection",
+        "id": "coll-2"
+       }
+      }
+     ]
+    },
+    {
+     "__typename": "User",
+     "id": "user-1",
+     "gravatar": {
+      "__typename": "Gravatar",
+      "id": "grav-1"
+     },
+     "tokens": [
+      {
+       "__typename": "Token",
+       "id": "tok-1",
+       "collection": {
+        "__typename": "NftCollection",
+        "id": "coll-1"
+       }
+      },
+      {
+       "__typename": "Token",
+       "id": "tok-2",
+       "collection": {
+        "__typename": "NftCollection",
+        "id": "coll-1"
+       }
+      },
+      {
+       "__typename": "Token",
+       "id": "tok-7",
+       "collection": null
+      }
+     ]
+    },
+    {
+     "__typename": "User",
+     "id": "user-2",
+     "gravatar": {
+      "__typename": "Gravatar",
+      "id": "grav-2"
+     },
+     "tokens": [
+      {
+       "__typename": "Token",
+       "id": "tok-3",
+       "collection": {
+        "__typename": "NftCollection",
+        "id": "coll-1"
+       }
+      },
+      {
+       "__typename": "Token",
+       "id": "tok-4",
+       "collection": {
+        "__typename": "NftCollection",
+        "id": "coll-2"
+       }
+      }
+     ]
+    },
+    {
+     "__typename": "User",
+     "id": "user-3",
+     "gravatar": null,
+     "tokens": [
+      {
+       "__typename": "Token",
+       "id": "tok-5",
+       "collection": {
+        "__typename": "NftCollection",
+        "id": "coll-2"
+       }
+      }
+     ]
+    },
+    {
+     "__typename": "User",
+     "id": "user-4",
+     "gravatar": null,
+     "tokens": [
+      {
+       "__typename": "Token",
+       "id": "tok-10",
+       "collection": {
+        "__typename": "NftCollection",
+        "id": "coll-1"
+       }
+      },
+      {
+       "__typename": "Token",
+       "id": "tok-9",
+       "collection": {
+        "__typename": "NftCollection",
+        "id": "coll-2"
+       }
+      }
+     ]
+    },
+    {
+     "__typename": "User",
+     "id": "user-dangling",
+     "gravatar": null,
+     "tokens": []
+    }
+   ]
+  }
+ }
+}

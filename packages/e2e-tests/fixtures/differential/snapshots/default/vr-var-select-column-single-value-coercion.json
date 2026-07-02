@@ -1,0 +1,28 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($cols: [Token_select_column!]!) { Token(distinct_on: $cols, order_by: [{collection_id: asc}, {tokenId: desc}, {id: asc}]) { id collection_id } }",
+  "variables": {
+   "cols": "collection_id"
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-10",
+     "collection_id": "coll-1"
+    },
+    {
+     "id": "tok-9",
+     "collection_id": "coll-2"
+    },
+    {
+     "id": "tok-7",
+     "collection_id": "coll-missing"
+    }
+   ]
+  }
+ }
+}

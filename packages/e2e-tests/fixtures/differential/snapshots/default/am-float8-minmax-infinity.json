@@ -1,0 +1,22 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate { aggregate { min { float_ } max { float_ optFloat } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_aggregate": {
+    "aggregate": {
+     "min": {
+      "float_": "-Infinity"
+     },
+     "max": {
+      "float_": "Infinity",
+      "optFloat": "NaN"
+     }
+    }
+   }
+  }
+ }
+}

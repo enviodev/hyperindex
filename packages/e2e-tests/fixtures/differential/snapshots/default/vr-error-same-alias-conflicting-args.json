@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ x: SimpleEntity(order_by: {id: asc}, limit: 1) { id } x: SimpleEntity(order_by: {id: desc}, limit: 1) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "inconsistent arguments between multiple selections of field 'SimpleEntity'",
+    "extensions": {
+     "path": "$.selectionSet",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

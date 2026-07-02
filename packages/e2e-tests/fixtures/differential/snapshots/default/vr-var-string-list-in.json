@@ -1,0 +1,26 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($ids: [String!]!) { SimpleEntity(where: {id: {_in: $ids}}, order_by: {id: asc}) { id } }",
+  "variables": {
+   "ids": [
+    "simple-1",
+    "simple-9",
+    "missing"
+   ]
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-1"
+    },
+    {
+     "id": "simple-9"
+    }
+   ]
+  }
+ }
+}

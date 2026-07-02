@@ -1,0 +1,167 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ d1: User(order_by: [{gravatar_id: asc}, {id: asc}]) { id gravatar_id } d2: User(order_by: [{gravatar_id: desc}, {id: asc}]) { id gravatar_id } d3: User(order_by: [{gravatar_id: asc_nulls_first}, {id: asc}]) { id gravatar_id } d4: User(order_by: [{gravatar_id: asc_nulls_last}, {id: asc}]) { id gravatar_id } d5: User(order_by: [{gravatar_id: desc_nulls_first}, {id: asc}]) { id gravatar_id } d6: User(order_by: [{gravatar_id: desc_nulls_last}, {id: asc}]) { id gravatar_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "d1": [
+    {
+     "id": "user-1",
+     "gravatar_id": "grav-1"
+    },
+    {
+     "id": "user-2",
+     "gravatar_id": "grav-2"
+    },
+    {
+     "id": "user-dangling",
+     "gravatar_id": "grav-missing"
+    },
+    {
+     "id": "user \"quoted\" 🚀",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-3",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-4",
+     "gravatar_id": null
+    }
+   ],
+   "d2": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-3",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-4",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-dangling",
+     "gravatar_id": "grav-missing"
+    },
+    {
+     "id": "user-2",
+     "gravatar_id": "grav-2"
+    },
+    {
+     "id": "user-1",
+     "gravatar_id": "grav-1"
+    }
+   ],
+   "d3": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-3",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-4",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-1",
+     "gravatar_id": "grav-1"
+    },
+    {
+     "id": "user-2",
+     "gravatar_id": "grav-2"
+    },
+    {
+     "id": "user-dangling",
+     "gravatar_id": "grav-missing"
+    }
+   ],
+   "d4": [
+    {
+     "id": "user-1",
+     "gravatar_id": "grav-1"
+    },
+    {
+     "id": "user-2",
+     "gravatar_id": "grav-2"
+    },
+    {
+     "id": "user-dangling",
+     "gravatar_id": "grav-missing"
+    },
+    {
+     "id": "user \"quoted\" 🚀",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-3",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-4",
+     "gravatar_id": null
+    }
+   ],
+   "d5": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-3",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-4",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-dangling",
+     "gravatar_id": "grav-missing"
+    },
+    {
+     "id": "user-2",
+     "gravatar_id": "grav-2"
+    },
+    {
+     "id": "user-1",
+     "gravatar_id": "grav-1"
+    }
+   ],
+   "d6": [
+    {
+     "id": "user-dangling",
+     "gravatar_id": "grav-missing"
+    },
+    {
+     "id": "user-2",
+     "gravatar_id": "grav-2"
+    },
+    {
+     "id": "user-1",
+     "gravatar_id": "grav-1"
+    },
+    {
+     "id": "user \"quoted\" 🚀",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-3",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-4",
+     "gravatar_id": null
+    }
+   ]
+  }
+ }
+}

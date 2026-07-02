@@ -10,6 +10,7 @@
     "test:e2e": "vitest run src/e2e/",
     "test:differential": "vitest run --config vitest.differential.config.ts",
     "record:differential": "tsx src/differential/record.ts",
+    "bench:differential": "tsx src/differential/bench.ts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

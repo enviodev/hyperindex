@@ -1,0 +1,23 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate { aggregate { min { enumField optEnumField } max { enumField optEnumField } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_aggregate": {
+    "aggregate": {
+     "min": {
+      "enumField": "ADMIN",
+      "optEnumField": "ADMIN"
+     },
+     "max": {
+      "enumField": "USER",
+      "optEnumField": "USER"
+     }
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,23 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate { aggregate { min { timestamp optTimestamp } max { timestamp optTimestamp } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_aggregate": {
+    "aggregate": {
+     "min": {
+      "timestamp": "1970-01-01T00:00:00+00:00",
+      "optTimestamp": "1969-12-31T23:59:59.999999+00:00"
+     },
+     "max": {
+      "timestamp": "9999-12-31T23:59:59.999999+00:00",
+      "optTimestamp": "2024-12-26T02:30:00+00:00"
+     }
+    }
+   }
+  }
+ }
+}

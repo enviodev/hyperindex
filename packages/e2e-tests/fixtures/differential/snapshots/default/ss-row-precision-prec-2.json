@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ PostgresNumericPrecisionEntityTester_by_pk(id: \"prec-2\") { id exampleBigInt exampleBigIntRequired exampleBigIntArray exampleBigIntArrayRequired exampleBigDecimal exampleBigDecimalRequired exampleBigDecimalArray exampleBigDecimalArrayRequired exampleBigDecimalOtherOrder } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "PostgresNumericPrecisionEntityTester_by_pk": {
+    "id": "prec-2",
+    "exampleBigInt": "-1",
+    "exampleBigIntRequired": "1",
+    "exampleBigIntArray": [
+     0
+    ],
+    "exampleBigIntArrayRequired": [
+     9999999999
+    ],
+    "exampleBigDecimal": "1.50000",
+    "exampleBigDecimalRequired": "-1.50000",
+    "exampleBigDecimalArray": [
+     1.1
+    ],
+    "exampleBigDecimalArrayRequired": [
+     -1.1
+    ],
+    "exampleBigDecimalOtherOrder": "-0.000001"
+   }
+  }
+ }
+}

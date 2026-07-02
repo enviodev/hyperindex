@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(where: {_not: {owner: {}}}, order_by: {id: asc}) { id owner_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-6",
+     "owner_id": "user-missing"
+    }
+   ]
+  }
+ }
+}

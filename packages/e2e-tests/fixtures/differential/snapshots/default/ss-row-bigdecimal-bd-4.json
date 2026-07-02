@@ -1,0 +1,15 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithBigDecimal_by_pk(id: \"bd-4\") { id bigDecimal } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithBigDecimal_by_pk": {
+    "id": "bd-4",
+    "bigDecimal": "123456789.123456789"
+   }
+  }
+ }
+}

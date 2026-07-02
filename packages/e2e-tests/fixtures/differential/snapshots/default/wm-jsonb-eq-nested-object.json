@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {json: {_eq: {kind: \"object\", n: 1, nested: {a: [1, 2]}}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-1"
+    }
+   ]
+  }
+ }
+}

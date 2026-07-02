@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: \"asc\") { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "expected an object for type 'User_order_by', but found a string",
+    "extensions": {
+     "path": "$.selectionSet.User.args.order_by[0]",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

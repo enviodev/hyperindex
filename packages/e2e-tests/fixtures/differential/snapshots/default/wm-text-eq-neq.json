@@ -1,0 +1,34 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ eq: User(where: {address: {_eq: \"0xaaaa000000000000000000000000000000000003\"}}, order_by: {id: asc}) { id address } neq: User(where: {address: {_neq: \"0xaaaa000000000000000000000000000000000003\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "eq": [
+    {
+     "id": "user-3",
+     "address": "0xaaaa000000000000000000000000000000000003"
+    }
+   ],
+   "neq": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-4"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

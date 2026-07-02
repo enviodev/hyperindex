@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes_by_pk(id: \"all-1\") { id json(path: \"\") } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "parse json path error: . Accept letters, digits, underscore (_) or hyphen (-) only. Use quotes enclosed in bracket ([\"...\"]) if there is any special character",
+    "extensions": {
+     "path": "$.selectionSet.EntityWithAllTypes_by_pk.selectionSet.json.args",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

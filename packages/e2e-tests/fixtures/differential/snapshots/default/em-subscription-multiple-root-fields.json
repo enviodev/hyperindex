@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "subscription { User(limit: 1) { id } Gravatar(limit: 1) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "subscriptions must select one top level field",
+    "extensions": {
+     "path": "$",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

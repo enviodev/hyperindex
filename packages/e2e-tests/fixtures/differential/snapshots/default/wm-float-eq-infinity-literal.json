@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes(where: {float_: {_eq: \"Infinity\"}}, order_by: {id: asc}) { id float_ } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-special-float",
+     "float_": "Infinity"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,51 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes_by_pk(id: \"all-json-unicode\") { id string optString arrayOfStrings int_ optInt arrayOfInts float_ optFloat arrayOfFloats bool optBool bigInt optBigInt arrayOfBigInts bigDecimal optBigDecimal bigDecimalWithConfig arrayOfBigDecimals timestamp optTimestamp json enumField optEnumField } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes_by_pk": {
+    "id": "all-json-unicode",
+    "string": "json unicode",
+    "optString": null,
+    "arrayOfStrings": [
+     "d"
+    ],
+    "int_": 8,
+    "optInt": null,
+    "arrayOfInts": [
+     8
+    ],
+    "float_": "8.5",
+    "optFloat": null,
+    "arrayOfFloats": [
+     8.5
+    ],
+    "bool": false,
+    "optBool": null,
+    "bigInt": "8",
+    "optBigInt": null,
+    "arrayOfBigInts": [
+     "8"
+    ],
+    "bigDecimal": "8.5",
+    "optBigDecimal": null,
+    "bigDecimalWithConfig": "8.00000000",
+    "arrayOfBigDecimals": [
+     "8.5"
+    ],
+    "timestamp": "2024-02-05T02:02:02+00:00",
+    "optTimestamp": null,
+    "json": {
+     "esc": "a\"b\\c\nd",
+     "num": 1e+100,
+     "héllo": "wörld 🚀"
+    },
+    "enumField": "USER",
+    "optEnumField": null
+   }
+  }
+ }
+}

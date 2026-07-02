@@ -1,0 +1,30 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ gt: User(where: {address: {_gt: \"0xaaaa000000000000000000000000000000000004\"}}, order_by: {id: asc}) { id } gte: User(where: {address: {_gte: \"0xaaaa000000000000000000000000000000000004\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "gt": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ],
+   "gte": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-4"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

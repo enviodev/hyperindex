@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($l: Int, $l: Int) { User(order_by: {id: asc}, limit: $l) { id } }",
+  "variables": {
+   "l": 1
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "multiple definitions for variable \"l\"",
+    "extensions": {
+     "path": "$",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

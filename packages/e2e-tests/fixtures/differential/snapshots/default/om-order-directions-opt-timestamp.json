@@ -1,0 +1,215 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ d1: EntityWithAllNonArrayTypes(order_by: [{optTimestamp: asc}, {id: asc}]) { id optTimestamp } d2: EntityWithAllNonArrayTypes(order_by: [{optTimestamp: desc}, {id: asc}]) { id optTimestamp } d3: EntityWithAllNonArrayTypes(order_by: [{optTimestamp: asc_nulls_first}, {id: asc}]) { id optTimestamp } d4: EntityWithAllNonArrayTypes(order_by: [{optTimestamp: asc_nulls_last}, {id: asc}]) { id optTimestamp } d5: EntityWithAllNonArrayTypes(order_by: [{optTimestamp: desc_nulls_first}, {id: asc}]) { id optTimestamp } d6: EntityWithAllNonArrayTypes(order_by: [{optTimestamp: desc_nulls_last}, {id: asc}]) { id optTimestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "d1": [
+    {
+     "id": "scalar-extremes",
+     "optTimestamp": "1969-12-31T23:59:59.999999+00:00"
+    },
+    {
+     "id": "scalar-1",
+     "optTimestamp": "2024-01-15T12:34:56.789123+00:00"
+    },
+    {
+     "id": "scalar-quotes",
+     "optTimestamp": "2024-03-10T10:00:00+00:00"
+    },
+    {
+     "id": "scalar-empty",
+     "optTimestamp": "2024-07-04T00:00:00.12+00:00"
+    },
+    {
+     "id": "scalar-unicode",
+     "optTimestamp": "2024-12-26T02:30:00+00:00"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optTimestamp": null
+    }
+   ],
+   "d2": [
+    {
+     "id": "scalar-neg-inf",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-unicode",
+     "optTimestamp": "2024-12-26T02:30:00+00:00"
+    },
+    {
+     "id": "scalar-empty",
+     "optTimestamp": "2024-07-04T00:00:00.12+00:00"
+    },
+    {
+     "id": "scalar-quotes",
+     "optTimestamp": "2024-03-10T10:00:00+00:00"
+    },
+    {
+     "id": "scalar-1",
+     "optTimestamp": "2024-01-15T12:34:56.789123+00:00"
+    },
+    {
+     "id": "scalar-extremes",
+     "optTimestamp": "1969-12-31T23:59:59.999999+00:00"
+    }
+   ],
+   "d3": [
+    {
+     "id": "scalar-neg-inf",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-extremes",
+     "optTimestamp": "1969-12-31T23:59:59.999999+00:00"
+    },
+    {
+     "id": "scalar-1",
+     "optTimestamp": "2024-01-15T12:34:56.789123+00:00"
+    },
+    {
+     "id": "scalar-quotes",
+     "optTimestamp": "2024-03-10T10:00:00+00:00"
+    },
+    {
+     "id": "scalar-empty",
+     "optTimestamp": "2024-07-04T00:00:00.12+00:00"
+    },
+    {
+     "id": "scalar-unicode",
+     "optTimestamp": "2024-12-26T02:30:00+00:00"
+    }
+   ],
+   "d4": [
+    {
+     "id": "scalar-extremes",
+     "optTimestamp": "1969-12-31T23:59:59.999999+00:00"
+    },
+    {
+     "id": "scalar-1",
+     "optTimestamp": "2024-01-15T12:34:56.789123+00:00"
+    },
+    {
+     "id": "scalar-quotes",
+     "optTimestamp": "2024-03-10T10:00:00+00:00"
+    },
+    {
+     "id": "scalar-empty",
+     "optTimestamp": "2024-07-04T00:00:00.12+00:00"
+    },
+    {
+     "id": "scalar-unicode",
+     "optTimestamp": "2024-12-26T02:30:00+00:00"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optTimestamp": null
+    }
+   ],
+   "d5": [
+    {
+     "id": "scalar-neg-inf",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-unicode",
+     "optTimestamp": "2024-12-26T02:30:00+00:00"
+    },
+    {
+     "id": "scalar-empty",
+     "optTimestamp": "2024-07-04T00:00:00.12+00:00"
+    },
+    {
+     "id": "scalar-quotes",
+     "optTimestamp": "2024-03-10T10:00:00+00:00"
+    },
+    {
+     "id": "scalar-1",
+     "optTimestamp": "2024-01-15T12:34:56.789123+00:00"
+    },
+    {
+     "id": "scalar-extremes",
+     "optTimestamp": "1969-12-31T23:59:59.999999+00:00"
+    }
+   ],
+   "d6": [
+    {
+     "id": "scalar-unicode",
+     "optTimestamp": "2024-12-26T02:30:00+00:00"
+    },
+    {
+     "id": "scalar-empty",
+     "optTimestamp": "2024-07-04T00:00:00.12+00:00"
+    },
+    {
+     "id": "scalar-quotes",
+     "optTimestamp": "2024-03-10T10:00:00+00:00"
+    },
+    {
+     "id": "scalar-1",
+     "optTimestamp": "2024-01-15T12:34:56.789123+00:00"
+    },
+    {
+     "id": "scalar-extremes",
+     "optTimestamp": "1969-12-31T23:59:59.999999+00:00"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optTimestamp": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optTimestamp": null
+    }
+   ]
+  }
+ }
+}

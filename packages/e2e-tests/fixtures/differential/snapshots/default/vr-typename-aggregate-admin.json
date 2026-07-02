@@ -1,0 +1,64 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ Token_aggregate(order_by: {id: asc}) { __typename aggregate { __typename count sum { __typename tokenId } } nodes { __typename id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token_aggregate": {
+    "__typename": "Token_aggregate",
+    "aggregate": {
+     "__typename": "Token_aggregate_fields",
+     "count": 10,
+     "sum": {
+      "__typename": "Token_sum_fields",
+      "tokenId": "10000000000000000000000000000000000000000000001000000000000000000000123456811"
+     }
+    },
+    "nodes": [
+     {
+      "__typename": "Token",
+      "id": "tok-1"
+     },
+     {
+      "__typename": "Token",
+      "id": "tok-10"
+     },
+     {
+      "__typename": "Token",
+      "id": "tok-2"
+     },
+     {
+      "__typename": "Token",
+      "id": "tok-3"
+     },
+     {
+      "__typename": "Token",
+      "id": "tok-4"
+     },
+     {
+      "__typename": "Token",
+      "id": "tok-5"
+     },
+     {
+      "__typename": "Token",
+      "id": "tok-6"
+     },
+     {
+      "__typename": "Token",
+      "id": "tok-7"
+     },
+     {
+      "__typename": "Token",
+      "id": "tok-8"
+     },
+     {
+      "__typename": "Token",
+      "id": "tok-9"
+     }
+    ]
+   }
+  }
+ }
+}

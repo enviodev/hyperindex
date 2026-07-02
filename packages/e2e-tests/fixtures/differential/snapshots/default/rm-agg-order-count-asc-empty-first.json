@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ NftCollection(order_by: [{tokens_aggregate: {count: asc}}, {id: asc}]) { id currentSupply } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "NftCollection": [
+    {
+     "id": "coll-3",
+     "currentSupply": 0
+    },
+    {
+     "id": "coll-1",
+     "currentSupply": 3
+    },
+    {
+     "id": "coll-2",
+     "currentSupply": 5
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate { aggregate { avg { timestamp } } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'timestamp' not found in type: 'EntityWithAllNonArrayTypes_avg_fields'",
+    "extensions": {
+     "path": "$.selectionSet.EntityWithAllNonArrayTypes_aggregate.selectionSet.aggregate.selectionSet.avg.selectionSet.timestamp",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

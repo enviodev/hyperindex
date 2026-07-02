@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ lt: Gravatar(where: {size: {_lt: \"MEDIUM\"}}, order_by: {id: asc}) { id size } lte: Gravatar(where: {size: {_lte: \"MEDIUM\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "lt": [
+    {
+     "id": "grav-1",
+     "size": "SMALL"
+    }
+   ],
+   "lte": [
+    {
+     "id": "grav-1"
+    },
+    {
+     "id": "grav-2"
+    }
+   ]
+  }
+ }
+}

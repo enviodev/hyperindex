@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($n: numeric!) { Token(where: {tokenId: {_eq: $n}}, order_by: {id: asc}) { id } }",
+  "variables": {
+   "n": true
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "parsing Scientific failed, expected Number, but encountered Boolean",
+    "extensions": {
+     "path": "$.selectionSet.Token.args.where.tokenId._eq",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

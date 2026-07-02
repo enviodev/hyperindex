@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {tokens: {owner: {tokens: {owner: {tokens: {tokenId: {_eq: \"8\"}}}}}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀"
+    }
+   ]
+  }
+ }
+}

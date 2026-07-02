@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ eq: raw_events(where: {event_id: {_eq: \"4611686018427387905\"}}, order_by: {serial: asc}) { serial event_id } neq: raw_events(where: {event_id: {_neq: \"4611686018427387905\"}}, order_by: {serial: asc}) { serial } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "eq": [
+    {
+     "serial": "2",
+     "event_id": "4611686018427387905"
+    }
+   ],
+   "neq": [
+    {
+     "serial": "1"
+    },
+    {
+     "serial": "3"
+    },
+    {
+     "serial": "4"
+    },
+    {
+     "serial": "5"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,39 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ in: EntityWithAllNonArrayTypes(where: {bool: {_in: [false]}}, order_by: {id: asc}) { id } nin: EntityWithAllNonArrayTypes(where: {bool: {_nin: [false]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "in": [
+    {
+     "id": "scalar-nulls"
+    },
+    {
+     "id": "scalar-quotes"
+    },
+    {
+     "id": "scalar-special-float"
+    }
+   ],
+   "nin": [
+    {
+     "id": "scalar-1"
+    },
+    {
+     "id": "scalar-empty"
+    },
+    {
+     "id": "scalar-extremes"
+    },
+    {
+     "id": "scalar-neg-inf"
+    },
+    {
+     "id": "scalar-unicode"
+    }
+   ]
+  }
+ }
+}

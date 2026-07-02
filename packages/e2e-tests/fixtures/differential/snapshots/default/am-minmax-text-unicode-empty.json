@@ -1,0 +1,23 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate { aggregate { min { string optString } max { string optString } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_aggregate": {
+    "aggregate": {
+     "min": {
+      "string": "",
+      "optString": ""
+     },
+     "max": {
+      "string": "with \"double\" and 'single' and back\\slash and\nnewline and\ttab",
+      "optString": "x"
+     }
+    }
+   }
+  }
+ }
+}

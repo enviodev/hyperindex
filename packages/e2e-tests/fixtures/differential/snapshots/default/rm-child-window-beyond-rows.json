@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {id: {_in: [\"user-1\", \"user-2\"]}}, order_by: {id: asc}) { id tokens(order_by: {id: asc}, limit: 3, offset: 50) { id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-1",
+     "tokens": []
+    },
+    {
+     "id": "user-2",
+     "tokens": []
+    }
+   ]
+  }
+ }
+}

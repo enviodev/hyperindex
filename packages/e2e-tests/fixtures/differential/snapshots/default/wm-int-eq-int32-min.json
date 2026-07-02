@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {updatesCountOnUserForTesting: {_eq: -2147483648}}, order_by: {id: asc}) { id updatesCountOnUserForTesting } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-4",
+     "updatesCountOnUserForTesting": -2147483648
+    }
+   ]
+  }
+ }
+}

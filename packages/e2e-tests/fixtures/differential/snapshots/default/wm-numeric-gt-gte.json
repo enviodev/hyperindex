@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ gt: EntityWithBigDecimal(where: {bigDecimal: {_gt: \"1.1\"}}, order_by: {id: asc}) { id bigDecimal } gte: EntityWithBigDecimal(where: {bigDecimal: {_gte: \"1.10\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "gt": [
+    {
+     "id": "bd-4",
+     "bigDecimal": "123456789.123456789"
+    }
+   ],
+   "gte": [
+    {
+     "id": "bd-2"
+    },
+    {
+     "id": "bd-4"
+    }
+   ]
+  }
+ }
+}

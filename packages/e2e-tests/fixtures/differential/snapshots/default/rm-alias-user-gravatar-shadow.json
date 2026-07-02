@@ -1,0 +1,52 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}, limit: 3) { id gravatar: gravatar_id gravatar_id: gravatar { id displayName } tokens: address address: tokens(order_by: {id: asc}, limit: 1) { id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "gravatar": null,
+     "gravatar_id": null,
+     "tokens": "0xaaaa000000000000000000000000000000000005",
+     "address": [
+      {
+       "id": "tok-8"
+      }
+     ]
+    },
+    {
+     "id": "user-1",
+     "gravatar": "grav-1",
+     "gravatar_id": {
+      "id": "grav-1",
+      "displayName": "First Grav"
+     },
+     "tokens": "0xaaaa000000000000000000000000000000000001",
+     "address": [
+      {
+       "id": "tok-1"
+      }
+     ]
+    },
+    {
+     "id": "user-2",
+     "gravatar": "grav-2",
+     "gravatar_id": {
+      "id": "grav-2",
+      "displayName": "Zwölf Grüße 中文"
+     },
+     "tokens": "0xaaaa000000000000000000000000000000000002",
+     "address": [
+      {
+       "id": "tok-3"
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

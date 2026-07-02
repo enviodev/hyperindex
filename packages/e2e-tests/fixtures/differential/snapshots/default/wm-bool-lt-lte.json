@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ lt: EntityWithAllNonArrayTypes(where: {bool: {_lt: true}}, order_by: {id: asc}) { id } lte: EntityWithAllNonArrayTypes(where: {bool: {_lte: false}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "lt": [
+    {
+     "id": "scalar-nulls"
+    },
+    {
+     "id": "scalar-quotes"
+    },
+    {
+     "id": "scalar-special-float"
+    }
+   ],
+   "lte": [
+    {
+     "id": "scalar-nulls"
+    },
+    {
+     "id": "scalar-quotes"
+    },
+    {
+     "id": "scalar-special-float"
+    }
+   ]
+  }
+ }
+}

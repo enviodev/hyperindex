@@ -1,0 +1,14 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "mutation { update_User(where: {id: {_eq: \"no-such-user\"}}, _set: {}) { affected_rows } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "update_User": {
+    "affected_rows": 0
+   }
+  }
+ }
+}

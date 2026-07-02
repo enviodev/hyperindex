@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ B(order_by: {id: asc}) { id c_id c { id stringThatIsMirroredToA } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "B": [
+    {
+     "id": "b-1",
+     "c_id": "c-1",
+     "c": {
+      "id": "c-1",
+      "stringThatIsMirroredToA": "mirror-1"
+     }
+    },
+    {
+     "id": "b-2",
+     "c_id": null,
+     "c": null
+    },
+    {
+     "id": "b-3",
+     "c_id": "c-missing",
+     "c": null
+    }
+   ]
+  }
+ }
+}

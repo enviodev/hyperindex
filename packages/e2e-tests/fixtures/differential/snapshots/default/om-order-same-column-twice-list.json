@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimulateTestEvent(order_by: [{blockNumber: asc}, {blockNumber: desc}, {id: asc}]) { id blockNumber } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimulateTestEvent": [
+    {
+     "id": "sim-1",
+     "blockNumber": 100
+    },
+    {
+     "id": "sim-2",
+     "blockNumber": 100
+    },
+    {
+     "id": "sim-3",
+     "blockNumber": 101
+    },
+    {
+     "id": "sim-4",
+     "blockNumber": 102
+    },
+    {
+     "id": "sim-5",
+     "blockNumber": 103
+    }
+   ]
+  }
+ }
+}

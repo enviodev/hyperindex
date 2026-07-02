@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate { aggregate { min { bool } } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'bool' not found in type: 'EntityWithAllNonArrayTypes_min_fields'",
+    "extensions": {
+     "path": "$.selectionSet.EntityWithAllNonArrayTypes_aggregate.selectionSet.aggregate.selectionSet.min.selectionSet.bool",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

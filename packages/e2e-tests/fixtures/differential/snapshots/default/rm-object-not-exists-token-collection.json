@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(where: {_not: {collection: {}}}, order_by: {id: asc}) { id collection_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-7",
+     "collection_id": "coll-missing"
+    }
+   ]
+  }
+ }
+}

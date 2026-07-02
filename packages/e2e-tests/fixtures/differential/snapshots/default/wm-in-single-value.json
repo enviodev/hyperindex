@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimpleEntity(where: {value: {_in: [\"v7\"]}}, order_by: {id: asc}) { id value } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-7",
+     "value": "v7"
+    }
+   ]
+  }
+ }
+}

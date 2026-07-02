@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes(where: {optFloat: {_eq: \"NaN\"}}, order_by: {id: asc}) { id optFloat } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-special-float",
+     "optFloat": "NaN"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,24 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ lt: User(where: {address: {_lt: \"0xaaaa000000000000000000000000000000000002\"}}, order_by: {id: asc}) { id } lte: User(where: {address: {_lte: \"0xaaaa000000000000000000000000000000000002\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "lt": [
+    {
+     "id": "user-1"
+    }
+   ],
+   "lte": [
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($w: SimpleEntity_bool_exp = {id: {_eq: \"simple-2\"}}) { SimpleEntity(where: $w, order_by: {id: asc}) { id value } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-2",
+     "value": "v2"
+    }
+   ]
+  }
+ }
+}

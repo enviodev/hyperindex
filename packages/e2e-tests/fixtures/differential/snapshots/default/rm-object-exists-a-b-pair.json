@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ has: A(where: {b: {}}, order_by: {id: asc}) { id b_id } lacks: A(where: {_not: {b: {}}}, order_by: {id: asc}) { id b_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "has": [
+    {
+     "id": "a-1",
+     "b_id": "b-1"
+    },
+    {
+     "id": "a-2",
+     "b_id": "b-1"
+    },
+    {
+     "id": "a-3",
+     "b_id": "b-2"
+    }
+   ],
+   "lacks": [
+    {
+     "id": "a-4",
+     "b_id": "b-missing"
+    }
+   ]
+  }
+ }
+}

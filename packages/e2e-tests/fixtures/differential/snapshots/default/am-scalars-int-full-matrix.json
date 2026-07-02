@@ -1,0 +1,46 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate { aggregate { count sum { int_ } avg { int_ } min { int_ } max { int_ } stddev { int_ } stddev_pop { int_ } stddev_samp { int_ } var_pop { int_ } var_samp { int_ } variance { int_ } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_aggregate": {
+    "aggregate": {
+     "count": 8,
+     "sum": {
+      "int_": 2147483659
+     },
+     "avg": {
+      "int_": 268435457.375
+     },
+     "min": {
+      "int_": -2
+     },
+     "max": {
+      "int_": 2147483647
+     },
+     "stddev": {
+      "int_": 759250124
+     },
+     "stddev_pop": {
+      "int_": 710213459
+     },
+     "stddev_samp": {
+      "int_": 759250124
+     },
+     "var_pop": {
+      "int_": 504403156990427140
+     },
+     "var_samp": {
+      "int_": 576460750846202430
+     },
+     "variance": {
+      "int_": 576460750846202430
+     }
+    }
+   }
+  }
+ }
+}

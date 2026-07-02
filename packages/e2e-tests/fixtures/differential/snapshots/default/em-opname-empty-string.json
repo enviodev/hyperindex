@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query Q { SimpleEntity(order_by: {id: asc}, limit: 1) { id } }",
+  "operationName": ""
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": " is not valid GraphQL name",
+    "extensions": {
+     "path": "$.operationName",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

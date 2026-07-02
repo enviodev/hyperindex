@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: \"user \\\"quoted\\\" 🚀\") { id address gravatar_id updatesCountOnUserForTesting accountType } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_by_pk": {
+    "id": "user \"quoted\" 🚀",
+    "address": "0xaaaa000000000000000000000000000000000005",
+    "gravatar_id": null,
+    "updatesCountOnUserForTesting": 5,
+    "accountType": "USER"
+   }
+  }
+ }
+}

@@ -1,0 +1,72 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ gt: EntityWithAllTypes(where: {arrayOfStrings: {_gt: [\"b\"]}}, order_by: {id: asc}) { id arrayOfStrings } gte: EntityWithAllTypes(where: {arrayOfStrings: {_gte: [\"b\"]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "gt": [
+    {
+     "id": "all-1",
+     "arrayOfStrings": [
+      "one",
+      "two",
+      "three"
+     ]
+    },
+    {
+     "id": "all-array-edge",
+     "arrayOfStrings": [
+      "with,comma",
+      "with}brace",
+      "with\"quote",
+      "with'single",
+      "",
+      " leading space",
+      "emoji 🚀",
+      "back\\slash"
+     ]
+    },
+    {
+     "id": "all-json-bool",
+     "arrayOfStrings": [
+      "e"
+     ]
+    },
+    {
+     "id": "all-json-null",
+     "arrayOfStrings": [
+      "c"
+     ]
+    },
+    {
+     "id": "all-json-unicode",
+     "arrayOfStrings": [
+      "d"
+     ]
+    }
+   ],
+   "gte": [
+    {
+     "id": "all-1"
+    },
+    {
+     "id": "all-array-edge"
+    },
+    {
+     "id": "all-json-bool"
+    },
+    {
+     "id": "all-json-null"
+    },
+    {
+     "id": "all-json-number"
+    },
+    {
+     "id": "all-json-unicode"
+    }
+   ]
+  }
+ }
+}

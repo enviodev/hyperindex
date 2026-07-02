@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {_or: [{gravatar: {size: {_eq: \"MEDIUM\"}}}, {tokens: {tokenId: {_eq: \"9999999999999999999999999999999999999999999999999999999999999999999999999999\"}}}]}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-4"
+    }
+   ]
+  }
+ }
+}

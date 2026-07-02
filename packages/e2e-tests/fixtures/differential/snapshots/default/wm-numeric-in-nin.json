@@ -1,0 +1,48 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ in: Token(where: {tokenId: {_in: [\"-5\", 7, \"1000000000000000000000000000000\"]}}, order_by: {id: asc}) { id tokenId } nin: Token(where: {tokenId: {_nin: [\"-5\", 7, \"1000000000000000000000000000000\"]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "in": [
+    {
+     "id": "tok-4",
+     "tokenId": "1000000000000000000000000000000"
+    },
+    {
+     "id": "tok-5",
+     "tokenId": "-5"
+    },
+    {
+     "id": "tok-7",
+     "tokenId": "7"
+    }
+   ],
+   "nin": [
+    {
+     "id": "tok-1"
+    },
+    {
+     "id": "tok-10"
+    },
+    {
+     "id": "tok-2"
+    },
+    {
+     "id": "tok-3"
+    },
+    {
+     "id": "tok-6"
+    },
+    {
+     "id": "tok-8"
+    },
+    {
+     "id": "tok-9"
+    }
+   ]
+  }
+ }
+}
