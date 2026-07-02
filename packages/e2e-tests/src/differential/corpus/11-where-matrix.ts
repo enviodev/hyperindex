@@ -27,6 +27,11 @@ export default defineCases([
     query: `{ isNull: User(where: {address: {_is_null: true}}, order_by: {id: asc}) { id } notNull: User(where: {address: {_is_null: false}}, order_by: {id: asc}) { id } }`,
   },
   {
+    // _nin: [] excludes nothing — every row matches, same as no filter.
+    name: "wm-text-nin-empty",
+    query: `{ SimpleEntity(where: {id: {_nin: []}}, order_by: {id: asc}) { id } }`,
+  },
+  {
     name: "wm-text-like-nlike",
     query: `{ like: User(where: {address: {_like: "%00000_"}}, order_by: {id: asc}) { id } nlike: User(where: {address: {_nlike: "%00000_"}}, order_by: {id: asc}) { id } }`,
   },
