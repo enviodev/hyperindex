@@ -55,17 +55,14 @@ struct TestServer {
     handle: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
-/// Applies the differential fixture to the container and boots the server
-/// in-process on an ephemeral port, exactly as `serve::run` wires it minus
-/// the OS signal handler.
-async fn boot(env: ServeEnv, query_timeout: Option<Duration>) -> TestServer {
-    let pool = env.make_pg_pool().expect("pool");
-
+/// Applies the differential fixture schema/seed to the pool's Postgres,
+/// retrying the connection while the container is still coming up. Panics
+/// if it can't get a connection at all within the retry budget.
+async fn apply_fixture(pool: &deadpool_postgres::Pool) {
     let fixture_dir = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../e2e-tests/fixtures/differential"
     );
-    let mut applied = false;
     for _ in 0..20 {
         let Ok(client) = pool.get().await else {
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -75,13 +72,17 @@ async fn boot(env: ServeEnv, query_timeout: Option<Duration>) -> TestServer {
             let sql = std::fs::read_to_string(format!("{fixture_dir}/{file}")).unwrap();
             client.batch_execute(&sql).await.expect("fixture applies");
         }
-        applied = true;
-        break;
+        return;
     }
-    assert!(
-        applied,
-        "could not reach the test Postgres to apply fixtures"
-    );
+    panic!("could not reach the test Postgres to apply fixtures");
+}
+
+/// Applies the differential fixture to the container and boots the server
+/// in-process on an ephemeral port, exactly as `serve::run` wires it minus
+/// the OS signal handler.
+async fn boot(env: ServeEnv, query_timeout: Option<Duration>) -> TestServer {
+    let pool = env.make_pg_pool().expect("pool");
+    apply_fixture(&pool).await;
 
     let project_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scenarios/test_codegen");
     let paths = ParsedProjectPaths::new(project_root, "config.yaml").unwrap();
@@ -401,26 +402,35 @@ async fn black_holed_websocket_client_is_closed_within_30s() {
         .unwrap();
     assert!(matches!(first, TMessage::Text(_)));
 
-    // Simulate a frozen/black-holed client: stop driving the stream (no
-    // reads => no automatic pong replies, no traffic of any kind) without
-    // tearing down the TCP connection. The server's own ping/pong timer
-    // must notice and close its side within the accept window -- and by
-    // construction (`run_connection`'s cleanup aborts every operation task
-    // on close), that also stops the subscription's Postgres poll loop.
+    // Simulate a frozen/black-holed client: stop driving the stream
+    // entirely for a while -- no `.next()` calls means no automatic pong
+    // replies and no traffic of any kind, without tearing down the TCP
+    // connection (a real black hole: the socket is fine, the peer just
+    // never reads or writes). ws_ping_interval_ms=3s means the server
+    // should give up by ~6s of silence; sleeping well past that before
+    // touching the stream again proves detection happened on its own,
+    // not because we kept polling and let tungstenite auto-pong for us.
     let started = Instant::now();
-    let closed = tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::sleep(Duration::from_secs(9)).await;
+
+    // Resume reading (bounded) to observe the close the server should
+    // already have sent while we were "frozen". By construction
+    // (`run_connection`'s cleanup aborts every operation task on close),
+    // that also stops the subscription's Postgres poll loop.
+    let closed = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             match ws.next().await {
-                Some(Ok(TMessage::Close(_))) | None => return,
+                Some(Ok(TMessage::Close(_))) | None => return true,
                 Some(Ok(_)) => continue,
-                Some(Err(_)) => return,
+                Some(Err(_)) => return true,
             }
         }
     })
-    .await;
+    .await
+    .unwrap_or(false);
 
     assert_eq!(
-        (closed.is_ok(), started.elapsed() < Duration::from_secs(30)),
+        (closed, started.elapsed() < Duration::from_secs(30)),
         (true, true),
         "server should close a black-holed client's connection within 30s"
     );
@@ -446,10 +456,19 @@ async fn serve_becomes_healthy_once_postgres_starts_within_the_retry_budget() {
 
     let pool = env.make_pg_pool().expect("pool");
     let started = Instant::now();
-    let catalog = super::wait_for_pg(&pool, &env.pg_schema, env.startup_retry_budget_ms)
+    // Proves the retry-then-recover behavior itself: `wait_for_pg` only
+    // needs Postgres reachable, not migrated, so this can succeed against
+    // an empty freshly-started container.
+    super::wait_for_pg(&pool, &env.pg_schema, env.startup_retry_budget_ms)
         .await
         .expect("wait_for_pg should succeed once Postgres comes up within budget");
     let retry_elapsed = started.elapsed();
+
+    // Schema readiness (migrations) is a separate deploy-ordering concern
+    // from Postgres reachability -- apply it now, then introspect fresh so
+    // the model actually has tables to serve.
+    apply_fixture(&pool).await;
+    let catalog = pg_catalog::introspect(&pool, &env.pg_schema).await.unwrap();
 
     let project_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scenarios/test_codegen");
     let paths = ParsedProjectPaths::new(project_root, "config.yaml").unwrap();
