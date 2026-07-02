@@ -555,8 +555,8 @@ type t = {
   // Buffer of items ordered from earliest to latest
   buffer: array<Internal.item>,
   // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
-  // size). Fetch depth is bounded separately by getNextQuery's itemBudget, the
-  // chain's per-tick slice of the indexer-wide pool.
+  // size). Per-partition fetch range is no longer capped here; total buffer
+  // growth is instead bounded reactively by CrossChainState.maybePrune.
   maxOnBlockBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
   knownHeight: int,
