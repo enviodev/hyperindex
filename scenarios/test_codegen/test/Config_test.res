@@ -319,6 +319,42 @@ describe("Config.fromPublic", () => {
     t.expect(address->Address.toString, ~message="Address must be preserved verbatim").toBe(uni)
   })
 
+  // config.yaml addresses go through the strict parser (Address.Evm.fromStringOrThrow /
+  // fromStringLowercaseOrThrow), unlike simulate's srcAddress which only requires a
+  // "0x" prefix. A malformed address here must still fail config load.
+  it("throws when a contract address in config is not a valid 20-byte hex address", t => {
+    let publicConfigJson: JSON.t = %raw(`{
+      "version": "0.0.1-dev",
+      "name": "test",
+      "storage": { "postgres": true },
+      "evm": {
+        "chains": {
+          "ethereumMainnet": {
+            "id": 1,
+            "startBlock": 0,
+            "rpcs": [{ "url": "https://eth.com", "for": "sync" }],
+            "contracts": {
+              "ERC20": {
+                "addresses": ["0xfoo"]
+              }
+            }
+          }
+        },
+        "contracts": {
+          "ERC20": {
+            "abi": [{"type":"event","name":"Transfer","inputs":[],"anonymous":false}],
+            "events": [{ "event": "Transfer()", "name": "Transfer", "sighash": "0x00000000" }]
+          }
+        },
+        "addressFormat": "checksum"
+      }
+    }`)
+
+    t.expect(() => Config.fromPublic(publicConfigJson)->ignore).toThrowError(
+      `Address "0xfoo" is invalid. Expected a 20-byte hex string starting with 0x.`,
+    )
+  })
+
   it("parses entity and field descriptions from public config", t => {
     let publicConfigJson: JSON.t = %raw(`{
       "version": "0.0.1-dev",
