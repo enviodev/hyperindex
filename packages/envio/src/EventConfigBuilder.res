@@ -443,6 +443,11 @@ let buildEvmEventConfig = (
     selectedBlockFields,
     selectedTransactionFields,
     transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
+    blockFieldMask: Evm.eventBlockFieldMask(
+      selectedBlockFields->(
+        Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
+      ),
+    ),
     sighash,
     topicCount,
     paramsMetadata: params,
@@ -459,6 +464,7 @@ let buildSvmInstructionEventConfig = (
   ~discriminatorByteLen: int,
   ~includeLogs: bool,
   ~transactionFields: array<Internal.svmTransactionField>=[],
+  ~blockFields: array<Internal.svmBlockField>=[],
   ~accountFilters: array<Internal.svmAccountFilterGroup>,
   ~isInner: option<bool>,
   ~isWildcard: bool,
@@ -480,6 +486,11 @@ let buildSvmInstructionEventConfig = (
     Utils.Set.fromArray(transactionFields)->(
       Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
     )
+  // `slot` is stamped on the inline block by the source; only the selected
+  // fields are decoded from the store, so the mask is the selection alone.
+  let blockFieldMask = Svm.eventBlockFieldMask(
+    Utils.Set.fromArray(blockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>)),
+  )
   {
     id: switch discriminator {
     | Some(d) => d
@@ -502,6 +513,8 @@ let buildSvmInstructionEventConfig = (
     includeLogs,
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
+    selectedBlockFields: Utils.Set.fromArray(blockFields),
+    blockFieldMask,
     accountFilters,
     isInner,
     accounts,
@@ -568,9 +581,11 @@ let buildFuelEventConfig = (
     dependsOnAddresses: !isWildcard,
     clientAddressFilter: ?buildAddressFilter([], ~isWildcard),
     startBlock,
-    // Fuel keeps the transaction inline on the payload; nothing to materialise.
+    // Fuel keeps the transaction and block inline on the payload; nothing to
+    // materialise.
     selectedTransactionFields: Utils.Set.make(),
     transactionFieldMask: 0.,
+    blockFieldMask: 0.,
     kind: fuelKind,
   }
 }

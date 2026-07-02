@@ -5,15 +5,16 @@ use napi_derive::napi;
 
 use super::borsh_decoder::DecodedInstructionJson;
 
+/// Lean per-slot block header the response carries to ReScript, used for reorg
+/// detection and each item's slot/time. Selectable fields (height, parents) are
+/// kept raw in the `BlockStore` and materialised on demand, so they aren't
+/// duplicated here.
 #[napi(object)]
 #[derive(Default, Clone)]
 pub struct Block {
     pub slot: i64,
     pub blockhash: String,
-    pub parent_slot: Option<i64>,
-    pub parent_blockhash: Option<String>,
     pub block_time: Option<i64>,
-    pub block_height: Option<i64>,
 }
 
 #[napi(object)]
@@ -134,16 +135,7 @@ impl TryFrom<simple::Block> for Block {
         Ok(Self {
             slot: u64_to_i64(b.slot, "block.slot")?,
             blockhash: b.blockhash,
-            parent_slot: b
-                .parent_slot
-                .map(|v| u64_to_i64(v, "block.parent_slot"))
-                .transpose()?,
-            parent_blockhash: b.parent_blockhash,
             block_time: b.block_time,
-            block_height: b
-                .block_height
-                .map(|v| u64_to_i64(v, "block.block_height"))
-                .transpose()?,
         })
     }
 }

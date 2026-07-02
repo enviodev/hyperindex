@@ -32,6 +32,7 @@ pub(crate) mod mod_helpers {
 use hypersync_client_solana::decode::ProgramSchema as UpstreamSchema;
 use hypersync_client_solana::simple_types as simple;
 
+use crate::block_store::BlockStore;
 use crate::transaction_store::TransactionStore;
 use config::SvmClientConfig;
 use query::SvmQuery;
@@ -133,7 +134,24 @@ impl SvmHypersyncClient {
     /// must NOT call `collect` (which spins up parallel batched requests under
     /// `StreamConfig::default()` and can DoS the server on multi-day windows).
     #[napi]
-    pub async fn get(&self, query: SvmQuery) -> napi::Result<(QueryResponse, TransactionStore)> {
+    pub async fn get(
+        &self,
+        query: SvmQuery,
+    ) -> napi::Result<(QueryResponse, TransactionStore, BlockStore)> {
+        // Whether any instruction selected a block field beyond the always-fetched
+        // slot/blockhash/blockTime (needed for reorg detection and each item's
+        // slot/time). Only then is the raw-block store worth populating — mirrors
+        // the EVM source's `has_extra_block_fields` gate.
+        let has_extra_block_fields = query
+            .fields
+            .as_ref()
+            .and_then(|f| f.block.as_ref())
+            .is_some_and(|block| {
+                block
+                    .iter()
+                    .any(|f| !matches!(f.as_str(), "slot" | "blockhash" | "block_time"))
+            });
+
         let q: hypersync_solana_net_types::query::SolanaQuery = query
             .try_into()
             .context("parse solana query")
@@ -175,13 +193,24 @@ impl SvmHypersyncClient {
             std::mem::take(&mut resp.token_balances),
         );
 
+        // Retain raw blocks in Rust keyed by slot so the block store can
+        // materialise the selected block fields onto each instruction's
+        // `event.block` at batch prep. Skipped when only slot/blockhash/blockTime
+        // were requested — those reach ReScript via the response's block table.
+        let block_store = BlockStore::new_svm();
+        if has_extra_block_fields {
+            for b in &resp.blocks {
+                block_store.insert_svm_raw(b.slot, Arc::new(b.clone()));
+            }
+        }
+
         let mut out = QueryResponse::try_from(resp)
             .context("convert solana response")
             .map_err(map_err)?;
         for (instr, d) in out.data.instructions.iter_mut().zip(decoded) {
             instr.decoded = d;
         }
-        Ok((out, store))
+        Ok((out, store, block_store))
     }
 }
 
@@ -227,7 +256,7 @@ mod tests {
 
         // Transactions are moved into the store, so `resp.data.transactions` is
         // empty here by design.
-        let (resp, _store) = client.get(q).await.expect("collect");
+        let (resp, _store, _block_store) = client.get(q).await.expect("collect");
         eprintln!(
             "got {} instructions / next_slot={}",
             resp.data.instructions.len(),

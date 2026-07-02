@@ -13,8 +13,10 @@ let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 
 let blockTime = 1778064393
 let slot = 417950033
+let blockHash = "99K5yyU2jLxLDeRCJ9YSSMy6VBJTNcnePWUH9uCHAWCB"
 
 let makeEventConfig = (
+  ~selectedBlockFields: array<Internal.svmBlockField>=[],
   ~selectedTransactionFields=[
     Internal.Signatures,
     FeePayer,
@@ -49,6 +51,12 @@ let makeEventConfig = (
     includeLogs: false,
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
+    selectedBlockFields: Utils.Set.fromArray(selectedBlockFields),
+    blockFieldMask: Svm.eventBlockFieldMask(
+      Utils.Set.fromArray(
+        selectedBlockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>),
+      ),
+    ),
     accountFilters: [],
     isInner: None,
     accounts: [],
@@ -64,7 +72,7 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
     blocks: [
       {
         slot,
-        blockhash: "99K5yyU2jLxLDeRCJ9YSSMy6VBJTNcnePWUH9uCHAWCB",
+        blockhash: blockHash,
         blockTime,
       },
     ],
@@ -91,10 +99,14 @@ let mockClient: SvmHyperSyncClient.t = {
   getHeight: () => Promise.resolve(slot + 1000),
   get: (~query) => {
     capturedQueries->Array.push(query)
-    // The real Rust client builds the store from raw transactions; the mock
-    // returns an empty page (transaction materialisation is covered by the Rust
-    // unit tests). This test asserts the item shape and the query columns.
-    Promise.resolve((mockResponse, TransactionStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false)))
+    // The real Rust client builds the stores from raw transactions/blocks; the
+    // mock returns empty pages (materialisation is covered by the Rust unit
+    // tests). This test asserts the item shape and the query columns.
+    Promise.resolve((
+      mockResponse,
+      TransactionStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
+      BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
+    ))
   },
 }
 
@@ -168,7 +180,9 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "item": Some({
         "timestamp": blockTime,
         "blockNumber": slot,
-        "block": ({slot, time: blockTime, hash: ""}: Envio.svmInstructionBlock),
+        // slot/time/hash are stamped inline from the response's block row;
+        // height/parentSlot/parentHash would be materialised from the store.
+        "block": ({slot, time: blockTime, hash: blockHash}: Envio.svmInstructionBlock),
       }),
       // Default merge mode: requesting a table's columns opts the matched
       // result set into that join, so selections carry no include flags.
@@ -229,4 +243,32 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       t.expect(query.fields->Option.flatMap(fields => fields.transaction)).toEqual(None)
     },
   )
+
+  // Selected block fields are added to the query's block columns on top of the
+  // always-fetched slot/blockhash/blockTime trio.
+  Async.it("requests the selected block fields' columns", async t => {
+    let eventConfig = makeEventConfig(~selectedBlockFields=[Height, ParentHash])
+    let source = makeSource(~eventConfigs=[eventConfig])
+
+    let _ = await source.getItemsOrThrow(
+      ~fromBlock=slot - 10,
+      ~toBlock=Some(slot + 10),
+      ~addressesByContractName=Dict.fromArray([
+        ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
+      ]),
+      ~contractNameByAddress,
+      ~knownHeight=slot + 1000,
+      ~partitionId="0",
+      ~selection={
+        eventConfigs: [(eventConfig :> Internal.eventConfig)],
+        dependsOnAddresses: true,
+      },
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+    )
+
+    let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
+    let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = query.fields->Option.getUnsafe
+    t.expect(fields.block).toEqual(Some([Slot, Blockhash, BlockTime, BlockHeight, ParentBlockhash]))
+  })
 })

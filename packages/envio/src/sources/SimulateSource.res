@@ -42,8 +42,9 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
         Source.knownHeight: reportedHeight,
         blockHashes: [],
         parsedQueueItems: result,
-        // Simulate keeps the transaction inline on the payload; no store page.
+        // Simulate keeps the transaction and block inline on the payload; no store pages.
         transactionStore: None,
+        blockStore: None,
         fromBlockQueried: 0,
         latestFetchedBlockNumber: reportedHeight,
         latestFetchedBlockTimestamp: 0,

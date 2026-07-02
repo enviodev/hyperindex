@@ -458,8 +458,9 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     {
       latestFetchedBlockTimestamp,
       parsedQueueItems,
-      // Fuel keeps transaction on the payload; no store page.
+      // Fuel keeps transaction and block on the payload; no store pages.
       transactionStore: None,
+      blockStore: None,
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,

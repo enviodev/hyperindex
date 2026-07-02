@@ -16,6 +16,18 @@ let transactionFields =
 // Computed per event at config build and cached on the event config.
 let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
+// Ordered block field names. The index of each is the field code shared with the
+// Rust store (`SvmBlockField`) — keep this order in sync.
+let blockFields = ["slot", "time", "hash", "height", "parentSlot", "parentHash"]
+
+// Only `slot` is always present (the source stamps it on the inline block);
+// every other block field is opt-in via `field_selection.block_fields` and
+// materialised from the store.
+//
+// One instruction's selected block fields → store selection bitmask. Computed per
+// event at config build and cached on the event config.
+let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
+
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
   blockNumberName: "height",

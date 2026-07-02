@@ -2184,6 +2184,7 @@ type testIndexer = {{
                 // Built once; the canonical field list is the same for every
                 // instruction (only the per-instruction `selected` set differs).
                 let svm_tx_specs = svm_transaction_field_specs();
+                let svm_block_specs = svm_block_field_specs();
                 let mut program_entries: Vec<String> = Vec::new();
                 for contract in cfg.contracts.values() {
                     use crate::config_parsing::system_config::{Abi, EventKind};
@@ -2234,12 +2235,19 @@ type testIndexer = {{
                             &event.name,
                             "            ",
                         );
+                        let block_ts = svm_block_ts_type(
+                            &svm_block_specs,
+                            &svm_kind.selected_block_fields,
+                            &event.name,
+                            "            ",
+                        );
                         instruction_entries.push(format!(
-                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: {accs}; readonly transaction: {tx} }};",
+                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: {accs}; readonly transaction: {tx}; readonly block: {block} }};",
                             instr = event.name,
                             args = args_ts,
                             accs = accounts_ts,
                             tx = transaction_ts,
+                            block = block_ts,
                         ));
                     }
                     if !instruction_entries.is_empty() {
@@ -2654,6 +2662,44 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
     specs
 }
 
+/// Render one field line of a per-instruction SVM field record: the field's real
+/// type when selected (nullable as `T | undefined`), else an `@deprecated` config
+/// hint plus a `FieldNotSelected<...>` sentinel. `token_balance_fields` is the one
+/// boolean-toggle knob (`knob: true`); every other knob takes a list
+/// (`knob:\n  - name`). Shared by the transaction and block record builders.
+fn svm_field_line(
+    name: &str,
+    ts_type: &str,
+    optional: bool,
+    knob: &str,
+    selected: bool,
+    instruction_name: &str,
+    indent: &str,
+) -> String {
+    if selected {
+        let value = if optional {
+            format!("{ts_type} | undefined")
+        } else {
+            ts_type.to_string()
+        };
+        ts_selected_field(name, &value, indent)
+    } else {
+        let yaml_body = if knob == "token_balance_fields" {
+            format!("{indent} * field_selection:\n{indent} *   {knob}: true")
+        } else {
+            format!("{indent} * field_selection:\n{indent} *   {knob}:\n{indent} *     - {name}")
+        };
+        ts_unselected_field(
+            name,
+            knob,
+            "instruction",
+            instruction_name,
+            &yaml_body,
+            indent,
+        )
+    }
+}
+
 /// Per-instruction SVM parent-transaction TS type for the generated program
 /// table: selected fields get their real type (nullable ones as `T | undefined`);
 /// unselected fields get an `@deprecated` hint plus `FieldNotSelected<...>`.
@@ -2669,37 +2715,77 @@ fn svm_transaction_ts_type(
     let fields: Vec<String> = specs
         .iter()
         .map(|spec| {
-            if selected.contains(spec.name.as_str()) {
-                let value = if spec.optional {
-                    format!("{} | undefined", spec.ts_type)
-                } else {
-                    spec.ts_type.to_string()
-                };
-                ts_selected_field(&spec.name, &value, indent)
-            } else {
-                // `token_balance_fields` is a boolean toggle; the others take a list.
-                let yaml_body = if spec.knob == "token_balance_fields" {
-                    format!(
-                        "{indent} * field_selection:\n{indent} *   {}: true",
-                        spec.knob
-                    )
-                } else {
-                    format!(
-                        "{indent} * field_selection:\n{indent} *   {}:\n{indent} *     - {}",
-                        spec.knob, spec.name
-                    )
-                };
-                ts_unselected_field(
-                    &spec.name,
-                    spec.knob,
-                    "instruction",
-                    instruction_name,
-                    &yaml_body,
-                    indent,
-                )
-            }
+            svm_field_line(
+                &spec.name,
+                spec.ts_type,
+                spec.optional,
+                spec.knob,
+                selected.contains(spec.name.as_str()),
+                instruction_name,
+                indent,
+            )
         })
         .collect();
+    wrap_ts_record(&fields, indent)
+}
+
+/// One selectable SVM block field: TS value type and whether it can be
+/// `undefined` even when selected (the upstream column is nullable, or the slot
+/// may lack a block row).
+struct SvmBlockFieldSpec {
+    name: String,
+    ts_type: &'static str,
+    optional: bool,
+}
+
+fn svm_block_field_specs() -> Vec<SvmBlockFieldSpec> {
+    use crate::config_parsing::human_config::svm::SvmBlockField;
+    use strum::IntoEnumIterator;
+
+    SvmBlockField::iter()
+        .map(|field| {
+            let (ts_type, optional) = match field {
+                SvmBlockField::Time => ("number", true),
+                // A slot can lack a block row (skipped slot), so `hash` may be
+                // absent even when selected — matching `svmInstructionBlock.hash?`.
+                SvmBlockField::Hash => ("string", true),
+                SvmBlockField::Height => ("number", true),
+                SvmBlockField::ParentSlot => ("number", true),
+                SvmBlockField::ParentHash => ("string", true),
+            };
+            SvmBlockFieldSpec {
+                name: field.to_string(),
+                ts_type,
+                optional,
+            }
+        })
+        .collect()
+}
+
+/// Per-instruction SVM block TS type for the generated program table. `slot` is
+/// always present; selected fields get their real type (nullable ones as
+/// `T | undefined`); unselected fields get an `@deprecated` hint plus
+/// `FieldNotSelected<...>`. Mirrors `svm_transaction_ts_type`.
+fn svm_block_ts_type(
+    specs: &[SvmBlockFieldSpec],
+    selected: &[String],
+    instruction_name: &str,
+    indent: &str,
+) -> String {
+    let selected: std::collections::HashSet<&str> = selected.iter().map(String::as_str).collect();
+    // `slot` is always present (the store key), so it's seeded, not selectable.
+    let mut fields: Vec<String> = vec![ts_selected_field("slot", "number", indent)];
+    for spec in specs {
+        fields.push(svm_field_line(
+            &spec.name,
+            spec.ts_type,
+            spec.optional,
+            "block_fields",
+            selected.contains(spec.name.as_str()),
+            instruction_name,
+            indent,
+        ));
+    }
     wrap_ts_record(&fields, indent)
 }
 
@@ -3300,6 +3386,42 @@ mod test {
     }
 
     #[test]
+    fn svm_block_field_specs_match_runtime() {
+        // The codegen block specs (selectable fields) must match the public
+        // `svmInstructionBlock` shape — name and optionality — excluding the
+        // always-present `slot`. Optionality parity guards the generated TS type
+        // from narrowing a nullable field (e.g. `hash`) to non-optional.
+        let res = std::fs::read_to_string(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../envio/src/Envio.res"),
+        )
+        .expect("read Envio.res");
+        let res_fields: Vec<(String, bool)> =
+            parse_type_fields(&res, "type svmInstructionBlock = {", "")
+                .into_iter()
+                .filter(|(name, _optional)| name != "slot")
+                .collect();
+        let spec_fields: Vec<(String, bool)> = svm_block_field_specs()
+            .into_iter()
+            .map(|spec| (spec.name, spec.optional))
+            .collect();
+        assert_eq!(spec_fields, res_fields);
+    }
+
+    #[test]
+    fn svm_block_ts_type_renders_optionality_and_unselected() {
+        // `slot` is always present (no `| undefined`); selected nullable fields
+        // (`hash`, `height`) render as `T | undefined`; unselected fields get the
+        // `@deprecated` hint + `FieldNotSelected`.
+        let generated = svm_block_ts_type(
+            &svm_block_field_specs(),
+            &["hash".to_string(), "height".to_string()],
+            "Swap",
+            "  ",
+        );
+        insta::assert_snapshot!(generated);
+    }
+
+    #[test]
     fn svm_transaction_ts_type_renders_optionality_and_unselected() {
         // Selected required field (`signatures`) and always-present
         // `tokenBalances` have no `| undefined`; nullable selected field
@@ -3328,6 +3450,7 @@ mod test {
                 discriminator: Some("0x21".to_string()),
                 discriminator_byte_len: 1,
                 selected_transaction_fields: vec![],
+                selected_block_fields: vec![],
                 include_logs: false,
                 account_filters: vec![],
                 is_inner: None,

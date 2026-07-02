@@ -166,6 +166,18 @@ let allSvmTransactionFields: array<svmTransactionField> = [
 ]
 let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 
+// SVM block fields selectable via `field_selection.block_fields`. Only `slot` is
+// always included (it's the key), so everything else is opt-in.
+type svmBlockField =
+  | @as("time") Time
+  | @as("hash") Hash
+  | @as("height") Height
+  | @as("parentSlot") ParentSlot
+  | @as("parentHash") ParentHash
+
+let allSvmBlockFields: array<svmBlockField> = [Time, Hash, Height, ParentSlot, ParentHash]
+let svmBlockFieldSchema = S.enum(allSvmBlockFields)
+
 // Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
 let evmNullableBlockFields = Utils.Set.fromArray(
   (
@@ -312,6 +324,11 @@ type eventPayload
 @get external getPayloadTransaction: eventPayload => Nullable.t<eventTransaction> = "transaction"
 @set external setPayloadTransaction: (eventPayload, eventTransaction) => unit = "transaction"
 
+// Generic access to the payload's `block`: written/enriched at batch prep for
+// store-backed ecosystems (EVM/SVM HyperSync) and present inline otherwise.
+@get external getPayloadBlock: eventPayload => Nullable.t<eventBlock> = "block"
+@set external setPayloadBlock: (eventPayload, eventBlock) => unit = "block"
+
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
@@ -425,6 +442,12 @@ type eventConfig = private {
   // so each transaction decodes only the fields its event selected. `0.` when
   // nothing is selected or the ecosystem carries the transaction inline (Fuel).
   transactionFieldMask: float,
+  // Selected block fields precompiled to the block-store selection bitmask (bit
+  // per ecosystem field code). `0.` for ecosystems that carry the block fully
+  // inline (RPC/Fuel). The always-available trio (EVM number/timestamp/hash from
+  // the item; SVM slot/time/hash from the response) is stamped without a store
+  // lookup, so this only drives whether the store is consulted for further fields.
+  blockFieldMask: float,
 }
 
 type fuelEventKind =
@@ -490,6 +513,10 @@ type svmAccountFilterGroup = array<svmAccountFilter>
 
 type svmInstructionEventConfig = {
   ...eventConfig,
+  /** Block fields selected via `field_selection.block_fields` (`slot` is always
+   included and excluded from this set). Drives the block query columns;
+   precompiled to `blockFieldMask` for store materialisation. */
+  selectedBlockFields: Utils.Set.t<svmBlockField>,
   /** Base58 Solana program id this instruction belongs to. */
   programId: SvmTypes.Pubkey.t,
   /** Hex-encoded discriminator. `None` matches every instruction in the program. */

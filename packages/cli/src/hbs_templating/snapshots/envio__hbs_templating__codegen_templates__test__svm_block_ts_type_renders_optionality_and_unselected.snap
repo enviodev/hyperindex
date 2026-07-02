@@ -1,0 +1,39 @@
+---
+source: packages/cli/src/hbs_templating/codegen_templates.rs
+expression: generated
+---
+{
+  /** The slot field. */
+  readonly slot: number;
+  /**
+   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+   * ```yaml
+   * field_selection:
+   *   block_fields:
+   *     - time
+   * ```
+   */
+  readonly time: FieldNotSelected<"Field 'time' is not selected for the 'Swap' instruction. Add it under field_selection.block_fields in config.yaml.">;
+  /** The hash field. */
+  readonly hash: string | undefined;
+  /** The height field. */
+  readonly height: number | undefined;
+  /**
+   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+   * ```yaml
+   * field_selection:
+   *   block_fields:
+   *     - parentSlot
+   * ```
+   */
+  readonly parentSlot: FieldNotSelected<"Field 'parentSlot' is not selected for the 'Swap' instruction. Add it under field_selection.block_fields in config.yaml.">;
+  /**
+   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+   * ```yaml
+   * field_selection:
+   *   block_fields:
+   *     - parentHash
+   * ```
+   */
+  readonly parentHash: FieldNotSelected<"Field 'parentHash' is not selected for the 'Swap' instruction. Add it under field_selection.block_fields in config.yaml.">;
+}

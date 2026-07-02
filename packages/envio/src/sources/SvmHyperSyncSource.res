@@ -268,6 +268,19 @@ let toQueryTxField = (field: Internal.svmTransactionField): option<
   | TokenBalances => None
   }
 
+// Map a selected block field to its HyperSync query column. Slot/Blockhash/
+// BlockTime are requested unconditionally (needed for reorg detection and the
+// item's slot/timestamp), so selecting `time`/`hash` adds no extra column.
+let toQueryBlockField = (field: Internal.svmBlockField): option<
+  SvmHyperSyncClient.QueryTypes.blockField,
+> =>
+  switch field {
+  | Time | Hash => None
+  | Height => Some(BlockHeight)
+  | ParentSlot => Some(ParentSlot)
+  | ParentHash => Some(ParentBlockhash)
+  }
+
 let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: options): t => {
   let name = "SvmHyperSync"
   let chainId = chain->ChainMap.Chain.toChainId
@@ -332,6 +345,24 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       }
     )
 
+  // Union of selected block fields across the chain's events. `slot`/`time`/
+  // `hash` are always fetched (as Slot/BlockTime/Blockhash); the rest are added
+  // only when an instruction selected them.
+  let blockQueryFields = {
+    let fields: array<SvmHyperSyncClient.QueryTypes.blockField> = [Slot, Blockhash, BlockTime]
+    let selected = Utils.Set.make()
+    eventConfigs->Array.forEach(cfg =>
+      cfg.selectedBlockFields->Utils.Set.forEach(field => selected->Utils.Set.add(field)->ignore)
+    )
+    selected->Utils.Set.forEach(field =>
+      switch field->toQueryBlockField {
+      | Some(queryField) => fields->Array.push(queryField)->ignore
+      | None => ()
+      }
+    )
+    fields
+  }
+
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
@@ -352,7 +383,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     // field list returns no rows (instructions and blocks are exempt), so each
     // opted-into table needs its columns spelled out here.
     let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = {
-      block: [Slot, Blockhash, BlockTime],
+      block: blockQueryFields,
       transaction: ?(needsTransactions ? Some(txQueryFields) : None),
       log: ?(needsLogs ? Some([Slot, TransactionIndex, InstructionAddress, Kind, Message]) : None),
       tokenBalance: ?(
@@ -372,7 +403,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
     Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")
 
-    let (resp, transactionStore) = try await client.get(~query) catch {
+    let (resp, transactionStore, blockStore) = try await client.get(~query) catch {
     | exn =>
       throw(
         Source.GetItemsError(
@@ -394,14 +425,17 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
     let parsingRef = Performance.now()
 
-    // Per-slot unix timestamp lookup from the response's `blocks` table. Slots
-    // without a block row (rare; usually skipped slots) fall back to `None`.
+    // Per-slot lookups from the response's `blocks` table for the always-fetched
+    // trio (time/hash). Slots without a block row (rare; usually skipped slots)
+    // fall back to `None`.
     let blockTimeBySlot = Dict.make()
+    let blockHashBySlot = Dict.make()
     resp.data.blocks->Array.forEach(b => {
       switch b.blockTime {
       | Some(t) => blockTimeBySlot->Dict.set(b.slot->Int.toString, t)
       | None => ()
       }
+      blockHashBySlot->Dict.set(b.slot->Int.toString, b.blockhash)
     })
 
     // Per (slot, transaction_index, instruction_address) lookup for logs
@@ -466,15 +500,19 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
         let slotKey = instr.slot->Int.toString
         let blockTime = blockTimeBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
+        let blockHash = blockHashBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
         let payload = toSvmInstruction(
           instr,
           ~programName=eventConfig.contractName,
           ~instructionName=eventConfig.name,
           ~logs=eventConfig.includeLogs ? maybeLogs : None,
+          // The always-fetched trio (slot/time/hash) is stamped inline from the
+          // response; height/parentSlot/parentHash are materialised from the store
+          // at batch prep.
           ~block={
             slot: instr.slot,
-            time: blockTime->Option.getOr(0),
-            hash: "",
+            time: ?blockTime,
+            hash: ?blockHash,
           },
         )
 
@@ -520,6 +558,9 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       parsedQueueItems,
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
       transactionStore: Some(transactionStore),
+      // Raw blocks kept in Rust; the inline block is enriched with the selected
+      // fields at batch prep.
+      blockStore: Some(blockStore),
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
@@ -544,8 +585,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
         maxNumBlocks: 1000,
       }
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getBlockHashes")
-      // Block-only query; the store page is empty.
-      let (resp, _) = await client.get(~query)
+      // Block-only query; the store pages are empty.
+      let (resp, _, _) = await client.get(~query)
       resp.data.blocks->Array.forEach(b =>
         blockDatas
         ->Array.push({

@@ -1337,8 +1337,9 @@ let make = (
       latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
-      // RPC keeps the transaction inline on the payload; no store page.
+      // RPC keeps the transaction and block inline on the payload; no store pages.
       transactionStore: None,
+      blockStore: None,
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },
