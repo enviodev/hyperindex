@@ -22,6 +22,7 @@ const arg = (name: string): string | undefined => {
 const phase = (arg("--phase") ?? "default") as Phase;
 const filter = arg("--filter");
 const verbose = Number(arg("--verbose") ?? 3);
+const concurrency = Number(arg("--concurrency") ?? 16);
 
 const snapshotsDir = new URL(
   `../../fixtures/differential/snapshots/${phase}/`,
@@ -69,7 +70,7 @@ async function main() {
   let pass = 0;
   const failures: { name: string; detail: string }[] = [];
 
-  for (const corpusCase of cases) {
+  const diffOne = async (corpusCase: (typeof cases)[number]) => {
     let oracle: Snapshot;
     try {
       oracle = JSON.parse(
@@ -77,7 +78,7 @@ async function main() {
       ) as Snapshot;
     } catch {
       failures.push({ name: corpusCase.name, detail: "no oracle snapshot" });
-      continue;
+      return;
     }
     let serve: GraphQLResponse;
     try {
@@ -87,7 +88,7 @@ async function main() {
         name: corpusCase.name,
         detail: `request failed: ${err instanceof Error ? err.message : err}`,
       });
-      continue;
+      return;
     }
     const nOracle = normalize(
       { status: oracle.status, body: oracle.body },
@@ -103,7 +104,17 @@ async function main() {
           : (firstDiff(nOracle.body, nServe.body) ?? "unknown diff");
       failures.push({ name: corpusCase.name, detail });
     }
-  }
+  };
+
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.max(1, concurrency) }, async () => {
+      while (next < cases.length) {
+        await diffOne(cases[next++]!);
+      }
+    })
+  );
+  failures.sort((a, b) => (a.name < b.name ? -1 : 1));
 
   console.log(`\n${pass}/${cases.length} passed (phase=${phase})`);
   if (failures.length > 0) {

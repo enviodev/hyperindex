@@ -1,9 +1,10 @@
 //! Hasura-shaped GraphQL errors.
 //!
 //! Hasura returns HTTP 200 with `{"errors": [{"message", "extensions":
-//! {"path", "code"}}]}` for validation errors, and specific shapes/status
-//! codes for auth and malformed-request errors. Messages are matched
-//! byte-for-byte against the oracle snapshots.
+//! {"path", "code"}}]}` for essentially everything, including a wrong
+//! admin secret and malformed request bodies (verified live: none of these
+//! use a non-200 status). Messages are matched byte-for-byte against the
+//! oracle snapshots.
 
 use serde_json::json;
 
@@ -13,8 +14,6 @@ pub struct GraphQLError {
     /// JSONPath-ish location, e.g. `$.selectionSet.User.args.limit`.
     pub path: String,
     pub code: &'static str,
-    /// HTTP status; Hasura uses 200 for validation errors, 400 for
-    /// malformed requests / parse errors / bad json, 401 for auth.
     pub status: u16,
 }
 
@@ -56,10 +55,10 @@ impl GraphQLError {
 
     pub fn access_denied() -> GraphQLError {
         GraphQLError {
-            message: "invalid x-hasura-admin-secret/x-hasura-access-key".to_string(),
+            message: "invalid \"x-hasura-admin-secret\"/\"x-hasura-access-key\"".to_string(),
             path: "$".to_string(),
             code: CODE_ACCESS_DENIED,
-            status: 401,
+            status: 200,
         }
     }
 

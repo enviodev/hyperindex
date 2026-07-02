@@ -173,9 +173,7 @@ export default defineCases([
   },
   {
     name: "error-admin-secret-wrong",
-    role: "admin",
+    role: "admin-wrong",
     query: `{ User(limit: 1) { id } }`,
-    // The runner sends the standard admin secret; this case is duplicated in
-    // http-protocol tests with a wrong secret. Kept here to pin the happy path.
   },
 ]);

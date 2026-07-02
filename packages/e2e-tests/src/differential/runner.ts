@@ -13,8 +13,11 @@ export async function runCase(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if ((corpusCase.role ?? "public") === "admin") {
+  const role = corpusCase.role ?? "public";
+  if (role === "admin") {
     headers["X-Hasura-Admin-Secret"] = adminSecret;
+  } else if (role === "admin-wrong") {
+    headers["X-Hasura-Admin-Secret"] = `${adminSecret}-wrong`;
   }
   const payload: Record<string, unknown> = { query: corpusCase.query };
   if (corpusCase.variables !== undefined)

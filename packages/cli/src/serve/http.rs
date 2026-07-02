@@ -44,7 +44,8 @@ async fn healthz() -> impl IntoResponse {
 
 /// Resolve the request's role from headers, mirroring Hasura:
 /// - correct admin secret -> admin (or the role named in X-Hasura-Role)
-/// - wrong admin secret -> 401 access-denied
+/// - wrong admin secret -> HTTP 200 with an access-denied GraphQL error
+///   (verified live — Hasura never uses 401 for this)
 /// - no secret -> the unauthorized role (public)
 pub fn resolve_role(
     headers: &HeaderMap,

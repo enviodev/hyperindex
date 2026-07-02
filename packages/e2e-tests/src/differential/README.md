@@ -25,17 +25,46 @@ identical JSON responses — data, errors, and serialization alike.
 
 ## Running
 
-Requires the same services as the other e2e tests: Postgres on 5433 and
-Hasura on 8080 (`envio local docker up` inside any scenario, or the CI
-service containers).
+**Fast loop (Rust iteration — no Hasura/Docker needed):** the oracle
+snapshots under `fixtures/differential/snapshots/` are the correctness
+ground truth. Start `envio serve` against the small fixture dataset
+(`schema.sql` + `seed.sql`, no `bench-seed.sql`) and diff:
+
+```sh
+cd scenarios/test_codegen && pnpm exec envio serve --port 8081 &
+cd packages/e2e-tests && pnpm exec tsx src/differential/diffServe.ts
+```
+
+This runs the ~590 default-phase cases concurrently in a few seconds
+against the already-recorded snapshots — nothing needs live Hasura. Use
+`--phase limited` (with serve restarted under
+`ENVIO_HASURA_RESPONSE_LIMIT=5 ENVIO_HASURA_PUBLIC_AGGREGATE='["User","Token","SimpleEntity","raw_events","_meta"]'`)
+for the limited-phase cases, and `--filter <substr>` / `--verbose N` to
+narrow down a failure.
+
+**Full suite (needs Postgres 5433 + Hasura 8080 live — CI runs this):**
 
 ```sh
 pnpm --filter e2e-tests record:differential   # refresh Hasura oracle snapshots
-pnpm --filter e2e-tests test:differential     # diff Hasura vs envio serve
+pnpm --filter e2e-tests test:differential     # diff Hasura vs envio serve, both engines live
 ```
 
-The differential test spawns `envio serve` (from packages/envio, dev build)
-against scenarios/test_codegen on port 8081.
+`test:differential` spawns `envio serve` itself and drives every HTTP case
+plus the WebSocket subscription scenarios (`subscriptions.test.ts`)
+against a live Hasura container — the authoritative check before landing
+a change, but slower (~5 min) since every case is a live round trip to
+both engines. Prefer `diffServe.ts` for iteration; run this before a PR.
+
+### Benchmarking
+
+Also needs Hasura only once — see `bench.ts`'s module doc comment. In
+short: `--record-baseline` captures Hasura's per-case timing + resource
+usage to `fixtures/differential/hasura-baseline.json` (committed; re-run
+after a real perf-relevant Postgres/dataset change, not after every Rust
+edit); the default mode benchmarks only `envio serve` against that stored
+baseline, so Hasura/Docker can stay stopped while iterating on Rust.
+`bench.ts` measures timing only — always confirm correctness with
+`diffServe.ts` on the small dataset separately.
 
 ## Regenerating the fixture schema
 

@@ -5,7 +5,9 @@
  * full JSON response bodies (data and errors alike) must be identical.
  */
 
-export type Role = "admin" | "public";
+// "admin-wrong" sends an incorrect admin secret — pins Hasura's
+// access-denied error shape (HTTP 200, not 401; verified live).
+export type Role = "admin" | "public" | "admin-wrong";
 
 /**
  * default — Hasura tracked with no response limit and no aggregate entities

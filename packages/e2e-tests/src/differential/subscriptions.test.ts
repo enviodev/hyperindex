@@ -177,6 +177,37 @@ describe.sequential("differential subscriptions", () => {
         const envio = await run(endpoints.envio);
         expect(envio.payloads).toEqual(hasura.payloads);
       }, 90_000);
+
+      it("streaming subscription loses rows tied with the cursor boundary", async () => {
+        // Hasura's single-column stream cursor has no tie-breaking: with
+        // batch_size 1, sim-1 and sim-2 both have blockNumber 100. Batch 1
+        // returns only sim-1 (arbitrary pick among ties); the cursor then
+        // advances to blockNumber=100 and the next query's strict `> 100`
+        // bound permanently skips sim-2. This is real, observed Hasura
+        // v2.43.0 behavior (verified live) — not an idealized "WITH TIES"
+        // protection — and envio serve must reproduce it exactly rather
+        // than "fix" it.
+        const query = `subscription { SimulateTestEvent_stream(batch_size: 1, cursor: {initial_value: {blockNumber: 0}, ordering: ASC}) { id blockNumber } }`;
+
+        const run = async (url: string): Promise<ScenarioResult> => {
+          const session = await connect(url, protocol, { adminSecret });
+          const payloads: unknown[] = [];
+          try {
+            const sub = subscribe(session, protocol, { query });
+            payloads.push(await sub.nextData());
+            payloads.push(await sub.nextData());
+            payloads.push(await sub.nextData());
+            sub.stop();
+          } finally {
+            await session.close();
+          }
+          return { payloads };
+        };
+
+        const hasura = await run(endpoints.hasura);
+        const envio = await run(endpoints.envio);
+        expect(envio.payloads).toEqual(hasura.payloads);
+      }, 90_000);
     });
   }
 });
