@@ -30,6 +30,12 @@ use tokio::sync::mpsc;
 
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1000);
 const KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+/// Consecutive connection-level Postgres failures a subscription survives
+/// (silently retrying on the poll interval) before it gives up with a
+/// terminal error frame. Without this, any 1-second Postgres blip
+/// permanently kills every active subscription — most graphql-ws clients
+/// treat an error frame as terminal and never resubscribe.
+const SUBSCRIPTION_TRANSIENT_RETRIES: u32 = 5;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Protocol {
@@ -371,30 +377,43 @@ async fn run_subscription(
     );
 
     let mut last_payload: Option<String> = None;
+    let mut consecutive_failures: u32 = 0;
     loop {
-        match exec::execute_operation(&state.serve, schema, &operation).await {
-            Ok(body) => {
-                if is_stream {
-                    match advance_stream_cursor(&state, &operation, &body).await {
-                        Ok(Some(new_cursor_values)) => {
-                            // Non-empty batch: emit and move the cursor.
-                            send_frame(&sender, protocol.data_type(), &id, Some(&body));
-                            apply_cursor(&mut operation, new_cursor_values);
-                        }
-                        Ok(None) => {} // empty batch: keep waiting
-                        Err(e) => {
-                            send_error(&sender, protocol, &id, &e);
-                            return;
-                        }
+        let result = match exec::execute_operation(&state.serve, schema, &operation).await {
+            Ok(body) if is_stream => {
+                match advance_stream_cursor(&state, &operation, &body).await {
+                    Ok(Some(new_cursor_values)) => {
+                        // Non-empty batch: emit and move the cursor.
+                        send_frame(&sender, protocol.data_type(), &id, Some(&body));
+                        apply_cursor(&mut operation, new_cursor_values);
+                        Ok(())
                     }
-                } else if last_payload.as_deref() != Some(body.as_str()) {
+                    Ok(None) => Ok(()), // empty batch: keep waiting
+                    Err(e) => Err(e),
+                }
+            }
+            Ok(body) => {
+                if last_payload.as_deref() != Some(body.as_str()) {
                     send_frame(&sender, protocol.data_type(), &id, Some(&body));
                     last_payload = Some(body);
                 }
+                Ok(())
             }
+            Err(e) => Err(e),
+        };
+        match result {
+            Ok(()) => consecutive_failures = 0,
             Err(e) => {
-                send_error(&sender, protocol, &id, &e);
-                return;
+                // Connection-level failures (Postgres down/restarting, pool
+                // exhausted) self-heal: keep polling and re-attempt so the
+                // stream resumes when Postgres does. Deterministic query
+                // errors terminate immediately, matching Hasura.
+                if !e.is_transient_infra() || consecutive_failures >= SUBSCRIPTION_TRANSIENT_RETRIES
+                {
+                    send_error(&sender, protocol, &id, &e);
+                    return;
+                }
+                consecutive_failures += 1;
             }
         }
         tokio::time::sleep(POLL_INTERVAL).await;
@@ -476,7 +495,8 @@ async fn advance_stream_cursor(
         },
     };
 
-    let batch_json = exec::sql::execute_root(&state.serve, &probe).await?;
+    let mut batch_json = String::new();
+    exec::sql::execute_root(&state.serve, &probe, &mut batch_json).await?;
     let batch: serde_json::Value = serde_json::from_str(&batch_json)
         .map_err(|_| GraphQLError::unexpected_payload("internal: non-JSON cursor batch"))?;
     let last = match batch.as_array().and_then(|a| a.last()) {

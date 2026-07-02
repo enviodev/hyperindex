@@ -18,7 +18,19 @@ pub struct AppState {
     pub schemas: Arc<Schemas>,
 }
 
-pub async fn serve(state: Arc<ServeState>, host: &str, port: u16) -> anyhow::Result<()> {
+/// How long in-flight requests get to finish after a shutdown signal
+/// before the process exits anyway (open WebSocket subscriptions never
+/// close on their own, so an unbounded drain would hang forever). Sits
+/// just under Kubernetes' default 30s termination grace period so slow
+/// but legitimate queries get most of the available window.
+const SHUTDOWN_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
+
+pub async fn serve(
+    state: Arc<ServeState>,
+    host: &str,
+    port: u16,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> anyhow::Result<()> {
     let schemas = Arc::new(Schemas::build(&state.model));
     let app_state = AppState {
         serve: state,
@@ -34,12 +46,41 @@ pub async fn serve(state: Arc<ServeState>, host: &str, port: u16) -> anyhow::Res
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     println!("envio serve: GraphQL API at http://{addr}/v1/graphql");
-    axum::serve(listener, app).await?;
+
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        shutdown.await;
+        let _ = tx.send(true);
+    });
+    let mut graceful_rx = rx.clone();
+    let mut drain_rx = rx;
+    tokio::select! {
+        r = axum::serve(listener, app).with_graceful_shutdown(async move {
+            let _ = graceful_rx.changed().await;
+        }) => { r?; }
+        _ = async move {
+            let _ = drain_rx.changed().await;
+            tokio::time::sleep(SHUTDOWN_DRAIN_TIMEOUT).await;
+        } => {
+            println!("envio serve: drain timeout reached, closing remaining connections");
+        }
+    }
     Ok(())
 }
 
-async fn healthz() -> impl IntoResponse {
-    (StatusCode::OK, "OK")
+/// Readiness-style probe: verifies a pooled connection can run a query, so
+/// orchestrators see Postgres outages instead of a permanently-green
+/// process. Bounded independently of the pool's own wait timeout so the
+/// probe answers fast even when the pool is exhausted or the DB is frozen.
+async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
+    let probe = async {
+        let client = state.serve.pool.get().await.ok()?;
+        client.simple_query("SELECT 1").await.ok()
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(2), probe).await {
+        Ok(Some(_)) => (StatusCode::OK, "OK"),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "ERROR"),
+    }
 }
 
 /// Resolve the request's role from headers, mirroring Hasura:

@@ -18,11 +18,30 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 use tokio_postgres::types::{ToSql, Type};
 
-/// Executes one table root field; returns the JSON fragment for its value
-/// (e.g. `[{"id":"..."}]`, `{"aggregate":{"count":3}}`, or `null`).
-pub async fn execute_root(state: &Arc<ServeState>, root: &ir::TableRoot) -> GResult<String> {
+/// Executes one table root field, appending the JSON fragment for its value
+/// (e.g. `[{"id":"..."}]`, `{"aggregate":{"count":3}}`, or `null`) to `out`.
+///
+/// Writes the driver's `&str` column value straight into `out` instead of
+/// collecting it into an intermediate `String` first — on large unfiltered
+/// list queries (tens of MB of JSON per response) that owned copy briefly
+/// doubled peak memory, since Postgres already hands back one contiguous
+/// text value.
+pub async fn execute_root(
+    state: &Arc<ServeState>,
+    root: &ir::TableRoot,
+    out: &mut String,
+) -> GResult<()> {
     let (sql, params) = compile_root(&state.model.pg_schema, root);
-    let client = state.pool.get().await.map_err(|_| internal_db_error())?;
+    // Pool failures (connect refused, wait timeout) get the same
+    // postgres-error code as connection-level query failures so
+    // subscriptions can tell "Postgres is briefly unreachable" (retryable)
+    // apart from deterministic query errors.
+    let client = state.pool.get().await.map_err(|_| GraphQLError {
+        message: "database query error".to_string(),
+        path: "$".to_string(),
+        code: CODE_POSTGRES_ERROR,
+        status: 200,
+    })?;
     // All parameters are bound as text and cast in the SQL itself
     // (`($1)::numeric`), which keeps runtime coercion errors identical to
     // Hasura's inlined-literal form.
@@ -34,7 +53,11 @@ pub async fn execute_root(state: &Arc<ServeState>, root: &ir::TableRoot) -> GRes
     let args: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();
     let rows = client.query(&stmt, &args).await.map_err(pg_error)?;
     match rows.as_slice() {
-        [row] => row.try_get(0).map_err(|_| internal_db_error()),
+        [row] => {
+            let text: &str = row.try_get(0).map_err(|_| internal_db_error())?;
+            out.push_str(text);
+            Ok(())
+        }
         // Hasura fails the same way when its aggregate statement degenerates
         // to a non-aggregate query (e.g. `_aggregate { aggregate { __typename } }`).
         _ => Err(internal_db_error()),

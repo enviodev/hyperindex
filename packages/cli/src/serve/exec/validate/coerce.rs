@@ -644,10 +644,13 @@ fn parse_decimal(s: &str) -> Option<(bool, String, i64)> {
         return None;
     }
     let mut digits: String = format!("{int_part}{frac_part}");
-    let mut e = int_part.len() as i64 + exp;
+    // A literal like `1e9223372036854775807` puts exp at i64::MAX; checked
+    // arithmetic falls back to echoing the raw text instead of overflowing
+    // (which would panic under debug assertions — a user-triggerable crash).
+    let mut e = (int_part.len() as i64).checked_add(exp)?;
     let leading_zeros = digits.len() - digits.trim_start_matches('0').len();
     digits = digits[leading_zeros..].to_string();
-    e -= leading_zeros as i64;
+    e = e.checked_sub(leading_zeros as i64)?;
     digits = digits.trim_end_matches('0').to_string();
     if digits.is_empty() {
         return Some((false, "0".to_string(), 0));
@@ -659,9 +662,10 @@ fn hs_scientific_parts(neg: bool, digits: &str, e: i64) -> String {
     let sign = if neg { "-" } else { "" };
     if !(0..=7).contains(&e) {
         // Exponent format: first digit, '.', remaining digits (or 0), e<e-1>.
+        // i128: e can legitimately sit at i64::MIN (e.g. `0.1e-9223372036854775808`).
         let first = &digits[..1];
         let rest = if digits.len() > 1 { &digits[1..] } else { "0" };
-        format!("{sign}{first}.{rest}e{}", e - 1)
+        format!("{sign}{first}.{rest}e{}", (e as i128) - 1)
     } else if e <= 0 {
         format!("{sign}0.{}{digits}", "0".repeat((-e) as usize))
     } else {
@@ -699,6 +703,11 @@ mod tests {
             ("0.5", "0.5"),
             ("0", "0.0"),
             ("123.45", "123.45"),
+            // Exponents at the i64 boundary must not overflow the internal
+            // arithmetic (echoed raw when normalization can't represent them).
+            ("1e9223372036854775807", "1e9223372036854775807"),
+            ("1e-9223372036854775808", "1.0e-9223372036854775808"),
+            ("0.1e-9223372036854775807", "1.0e-9223372036854775808"),
         ];
         for (input, expected) in cases {
             assert_eq!(

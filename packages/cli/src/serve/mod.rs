@@ -28,10 +28,18 @@ use crate::project_paths::ParsedProjectPaths;
 use anyhow::Context;
 use std::sync::Arc;
 
+#[cfg(test)]
+mod robustness_tests;
+
 pub struct ServeState {
     pub model: model::ServerModel,
     pub pool: deadpool_postgres::Pool,
     pub admin_secret: String,
+    /// Client-side bound on a whole operation's execution (every root
+    /// field's pool wait + prepare + query). The server-side
+    /// statement_timeout normally fires first; this is the backstop for a
+    /// Postgres that stopped responding entirely.
+    pub query_timeout: Option<std::time::Duration>,
 }
 
 pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow::Result<()> {
@@ -54,7 +62,32 @@ pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow
         model,
         pool,
         admin_secret: env.admin_secret.clone(),
+        // +5s slack so the server-side statement_timeout (clean SQLSTATE
+        // 57014 cancellation) wins whenever Postgres is still responsive.
+        query_timeout: env
+            .query_timeout_ms
+            .map(|ms| std::time::Duration::from_millis(ms + 5_000)),
     });
 
-    http::serve(state, &args.host, args.port).await
+    http::serve(state, &args.host, args.port, shutdown_signal()).await
+}
+
+/// Resolves on SIGTERM or Ctrl-C so deploys drain in-flight requests
+/// instead of hard-dropping them.
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed installing SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = ctrl_c.await;
+    }
+    println!("envio serve: shutdown signal received, draining connections");
 }

@@ -24,6 +24,8 @@ pub const CODE_ACCESS_DENIED: &str = "access-denied";
 pub const CODE_POSTGRES_ERROR: &str = "postgres-error";
 pub const CODE_UNEXPECTED: &str = "unexpected";
 
+pub const QUERY_TIMEOUT_MESSAGE: &str = "database query timeout";
+
 impl GraphQLError {
     pub fn validation(path: impl Into<String>, message: impl Into<String>) -> GraphQLError {
         GraphQLError {
@@ -34,14 +36,20 @@ impl GraphQLError {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn parse_failed(message: impl Into<String>) -> GraphQLError {
+    pub fn query_timeout() -> GraphQLError {
         GraphQLError {
-            message: message.into(),
-            path: "$.query".to_string(),
-            code: CODE_PARSE_FAILED,
+            message: QUERY_TIMEOUT_MESSAGE.to_string(),
+            path: "$".to_string(),
+            code: CODE_UNEXPECTED,
             status: 200,
         }
+    }
+
+    /// Connection-level infrastructure failure (Postgres unreachable, pool
+    /// exhausted, query timed out) — retryable, unlike deterministic query
+    /// errors, which reproduce on every attempt.
+    pub fn is_transient_infra(&self) -> bool {
+        self.code == CODE_POSTGRES_ERROR || self.message == QUERY_TIMEOUT_MESSAGE
     }
 
     pub fn unexpected_payload(message: impl Into<String>) -> GraphQLError {

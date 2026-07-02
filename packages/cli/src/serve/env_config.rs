@@ -15,6 +15,7 @@
 use crate::project_paths::ParsedProjectPaths;
 use crate::utils::dotenv::{self, EnvMap};
 use anyhow::{anyhow, Context};
+use std::time::Duration;
 
 pub struct ServeEnv {
     pub pg_host: String,
@@ -27,6 +28,31 @@ pub struct ServeEnv {
     pub admin_secret: String,
     pub response_limit: Option<u32>,
     pub aggregate_entities: Vec<String>,
+    /// ENVIO_PG_QUERY_TIMEOUT_MS. Bounds every query both server-side
+    /// (statement_timeout) and client-side (tokio timeout with slack, so a
+    /// frozen/unreachable Postgres can't hang requests forever). 0 disables.
+    pub query_timeout_ms: Option<u64>,
+    /// ENVIO_PG_POOL_WAIT_TIMEOUT_MS. Bounds how long a request waits for a
+    /// free pooled connection before erroring instead of queuing without
+    /// limit. 0 disables.
+    pub pool_wait_timeout_ms: Option<u64>,
+    /// ENVIO_PG_CONNECT_TIMEOUT_MS. Bounds TCP connect + handshake when the
+    /// pool opens a new connection. 0 disables.
+    pub connect_timeout_ms: Option<u64>,
+    /// ENVIO_PG_POOL_MAX_SIZE. Defaults to min(cpu_count * 2, 10).
+    pub pool_max_size: usize,
+}
+
+/// deadpool_postgres::Config defaults to `cpu_core_count * 2` with no upper
+/// bound; on a many-core host that lets that many full-response-buffered
+/// queries (see exec/sql.rs) run concurrently, each holding its own copy of
+/// the response in memory. Capping it keeps the default reasonable while
+/// still scaling down on small hosts (e.g. a 2-core box gets 4, not 10).
+const DEFAULT_POOL_MAX_SIZE_CAP: usize = 10;
+
+fn default_pool_max_size() -> usize {
+    let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
+    std::cmp::min(cpus * 2, DEFAULT_POOL_MAX_SIZE_CAP)
 }
 
 pub struct EnvReader {
@@ -67,6 +93,25 @@ impl EnvReader {
 /// `ServeEnv::make_pg_pool`.
 fn parse_pg_ssl(raw: Option<&str>) -> bool {
     raw.map(|v| v != "false").unwrap_or(false)
+}
+
+/// Millisecond-duration env vars share one convention: unset uses the
+/// default, an explicit "0" disables the bound entirely.
+fn parse_timeout_ms(
+    raw: Option<String>,
+    name: &str,
+    default: Option<u64>,
+) -> anyhow::Result<Option<u64>> {
+    match raw {
+        None => Ok(default),
+        Some(v) => match v.parse::<u64>() {
+            Ok(0) => Ok(None),
+            Ok(n) => Ok(Some(n)),
+            Err(_) => Err(anyhow!(
+                "Invalid {name}: expected milliseconds as an integer"
+            )),
+        },
+    }
 }
 
 impl ServeEnv {
@@ -119,6 +164,29 @@ impl ServeEnv {
             aggregate_entities: parse_aggregate_entities(
                 r.var("ENVIO_HASURA_PUBLIC_AGGREGATE").as_deref(),
             )?,
+            query_timeout_ms: parse_timeout_ms(
+                r.var("ENVIO_PG_QUERY_TIMEOUT_MS"),
+                "ENVIO_PG_QUERY_TIMEOUT_MS",
+                Some(120_000),
+            )?,
+            pool_wait_timeout_ms: parse_timeout_ms(
+                r.var("ENVIO_PG_POOL_WAIT_TIMEOUT_MS"),
+                "ENVIO_PG_POOL_WAIT_TIMEOUT_MS",
+                Some(15_000),
+            )?,
+            connect_timeout_ms: parse_timeout_ms(
+                r.var("ENVIO_PG_CONNECT_TIMEOUT_MS"),
+                "ENVIO_PG_CONNECT_TIMEOUT_MS",
+                Some(10_000),
+            )?,
+            pool_max_size: match r.var("ENVIO_PG_POOL_MAX_SIZE") {
+                None => default_pool_max_size(),
+                Some(v) => v
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| anyhow!("Invalid ENVIO_PG_POOL_MAX_SIZE"))?,
+            },
         })
     }
 
@@ -137,8 +205,24 @@ impl ServeEnv {
         cfg.password = Some(self.pg_password.clone());
         cfg.dbname = Some(self.pg_database.clone());
         // Serialization parity depends on ISO datestyle and UTC output for
-        // timestamptz values; pin them per connection.
-        cfg.options = Some("-c TimeZone=UTC -c DateStyle=ISO".to_string());
+        // timestamptz values; pin them per connection. statement_timeout
+        // makes Postgres itself cancel over-budget queries (SQLSTATE 57014)
+        // — the client-side wrap in exec::sql only fires when the server
+        // can't respond at all (frozen/unreachable).
+        let mut options = "-c TimeZone=UTC -c DateStyle=ISO".to_string();
+        if let Some(ms) = self.query_timeout_ms {
+            options.push_str(&format!(" -c statement_timeout={ms}"));
+        }
+        cfg.options = Some(options);
+        cfg.connect_timeout = self.connect_timeout_ms.map(Duration::from_millis);
+        // Unbounded pool waits turn a wedged Postgres into a permanently
+        // hung server: once every connection is checked out by a stuck
+        // query, all later requests queue forever. A wait timeout converts
+        // that into a clean per-request error instead.
+        let mut pool_cfg = deadpool_postgres::PoolConfig::new(self.pool_max_size);
+        pool_cfg.timeouts.wait = self.pool_wait_timeout_ms.map(Duration::from_millis);
+        pool_cfg.timeouts.create = self.connect_timeout_ms.map(Duration::from_millis);
+        cfg.pool = Some(pool_cfg);
 
         if self.pg_ssl {
             // deadpool_postgres::Config defaults to SslMode::Prefer, which

@@ -275,11 +275,16 @@ mod tests {
         assert!(prescan("{ User(where: {id: {_eq: \"({[\"}}) { id } }").is_ok());
 
         let scan = prescan("{ User(limit: 9223372036854775808) { id } }").unwrap();
-        assert_eq!(scan.int_originals.len(), 1);
         let (magic, orig) = scan.int_originals.iter().next().unwrap();
-        assert_eq!(orig, "9223372036854775808");
-        assert!(scan.rewritten.contains(&magic.to_string()));
-        assert!(q::parse_query::<String>(&scan.rewritten).is_ok());
+        assert_eq!(
+            (
+                scan.int_originals.len(),
+                orig.as_str(),
+                scan.rewritten.contains(&magic.to_string()),
+                q::parse_query::<String>(&scan.rewritten).is_ok(),
+            ),
+            (1, "9223372036854775808", true, true)
+        );
 
         let scan = prescan("{ E(where: {f: {_lt: 1e400}}) { id } }").unwrap();
         assert_eq!(scan.inf_floats, vec!["1e400".to_string()]);

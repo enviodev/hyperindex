@@ -255,9 +255,18 @@ type Token {
 "#;
         let parsed = ProjectSchema::parse(schema).unwrap();
         let user = parsed.entities.iter().find(|e| e.name == "User").unwrap();
-        assert_eq!(user.object_relationships.len(), 1);
-        assert_eq!(user.object_relationships[0].field_name, "gravatar");
-        assert_eq!(user.array_relationships.len(), 1);
-        assert_eq!(user.array_relationships[0].remote_field, "owner");
+        assert_eq!(
+            (
+                user.object_relationships
+                    .iter()
+                    .map(|r| r.field_name.as_str())
+                    .collect::<Vec<_>>(),
+                user.array_relationships
+                    .iter()
+                    .map(|r| (r.field_name.as_str(), r.remote_field.as_str()))
+                    .collect::<Vec<_>>(),
+            ),
+            (vec!["gravatar"], vec![("tokens", "owner")])
+        );
     }
 }

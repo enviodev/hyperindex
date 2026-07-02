@@ -27,8 +27,6 @@ pub struct GraphQLRequest {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
     Http,
-    // Constructed by the WS subscription handler once implemented.
-    #[allow(dead_code)]
     Ws,
 }
 
@@ -86,7 +84,27 @@ async fn execute_inner(
 }
 
 /// Executes an already-planned (non-subscription) operation.
+///
+/// The whole operation — every root field's pool wait + prepare + query —
+/// shares one client-side time budget. The server-side statement_timeout
+/// can't help when Postgres has stopped responding, and a per-root-field
+/// bound would still let a request with N root fields hang for N budgets.
 pub async fn execute_operation(
+    state: &Arc<ServeState>,
+    schema: &RoleSchema,
+    operation: &ir::Operation,
+) -> Result<String, GraphQLError> {
+    match state.query_timeout {
+        None => execute_operation_inner(state, schema, operation).await,
+        Some(limit) => {
+            tokio::time::timeout(limit, execute_operation_inner(state, schema, operation))
+                .await
+                .unwrap_or_else(|_| Err(GraphQLError::query_timeout()))
+        }
+    }
+}
+
+async fn execute_operation_inner(
     state: &Arc<ServeState>,
     schema: &RoleSchema,
     operation: &ir::Operation,
@@ -117,10 +135,9 @@ pub async fn execute_operation(
                 out.push_str(&value_json);
             }
             ir::RootField::Table(table_root) => {
-                let piece = sql::execute_root(state, table_root).await?;
                 out.push_str(&serde_json::to_string(&table_root.alias).unwrap());
                 out.push(':');
-                out.push_str(&piece);
+                sql::execute_root(state, table_root, &mut out).await?;
             }
         }
     }
