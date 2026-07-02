@@ -6,7 +6,7 @@ let (configWithRegistrations, _) = await HandlerLoader.registerAllHandlers(
   ~config=Config.loadWithoutRegistrations(),
 )
 
-let getEvmEventConfig = MockConfig.getEvmEventConfig(~config=configWithRegistrations, ...)
+let getEvmEventConfig = MockConfig.getEvmOnEventRegistration(~config=configWithRegistrations, ...)
 
 // The codegen'd onEventWhereArgs is structurally compatible with
 // Internal.onEventWhereArgs<_> at runtime; runtime parser uses Obj.magic.

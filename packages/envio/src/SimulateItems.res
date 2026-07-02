@@ -220,7 +220,12 @@ let deriveSrcAddress = (
   switch providedSrcAddress {
   | Some(addr) => addr
   | None =>
-    if eventConfig.isWildcard {
+    if (
+      HandlerRegister.isWildcard(
+        ~contractName=eventConfig.contractName,
+        ~eventName=eventConfig.name,
+      )
+    ) {
       dummySrcAddress
     } else {
       switch firstContractAddress(~chainConfig, ~contractName=eventConfig.contractName) {
@@ -251,7 +256,7 @@ let validateSrcAddresses = (
     switch (raw->getContract, raw->getEvent) {
     | (Some(contractName), Some(eventName)) =>
       switch findEventConfig(~config, ~contractName, ~eventName) {
-      | Some(eventConfig) if !eventConfig.isWildcard =>
+      | Some(eventConfig) if !HandlerRegister.isWildcard(~contractName, ~eventName) =>
         let item = rawJson->(Utils.magic: JSON.t => Envio.evmSimulateItem)
         let srcAddress = deriveSrcAddress(
           ~providedSrcAddress=item.srcAddress,
@@ -345,10 +350,20 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       // Update currentBlock for subsequent items
       currentBlock := blockNumber
 
+      let onEventRegistration: Internal.onEventRegistration = {
+        eventConfig,
+        handler: HandlerRegister.getHandler(~contractName, ~eventName),
+        contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName),
+        isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName),
+        filterByAddresses: false,
+        dependsOnAddresses: false,
+        startBlock: None,
+      }
+
       items
       ->Array.push(
         Internal.Event({
-          eventConfig,
+          onEventRegistration,
           timestamp,
           chain,
           blockNumber,

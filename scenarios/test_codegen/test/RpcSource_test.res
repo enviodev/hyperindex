@@ -737,7 +737,7 @@ describe("RpcSource - getSelectionConfig", () => {
   it("Selection config for the most basic case with no wildcards", t => {
     let selectionConfig = {
       dependsOnAddresses: true,
-      eventConfigs: [(MockIndexer.evmEventConfig() :> Internal.eventConfig)],
+      onEventRegistrations: [(MockIndexer.evmOnEventRegistration() :> Internal.onEventRegistration)],
     }->RpcSource.getSelectionConfig(~chain)
 
     t.expect(
@@ -754,9 +754,9 @@ describe("RpcSource - getSelectionConfig", () => {
   it("Selection config with wildcard events", t => {
     let selectionConfig = {
       dependsOnAddresses: false,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(~id="1", ~isWildcard=true) :> Internal.eventConfig),
-        (MockIndexer.evmEventConfig(~id="2", ~isWildcard=true) :> Internal.eventConfig),
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(~id="1", ~isWildcard=true) :> Internal.onEventRegistration),
+        (MockIndexer.evmOnEventRegistration(~id="2", ~isWildcard=true) :> Internal.onEventRegistration),
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
@@ -772,12 +772,12 @@ describe("RpcSource - getSelectionConfig", () => {
   Async.it("Wildcard topic selection which depends on addresses", async t => {
     let selectionConfig = {
       dependsOnAddresses: false,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(
           ~id="event 2",
           ~isWildcard=true,
           ~dependsOnAddresses=true,
-        ) :> Internal.eventConfig),
+        ) :> Internal.onEventRegistration),
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
@@ -794,12 +794,12 @@ describe("RpcSource - getSelectionConfig", () => {
   Async.it("Non-wildcard topic selection which depends on addresses", async t => {
     let selectionConfig = {
       dependsOnAddresses: false,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(
           ~id="event 2",
           ~isWildcard=false,
           ~dependsOnAddresses=true,
-        ) :> Internal.eventConfig),
+        ) :> Internal.onEventRegistration),
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
@@ -817,7 +817,7 @@ describe("RpcSource - getSelectionConfig", () => {
     try {
       let _ = {
         dependsOnAddresses: true,
-        eventConfigs: [],
+        onEventRegistrations: [],
       }->RpcSource.getSelectionConfig(~chain)
       JsError.throwWithMessage("Should have thrown")
     } catch {
@@ -833,9 +833,9 @@ describe("RpcSource - getSelectionConfig", () => {
     try {
       let _ = {
         dependsOnAddresses: true,
-        eventConfigs: [
-          (MockIndexer.evmEventConfig(~id="1") :> Internal.eventConfig),
-          (MockIndexer.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
+        onEventRegistrations: [
+          (MockIndexer.evmOnEventRegistration(~id="1") :> Internal.onEventRegistration),
+          (MockIndexer.evmOnEventRegistration(~id="2", ~dependsOnAddresses=true) :> Internal.onEventRegistration),
         ],
       }->RpcSource.getSelectionConfig(~chain)
       JsError.throwWithMessage("Should have thrown")
@@ -1048,7 +1048,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
   Async.it(
     "Throws a retryable error instead of a source-disabling one when the receipt is null",
     async t => {
-      let eventConfig = MockIndexer.evmEventConfig(
+      let eventConfig = MockIndexer.evmOnEventRegistration(
         ~id=`${sighash}_1`,
         ~transactionFieldNames=[GasUsed],
       )
@@ -1095,8 +1095,8 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
           {
             sighash,
             topicCount: 1,
-            eventName: eventConfig.name,
-            contractName: eventConfig.contractName,
+            eventName: eventConfig.eventConfig.name,
+            contractName: eventConfig.eventConfig.contractName,
             params: [],
           },
         ],
@@ -1109,15 +1109,15 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
             let _ = await source.getItemsOrThrow(
               ~fromBlock=0,
               ~toBlock=Some(100),
-              ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+              ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
               ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-                Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+                Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
               ),
               ~knownHeight=100,
               ~partitionId="0",
               ~selection={
                 dependsOnAddresses: true,
-                eventConfigs: [(eventConfig :> Internal.eventConfig)],
+                onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
               },
               ~retry,
               ~logger=Logging.createChild(~params={"test": "RpcSource missing transaction data"}),

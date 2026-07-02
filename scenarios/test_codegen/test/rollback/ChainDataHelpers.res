@@ -27,7 +27,7 @@ module Gravatar = {
   module NewGravatar = {
     let mkEventConstr = params =>
       makeEventConstructorWithDefaultSrcAddress(
-        ~eventConfig=MockConfig.getEvmEventConfig(
+        ~onEventRegistration=MockConfig.getEvmOnEventRegistration(
           ~contractName="Gravatar",
           ~eventName="NewGravatar",
         ),
@@ -39,7 +39,7 @@ module Gravatar = {
   module UpdatedGravatar = {
     let mkEventConstr = params =>
       makeEventConstructorWithDefaultSrcAddress(
-        ~eventConfig=MockConfig.getEvmEventConfig(
+        ~onEventRegistration=MockConfig.getEvmOnEventRegistration(
           ~contractName="Gravatar",
           ~eventName="UpdatedGravatar",
         ),

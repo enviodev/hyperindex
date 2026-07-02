@@ -652,7 +652,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ~events: option<array<_>>,
     ~abi,
     ~chainId: int,
-    ~startBlock: option<int>,
     ~addresses: array<string>,
     ~svmDefinedTypes: JSON.t=JSON.Null,
   ) => {
@@ -675,10 +674,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               ~kind=fuelKind,
               ~sighash,
               ~rawAbi=abi->(Utils.magic: EvmTypes.Abi.t => JSON.t),
-              ~isWildcard=false,
-              ~handler=None,
-              ~contractRegister=None,
-              ~startBlock?,
             ) :> Internal.eventConfig)
           | None =>
             JsError.throwWithMessage(
@@ -742,13 +737,9 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~includeLogs=svm["includeLogs"],
             ~accountFilters,
             ~isInner=svm["isInner"],
-            ~isWildcard=false,
-            ~handler=None,
-            ~contractRegister=None,
             ~accounts=svm["accounts"]->Option.getOr([]),
             ~args=svm["args"]->Option.getOr(JSON.Null),
             ~definedTypes=svmDefinedTypes,
-            ~startBlock?,
           ) :> Internal.eventConfig)
         | _ =>
           (EventConfigBuilder.buildEvmEventConfig(
@@ -756,15 +747,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~eventName,
             ~sighash,
             ~params,
-            ~isWildcard=false,
-            ~handler=None,
-            ~contractRegister=None,
-            ~eventFilters=None,
-            ~probeChainId=chainId,
-            ~onEventBlockFilterSchema=ecosystem.onEventBlockFilterSchema,
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
-            ~startBlock?,
             ~globalBlockFieldsSet,
             ~globalTransactionFieldsSet,
           ) :> Internal.eventConfig)
@@ -816,17 +800,14 @@ let fromPublic = (publicConfigJson: JSON.t) => {
           let addresses = rawAddresses->Array.map(parseAddress)
           let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
 
-          // Build event configs from JSON (field selections resolved inline)
-          // chainId is threaded in so the where-callback detection probe
-          // exercises the callback with this chain's real id — handlers
-          // that branch on `chain.id` are taken through the same path
-          // they will follow at runtime.
+          // Build event definitions from JSON (field selections resolved
+          // inline). Handlers and per-chain `where` filters are layered on
+          // later as `onEventRegistration`s in `ChainState.makeInternal`.
           let events = buildContractEvents(
             ~contractName=capitalizedName,
             ~events=contractData["events"],
             ~abi=contractData["abi"],
             ~chainId,
-            ~startBlock,
             ~addresses=rawAddresses,
             ~svmDefinedTypes=contractData["svmAbi"]
             ->Option.map(a => a["definedTypes"])

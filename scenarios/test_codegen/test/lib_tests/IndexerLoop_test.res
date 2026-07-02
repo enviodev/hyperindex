@@ -7,20 +7,20 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
   config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig => {
-    let eventConfigs = [
-      (MockIndexer.evmEventConfig(
+    let onEventRegistrations = [
+      (MockIndexer.evmOnEventRegistration(
         ~id="0",
         ~contractName="Gravatar",
         ~isWildcard=true,
-      ) :> Internal.eventConfig),
+      ) :> Internal.onEventRegistration),
     ]
     let addresses = []
-    let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
     let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     let fetchState = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
-      ~eventConfigs,
+      ~onEventRegistrations,
       ~contractConfigs,
       ~addresses,
       ~startBlock=0,

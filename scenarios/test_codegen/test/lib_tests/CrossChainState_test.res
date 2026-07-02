@@ -8,7 +8,7 @@ let mockEvent = (~blockNumber): Internal.item =>
     chain: ChainMap.Chain.makeUnsafe(~chainId=1),
     blockNumber,
     blockHash: `0x${blockNumber->Int.toString}`,
-    eventConfig: "Mock eventConfig in CrossChainState test"->(Utils.magic: string => Internal.eventConfig),
+    onEventRegistration: "Mock onEventRegistration in CrossChainState test"->(Utils.magic: string => Internal.onEventRegistration),
     logIndex: 0,
     transactionIndex: 0,
     payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
@@ -24,14 +24,14 @@ let makeChainState = (
   ~bufferBlocks=[],
   ~isProgressAtHead=false,
 ) => {
-  let eventConfigs = []
+  let onEventRegistrations = []
   let addresses = []
-  let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+  let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
   let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
   let base = FetchState.make(
     // An onBlock config (no address partition) satisfies "something to fetch"
     // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
-    ~eventConfigs,
+    ~onEventRegistrations,
     ~contractConfigs,
     ~addresses,
     ~onBlockConfigs=[
@@ -81,7 +81,7 @@ let makeChainState = (
 // above). The partition has no response yet, so each query estimates at the
 // default size.
 let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
-  let normalSelection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
   let partition: FetchState.partition = {
     id: "0",

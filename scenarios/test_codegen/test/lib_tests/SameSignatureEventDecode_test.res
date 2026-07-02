@@ -13,26 +13,23 @@ external encodeAbiParameters: (JSON.t, JSON.t) => string = "encodeAbiParameters"
 // vs WETH `src/dst/wad`). Same sighash, same topicCount.
 let transferSighash = toEventSelector("event Transfer(address indexed, address indexed, uint256)")
 
-let makeContract = (~name, ~params): Internal.evmContractConfig => {
-  name,
-  abi: %raw(`[]`),
-  events: [
-    EventConfigBuilder.buildEvmEventConfig(
+let makeReg = (~name, ~params): Internal.evmOnEventRegistration =>
+  EventConfigBuilder.buildEvmOnEventRegistration(
+    ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
       ~contractName=name,
       ~eventName="Transfer",
       ~sighash=transferSighash,
       ~params,
-      ~isWildcard=false,
-      ~handler=None,
-      ~contractRegister=None,
-      ~eventFilters=None,
-      ~probeChainId=1,
-      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ),
-  ],
-}
+    ~isWildcard=false,
+    ~handler=None,
+    ~contractRegister=None,
+    ~eventFilters=None,
+    ~probeChainId=1,
+    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+  )
 
-let tokenA = makeContract(
+let tokenA = makeReg(
   ~name="TokenA",
   ~params=([
     {name: "from", abiType: "address", indexed: true},
@@ -41,7 +38,7 @@ let tokenA = makeContract(
   ]: array<Internal.paramMeta>),
 )
 
-let tokenB = makeContract(
+let tokenB = makeReg(
   ~name="TokenB",
   ~params=([
     {name: "src", abiType: "address", indexed: true},

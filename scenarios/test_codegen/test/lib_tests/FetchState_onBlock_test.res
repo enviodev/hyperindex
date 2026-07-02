@@ -13,7 +13,7 @@ let defaultQuery: FetchState.query = {
   estResponseSize: 0.,
   chainId: 0,
   progress: 0.,
-  selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
+  selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
 
@@ -26,10 +26,10 @@ let getBlockData = (~blockNumber): FetchState.blockNumberAndTimestamp => {
   blockTimestamp: getTimestamp(~blockNumber),
 }
 
-let baseEventConfig = (MockIndexer.evmEventConfig(
+let baseEventConfig = (MockIndexer.evmOnEventRegistration(
   ~id="0",
   ~contractName="Gravatar",
-) :> Internal.eventConfig)
+) :> Internal.onEventRegistration)
 
 let makeOnBlockConfig = (
   ~name="testOnBlock",
@@ -48,7 +48,7 @@ let makeOnBlockConfig = (
 }
 
 let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
-  let eventConfigs = [baseEventConfig]
+  let onEventRegistrations = [baseEventConfig]
   let addresses = [
     {
       Internal.address: mockAddress0,
@@ -56,10 +56,10 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
       registrationBlock: -1,
     },
   ]
-  let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+  let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
   let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
   let fetchState = FetchState.make(
-    ~eventConfigs,
+    ~onEventRegistrations,
     ~contractConfigs,
     ~addresses,
     ~startBlock,
@@ -78,7 +78,7 @@ let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
   chain: ChainMap.Chain.makeUnsafe(~chainId),
   blockNumber,
   blockHash: `0x${blockNumber->Int.toString}`,
-  eventConfig: Utils.magic("Mock eventConfig in fetchstate test"),
+  onEventRegistration: Utils.magic("Mock onEventRegistration in fetchstate test"),
   logIndex,
   transactionIndex: 0,
   payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),

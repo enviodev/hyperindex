@@ -325,8 +325,8 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let staticTopicSelections = []
   let dynamicEventFilters = []
 
-  selection.eventConfigs
-  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
+  selection.onEventRegistrations
+  ->(Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>)
   ->Array.forEach(({getEventFiltersOrThrow}) => {
     switch getEventFiltersOrThrow(chain) {
     | Static(s) => staticTopicSelections->Array.pushMany(s)->ignore
@@ -356,13 +356,13 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         topicQuery,
       }
     }
-  | ([], [dynamicEventFilter]) if selection.eventConfigs->Array.length === 1 =>
-    let eventConfig = selection.eventConfigs->Utils.Array.firstUnsafe
+  | ([], [dynamicEventFilter]) if selection.onEventRegistrations->Array.length === 1 =>
+    let onEventRegistration = selection.onEventRegistrations->Utils.Array.firstUnsafe
 
     (~addressesByContractName) => {
       let addresses = addressesByContractName->FetchState.addressesByContractNameGetAll
       {
-        addresses: eventConfig.isWildcard ? None : Some(addresses),
+        addresses: onEventRegistration.isWildcard ? None : Some(addresses),
         topicQuery: switch dynamicEventFilter(addresses) {
         | [topicSelection] => topicSelection->Rpc.GetLogs.mapTopicQuery
         | _ =>
@@ -854,7 +854,7 @@ type options = {
   syncConfig: Config.sourceSync,
   url: string,
   chain: ChainMap.Chain.t,
-  eventRouter: EventRouter.t<Internal.evmEventConfig>,
+  eventRouter: EventRouter.t<Internal.evmOnEventRegistration>,
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   lowercaseAddresses: bool,
   ws?: string,
@@ -1098,7 +1098,11 @@ let make = (
         ~contractAddress=routedAddress,
       ) {
       | None => None
-      | Some(eventConfig) =>
+      | Some(onEventRegistration) =>
+        let eventConfig =
+          onEventRegistration.eventConfig->(
+            Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+          )
         switch maybeDecodedEvent
         ->Nullable.toOption
         ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
@@ -1145,7 +1149,7 @@ let make = (
                 }
 
                 Internal.Event({
-                  eventConfig: (eventConfig :> Internal.eventConfig),
+                  onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
                   timestamp: block->getBlockTimestamp,
                   blockNumber: block->getBlockNumber,
                   blockHash: block->getBlockHash,

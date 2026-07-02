@@ -8,15 +8,18 @@ let deriveEffectiveStartBlock = (~registrationBlock: int, ~contractStartBlock: o
   Pervasives.max(Pervasives.max(registrationBlock, 0), contractStartBlock->Option.getOr(0))
 }
 
-let makeContractConfigs = (~eventConfigs: array<Internal.eventConfig>): dict<contractConfig> => {
+let makeContractConfigs = (~onEventRegistrations: array<Internal.onEventRegistration>): dict<
+  contractConfig,
+> => {
   let contractConfigs: dict<contractConfig> = Dict.make()
-  eventConfigs->Array.forEach(ec => {
-    switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(ec.contractName) {
+  onEventRegistrations->Array.forEach(reg => {
+    let contractName = reg.eventConfig.contractName
+    switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(contractName) {
     | Some({startBlock}) =>
       contractConfigs->Dict.set(
-        ec.contractName,
+        contractName,
         {
-          startBlock: switch (startBlock, ec.startBlock) {
+          startBlock: switch (startBlock, reg.startBlock) {
           | (Some(a), Some(b)) => Some(Pervasives.min(a, b))
           | (Some(_) as s, None) | (None, Some(_) as s) => s
           | (None, None) => None
@@ -25,9 +28,9 @@ let makeContractConfigs = (~eventConfigs: array<Internal.eventConfig>): dict<con
       )
     | None =>
       contractConfigs->Dict.set(
-        ec.contractName,
+        contractName,
         {
-          startBlock: ec.startBlock,
+          startBlock: reg.startBlock,
         },
       )
     }

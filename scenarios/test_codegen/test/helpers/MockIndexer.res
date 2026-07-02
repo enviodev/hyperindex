@@ -796,10 +796,20 @@ module Source = {
                     parsedQueueItems: items->Array.map(
                       item => {
                         Internal.Event({
-                          eventConfig: ({
-                            id: "MockEvent",
-                            contractName: "MockContract",
-                            name: "MockEvent",
+                          onEventRegistration: ({
+                            eventConfig: ({
+                              id: "MockEvent",
+                              contractName: "MockContract",
+                              name: "MockEvent",
+                              paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
+                              simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
+                              selectedBlockFields: Utils.Set.make(),
+                              selectedTransactionFields: Utils.Set.make(),
+                              transactionFieldMask: 0.,
+                              sighash: "",
+                              topicCount: 1,
+                              paramsMetadata: [],
+                            }: Internal.evmEventConfig :> Internal.eventConfig),
                             isWildcard: false,
                             filterByAddresses: false,
                             dependsOnAddresses: false,
@@ -831,17 +841,9 @@ module Source = {
                                 Internal.contractRegister,
                               >
                             ),
-                            paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
-                            simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
                             getEventFiltersOrThrow: _ =>
                               JsError.throwWithMessage("Not implemented"),
-                            selectedBlockFields: Utils.Set.make(),
-                            selectedTransactionFields: Utils.Set.make(),
-                            transactionFieldMask: 0.,
-                            sighash: "",
-                            topicCount: 1,
-                            paramsMetadata: [],
-                          }: Internal.evmEventConfig :> Internal.eventConfig),
+                          }: Internal.evmOnEventRegistration :> Internal.onEventRegistration),
                           timestamp: item.blockNumber,
                           chain,
                           blockNumber: item.blockNumber,
@@ -942,7 +944,7 @@ let mockRawEventRow: InternalTable.RawEvents.t = {
 
 let eventId = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1"
 
-let evmEventConfig = (
+let evmOnEventRegistration = (
   ~id=eventId,
   ~contractName="ERC20",
   ~blockFieldNames: array<Internal.evmBlockField>=[],
@@ -951,23 +953,32 @@ let evmEventConfig = (
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
   ~startBlock: option<int>=?,
-): Internal.evmEventConfig => {
+): Internal.evmOnEventRegistration => {
   let selectedTransactionFields =
     Utils.Set.fromArray(transactionFieldNames)->(
       Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
     )
-  {
+  let eventConfig: Internal.evmEventConfig = {
     id,
     contractName,
     name: "EventWithoutFields",
+    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
+    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
+    selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
+    selectedTransactionFields,
+    transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
+    sighash: id,
+    topicCount: 1,
+    paramsMetadata: [],
+  }
+  {
+    eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
     filterByAddresses,
     dependsOnAddresses: filterByAddresses || dependsOnAddresses->Option.getOr(!isWildcard),
     startBlock,
     handler: None,
     contractRegister: None,
-    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
-    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
     getEventFiltersOrThrow: _ =>
       switch dependsOnAddresses {
       | Some(true) =>
@@ -997,11 +1008,5 @@ let evmEventConfig = (
           },
         ])
       },
-    selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
-    selectedTransactionFields,
-    transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
-    sighash: id,
-    topicCount: 1,
-    paramsMetadata: [],
   }
 }

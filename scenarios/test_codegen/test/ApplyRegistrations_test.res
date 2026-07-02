@@ -10,9 +10,9 @@ let (configWithRegistrations, _) = await HandlerLoader.registerAllHandlers(
   ~config=Config.loadWithoutRegistrations(),
 )
 
-let getEvmEventConfig = MockConfig.getEvmEventConfig(~config=configWithRegistrations, ...)
+let getEvmEventConfig = MockConfig.getEvmOnEventRegistration(~config=configWithRegistrations, ...)
 
-describe("HandlerLoader.applyRegistrations", () => {
+describe("onEventRegistration handler-state fields", () => {
   it("propagates handler from onEvent into the event config", t => {
     // `indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, …)`
     // is registered in EventHandlers.ts at module top level.

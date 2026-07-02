@@ -112,8 +112,9 @@ let makeInternal = (
   // Ideally to split it into two different parts.
   let eventRouter = EventRouter.empty()
 
-  // Aggregate events we want to fetch
-  let eventConfigs: array<Internal.eventConfig> = []
+  // Build the per-chain registrations (handler binding + `where`-derived fetch
+  // state) by layering the registered handlers onto the event definitions.
+  let onEventRegistrations: array<Internal.onEventRegistration> = []
 
   let notRegisteredEvents = []
 
@@ -121,8 +122,42 @@ let makeInternal = (
     let contractName = contract.name
 
     contract.events->Array.forEach(eventConfig => {
-      let {isWildcard} = eventConfig
-      let hasContractRegister = eventConfig.contractRegister->Option.isSome
+      let eventName = eventConfig.name
+      let isWildcard = HandlerRegister.isWildcard(~contractName, ~eventName)
+      let handler = HandlerRegister.getHandler(~contractName, ~eventName)
+      let contractRegister = HandlerRegister.getContractRegister(~contractName, ~eventName)
+
+      let onEventRegistration = switch config.ecosystem.name {
+      | Fuel =>
+        (EventConfigBuilder.buildFuelOnEventRegistration(
+          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig),
+          ~isWildcard,
+          ~handler,
+          ~contractRegister,
+          ~startBlock=?contract.startBlock,
+        ) :> Internal.onEventRegistration)
+      | Svm =>
+        (EventConfigBuilder.buildSvmOnEventRegistration(
+          ~eventConfig=eventConfig->(
+            Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
+          ),
+          ~isWildcard,
+          ~handler,
+          ~contractRegister,
+          ~startBlock=?contract.startBlock,
+        ) :> Internal.onEventRegistration)
+      | Evm =>
+        (EventConfigBuilder.buildEvmOnEventRegistration(
+          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig),
+          ~isWildcard,
+          ~handler,
+          ~contractRegister,
+          ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
+          ~probeChainId=chainConfig.id,
+          ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
+          ~startBlock=?contract.startBlock,
+        ) :> Internal.onEventRegistration)
+      }
 
       // Should validate the events
       eventRouter->EventRouter.addOrThrow(
@@ -130,18 +165,18 @@ let makeInternal = (
         (),
         ~contractName,
         ~chain=ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id),
-        ~eventName=eventConfig.name,
+        ~eventName,
         ~isWildcard,
       )
 
-      // Filter out non-preRegistration events on preRegistration phase
-      // so we don't care about it in fetch state and workers anymore
+      // Filter out events without a handler/contractRegister so they aren't
+      // fetched or dispatched (unless raw events are enabled).
       let shouldBeIncluded = if config.enableRawEvents {
         true
       } else {
-        let isRegistered = hasContractRegister || eventConfig.handler->Option.isSome
+        let isRegistered = contractRegister->Option.isSome || handler->Option.isSome
         if !isRegistered {
-          notRegisteredEvents->Array.push(eventConfig)
+          notRegisteredEvents->Array.push(onEventRegistration)
         }
         isRegistered
       }
@@ -151,7 +186,9 @@ let makeInternal = (
       // If so, skip it entirely - it should never be fetched
       let shouldSkip = try {
         let getEventFiltersOrThrow = (
-          eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+          onEventRegistration->(
+            Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration
+          )
         ).getEventFiltersOrThrow
 
         // Check for non-evm chains
@@ -172,7 +209,7 @@ let makeInternal = (
       }
 
       if shouldBeIncluded && !shouldSkip {
-        eventConfigs->Array.push(eventConfig)
+        onEventRegistrations->Array.push(onEventRegistration)
       }
     })
 
@@ -192,7 +229,7 @@ let makeInternal = (
         } else {
           ""
         }} ${notRegisteredEvents
-        ->Array.map(eventConfig => `${eventConfig.contractName}.${eventConfig.name}`)
+        ->Array.map(reg => `${reg.eventConfig.contractName}.${reg.eventConfig.name}`)
         ->Array.joinUnsafe(", ")} don't have an event handler and skipped for indexing.`,
     )
   }
@@ -222,7 +259,7 @@ let makeInternal = (
   | None => ()
   }
 
-  let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+  let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
   let indexingAddressIndex = IndexingAddresses.make(~contractConfigs, ~addresses=indexingAddresses)
 
   let fetchState = FetchState.make(
@@ -232,7 +269,7 @@ let makeInternal = (
     ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
-    ~eventConfigs,
+    ~onEventRegistrations,
     ~maxOnBlockBufferSize=2 * config.batchSize,
     ~knownHeight,
     ~chainId=chainConfig.id,
@@ -258,16 +295,6 @@ let makeInternal = (
   let lowercaseAddresses = config.lowercaseAddresses
   let sources = switch chainConfig.sourceConfig {
   | Config.EvmSourceConfig({hypersync, rpcs}) =>
-    // Build Internal.evmContractConfig from contracts for EvmChain.makeSources
-    let evmContracts: array<Internal.evmContractConfig> = chainConfig.contracts->Array.map((
-      contract
-    ): Internal.evmContractConfig => {
-      name: contract.name,
-      abi: contract.abi,
-      events: contract.events->(
-        Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
-      ),
-    })
     let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
       let syncConfig = rpc.syncConfig
       let ws = rpc.ws
@@ -280,7 +307,9 @@ let makeInternal = (
     })
     EvmChain.makeSources(
       ~chain,
-      ~contracts=evmContracts,
+      ~onEventRegistrations=onEventRegistrations->(
+        Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
+      ),
       ~hyperSync=hypersync,
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
@@ -298,17 +327,13 @@ let makeInternal = (
     | (Some(hypersyncUrl), _) =>
       // HyperSync drives instruction sync. A configured RPC is ignored for now
       // (RPC fallback isn't wired up yet).
-      let svmEventConfigs =
-        chainConfig.contracts
-        ->Array.flatMap(contract => contract.events)
-        ->(Utils.magic: array<Internal.eventConfig> => array<Internal.svmInstructionEventConfig>)
       let apiToken = Env.envioApiToken
       [
         SvmHyperSyncSource.make({
           chain,
           endpointUrl: hypersyncUrl,
           apiToken,
-          eventConfigs: svmEventConfigs,
+          onEventRegistrations,
           clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         }),
       ]
