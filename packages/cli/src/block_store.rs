@@ -121,23 +121,53 @@ impl SvmBlockField {
     }
 }
 
-/// Decode the per-row mask-selected fields of the given EVM blocks into columns.
-/// `block_numbers` is the requested key per row, so `number` resolves from the
-/// key (always known) rather than a stored record.
+/// Decode the per-row mask-selected fields of the given EVM blocks into
+/// columns, then set `number`/`timestamp`/`hash` unconditionally from each
+/// row's stored header — the trio is always known from the response (kept in
+/// the store's header independent of whether the full raw block was also
+/// retained), regardless of whether any mask selected it.
 fn decode_evm_block_columns(
-    records: &[Option<Arc<simple_types::Block>>],
+    records: &[Option<EvmRecord>],
     block_numbers: &[i64],
     masks: &[u64],
     should_checksum: bool,
 ) -> Result<Columns> {
-    build_columns(
+    let raw: Vec<Option<Arc<simple_types::Block>>> = records
+        .iter()
+        .map(|r| r.as_ref().and_then(|(_, raw)| raw.clone()))
+        .collect();
+
+    let mut cols = build_columns(
         EvmBlockField::VARIANTS,
         masks,
         records.len(),
         |f| f as u32,
         |f| f.name(),
-        |f| decode_evm_block_field(f, records, block_numbers, masks, should_checksum),
-    )
+        |f| decode_evm_block_field(f, &raw, block_numbers, masks, should_checksum),
+    )?;
+    cols.columns.push((
+        EvmBlockField::Number.name(),
+        Column::I64(block_numbers.iter().map(|&n| Some(n)).collect()),
+    ));
+    cols.columns.push((
+        EvmBlockField::Timestamp.name(),
+        Column::I64(
+            records
+                .iter()
+                .map(|r| r.as_ref().map(|(h, _)| h.timestamp))
+                .collect(),
+        ),
+    ));
+    cols.columns.push((
+        EvmBlockField::Hash.name(),
+        Column::Str(
+            records
+                .iter()
+                .map(|r| r.as_ref().map(|(h, _)| h.hash.clone()))
+                .collect(),
+        ),
+    ));
+    Ok(cols)
 }
 
 /// Decode a single EVM block field, materialising it only on the rows whose mask
@@ -152,8 +182,10 @@ fn decode_evm_block_field(
 ) -> Result<Column> {
     let bit = 1u64 << (field as u32);
     Ok(match field {
-        // The block number is the store key, so it's always available regardless
-        // of whether the block row was fetched.
+        // `decode_evm_block_columns` always overlays number/timestamp/hash from
+        // the caller's own per-row values afterward, so these three arms only
+        // run (and are immediately superseded) if a caller ever sets their bits
+        // — kept for an exhaustive match rather than a live path.
         EvmBlockField::Number => Column::I64(
             block_numbers
                 .iter()
@@ -309,9 +341,29 @@ fn decode_svm_block_field(
     })
 }
 
+/// The lean header every fetched EVM block carries, independent of whether its
+/// full raw form was also retained — timestamp/hash are always known from the
+/// response, not just when an event selected a field beyond the trio.
+/// `number` isn't duplicated here since it's already the map key.
+#[derive(Clone)]
+struct EvmHeader {
+    timestamp: i64,
+    hash: String,
+}
+
+/// One EVM row's stored data: the header is always known; the raw block is
+/// only kept when an event selected a field beyond the trio.
+type EvmRecord = (EvmHeader, Option<Arc<simple_types::Block>>);
+
 /// One stored block, kept in its ecosystem's compact raw form.
 enum StoredBlock {
-    Evm(Arc<simple_types::Block>),
+    /// EVM: the header is always known (from the response); `raw` holds the
+    /// full upstream struct only when an event selected a field beyond the
+    /// always-available trio.
+    Evm {
+        header: EvmHeader,
+        raw: Option<Arc<simple_types::Block>>,
+    },
     Svm(Arc<solana_simple::Block>),
 }
 
@@ -448,8 +500,11 @@ impl BlockStore {
 
         match self.ecosystem {
             Ecosystem::Evm { should_checksum } => {
+                // The header (timestamp/hash) is always present for a stored EVM
+                // block; `raw` is only `Some` when an event selected a field
+                // beyond the trio.
                 let records = self.collect_locked(&block_numbers, |stored| match stored {
-                    StoredBlock::Evm(b) => Some(b.clone()),
+                    StoredBlock::Evm { header, raw } => Some((header.clone(), raw.clone())),
                     _ => None,
                 });
                 tokio::task::block_in_place(|| {
@@ -514,15 +569,25 @@ impl BlockStore {
         }
     }
 
-    /// Insert a raw EVM block (called by the HyperSync source while building a
-    /// page). One block per number, so a plain insert deduplicates the many logs
-    /// that share it. Not exposed to JS.
-    pub(crate) fn insert_evm_raw(&self, number: u64, block: Arc<simple_types::Block>) {
-        self.inner
-            .lock()
-            .unwrap()
-            .map
-            .insert(number, StoredBlock::Evm(block));
+    /// Insert an EVM block's header — always known from the response — and,
+    /// optionally, its full raw form (only kept when an event selected a field
+    /// beyond the always-available trio). Called once per response block while
+    /// building a page; one block per number, so a plain insert deduplicates
+    /// the many logs that share it. Not exposed to JS.
+    pub(crate) fn insert_evm(
+        &self,
+        number: u64,
+        timestamp: i64,
+        hash: String,
+        raw: Option<Arc<simple_types::Block>>,
+    ) {
+        self.inner.lock().unwrap().map.insert(
+            number,
+            StoredBlock::Evm {
+                header: EvmHeader { timestamp, hash },
+                raw,
+            },
+        );
     }
 
     /// Insert a raw SVM block keyed by slot (called by the SVM HyperSync source
@@ -568,6 +633,20 @@ mod tests {
         }
     }
 
+    fn evm_record(
+        timestamp: i64,
+        hash: &str,
+        raw: Option<Arc<simple_types::Block>>,
+    ) -> Option<EvmRecord> {
+        Some((
+            EvmHeader {
+                timestamp,
+                hash: hash.to_string(),
+            },
+            raw,
+        ))
+    }
+
     fn raw_svm_block(slot: u64) -> solana_simple::Block {
         solana_simple::Block {
             slot,
@@ -588,57 +667,107 @@ mod tests {
     fn decode_selected_only_materialises_masked_fields() {
         // Select only `logsBloom` via the bitmask.
         let mask = 1u64 << (EvmBlockField::LogsBloom as u32);
-        let cols =
-            decode_evm_block_columns(&[Some(Arc::new(raw_evm_block(1)))], &[1], &[mask], false)
-                .expect("decode columns");
-
-        // Exactly one column (logsBloom) is present; number (resolvable from the
-        // key but unselected) and gasUsed are absent.
-        assert!(column(&cols, "logsBloom").is_some());
-        assert!(column(&cols, "number").is_none());
-        assert!(column(&cols, "gasUsed").is_none());
-    }
-
-    #[test]
-    fn number_comes_from_key_even_on_miss() {
-        // A missing record (None) still materialises the requested key as
-        // `number`, so it never depends on a fetched block row.
-        let mask = 1u64 << (EvmBlockField::Number as u32);
         let cols = decode_evm_block_columns(
-            &[None, Some(Arc::new(raw_evm_block(3)))],
-            &[7, 3],
-            &[mask, mask],
+            &[evm_record(11, "0x1", Some(Arc::new(raw_evm_block(1))))],
+            &[1],
+            &[mask],
             false,
         )
         .expect("decode columns");
-        match column(&cols, "number") {
-            Some(Column::I64(v)) => assert_eq!(v, &vec![Some(7), Some(3)]),
-            other => panic!(
-                "expected number i64 column, got present={}",
-                other.is_some()
-            ),
-        }
+
+        // logsBloom is selected (present); gasUsed isn't (absent).
+        // number/timestamp/hash are always present from the header, regardless
+        // of the mask.
+        let summary = (
+            column(&cols, "logsBloom").is_some(),
+            column(&cols, "gasUsed").is_some(),
+            match column(&cols, "number") {
+                Some(Column::I64(v)) => v.clone(),
+                _ => panic!("expected number column"),
+            },
+            match column(&cols, "timestamp") {
+                Some(Column::I64(v)) => v.clone(),
+                _ => panic!("expected timestamp column"),
+            },
+            match column(&cols, "hash") {
+                Some(Column::Str(v)) => v.clone(),
+                _ => panic!("expected hash column"),
+            },
+        );
+        assert_eq!(
+            summary,
+            (
+                true,
+                false,
+                vec![Some(1)],
+                vec![Some(11)],
+                vec![Some("0x1".to_string())],
+            )
+        );
+    }
+
+    #[test]
+    fn trio_always_set_from_header_regardless_of_mask_or_raw_record() {
+        // mask=0 (nothing selected) and no raw record for either row; the trio
+        // still materialises from each row's stored header, since it never
+        // depends on the mask or a fetched raw block.
+        let cols = decode_evm_block_columns(
+            &[evm_record(70, "0x7", None), evm_record(30, "0x3", None)],
+            &[7, 3],
+            &[0, 0],
+            false,
+        )
+        .expect("decode columns");
+
+        let summary = (
+            match column(&cols, "number") {
+                Some(Column::I64(v)) => v.clone(),
+                _ => panic!("expected number column"),
+            },
+            match column(&cols, "timestamp") {
+                Some(Column::I64(v)) => v.clone(),
+                _ => panic!("expected timestamp column"),
+            },
+            match column(&cols, "hash") {
+                Some(Column::Str(v)) => v.clone(),
+                _ => panic!("expected hash column"),
+            },
+        );
+        assert_eq!(
+            summary,
+            (
+                vec![Some(7), Some(3)],
+                vec![Some(70), Some(30)],
+                vec![Some("0x7".to_string()), Some("0x3".to_string())],
+            )
+        );
     }
 
     #[test]
     fn decode_applies_each_rows_own_mask() {
-        // Row 0 selects `number`; row 1 selects nothing. The key-derived `number`
-        // column is present only on the row whose own mask has the bit set.
-        let number_mask = 1u64 << (EvmBlockField::Number as u32);
+        // Both rows have a real `gasUsed` value on their raw record, but only
+        // row 0 selects it via its own mask — proving the mask, not the
+        // record, gates whether a row's value materialises.
+        let mut block1 = raw_evm_block(1);
+        block1.gas_used = Some(Quantity::from(100u64));
+        let mut block2 = raw_evm_block(2);
+        block2.gas_used = Some(Quantity::from(200u64));
+
+        let gas_used_mask = 1u64 << (EvmBlockField::GasUsed as u32);
         let cols = decode_evm_block_columns(
             &[
-                Some(Arc::new(raw_evm_block(1))),
-                Some(Arc::new(raw_evm_block(2))),
+                evm_record(11, "0x1", Some(Arc::new(block1))),
+                evm_record(22, "0x2", Some(Arc::new(block2))),
             ],
             &[1, 2],
-            &[number_mask, 0],
+            &[gas_used_mask, 0],
             false,
         )
         .expect("decode columns");
 
-        match column(&cols, "number") {
-            Some(Column::I64(v)) => assert_eq!(v, &vec![Some(1), None]),
-            other => panic!("expected number column, got present={}", other.is_some()),
+        match column(&cols, "gasUsed") {
+            Some(Column::Big(v)) => assert_eq!((v[0].is_some(), v[1].is_some()), (true, false)),
+            other => panic!("expected gasUsed column, got present={}", other.is_some()),
         }
     }
 
@@ -681,7 +810,12 @@ mod tests {
     fn prune_and_rollback_drop_by_block() {
         let store = BlockStore::new_evm(false);
         for block in [10u64, 20, 30] {
-            store.insert_evm_raw(block, Arc::new(raw_evm_block(block)));
+            store.insert_evm(
+                block,
+                0,
+                "0x0".to_string(),
+                Some(Arc::new(raw_evm_block(block))),
+            );
         }
 
         store.prune(10);
@@ -768,18 +902,32 @@ mod tests {
     async fn materialize_returns_stored_extra_fields_via_store() {
         let store = BlockStore::new_evm(false);
         let mut block = raw_evm_block(10);
-        block.timestamp = Some(Quantity::from(555u64));
-        store.insert_evm_raw(10, Arc::new(block));
+        block.gas_used = Some(Quantity::from(555u64));
+        store.insert_evm(10, 999, "0xhash".to_string(), Some(Arc::new(block)));
 
-        let mask = (1u64 << (EvmBlockField::Timestamp as u32)) as f64;
+        let mask = (1u64 << (EvmBlockField::GasUsed as u32)) as f64;
         let cols = store
             .materialize(vec![10], vec![mask])
             .await
             .expect("materialize");
-        match column(&cols, "timestamp") {
-            Some(Column::I64(v)) => assert_eq!(v, &vec![Some(555)]),
-            other => panic!("expected timestamp column, got present={}", other.is_some()),
-        }
+        // gasUsed (the selected extra field) round-trips through the store;
+        // the header (timestamp/hash) is always set too, regardless of the
+        // mask.
+        let summary = (
+            column(&cols, "gasUsed").is_some(),
+            match column(&cols, "timestamp") {
+                Some(Column::I64(v)) => v.clone(),
+                _ => panic!("expected timestamp column"),
+            },
+            match column(&cols, "hash") {
+                Some(Column::Str(v)) => v.clone(),
+                _ => panic!("expected hash column"),
+            },
+        );
+        assert_eq!(
+            summary,
+            (true, vec![Some(999)], vec![Some("0xhash".to_string())])
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -805,24 +953,21 @@ mod tests {
         // A rolled-back block re-fetched with different content must replace the
         // stale entry rather than be shadowed by it — the sequence a chain
         // reorg drives through `ChainState`: merge a page, then merge a later
-        // page for the same (re-fetched) block number.
+        // page for the same (re-fetched) block number. No raw block needed
+        // here: the header alone (set directly via `insert_evm`) is enough to
+        // prove the overwrite.
         let persistent = BlockStore::new_evm(false);
 
         let page1 = BlockStore::new_evm(false);
-        let mut first = raw_evm_block(20);
-        first.timestamp = Some(Quantity::from(100u64));
-        page1.insert_evm_raw(20, Arc::new(first));
+        page1.insert_evm(20, 100, "0x100".to_string(), None);
         persistent.merge(&page1);
 
         let page2 = BlockStore::new_evm(false);
-        let mut second = raw_evm_block(20);
-        second.timestamp = Some(Quantity::from(200u64));
-        page2.insert_evm_raw(20, Arc::new(second));
+        page2.insert_evm(20, 200, "0x200".to_string(), None);
         persistent.merge(&page2);
 
-        let mask = (1u64 << (EvmBlockField::Timestamp as u32)) as f64;
         let cols = persistent
-            .materialize(vec![20], vec![mask])
+            .materialize(vec![20], vec![0.])
             .await
             .expect("materialize");
         match column(&cols, "timestamp") {

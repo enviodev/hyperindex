@@ -36,9 +36,11 @@ let orMask = FieldMask.orMask
 let hasExtraFields: float => bool = %raw(`m => ((m & ~7) >>> 0) !== 0`)
 
 // Clear the trio's bits (field codes 0/1/2) from a mask before a materialise
-// call. The EVM path always stamps the trio from the item afterward (see
-// `setBlockHeader`), so asking the store to decode it too is wasted work — a
-// full hash hex-encode per block for a value that's immediately overwritten.
+// call. The Rust store always resolves number/timestamp/hash from its own
+// header regardless of the mask (`BlockStore::insert_evm`/
+// `decode_evm_block_columns`), so asking it to also decode them from the raw
+// block is wasted work — a full hash hex-encode per block for a value that's
+// immediately overwritten.
 let stripTrioBits: float => float = %raw(`m => (m & ~7) >>> 0`)
 
 // Drain another store (a fetch-response page) into this one.
@@ -60,19 +62,16 @@ external materialize: (
 // Drop blocks above the given block (rolled back).
 @send external rollback: (t, int) => unit = "rollback"
 
-// Stamp the always-present trio onto a block object. Taken from the item rather
-// than the store so it's correct even when the block was never stored (an event
-// that selected only the trio).
-let setBlockHeader: (
-  Internal.eventBlock,
+// Build a block object carrying just the always-present trio, straight from
+// the item. Used only for the no-store-lookup fast path (no event selected a
+// field beyond the trio) — when the store IS consulted, its own header
+// resolves number/timestamp/hash instead (see `BlockStore::insert_evm` on the
+// Rust side).
+let makeBlockHeader: (
   ~number: int,
   ~timestamp: int,
   ~hash: string,
-) => unit = %raw(`(b, number, timestamp, hash) => {
-    b.number = number
-    b.timestamp = timestamp
-    b.hash = hash
-  }`)
+) => Internal.eventBlock = %raw(`(number, timestamp, hash) => ({ number, timestamp, hash })`)
 
 // Merge a materialised field bag onto an existing block object in place. Used by
 // the SVM path, where the source already attached a minimal inline block.
@@ -120,30 +119,31 @@ let groupByBlock = (items: array<Internal.item>, ~owns: Internal.eventItem => bo
 // EVM: materialise each store-backed item's selected block fields and write the
 // resulting block onto its payload. Items that already carry an inline block
 // (RPC/simulate/Fuel) are skipped. Store-backed items always get a block object
-// carrying at least number/timestamp/hash (stamped from the item), plus any
-// further fields their events selected. Deduped per block number.
+// carrying at least number/timestamp/hash, plus any further fields their
+// events selected. Deduped per block number.
 let materializeEvmItems = async (store: t, ~items: array<Internal.item>) => {
   let (blockNumbers, masks, groups) =
     items->groupByBlock(~owns=eventItem =>
       eventItem.payload->Internal.getPayloadBlock->Nullable.toOption->Option.isNone
     )
   if groups->Utils.Array.notEmpty {
-    // Only reach into the store when some event selected a field beyond the trio;
-    // otherwise every block is built from its item alone. The trio's own bits are
-    // stripped from the request since `setBlockHeader` below always overwrites
-    // them from the item anyway.
+    // Only reach into the store when some event selected a field beyond the
+    // trio; otherwise every block is built directly from its item. When the
+    // store IS consulted, its own header resolves number/timestamp/hash (see
+    // `stripTrioBits`), so the returned objects need no further stamping.
     let anyExtra = masks->Array.some(hasExtraFields)
-    let materialized = anyExtra
+    let blocks = anyExtra
       ? await store->materialize(~blockNumbers, ~masks=masks->Array.map(stripTrioBits))
-      : []
+      : groups->Array.map(group => {
+          let eventItem = group->Array.getUnsafe(0)
+          makeBlockHeader(
+            ~number=eventItem.blockNumber,
+            ~timestamp=eventItem.timestamp,
+            ~hash=eventItem.blockHash,
+          )
+        })
     groups->Array.forEachWithIndex((group, i) => {
-      let eventItem = group->Array.getUnsafe(0)
-      let block = anyExtra ? materialized->Array.getUnsafe(i) : %raw(`{}`)
-      block->setBlockHeader(
-        ~number=eventItem.blockNumber,
-        ~timestamp=eventItem.timestamp,
-        ~hash=eventItem.blockHash,
-      )
+      let block = blocks->Array.getUnsafe(i)
       group->Array.forEach(ei => ei.payload->Internal.setPayloadBlock(block))
     })
   }

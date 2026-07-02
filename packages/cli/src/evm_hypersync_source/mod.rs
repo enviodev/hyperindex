@@ -409,18 +409,18 @@ fn process_response(
         .collect::<Result<Vec<_>>>()
         .context("mapping block headers")?;
 
-    // Retain raw blocks in the store only when an event selected a block field
-    // beyond the always-required trio (number/timestamp/hash, which the headers
-    // already carry). Otherwise the store stays empty and the consumer builds
-    // `event.block` from the header alone — no materialisation needed.
+    // Every block's header (number/timestamp/hash) is always known from the
+    // response, so it's always kept in the store; the full raw block is
+    // additionally attached only when an event selected a field beyond that
+    // trio, so `BlockStore::materialize` has something to decode extra fields
+    // from.
     let has_extra_block_fields = validated_block_fields
         .iter()
         .any(|f| !REQUIRED_BLOCK_FIELDS.contains(f));
-    if has_extra_block_fields {
-        for block in response_blocks {
-            if let Some(number) = block.number {
-                block_store.insert_evm_raw(number, Arc::new(block));
-            }
+    for (header, block) in out_blocks.iter().zip(response_blocks) {
+        if let Some(number) = block.number {
+            let raw = has_extra_block_fields.then(|| Arc::new(block));
+            block_store.insert_evm(number, header.timestamp, header.hash.clone(), raw);
         }
     }
 
