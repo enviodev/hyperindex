@@ -14,6 +14,9 @@ module Evm = {
   @module("viem")
   external fromStringLowercaseOrThrow: string => bool = "isAddress"
 
+  @module("viem")
+  external isValid: string => bool = "isAddress"
+
   // Reassign since the function might be used in the handler code
   // and we don't want to have a "viem" import there. It's needed to keep "viem" a dependency
   // of generated code instead of adding it to the indexer project dependencies.

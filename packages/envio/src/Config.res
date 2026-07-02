@@ -1034,6 +1034,31 @@ let normalizeUserAddress = (config: t, address: Address.t): Address.t =>
   | Ecosystem.Fuel | Ecosystem.Svm => address
   }
 
+// Relaxed counterpart to normalizeUserAddress, used only for simulate srcAddress.
+// Tests commonly use short placeholder strings like "0xfoo" as a stand-in
+// identity (e.g. for a wildcard event whose srcAddress doesn't need to resolve
+// to any real contract), so only the "0x" prefix is enforced here. A properly
+// formatted 20-byte address is still canonicalized to the configured casing so
+// it can match a real config address during routing.
+let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
+  switch config.ecosystem.name {
+  | Ecosystem.Evm =>
+    let str = address->Address.toString
+    if !(str->String.startsWith("0x")) {
+      JsError.throwWithMessage(
+        `simulate: srcAddress "${str}" is invalid. Expected a string starting with "0x".`,
+      )
+    }
+    if Address.Evm.isValid(str) {
+      config->normalizeUserAddress(address)
+    } else if config.lowercaseAddresses {
+      address->Address.Evm.fromAddressLowercaseOrThrow
+    } else {
+      address
+    }
+  | Ecosystem.Fuel | Ecosystem.Svm => address
+  }
+
 // Look up an event config by (contract, event) name. When `chainId` is given,
 // returns that chain's per-chain event config (matters for where-callback
 // probe detection, which runs with the chain's real id). Without `chainId`,

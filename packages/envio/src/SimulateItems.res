@@ -220,8 +220,9 @@ let deriveSrcAddress = (
 ): Address.t => {
   switch providedSrcAddress {
   // Canonicalize to the configured casing; the fallback addresses below already
-  // come from the parsed config and need no normalization.
-  | Some(addr) => config->Config.normalizeUserAddress(addr)
+  // come from the parsed config and need no normalization. Relaxed (not
+  // Config.normalizeUserAddress) so test placeholders like "0xfoo" are allowed.
+  | Some(addr) => config->Config.normalizeSimulateAddress(addr)
   | None =>
     if eventConfig.isWildcard {
       dummySrcAddress
