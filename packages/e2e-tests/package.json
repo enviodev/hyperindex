@@ -15,9 +15,11 @@
   },
   "devDependencies": {
     "@types/node": "24.12.2",
+    "@types/ws": "^8.18.1",
     "envio": "file:../../packages/envio",
     "tsx": "^4.19.0",
     "typescript": "6.0.3",
-    "vitest": "4.1.0"
+    "vitest": "4.1.0",
+    "ws": "^8.21.0"
   }
 }
