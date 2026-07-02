@@ -140,6 +140,30 @@ Async.it("routes a simulate event whose srcAddress casing differs from the confi
   t.expect(collections).toEqual([expectedCollection])
 })
 
+// An address with an invalid EIP-55 checksum (here all-uppercase hex) is still
+// a valid 20-byte address — normalization recomputes its checksum rather than
+// requiring the input to already carry the correct one, so it still routes.
+Async.it("routes a simulate event whose srcAddress has an invalid checksum casing", async t => {
+  let indexer = Indexer.createTestIndexer()
+  let _ = await indexer.process({
+    chains: {
+      \"1337": {
+        startBlock: 1,
+        endBlock: 100,
+        simulate: [
+          {
+            ...createNft,
+            srcAddress: Address.unsafeFromString("0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"),
+          },
+        ],
+      },
+    },
+  })
+
+  let collections = await indexer.\"NftCollection".getAll()
+  t.expect(collections).toEqual([expectedCollection])
+})
+
 // Two items resolving to the same (block, logIndex) is an ambiguous input that
 // the dead-input tracker and event ordering both key on — rejected at parse.
 Async.it("rejects simulate items that resolve to the same block and logIndex", async t => {

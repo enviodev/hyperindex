@@ -1037,9 +1037,10 @@ let normalizeUserAddress = (config: t, address: Address.t): Address.t =>
 // Relaxed counterpart to normalizeUserAddress, used only for simulate srcAddress.
 // Tests commonly use short placeholder strings like "0xfoo" as a stand-in
 // identity (e.g. for a wildcard event whose srcAddress doesn't need to resolve
-// to any real contract), so only the "0x" prefix is enforced here. A properly
-// formatted 20-byte address is still canonicalized to the configured casing so
-// it can match a real config address during routing.
+// to any real contract), so only the "0x" prefix is enforced here. Under
+// address_format: checksum, a real address is checksummed even if the input
+// casing doesn't match (getAddress doesn't require the input to already be
+// checksummed) — a placeholder that isn't valid hex falls back unchanged.
 let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
   switch config.ecosystem.name {
   | Ecosystem.Evm =>
@@ -1049,12 +1050,14 @@ let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
         `simulate: srcAddress "${str}" is invalid. Expected a string starting with "0x".`,
       )
     }
-    if Address.Evm.isValid(str) {
-      config->normalizeUserAddress(address)
-    } else if config.lowercaseAddresses {
+    if config.lowercaseAddresses {
       address->Address.Evm.fromAddressLowercaseOrThrow
     } else {
-      address
+      try {
+        address->Address.Evm.fromAddressOrThrow
+      } catch {
+      | _ => address
+      }
     }
   | Ecosystem.Fuel | Ecosystem.Svm => address
   }
