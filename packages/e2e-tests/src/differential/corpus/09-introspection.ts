@@ -34,10 +34,18 @@ export default defineCases([
     name: "introspection-full-public",
     query: FULL_INTROSPECTION,
   },
+  // The admin schema is compared per-read-feature below instead of via full
+  // introspection: envio serve is read-only, so Hasura's admin mutation
+  // surface (mutation_root + insert_/update_/delete_ types) is out of scope.
   {
-    name: "introspection-full-admin",
+    name: "introspection-admin-query-root",
     role: "admin",
-    query: FULL_INTROSPECTION,
+    query: `{ __type(name: "query_root") { fields { name description args { name description type { kind name ofType { kind name ofType { kind name ofType { kind name } } } } defaultValue } type { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } } }`,
+  },
+  {
+    name: "introspection-admin-subscription-root",
+    role: "admin",
+    query: `{ __type(name: "subscription_root") { fields { name description args { name type { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } type { kind name } } } }`,
   },
   {
     name: "introspection-full-public-limited",

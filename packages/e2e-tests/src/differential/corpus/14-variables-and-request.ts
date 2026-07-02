@@ -195,18 +195,9 @@ export default defineCases([
     role: "admin",
     query: `mutation { insert_Bogus(objects: []) { affected_rows } }`,
   },
-  {
-    // Empty _set with a where matching no rows: succeeds with
-    // affected_rows 0 and never touches data.
-    name: "vr-admin-mutation-update-empty-set-no-match",
-    role: "admin",
-    query: `mutation { update_User(where: {id: {_eq: "no-such-user"}}, _set: {}) { affected_rows } }`,
-  },
-  {
-    name: "vr-admin-mutation-update-unknown-column",
-    role: "admin",
-    query: `mutation { update_User(where: {id: {_eq: "no-such-user"}}, _set: {notAColumn: 1}) { affected_rows } }`,
-  },
+  // envio serve is a read-only server: Hasura's admin mutation surface is
+  // deliberately out of scope, so only mutation cases whose responses don't
+  // depend on mutation types existing (unknown-table errors) are kept.
   {
     name: "vr-directive-include-fragment-spread",
     query: `query ($inc: Boolean!) { User(order_by: {id: asc}, limit: 2) { id ...Extra @include(if: $inc) } } fragment Extra on User { address accountType }`,
