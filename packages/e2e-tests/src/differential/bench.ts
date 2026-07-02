@@ -30,10 +30,19 @@
  *   collected and either the per-case budget is spent or max-iters is hit.
  *   Fast cases get many samples cheaply; slow full-table scans stop early
  *   (their variance is low anyway).
- * - Cases run on a small worker pool (case-level concurrency). Absolute
- *   latencies inflate slightly under concurrency, but the baseline was
- *   recorded the same way, so the speedup ratio stays comparable. Use
- *   --concurrency 1 for publication-grade absolute latencies.
+ * - Default concurrency is 1. Cases CAN run on a worker pool
+ *   (--concurrency N) for a faster sweep, but per-case numbers get noisy:
+ *   the baseline and engine-only runs happen in separate processes at
+ *   separate times, so "N cases running concurrently" means a different
+ *   MIX of light/heavy queries contends for the one shared Postgres
+ *   instance in each run. Verified empirically: cases that looked "2-4x
+ *   slower" at --concurrency 6 were actually 1.4-3.8x FASTER when
+ *   re-measured at --concurrency 1 — the geomean speedup stayed directionally
+ *   right, but individual "which cases regressed" conclusions from a
+ *   concurrent sweep are not reliable. Use --concurrency >1 only for a
+ *   quick smoke check ("is anything catastrophically slower"), and
+ *   --concurrency 1 (the default) for the numbers that go in a report or
+ *   drive an optimization decision.
  * - Resource usage is sampled from /proc every 500ms for the relevant
  *   process tree (Hasura container or envio serve) and for Postgres.
  *
@@ -60,7 +69,7 @@ const arg = (name: string): string | undefined => {
   return i >= 0 ? argv[i + 1] : undefined;
 };
 
-const concurrency = Number(arg("--concurrency") ?? 4);
+const concurrency = Number(arg("--concurrency") ?? 1);
 const budgetMs = Number(arg("--budget-ms") ?? 1500);
 const minIters = Number(arg("--min-iters") ?? 3);
 const maxIters = Number(arg("--max-iters") ?? 30);
