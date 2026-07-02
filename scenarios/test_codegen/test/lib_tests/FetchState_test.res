@@ -3307,12 +3307,14 @@ describe("FetchState unit tests for specific cases", () => {
           {
             // Partition responded with no items, so its density is 0; the
             // estimate is floored at minEstResponseSize (100) so admission still
-            // gates it.
+            // gates it. Chunking is active after the first response, and the
+            // remaining range up to the end block fits in a single chunk query.
             ...queryA,
             partitionId: "1",
             estResponseSize: 100.,
             toBlock: Some(500),
             fromBlock: 401,
+            isChunk: true,
           },
           queries->Array.getUnsafe(1),
         ]),
@@ -3937,15 +3939,17 @@ describe("Stale query response should not overwrite block range", () => {
       ~message="latestBlockRangeUpdateBlock should be 500 after first query",
     ).toBe(500)
 
-    // -- Query 2: uncapped query from block 501 --
+    // -- Query 2: chunking activates after one observed range:
+    // chunkSize = ceil(501 * 1.8) = 902 -> [501..1402], ... Dispatch only the
+    // first chunk. --
     let q2 = switch fs1->getNextQuery {
-    | Ready([q]) => q
-    | _ => JsError.throwWithMessage("Expected a single query for second round")
+    | Ready(qs) => qs->Array.getUnsafe(0)
+    | _ => JsError.throwWithMessage("Expected chunk queries for second round")
     }
     fs1->FetchState.startFetchingQueries(~queries=[q2])
 
-    // Response arrives at block 1000 (range = 500)
-    // shouldUpdateBlockRange: None toBlock => 1000 < 99990 = true
+    // Partial response at block 1000 (range = 500)
+    // shouldUpdateBlockRange: 1000 < toBlock 1402 (partial response) = true
     let fs2 =
       fs1->FetchState.handleQueryResult(
         ~indexingAddresses,

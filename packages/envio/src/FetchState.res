@@ -119,10 +119,15 @@ let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~maxQueryBlo
     defaultEstResponseSize
   }
 
-// Calculate the chunk range from history using min-of-last-3-ranges heuristic
+// Calculate the chunk range from history using min-of-last-3-ranges heuristic.
+// A single observed range is enough to start chunking: it bounds the partition's
+// second query instead of proposing an open-ended tail to the head, whose
+// estimate (density x the whole remaining chain) could reserve the entire shared
+// buffer pool for a full response round-trip.
 let getMinHistoryRange = (p: partition) => {
   switch (p.prevQueryRange, p.prevPrevQueryRange) {
-  | (0, _) | (_, 0) => None
+  | (0, _) => None
+  | (a, 0) => Some(a)
   | (a, b) => Some(a < b ? a : b)
   }
 }
