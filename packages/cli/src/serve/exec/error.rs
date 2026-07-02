@@ -36,6 +36,7 @@ impl GraphQLError {
         }
     }
 
+    #[allow(dead_code)]
     pub fn parse_failed(message: impl Into<String>) -> GraphQLError {
         GraphQLError {
             message: message.into(),

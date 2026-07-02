@@ -2,6 +2,11 @@
 //! by `validate.rs` and consumed by `sql.rs`/`executor`. Everything here is
 //! fully resolved: aliases, db column names, coerced argument values.
 
+// Several fields (StreamCursor typing, selection table names) are populated
+// by the planner but only read by the WS subscription executor, which is
+// not implemented yet.
+#![allow(dead_code)]
+
 use crate::serve::model::Scalar;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -15,6 +20,9 @@ pub struct Operation {
     pub root_fields: Vec<RootField>,
 }
 
+// Table is the overwhelmingly common variant; boxing it would cost an
+// allocation per root field for no benefit.
+#[allow(clippy::large_enum_variant)]
 pub enum RootField {
     /// `__typename` on the root: resolves to "query_root"/"subscription_root".
     Typename { alias: String },
@@ -317,7 +325,7 @@ pub enum CompareOp {
     HasKeysAll(Vec<SqlValue>),
     HasKeysAny(Vec<SqlValue>),
     /// jsonb _cast: (String: String_comparison_exp) — compare col::text.
-    CastText(Vec<Box<CompareOp>>),
+    CastText(Vec<CompareOp>),
 }
 
 /// A coerced scalar value ready to bind as a SQL parameter. Values are

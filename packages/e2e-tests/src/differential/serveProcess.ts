@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { servePort, serveUrl } from "./env.js";
 import type { TrackOptions } from "./hasuraSetup.js";
@@ -11,9 +12,9 @@ export interface ServeProcess {
 const projectDir = fileURLToPath(
   new URL("../../../../scenarios/test_codegen/", import.meta.url)
 );
-const envioBin = fileURLToPath(
-  new URL("../../../envio/bin.mjs", import.meta.url)
-);
+// Resolved through the package dependency so CI (artifact install) and the
+// local workspace link both work.
+const envioBin = createRequire(import.meta.url).resolve("envio/bin.mjs");
 
 export async function startServe(options: TrackOptions): Promise<ServeProcess> {
   const env: NodeJS.ProcessEnv = {

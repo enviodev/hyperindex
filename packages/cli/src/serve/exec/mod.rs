@@ -27,6 +27,8 @@ pub struct GraphQLRequest {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
     Http,
+    // Constructed by the WS subscription handler once implemented.
+    #[allow(dead_code)]
     Ws,
 }
 

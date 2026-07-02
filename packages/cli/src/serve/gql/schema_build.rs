@@ -37,7 +37,7 @@ fn column_type_ref(c: &Column) -> TypeRef {
     }
 }
 
-fn visible_tables<'a>(model: &'a ServerModel, role: Role) -> Vec<&'a Table> {
+fn visible_tables(model: &ServerModel, role: Role) -> Vec<&Table> {
     model
         .tables
         .iter()
@@ -199,6 +199,7 @@ pub fn build(model: &ServerModel, role: Role) -> Registry {
         }
     }
     b.build_roots(&tables);
+    b.build_meta_types();
 
     Registry {
         types: b.types,
@@ -881,6 +882,135 @@ impl<'a> Builder<'a> {
             name: format!("{t}_aggregate_bool_exp"),
             description: None,
             fields,
+        });
+    }
+
+    /// The `__Schema`/`__Type`/... meta types as Hasura reports them in its
+    /// own `types` list. Hasura's shapes are degenerate — list fields carry
+    /// their bare element type, and most nullable/scalar fields (even
+    /// `isRepeatable` and `isDeprecated`) come out as `String!`; reproduced
+    /// verbatim from the introspection-full-*.json oracle. There is no
+    /// `__DirectiveLocation` type: `locations` is `String!` too.
+    fn build_meta_types(&mut self) {
+        fn meta_field(name: &str, ty: TypeRef) -> FieldDef {
+            FieldDef {
+                name: name.to_string(),
+                description: None,
+                args: vec![],
+                ty,
+                kind: FieldKind::Introspection,
+            }
+        }
+        fn string_nn() -> TypeRef {
+            TypeRef::non_null(TypeRef::named("String"))
+        }
+
+        self.add(TypeDef::Object {
+            name: "__Directive".to_string(),
+            description: None,
+            fields: vec![
+                meta_field("args", TypeRef::named("__InputValue")),
+                meta_field("description", string_nn()),
+                meta_field("isRepeatable", string_nn()),
+                meta_field("locations", string_nn()),
+                meta_field("name", string_nn()),
+            ],
+        });
+        self.add(TypeDef::Object {
+            name: "__EnumValue".to_string(),
+            description: None,
+            fields: vec![
+                meta_field("deprecationReason", string_nn()),
+                meta_field("description", string_nn()),
+                meta_field("isDeprecated", string_nn()),
+                meta_field("name", string_nn()),
+            ],
+        });
+        self.add(TypeDef::Object {
+            name: "__Field".to_string(),
+            description: None,
+            fields: vec![
+                meta_field("args", TypeRef::named("__InputValue")),
+                meta_field("deprecationReason", string_nn()),
+                meta_field("description", string_nn()),
+                meta_field("isDeprecated", string_nn()),
+                meta_field("name", string_nn()),
+                meta_field("type", TypeRef::named("__Type")),
+            ],
+        });
+        self.add(TypeDef::Object {
+            name: "__InputValue".to_string(),
+            description: None,
+            fields: vec![
+                meta_field("defaultValue", string_nn()),
+                meta_field("description", string_nn()),
+                meta_field("name", string_nn()),
+                meta_field("type", TypeRef::named("__Type")),
+            ],
+        });
+        self.add(TypeDef::Object {
+            name: "__Schema".to_string(),
+            description: None,
+            fields: vec![
+                meta_field("description", string_nn()),
+                meta_field("directives", TypeRef::named("__Directive")),
+                meta_field("mutationType", TypeRef::named("__Type")),
+                meta_field("queryType", TypeRef::named("__Type")),
+                meta_field("subscriptionType", TypeRef::named("__Type")),
+                meta_field("types", TypeRef::named("__Type")),
+            ],
+        });
+        let include_deprecated = {
+            let mut arg = InputValueDef::new("includeDeprecated", None, TypeRef::named("Boolean"));
+            arg.default_value = Some("false".to_string());
+            arg
+        };
+        self.add(TypeDef::Object {
+            name: "__Type".to_string(),
+            description: None,
+            fields: vec![
+                meta_field("description", string_nn()),
+                FieldDef {
+                    name: "enumValues".to_string(),
+                    description: None,
+                    args: vec![include_deprecated.clone()],
+                    ty: TypeRef::named("__EnumValue"),
+                    kind: FieldKind::Introspection,
+                },
+                FieldDef {
+                    name: "fields".to_string(),
+                    description: None,
+                    args: vec![include_deprecated],
+                    ty: TypeRef::named("__Field"),
+                    kind: FieldKind::Introspection,
+                },
+                meta_field("inputFields", TypeRef::named("__InputValue")),
+                meta_field("interfaces", TypeRef::named("__Type")),
+                meta_field("kind", TypeRef::non_null(TypeRef::named("__TypeKind"))),
+                meta_field("name", string_nn()),
+                meta_field("ofType", TypeRef::named("__Type")),
+                meta_field("possibleTypes", TypeRef::named("__Type")),
+            ],
+        });
+        self.add(TypeDef::Enum {
+            name: "__TypeKind".to_string(),
+            description: None,
+            values: [
+                "ENUM",
+                "INPUT_OBJECT",
+                "INTERFACE",
+                "LIST",
+                "NON_NULL",
+                "OBJECT",
+                "SCALAR",
+                "UNION",
+            ]
+            .iter()
+            .map(|n| EnumValueDef {
+                name: n.to_string(),
+                description: None,
+            })
+            .collect(),
         });
     }
 
