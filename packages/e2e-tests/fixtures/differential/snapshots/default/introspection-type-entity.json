@@ -9,7 +9,7 @@
    "__type": {
     "kind": "OBJECT",
     "name": "User",
-    "description": "columns and relationships of \"User\"",
+    "description": "A user of the protocol, keyed by their wallet address.",
     "fields": [
      {
       "name": "accountType",

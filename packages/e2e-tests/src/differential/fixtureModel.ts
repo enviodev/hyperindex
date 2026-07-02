@@ -9,6 +9,8 @@ export interface ObjectRelationship {
   /** db column on this table mapping to the remote table's id */
   column: string;
   remoteTable: string;
+  /** GraphQL docstring on the linking field, sent as the relationship's `comment` */
+  description?: string;
 }
 
 export interface ArrayRelationship {
@@ -16,10 +18,16 @@ export interface ArrayRelationship {
   /** db column on the remote table mapping to this table's id */
   remoteColumn: string;
   remoteTable: string;
+  /** GraphQL docstring on the `@derivedFrom` field, sent as the relationship's `comment` */
+  description?: string;
 }
 
 export interface EntityTable {
   name: string;
+  /** GraphQL docstring on the entity type, sent as the table's `comment` */
+  description?: string;
+  /** GraphQL docstrings on scalar fields, keyed by db column name, sent as `column_config[].comment` */
+  columnDescriptions?: Record<string, string>;
   objectRelationships?: ObjectRelationship[];
   arrayRelationships?: ArrayRelationship[];
 }
@@ -72,11 +80,25 @@ export const entityTables: EntityTable[] = [
   },
   {
     name: "User",
+    description: "A user of the protocol, keyed by their wallet address.",
+    columnDescriptions: {
+      address: "The user's wallet address, lowercased.",
+    },
     objectRelationships: [
-      { name: "gravatar", column: "gravatar_id", remoteTable: "Gravatar" },
+      {
+        name: "gravatar",
+        column: "gravatar_id",
+        remoteTable: "Gravatar",
+        description: "The user's gravatar profile, if they have set one.",
+      },
     ],
     arrayRelationships: [
-      { name: "tokens", remoteColumn: "owner_id", remoteTable: "Token" },
+      {
+        name: "tokens",
+        remoteColumn: "owner_id",
+        remoteTable: "Token",
+        description: "Tokens currently owned by this user.",
+      },
     ],
   },
 ];

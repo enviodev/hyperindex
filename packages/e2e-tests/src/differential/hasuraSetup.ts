@@ -67,14 +67,34 @@ export async function trackDatabase(options: TrackOptions = {}): Promise<void> {
     args: { reload_sources: ["default"] },
   });
 
+  const entityByName = new Map(entityTables.map((e) => [e.name, e]));
+
   await metadataOp({
     type: "pg_track_tables",
     args: {
       allow_warnings: false,
-      tables: allTrackedTables.map((tableName) => ({
-        table: { name: tableName, schema: pgSchema },
-        configuration: { custom_name: tableName },
-      })),
+      tables: allTrackedTables.map((tableName) => {
+        const entity = entityByName.get(tableName);
+        const configuration: Record<string, unknown> = {
+          custom_name: tableName,
+        };
+        if (entity?.description !== undefined) {
+          configuration.comment = entity.description;
+        }
+        const columnDescriptions = entity?.columnDescriptions ?? {};
+        if (Object.keys(columnDescriptions).length > 0) {
+          configuration.column_config = Object.fromEntries(
+            Object.entries(columnDescriptions).map(([column, comment]) => [
+              column,
+              { comment },
+            ])
+          );
+        }
+        return {
+          table: { name: tableName, schema: pgSchema },
+          configuration,
+        };
+      }),
     },
   });
 
@@ -110,6 +130,7 @@ export async function trackDatabase(options: TrackOptions = {}): Promise<void> {
               column_mapping: { id: rel.remoteColumn },
             },
           },
+          ...(rel.description !== undefined && { comment: rel.description }),
         },
       });
     }
@@ -126,6 +147,7 @@ export async function trackDatabase(options: TrackOptions = {}): Promise<void> {
               column_mapping: { [rel.column]: "id" },
             },
           },
+          ...(rel.description !== undefined && { comment: rel.description }),
         },
       });
     }

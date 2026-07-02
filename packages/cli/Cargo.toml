@@ -63,6 +63,12 @@ napi-derive = "=3.5.4"
 axum = { version = "0.8", features = ["ws"] }
 tokio-postgres = "0.7"
 deadpool-postgres = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls-native-certs = "0.8"
+tokio-postgres-rustls = { version = "0.14", default-features = false, features = [
+  "native-certs",
+  "ring",
+] }
 
 [features]
 hypersync_health = []
@@ -80,6 +86,7 @@ paste = "1.0.15"
 tracing-subscriber = "0.3.22"
 pretty_assertions = "1.4.1"
 insta = "1.46"
+rustls-pemfile = "1.0"
 
 # NOTE: this is needed for aarch64 linux, since linking of openssl has caused issues via the package manager
 #       See here for this workaround: https://docs.rs/openssl/latest/openssl/#vendored

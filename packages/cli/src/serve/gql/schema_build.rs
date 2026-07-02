@@ -486,16 +486,9 @@ impl<'a> Builder<'a> {
             let Some(remote) = self.model.table(&rel.remote_table) else {
                 continue;
             };
-            let local_col = table
-                .columns
-                .iter()
-                .find(|c| c.db_name == rel.local_db_column);
-            let non_null = local_col.map(|c| !c.nullable).unwrap_or(false);
-            // Hasura's manual object relationships are always nullable
-            // unless the fk column is non-null AND... (pinned by snapshot:
-            // Gravatar.owner: User — nullable even though owner_id is NOT
-            // NULL, because manual relationships don't prove existence).
-            let _ = non_null;
+            // Hasura's manual object relationships are always nullable, even
+            // when the fk column is NOT NULL, because they don't prove
+            // existence (pinned by snapshot: Gravatar.owner: User).
             fields.push(FieldDef {
                 name: rel.name.clone(),
                 description: Some("An object relationship".to_string()),
@@ -668,7 +661,7 @@ impl<'a> Builder<'a> {
                 } else {
                     base
                 };
-                InputValueDef::new(&c.api_name, None, ty)
+                InputValueDef::new(&c.api_name, c.description.as_deref(), ty)
             })
             .collect();
         cursor_fields.sort_by(|a, b| a.name.cmp(&b.name));

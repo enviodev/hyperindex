@@ -149,14 +149,7 @@ impl<'a> Sql<'a> {
     }
 
     fn ident(&mut self, name: &str) {
-        self.text.push('"');
-        for c in name.chars() {
-            if c == '"' {
-                self.text.push('"');
-            }
-            self.text.push(c);
-        }
-        self.text.push('"');
+        push_ident_to(&mut self.text, name);
     }
 
     fn string_lit(&mut self, s: &str) {
@@ -368,6 +361,7 @@ fn emit_rows_middle(
     let order_in_base = ra.order_in_base();
     let t = b.alias();
     let rel_aliases = alloc_rel_aliases(b, sel);
+    let order_join_aliases = alloc_order_join_aliases(b, &ra.order);
 
     b.push("SELECT ");
     if !order_in_base && !ra.distinct_on.is_empty() {
@@ -375,9 +369,10 @@ fn emit_rows_middle(
     }
     emit_row_json(b, &t, sel, &rel_aliases);
     b.push(" AS \"_v\"");
-    emit_order_cols(b, &t, &ra.order);
+    emit_order_cols(b, &t, &ra.order, &order_join_aliases);
     b.push(" FROM ");
     emit_base(b, table, &t, ra, corr, order_in_base);
+    emit_order_rel_joins(b, &t, &ra.order, &order_join_aliases);
     emit_rel_laterals(b, &t, sel, &rel_aliases);
     if !order_in_base {
         emit_middle_order_limit(b, ra);
@@ -395,15 +390,75 @@ fn emit_middle_distinct(b: &mut Sql, n_cols: usize) {
     b.push(") ");
 }
 
-fn emit_order_cols(b: &mut Sql, t: &str, order: &[Ord]) {
+/// Pre-allocates one alias per hop of every `ObjectRelColumn` order target,
+/// so the order column (in the SELECT list, emitted before the FROM clause
+/// text) can reference the leaf alias that `emit_order_rel_joins` later
+/// joins into the FROM clause — the same alloc-then-reference pattern
+/// `alloc_rel_aliases`/`emit_rel_laterals` use for relationship fields.
+fn alloc_order_join_aliases(b: &mut Sql, order: &[Ord]) -> Vec<Option<Vec<String>>> {
+    order
+        .iter()
+        .map(|o| match &o.target {
+            OrdTarget::Rel(ir::OrderTarget::ObjectRelColumn { path, .. }) => {
+                Some(path.iter().map(|_| b.alias()).collect())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn emit_order_cols(
+    b: &mut Sql,
+    t: &str,
+    order: &[Ord],
+    order_join_aliases: &[Option<Vec<String>>],
+) {
     for (k, o) in order.iter().enumerate() {
         b.push(", ");
-        match &o.target {
-            OrdTarget::Col(c) => b.qual(t, c),
-            OrdTarget::Rel(target) => emit_order_rel_expr(b, t, target),
+        match (&o.target, &order_join_aliases[k]) {
+            (OrdTarget::Col(c), _) => b.qual(t, c),
+            (OrdTarget::Rel(ir::OrderTarget::ObjectRelColumn { column, .. }), Some(aliases)) => {
+                // `aliases` has one entry per path hop, and ObjectRelColumn's
+                // path is never empty (see validate.rs's chain-based builder).
+                b.qual(aliases.last().unwrap(), column);
+            }
+            (OrdTarget::Rel(target), _) => emit_order_rel_expr(b, t, target),
         }
         b.push(" AS ");
         b.ident(&format!("_o{k}"));
+    }
+}
+
+/// LEFT JOINs the tables reached by `ObjectRelColumn` order targets into the
+/// FROM clause instead of computing them via a correlated subselect per row.
+/// Safe because object relationships match at most one remote row (the join
+/// is on the remote table's PK), so this can't change the base row count —
+/// unlike a join on an array relationship, which would fan out rows.
+fn emit_order_rel_joins(
+    b: &mut Sql,
+    t: &str,
+    order: &[Ord],
+    order_join_aliases: &[Option<Vec<String>>],
+) {
+    for (o, aliases) in order.iter().zip(order_join_aliases) {
+        let (OrdTarget::Rel(ir::OrderTarget::ObjectRelColumn { path, .. }), Some(aliases)) =
+            (&o.target, aliases)
+        else {
+            continue;
+        };
+        let mut parent = t;
+        for ((local, remote), alias) in path.iter().zip(aliases) {
+            b.push(" LEFT JOIN ");
+            b.table(remote);
+            b.push(" AS ");
+            b.ident(alias);
+            b.push(" ON ((");
+            b.qual(parent, local);
+            b.push(") = (");
+            b.qual(alias, "id");
+            b.push("))");
+            parent = alias;
+        }
     }
 }
 
@@ -860,6 +915,7 @@ fn emit_agg_middle(
     let t = b.alias();
     let node_rel_aliases: Vec<Vec<Option<String>>> =
         nodes.iter().map(|sel| alloc_rel_aliases(b, sel)).collect();
+    let order_join_aliases = alloc_order_join_aliases(b, &ra.order);
 
     b.push("SELECT ");
     if !order_in_base && !ra.distinct_on.is_empty() {
@@ -898,9 +954,10 @@ fn emit_agg_middle(
         // Order columns follow with a leading comma; keep the list valid.
         b.push("1 AS \"_one\"");
     }
-    emit_order_cols(b, &t, &ra.order);
+    emit_order_cols(b, &t, &ra.order, &order_join_aliases);
     b.push(" FROM ");
     emit_base(b, table, &t, ra, corr, order_in_base);
+    emit_order_rel_joins(b, &t, &ra.order, &order_join_aliases);
     for (n, sel) in nodes.iter().enumerate() {
         emit_rel_laterals(b, &t, sel, &node_rel_aliases[n]);
     }
@@ -909,14 +966,14 @@ fn emit_agg_middle(
     }
 }
 
-/// Order expression for a relationship target, as a correlated subselect.
+/// Order expression for an `ArrayRelAggregate` target, as a correlated
+/// subselect (`ObjectRelColumn` targets are LEFT JOINed in by
+/// `emit_order_rel_joins` instead; `Column` never reaches here — see
+/// `RowsArgs::from_select_args`).
 fn emit_order_rel_expr(b: &mut Sql, parent: &str, target: &ir::OrderTarget) {
     match target {
-        ir::OrderTarget::Column { column } => b.qual(parent, column),
-        ir::OrderTarget::ObjectRelColumn { path, column } => {
-            emit_order_obj_path(b, parent, path, &mut |b, leaf| {
-                b.qual(leaf, column);
-            });
+        ir::OrderTarget::Column { .. } | ir::OrderTarget::ObjectRelColumn { .. } => {
+            unreachable!("handled directly in emit_order_cols")
         }
         ir::OrderTarget::ArrayRelAggregate {
             path,
@@ -1495,8 +1552,9 @@ mod tests {
             (
                 "SELECT (coalesce(json_agg(\"_v\" ORDER BY \"_o0\" ASC NULLS LAST), '[]'))::text AS \"root\" \
                  FROM (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t0\".\"id\" AS \"id\", \"t1\".\"_v\" AS \"owner\", \"t2\".\"_v\" AS \"tags\") AS \"_e\")) AS \"_v\", \
-                 (SELECT \"t3\".\"name\" FROM \"public\".\"User\" AS \"t3\" WHERE ((\"t0\".\"owner_id\") = (\"t3\".\"id\")) LIMIT 1) AS \"_o0\" \
+                 \"t3\".\"name\" AS \"_o0\" \
                  FROM (SELECT * FROM \"public\".\"Gravatar\" AS \"t0\" WHERE ('true')) AS \"t0\" \
+                 LEFT JOIN \"public\".\"User\" AS \"t3\" ON ((\"t0\".\"owner_id\") = (\"t3\".\"id\")) \
                  LEFT OUTER JOIN LATERAL (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t4\".\"id\" AS \"id\") AS \"_e\")) AS \"_v\" \
                  FROM (SELECT * FROM \"public\".\"User\" AS \"t4\" WHERE ((\"t4\".\"id\") = (\"t0\".\"owner_id\")) LIMIT 1) AS \"t4\") AS \"t1\" ON ('true') \
                  LEFT OUTER JOIN LATERAL (SELECT coalesce(json_agg(\"_v\"), '[]') AS \"_v\" \

@@ -114,7 +114,6 @@ pub struct ObjectRelationship {
     /// db column on this table joined to remote "id"
     pub local_db_column: String,
     pub remote_table: String,
-    pub description: Option<String>,
 }
 
 pub struct ArrayRelationship {
@@ -122,7 +121,6 @@ pub struct ArrayRelationship {
     pub remote_table: String,
     /// db column on the remote table joined to this table's "id"
     pub remote_db_column: String,
-    pub description: Option<String>,
 }
 
 pub struct Table {
@@ -207,7 +205,12 @@ impl ServerModel {
             // Fields that are entity references (object relationships) are
             // stored as `<field>_id` columns; their GraphQL column name is
             // also `<field>_id` (Table.res getApiFieldName), while the db
-            // column may additionally be snake_cased.
+            // column may additionally be snake_cased. Hasura never applies
+            // the relationship field's own description to this underlying
+            // fk column (Hasura.res's makeColumnConfigs only sets comments
+            // for plain Table.Field entries, never entity-reference
+            // fields) — pinned by the `gravatar_id` case in
+            // introspection-descriptions, so this stays `None` here.
             let mut api_by_db: HashMap<String, (String, Option<String>)> = HashMap::new();
             for rel_def in &entity.object_relationships {
                 let api = format!("{}_id", rel_def.field_name);
@@ -217,7 +220,7 @@ impl ServerModel {
                 ];
                 for db in db_candidates {
                     if rel.columns.iter().any(|c| c.name == db) {
-                        api_by_db.insert(db, (api.clone(), rel_def.description.clone()));
+                        api_by_db.insert(db, (api.clone(), None));
                         break;
                     }
                 }
@@ -279,7 +282,6 @@ impl ServerModel {
                         name: r.field_name.clone(),
                         local_db_column: db_col,
                         remote_table: r.remote_entity.clone(),
-                        description: r.description.clone(),
                     })
                 })
                 .collect();
@@ -315,7 +317,6 @@ impl ServerModel {
                         name: r.field_name.clone(),
                         remote_table: r.remote_entity.clone(),
                         remote_db_column,
-                        description: r.description.clone(),
                     })
                 })
                 .collect();

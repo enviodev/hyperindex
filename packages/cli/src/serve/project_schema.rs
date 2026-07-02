@@ -34,7 +34,6 @@ pub struct EntityDef {
 pub struct ObjectRel {
     pub field_name: String,
     pub remote_entity: String,
-    pub description: Option<String>,
 }
 
 pub struct ArrayRel {
@@ -42,7 +41,6 @@ pub struct ArrayRel {
     pub remote_entity: String,
     /// The field on the remote entity named by @derivedFrom(field: ...)
     pub remote_field: String,
-    pub description: Option<String>,
 }
 
 impl ProjectSchema {
@@ -95,9 +93,6 @@ impl ProjectSchema {
             let mut field_descriptions = HashMap::new();
 
             for field in &obj.fields {
-                if let Some(desc) = &field.description {
-                    field_descriptions.insert(field.name.clone(), desc.clone());
-                }
                 let base = base_type_name(&field.field_type);
                 let derived_from_field = field.directives.iter().find_map(|d| {
                     if d.name != "derivedFrom" {
@@ -115,21 +110,29 @@ impl ProjectSchema {
                     })
                 });
 
+                // Hasura.res's makeColumnConfigs only sends a `comment` for
+                // plain db-backed fields, never for relationship fields
+                // (Table.DerivedFrom is skipped outright, and entity-reference
+                // fields never produce a Table.Field entry) — so relationship
+                // fields must not feed field_descriptions here.
                 if let Some(remote_field) = derived_from_field {
                     if entity_names.contains(&base) {
                         array_relationships.push(ArrayRel {
                             field_name: field.name.clone(),
                             remote_entity: base,
                             remote_field,
-                            description: field.description.clone(),
                         });
+                        continue;
                     }
                 } else if entity_names.contains(&base) && !is_list_type(&field.field_type) {
                     object_relationships.push(ObjectRel {
                         field_name: field.name.clone(),
                         remote_entity: base,
-                        description: field.description.clone(),
                     });
+                    continue;
+                }
+                if let Some(desc) = &field.description {
+                    field_descriptions.insert(field.name.clone(), desc.clone());
                 }
             }
 

@@ -9553,7 +9553,7 @@
      {
       "kind": "OBJECT",
       "name": "User",
-      "description": "columns and relationships of \"User\"",
+      "description": "A user of the protocol, keyed by their wallet address.",
       "fields": [
        {
         "name": "accountType",
@@ -9573,7 +9573,7 @@
        },
        {
         "name": "address",
-        "description": null,
+        "description": "The user's wallet address, lowercased.",
         "args": [],
         "type": {
          "kind": "NON_NULL",
@@ -10042,7 +10042,7 @@
        },
        {
         "name": "address",
-        "description": null,
+        "description": "The user's wallet address, lowercased.",
         "type": {
          "kind": "SCALAR",
          "name": "String",

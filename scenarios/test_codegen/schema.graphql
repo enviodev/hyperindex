@@ -3,11 +3,15 @@ enum AccountType {
   USER
 }
 
+"""A user of the protocol, keyed by their wallet address."""
 type User {
   id: ID!
+  """The user's wallet address, lowercased."""
   address: Bytes!
+  """The user's gravatar profile, if they have set one."""
   gravatar: Gravatar
   updatesCountOnUserForTesting: Int!
+  """Tokens currently owned by this user."""
   tokens: [Token!]! @derivedFrom(field: "owner")
   accountType: AccountType!
 }

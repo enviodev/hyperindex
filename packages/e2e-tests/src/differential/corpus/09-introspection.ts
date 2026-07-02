@@ -61,6 +61,18 @@ export default defineCases([
     query: `{ __type(name: "User") { kind name description fields { name type { kind name ofType { kind name ofType { kind name } } } } } }`,
   },
   {
+    name: "introspection-descriptions",
+    query: `{ __type(name: "User") { description fields { name description } } }`,
+  },
+  {
+    name: "introspection-descriptions-stream-cursor-value-input",
+    query: `{ __type(name: "User_stream_cursor_value_input") { inputFields { name description } } }`,
+  },
+  {
+    name: "introspection-descriptions-bool-exp-and-order-by",
+    query: `{ bool_exp: __type(name: "User_bool_exp") { inputFields { name description } } order_by: __type(name: "User_order_by") { inputFields { name description } } }`,
+  },
+  {
     name: "introspection-type-bool-exp",
     query: `{ __type(name: "User_bool_exp") { kind name inputFields { name type { kind name ofType { kind name ofType { kind name } } } } } }`,
   },
