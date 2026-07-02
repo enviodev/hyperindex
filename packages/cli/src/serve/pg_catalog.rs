@@ -1,0 +1,146 @@
+//! Live Postgres catalog introspection — the source of truth for column
+//! shapes, exactly like Hasura's own source introspection.
+
+use anyhow::Context;
+use std::collections::HashMap;
+
+pub struct Catalog {
+    /// Tables and views in the target schema, keyed by relation name.
+    pub relations: HashMap<String, Relation>,
+    /// Enum type name (pg_type.typname) -> ordered labels.
+    pub enums: HashMap<String, Vec<String>>,
+}
+
+pub struct Relation {
+    pub name: String,
+    pub kind: RelationKind,
+    pub columns: Vec<Column>,
+    /// Primary key column names, in key order. Empty for views.
+    pub primary_key: Vec<String>,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum RelationKind {
+    Table,
+    View,
+}
+
+#[derive(Clone)]
+pub struct Column {
+    pub name: String,
+    /// Base type name from pg_type (e.g. "text", "int4", "numeric",
+    /// "timestamptz", or an enum type name like "accounttype").
+    pub pg_type: String,
+    pub is_array: bool,
+    pub nullable: bool,
+    pub is_enum: bool,
+}
+
+pub async fn introspect(
+    pool: &deadpool_postgres::Pool,
+    pg_schema: &str,
+) -> anyhow::Result<Catalog> {
+    let client = pool.get().await.context("Failed acquiring PG connection")?;
+
+    let column_rows = client
+        .query(
+            r#"
+            SELECT
+              c.relname::text AS table_name,
+              c.relkind::text AS relkind,
+              a.attname::text AS column_name,
+              CASE WHEN t.typtype = 'd' THEN bt_base.typname ELSE base_t.typname END::text AS pg_type,
+              (t.typcategory = 'A')::bool AS is_array,
+              NOT (a.attnotnull)::bool AS nullable,
+              (CASE WHEN t.typcategory = 'A' THEN elem_t.typtype ELSE t.typtype END = 'e')::bool AS is_enum,
+              a.attnum
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+            JOIN pg_type t ON t.oid = a.atttypid
+            LEFT JOIN pg_type elem_t ON elem_t.oid = t.typelem
+            LEFT JOIN pg_type bt_base ON t.typtype = 'd' AND bt_base.oid = t.typbasetype
+            JOIN LATERAL (
+              SELECT CASE WHEN t.typcategory = 'A' THEN elem_t.typname ELSE t.typname END AS typname
+            ) base_t ON true
+            WHERE n.nspname = $1 AND c.relkind IN ('r', 'v', 'm')
+            ORDER BY c.relname, a.attnum
+            "#,
+            &[&pg_schema],
+        )
+        .await
+        .context("Failed querying pg_catalog for columns")?;
+
+    let pk_rows = client
+        .query(
+            r#"
+            SELECT c.relname::text AS table_name, a.attname::text AS column_name, k.ordinality
+            FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality) ON true
+            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
+            WHERE n.nspname = $1 AND i.indisprimary
+            ORDER BY c.relname, k.ordinality
+            "#,
+            &[&pg_schema],
+        )
+        .await
+        .context("Failed querying pg_catalog for primary keys")?;
+
+    let enum_rows = client
+        .query(
+            r#"
+            SELECT t.typname::text, e.enumlabel::text
+            FROM pg_type t
+            JOIN pg_namespace n ON n.oid = t.typnamespace
+            JOIN pg_enum e ON e.enumtypid = t.oid
+            WHERE n.nspname = $1
+            ORDER BY t.typname, e.enumsortorder
+            "#,
+            &[&pg_schema],
+        )
+        .await
+        .context("Failed querying pg_catalog for enums")?;
+
+    let mut relations: HashMap<String, Relation> = HashMap::new();
+    for row in column_rows {
+        let table_name: String = row.get("table_name");
+        let relkind: String = row.get("relkind");
+        let relation = relations
+            .entry(table_name.clone())
+            .or_insert_with(|| Relation {
+                name: table_name,
+                kind: if relkind == "r" {
+                    RelationKind::Table
+                } else {
+                    RelationKind::View
+                },
+                columns: Vec::new(),
+                primary_key: Vec::new(),
+            });
+        relation.columns.push(Column {
+            name: row.get("column_name"),
+            pg_type: row.get("pg_type"),
+            is_array: row.get("is_array"),
+            nullable: row.get("nullable"),
+            is_enum: row.get("is_enum"),
+        });
+    }
+
+    for row in pk_rows {
+        let table_name: String = row.get("table_name");
+        if let Some(rel) = relations.get_mut(&table_name) {
+            rel.primary_key.push(row.get("column_name"));
+        }
+    }
+
+    let mut enums: HashMap<String, Vec<String>> = HashMap::new();
+    for row in enum_rows {
+        let type_name: String = row.get(0);
+        let label: String = row.get(1);
+        enums.entry(type_name).or_default().push(label);
+    }
+
+    Ok(Catalog { relations, enums })
+}

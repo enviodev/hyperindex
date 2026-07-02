@@ -88,6 +88,11 @@ pub async fn execute(
             Ok(None)
         }
 
+        CommandType::Serve(serve_args) => {
+            crate::serve::run(&serve_args, &parsed_project_paths).await?;
+            Ok(None)
+        }
+
         CommandType::Skills(SkillsSubcommand::Update) => {
             skills::run_update(&parsed_project_paths)?;
             Ok(None)
