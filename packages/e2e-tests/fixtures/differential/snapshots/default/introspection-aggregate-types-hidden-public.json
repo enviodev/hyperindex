@@ -1,0 +1,12 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"Token_aggregate_fields\") { name } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": null
+  }
+ }
+}

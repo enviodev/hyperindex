@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimpleEntity(order_by: {id: asc}, limit: 2) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-1"
+    },
+    {
+     "id": "simple-10"
+    }
+   ]
+  }
+ }
+}

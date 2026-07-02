@@ -1,0 +1,78 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}) { id tokens(order_by: {id: asc}) { id tokenId } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "tokens": [
+      {
+       "id": "tok-8",
+       "tokenId": "8"
+      }
+     ]
+    },
+    {
+     "id": "user-1",
+     "tokens": [
+      {
+       "id": "tok-1",
+       "tokenId": "0"
+      },
+      {
+       "id": "tok-2",
+       "tokenId": "1"
+      },
+      {
+       "id": "tok-7",
+       "tokenId": "7"
+      }
+     ]
+    },
+    {
+     "id": "user-2",
+     "tokens": [
+      {
+       "id": "tok-3",
+       "tokenId": "2"
+      },
+      {
+       "id": "tok-4",
+       "tokenId": "1000000000000000000000000000000"
+      }
+     ]
+    },
+    {
+     "id": "user-3",
+     "tokens": [
+      {
+       "id": "tok-5",
+       "tokenId": "-5"
+      }
+     ]
+    },
+    {
+     "id": "user-4",
+     "tokens": [
+      {
+       "id": "tok-10",
+       "tokenId": "10"
+      },
+      {
+       "id": "tok-9",
+       "tokenId": "9999999999999999999999999999999999999999999999999999999999999999999999999999"
+      }
+     ]
+    },
+    {
+     "id": "user-dangling",
+     "tokens": []
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ NotATable { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'NotATable' not found in type: 'query_root'",
+    "extensions": {
+     "path": "$.selectionSet.NotATable",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

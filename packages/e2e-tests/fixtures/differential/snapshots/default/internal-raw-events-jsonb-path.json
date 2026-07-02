@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ raw_events(where: {event_name: {_eq: \"NewGravatar\"}}) { serial params(path: \"$.nested.deep[0]\") } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events": [
+    {
+     "serial": "3",
+     "params": 1
+    }
+   ]
+  }
+ }
+}

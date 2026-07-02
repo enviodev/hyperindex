@@ -1,0 +1,53 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimpleEntity { id value } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-1",
+     "value": "v1"
+    },
+    {
+     "id": "simple-2",
+     "value": "v2"
+    },
+    {
+     "id": "simple-3",
+     "value": "v3"
+    },
+    {
+     "id": "simple-4",
+     "value": "v4"
+    },
+    {
+     "id": "simple-5",
+     "value": "v5"
+    },
+    {
+     "id": "simple-6",
+     "value": "v6"
+    },
+    {
+     "id": "simple-7",
+     "value": "v7"
+    },
+    {
+     "id": "simple-8",
+     "value": "v8"
+    },
+    {
+     "id": "simple-9",
+     "value": "v9"
+    },
+    {
+     "id": "simple-10",
+     "value": "v10"
+    }
+   ]
+  }
+ }
+}

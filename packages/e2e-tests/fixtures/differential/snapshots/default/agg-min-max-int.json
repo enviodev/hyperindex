@@ -1,0 +1,21 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User_aggregate { aggregate { min { updatesCountOnUserForTesting } max { updatesCountOnUserForTesting } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_aggregate": {
+    "aggregate": {
+     "min": {
+      "updatesCountOnUserForTesting": -2147483648
+     },
+     "max": {
+      "updatesCountOnUserForTesting": 2147483647
+     }
+    }
+   }
+  }
+ }
+}

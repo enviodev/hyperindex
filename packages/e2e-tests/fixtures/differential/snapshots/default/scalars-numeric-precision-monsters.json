@@ -1,0 +1,70 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ PostgresNumericPrecisionEntityTester(order_by: {id: asc}) { id exampleBigInt exampleBigIntRequired exampleBigIntArray exampleBigIntArrayRequired exampleBigDecimal exampleBigDecimalRequired exampleBigDecimalArray exampleBigDecimalArrayRequired exampleBigDecimalOtherOrder } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "PostgresNumericPrecisionEntityTester": [
+    {
+     "id": "prec-1",
+     "exampleBigInt": "9999999999999999999999999999999999999999999999999999999999999999999999999999",
+     "exampleBigIntRequired": "99999999999999999999999999999999999999999999999999999999999999999999999999999",
+     "exampleBigIntArray": [
+      1,
+      2,
+      3
+     ],
+     "exampleBigIntArrayRequired": [
+      -1,
+      -2,
+      -3
+     ],
+     "exampleBigDecimal": "123456789012345678901234567890123456789012345678901234567890123456789012345.12345",
+     "exampleBigDecimalRequired": "-123456789012345678901234567890123456789012345678901234567890123456789012345.54321",
+     "exampleBigDecimalArray": [
+      0.00001,
+      -0.00001
+     ],
+     "exampleBigDecimalArrayRequired": [
+      123.45678
+     ],
+     "exampleBigDecimalOtherOrder": "0.123456"
+    },
+    {
+     "id": "prec-2",
+     "exampleBigInt": "-1",
+     "exampleBigIntRequired": "1",
+     "exampleBigIntArray": [
+      0
+     ],
+     "exampleBigIntArrayRequired": [
+      9999999999
+     ],
+     "exampleBigDecimal": "1.50000",
+     "exampleBigDecimalRequired": "-1.50000",
+     "exampleBigDecimalArray": [
+      1.1
+     ],
+     "exampleBigDecimalArrayRequired": [
+      -1.1
+     ],
+     "exampleBigDecimalOtherOrder": "-0.000001"
+    },
+    {
+     "id": "prec-nulls",
+     "exampleBigInt": null,
+     "exampleBigIntRequired": "0",
+     "exampleBigIntArray": null,
+     "exampleBigIntArrayRequired": [],
+     "exampleBigDecimal": null,
+     "exampleBigDecimalRequired": "0.00000",
+     "exampleBigDecimalArray": null,
+     "exampleBigDecimalArrayRequired": [],
+     "exampleBigDecimalOtherOrder": "0.000000"
+    }
+   ]
+  }
+ }
+}

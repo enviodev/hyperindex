@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {address: {_ilike: \"0XAAAA%\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-4"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

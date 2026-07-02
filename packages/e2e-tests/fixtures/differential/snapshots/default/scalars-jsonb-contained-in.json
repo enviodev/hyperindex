@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {json: {_contained_in: {kind: \"object\", n: 1, nested: {a: [1, 2]}, extra: true}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-1"
+    },
+    {
+     "id": "all-empty-arrays"
+    }
+   ]
+  }
+ }
+}

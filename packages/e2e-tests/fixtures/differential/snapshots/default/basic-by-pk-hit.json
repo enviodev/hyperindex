@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: \"user-1\") { id address accountType } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_by_pk": {
+    "id": "user-1",
+    "address": "0xaaaa000000000000000000000000000000000001",
+    "accountType": "ADMIN"
+   }
+  }
+ }
+}

@@ -1,0 +1,149 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ agg: __type(name: \"Token_aggregate_fields\") { fields { name args { name defaultValue type { kind name ofType { kind name } } } type { kind name ofType { kind name } } } } sum: __type(name: \"Token_sum_fields\") { fields { name type { name } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "agg": {
+    "fields": [
+     {
+      "name": "avg",
+      "args": [],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Token_avg_fields",
+       "ofType": null
+      }
+     },
+     {
+      "name": "count",
+      "args": [
+       {
+        "name": "columns",
+        "defaultValue": null,
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null
+         }
+        }
+       },
+       {
+        "name": "distinct",
+        "defaultValue": null,
+        "type": {
+         "kind": "SCALAR",
+         "name": "Boolean",
+         "ofType": null
+        }
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "SCALAR",
+        "name": "Int"
+       }
+      }
+     },
+     {
+      "name": "max",
+      "args": [],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Token_max_fields",
+       "ofType": null
+      }
+     },
+     {
+      "name": "min",
+      "args": [],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Token_min_fields",
+       "ofType": null
+      }
+     },
+     {
+      "name": "stddev",
+      "args": [],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Token_stddev_fields",
+       "ofType": null
+      }
+     },
+     {
+      "name": "stddev_pop",
+      "args": [],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Token_stddev_pop_fields",
+       "ofType": null
+      }
+     },
+     {
+      "name": "stddev_samp",
+      "args": [],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Token_stddev_samp_fields",
+       "ofType": null
+      }
+     },
+     {
+      "name": "sum",
+      "args": [],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Token_sum_fields",
+       "ofType": null
+      }
+     },
+     {
+      "name": "var_pop",
+      "args": [],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Token_var_pop_fields",
+       "ofType": null
+      }
+     },
+     {
+      "name": "var_samp",
+      "args": [],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Token_var_samp_fields",
+       "ofType": null
+      }
+     },
+     {
+      "name": "variance",
+      "args": [],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Token_variance_fields",
+       "ofType": null
+      }
+     }
+    ]
+   },
+   "sum": {
+    "fields": [
+     {
+      "name": "tokenId",
+      "type": {
+       "name": "numeric"
+      }
+     }
+    ]
+   }
+  }
+ }
+}

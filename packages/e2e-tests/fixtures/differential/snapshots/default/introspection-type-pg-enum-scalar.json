@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"accounttype\") { kind name description } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "kind": "SCALAR",
+    "name": "accounttype",
+    "description": null
+   }
+  }
+ }
+}

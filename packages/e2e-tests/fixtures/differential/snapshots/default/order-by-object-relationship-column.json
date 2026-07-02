@@ -1,0 +1,29 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Gravatar(order_by: [{owner: {updatesCountOnUserForTesting: desc}}, {id: asc}]) { id owner { updatesCountOnUserForTesting } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Gravatar": [
+    {
+     "id": "grav-3",
+     "owner": null
+    },
+    {
+     "id": "grav-2",
+     "owner": {
+      "updatesCountOnUserForTesting": 42
+     }
+    },
+    {
+     "id": "grav-1",
+     "owner": {
+      "updatesCountOnUserForTesting": 0
+     }
+    }
+   ]
+  }
+ }
+}

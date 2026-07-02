@@ -1,0 +1,45 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes(order_by: [{bool: asc}, {id: asc}]) { id bool } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-nulls",
+     "bool": false
+    },
+    {
+     "id": "scalar-quotes",
+     "bool": false
+    },
+    {
+     "id": "scalar-special-float",
+     "bool": false
+    },
+    {
+     "id": "scalar-1",
+     "bool": true
+    },
+    {
+     "id": "scalar-empty",
+     "bool": true
+    },
+    {
+     "id": "scalar-extremes",
+     "bool": true
+    },
+    {
+     "id": "scalar-neg-inf",
+     "bool": true
+    },
+    {
+     "id": "scalar-unicode",
+     "bool": true
+    }
+   ]
+  }
+ }
+}

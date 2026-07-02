@@ -1,0 +1,183 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"query_root\") { fields(includeDeprecated: true) { name isDeprecated } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "fields": [
+     {
+      "name": "A",
+      "isDeprecated": false
+     },
+     {
+      "name": "A_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "B",
+      "isDeprecated": false
+     },
+     {
+      "name": "B_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "C",
+      "isDeprecated": false
+     },
+     {
+      "name": "C_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "CustomSelectionTestPass",
+      "isDeprecated": false
+     },
+     {
+      "name": "CustomSelectionTestPass_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "D",
+      "isDeprecated": false
+     },
+     {
+      "name": "D_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWith63LenghtName______________________________________one",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWith63LenghtName______________________________________one_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWith63LenghtName______________________________________two",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWith63LenghtName______________________________________two_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWithAllNonArrayTypes",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWithAllNonArrayTypes_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWithAllTypes",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWithAllTypes_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWithBigDecimal",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWithBigDecimal_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWithRestrictedReScriptField",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWithRestrictedReScriptField_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWithTimestamp",
+      "isDeprecated": false
+     },
+     {
+      "name": "EntityWithTimestamp_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "Gravatar",
+      "isDeprecated": false
+     },
+     {
+      "name": "Gravatar_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "NftCollection",
+      "isDeprecated": false
+     },
+     {
+      "name": "NftCollection_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "PostgresNumericPrecisionEntityTester",
+      "isDeprecated": false
+     },
+     {
+      "name": "PostgresNumericPrecisionEntityTester_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "SimpleEntity",
+      "isDeprecated": false
+     },
+     {
+      "name": "SimpleEntity_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "SimulateTestEvent",
+      "isDeprecated": false
+     },
+     {
+      "name": "SimulateTestEvent_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "Token",
+      "isDeprecated": false
+     },
+     {
+      "name": "Token_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "User",
+      "isDeprecated": false
+     },
+     {
+      "name": "User_by_pk",
+      "isDeprecated": false
+     },
+     {
+      "name": "_meta",
+      "isDeprecated": false
+     },
+     {
+      "name": "chain_metadata",
+      "isDeprecated": false
+     },
+     {
+      "name": "raw_events",
+      "isDeprecated": false
+     },
+     {
+      "name": "raw_events_by_pk",
+      "isDeprecated": false
+     }
+    ]
+   }
+  }
+ }
+}

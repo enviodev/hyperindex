@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithTimestamp(where: {timestamp: {_gte: \"1970-01-01\", _lt: \"2025-01-01\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithTimestamp": [
+    {
+     "id": "ts-epoch"
+    },
+    {
+     "id": "ts-micro"
+    },
+    {
+     "id": "ts-milli"
+    },
+    {
+     "id": "ts-zoned"
+    }
+   ]
+  }
+ }
+}

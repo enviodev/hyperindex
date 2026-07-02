@@ -1,0 +1,52 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {tokens: {collection: {symbol: {_eq: \"ALPHA\"}}}}, order_by: {id: asc}) { id tokens(where: {collection: {symbol: {_eq: \"ALPHA\"}}}, order_by: {id: asc}) { id collection { symbol } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-1",
+     "tokens": [
+      {
+       "id": "tok-1",
+       "collection": {
+        "symbol": "ALPHA"
+       }
+      },
+      {
+       "id": "tok-2",
+       "collection": {
+        "symbol": "ALPHA"
+       }
+      }
+     ]
+    },
+    {
+     "id": "user-2",
+     "tokens": [
+      {
+       "id": "tok-3",
+       "collection": {
+        "symbol": "ALPHA"
+       }
+      }
+     ]
+    },
+    {
+     "id": "user-4",
+     "tokens": [
+      {
+       "id": "tok-10",
+       "collection": {
+        "symbol": "ALPHA"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

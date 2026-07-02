@@ -1,0 +1,27 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Gravatar(order_by: {id: asc}, limit: 2) { __typename owner { __typename id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Gravatar": [
+    {
+     "__typename": "Gravatar",
+     "owner": {
+      "__typename": "User",
+      "id": "user-1"
+     }
+    },
+    {
+     "__typename": "Gravatar",
+     "owner": {
+      "__typename": "User",
+      "id": "user-2"
+     }
+    }
+   ]
+  }
+ }
+}

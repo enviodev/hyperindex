@@ -1,0 +1,21 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithTimestamp_aggregate { aggregate { min { timestamp } max { timestamp } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithTimestamp_aggregate": {
+    "aggregate": {
+     "min": {
+      "timestamp": "1969-07-20T20:17:40+00:00"
+     },
+     "max": {
+      "timestamp": "9999-12-31T23:59:59.999999+00:00"
+     }
+    }
+   }
+  }
+ }
+}

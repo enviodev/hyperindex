@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {_or: [{id: {_eq: \"user-1\"}}, {id: {_eq: \"user-2\"}}]}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,23 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ SimpleEntity_aggregate { aggregate { min { id value } max { id value } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity_aggregate": {
+    "aggregate": {
+     "min": {
+      "id": "simple-1",
+      "value": "v1"
+     },
+     "max": {
+      "id": "simple-9",
+      "value": "v9"
+     }
+    }
+   }
+  }
+ }
+}

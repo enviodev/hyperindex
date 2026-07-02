@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {updatesCountOnUserForTesting: {_eq: 99999999999999}}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "The value 9.9999999999999e13 lies outside the bounds or is not an integer. Maybe it is a float, or is there integer overflow?",
+    "extensions": {
+     "path": "$.selectionSet.User.args.where.updatesCountOnUserForTesting._eq",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

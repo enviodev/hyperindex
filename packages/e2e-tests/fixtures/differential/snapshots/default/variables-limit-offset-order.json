@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($l: Int, $o: Int, $ord: [SimpleEntity_order_by!]) { SimpleEntity(limit: $l, offset: $o, order_by: $ord) { id } }",
+  "variables": {
+   "l": 3,
+   "o": 1,
+   "ord": [
+    {
+     "id": "desc"
+    }
+   ]
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-8"
+    },
+    {
+     "id": "simple-7"
+    },
+    {
+     "id": "simple-6"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,12 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: \"nope\") { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_by_pk": null
+  }
+ }
+}

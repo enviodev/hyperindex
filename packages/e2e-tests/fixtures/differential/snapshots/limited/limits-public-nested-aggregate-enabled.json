@@ -1,0 +1,29 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}, limit: 2) { id tokens_aggregate { aggregate { count } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 1
+      }
+     }
+    },
+    {
+     "id": "user-1",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 3
+      }
+     }
+    }
+   ]
+  }
+ }
+}

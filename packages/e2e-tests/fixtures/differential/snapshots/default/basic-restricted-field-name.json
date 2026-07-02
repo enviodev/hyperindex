@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithRestrictedReScriptField(order_by: {id: asc}) { id type } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithRestrictedReScriptField": [
+    {
+     "id": "restricted-1",
+     "type": "the type field"
+    },
+    {
+     "id": "restricted-2",
+     "type": ""
+    }
+   ]
+  }
+ }
+}

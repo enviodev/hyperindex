@@ -1,0 +1,43 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ NftCollection(order_by: {id: asc}) { id tokens(order_by: {tokenId: asc}, limit: 2, offset: 1) { id tokenId } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "NftCollection": [
+    {
+     "id": "coll-1",
+     "tokens": [
+      {
+       "id": "tok-2",
+       "tokenId": "1"
+      },
+      {
+       "id": "tok-3",
+       "tokenId": "2"
+      }
+     ]
+    },
+    {
+     "id": "coll-2",
+     "tokens": [
+      {
+       "id": "tok-8",
+       "tokenId": "8"
+      },
+      {
+       "id": "tok-6",
+       "tokenId": "123456789"
+      }
+     ]
+    },
+    {
+     "id": "coll-3",
+     "tokens": []
+    }
+   ]
+  }
+ }
+}

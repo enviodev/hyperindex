@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {json: {_has_keys_any: [\"kind\", \"héllo\"]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-1"
+    },
+    {
+     "id": "all-json-unicode"
+    }
+   ]
+  }
+ }
+}

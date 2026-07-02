@@ -1,0 +1,23 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes(where: {id: {_in: [\"scalar-unicode\", \"scalar-quotes\"]}}, order_by: {id: asc}) { id string optString } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-quotes",
+     "string": "with \"double\" and 'single' and back\\slash and\nnewline and\ttab",
+     "optString": "end"
+    },
+    {
+     "id": "scalar-unicode",
+     "string": "héllo wörld 中文测试 🚀🎉",
+     "optString": "emoji 🤖"
+    }
+   ]
+  }
+ }
+}

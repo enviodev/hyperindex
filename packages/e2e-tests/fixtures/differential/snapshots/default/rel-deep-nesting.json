@@ -1,0 +1,71 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ NftCollection(order_by: {id: asc}, limit: 2) { id tokens(order_by: {id: asc}, limit: 3) { id owner { id gravatar { id displayName } } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "NftCollection": [
+    {
+     "id": "coll-1",
+     "tokens": [
+      {
+       "id": "tok-1",
+       "owner": {
+        "id": "user-1",
+        "gravatar": {
+         "id": "grav-1",
+         "displayName": "First Grav"
+        }
+       }
+      },
+      {
+       "id": "tok-10",
+       "owner": {
+        "id": "user-4",
+        "gravatar": null
+       }
+      },
+      {
+       "id": "tok-2",
+       "owner": {
+        "id": "user-1",
+        "gravatar": {
+         "id": "grav-1",
+         "displayName": "First Grav"
+        }
+       }
+      }
+     ]
+    },
+    {
+     "id": "coll-2",
+     "tokens": [
+      {
+       "id": "tok-4",
+       "owner": {
+        "id": "user-2",
+        "gravatar": {
+         "id": "grav-2",
+         "displayName": "Zwölf Grüße 中文"
+        }
+       }
+      },
+      {
+       "id": "tok-5",
+       "owner": {
+        "id": "user-3",
+        "gravatar": null
+       }
+      },
+      {
+       "id": "tok-6",
+       "owner": null
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

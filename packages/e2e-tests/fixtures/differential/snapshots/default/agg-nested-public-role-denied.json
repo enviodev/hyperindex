@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}, limit: 1) { id tokens_aggregate { aggregate { count } } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'tokens_aggregate' not found in type: 'User'",
+    "extensions": {
+     "path": "$.selectionSet.User.selectionSet.tokens_aggregate",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,14 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimpleEntity_by_pk(id: \"simple-9\") { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity_by_pk": {
+    "id": "simple-9"
+   }
+  }
+ }
+}

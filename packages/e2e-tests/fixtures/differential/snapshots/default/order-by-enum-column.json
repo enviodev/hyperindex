@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Gravatar(order_by: [{size: asc}, {id: asc}]) { id size } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Gravatar": [
+    {
+     "id": "grav-1",
+     "size": "SMALL"
+    },
+    {
+     "id": "grav-2",
+     "size": "MEDIUM"
+    },
+    {
+     "id": "grav-3",
+     "size": "LARGE"
+    }
+   ]
+  }
+ }
+}

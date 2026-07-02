@@ -1,0 +1,79 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User(order_by: {id: asc}) { id tokens_aggregate { aggregate { count sum { tokenId } } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 1,
+       "sum": {
+        "tokenId": "8"
+       }
+      }
+     }
+    },
+    {
+     "id": "user-1",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 3,
+       "sum": {
+        "tokenId": "8"
+       }
+      }
+     }
+    },
+    {
+     "id": "user-2",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 2,
+       "sum": {
+        "tokenId": "1000000000000000000000000000002"
+       }
+      }
+     }
+    },
+    {
+     "id": "user-3",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 1,
+       "sum": {
+        "tokenId": "-5"
+       }
+      }
+     }
+    },
+    {
+     "id": "user-4",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 2,
+       "sum": {
+        "tokenId": "10000000000000000000000000000000000000000000000000000000000000000000000000009"
+       }
+      }
+     }
+    },
+    {
+     "id": "user-dangling",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 0,
+       "sum": {
+        "tokenId": null
+       }
+      }
+     }
+    }
+   ]
+  }
+ }
+}

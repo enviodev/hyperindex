@@ -1,0 +1,12 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"DoesNotExist\") { kind name } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": null
+  }
+ }
+}

@@ -1,0 +1,12 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}, limit: 0) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": []
+  }
+ }
+}

@@ -1,0 +1,26 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($w: User_bool_exp!) { User(where: $w, order_by: {id: asc}) { id } }",
+  "variables": {
+   "w": {
+    "accountType": {
+     "_eq": "ADMIN"
+    }
+   }
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-4"
+    }
+   ]
+  }
+ }
+}

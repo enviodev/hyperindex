@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ chain_metadata(where: {chain_id: {_eq: 1337}}) { chain_id end_block timestamp_caught_up_to_head_or_endblock } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "chain_metadata": [
+    {
+     "chain_id": 1337,
+     "end_block": 5000,
+     "timestamp_caught_up_to_head_or_endblock": null
+    }
+   ]
+  }
+ }
+}

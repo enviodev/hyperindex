@@ -1,0 +1,25 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate(where: {id: {_in: [\"scalar-1\", \"scalar-nulls\", \"scalar-empty\"]}}) { aggregate { sum { int_ float_ bigInt bigDecimal } avg { int_ float_ } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_aggregate": {
+    "aggregate": {
+     "sum": {
+      "int_": 5,
+      "float_": "1",
+      "bigInt": "110",
+      "bigDecimal": "101.25"
+     },
+     "avg": {
+      "int_": 1.6666666666666667,
+      "float_": "0.3333333333333333"
+     }
+    }
+   }
+  }
+ }
+}

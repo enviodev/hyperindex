@@ -1,0 +1,97 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"User\") { kind name description fields { name type { kind name ofType { kind name ofType { kind name } } } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "kind": "OBJECT",
+    "name": "User",
+    "description": "columns and relationships of \"User\"",
+    "fields": [
+     {
+      "name": "accountType",
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "SCALAR",
+        "name": "accounttype",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "address",
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "SCALAR",
+        "name": "String",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "gravatar",
+      "type": {
+       "kind": "OBJECT",
+       "name": "Gravatar",
+       "ofType": null
+      }
+     },
+     {
+      "name": "gravatar_id",
+      "type": {
+       "kind": "SCALAR",
+       "name": "String",
+       "ofType": null
+      }
+     },
+     {
+      "name": "id",
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "SCALAR",
+        "name": "String",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "tokens",
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null
+        }
+       }
+      }
+     },
+     {
+      "name": "updatesCountOnUserForTesting",
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "SCALAR",
+        "name": "Int",
+        "ofType": null
+       }
+      }
+     }
+    ]
+   }
+  }
+ }
+}

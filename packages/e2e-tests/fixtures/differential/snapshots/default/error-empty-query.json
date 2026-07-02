@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": ""
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "not a valid graphql query",
+    "extensions": {
+     "path": "$.query",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

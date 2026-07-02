@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {accountType: {_eq: \"ADMIN\"}}, order_by: {id: asc}) { id accountType } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-1",
+     "accountType": "ADMIN"
+    },
+    {
+     "id": "user-4",
+     "accountType": "ADMIN"
+    }
+   ]
+  }
+ }
+}

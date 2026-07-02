@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {tokens: {tokenId: {_gte: \"9\"}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-4"
+    }
+   ]
+  }
+ }
+}

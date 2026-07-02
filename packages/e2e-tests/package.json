@@ -8,6 +8,8 @@
     "test:templates": "vitest run src/template-tests/",
     "test:deps": "vitest run src/dependency-tests/",
     "test:e2e": "vitest run src/e2e/",
+    "test:differential": "vitest run --config vitest.differential.config.ts",
+    "record:differential": "tsx src/differential/record.ts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

@@ -1,0 +1,45 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}) { id gravatar { id displayName size } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "gravatar": null
+    },
+    {
+     "id": "user-1",
+     "gravatar": {
+      "id": "grav-1",
+      "displayName": "First Grav",
+      "size": "SMALL"
+     }
+    },
+    {
+     "id": "user-2",
+     "gravatar": {
+      "id": "grav-2",
+      "displayName": "Zwölf Grüße 中文",
+      "size": "MEDIUM"
+     }
+    },
+    {
+     "id": "user-3",
+     "gravatar": null
+    },
+    {
+     "id": "user-4",
+     "gravatar": null
+    },
+    {
+     "id": "user-dangling",
+     "gravatar": null
+    }
+   ]
+  }
+ }
+}

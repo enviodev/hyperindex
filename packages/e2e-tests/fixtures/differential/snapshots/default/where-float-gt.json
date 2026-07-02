@@ -1,0 +1,29 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes(where: {float_: {_gt: 0}}, order_by: {id: asc}) { id float_ } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-1",
+     "float_": "1.5"
+    },
+    {
+     "id": "scalar-extremes",
+     "float_": "1.7976931348623157e+308"
+    },
+    {
+     "id": "scalar-quotes",
+     "float_": "0.1"
+    },
+    {
+     "id": "scalar-special-float",
+     "float_": "Infinity"
+    }
+   ]
+  }
+ }
+}
