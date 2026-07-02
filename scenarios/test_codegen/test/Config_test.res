@@ -319,11 +319,10 @@ describe("Config.fromPublic", () => {
     t.expect(address->Address.toString, ~message="Address must be preserved verbatim").toBe(uni)
   })
 
-  // config.yaml addresses go through the strict parser (Address.Evm.fromStringOrThrow /
-  // fromStringLowercaseOrThrow), unlike simulate's srcAddress which only requires a
-  // "0x" prefix. A malformed address here must still fail config load.
-  it("throws when a contract address in config is not a valid 20-byte hex address", t => {
-    let publicConfigJson: JSON.t = %raw(`{
+  // Builds a minimal single-chain, single-contract public config with one
+  // configurable contract address, for exercising address_format handling.
+  let makeAddressFormatConfigJson = (~addressFormat: string, ~address: string): JSON.t =>
+    JSON.parseOrThrow(`{
       "version": "0.0.1-dev",
       "name": "test",
       "storage": { "postgres": true },
@@ -335,7 +334,7 @@ describe("Config.fromPublic", () => {
             "rpcs": [{ "url": "https://eth.com", "for": "sync" }],
             "contracts": {
               "ERC20": {
-                "addresses": ["0xfoo"]
+                "addresses": ["${address}"]
               }
             }
           }
@@ -346,13 +345,55 @@ describe("Config.fromPublic", () => {
             "events": [{ "event": "Transfer()", "name": "Transfer", "sighash": "0x00000000" }]
           }
         },
-        "addressFormat": "checksum"
+        "addressFormat": "${addressFormat}"
       }
     }`)
 
-    t.expect(() => Config.fromPublic(publicConfigJson)->ignore).toThrowError(
-      `Address "0xfoo" is invalid. Expected a 20-byte hex string starting with 0x.`,
-    )
+  let getFirstContractAddress = (config: Config.t): string => {
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    let contract = chain.contracts->Array.getUnsafe(0)
+    contract.addresses->Array.getUnsafe(0)->Address.toString
+  }
+
+  // config.yaml addresses go through the strict parser (Address.Evm.fromStringOrThrow /
+  // fromStringLowercaseOrThrow), unlike simulate's srcAddress which only requires a
+  // "0x" prefix. A malformed address here must still fail config load.
+  it("throws when a contract address in config is not a valid 20-byte hex address (checksum format)", t => {
+    t.expect(
+      () =>
+        Config.fromPublic(
+          makeAddressFormatConfigJson(~addressFormat="checksum", ~address="0xfoo"),
+        )->ignore,
+    ).toThrowError(`Address "0xfoo" is invalid. Expected a 20-byte hex string starting with 0x.`)
+  })
+
+  it("throws when a contract address in config is not a valid 20-byte hex address (lowercase format)", t => {
+    t.expect(
+      () =>
+        Config.fromPublic(
+          makeAddressFormatConfigJson(~addressFormat="lowercase", ~address="0xfoo"),
+        )->ignore,
+    ).toThrowError(`Address "0xfoo" is invalid. Expected a 20-byte hex string starting with 0x.`)
+  })
+
+  // Whatever casing a valid 20-byte address is written in, address_format
+  // adjusts it internally instead of rejecting it — that's the whole point of
+  // the setting: don't make the user care about case.
+  [
+    ("checksum", "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac", "all-lowercase"),
+    ("checksum", "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC", "all-uppercase"),
+    ("lowercase", "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac", "all-lowercase"),
+    ("lowercase", "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC", "all-uppercase"),
+  ]->Array.forEach(((addressFormat, address, caseDescription)) => {
+    it(`normalizes a ${caseDescription} address under address_format: ${addressFormat}`, t => {
+      let config = Config.fromPublic(makeAddressFormatConfigJson(~addressFormat, ~address))
+      t.expect(config->getFirstContractAddress).toBe(
+        switch addressFormat {
+        | "lowercase" => "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"
+        | _ => "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"
+        },
+      )
+    })
   })
 
   it("parses entity and field descriptions from public config", t => {
