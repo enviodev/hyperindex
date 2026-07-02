@@ -130,10 +130,9 @@ fn decode_evm_block_columns(
     masks: &[u64],
     should_checksum: bool,
 ) -> Result<Columns> {
-    let union = masks.iter().fold(0u64, |acc, &m| acc | m);
     build_columns(
         EvmBlockField::VARIANTS,
-        union,
+        masks,
         records.len(),
         |f| f as u32,
         |f| f.name(),
@@ -258,10 +257,9 @@ fn decode_svm_block_columns(
     block_numbers: &[i64],
     masks: &[u64],
 ) -> Result<Columns> {
-    let union = masks.iter().fold(0u64, |acc, &m| acc | m);
     build_columns(
         SvmBlockField::VARIANTS,
-        union,
+        masks,
         records.len(),
         |f| f as u32,
         |f| f.name(),
@@ -561,6 +559,7 @@ pub fn svm_block_field_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hypersync_client::format::Quantity;
 
     fn raw_evm_block(number: u64) -> simple_types::Block {
         simple_types::Block {
@@ -758,5 +757,77 @@ mod tests {
             svm_names,
             vec!["slot", "time", "hash", "height", "parentSlot", "parentHash"]
         );
+    }
+
+    // The tests above call `decode_evm_block_columns`/`decode_svm_block_columns`
+    // directly; the ones below go through the public `materialize` method (as
+    // ReScript does), so they also cover the lock, the `f64` mask cast, and the
+    // ecosystem dispatch. `block_in_place` inside `materialize` panics without a
+    // multi-thread runtime.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn materialize_returns_stored_extra_fields_via_store() {
+        let store = BlockStore::new_evm(false);
+        let mut block = raw_evm_block(10);
+        block.timestamp = Some(Quantity::from(555u64));
+        store.insert_evm_raw(10, Arc::new(block));
+
+        let mask = (1u64 << (EvmBlockField::Timestamp as u32)) as f64;
+        let cols = store
+            .materialize(vec![10], vec![mask])
+            .await
+            .expect("materialize");
+        match column(&cols, "timestamp") {
+            Some(Column::I64(v)) => assert_eq!(v, &vec![Some(555)]),
+            other => panic!("expected timestamp column, got present={}", other.is_some()),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn svm_materialize_returns_stored_extra_fields_via_store() {
+        let store = BlockStore::new_svm();
+        let mut block = raw_svm_block(9);
+        block.block_height = Some(777);
+        store.insert_svm_raw(9, Arc::new(block));
+
+        let mask = (1u64 << (SvmBlockField::Height as u32)) as f64;
+        let cols = store
+            .materialize(vec![9], vec![mask])
+            .await
+            .expect("materialize");
+        match column(&cols, "height") {
+            Some(Column::I64(v)) => assert_eq!(v, &vec![Some(777)]),
+            other => panic!("expected height column, got present={}", other.is_some()),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn merge_overwrites_existing_block_for_same_number() {
+        // A rolled-back block re-fetched with different content must replace the
+        // stale entry rather than be shadowed by it — the sequence a chain
+        // reorg drives through `ChainState`: merge a page, then merge a later
+        // page for the same (re-fetched) block number.
+        let persistent = BlockStore::new_evm(false);
+
+        let page1 = BlockStore::new_evm(false);
+        let mut first = raw_evm_block(20);
+        first.timestamp = Some(Quantity::from(100u64));
+        page1.insert_evm_raw(20, Arc::new(first));
+        persistent.merge(&page1);
+
+        let page2 = BlockStore::new_evm(false);
+        let mut second = raw_evm_block(20);
+        second.timestamp = Some(Quantity::from(200u64));
+        page2.insert_evm_raw(20, Arc::new(second));
+        persistent.merge(&page2);
+
+        let mask = (1u64 << (EvmBlockField::Timestamp as u32)) as f64;
+        let cols = persistent
+            .materialize(vec![20], vec![mask])
+            .await
+            .expect("materialize");
+        match column(&cols, "timestamp") {
+            Some(Column::I64(v)) => assert_eq!(v, &vec![Some(200)]),
+            other => panic!("expected timestamp column, got present={}", other.is_some()),
+        }
     }
 }

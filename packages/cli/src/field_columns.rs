@@ -160,21 +160,24 @@ pub fn fill_masked<R, T>(
         .collect()
 }
 
-/// Iterate an ecosystem's field variants and decode each whose mask bit is set,
-/// collecting them into columns. Shared by every store; only the per-field
-/// `decode` table differs. A decode error names the field so one bad row aborts
-/// the batch's materialisation with an actionable message.
+/// Iterate an ecosystem's field variants and decode each whose bit is set in the
+/// union of `masks` (a column is built when any row selects it; `decode`, via
+/// `fill_masked`, still applies each row's own mask within it). Shared by every
+/// store; only the per-field `decode` table differs. A decode error names the
+/// field so one bad row aborts the batch's materialisation with an actionable
+/// message.
 pub fn build_columns<F: Copy>(
     variants: &'static [F],
-    mask: u64,
+    masks: &[u64],
     len: usize,
     ordinal: impl Fn(F) -> u32,
     name: impl Fn(F) -> &'static str,
     decode: impl Fn(F) -> Result<Column>,
 ) -> Result<Columns> {
+    let union = masks.iter().fold(0u64, |acc, &m| acc | m);
     let mut columns: Vec<(&'static str, Column)> = Vec::new();
     for &field in variants {
-        if mask & (1u64 << ordinal(field)) == 0 {
+        if union & (1u64 << ordinal(field)) == 0 {
             continue;
         }
         let field_name = name(field);

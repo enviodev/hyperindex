@@ -38,6 +38,13 @@ use config::SvmClientConfig;
 use query::SvmQuery;
 use types::QueryResponse;
 
+/// Query column names HyperSync always returns for a block row — see
+/// `SvmHyperSyncSource.res`'s `blockQueryFields`, which always requests
+/// `[Slot, Blockhash, BlockTime]`. Named here (mirroring the EVM side's
+/// `REQUIRED_BLOCK_FIELDS`) rather than inlined, so the trio the raw-block
+/// store gate compares against is a single discoverable constant.
+const REQUIRED_SVM_BLOCK_QUERY_FIELDS: &[&str] = &["slot", "blockhash", "block_time"];
+
 /// Move the raw transactions and token balances of a response into a
 /// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept raw in Rust so
 /// only the config-selected fields are materialised at batch prep; many
@@ -149,7 +156,7 @@ impl SvmHypersyncClient {
             .is_some_and(|block| {
                 block
                     .iter()
-                    .any(|f| !matches!(f.as_str(), "slot" | "blockhash" | "block_time"))
+                    .any(|f| !REQUIRED_SVM_BLOCK_QUERY_FIELDS.contains(&f.as_str()))
             });
 
         let q: hypersync_solana_net_types::query::SolanaQuery = query
@@ -193,20 +200,33 @@ impl SvmHypersyncClient {
             std::mem::take(&mut resp.token_balances),
         );
 
+        // Take the raw blocks out before the response conversion consumes them,
+        // build the lean per-slot header from a borrow, then move the owned raw
+        // blocks into the store — avoiding a full raw-`Block` clone per block
+        // (mirrors the EVM source's borrow-then-move header pattern).
+        let raw_blocks = std::mem::take(&mut resp.blocks);
+        let block_headers: Vec<types::Block> = raw_blocks
+            .iter()
+            .map(types::Block::from_raw)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .context("mapping solana block headers")
+            .map_err(map_err)?;
+
         // Retain raw blocks in Rust keyed by slot so the block store can
         // materialise the selected block fields onto each instruction's
         // `event.block` at batch prep. Skipped when only slot/blockhash/blockTime
         // were requested — those reach ReScript via the response's block table.
         let block_store = BlockStore::new_svm();
         if has_extra_block_fields {
-            for b in &resp.blocks {
-                block_store.insert_svm_raw(b.slot, Arc::new(b.clone()));
+            for b in raw_blocks {
+                block_store.insert_svm_raw(b.slot, Arc::new(b));
             }
         }
 
         let mut out = QueryResponse::try_from(resp)
             .context("convert solana response")
             .map_err(map_err)?;
+        out.data.blocks = block_headers;
         for (instr, d) in out.data.instructions.iter_mut().zip(decoded) {
             instr.decoded = d;
         }

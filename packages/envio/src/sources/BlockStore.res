@@ -35,6 +35,12 @@ let orMask = FieldMask.orMask
 // tests in BlockStore_test pin both orderings.
 let hasExtraFields: float => bool = %raw(`m => ((m & ~7) >>> 0) !== 0`)
 
+// Clear the trio's bits (field codes 0/1/2) from a mask before a materialise
+// call. The EVM path always stamps the trio from the item afterward (see
+// `setBlockHeader`), so asking the store to decode it too is wasted work — a
+// full hash hex-encode per block for a value that's immediately overwritten.
+let stripTrioBits: float => float = %raw(`m => (m & ~7) >>> 0`)
+
 // Drain another store (a fetch-response page) into this one.
 @send external merge: (t, t) => unit = "merge"
 
@@ -123,9 +129,13 @@ let materializeEvmItems = async (store: t, ~items: array<Internal.item>) => {
     )
   if groups->Utils.Array.notEmpty {
     // Only reach into the store when some event selected a field beyond the trio;
-    // otherwise every block is built from its item alone.
+    // otherwise every block is built from its item alone. The trio's own bits are
+    // stripped from the request since `setBlockHeader` below always overwrites
+    // them from the item anyway.
     let anyExtra = masks->Array.some(hasExtraFields)
-    let materialized = anyExtra ? await store->materialize(~blockNumbers, ~masks) : []
+    let materialized = anyExtra
+      ? await store->materialize(~blockNumbers, ~masks=masks->Array.map(stripTrioBits))
+      : []
     groups->Array.forEachWithIndex((group, i) => {
       let eventItem = group->Array.getUnsafe(0)
       let block = anyExtra ? materialized->Array.getUnsafe(i) : %raw(`{}`)

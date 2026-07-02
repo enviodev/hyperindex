@@ -159,10 +159,9 @@ fn decode_evm_columns(
     masks: &[u64],
     should_checksum: bool,
 ) -> Result<Columns> {
-    let union = masks.iter().fold(0u64, |acc, &m| acc | m);
     build_columns(
         EvmTxField::VARIANTS,
-        union,
+        masks,
         records.len(),
         |f| f as u32,
         |f| f.name(),
@@ -322,10 +321,9 @@ fn decode_svm_columns(
     transaction_indices: &[u32],
     masks: &[u64],
 ) -> Result<Columns> {
-    let union = masks.iter().fold(0u64, |acc, &m| acc | m);
     build_columns(
         SvmTxField::VARIANTS,
-        union,
+        masks,
         records.len(),
         |f| f as u32,
         |f| f.name(),
