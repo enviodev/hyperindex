@@ -299,4 +299,15 @@ export default defineCases([
     name: "wm-jsonb-eq-nested-object",
     query: `{ EntityWithAllTypes(where: {json: {_eq: {kind: "object", n: 1, nested: {a: [1, 2]}}}}, order_by: {id: asc}) { id } }`,
   },
+  {
+    // _cast casts the jsonb column to text, then applies a
+    // String_comparison_exp — a distinct code path (CompareOp::CastText)
+    // from every other jsonb operator above.
+    name: "wm-jsonb-cast-string-like",
+    query: `{ EntityWithAllTypes(where: {json: {_cast: {String: {_like: "%\\"kind\\"%"}}}}, order_by: {id: asc}) { id } }`,
+  },
+  {
+    name: "wm-jsonb-cast-string-eq-scalar",
+    query: `{ EntityWithAllTypes(where: {json: {_cast: {String: {_eq: "\\"just a string\\""}}}}, order_by: {id: asc}) { id } }`,
+  },
 ]);
