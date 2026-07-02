@@ -181,8 +181,11 @@ jobs:
     needs: build-envio-package
     timeout-minutes: 9
 
+    # postgres/hasura anchors defined here (first job needing them, in file
+    # order) and reused via aliases below to avoid repeating the identical
+    # `services:` blocks in every job that needs the same containers.
     services:
-      postgres:
+      postgres: &postgres-service
         image: postgres:16
         env:
           POSTGRES_PASSWORD: testing
@@ -196,7 +199,7 @@ jobs:
         ports:
           - 5433:5432
 
-      hasura:
+      hasura: &hasura-service
         image: hasura/graphql-engine:v2.43.0
         env:
           HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
@@ -270,19 +273,7 @@ jobs:
     timeout-minutes: 9
 
     services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: testing
-          POSTGRES_DB: envio-dev
-          POSTGRES_USER: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5433:5432
+      postgres: *postgres-service
 
     steps:
       - uses: actions/checkout@v6
@@ -300,31 +291,18 @@ jobs:
             -f packages/e2e-tests/fixtures/differential/seed.sql
 
       - name: Start envio serve (default phase)
-        working-directory: scenarios/test_codegen
-        run: |
-          ENVIO_HASURA_RESPONSE_LIMIT= ENVIO_HASURA_PUBLIC_AGGREGATE= pnpm exec envio serve --port 8081 &
-          for i in {1..60}; do
-            if curl -sSf http://localhost:8081/healthz >/dev/null; then echo "envio serve is up"; exit 0; fi
-            sleep 1
-          done
-          echo "envio serve did not become ready"; exit 1
+        uses: ./.github/actions/start-envio-serve
 
       - name: Diff default phase against oracle snapshots
         working-directory: packages/e2e-tests
         run: pnpm exec tsx src/differential/diffServe.ts
 
       - name: Restart envio serve (limited phase)
-        working-directory: scenarios/test_codegen
-        run: |
-          pkill -f "bin.mjs serve" || true
-          sleep 1
-          ENVIO_HASURA_RESPONSE_LIMIT=5 ENVIO_HASURA_PUBLIC_AGGREGATE='["User","Token","SimpleEntity","raw_events","_meta"]' \
-            pnpm exec envio serve --port 8081 &
-          for i in {1..60}; do
-            if curl -sSf http://localhost:8081/healthz >/dev/null; then echo "envio serve is up"; exit 0; fi
-            sleep 1
-          done
-          echo "envio serve did not become ready"; exit 1
+        uses: ./.github/actions/start-envio-serve
+        with:
+          restart: "true"
+          hasura-response-limit: "5"
+          hasura-public-aggregate: '["User","Token","SimpleEntity","raw_events","_meta"]'
 
       - name: Diff limited phase against oracle snapshots
         working-directory: packages/e2e-tests
@@ -342,33 +320,8 @@ jobs:
     continue-on-error: true
 
     services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: testing
-          POSTGRES_DB: envio-dev
-          POSTGRES_USER: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5433:5432
-
-      hasura:
-        image: hasura/graphql-engine:v2.43.0
-        env:
-          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
-          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
-          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
-          HASURA_GRAPHQL_NO_OF_RETRIES: 10
-          HASURA_GRAPHQL_ADMIN_SECRET: testing
-          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
-          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
-          PORT: 8080
-        ports:
-          - 8080:8080
+      postgres: *postgres-service
+      hasura: *hasura-service
 
     steps:
       - uses: actions/checkout@v6
@@ -400,33 +353,8 @@ jobs:
     continue-on-error: true
 
     services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: testing
-          POSTGRES_DB: envio-dev
-          POSTGRES_USER: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5433:5432
-
-      hasura:
-        image: hasura/graphql-engine:v2.43.0
-        env:
-          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
-          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
-          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
-          HASURA_GRAPHQL_NO_OF_RETRIES: 10
-          HASURA_GRAPHQL_ADMIN_SECRET: testing
-          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
-          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
-          PORT: 8080
-        ports:
-          - 8080:8080
+      postgres: *postgres-service
+      hasura: *hasura-service
 
     steps:
       - uses: actions/checkout@v6
@@ -448,14 +376,7 @@ jobs:
           pnpm exec tsx src/differential/bench.ts --record-baseline --all --budget-ms 800 --min-iters 2 --max-iters 15
 
       - name: Start envio serve
-        working-directory: scenarios/test_codegen
-        run: |
-          ENVIO_HASURA_RESPONSE_LIMIT= ENVIO_HASURA_PUBLIC_AGGREGATE= pnpm exec envio serve --port 8081 &
-          for i in {1..60}; do
-            if curl -sSf http://localhost:8081/healthz >/dev/null; then echo "envio serve is up"; exit 0; fi
-            sleep 1
-          done
-          echo "envio serve did not become ready"; exit 1
+        uses: ./.github/actions/start-envio-serve
 
       - name: Benchmark envio serve against the fresh baseline
         working-directory: packages/e2e-tests
@@ -475,33 +396,8 @@ jobs:
     timeout-minutes: 9
 
     services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: testing
-          POSTGRES_DB: envio-dev
-          POSTGRES_USER: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5433:5432
-
-      hasura:
-        image: hasura/graphql-engine:v2.43.0
-        env:
-          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
-          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
-          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
-          HASURA_GRAPHQL_NO_OF_RETRIES: 10
-          HASURA_GRAPHQL_ADMIN_SECRET: testing
-          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
-          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
-          PORT: 8080
-        ports:
-          - 8080:8080
+      postgres: *postgres-service
+      hasura: *hasura-service
 
       clickhouse:
         image: clickhouse/clickhouse-server:26.2.15.4

@@ -12,12 +12,7 @@ import { allCases } from "./corpus/index.js";
 import type { Phase } from "./corpus.js";
 import { serveUrl } from "./env.js";
 import { runCase, normalize, type GraphQLResponse } from "./runner.js";
-
-const argv = process.argv.slice(2);
-const arg = (name: string): string | undefined => {
-  const i = argv.indexOf(name);
-  return i >= 0 ? argv[i + 1] : undefined;
-};
+import { arg } from "./cliArgs.js";
 
 const phase = (arg("--phase") ?? "default") as Phase;
 const filter = arg("--filter");
