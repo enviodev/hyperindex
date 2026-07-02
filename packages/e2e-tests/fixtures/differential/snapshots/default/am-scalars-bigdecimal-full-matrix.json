@@ -1,0 +1,38 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate { aggregate { count sum { bigDecimal bigDecimalWithConfig } avg { bigDecimal bigDecimalWithConfig } min { bigDecimal bigDecimalWithConfig } max { bigDecimal bigDecimalWithConfig } stddev { bigDecimal } var_samp { bigDecimalWithConfig } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_aggregate": {
+    "aggregate": {
+     "count": 8,
+     "sum": {
+      "bigDecimal": "12345678901234567994.613456789",
+      "bigDecimalWithConfig": "107.00000000"
+     },
+     "avg": {
+      "bigDecimal": "1543209862654320999.326682099",
+      "bigDecimalWithConfig": "13.3750000000000000"
+     },
+     "min": {
+      "bigDecimal": "-1.5",
+      "bigDecimalWithConfig": "-0.00000001"
+     },
+     "max": {
+      "bigDecimal": "12345678901234567890.123456789",
+      "bigDecimalWithConfig": "99.99999999"
+     },
+     "stddev": {
+      "bigDecimal": "4364856634707324026.114560125832717618"
+     },
+     "var_samp": {
+      "bigDecimalWithConfig": "1226.4821425742857143"
+     }
+    }
+   }
+  }
+ }
+}

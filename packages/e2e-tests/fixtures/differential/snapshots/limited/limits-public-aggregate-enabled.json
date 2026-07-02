@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_aggregate { aggregate { count } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_aggregate": {
+    "aggregate": {
+     "count": 6
+    }
+   }
+  }
+ }
+}

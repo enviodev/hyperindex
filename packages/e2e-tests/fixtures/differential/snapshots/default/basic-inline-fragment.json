@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}, limit: 2) { ... on User { id accountType } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "accountType": "USER"
+    },
+    {
+     "id": "user-1",
+     "accountType": "ADMIN"
+    }
+   ]
+  }
+ }
+}

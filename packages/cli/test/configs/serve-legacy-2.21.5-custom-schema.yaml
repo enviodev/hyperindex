@@ -1,0 +1,9 @@
+# v2.21.5-era config with an explicit custom `schema` path.
+name: legacy_custom_schema
+schema: ./schemas/gravatar-schema.graphql
+unordered_multichain_mode: true
+event_decoder: hypersync-client
+networks:
+  - id: 1
+    start_block: 0
+    contracts: []

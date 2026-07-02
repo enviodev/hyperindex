@@ -1,0 +1,215 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ d1: EntityWithAllNonArrayTypes(order_by: [{optFloat: asc}, {id: asc}]) { id optFloat } d2: EntityWithAllNonArrayTypes(order_by: [{optFloat: desc}, {id: asc}]) { id optFloat } d3: EntityWithAllNonArrayTypes(order_by: [{optFloat: asc_nulls_first}, {id: asc}]) { id optFloat } d4: EntityWithAllNonArrayTypes(order_by: [{optFloat: asc_nulls_last}, {id: asc}]) { id optFloat } d5: EntityWithAllNonArrayTypes(order_by: [{optFloat: desc_nulls_first}, {id: asc}]) { id optFloat } d6: EntityWithAllNonArrayTypes(order_by: [{optFloat: desc_nulls_last}, {id: asc}]) { id optFloat } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "d1": [
+    {
+     "id": "scalar-empty",
+     "optFloat": "0"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optFloat": "-0"
+    },
+    {
+     "id": "scalar-extremes",
+     "optFloat": "5e-324"
+    },
+    {
+     "id": "scalar-quotes",
+     "optFloat": "0.2"
+    },
+    {
+     "id": "scalar-1",
+     "optFloat": "2.5"
+    },
+    {
+     "id": "scalar-unicode",
+     "optFloat": "2.718281828459045"
+    },
+    {
+     "id": "scalar-special-float",
+     "optFloat": "NaN"
+    },
+    {
+     "id": "scalar-nulls",
+     "optFloat": null
+    }
+   ],
+   "d2": [
+    {
+     "id": "scalar-nulls",
+     "optFloat": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optFloat": "NaN"
+    },
+    {
+     "id": "scalar-unicode",
+     "optFloat": "2.718281828459045"
+    },
+    {
+     "id": "scalar-1",
+     "optFloat": "2.5"
+    },
+    {
+     "id": "scalar-quotes",
+     "optFloat": "0.2"
+    },
+    {
+     "id": "scalar-extremes",
+     "optFloat": "5e-324"
+    },
+    {
+     "id": "scalar-empty",
+     "optFloat": "0"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optFloat": "-0"
+    }
+   ],
+   "d3": [
+    {
+     "id": "scalar-nulls",
+     "optFloat": null
+    },
+    {
+     "id": "scalar-empty",
+     "optFloat": "0"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optFloat": "-0"
+    },
+    {
+     "id": "scalar-extremes",
+     "optFloat": "5e-324"
+    },
+    {
+     "id": "scalar-quotes",
+     "optFloat": "0.2"
+    },
+    {
+     "id": "scalar-1",
+     "optFloat": "2.5"
+    },
+    {
+     "id": "scalar-unicode",
+     "optFloat": "2.718281828459045"
+    },
+    {
+     "id": "scalar-special-float",
+     "optFloat": "NaN"
+    }
+   ],
+   "d4": [
+    {
+     "id": "scalar-empty",
+     "optFloat": "0"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optFloat": "-0"
+    },
+    {
+     "id": "scalar-extremes",
+     "optFloat": "5e-324"
+    },
+    {
+     "id": "scalar-quotes",
+     "optFloat": "0.2"
+    },
+    {
+     "id": "scalar-1",
+     "optFloat": "2.5"
+    },
+    {
+     "id": "scalar-unicode",
+     "optFloat": "2.718281828459045"
+    },
+    {
+     "id": "scalar-special-float",
+     "optFloat": "NaN"
+    },
+    {
+     "id": "scalar-nulls",
+     "optFloat": null
+    }
+   ],
+   "d5": [
+    {
+     "id": "scalar-nulls",
+     "optFloat": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optFloat": "NaN"
+    },
+    {
+     "id": "scalar-unicode",
+     "optFloat": "2.718281828459045"
+    },
+    {
+     "id": "scalar-1",
+     "optFloat": "2.5"
+    },
+    {
+     "id": "scalar-quotes",
+     "optFloat": "0.2"
+    },
+    {
+     "id": "scalar-extremes",
+     "optFloat": "5e-324"
+    },
+    {
+     "id": "scalar-empty",
+     "optFloat": "0"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optFloat": "-0"
+    }
+   ],
+   "d6": [
+    {
+     "id": "scalar-special-float",
+     "optFloat": "NaN"
+    },
+    {
+     "id": "scalar-unicode",
+     "optFloat": "2.718281828459045"
+    },
+    {
+     "id": "scalar-1",
+     "optFloat": "2.5"
+    },
+    {
+     "id": "scalar-quotes",
+     "optFloat": "0.2"
+    },
+    {
+     "id": "scalar-extremes",
+     "optFloat": "5e-324"
+    },
+    {
+     "id": "scalar-empty",
+     "optFloat": "0"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optFloat": "-0"
+    },
+    {
+     "id": "scalar-nulls",
+     "optFloat": null
+    }
+   ]
+  }
+ }
+}

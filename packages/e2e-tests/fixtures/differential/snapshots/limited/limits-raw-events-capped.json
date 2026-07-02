@@ -1,0 +1,28 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ raw_events(order_by: {serial: asc}) { serial } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events": [
+    {
+     "serial": "1"
+    },
+    {
+     "serial": "2"
+    },
+    {
+     "serial": "3"
+    },
+    {
+     "serial": "4"
+    },
+    {
+     "serial": "5"
+    }
+   ]
+  }
+ }
+}

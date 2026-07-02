@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query Q { SimpleEntity(order_by: {id: asc}, limit: 1) { id } } mutation M { insert_Bogus(objects: []) { affected_rows } }",
+  "operationName": "Q"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-1"
+    }
+   ]
+  }
+ }
+}

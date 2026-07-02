@@ -1,0 +1,26 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "query ($w: Token_bool_exp) { Token_aggregate(where: $w) { aggregate { count sum { tokenId } } } }",
+  "variables": {
+   "w": {
+    "collection_id": {
+     "_eq": "coll-1"
+    }
+   }
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token_aggregate": {
+    "aggregate": {
+     "count": 4,
+     "sum": {
+      "tokenId": "13"
+     }
+    }
+   }
+  }
+ }
+}

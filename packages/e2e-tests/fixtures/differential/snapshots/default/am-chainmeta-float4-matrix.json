@@ -1,0 +1,28 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ chain_metadata_aggregate { aggregate { count sum { num_events_processed } avg { num_events_processed } min { num_events_processed } max { num_events_processed } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "chain_metadata_aggregate": {
+    "aggregate": {
+     "count": 2,
+     "sum": {
+      "num_events_processed": 2147487700
+     },
+     "avg": {
+      "num_events_processed": 1073743872
+     },
+     "min": {
+      "num_events_processed": 0
+     },
+     "max": {
+      "num_events_processed": 2147487700
+     }
+    }
+   }
+  }
+ }
+}

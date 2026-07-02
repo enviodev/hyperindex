@@ -1,0 +1,28 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithBigDecimal(order_by: {id: asc}) { __typename } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithBigDecimal": [
+    {
+     "__typename": "EntityWithBigDecimal"
+    },
+    {
+     "__typename": "EntityWithBigDecimal"
+    },
+    {
+     "__typename": "EntityWithBigDecimal"
+    },
+    {
+     "__typename": "EntityWithBigDecimal"
+    },
+    {
+     "__typename": "EntityWithBigDecimal"
+    }
+   ]
+  }
+ }
+}

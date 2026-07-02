@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_by_pk(id: \"scalar-neg-inf\") { id string optString int_ optInt float_ optFloat bool optBool bigInt optBigInt bigDecimal optBigDecimal bigDecimalWithConfig enumField optEnumField timestamp optTimestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_by_pk": {
+    "id": "scalar-neg-inf",
+    "string": "neg inf",
+    "optString": null,
+    "int_": -2,
+    "optInt": null,
+    "float_": "-Infinity",
+    "optFloat": "-0",
+    "bool": true,
+    "optBool": null,
+    "bigInt": "-1",
+    "optBigInt": null,
+    "bigDecimal": "-1.5",
+    "optBigDecimal": null,
+    "bigDecimalWithConfig": "-0.00000001",
+    "enumField": "USER",
+    "optEnumField": null,
+    "timestamp": "2024-07-01T00:00:00+00:00",
+    "optTimestamp": null
+   }
+  }
+ }
+}

@@ -1,0 +1,33 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ SimulateTestEvent_aggregate { aggregate { stddev { blockNumber } stddev_pop { blockNumber } stddev_samp { blockNumber } variance { blockNumber } var_pop { blockNumber } var_samp { blockNumber } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimulateTestEvent_aggregate": {
+    "aggregate": {
+     "stddev": {
+      "blockNumber": 1.3038404810405297
+     },
+     "stddev_pop": {
+      "blockNumber": 1.1661903789690602
+     },
+     "stddev_samp": {
+      "blockNumber": 1.3038404810405297
+     },
+     "variance": {
+      "blockNumber": 1.7
+     },
+     "var_pop": {
+      "blockNumber": 1.36
+     },
+     "var_samp": {
+      "blockNumber": 1.7
+     }
+    }
+   }
+  }
+ }
+}

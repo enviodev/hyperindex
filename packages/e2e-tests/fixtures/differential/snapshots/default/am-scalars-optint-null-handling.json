@@ -1,0 +1,28 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate { aggregate { count(columns: optInt) sum { optInt } avg { optInt } min { optInt } max { optInt } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_aggregate": {
+    "aggregate": {
+     "count": 5,
+     "sum": {
+      "optInt": -2147483628
+     },
+     "avg": {
+      "optInt": -429496725.6
+     },
+     "min": {
+      "optInt": -2147483648
+     },
+     "max": {
+      "optInt": 10
+     }
+    }
+   }
+  }
+ }
+}

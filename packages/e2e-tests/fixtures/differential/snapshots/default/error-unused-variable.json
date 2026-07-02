@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($unused: Int) { SimpleEntity(order_by: {id: asc}, limit: 1) { id } }",
+  "variables": {
+   "unused": 1
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "unexpected variables in variableValues: unused",
+    "extensions": {
+     "path": "$",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

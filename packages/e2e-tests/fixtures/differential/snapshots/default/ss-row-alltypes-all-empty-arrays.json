@@ -1,0 +1,37 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes_by_pk(id: \"all-empty-arrays\") { id string optString arrayOfStrings int_ optInt arrayOfInts float_ optFloat arrayOfFloats bool optBool bigInt optBigInt arrayOfBigInts bigDecimal optBigDecimal bigDecimalWithConfig arrayOfBigDecimals timestamp optTimestamp json enumField optEnumField } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes_by_pk": {
+    "id": "all-empty-arrays",
+    "string": "empty",
+    "optString": null,
+    "arrayOfStrings": [],
+    "int_": 0,
+    "optInt": null,
+    "arrayOfInts": [],
+    "float_": "0",
+    "optFloat": null,
+    "arrayOfFloats": [],
+    "bool": false,
+    "optBool": null,
+    "bigInt": "0",
+    "optBigInt": null,
+    "arrayOfBigInts": [],
+    "bigDecimal": "0",
+    "optBigDecimal": null,
+    "bigDecimalWithConfig": "0.00000000",
+    "arrayOfBigDecimals": [],
+    "timestamp": "2024-01-01T00:00:00+00:00",
+    "optTimestamp": null,
+    "json": {},
+    "enumField": "USER",
+    "optEnumField": null
+   }
+  }
+ }
+}

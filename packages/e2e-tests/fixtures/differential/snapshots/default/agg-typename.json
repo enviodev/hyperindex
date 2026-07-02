@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User_aggregate { __typename aggregate { __typename count } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_aggregate": {
+    "__typename": "User_aggregate",
+    "aggregate": {
+     "__typename": "User_aggregate_fields",
+     "count": 6
+    }
+   }
+  }
+ }
+}

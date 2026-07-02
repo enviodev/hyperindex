@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {id: {_eq: \"all-1\"}}) { json(path: \"totally broken [\") } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "parse json path error: totally broken [. Accept letters, digits, underscore (_) or hyphen (-) only. Use quotes enclosed in bracket ([\"...\"]) if there is any special character",
+    "extensions": {
+     "path": "$.selectionSet.EntityWithAllTypes.selectionSet.json.args",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

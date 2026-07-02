@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Gravatar(where: {owner: {accountType: {_eq: \"ADMIN\"}}}, order_by: {id: asc}) { id owner { id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Gravatar": [
+    {
+     "id": "grav-1",
+     "owner": {
+      "id": "user-1"
+     }
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,36 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($b: Boolean!) { EntityWithAllNonArrayTypes(where: {bool: {_eq: $b}}, order_by: {id: asc}) { id bool } }",
+  "variables": {
+   "b": "true"
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-1",
+     "bool": true
+    },
+    {
+     "id": "scalar-empty",
+     "bool": true
+    },
+    {
+     "id": "scalar-extremes",
+     "bool": true
+    },
+    {
+     "id": "scalar-neg-inf",
+     "bool": true
+    },
+    {
+     "id": "scalar-unicode",
+     "bool": true
+    }
+   ]
+  }
+ }
+}

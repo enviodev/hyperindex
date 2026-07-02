@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "fragment Unused on User { id } { User(limit: 1) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-1"
+    }
+   ]
+  }
+ }
+}

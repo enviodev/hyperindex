@@ -1,0 +1,20 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($f: float8!) { EntityWithAllNonArrayTypes(where: {float_: {_eq: $f}}, order_by: {id: asc}) { id float_ } }",
+  "variables": {
+   "f": "1.5"
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-1",
+     "float_": "1.5"
+    }
+   ]
+  }
+ }
+}

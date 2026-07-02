@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes(where: {string: {_eq: \"héllo wörld 中文测试 🚀🎉\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-unicode"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,46 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($ord: [Token_order_by!]!) { Token(order_by: $ord, limit: 4) { id tokenId owner_id } }",
+  "variables": {
+   "ord": [
+    {
+     "owner_id": "asc"
+    },
+    {
+     "tokenId": "desc"
+    },
+    {
+     "id": "asc"
+    }
+   ]
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-8",
+     "tokenId": "8",
+     "owner_id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "tok-7",
+     "tokenId": "7",
+     "owner_id": "user-1"
+    },
+    {
+     "id": "tok-2",
+     "tokenId": "1",
+     "owner_id": "user-1"
+    },
+    {
+     "id": "tok-1",
+     "tokenId": "0",
+     "owner_id": "user-1"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,30 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ exists: User(where: {gravatar: {}}, order_by: {id: asc}) { id } fkNotNull: User(where: {gravatar_id: {_is_null: false}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "exists": [
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    }
+   ],
+   "fkNotNull": [
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

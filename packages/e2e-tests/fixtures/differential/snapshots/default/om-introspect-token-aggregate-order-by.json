@@ -1,0 +1,92 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"Token_aggregate_order_by\") { inputFields { name type { name kind } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "inputFields": [
+     {
+      "name": "avg",
+      "type": {
+       "name": "Token_avg_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     },
+     {
+      "name": "count",
+      "type": {
+       "name": "order_by",
+       "kind": "ENUM"
+      }
+     },
+     {
+      "name": "max",
+      "type": {
+       "name": "Token_max_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     },
+     {
+      "name": "min",
+      "type": {
+       "name": "Token_min_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     },
+     {
+      "name": "stddev",
+      "type": {
+       "name": "Token_stddev_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     },
+     {
+      "name": "stddev_pop",
+      "type": {
+       "name": "Token_stddev_pop_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     },
+     {
+      "name": "stddev_samp",
+      "type": {
+       "name": "Token_stddev_samp_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     },
+     {
+      "name": "sum",
+      "type": {
+       "name": "Token_sum_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     },
+     {
+      "name": "var_pop",
+      "type": {
+       "name": "Token_var_pop_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     },
+     {
+      "name": "var_samp",
+      "type": {
+       "name": "Token_var_samp_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     },
+     {
+      "name": "variance",
+      "type": {
+       "name": "Token_variance_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     }
+    ]
+   }
+  }
+ }
+}

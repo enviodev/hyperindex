@@ -1,0 +1,14 @@
+{
+ "role": "public",
+ "request": {
+  "query": "fragment F on order_by { x } { User(order_by: {id: asc}, limit: 1) { ...F } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {}
+   ]
+  }
+ }
+}

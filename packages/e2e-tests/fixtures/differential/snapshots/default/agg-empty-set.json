@@ -1,0 +1,28 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User_aggregate(where: {id: {_eq: \"missing\"}}) { aggregate { count sum { updatesCountOnUserForTesting } avg { updatesCountOnUserForTesting } min { id } max { id } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_aggregate": {
+    "aggregate": {
+     "count": 0,
+     "sum": {
+      "updatesCountOnUserForTesting": null
+     },
+     "avg": {
+      "updatesCountOnUserForTesting": null
+     },
+     "min": {
+      "id": null
+     },
+     "max": {
+      "id": null
+     }
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {accountType: {_eq: \"USER\"}, gravatar_id: {_is_null: false}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

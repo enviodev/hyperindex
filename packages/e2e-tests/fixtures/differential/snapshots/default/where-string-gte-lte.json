@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimpleEntity(where: {id: {_gte: \"simple-2\", _lte: \"simple-5\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-2"
+    },
+    {
+     "id": "simple-3"
+    },
+    {
+     "id": "simple-4"
+    },
+    {
+     "id": "simple-5"
+    }
+   ]
+  }
+ }
+}

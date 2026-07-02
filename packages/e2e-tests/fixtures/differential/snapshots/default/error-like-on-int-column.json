@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {updatesCountOnUserForTesting: {_like: \"%1%\"}}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field '_like' not found in type: 'Int_comparison_exp'",
+    "extensions": {
+     "path": "$.selectionSet.User.args.where.updatesCountOnUserForTesting._like",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

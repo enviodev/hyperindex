@@ -1,0 +1,55 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}) { id address gravatar_id updatesCountOnUserForTesting accountType } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "address": "0xaaaa000000000000000000000000000000000005",
+     "gravatar_id": null,
+     "updatesCountOnUserForTesting": 5,
+     "accountType": "USER"
+    },
+    {
+     "id": "user-1",
+     "address": "0xaaaa000000000000000000000000000000000001",
+     "gravatar_id": "grav-1",
+     "updatesCountOnUserForTesting": 0,
+     "accountType": "ADMIN"
+    },
+    {
+     "id": "user-2",
+     "address": "0xaaaa000000000000000000000000000000000002",
+     "gravatar_id": "grav-2",
+     "updatesCountOnUserForTesting": 42,
+     "accountType": "USER"
+    },
+    {
+     "id": "user-3",
+     "address": "0xaaaa000000000000000000000000000000000003",
+     "gravatar_id": null,
+     "updatesCountOnUserForTesting": 2147483647,
+     "accountType": "USER"
+    },
+    {
+     "id": "user-4",
+     "address": "0xaaaa000000000000000000000000000000000004",
+     "gravatar_id": null,
+     "updatesCountOnUserForTesting": -2147483648,
+     "accountType": "ADMIN"
+    },
+    {
+     "id": "user-dangling",
+     "address": "0xaaaa000000000000000000000000000000000006",
+     "gravatar_id": "grav-missing",
+     "updatesCountOnUserForTesting": 7,
+     "accountType": "USER"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($ids: [String!]!) { SimpleEntity(where: {id: {_in: $ids}}, order_by: {id: asc}) { id } }",
+  "variables": {
+   "ids": 5
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "parsing Text failed, expected String, but encountered Number",
+    "extensions": {
+     "path": "$.selectionSet.SimpleEntity.args.where.id._in[0]",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

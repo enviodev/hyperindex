@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ ilike: User(where: {address: {_ilike: \"0XAAAA%3\"}}, order_by: {id: asc}) { id } nilike: User(where: {address: {_nilike: \"0XAAAA%3\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "ilike": [
+    {
+     "id": "user-3"
+    }
+   ],
+   "nilike": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-4"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

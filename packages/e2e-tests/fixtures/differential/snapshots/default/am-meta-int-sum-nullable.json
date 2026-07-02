@@ -1,0 +1,21 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ _meta_aggregate { aggregate { sum { endBlock firstEventBlock startBlock progressBlock } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "_meta_aggregate": {
+    "aggregate": {
+     "sum": {
+      "endBlock": 5000,
+      "firstEventBlock": 10861674,
+      "startBlock": 1,
+      "progressBlock": 10865773
+     }
+    }
+   }
+  }
+ }
+}

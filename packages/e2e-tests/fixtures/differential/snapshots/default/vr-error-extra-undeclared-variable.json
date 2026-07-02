@@ -1,0 +1,23 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($l: Int) { SimpleEntity(order_by: {id: asc}, limit: $l) { id } }",
+  "variables": {
+   "l": 2,
+   "extraneous": "ignored",
+   "another": 5
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "unexpected variables in variableValues: extraneous, another",
+    "extensions": {
+     "path": "$",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

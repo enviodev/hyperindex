@@ -1,0 +1,4233 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ __type(name: \"query_root\") { fields { name description args { name description type { kind name ofType { kind name ofType { kind name ofType { kind name } } } } defaultValue } type { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "fields": [
+     {
+      "name": "A",
+      "description": "fetch data from the table: \"A\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "A_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "A_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "A_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "A"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "A_aggregate",
+      "description": "fetch aggregated fields from the table: \"A\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "A_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "A_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "A_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "A_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "A_by_pk",
+      "description": "fetch data from the table: \"A\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "A",
+       "ofType": null
+      }
+     },
+     {
+      "name": "B",
+      "description": "fetch data from the table: \"B\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "B_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "B_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "B_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "B"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "B_aggregate",
+      "description": "fetch aggregated fields from the table: \"B\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "B_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "B_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "B_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "B_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "B_by_pk",
+      "description": "fetch data from the table: \"B\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "B",
+       "ofType": null
+      }
+     },
+     {
+      "name": "C",
+      "description": "fetch data from the table: \"C\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "C_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "C_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "C_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "C"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "C_aggregate",
+      "description": "fetch aggregated fields from the table: \"C\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "C_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "C_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "C_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "C_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "C_by_pk",
+      "description": "fetch data from the table: \"C\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "C",
+       "ofType": null
+      }
+     },
+     {
+      "name": "CustomSelectionTestPass",
+      "description": "fetch data from the table: \"CustomSelectionTestPass\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "CustomSelectionTestPass_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "CustomSelectionTestPass_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "CustomSelectionTestPass_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "CustomSelectionTestPass"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "CustomSelectionTestPass_aggregate",
+      "description": "fetch aggregated fields from the table: \"CustomSelectionTestPass\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "CustomSelectionTestPass_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "CustomSelectionTestPass_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "CustomSelectionTestPass_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "CustomSelectionTestPass_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "CustomSelectionTestPass_by_pk",
+      "description": "fetch data from the table: \"CustomSelectionTestPass\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "CustomSelectionTestPass",
+       "ofType": null
+      }
+     },
+     {
+      "name": "D",
+      "description": "fetch data from the table: \"D\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "D_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "D_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "D_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "D"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "D_aggregate",
+      "description": "fetch aggregated fields from the table: \"D\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "D_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "D_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "D_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "D_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "D_by_pk",
+      "description": "fetch data from the table: \"D\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "D",
+       "ofType": null
+      }
+     },
+     {
+      "name": "EntityWith63LenghtName______________________________________one",
+      "description": "fetch data from the table: \"EntityWith63LenghtName______________________________________one\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWith63LenghtName______________________________________one_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWith63LenghtName______________________________________one_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWith63LenghtName______________________________________one_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "EntityWith63LenghtName______________________________________one"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "EntityWith63LenghtName______________________________________one_aggregate",
+      "description": "fetch aggregated fields from the table: \"EntityWith63LenghtName______________________________________one\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWith63LenghtName______________________________________one_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWith63LenghtName______________________________________one_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWith63LenghtName______________________________________one_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "EntityWith63LenghtName______________________________________one_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "EntityWith63LenghtName______________________________________one_by_pk",
+      "description": "fetch data from the table: \"EntityWith63LenghtName______________________________________one\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "EntityWith63LenghtName______________________________________one",
+       "ofType": null
+      }
+     },
+     {
+      "name": "EntityWith63LenghtName______________________________________two",
+      "description": "fetch data from the table: \"EntityWith63LenghtName______________________________________two\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWith63LenghtName______________________________________two_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWith63LenghtName______________________________________two_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWith63LenghtName______________________________________two_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "EntityWith63LenghtName______________________________________two"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "EntityWith63LenghtName______________________________________two_aggregate",
+      "description": "fetch aggregated fields from the table: \"EntityWith63LenghtName______________________________________two\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWith63LenghtName______________________________________two_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWith63LenghtName______________________________________two_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWith63LenghtName______________________________________two_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "EntityWith63LenghtName______________________________________two_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "EntityWith63LenghtName______________________________________two_by_pk",
+      "description": "fetch data from the table: \"EntityWith63LenghtName______________________________________two\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "EntityWith63LenghtName______________________________________two",
+       "ofType": null
+      }
+     },
+     {
+      "name": "EntityWithAllNonArrayTypes",
+      "description": "fetch data from the table: \"EntityWithAllNonArrayTypes\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWithAllNonArrayTypes_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWithAllNonArrayTypes_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWithAllNonArrayTypes_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "EntityWithAllNonArrayTypes"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "EntityWithAllNonArrayTypes_aggregate",
+      "description": "fetch aggregated fields from the table: \"EntityWithAllNonArrayTypes\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWithAllNonArrayTypes_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWithAllNonArrayTypes_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWithAllNonArrayTypes_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "EntityWithAllNonArrayTypes_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "EntityWithAllNonArrayTypes_by_pk",
+      "description": "fetch data from the table: \"EntityWithAllNonArrayTypes\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "EntityWithAllNonArrayTypes",
+       "ofType": null
+      }
+     },
+     {
+      "name": "EntityWithAllTypes",
+      "description": "fetch data from the table: \"EntityWithAllTypes\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWithAllTypes_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWithAllTypes_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWithAllTypes_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "EntityWithAllTypes"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "EntityWithAllTypes_aggregate",
+      "description": "fetch aggregated fields from the table: \"EntityWithAllTypes\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWithAllTypes_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWithAllTypes_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWithAllTypes_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "EntityWithAllTypes_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "EntityWithAllTypes_by_pk",
+      "description": "fetch data from the table: \"EntityWithAllTypes\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "EntityWithAllTypes",
+       "ofType": null
+      }
+     },
+     {
+      "name": "EntityWithBigDecimal",
+      "description": "fetch data from the table: \"EntityWithBigDecimal\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWithBigDecimal_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWithBigDecimal_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWithBigDecimal_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "EntityWithBigDecimal"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "EntityWithBigDecimal_aggregate",
+      "description": "fetch aggregated fields from the table: \"EntityWithBigDecimal\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWithBigDecimal_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWithBigDecimal_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWithBigDecimal_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "EntityWithBigDecimal_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "EntityWithBigDecimal_by_pk",
+      "description": "fetch data from the table: \"EntityWithBigDecimal\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "EntityWithBigDecimal",
+       "ofType": null
+      }
+     },
+     {
+      "name": "EntityWithRestrictedReScriptField",
+      "description": "fetch data from the table: \"EntityWithRestrictedReScriptField\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWithRestrictedReScriptField_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWithRestrictedReScriptField_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWithRestrictedReScriptField_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "EntityWithRestrictedReScriptField"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "EntityWithRestrictedReScriptField_aggregate",
+      "description": "fetch aggregated fields from the table: \"EntityWithRestrictedReScriptField\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWithRestrictedReScriptField_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWithRestrictedReScriptField_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWithRestrictedReScriptField_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "EntityWithRestrictedReScriptField_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "EntityWithRestrictedReScriptField_by_pk",
+      "description": "fetch data from the table: \"EntityWithRestrictedReScriptField\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "EntityWithRestrictedReScriptField",
+       "ofType": null
+      }
+     },
+     {
+      "name": "EntityWithTimestamp",
+      "description": "fetch data from the table: \"EntityWithTimestamp\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWithTimestamp_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWithTimestamp_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWithTimestamp_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "EntityWithTimestamp"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "EntityWithTimestamp_aggregate",
+      "description": "fetch aggregated fields from the table: \"EntityWithTimestamp\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "EntityWithTimestamp_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "EntityWithTimestamp_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "EntityWithTimestamp_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "EntityWithTimestamp_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "EntityWithTimestamp_by_pk",
+      "description": "fetch data from the table: \"EntityWithTimestamp\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "EntityWithTimestamp",
+       "ofType": null
+      }
+     },
+     {
+      "name": "Gravatar",
+      "description": "fetch data from the table: \"Gravatar\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "Gravatar_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "Gravatar_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "Gravatar_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "Gravatar"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "Gravatar_aggregate",
+      "description": "fetch aggregated fields from the table: \"Gravatar\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "Gravatar_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "Gravatar_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "Gravatar_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "Gravatar_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "Gravatar_by_pk",
+      "description": "fetch data from the table: \"Gravatar\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Gravatar",
+       "ofType": null
+      }
+     },
+     {
+      "name": "NftCollection",
+      "description": "fetch data from the table: \"NftCollection\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "NftCollection_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "NftCollection_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "NftCollection_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "NftCollection"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "NftCollection_aggregate",
+      "description": "fetch aggregated fields from the table: \"NftCollection\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "NftCollection_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "NftCollection_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "NftCollection_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "NftCollection_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "NftCollection_by_pk",
+      "description": "fetch data from the table: \"NftCollection\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "NftCollection",
+       "ofType": null
+      }
+     },
+     {
+      "name": "PostgresNumericPrecisionEntityTester",
+      "description": "fetch data from the table: \"PostgresNumericPrecisionEntityTester\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "PostgresNumericPrecisionEntityTester_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "PostgresNumericPrecisionEntityTester_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "PostgresNumericPrecisionEntityTester_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "PostgresNumericPrecisionEntityTester"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "PostgresNumericPrecisionEntityTester_aggregate",
+      "description": "fetch aggregated fields from the table: \"PostgresNumericPrecisionEntityTester\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "PostgresNumericPrecisionEntityTester_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "PostgresNumericPrecisionEntityTester_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "PostgresNumericPrecisionEntityTester_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "PostgresNumericPrecisionEntityTester_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "PostgresNumericPrecisionEntityTester_by_pk",
+      "description": "fetch data from the table: \"PostgresNumericPrecisionEntityTester\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "PostgresNumericPrecisionEntityTester",
+       "ofType": null
+      }
+     },
+     {
+      "name": "SimpleEntity",
+      "description": "fetch data from the table: \"SimpleEntity\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "SimpleEntity_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "SimpleEntity_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "SimpleEntity_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "SimpleEntity"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "SimpleEntity_aggregate",
+      "description": "fetch aggregated fields from the table: \"SimpleEntity\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "SimpleEntity_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "SimpleEntity_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "SimpleEntity_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "SimpleEntity_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "SimpleEntity_by_pk",
+      "description": "fetch data from the table: \"SimpleEntity\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "SimpleEntity",
+       "ofType": null
+      }
+     },
+     {
+      "name": "SimulateTestEvent",
+      "description": "fetch data from the table: \"SimulateTestEvent\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "SimulateTestEvent_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "SimulateTestEvent_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "SimulateTestEvent_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "SimulateTestEvent"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "SimulateTestEvent_aggregate",
+      "description": "fetch aggregated fields from the table: \"SimulateTestEvent\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "SimulateTestEvent_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "SimulateTestEvent_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "SimulateTestEvent_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "SimulateTestEvent_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "SimulateTestEvent_by_pk",
+      "description": "fetch data from the table: \"SimulateTestEvent\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "SimulateTestEvent",
+       "ofType": null
+      }
+     },
+     {
+      "name": "Token",
+      "description": "fetch data from the table: \"Token\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "Token_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "Token_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "Token_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "Token"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "Token_aggregate",
+      "description": "fetch aggregated fields from the table: \"Token\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "Token_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "Token_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "Token_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "Token_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "Token_by_pk",
+      "description": "fetch data from the table: \"Token\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "Token",
+       "ofType": null
+      }
+     },
+     {
+      "name": "User",
+      "description": "fetch data from the table: \"User\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "User_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "User_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "User_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "User"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "User_aggregate",
+      "description": "fetch aggregated fields from the table: \"User\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "User_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "User_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "User_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "User_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "User_by_pk",
+      "description": "fetch data from the table: \"User\" using primary key columns",
+      "args": [
+       {
+        "name": "id",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "String",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "User",
+       "ofType": null
+      }
+     },
+     {
+      "name": "_meta",
+      "description": "fetch data from the table: \"_meta\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "_meta_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "_meta_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "_meta_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "_meta"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "_meta_aggregate",
+      "description": "fetch aggregated fields from the table: \"_meta\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "_meta_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "_meta_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "_meta_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "_meta_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "chain_metadata",
+      "description": "fetch data from the table: \"chain_metadata\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "chain_metadata_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "chain_metadata_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "chain_metadata_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "chain_metadata"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "chain_metadata_aggregate",
+      "description": "fetch aggregated fields from the table: \"chain_metadata\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "chain_metadata_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "chain_metadata_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "chain_metadata_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "chain_metadata_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "raw_events",
+      "description": "fetch data from the table: \"raw_events\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "raw_events_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "raw_events_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "raw_events_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "LIST",
+        "name": null,
+        "ofType": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "OBJECT",
+          "name": "raw_events"
+         }
+        }
+       }
+      }
+     },
+     {
+      "name": "raw_events_aggregate",
+      "description": "fetch aggregated fields from the table: \"raw_events\"",
+      "args": [
+       {
+        "name": "distinct_on",
+        "description": "distinct select on columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "ENUM",
+           "name": "raw_events_select_column",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "limit",
+        "description": "limit the number of rows returned",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "offset",
+        "description": "skip the first n rows. Use only with order_by",
+        "type": {
+         "kind": "SCALAR",
+         "name": "Int",
+         "ofType": null
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "order_by",
+        "description": "sort the rows by one or more columns",
+        "type": {
+         "kind": "LIST",
+         "name": null,
+         "ofType": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+           "kind": "INPUT_OBJECT",
+           "name": "raw_events_order_by",
+           "ofType": null
+          }
+         }
+        },
+        "defaultValue": null
+       },
+       {
+        "name": "where",
+        "description": "filter the rows returned",
+        "type": {
+         "kind": "INPUT_OBJECT",
+         "name": "raw_events_bool_exp",
+         "ofType": null
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "OBJECT",
+        "name": "raw_events_aggregate",
+        "ofType": null
+       }
+      }
+     },
+     {
+      "name": "raw_events_by_pk",
+      "description": "fetch data from the table: \"raw_events\" using primary key columns",
+      "args": [
+       {
+        "name": "serial",
+        "description": null,
+        "type": {
+         "kind": "NON_NULL",
+         "name": null,
+         "ofType": {
+          "kind": "SCALAR",
+          "name": "bigint",
+          "ofType": null
+         }
+        },
+        "defaultValue": null
+       }
+      ],
+      "type": {
+       "kind": "OBJECT",
+       "name": "raw_events",
+       "ofType": null
+      }
+     }
+    ]
+   }
+  }
+ }
+}

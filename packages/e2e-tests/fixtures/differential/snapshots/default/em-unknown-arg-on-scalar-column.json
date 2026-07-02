@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}, limit: 1) { id address(bogus: 1) } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "'address' has no argument named 'bogus'",
+    "extensions": {
+     "path": "$.selectionSet.User.selectionSet.address",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query GetUsers { User(order_by: {id: asc}, limit: 1) { id } } query GetGravatars { Gravatar(order_by: {id: asc}, limit: 1) { id } }",
+  "operationName": "GetGravatars"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Gravatar": [
+    {
+     "id": "grav-1"
+    }
+   ]
+  }
+ }
+}

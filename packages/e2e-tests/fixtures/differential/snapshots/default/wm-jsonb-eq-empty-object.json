@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {json: {_eq: {}}}, order_by: {id: asc}) { id json } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-empty-arrays",
+     "json": {}
+    }
+   ]
+  }
+ }
+}

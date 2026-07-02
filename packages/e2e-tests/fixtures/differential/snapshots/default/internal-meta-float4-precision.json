@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ _meta(where: {chainId: {_eq: 1}}) { chainId eventsProcessed } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "_meta": [
+    {
+     "chainId": 1,
+     "eventsProcessed": 2147487700
+    }
+   ]
+  }
+ }
+}

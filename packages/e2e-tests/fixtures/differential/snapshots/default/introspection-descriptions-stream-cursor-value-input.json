@@ -1,0 +1,35 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"User_stream_cursor_value_input\") { inputFields { name description } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "inputFields": [
+     {
+      "name": "accountType",
+      "description": null
+     },
+     {
+      "name": "address",
+      "description": "The user's wallet address, lowercased."
+     },
+     {
+      "name": "gravatar_id",
+      "description": null
+     },
+     {
+      "name": "id",
+      "description": null
+     },
+     {
+      "name": "updatesCountOnUserForTesting",
+      "description": null
+     }
+    ]
+   }
+  }
+ }
+}

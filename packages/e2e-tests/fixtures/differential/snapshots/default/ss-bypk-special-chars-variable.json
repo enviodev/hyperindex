@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($id: String!) { User_by_pk(id: $id) { id address accountType } }",
+  "variables": {
+   "id": "user \"quoted\" 🚀"
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_by_pk": {
+    "id": "user \"quoted\" 🚀",
+    "address": "0xaaaa000000000000000000000000000000000005",
+    "accountType": "USER"
+   }
+  }
+ }
+}

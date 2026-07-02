@@ -1,0 +1,46 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ Token_aggregate(where: {id: {_eq: \"missing\"}}) { aggregate { count sum { tokenId } avg { tokenId } min { tokenId } max { tokenId } stddev { tokenId } stddev_pop { tokenId } stddev_samp { tokenId } var_pop { tokenId } var_samp { tokenId } variance { tokenId } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token_aggregate": {
+    "aggregate": {
+     "count": 0,
+     "sum": {
+      "tokenId": null
+     },
+     "avg": {
+      "tokenId": null
+     },
+     "min": {
+      "tokenId": null
+     },
+     "max": {
+      "tokenId": null
+     },
+     "stddev": {
+      "tokenId": null
+     },
+     "stddev_pop": {
+      "tokenId": null
+     },
+     "stddev_samp": {
+      "tokenId": null
+     },
+     "var_pop": {
+      "tokenId": null
+     },
+     "var_samp": {
+      "tokenId": null
+     },
+     "variance": {
+      "tokenId": null
+     }
+    }
+   }
+  }
+ }
+}

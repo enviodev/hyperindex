@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {tokens: {tokenId: asc}}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'tokens' not found in type: 'User_order_by'",
+    "extensions": {
+     "path": "$.selectionSet.User.args.order_by[0].tokens",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

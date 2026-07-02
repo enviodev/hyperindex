@@ -1,0 +1,22 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($skip: Boolean!) { User(order_by: {id: asc}, limit: 2) { id ... on User @skip(if: $skip) { address } } }",
+  "variables": {
+   "skip": true
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    }
+   ]
+  }
+ }
+}

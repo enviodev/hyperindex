@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($lim: Int = 2) { User(order_by: {id: asc}, limit: $lim) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,15 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithTimestamp_by_pk(id: \"ts-future\") { id timestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithTimestamp_by_pk": {
+    "id": "ts-future",
+    "timestamp": "9999-12-31T23:59:59.999999+00:00"
+   }
+  }
+ }
+}

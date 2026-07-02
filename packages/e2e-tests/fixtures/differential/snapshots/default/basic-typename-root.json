@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __typename User(order_by: {id: asc}, limit: 1) { __typename id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__typename": "query_root",
+   "User": [
+    {
+     "__typename": "User",
+     "id": "user \"quoted\" 🚀"
+    }
+   ]
+  }
+ }
+}

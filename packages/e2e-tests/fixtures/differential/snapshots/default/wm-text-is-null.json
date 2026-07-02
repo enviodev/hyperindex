@@ -1,0 +1,32 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ isNull: User(where: {address: {_is_null: true}}, order_by: {id: asc}) { id } notNull: User(where: {address: {_is_null: false}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "isNull": [],
+   "notNull": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-4"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

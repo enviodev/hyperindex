@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(limit: 1) { id @skip } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "missing required field 'if'",
+    "extensions": {
+     "path": "$.selectionSet.User.selectionSet.skip.args.if",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

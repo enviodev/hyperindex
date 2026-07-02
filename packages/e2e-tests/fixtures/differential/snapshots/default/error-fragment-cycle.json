@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "fragment A1 on User { ...B1 } fragment B1 on User { ...A1 } { User(limit: 1) { ...A1 } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "the fragment definition(s) A1 and B1 form a cycle",
+    "extensions": {
+     "path": "$.selectionSet.User.selectionSet.A1.selectionSet.B1.selectionSet",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

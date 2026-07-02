@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ eq: EntityWithBigDecimal(where: {bigDecimal: {_eq: \"1.1\"}}, order_by: {id: asc}) { id bigDecimal } neq: EntityWithBigDecimal(where: {bigDecimal: {_neq: \"1.1\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "eq": [
+    {
+     "id": "bd-2",
+     "bigDecimal": "1.10"
+    }
+   ],
+   "neq": [
+    {
+     "id": "bd-1"
+    },
+    {
+     "id": "bd-3"
+    },
+    {
+     "id": "bd-4"
+    },
+    {
+     "id": "bd-5"
+    }
+   ]
+  }
+ }
+}

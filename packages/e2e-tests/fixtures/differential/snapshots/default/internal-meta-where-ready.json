@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ _meta(where: {isReady: {_eq: true}}) { chainId readyAt } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "_meta": [
+    {
+     "chainId": 1,
+     "readyAt": "2024-11-01T10:20:30.456+00:00"
+    }
+   ]
+  }
+ }
+}

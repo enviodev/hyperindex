@@ -1,0 +1,23 @@
+{
+ "role": "public",
+ "request": {
+  "query": "fragment UserFields on User { id address accountType } { User(order_by: {id: asc}, limit: 2) { ...UserFields } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "address": "0xaaaa000000000000000000000000000000000005",
+     "accountType": "USER"
+    },
+    {
+     "id": "user-1",
+     "address": "0xaaaa000000000000000000000000000000000001",
+     "accountType": "ADMIN"
+    }
+   ]
+  }
+ }
+}

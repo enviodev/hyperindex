@@ -1,0 +1,29 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {id: {_eq: \"user-1\"}}) { id low: tokens(where: {tokenId: {_lt: 1}}, order_by: {id: asc}) { id } high: tokens(where: {tokenId: {_gte: 1}}, order_by: {id: asc}) { id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-1",
+     "low": [
+      {
+       "id": "tok-1"
+      }
+     ],
+     "high": [
+      {
+       "id": "tok-2"
+      },
+      {
+       "id": "tok-7"
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

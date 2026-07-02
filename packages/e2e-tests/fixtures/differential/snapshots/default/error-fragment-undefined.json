@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(limit: 1) { ...NoSuchFragment } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "reference to undefined fragment \"NoSuchFragment\"",
+    "extensions": {
+     "path": "$.selectionSet.User.selectionSet",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

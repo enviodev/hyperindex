@@ -1,0 +1,51 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {id: {_eq: \"user-1\"}}) { id tokens(order_by: {id: asc}) { id owner { id tokens(order_by: {id: asc}, limit: 1) { id } } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-1",
+     "tokens": [
+      {
+       "id": "tok-1",
+       "owner": {
+        "id": "user-1",
+        "tokens": [
+         {
+          "id": "tok-1"
+         }
+        ]
+       }
+      },
+      {
+       "id": "tok-2",
+       "owner": {
+        "id": "user-1",
+        "tokens": [
+         {
+          "id": "tok-1"
+         }
+        ]
+       }
+      },
+      {
+       "id": "tok-7",
+       "owner": {
+        "id": "user-1",
+        "tokens": [
+         {
+          "id": "tok-1"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

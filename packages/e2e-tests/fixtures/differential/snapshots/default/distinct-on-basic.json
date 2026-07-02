@@ -1,0 +1,43 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(distinct_on: owner_id, order_by: [{owner_id: asc}, {tokenId: desc}]) { id owner_id tokenId } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-8",
+     "owner_id": "user \"quoted\" 🚀",
+     "tokenId": "8"
+    },
+    {
+     "id": "tok-7",
+     "owner_id": "user-1",
+     "tokenId": "7"
+    },
+    {
+     "id": "tok-4",
+     "owner_id": "user-2",
+     "tokenId": "1000000000000000000000000000000"
+    },
+    {
+     "id": "tok-5",
+     "owner_id": "user-3",
+     "tokenId": "-5"
+    },
+    {
+     "id": "tok-9",
+     "owner_id": "user-4",
+     "tokenId": "9999999999999999999999999999999999999999999999999999999999999999999999999999"
+    },
+    {
+     "id": "tok-6",
+     "owner_id": "user-missing",
+     "tokenId": "123456789"
+    }
+   ]
+  }
+ }
+}

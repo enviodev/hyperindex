@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($p: String) { EntityWithAllTypes_by_pk(id: \"all-1\") { id json(path: $p) } }",
+  "variables": {
+   "p": "$.nested.a"
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes_by_pk": {
+    "id": "all-1",
+    "json": [
+     1,
+     2
+    ]
+   }
+  }
+ }
+}

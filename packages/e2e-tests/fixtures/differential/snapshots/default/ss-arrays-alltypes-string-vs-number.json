@@ -1,0 +1,163 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(order_by: {id: asc}) { id arrayOfInts float_ arrayOfFloats bigInt arrayOfBigInts bigDecimal arrayOfBigDecimals } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-1",
+     "arrayOfInts": [
+      1,
+      2,
+      3
+     ],
+     "float_": "1.5",
+     "arrayOfFloats": [
+      1.5,
+      2.5,
+      -3.5
+     ],
+     "bigInt": "1000",
+     "arrayOfBigInts": [
+      "1",
+      "2",
+      "3"
+     ],
+     "bigDecimal": "10.5",
+     "arrayOfBigDecimals": [
+      "1.5",
+      "2.25"
+     ]
+    },
+    {
+     "id": "all-array-edge",
+     "arrayOfInts": [
+      -2147483648,
+      0,
+      2147483647
+     ],
+     "float_": "-1.5",
+     "arrayOfFloats": [
+      0,
+      -0.5
+     ],
+     "bigInt": "-1",
+     "arrayOfBigInts": [
+      "-99999999999999999999999999999999999999",
+      "0",
+      "99999999999999999999999999999999999999"
+     ],
+     "bigDecimal": "-0.5",
+     "arrayOfBigDecimals": [
+      "-1.5",
+      "0.0",
+      "1.500"
+     ]
+    },
+    {
+     "id": "all-empty-arrays",
+     "arrayOfInts": [],
+     "float_": "0",
+     "arrayOfFloats": [],
+     "bigInt": "0",
+     "arrayOfBigInts": [],
+     "bigDecimal": "0",
+     "arrayOfBigDecimals": []
+    },
+    {
+     "id": "all-json-bool",
+     "arrayOfInts": [
+      9
+     ],
+     "float_": "9.5",
+     "arrayOfFloats": [
+      9.5
+     ],
+     "bigInt": "9",
+     "arrayOfBigInts": [
+      "9"
+     ],
+     "bigDecimal": "9.5",
+     "arrayOfBigDecimals": [
+      "9.5"
+     ]
+    },
+    {
+     "id": "all-json-null",
+     "arrayOfInts": [
+      7
+     ],
+     "float_": "7.5",
+     "arrayOfFloats": [
+      7.5
+     ],
+     "bigInt": "7",
+     "arrayOfBigInts": [
+      "7"
+     ],
+     "bigDecimal": "7.5",
+     "arrayOfBigDecimals": [
+      "7.5"
+     ]
+    },
+    {
+     "id": "all-json-number",
+     "arrayOfInts": [
+      6
+     ],
+     "float_": "6.5",
+     "arrayOfFloats": [
+      6.5
+     ],
+     "bigInt": "6",
+     "arrayOfBigInts": [
+      "6"
+     ],
+     "bigDecimal": "6.5",
+     "arrayOfBigDecimals": [
+      "6.5"
+     ]
+    },
+    {
+     "id": "all-json-string",
+     "arrayOfInts": [
+      5
+     ],
+     "float_": "5.5",
+     "arrayOfFloats": [
+      5.5
+     ],
+     "bigInt": "5",
+     "arrayOfBigInts": [
+      "5"
+     ],
+     "bigDecimal": "5.5",
+     "arrayOfBigDecimals": [
+      "5.5"
+     ]
+    },
+    {
+     "id": "all-json-unicode",
+     "arrayOfInts": [
+      8
+     ],
+     "float_": "8.5",
+     "arrayOfFloats": [
+      8.5
+     ],
+     "bigInt": "8",
+     "arrayOfBigInts": [
+      "8"
+     ],
+     "bigDecimal": "8.5",
+     "arrayOfBigDecimals": [
+      "8.5"
+     ]
+    }
+   ]
+  }
+ }
+}

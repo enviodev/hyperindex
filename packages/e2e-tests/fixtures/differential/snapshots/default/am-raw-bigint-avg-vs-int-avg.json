@@ -1,0 +1,19 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ raw_events_aggregate { aggregate { avg { event_id log_index } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events_aggregate": {
+    "aggregate": {
+     "avg": {
+      "event_id": "2767011611056432744",
+      "log_index": 0.8
+     }
+    }
+   }
+  }
+ }
+}

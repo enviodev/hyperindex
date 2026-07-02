@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($l: Int!) { SimpleEntity(order_by: {id: asc}, limit: $l) { id } }",
+  "variables": {
+   "l": "1"
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "expected a non-negative 32-bit integer for type 'Int', but found a string",
+    "extensions": {
+     "path": "$.selectionSet.SimpleEntity.args.limit",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,54 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ SimulateTestEvent_aggregate { aggregate { count sum { blockNumber logIndex timestamp } avg { blockNumber logIndex timestamp } min { blockNumber logIndex timestamp } max { blockNumber logIndex timestamp } stddev { logIndex } stddev_pop { logIndex } stddev_samp { logIndex } var_pop { timestamp } var_samp { timestamp } variance { timestamp } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimulateTestEvent_aggregate": {
+    "aggregate": {
+     "count": 5,
+     "sum": {
+      "blockNumber": 506,
+      "logIndex": 8,
+      "timestamp": 8500000072
+     },
+     "avg": {
+      "blockNumber": 101.2,
+      "logIndex": 1.6,
+      "timestamp": 1700000014.4
+     },
+     "min": {
+      "blockNumber": 100,
+      "logIndex": 0,
+      "timestamp": 1700000000
+     },
+     "max": {
+      "blockNumber": 103,
+      "logIndex": 5,
+      "timestamp": 1700000036
+     },
+     "stddev": {
+      "logIndex": 2.073644135332772
+     },
+     "stddev_pop": {
+      "logIndex": 1.8547236990991407
+     },
+     "stddev_samp": {
+      "logIndex": 2.073644135332772
+     },
+     "var_pop": {
+      "timestamp": 195.84
+     },
+     "var_samp": {
+      "timestamp": 244.8
+     },
+     "variance": {
+      "timestamp": 244.8
+     }
+    }
+   }
+  }
+ }
+}

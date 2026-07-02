@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query Q @include(if: true) { SimpleEntity(order_by: {id: asc}, limit: 1) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "directive 'include' is not allowed on a query",
+    "extensions": {
+     "path": "$",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

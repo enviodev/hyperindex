@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query A { User(limit: 1) { id } } query A { Gravatar(limit: 1) { id } }",
+  "operationName": "A"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-1"
+    }
+   ]
+  }
+ }
+}

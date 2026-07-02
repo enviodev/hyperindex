@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}, limit: 1) { id gravatar { id bogusField } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'bogusField' not found in type: 'Gravatar'",
+    "extensions": {
+     "path": "$.selectionSet.User.selectionSet.gravatar.selectionSet.bogusField",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

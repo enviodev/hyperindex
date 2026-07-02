@@ -1,0 +1,27 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ raw_events_aggregate { aggregate { stddev { event_id } stddev_pop { event_id } var_pop { event_id } variance { event_id } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events_aggregate": {
+    "aggregate": {
+     "stddev": {
+      "event_id": "2525924460423865524"
+     },
+     "stddev_pop": {
+      "event_id": "2259255519814896225"
+     },
+     "var_pop": {
+      "event_id": "5104235503814076950843814467053950075"
+     },
+     "variance": {
+      "event_id": "6380294379767596188554768083817437594"
+     }
+    }
+   }
+  }
+ }
+}

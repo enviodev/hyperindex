@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($l: String!) { User(order_by: {id: asc}, limit: $l) { id } }",
+  "variables": {
+   "l": "1"
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "variable 'l' is declared as 'String!', but used where 'Int' is expected",
+    "extensions": {
+     "path": "$.selectionSet.User.args.limit",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

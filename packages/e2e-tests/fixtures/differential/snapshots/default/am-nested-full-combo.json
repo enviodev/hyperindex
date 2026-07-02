@@ -1,0 +1,121 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User(order_by: {id: asc}) { id tokens_aggregate(where: {tokenId: {_gte: 0}}, distinct_on: collection_id, order_by: [{collection_id: asc}, {tokenId: desc}], limit: 2, offset: 1) { aggregate { count sum { tokenId } min { tokenId } } nodes { id collection_id tokenId } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 0,
+       "sum": {
+        "tokenId": null
+       },
+       "min": {
+        "tokenId": null
+       }
+      },
+      "nodes": []
+     }
+    },
+    {
+     "id": "user-1",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 1,
+       "sum": {
+        "tokenId": "7"
+       },
+       "min": {
+        "tokenId": "7"
+       }
+      },
+      "nodes": [
+       {
+        "id": "tok-7",
+        "collection_id": "coll-missing",
+        "tokenId": "7"
+       }
+      ]
+     }
+    },
+    {
+     "id": "user-2",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 1,
+       "sum": {
+        "tokenId": "1000000000000000000000000000000"
+       },
+       "min": {
+        "tokenId": "1000000000000000000000000000000"
+       }
+      },
+      "nodes": [
+       {
+        "id": "tok-4",
+        "collection_id": "coll-2",
+        "tokenId": "1000000000000000000000000000000"
+       }
+      ]
+     }
+    },
+    {
+     "id": "user-3",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 0,
+       "sum": {
+        "tokenId": null
+       },
+       "min": {
+        "tokenId": null
+       }
+      },
+      "nodes": []
+     }
+    },
+    {
+     "id": "user-4",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 1,
+       "sum": {
+        "tokenId": "9999999999999999999999999999999999999999999999999999999999999999999999999999"
+       },
+       "min": {
+        "tokenId": "9999999999999999999999999999999999999999999999999999999999999999999999999999"
+       }
+      },
+      "nodes": [
+       {
+        "id": "tok-9",
+        "collection_id": "coll-2",
+        "tokenId": "9999999999999999999999999999999999999999999999999999999999999999999999999999"
+       }
+      ]
+     }
+    },
+    {
+     "id": "user-dangling",
+     "tokens_aggregate": {
+      "aggregate": {
+       "count": 0,
+       "sum": {
+        "tokenId": null
+       },
+       "min": {
+        "tokenId": null
+       }
+      },
+      "nodes": []
+     }
+    }
+   ]
+  }
+ }
+}

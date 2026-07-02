@@ -1,0 +1,53 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}) { id } Gravatar(order_by: {id: asc}) { id } Token(order_by: {id: asc}, limit: 3) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-4"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ],
+   "Gravatar": [
+    {
+     "id": "grav-1"
+    },
+    {
+     "id": "grav-2"
+    },
+    {
+     "id": "grav-3"
+    }
+   ],
+   "Token": [
+    {
+     "id": "tok-1"
+    },
+    {
+     "id": "tok-10"
+    },
+    {
+     "id": "tok-2"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: null) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "unexpected null value for type 'String'",
+    "extensions": {
+     "path": "$.selectionSet.User_by_pk.args.id",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

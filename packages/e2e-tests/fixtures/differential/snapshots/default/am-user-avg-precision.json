@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User_aggregate { aggregate { avg { updatesCountOnUserForTesting } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_aggregate": {
+    "aggregate": {
+     "avg": {
+      "updatesCountOnUserForTesting": 8.833333333333334
+     }
+    }
+   }
+  }
+ }
+}

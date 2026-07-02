@@ -1,0 +1,32 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ eq: SimulateTestEvent(where: {blockNumber: {_eq: 100}}, order_by: {id: asc}) { id blockNumber } neq: SimulateTestEvent(where: {blockNumber: {_neq: 100}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "eq": [
+    {
+     "id": "sim-1",
+     "blockNumber": 100
+    },
+    {
+     "id": "sim-2",
+     "blockNumber": 100
+    }
+   ],
+   "neq": [
+    {
+     "id": "sim-3"
+    },
+    {
+     "id": "sim-4"
+    },
+    {
+     "id": "sim-5"
+    }
+   ]
+  }
+ }
+}

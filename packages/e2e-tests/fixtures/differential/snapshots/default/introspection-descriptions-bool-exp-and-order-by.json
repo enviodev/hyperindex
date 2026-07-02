@@ -1,0 +1,87 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ bool_exp: __type(name: \"User_bool_exp\") { inputFields { name description } } order_by: __type(name: \"User_order_by\") { inputFields { name description } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "bool_exp": {
+    "inputFields": [
+     {
+      "name": "_and",
+      "description": null
+     },
+     {
+      "name": "_not",
+      "description": null
+     },
+     {
+      "name": "_or",
+      "description": null
+     },
+     {
+      "name": "accountType",
+      "description": null
+     },
+     {
+      "name": "address",
+      "description": null
+     },
+     {
+      "name": "gravatar",
+      "description": null
+     },
+     {
+      "name": "gravatar_id",
+      "description": null
+     },
+     {
+      "name": "id",
+      "description": null
+     },
+     {
+      "name": "tokens",
+      "description": null
+     },
+     {
+      "name": "updatesCountOnUserForTesting",
+      "description": null
+     }
+    ]
+   },
+   "order_by": {
+    "inputFields": [
+     {
+      "name": "accountType",
+      "description": null
+     },
+     {
+      "name": "address",
+      "description": null
+     },
+     {
+      "name": "gravatar",
+      "description": null
+     },
+     {
+      "name": "gravatar_id",
+      "description": null
+     },
+     {
+      "name": "id",
+      "description": null
+     },
+     {
+      "name": "tokens_aggregate",
+      "description": null
+     },
+     {
+      "name": "updatesCountOnUserForTesting",
+      "description": null
+     }
+    ]
+   }
+  }
+ }
+}

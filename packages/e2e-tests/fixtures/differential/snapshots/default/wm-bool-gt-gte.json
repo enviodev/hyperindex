@@ -1,0 +1,45 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ gt: EntityWithAllNonArrayTypes(where: {bool: {_gt: false}}, order_by: {id: asc}) { id } gte: EntityWithAllNonArrayTypes(where: {bool: {_gte: true}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "gt": [
+    {
+     "id": "scalar-1"
+    },
+    {
+     "id": "scalar-empty"
+    },
+    {
+     "id": "scalar-extremes"
+    },
+    {
+     "id": "scalar-neg-inf"
+    },
+    {
+     "id": "scalar-unicode"
+    }
+   ],
+   "gte": [
+    {
+     "id": "scalar-1"
+    },
+    {
+     "id": "scalar-empty"
+    },
+    {
+     "id": "scalar-extremes"
+    },
+    {
+     "id": "scalar-neg-inf"
+    },
+    {
+     "id": "scalar-unicode"
+    }
+   ]
+  }
+ }
+}

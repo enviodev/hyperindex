@@ -1,0 +1,32 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ gt: SimulateTestEvent(where: {logIndex: {_gt: 1}}, order_by: {id: asc}) { id logIndex } gte: SimulateTestEvent(where: {logIndex: {_gte: 1}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "gt": [
+    {
+     "id": "sim-4",
+     "logIndex": 5
+    },
+    {
+     "id": "sim-5",
+     "logIndex": 2
+    }
+   ],
+   "gte": [
+    {
+     "id": "sim-2"
+    },
+    {
+     "id": "sim-4"
+    },
+    {
+     "id": "sim-5"
+    }
+   ]
+  }
+ }
+}

@@ -181,8 +181,11 @@ jobs:
     needs: build-envio-package
     timeout-minutes: 9
 
+    # postgres/hasura anchors defined here (first job needing them, in file
+    # order) and reused via aliases below to avoid repeating the identical
+    # `services:` blocks in every job that needs the same containers.
     services:
-      postgres:
+      postgres: &postgres-service
         image: postgres:16
         env:
           POSTGRES_PASSWORD: testing
@@ -196,7 +199,7 @@ jobs:
         ports:
           - 5433:5432
 
-      hasura:
+      hasura: &hasura-service
         image: hasura/graphql-engine:v2.43.0
         env:
           HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
@@ -256,6 +259,136 @@ jobs:
           details: "Tests Failed on main!"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
 
+  # Differential GraphQL test - envio serve must match real Hasura
+  # response-for-response on the recorded corpus. This is the REQUIRED,
+  # fast path: it diffs against the committed oracle snapshots
+  # (fixtures/differential/snapshots/) instead of a live Hasura instance,
+  # so it needs Postgres only. Hasura is used just to *populate* those
+  # snapshots (`pnpm record:differential`, run locally/manually whenever
+  # the corpus changes, not on every CI run) - see
+  # differential-test-live below for the live-Hasura confidence check.
+  differential-test:
+    runs-on: ubuntu-latest
+    needs: build-envio-package
+    timeout-minutes: 9
+
+    services:
+      postgres: *postgres-service
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/prepare-envio-artifacts
+
+      - name: Ensure psql is available
+        run: which psql || (sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client)
+
+      - name: Apply fixture schema + seed
+        run: |
+          PGPASSWORD=testing psql -h localhost -p 5433 -U postgres -d envio-dev -v ON_ERROR_STOP=1 \
+            -f packages/e2e-tests/fixtures/differential/schema.sql \
+            -f packages/e2e-tests/fixtures/differential/seed.sql
+
+      - name: Start envio serve (default phase)
+        uses: ./.github/actions/start-envio-serve
+
+      - name: Diff default phase against oracle snapshots
+        working-directory: packages/e2e-tests
+        run: pnpm exec tsx src/differential/diffServe.ts
+
+      - name: Restart envio serve (limited phase)
+        uses: ./.github/actions/start-envio-serve
+        with:
+          restart: "true"
+          hasura-response-limit: "5"
+          hasura-public-aggregate: '["User","Token","SimpleEntity","raw_events","_meta"]'
+
+      - name: Diff limited phase against oracle snapshots
+        working-directory: packages/e2e-tests
+        run: pnpm exec tsx src/differential/diffServe.ts --phase limited
+
+  # Live-Hasura confidence check: the full HTTP + WebSocket-subscription
+  # suite against both engines running live side by side. Slower (~5 min)
+  # and only catches upstream Hasura behavior drift or gaps the snapshot-
+  # based job above can't see (e.g. live-query semantics) - not required,
+  # so a flaky/slow live run never blocks a merge.
+  differential-test-live:
+    runs-on: ubuntu-latest
+    needs: build-envio-package
+    timeout-minutes: 15
+    continue-on-error: true
+
+    services:
+      postgres: *postgres-service
+      hasura: *hasura-service
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/prepare-envio-artifacts
+
+      - name: Wait for Hasura
+        run: |
+          for i in {1..60}; do
+            if curl -sSf http://localhost:8080/healthz >/dev/null; then
+              echo "Hasura is up"; exit 0; fi; sleep 1; done
+          echo "Hasura did not become ready"; exit 1
+
+      - name: Run live differential suite (HTTP + WebSocket)
+        working-directory: packages/e2e-tests
+        run: pnpm test:differential
+
+  # Performance + resource benchmark: envio serve vs a Hasura baseline
+  # recorded fresh on the SAME runner in the SAME job (CI hardware varies
+  # run to run, so the locally-committed hasura-baseline.json isn't a fair
+  # same-machine comparison here). Informational only - never blocks a
+  # merge on a regression, since CI runners have enough performance
+  # variance on their own that a hard threshold would be flaky.
+  differential-benchmark:
+    runs-on: ubuntu-latest
+    needs: build-envio-package
+    timeout-minutes: 15
+    continue-on-error: true
+
+    services:
+      postgres: *postgres-service
+      hasura: *hasura-service
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/prepare-envio-artifacts
+
+      - name: Wait for Hasura
+        run: |
+          for i in {1..60}; do
+            if curl -sSf http://localhost:8080/healthz >/dev/null; then
+              echo "Hasura is up"; exit 0; fi; sleep 1; done
+          echo "Hasura did not become ready"; exit 1
+
+      - name: Seed bench dataset + record Hasura baseline
+        working-directory: packages/e2e-tests
+        run: |
+          pnpm exec tsx src/differential/setupBenchDataset.ts
+          pnpm exec tsx src/differential/bench.ts --record-baseline --all --budget-ms 800 --min-iters 2 --max-iters 15
+
+      - name: Start envio serve
+        uses: ./.github/actions/start-envio-serve
+
+      - name: Benchmark envio serve against the fresh baseline
+        working-directory: packages/e2e-tests
+        run: pnpm exec tsx src/differential/bench.ts --all --budget-ms 800 --min-iters 2 --max-iters 15
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-report
+          path: packages/e2e-tests/bench-report.md
+          retention-days: 30
+
   # E2E test - runs envio dev with a real indexer scenario
   e2e-test:
     runs-on: ubuntu-latest
@@ -263,33 +396,8 @@ jobs:
     timeout-minutes: 9
 
     services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: testing
-          POSTGRES_DB: envio-dev
-          POSTGRES_USER: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5433:5432
-
-      hasura:
-        image: hasura/graphql-engine:v2.43.0
-        env:
-          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
-          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
-          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
-          HASURA_GRAPHQL_NO_OF_RETRIES: 10
-          HASURA_GRAPHQL_ADMIN_SECRET: testing
-          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
-          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
-          PORT: 8080
-        ports:
-          - 8080:8080
+      postgres: *postgres-service
+      hasura: *hasura-service
 
       clickhouse:
         image: clickhouse/clickhouse-server:26.2.15.4

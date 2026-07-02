@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ in: EntityWithTimestamp(where: {timestamp: {_in: [\"1970-01-01T00:00:00Z\", \"9999-12-31T23:59:59.999999+00:00\"]}}, order_by: {id: asc}) { id } nin: EntityWithTimestamp(where: {timestamp: {_nin: [\"1970-01-01T00:00:00Z\", \"9999-12-31T23:59:59.999999+00:00\"]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "in": [
+    {
+     "id": "ts-epoch"
+    },
+    {
+     "id": "ts-future"
+    }
+   ],
+   "nin": [
+    {
+     "id": "ts-micro"
+    },
+    {
+     "id": "ts-milli"
+    },
+    {
+     "id": "ts-pre-epoch"
+    },
+    {
+     "id": "ts-zoned"
+    }
+   ]
+  }
+ }
+}

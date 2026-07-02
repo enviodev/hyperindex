@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {id: {_eq: \"all-empty-arrays\"}}) { id arrayOfStrings arrayOfInts arrayOfFloats arrayOfBigInts arrayOfBigDecimals } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-empty-arrays",
+     "arrayOfStrings": [],
+     "arrayOfInts": [],
+     "arrayOfFloats": [],
+     "arrayOfBigInts": [],
+     "arrayOfBigDecimals": []
+    }
+   ]
+  }
+ }
+}

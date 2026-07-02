@@ -1,0 +1,27 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ any: NftCollection(where: {tokens: {}}, order_by: {id: asc}) { id name } none: NftCollection(where: {_not: {tokens: {}}}, order_by: {id: asc}) { id name } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "any": [
+    {
+     "id": "coll-1",
+     "name": "Alpha Apes"
+    },
+    {
+     "id": "coll-2",
+     "name": "Béta Bots 🤖"
+    }
+   ],
+   "none": [
+    {
+     "id": "coll-3",
+     "name": ""
+    }
+   ]
+  }
+ }
+}

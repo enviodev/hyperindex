@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate { aggregate { variance { enumField } } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'enumField' not found in type: 'EntityWithAllNonArrayTypes_variance_fields'",
+    "extensions": {
+     "path": "$.selectionSet.EntityWithAllNonArrayTypes_aggregate.selectionSet.aggregate.selectionSet.variance.selectionSet.enumField",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

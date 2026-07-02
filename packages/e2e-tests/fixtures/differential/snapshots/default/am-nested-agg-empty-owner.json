@@ -1,0 +1,32 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User_by_pk(id: \"user-dangling\") { id tokens_aggregate { aggregate { count sum { tokenId } avg { tokenId } min { tokenId } max { tokenId } } nodes { id } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_by_pk": {
+    "id": "user-dangling",
+    "tokens_aggregate": {
+     "aggregate": {
+      "count": 0,
+      "sum": {
+       "tokenId": null
+      },
+      "avg": {
+       "tokenId": null
+      },
+      "min": {
+       "tokenId": null
+      },
+      "max": {
+       "tokenId": null
+      }
+     },
+     "nodes": []
+    }
+   }
+  }
+ }
+}

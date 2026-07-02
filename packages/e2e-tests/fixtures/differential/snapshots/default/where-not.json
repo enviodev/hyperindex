@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {_not: {accountType: {_eq: \"ADMIN\"}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Gravatar_aggregate { aggregate { count } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'Gravatar_aggregate' not found in type: 'query_root'",
+    "extensions": {
+     "path": "$.selectionSet.Gravatar_aggregate",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

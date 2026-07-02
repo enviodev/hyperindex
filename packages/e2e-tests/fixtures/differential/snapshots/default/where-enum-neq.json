@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Gravatar(where: {size: {_neq: \"SMALL\"}}, order_by: {id: asc}) { id size } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Gravatar": [
+    {
+     "id": "grav-2",
+     "size": "MEDIUM"
+    },
+    {
+     "id": "grav-3",
+     "size": "LARGE"
+    }
+   ]
+  }
+ }
+}

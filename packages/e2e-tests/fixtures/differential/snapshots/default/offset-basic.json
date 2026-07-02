@@ -1,0 +1,34 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimpleEntity(order_by: {id: asc}, offset: 3) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-3"
+    },
+    {
+     "id": "simple-4"
+    },
+    {
+     "id": "simple-5"
+    },
+    {
+     "id": "simple-6"
+    },
+    {
+     "id": "simple-7"
+    },
+    {
+     "id": "simple-8"
+    },
+    {
+     "id": "simple-9"
+    }
+   ]
+  }
+ }
+}

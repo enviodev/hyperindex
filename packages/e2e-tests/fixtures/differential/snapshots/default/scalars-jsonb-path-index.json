@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {id: {_eq: \"all-array-edge\"}}) { id json(path: \"$[4].k\") } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-array-edge",
+     "json": "v"
+    }
+   ]
+  }
+ }
+}

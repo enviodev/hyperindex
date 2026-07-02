@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ _meta_aggregate { aggregate { count } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "_meta_aggregate": {
+    "aggregate": {
+     "count": 2
+    }
+   }
+  }
+ }
+}

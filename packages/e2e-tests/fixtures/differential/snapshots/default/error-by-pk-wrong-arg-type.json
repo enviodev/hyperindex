@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: 5) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "parsing Text failed, expected String, but encountered Number",
+    "extensions": {
+     "path": "$.selectionSet.User_by_pk.args.id",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWith63LenghtName______________________________________one(order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWith63LenghtName______________________________________one": [
+    {
+     "id": "long-1"
+    },
+    {
+     "id": "long-2"
+    }
+   ]
+  }
+ }
+}

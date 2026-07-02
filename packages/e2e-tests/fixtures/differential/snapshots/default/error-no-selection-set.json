@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "missing selection set for 'User'",
+    "extensions": {
+     "path": "$.selectionSet.User.selectionSet",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

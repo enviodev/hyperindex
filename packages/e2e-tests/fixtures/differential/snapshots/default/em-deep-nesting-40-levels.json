@@ -1,0 +1,134 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: \"user-1\") { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id gravatar { id owner { id } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_by_pk": {
+    "id": "user-1",
+    "gravatar": {
+     "id": "grav-1",
+     "owner": {
+      "id": "user-1",
+      "gravatar": {
+       "id": "grav-1",
+       "owner": {
+        "id": "user-1",
+        "gravatar": {
+         "id": "grav-1",
+         "owner": {
+          "id": "user-1",
+          "gravatar": {
+           "id": "grav-1",
+           "owner": {
+            "id": "user-1",
+            "gravatar": {
+             "id": "grav-1",
+             "owner": {
+              "id": "user-1",
+              "gravatar": {
+               "id": "grav-1",
+               "owner": {
+                "id": "user-1",
+                "gravatar": {
+                 "id": "grav-1",
+                 "owner": {
+                  "id": "user-1",
+                  "gravatar": {
+                   "id": "grav-1",
+                   "owner": {
+                    "id": "user-1",
+                    "gravatar": {
+                     "id": "grav-1",
+                     "owner": {
+                      "id": "user-1",
+                      "gravatar": {
+                       "id": "grav-1",
+                       "owner": {
+                        "id": "user-1",
+                        "gravatar": {
+                         "id": "grav-1",
+                         "owner": {
+                          "id": "user-1",
+                          "gravatar": {
+                           "id": "grav-1",
+                           "owner": {
+                            "id": "user-1",
+                            "gravatar": {
+                             "id": "grav-1",
+                             "owner": {
+                              "id": "user-1",
+                              "gravatar": {
+                               "id": "grav-1",
+                               "owner": {
+                                "id": "user-1",
+                                "gravatar": {
+                                 "id": "grav-1",
+                                 "owner": {
+                                  "id": "user-1",
+                                  "gravatar": {
+                                   "id": "grav-1",
+                                   "owner": {
+                                    "id": "user-1",
+                                    "gravatar": {
+                                     "id": "grav-1",
+                                     "owner": {
+                                      "id": "user-1",
+                                      "gravatar": {
+                                       "id": "grav-1",
+                                       "owner": {
+                                        "id": "user-1",
+                                        "gravatar": {
+                                         "id": "grav-1",
+                                         "owner": {
+                                          "id": "user-1",
+                                          "gravatar": {
+                                           "id": "grav-1",
+                                           "owner": {
+                                            "id": "user-1"
+                                           }
+                                          }
+                                         }
+                                        }
+                                       }
+                                      }
+                                     }
+                                    }
+                                   }
+                                  }
+                                 }
+                                }
+                               }
+                              }
+                             }
+                            }
+                           }
+                          }
+                         }
+                        }
+                       }
+                      }
+                     }
+                    }
+                   }
+                  }
+                 }
+                }
+               }
+              }
+             }
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

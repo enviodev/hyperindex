@@ -1,0 +1,125 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ raw_events(order_by: {serial: asc}) { chain_id event_id event_name contract_name block_number log_index src_address block_hash block_timestamp block_fields transaction_fields params serial } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events": [
+    {
+     "chain_id": 1,
+     "event_id": "4611686018427387904",
+     "event_name": "Transfer",
+     "contract_name": "Gravatar",
+     "block_number": 10861674,
+     "log_index": 0,
+     "src_address": "0x2b2f78c5bf6d9c12ee1225d5f374aa91204580c3",
+     "block_hash": "0xblock1",
+     "block_timestamp": 1600000000,
+     "block_fields": {
+      "number": 10861674
+     },
+     "transaction_fields": {
+      "hash": "0xtx1",
+      "transactionIndex": 0
+     },
+     "params": {
+      "to": "0x1",
+      "from": "0x0",
+      "value": "100"
+     },
+     "serial": "1"
+    },
+    {
+     "chain_id": 1,
+     "event_id": "4611686018427387905",
+     "event_name": "Transfer",
+     "contract_name": "Gravatar",
+     "block_number": 10861674,
+     "log_index": 1,
+     "src_address": "0x2b2f78c5bf6d9c12ee1225d5f374aa91204580c3",
+     "block_hash": "0xblock1",
+     "block_timestamp": 1600000000,
+     "block_fields": {
+      "number": 10861674
+     },
+     "transaction_fields": {
+      "hash": "0xtx1",
+      "transactionIndex": 0
+     },
+     "params": {
+      "to": "0x2",
+      "from": "0x1",
+      "value": "9999999999999999999999999999"
+     },
+     "serial": "2"
+    },
+    {
+     "chain_id": 1,
+     "event_id": "4611686018427387906",
+     "event_name": "NewGravatar",
+     "contract_name": "Gravatar",
+     "block_number": 10861675,
+     "log_index": 0,
+     "src_address": "0x2b2f78c5bf6d9c12ee1225d5f374aa91204580c3",
+     "block_hash": "0xblock2",
+     "block_timestamp": 1600000012,
+     "block_fields": {
+      "number": 10861675
+     },
+     "transaction_fields": {},
+     "params": {
+      "id": "1",
+      "nested": {
+       "deep": [
+        1,
+        null,
+        "x"
+       ]
+      },
+      "displayName": "unicode 🚀"
+     },
+     "serial": "3"
+    },
+    {
+     "chain_id": 1337,
+     "event_id": "1",
+     "event_name": "EmptyEvent",
+     "contract_name": "Noop",
+     "block_number": 1,
+     "log_index": 0,
+     "src_address": "0x0000000000000000000000000000000000000000",
+     "block_hash": "0xblockA",
+     "block_timestamp": 1500000000,
+     "block_fields": {},
+     "transaction_fields": {},
+     "params": {},
+     "serial": "4"
+    },
+    {
+     "chain_id": 1337,
+     "event_id": "2",
+     "event_name": "FilterTestEvent",
+     "contract_name": "EventFiltersTest",
+     "block_number": 2,
+     "log_index": 3,
+     "src_address": "0x4444444444444444444444444444444444444444",
+     "block_hash": "0xblockB",
+     "block_timestamp": 1500000060,
+     "block_fields": {
+      "extra": true,
+      "number": 2
+     },
+     "transaction_fields": {
+      "hash": null
+     },
+     "params": {
+      "addr": "0x5555555555555555555555555555555555555555"
+     },
+     "serial": "5"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($lim: Int) { User(order_by: {id: asc}, limit: $limit) { id } }",
+  "variables": {
+   "lim": 1
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "unbound variable \"limit\"",
+    "extensions": {
+     "path": "$",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

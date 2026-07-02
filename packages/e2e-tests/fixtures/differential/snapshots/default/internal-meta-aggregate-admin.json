@@ -1,0 +1,19 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ _meta_aggregate { aggregate { count max { eventsProcessed } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "_meta_aggregate": {
+    "aggregate": {
+     "count": 2,
+     "max": {
+      "eventsProcessed": 2147487700
+     }
+    }
+   }
+  }
+ }
+}

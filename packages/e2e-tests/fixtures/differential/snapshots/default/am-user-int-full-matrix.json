@@ -1,0 +1,46 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User_aggregate { aggregate { count sum { updatesCountOnUserForTesting } avg { updatesCountOnUserForTesting } min { updatesCountOnUserForTesting } max { updatesCountOnUserForTesting } stddev { updatesCountOnUserForTesting } stddev_pop { updatesCountOnUserForTesting } stddev_samp { updatesCountOnUserForTesting } var_pop { updatesCountOnUserForTesting } var_samp { updatesCountOnUserForTesting } variance { updatesCountOnUserForTesting } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_aggregate": {
+    "aggregate": {
+     "count": 6,
+     "sum": {
+      "updatesCountOnUserForTesting": 53
+     },
+     "avg": {
+      "updatesCountOnUserForTesting": 8.833333333333334
+     },
+     "min": {
+      "updatesCountOnUserForTesting": -2147483648
+     },
+     "max": {
+      "updatesCountOnUserForTesting": 2147483647
+     },
+     "stddev": {
+      "updatesCountOnUserForTesting": 1358187913
+     },
+     "stddev_pop": {
+      "updatesCountOnUserForTesting": 1239850262
+     },
+     "stddev_samp": {
+      "updatesCountOnUserForTesting": 1358187913
+     },
+     "var_pop": {
+      "updatesCountOnUserForTesting": 1537228672093301800
+     },
+     "var_samp": {
+      "updatesCountOnUserForTesting": 1844674406511961900
+     },
+     "variance": {
+      "updatesCountOnUserForTesting": 1844674406511961900
+     }
+    }
+   }
+  }
+ }
+}

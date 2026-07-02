@@ -1,0 +1,46 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($lim: Int = 2) { SimpleEntity(order_by: {id: asc}, limit: $lim) { id } }",
+  "variables": {
+   "lim": null
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-1"
+    },
+    {
+     "id": "simple-10"
+    },
+    {
+     "id": "simple-2"
+    },
+    {
+     "id": "simple-3"
+    },
+    {
+     "id": "simple-4"
+    },
+    {
+     "id": "simple-5"
+    },
+    {
+     "id": "simple-6"
+    },
+    {
+     "id": "simple-7"
+    },
+    {
+     "id": "simple-8"
+    },
+    {
+     "id": "simple-9"
+    }
+   ]
+  }
+ }
+}

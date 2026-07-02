@@ -1,0 +1,28 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: [{tokens_aggregate: {max: {tokenId: desc}}}, {id: asc}]) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-dangling"
+    },
+    {
+     "id": "user-4"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    }
+   ]
+  }
+ }
+}

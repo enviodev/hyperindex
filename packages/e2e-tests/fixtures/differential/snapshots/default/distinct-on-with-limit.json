@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(distinct_on: collection_id, order_by: [{collection_id: asc}, {tokenId: desc}], limit: 2) { id collection_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-10",
+     "collection_id": "coll-1"
+    },
+    {
+     "id": "tok-9",
+     "collection_id": "coll-2"
+    }
+   ]
+  }
+ }
+}

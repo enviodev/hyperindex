@@ -1,0 +1,16 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User_aggregate { aggregate { count(columns: gravatar_id) } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_aggregate": {
+    "aggregate": {
+     "count": 3
+    }
+   }
+  }
+ }
+}

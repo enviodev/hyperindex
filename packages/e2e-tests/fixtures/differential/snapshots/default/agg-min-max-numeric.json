@@ -1,0 +1,21 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ Token_aggregate { aggregate { min { tokenId } max { tokenId } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token_aggregate": {
+    "aggregate": {
+     "min": {
+      "tokenId": "-5"
+     },
+     "max": {
+      "tokenId": "9999999999999999999999999999999999999999999999999999999999999999999999999999"
+     }
+    }
+   }
+  }
+ }
+}

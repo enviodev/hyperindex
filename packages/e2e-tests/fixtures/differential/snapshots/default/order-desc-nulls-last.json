@@ -1,0 +1,37 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {gravatar_id: desc_nulls_last, id: asc}) { id gravatar_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-1",
+     "gravatar_id": "grav-1"
+    },
+    {
+     "id": "user-2",
+     "gravatar_id": "grav-2"
+    },
+    {
+     "id": "user-3",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-4",
+     "gravatar_id": null
+    },
+    {
+     "id": "user-dangling",
+     "gravatar_id": "grav-missing"
+    }
+   ]
+  }
+ }
+}

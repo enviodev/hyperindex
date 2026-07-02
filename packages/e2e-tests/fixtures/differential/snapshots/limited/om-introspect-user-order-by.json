@@ -1,0 +1,64 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"User_order_by\") { inputFields { name type { name kind } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "inputFields": [
+     {
+      "name": "accountType",
+      "type": {
+       "name": "order_by",
+       "kind": "ENUM"
+      }
+     },
+     {
+      "name": "address",
+      "type": {
+       "name": "order_by",
+       "kind": "ENUM"
+      }
+     },
+     {
+      "name": "gravatar",
+      "type": {
+       "name": "Gravatar_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     },
+     {
+      "name": "gravatar_id",
+      "type": {
+       "name": "order_by",
+       "kind": "ENUM"
+      }
+     },
+     {
+      "name": "id",
+      "type": {
+       "name": "order_by",
+       "kind": "ENUM"
+      }
+     },
+     {
+      "name": "tokens_aggregate",
+      "type": {
+       "name": "Token_aggregate_order_by",
+       "kind": "INPUT_OBJECT"
+      }
+     },
+     {
+      "name": "updatesCountOnUserForTesting",
+      "type": {
+       "name": "order_by",
+       "kind": "ENUM"
+      }
+     }
+    ]
+   }
+  }
+ }
+}

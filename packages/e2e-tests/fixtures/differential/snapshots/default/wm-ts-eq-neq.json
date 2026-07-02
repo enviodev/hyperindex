@@ -1,0 +1,34 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ eq: EntityWithTimestamp(where: {timestamp: {_eq: \"2024-01-15T12:34:56.123+00:00\"}}, order_by: {id: asc}) { id timestamp } neq: EntityWithTimestamp(where: {timestamp: {_neq: \"2024-01-15T12:34:56.123+00:00\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "eq": [
+    {
+     "id": "ts-milli",
+     "timestamp": "2024-01-15T12:34:56.123+00:00"
+    }
+   ],
+   "neq": [
+    {
+     "id": "ts-epoch"
+    },
+    {
+     "id": "ts-future"
+    },
+    {
+     "id": "ts-micro"
+    },
+    {
+     "id": "ts-pre-epoch"
+    },
+    {
+     "id": "ts-zoned"
+    }
+   ]
+  }
+ }
+}

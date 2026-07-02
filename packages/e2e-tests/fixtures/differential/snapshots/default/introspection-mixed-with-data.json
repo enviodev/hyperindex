@@ -1,0 +1,22 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __schema { queryType { name } } User(order_by: {id: asc}, limit: 1) { id __typename } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__schema": {
+    "queryType": {
+     "name": "query_root"
+    }
+   },
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "__typename": "User"
+    }
+   ]
+  }
+ }
+}

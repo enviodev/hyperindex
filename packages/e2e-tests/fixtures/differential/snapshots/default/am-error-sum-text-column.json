@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ Token_aggregate { aggregate { sum { id } } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'id' not found in type: 'Token_sum_fields'",
+    "extensions": {
+     "path": "$.selectionSet.Token_aggregate.selectionSet.aggregate.selectionSet.sum.selectionSet.id",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,14 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ PostgresNumericPrecisionEntityTester_by_pk(id: \"prec-1\") { __typename } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "PostgresNumericPrecisionEntityTester_by_pk": {
+    "__typename": "PostgresNumericPrecisionEntityTester"
+   }
+  }
+ }
+}

@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ Token_aggregate { aggregate { bogus } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'bogus' not found in type: 'Token_aggregate_fields'",
+    "extensions": {
+     "path": "$.selectionSet.Token_aggregate.selectionSet.aggregate.selectionSet.bogus",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,29 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {updatesCountOnUserForTesting: {_gte: 0, _lt: 100}}, order_by: {id: asc}) { id updatesCountOnUserForTesting } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "updatesCountOnUserForTesting": 5
+    },
+    {
+     "id": "user-1",
+     "updatesCountOnUserForTesting": 0
+    },
+    {
+     "id": "user-2",
+     "updatesCountOnUserForTesting": 42
+    },
+    {
+     "id": "user-dangling",
+     "updatesCountOnUserForTesting": 7
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,30 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ gt: EntityWithTimestamp(where: {timestamp: {_gt: \"2024-01-15T12:34:56.123456+00:00\"}}, order_by: {id: asc}) { id } gte: EntityWithTimestamp(where: {timestamp: {_gte: \"2024-01-15T12:34:56.123456+00:00\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "gt": [
+    {
+     "id": "ts-future"
+    },
+    {
+     "id": "ts-zoned"
+    }
+   ],
+   "gte": [
+    {
+     "id": "ts-future"
+    },
+    {
+     "id": "ts-micro"
+    },
+    {
+     "id": "ts-zoned"
+    }
+   ]
+  }
+ }
+}

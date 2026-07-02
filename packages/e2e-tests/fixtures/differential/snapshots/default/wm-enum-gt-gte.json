@@ -1,0 +1,49 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ gt: User(where: {accountType: {_gt: \"ADMIN\"}}, order_by: {id: asc}) { id accountType } gte: User(where: {accountType: {_gte: \"ADMIN\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "gt": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "accountType": "USER"
+    },
+    {
+     "id": "user-2",
+     "accountType": "USER"
+    },
+    {
+     "id": "user-3",
+     "accountType": "USER"
+    },
+    {
+     "id": "user-dangling",
+     "accountType": "USER"
+    }
+   ],
+   "gte": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-4"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

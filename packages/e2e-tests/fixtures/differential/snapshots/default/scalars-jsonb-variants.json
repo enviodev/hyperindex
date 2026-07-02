@@ -1,0 +1,37 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {id: {_like: \"all-json%\"}}, order_by: {id: asc}) { id json } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-json-bool",
+     "json": false
+    },
+    {
+     "id": "all-json-null",
+     "json": null
+    },
+    {
+     "id": "all-json-number",
+     "json": 1.2345678901234568e+29
+    },
+    {
+     "id": "all-json-string",
+     "json": "just a string"
+    },
+    {
+     "id": "all-json-unicode",
+     "json": {
+      "esc": "a\"b\\c\nd",
+      "num": 1e+100,
+      "héllo": "wörld 🚀"
+     }
+    }
+   ]
+  }
+ }
+}

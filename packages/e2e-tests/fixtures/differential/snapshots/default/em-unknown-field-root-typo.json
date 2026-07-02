@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Userz { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'Userz' not found in type: 'query_root'",
+    "extensions": {
+     "path": "$.selectionSet.Userz",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_by_pk(id: \"scalar-quotes\") { id string optString int_ optInt float_ optFloat bool optBool bigInt optBigInt bigDecimal optBigDecimal bigDecimalWithConfig enumField optEnumField timestamp optTimestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_by_pk": {
+    "id": "scalar-quotes",
+    "string": "with \"double\" and 'single' and back\\slash and\nnewline and\ttab",
+    "optString": "end",
+    "int_": 3,
+    "optInt": 3,
+    "float_": "0.1",
+    "optFloat": "0.2",
+    "bool": false,
+    "optBool": false,
+    "bigInt": "7",
+    "optBigInt": "8",
+    "bigDecimal": "0.5",
+    "optBigDecimal": "0.5",
+    "bigDecimalWithConfig": "3.00000000",
+    "enumField": "ADMIN",
+    "optEnumField": "USER",
+    "timestamp": "2024-03-10T10:00:00+00:00",
+    "optTimestamp": "2024-03-10T10:00:00+00:00"
+   }
+  }
+ }
+}

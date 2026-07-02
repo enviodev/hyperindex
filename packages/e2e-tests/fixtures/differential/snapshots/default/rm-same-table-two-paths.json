@@ -1,0 +1,28 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {tokens: {collection: {tokens: {owner: {accountType: {_eq: \"USER\"}}}}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-4"
+    }
+   ]
+  }
+ }
+}

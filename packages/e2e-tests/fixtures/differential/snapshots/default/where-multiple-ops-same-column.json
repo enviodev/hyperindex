@@ -1,0 +1,29 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(where: {tokenId: {_gte: 1, _lte: 10, _neq: 8}}, order_by: {id: asc}) { id tokenId } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-10",
+     "tokenId": "10"
+    },
+    {
+     "id": "tok-2",
+     "tokenId": "1"
+    },
+    {
+     "id": "tok-3",
+     "tokenId": "2"
+    },
+    {
+     "id": "tok-7",
+     "tokenId": "7"
+    }
+   ]
+  }
+ }
+}

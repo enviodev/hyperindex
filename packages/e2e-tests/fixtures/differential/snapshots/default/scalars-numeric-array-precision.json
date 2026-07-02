@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ PostgresNumericPrecisionEntityTester(where: {id: {_eq: \"prec-1\"}}) { id exampleBigIntArray exampleBigDecimalArray } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "PostgresNumericPrecisionEntityTester": [
+    {
+     "id": "prec-1",
+     "exampleBigIntArray": [
+      1,
+      2,
+      3
+     ],
+     "exampleBigDecimalArray": [
+      0.00001,
+      -0.00001
+     ]
+    }
+   ]
+  }
+ }
+}

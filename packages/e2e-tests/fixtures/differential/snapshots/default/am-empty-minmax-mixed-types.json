@@ -1,0 +1,30 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_aggregate(where: {id: {_eq: \"missing\"}}) { aggregate { count min { id enumField timestamp int_ float_ } max { id enumField timestamp int_ float_ } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_aggregate": {
+    "aggregate": {
+     "count": 0,
+     "min": {
+      "id": null,
+      "enumField": null,
+      "timestamp": null,
+      "int_": null,
+      "float_": null
+     },
+     "max": {
+      "id": null,
+      "enumField": null,
+      "timestamp": null,
+      "int_": null,
+      "float_": null
+     }
+    }
+   }
+  }
+ }
+}

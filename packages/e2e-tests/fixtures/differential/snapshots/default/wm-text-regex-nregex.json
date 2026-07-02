@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ regex: User(where: {address: {_regex: \"000[12]$\"}}, order_by: {id: asc}) { id } nregex: User(where: {address: {_nregex: \"000[12]$\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "regex": [
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    }
+   ],
+   "nregex": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-4"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

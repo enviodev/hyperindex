@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ A(where: {b: {a: {id: {_eq: \"a-2\"}}}}, order_by: {id: asc}) { id b_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "A": [
+    {
+     "id": "a-1",
+     "b_id": "b-1"
+    },
+    {
+     "id": "a-2",
+     "b_id": "b-1"
+    }
+   ]
+  }
+ }
+}

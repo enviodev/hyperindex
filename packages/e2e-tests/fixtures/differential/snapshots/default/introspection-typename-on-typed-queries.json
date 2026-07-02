@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"User\") { __typename } __schema { __typename } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "__typename": "__Type"
+   },
+   "__schema": {
+    "__typename": "__Schema"
+   }
+  }
+ }
+}

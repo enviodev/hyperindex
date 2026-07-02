@@ -1,0 +1,21 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ total: User_aggregate { aggregate { c: count } } admins: User_aggregate(where: {accountType: {_eq: \"ADMIN\"}}) { aggregate { count } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "total": {
+    "aggregate": {
+     "c": 6
+    }
+   },
+   "admins": {
+    "aggregate": {
+     "count": 2
+    }
+   }
+  }
+ }
+}

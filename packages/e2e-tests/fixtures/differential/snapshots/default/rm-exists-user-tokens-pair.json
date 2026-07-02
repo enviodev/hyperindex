@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ any: User(where: {tokens: {}}, order_by: {id: asc}) { id } none: User(where: {_not: {tokens: {}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "any": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-4"
+    }
+   ],
+   "none": [
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

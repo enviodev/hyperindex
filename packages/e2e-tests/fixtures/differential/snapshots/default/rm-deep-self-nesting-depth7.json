@@ -1,0 +1,122 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {id: {_eq: \"user-1\"}}) { id tokens(order_by: {id: asc}, limit: 2) { id owner { id tokens(order_by: {id: asc}, limit: 2) { id owner { id tokens(order_by: {id: asc}, limit: 2) { id tokenId owner { id } } } } } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-1",
+     "tokens": [
+      {
+       "id": "tok-1",
+       "owner": {
+        "id": "user-1",
+        "tokens": [
+         {
+          "id": "tok-1",
+          "owner": {
+           "id": "user-1",
+           "tokens": [
+            {
+             "id": "tok-1",
+             "tokenId": "0",
+             "owner": {
+              "id": "user-1"
+             }
+            },
+            {
+             "id": "tok-2",
+             "tokenId": "1",
+             "owner": {
+              "id": "user-1"
+             }
+            }
+           ]
+          }
+         },
+         {
+          "id": "tok-2",
+          "owner": {
+           "id": "user-1",
+           "tokens": [
+            {
+             "id": "tok-1",
+             "tokenId": "0",
+             "owner": {
+              "id": "user-1"
+             }
+            },
+            {
+             "id": "tok-2",
+             "tokenId": "1",
+             "owner": {
+              "id": "user-1"
+             }
+            }
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {
+       "id": "tok-2",
+       "owner": {
+        "id": "user-1",
+        "tokens": [
+         {
+          "id": "tok-1",
+          "owner": {
+           "id": "user-1",
+           "tokens": [
+            {
+             "id": "tok-1",
+             "tokenId": "0",
+             "owner": {
+              "id": "user-1"
+             }
+            },
+            {
+             "id": "tok-2",
+             "tokenId": "1",
+             "owner": {
+              "id": "user-1"
+             }
+            }
+           ]
+          }
+         },
+         {
+          "id": "tok-2",
+          "owner": {
+           "id": "user-1",
+           "tokens": [
+            {
+             "id": "tok-1",
+             "tokenId": "0",
+             "owner": {
+              "id": "user-1"
+             }
+            },
+            {
+             "id": "tok-2",
+             "tokenId": "1",
+             "owner": {
+              "id": "user-1"
+             }
+            }
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

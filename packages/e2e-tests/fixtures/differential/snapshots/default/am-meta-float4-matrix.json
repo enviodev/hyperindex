@@ -1,0 +1,34 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ _meta_aggregate { aggregate { count sum { eventsProcessed } avg { eventsProcessed } min { eventsProcessed } max { eventsProcessed } stddev { eventsProcessed } var_pop { eventsProcessed } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "_meta_aggregate": {
+    "aggregate": {
+     "count": 2,
+     "sum": {
+      "eventsProcessed": 2147487700
+     },
+     "avg": {
+      "eventsProcessed": 1073743872
+     },
+     "min": {
+      "eventsProcessed": 0
+     },
+     "max": {
+      "eventsProcessed": 2147487700
+     },
+     "stddev": {
+      "eventsProcessed": 1518503146.2974005
+     },
+     "var_pop": {
+      "eventsProcessed": 1152925902657552400
+     }
+    }
+   }
+  }
+ }
+}

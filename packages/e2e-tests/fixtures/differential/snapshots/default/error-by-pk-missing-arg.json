@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "missing required field 'id'",
+    "extensions": {
+     "path": "$.selectionSet.User_by_pk.args.id",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

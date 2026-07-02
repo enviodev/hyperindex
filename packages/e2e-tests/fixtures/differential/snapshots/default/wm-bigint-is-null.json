@@ -1,0 +1,29 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ isNull: raw_events(where: {event_id: {_is_null: true}}, order_by: {serial: asc}) { serial } notNull: raw_events(where: {event_id: {_is_null: false}}, order_by: {serial: asc}) { serial } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "isNull": [],
+   "notNull": [
+    {
+     "serial": "1"
+    },
+    {
+     "serial": "2"
+    },
+    {
+     "serial": "3"
+    },
+    {
+     "serial": "4"
+    },
+    {
+     "serial": "5"
+    }
+   ]
+  }
+ }
+}
