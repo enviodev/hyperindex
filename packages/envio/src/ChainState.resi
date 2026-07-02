@@ -56,6 +56,9 @@ let knownHeight: t => int
 let contractAddresses: (t, ~contractName: string) => array<Address.t>
 let bufferSize: t => int
 let bufferReadyCount: t => int
+let lastPruneTarget: t => option<int>
+let clearPruneTarget: t => unit
+let isQueryStillPending: (t, ~query: FetchState.query) => bool
 let getProgressPercentage: t => float
 let getProgressPercentageAt: (t, ~blockNumber: int) => float
 let hasReadyItem: t => bool
@@ -65,7 +68,6 @@ let isReadyToEnterReorgThreshold: t => bool
 let getNextQuery: (t, ~hasBudget: bool) => FetchState.nextQuery
 let getPruneTarget: (t, ~progressThreshold: float) => (int, int)
 let pruneBuffer: (t, ~targetBlockNumber: int) => unit
-let resetPendingQueries: t => unit
 let dispatch: (
   t,
   ~executeQuery: FetchState.query => promise<unit>,

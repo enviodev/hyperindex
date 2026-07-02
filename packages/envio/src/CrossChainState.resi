@@ -36,5 +36,4 @@ let priorityOrder: t => array<ChainState.t>
 let checkAndFetch: (
   t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
-  ~invalidateInflight: unit => unit,
 ) => promise<unit>

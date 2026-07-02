@@ -214,7 +214,7 @@ let compareByProgress = (a: FetchState.query, b: FetchState.query) =>
 // chains back down to 1.5x and roll back the partitions that fetched them. Prune
 // only during backfill — near the head blockLag keeps the buffer below the reorg
 // window and there is nothing far-ahead to reclaim.
-let maybePrune = (crossChainState: t, ~invalidateInflight) => {
+let maybePrune = (crossChainState: t) => {
   if !crossChainState.isInReorgThreshold {
     let chainIds = crossChainState.chainIds
 
@@ -272,15 +272,14 @@ let maybePrune = (crossChainState: t, ~invalidateInflight) => {
         }
         let (targets, _) = best.contents
 
-        // Quiesce in-flight fetches before rolling partitions back: the epoch bump
-        // makes their responses stale (dropped on arrival) and resetPendingQueries
-        // clears them from every chain, since FetchState.rollback requires no
-        // in-flight queries.
-        invalidateInflight()
+        // Only the chains that actually free something are touched: pruneBuffer's
+        // rollback drops their in-flight queries above the target (late responses
+        // are discarded by the still-pending check), while every other chain's
+        // in-flight work — including the lagging frontier query the prune is
+        // waiting on — keeps running.
         let totalFreed = ref(0)
         for i in 0 to chainIds->Array.length - 1 {
           let cs = crossChainState->getChainState(chainIds->Array.getUnsafe(i))
-          cs->ChainState.resetPendingQueries
           let (target, freed) = targets->Array.getUnsafe(i)
           if freed > 0 {
             cs->ChainState.pruneBuffer(~targetBlockNumber=target)
@@ -309,9 +308,8 @@ let maybePrune = (crossChainState: t, ~invalidateInflight) => {
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
-  ~invalidateInflight: unit => unit,
 ) => {
-  crossChainState->maybePrune(~invalidateInflight)
+  crossChainState->maybePrune
 
   let remaining = Pervasives.max(
     0,
@@ -320,7 +318,19 @@ let checkAndFetch = async (
     crossChainState->totalReservedSize->Float.toInt,
   )
 
+  // A pruned range is not re-admitted while the whole buffer still holds more
+  // than targetBufferSize items — otherwise the tick right after a prune would
+  // refetch exactly what it dropped, since stuck items count toward the prune
+  // trigger but not toward `remaining`. Once the buffer drains back to the
+  // target, processing has caught up and the prune targets are cleared.
+  let bufferAboveTarget = crossChainState->totalBufferSize > crossChainState.targetBufferSize
+
   let chainIds = crossChainState.chainIds
+  if !bufferAboveTarget {
+    for i in 0 to chainIds->Array.length - 1 {
+      crossChainState->getChainState(chainIds->Array.getUnsafe(i))->ChainState.clearPruneTarget
+    }
+  }
   let actionByChain = Dict.make()
   // Candidate queries from every chain. Each query carries its chain id and the
   // chain progress % at its fromBlock (the admission sort key), set here so the
@@ -335,10 +345,17 @@ let checkAndFetch = async (
     | Ready(queries) =>
       // Default to NothingToQuery; replaced below if any candidate is admitted.
       actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
+      let pruneCeiling = bufferAboveTarget ? cs->ChainState.lastPruneTarget : None
       queries->Array.forEach(query => {
-        query.chainId = chainId
-        query.progress = cs->ChainState.getProgressPercentageAt(~blockNumber=query.fromBlock)
-        candidates->Array.push(query)
+        let isHeldBackPrunedRange = switch pruneCeiling {
+        | Some(ceiling) => query.fromBlock > ceiling
+        | None => false
+        }
+        if !isHeldBackPrunedRange {
+          query.chainId = chainId
+          query.progress = cs->ChainState.getProgressPercentageAt(~blockNumber=query.fromBlock)
+          candidates->Array.push(query)
+        }
       })
     }
   }

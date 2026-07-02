@@ -119,15 +119,25 @@ let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~maxQueryBlo
     defaultEstResponseSize
   }
 
+// Random number from my head
+// Not super critical if it's too big or too small
+// We optimize for fastest data which we get in any case.
+// If the value is off, it'll only result in
+// quering the same block range multiple times
+let tooFarBlockRange = 20_000
+
 // Calculate the chunk range from history using min-of-last-3-ranges heuristic.
 // A single observed range is enough to start chunking: it bounds the partition's
 // second query instead of proposing an open-ended tail to the head, whose
 // estimate (density x the whole remaining chain) could reserve the entire shared
-// buffer pool for a full response round-trip.
+// buffer pool for a full response round-trip. One sample isn't trusted to
+// shrink queries though — a small first response (e.g. near the head) must not
+// collapse the follow-up into tiny chunks, so it's floored at tooFarBlockRange
+// and short tails still fall back to a single query.
 let getMinHistoryRange = (p: partition) => {
   switch (p.prevQueryRange, p.prevPrevQueryRange) {
   | (0, _) => None
-  | (a, 0) => Some(a)
+  | (a, 0) => Some(Pervasives.max(a, tooFarBlockRange))
   | (a, b) => Some(a < b ? a : b)
   }
 }
@@ -253,13 +263,6 @@ module OptimizedPartitions = {
       completed
     }
   }
-
-  // Random number from my head
-  // Not super critical if it's too big or too small
-  // We optimize for fastest data which we get in any case.
-  // If the value is off, it'll only result in
-  // quering the same block range multiple times
-  let tooFarBlockRange = 20_000
 
   let ascSortFn = (a, b) =>
     Int.compare(a.latestFetchedBlock.blockNumber, b.latestFetchedBlock.blockNumber)
@@ -873,7 +876,7 @@ OptimizedPartitions.t => {
       | Some(nextStartBlockKey) => {
           let nextStartBlock = nextStartBlockKey->Int.fromString->Option.getUnsafe
           let shouldJoinCurrentStartBlock =
-            nextStartBlock - startBlockRef.contents < OptimizedPartitions.tooFarBlockRange
+            nextStartBlock - startBlockRef.contents < tooFarBlockRange
 
           // Addresses with different start blocks within range share a partition;
           // events before each address's effectiveStartBlock are dropped on the
@@ -967,7 +970,7 @@ OptimizedPartitions.t => {
           }
         }
 
-        let isTooFar = currentPBlock + OptimizedPartitions.tooFarBlockRange < nextPBlock
+        let isTooFar = currentPBlock + tooFarBlockRange < nextPBlock
 
         if isTooFar {
           // Too far: mergeBlock on current, merge addresses into next
@@ -1812,8 +1815,14 @@ let make = (
 let bufferSize = ({buffer}: t) => buffer->Array.length
 
 let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlockNumber) => {
-  // - Remove queries where fromBlock > target
-  // - Cap fetchedBlock at target where fetchedBlock > target
+  // - Remove queries where fromBlock > target: an in-flight one would re-add the
+  //   items just discarded (its late response is then dropped by the
+  //   still-pending check), a completed one covered a discarded range.
+  // - Cap fetchedBlock at target where fetchedBlock > target.
+  // - Keep in-flight queries starting at/below the target even when their range
+  //   crosses it: their response data stays valid — on a buffer prune nothing
+  //   above the target is wrong, merely early, and on a reorg rollback
+  //   resetPendingQueries has already removed every in-flight query.
   let adjusted = []
   for qIdx in 0 to mutPendingQueries->Array.length - 1 {
     let pq = mutPendingQueries->Array.getUnsafe(qIdx)
@@ -1826,9 +1835,7 @@ let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlo
           fetchedBlock: Some({blockNumber: targetBlockNumber, blockTimestamp: 0}),
         })
         ->ignore
-      | Some(_) => adjusted->Array.push(pq)->ignore
-      | None =>
-        JsError.throwWithMessage("Internal error: Must not have a fetching query during rollback")
+      | Some(_) | None => adjusted->Array.push(pq)->ignore
       }
     }
   }
@@ -1848,9 +1855,11 @@ let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetB
   // it's still in the index.
   indexingAddresses->IndexingAddresses.rollbackInPlace(~targetBlockNumber)
 
-  // Step 2: Categorize partitions
+  // Step 2: Categorize partitions. Kept partitions keep their ids and deleted
+  // ids are never reused (recreated partitions take fresh ids from
+  // nextPartitionIndex) — a late response for a deleted partition must fail its
+  // lookup rather than land on a different partition wearing the same id.
   let keptPartitions = []
-  let nextKeptIdRef = ref(0)
   let registeringContractsByContract: dict<dict<indexingAddress>> = Dict.make()
 
   let partitions = fetchState.optimizedPartitions.entities->Dict.valuesToArray
@@ -1859,12 +1868,9 @@ let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetB
     switch p {
     // Wildcard: rollback latestFetchedBlock and adjust pending queries
     | {selection: {dependsOnAddresses: false}} =>
-      let id = nextKeptIdRef.contents->Int.toString
-      nextKeptIdRef := nextKeptIdRef.contents + 1
       keptPartitions
       ->Array.push({
         ...p,
-        id,
         latestFetchedBlock: p.latestFetchedBlock.blockNumber > targetBlockNumber
           ? {blockNumber: targetBlockNumber, blockTimestamp: 0}
           : p.latestFetchedBlock,
@@ -1907,12 +1913,9 @@ let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetB
         })
 
         if !(rollbackedAddressesByContractName->Utils.Dict.isEmpty) {
-          let id = nextKeptIdRef.contents->Int.toString
-          nextKeptIdRef := nextKeptIdRef.contents + 1
           keptPartitions
           ->Array.push({
             ...p,
-            id,
             addressesByContractName: rollbackedAddressesByContractName,
             mutPendingQueries: rollbackPendingQueries(p.mutPendingQueries, ~targetBlockNumber),
             mergeBlock,
@@ -1929,7 +1932,7 @@ let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetB
     ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
     ~normalSelection=fetchState.normalSelection,
     ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-    ~nextPartitionIndex=nextKeptIdRef.contents,
+    ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex,
     ~existingPartitions=keptPartitions,
     ~progressBlockNumber=targetBlockNumber,
   )
@@ -1979,6 +1982,39 @@ let resetPendingQueries = (fetchState: t) => {
     },
   }
 }
+
+// Sum of in-flight pending-query estimates, for restoring the chain's
+// reservation counter after a rollback dropped some of the queries it covered.
+let pendingBudgetSize = (fetchState: t) => {
+  let total = ref(0.)
+  let partitionIds = fetchState.optimizedPartitions.idsInAscOrder
+  for idx in 0 to partitionIds->Array.length - 1 {
+    let p =
+      fetchState.optimizedPartitions.entities->Dict.getUnsafe(partitionIds->Array.getUnsafe(idx))
+    for qIdx in 0 to p.mutPendingQueries->Array.length - 1 {
+      let pq = p.mutPendingQueries->Array.getUnsafe(qIdx)
+      if pq.fetchedBlock === None {
+        total := total.contents +. pq.estResponseSize
+      }
+    }
+  }
+  total.contents
+}
+
+// A response may only be applied while its query is still tracked in flight:
+// the partition exists (deleted partition ids are never reused) and holds an
+// in-flight pending query at the response's fromBlock. A query dropped by a
+// buffer prune fails the lookup, and a slot already satisfied by an equivalent
+// re-issued query's response has fetchedBlock set — both mean the response must
+// be discarded, which is what keeps a range from being applied twice.
+let isQueryStillPending = (fetchState: t, ~query: query) =>
+  switch fetchState.optimizedPartitions.entities->Dict.get(query.partitionId) {
+  | Some(p) =>
+    p.mutPendingQueries->Array.some(pq =>
+      pq.fromBlock === query.fromBlock && pq.fetchedBlock === None
+    )
+  | None => false
+  }
 
 /**
 * Returns a boolean indicating whether the fetch state is actively indexing

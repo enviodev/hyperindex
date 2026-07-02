@@ -18,6 +18,11 @@ type t = {
   // scheduler doesn't re-sum pending queries on every tick. Incremented when
   // queries are dispatched, decremented as their responses land.
   mutable pendingBudget: float,
+  // Block the last buffer prune rolled this chain back to. While the indexer-wide
+  // buffer is still above targetBufferSize, cross-chain admission holds back
+  // queries above it so a prune isn't immediately undone by refetching what it
+  // dropped; cleared once the buffer drains back to the target.
+  mutable lastPruneTarget: option<int>,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
@@ -82,6 +87,7 @@ let make = (
   committedProgressBlockNumber,
   numEventsProcessed,
   pendingBudget: 0.,
+  lastPruneTarget: None,
   reorgDetection,
   safeCheckpointTracking,
   transactionStore,
@@ -434,6 +440,9 @@ let contractAddresses = (cs: t, ~contractName) =>
   cs.indexingAddresses->IndexingAddresses.getContractAddresses(~contractName)
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
+let lastPruneTarget = (cs: t) => cs.lastPruneTarget
+let clearPruneTarget = (cs: t) => cs.lastPruneTarget = None
+let isQueryStillPending = (cs: t, ~query) => cs.fetchState->FetchState.isQueryStillPending(~query)
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
 let getProgressPercentageAt = (cs: t, ~blockNumber) =>
   cs.fetchState->FetchState.getProgressPercentageAt(~blockNumber)
@@ -472,13 +481,17 @@ let getPruneTarget = (cs: t, ~progressThreshold) =>
 // and rolling the partitions that fetched them back to it, so they re-fetch later
 // once processing has caught up. Unlike a reorg rollback this touches only the
 // fetch frontier and transaction store — committed progress, reorg detection and
-// the DB are untouched, since nothing processed is being reverted. Callers must
-// first quiesce in-flight queries (resetPendingQueries + epoch bump); rolled-back
-// partitions collapse to targetBlockNumber and re-merge, de-fragmenting them.
+// the DB are untouched, since nothing processed is being reverted. In-flight
+// queries above the target are dropped by the rollback itself (their late
+// responses fail the still-pending check); queries at/below it keep running.
+// Rolled-back partitions collapse to targetBlockNumber and re-merge,
+// de-fragmenting them.
 let pruneBuffer = (cs: t, ~targetBlockNumber) => {
   cs.fetchState =
     cs.fetchState->FetchState.rollback(~indexingAddresses=cs.indexingAddresses, ~targetBlockNumber)
   cs.transactionStore->TransactionStore.rollback(targetBlockNumber)
+  cs.pendingBudget = cs.fetchState->FetchState.pendingBudgetSize
+  cs.lastPruneTarget = Some(targetBlockNumber)
 }
 
 // Run a fetch tick for this chain against its sources, feeding the owned fetch

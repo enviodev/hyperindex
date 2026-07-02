@@ -1328,15 +1328,17 @@ describe("E2E tests", () => {
     )
     await Utils.delay(0)
 
-    // Step 1: Resolve height
-    sourceMock.resolveGetHeightOrThrow(100_000)
+    // Step 1: Resolve height. 97k keeps DC2's tail under two floored
+    // single-sample chunks (2 x 36000), so its second query stays a single
+    // bounded range and the merge math below is unaffected.
+    sourceMock.resolveGetHeightOrThrow(97_000)
     await Utils.delay(0)
     await Utils.delay(0)
 
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
       ~message="Step 1: initial query for partition 0",
-    ).toEqual([{"fromBlock": 1, "toBlock": Some(99800), "retry": 0, "p": "0"}])
+    ).toEqual([{"fromBlock": 1, "toBlock": Some(96800), "retry": 0, "p": "0"}])
 
     // Step 2: Register DC1 at block 5000, DC2 at block 25100
     // Gap = 25099 - 4999 = 20100 > tooFarBlockRange(20000) → separate partitions
@@ -1408,8 +1410,8 @@ describe("E2E tests", () => {
       ->Array.toSorted(((_, a, _), (_, b, _)) => Int.compare(a, b)),
       ~message="Step 4: DC2 has 10 uniform 540-size chunks",
     ).toEqual([
-      ("2", 5000, Some(99800)),
-      ("0", 25101, Some(99800)),
+      ("2", 5000, Some(96800)),
+      ("0", 25101, Some(96800)),
       ("3", 25901, Some(26440)),
       ("3", 26441, Some(26980)),
       ("3", 26981, Some(27520)),
@@ -1437,7 +1439,7 @@ describe("E2E tests", () => {
     // After merge:
     // DC1("2"): mergeBlock=31300, single query 11401→31300 (no chunk history)
     // DC2("3"): mergeBlock=31300, chunks still pending
-    // P0("0"): still pending 25101→99800
+    // P0("0"): still pending 25101→96800
     // New("4"): lfb=31300, both addresses, inherits minRange=300 from DC2 history.
     //   chunkSize=540, uniform chunks from 31301 up to the per-partition cap of 10.
     t.expect(
@@ -1447,7 +1449,7 @@ describe("E2E tests", () => {
       ~message="After merge: DC1 queries to mergeBlock, DC2 chunks pending, new partition '4'",
     ).toEqual([
       ("2", 11401, Some(31300)),
-      ("0", 25101, Some(99800)),
+      ("0", 25101, Some(96800)),
       ("3", 25901, Some(26440)),
       ("3", 26441, Some(26980)),
       ("3", 26981, Some(27520)),

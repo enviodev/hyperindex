@@ -2468,19 +2468,19 @@ describe("FetchState.getNextQuery & integration", () => {
     let indexingAddresses = makeIntermidiateIndex()
 
     // Rollback to block 2: both DCs survive (regBlock <= 2)
-    // Partition "0" (lfb=10 > 2) -> DELETED, addresses recreated as partition "1"
-    // Partition "2" (lfb=2 <= 2) -> KEPT as partition "0" (IDs reset)
+    // Partition "0" (lfb=10 > 2) -> DELETED, addresses recreated as partition "3"
+    // Partition "2" (lfb=2 <= 2) -> KEPT with its id (deleted ids are never reused)
     let fetchStateAfterRollback1 =
       fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=2)
     t.expect(
       fetchStateAfterRollback1,
-      ~message=`Rollbacks partitions: kept "0", recreated "1" from deleted`,
+      ~message=`Rollbacks partitions: kept "2", recreated "3" from deleted`,
     ).toEqual({
       ...fetchState,
       optimizedPartitions: FetchState.OptimizedPartitions.make(
         ~partitions=[
           {
-            id: "0",
+            id: "2",
             latestFetchedBlock: {
               blockNumber: 2,
               blockTimestamp: 0,
@@ -2496,7 +2496,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mergeBlock: None,
           },
           {
-            id: "1",
+            id: "3",
             latestFetchedBlock: {
               blockNumber: 2,
               blockTimestamp: 0,
@@ -2514,7 +2514,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mergeBlock: None,
           },
         ],
-        ~nextPartitionIndex=2,
+        ~nextPartitionIndex=4,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
       ),
@@ -2526,13 +2526,13 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=1)
     t.expect(
       fetchStateAfterRollback2,
-      ~message=`Both partitions deleted, surviving addresses recreated as partition "0"`,
+      ~message=`Both partitions deleted, surviving addresses recreated as partition "3"`,
     ).toEqual({
       ...fetchState,
       optimizedPartitions: FetchState.OptimizedPartitions.make(
         ~partitions=[
           {
-            id: "0",
+            id: "3",
             latestFetchedBlock: {
               blockNumber: 1,
               blockTimestamp: 0,
@@ -2550,7 +2550,7 @@ describe("FetchState.getNextQuery & integration", () => {
           },
           // Removed partition "2"
         ],
-        ~nextPartitionIndex=1,
+        ~nextPartitionIndex=4,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
       ),
@@ -2564,13 +2564,13 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=-1)
     t.expect(
       fetchStateAfterRollback3,
-      ~message=`All DCs removed, only static addr0 recreated as partition "0"`,
+      ~message=`All DCs removed, only static addr0 recreated as partition "3"`,
     ).toEqual({
       ...fetchState,
       optimizedPartitions: FetchState.OptimizedPartitions.make(
         ~partitions=[
           {
-            id: "0",
+            id: "3",
             latestFetchedBlock: {
               blockNumber: -1,
               blockTimestamp: 0,
@@ -2586,7 +2586,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mergeBlock: None,
           },
         ],
-        ~nextPartitionIndex=1,
+        ~nextPartitionIndex=4,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
       ),
@@ -2678,8 +2678,8 @@ describe("FetchState.getNextQuery & integration", () => {
             mergeBlock: None,
           },
         ],
-        // IDs reset on rollback
-        ~nextPartitionIndex=1,
+        // IDs survive rollback and deleted ids are never reused
+        ~nextPartitionIndex=2,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
       ),
@@ -3939,9 +3939,9 @@ describe("Stale query response should not overwrite block range", () => {
       ~message="latestBlockRangeUpdateBlock should be 500 after first query",
     ).toBe(500)
 
-    // -- Query 2: chunking activates after one observed range:
-    // chunkSize = ceil(501 * 1.8) = 902 -> [501..1402], ... Dispatch only the
-    // first chunk. --
+    // -- Query 2: chunking activates after one observed range, floored at
+    // tooFarBlockRange: chunkSize = ceil(20000 * 1.8) = 36000 -> [501..36500],
+    // ... Dispatch only the first chunk. --
     let q2 = switch fs1->getNextQuery {
     | Ready(qs) => qs->Array.getUnsafe(0)
     | _ => JsError.throwWithMessage("Expected chunk queries for second round")
@@ -3949,7 +3949,7 @@ describe("Stale query response should not overwrite block range", () => {
     fs1->FetchState.startFetchingQueries(~queries=[q2])
 
     // Partial response at block 1000 (range = 500)
-    // shouldUpdateBlockRange: 1000 < toBlock 1402 (partial response) = true
+    // shouldUpdateBlockRange: 1000 < toBlock 36500 (partial response) = true
     let fs2 =
       fs1->FetchState.handleQueryResult(
         ~indexingAddresses,
@@ -4119,6 +4119,99 @@ describe("FetchState.rollback consolidation", () => {
       "contract": Some("Gravatar"),
       "mergeBlock": None,
       "addressCount": 2,
+    })
+  })
+})
+
+describe("FetchState.rollback with in-flight queries", () => {
+  // A wildcard partition at block 100 with the full pending-query zoo around a
+  // rollback target of 300: completed below, completed crossing, in-flight
+  // crossing, in-flight above.
+  let completedBelow: FetchState.pendingQuery = {
+    fromBlock: 101,
+    toBlock: Some(200),
+    isChunk: true,
+    estResponseSize: 10.,
+    fetchedBlock: Some({blockNumber: 200, blockTimestamp: 0}),
+  }
+  let completedCrossing: FetchState.pendingQuery = {
+    fromBlock: 201,
+    toBlock: Some(400),
+    isChunk: true,
+    estResponseSize: 20.,
+    fetchedBlock: Some({blockNumber: 400, blockTimestamp: 0}),
+  }
+  let inflightCrossing: FetchState.pendingQuery = {
+    fromBlock: 280,
+    toBlock: None,
+    isChunk: false,
+    estResponseSize: 30.,
+    fetchedBlock: None,
+  }
+  let inflightAbove: FetchState.pendingQuery = {
+    fromBlock: 401,
+    toBlock: Some(600),
+    isChunk: true,
+    estResponseSize: 40.,
+    fetchedBlock: None,
+  }
+
+  let makeWithPending = () => {
+    let (baseFs, indexingAddresses) = makeInitial()
+    let fetchState: FetchState.t = {
+      ...baseFs,
+      buffer: [mockEvent(~blockNumber=250), mockEvent(~blockNumber=350)],
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          {
+            id: "0",
+            latestFetchedBlock: {blockNumber: 100, blockTimestamp: 0},
+            selection: {dependsOnAddresses: false, eventConfigs: []},
+            addressesByContractName: Dict.make(),
+            mergeBlock: None,
+            dynamicContract: None,
+            mutPendingQueries: [completedBelow, completedCrossing, inflightCrossing, inflightAbove],
+            prevQueryRange: 0,
+            prevPrevQueryRange: 0,
+            prevRangeSize: 0,
+            latestBlockRangeUpdateBlock: 0,
+          },
+        ],
+        ~maxAddrInPartition=3,
+        ~nextPartitionIndex=1,
+        ~dynamicContracts=Utils.Set.make(),
+      ),
+    }
+    (fetchState, indexingAddresses)
+  }
+
+  it("drops in-flight queries above the target, keeps crossing and completed ones", t => {
+    let (fetchState, indexingAddresses) = makeWithPending()
+
+    let result = fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=300)
+
+    let mkQuery = fromBlock => {...defaultQuery, partitionId: "0", fromBlock}
+    t.expect({
+      "pendingQueries": (result.optimizedPartitions.entities->Dict.getUnsafe("0")).mutPendingQueries,
+      "buffer": result.buffer->Array.map(Internal.getItemBlockNumber),
+      // Only the surviving in-flight query still counts as pending: the dropped
+      // one's late response must be discarded and the completed slots must not
+      // accept a second response for the same range.
+      "crossingStillPending": result->FetchState.isQueryStillPending(~query=mkQuery(280)),
+      "droppedStillPending": result->FetchState.isQueryStillPending(~query=mkQuery(401)),
+      "completedStillPending": result->FetchState.isQueryStillPending(~query=mkQuery(201)),
+      "pendingBudgetSize": result->FetchState.pendingBudgetSize,
+    }).toEqual({
+      "pendingQueries": [
+        completedBelow,
+        {...completedCrossing, fetchedBlock: Some({blockNumber: 300, blockTimestamp: 0})},
+        inflightCrossing,
+      ],
+      "buffer": [250],
+      "crossingStillPending": true,
+      "droppedStillPending": false,
+      "completedStillPending": false,
+      "pendingBudgetSize": 30.,
     })
   })
 })

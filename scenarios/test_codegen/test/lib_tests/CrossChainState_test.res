@@ -80,12 +80,23 @@ let makeChainState = (
 // getNextQuery actually produces a Ready query (unlike the onBlock-only helper
 // above). The partition has no response yet, so each query estimates at the
 // default size.
-let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock, ~bufferBlocks=[]) => {
+let makeFetchingChainState = (
+  ~chainId,
+  ~knownHeight,
+  ~latestFetchedBlock,
+  ~bufferBlocks=[],
+  // The partition's own frontier, when it fetched ahead of the chain frontier
+  // (latestFetchedBlock keeps holding latestOnBlockBlockNumber back).
+  ~partitionFetchedBlock=?,
+) => {
   let normalSelection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
   let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
   let partition: FetchState.partition = {
     id: "0",
-    latestFetchedBlock: {blockNumber: latestFetchedBlock, blockTimestamp: 0},
+    latestFetchedBlock: {
+      blockNumber: partitionFetchedBlock->Option.getOr(latestFetchedBlock),
+      blockTimestamp: 0,
+    },
     selection: normalSelection,
     addressesByContractName: Dict.fromArray([("MockContract", [address])]),
     mergeBlock: None,
@@ -183,7 +194,7 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime=true)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~invalidateInflight=() => (), ~dispatchChain=(~chain, ~action) => {
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
       dispatched->Array.push((chain->ChainMap.Chain.toChainId, action))->ignore
       Promise.resolve()
     })
@@ -213,7 +224,7 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=100)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~invalidateInflight=() => (), ~dispatchChain=(~chain, ~action as _) => {
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action as _) => {
       dispatched->Array.push(chain->ChainMap.Chain.toChainId)->ignore
       Promise.resolve()
     })
@@ -229,7 +240,7 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=1)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~invalidateInflight=() => (), ~dispatchChain=(~chain, ~action) => {
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
       dispatched
       ->Array.push((
         chain->ChainMap.Chain.toChainId,
@@ -323,20 +334,23 @@ describe("CrossChainState buffer prune", () => {
     let cs2 = makeStuck(~chainId=2, ~fromBlock=2000)
     let cm = makeCrossChainState(~chainStatesList=[cs1, cs2], ~targetBufferSize=20)
 
-    let invalidateCalled = ref(false)
     await cm->CrossChainState.checkAndFetch(
-      ~invalidateInflight=() => invalidateCalled := true,
       ~dispatchChain=(~chain as _, ~action as _) => Promise.resolve(),
     )
 
     t.expect({
       "chain1Buffer": cs1->ChainState.bufferSize,
       "chain2Buffer": cs2->ChainState.bufferSize,
-      "invalidateCalled": invalidateCalled.contents,
+      // The threshold lands one block below chain 2's 10th-from-last item
+      // (freeing exactly the 10 items needed on top of chain 1's 40), and both
+      // chains record it so admission holds back the pruned ranges.
+      "chain1PruneTarget": cs1->ChainState.lastPruneTarget,
+      "chain2PruneTarget": cs2->ChainState.lastPruneTarget,
     }).toEqual({
       "chain1Buffer": 0,
       "chain2Buffer": 30,
-      "invalidateCalled": true,
+      "chain1PruneTarget": Some(2029),
+      "chain2PruneTarget": Some(2029),
     })
   })
 
@@ -346,20 +360,94 @@ describe("CrossChainState buffer prune", () => {
     let cs2 = makeStuck(~chainId=2, ~fromBlock=2000)
     let cm = makeCrossChainState(~chainStatesList=[cs1, cs2], ~targetBufferSize=100)
 
-    let invalidateCalled = ref(false)
     await cm->CrossChainState.checkAndFetch(
-      ~invalidateInflight=() => invalidateCalled := true,
       ~dispatchChain=(~chain as _, ~action as _) => Promise.resolve(),
     )
 
     t.expect({
       "chain1Buffer": cs1->ChainState.bufferSize,
       "chain2Buffer": cs2->ChainState.bufferSize,
-      "invalidateCalled": invalidateCalled.contents,
+      "chain1PruneTarget": cs1->ChainState.lastPruneTarget,
+      "chain2PruneTarget": cs2->ChainState.lastPruneTarget,
     }).toEqual({
       "chain1Buffer": 40,
       "chain2Buffer": 40,
-      "invalidateCalled": false,
+      "chain1PruneTarget": None,
+      "chain2PruneTarget": None,
+    })
+  })
+
+  Async.it("holds back the pruned range instead of refetching it in the same tick", async t => {
+    // One partition fetched ahead to 8039 while the chain frontier sits at 100,
+    // so all 40 buffered items are stuck. targetBufferSize 10 → prune at 3x (30)
+    // down to 1.5x (15): target lands at 8014. The rolled-back partition
+    // immediately re-proposes 8015+, but the buffer (15) is still above the
+    // target (10), so admission holds the range back and nothing is dispatched.
+    let cs = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=10000,
+      ~latestFetchedBlock=100,
+      ~partitionFetchedBlock=8039,
+      ~bufferBlocks=Array.fromInitializer(~length=40, i => 8000 + i),
+    )
+    let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=10)
+
+    let dispatched = []
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chain, ~action as _) => {
+        dispatched->Array.push(chain->ChainMap.Chain.toChainId)->ignore
+        Promise.resolve()
+      },
+    )
+
+    t.expect({
+      "buffer": cs->ChainState.bufferSize,
+      "pruneTarget": cs->ChainState.lastPruneTarget,
+      "dispatched": dispatched,
+    }).toEqual({
+      "buffer": 15,
+      "pruneTarget": Some(8014),
+      "dispatched": [],
+    })
+  })
+
+  Async.it("clears the prune target and refetches once the buffer drains", async t => {
+    // Same shape, but pruned directly and with the buffer already drained below
+    // targetBufferSize: the tick clears the target and re-admits the range.
+    let cs = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=10000,
+      ~latestFetchedBlock=100,
+      ~partitionFetchedBlock=8039,
+      ~bufferBlocks=Array.fromInitializer(~length=40, i => 8000 + i),
+    )
+    cs->ChainState.pruneBuffer(~targetBlockNumber=8004)
+    let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=100)
+
+    let dispatched = []
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chain, ~action) => {
+        dispatched
+        ->Array.push((
+          chain->ChainMap.Chain.toChainId,
+          switch action {
+          | Ready(queries) => queries->Array.map(q => q.fromBlock)
+          | _ => []
+          },
+        ))
+        ->ignore
+        Promise.resolve()
+      },
+    )
+
+    t.expect({
+      "buffer": cs->ChainState.bufferSize,
+      "pruneTarget": cs->ChainState.lastPruneTarget,
+      "dispatched": dispatched,
+    }).toEqual({
+      "buffer": 5,
+      "pruneTarget": None,
+      "dispatched": [(1, [8005])],
     })
   })
 })

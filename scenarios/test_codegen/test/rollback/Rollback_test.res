@@ -230,8 +230,8 @@ describe("E2E rollback tests", () => {
         "fromBlock": 101,
         "toBlock": None,
         "retry": 0,
-        // IDs reset on rollback, recreated partition starts at 0
-        "p": "0",
+        // Deleted partition ids are never reused; the recreated one takes the next id
+        "p": "2",
       }),
     )
     sourceMock.resolveGetItemsOrThrow([
@@ -490,7 +490,7 @@ describe("E2E rollback tests", () => {
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
       ~message="after the parked rollback executes, the indexer re-requests from the valid block",
-    ).toEqual(Some({"fromBlock": 101, "toBlock": None, "retry": 0, "p": "0"}))
+    ).toEqual(Some({"fromBlock": 101, "toBlock": None, "retry": 0, "p": "2"}))
   })
 
   Async.it("Fires onRollbackCommit per affected chain after the rollback write", async t => {
@@ -609,8 +609,8 @@ describe("E2E rollback tests", () => {
         "fromBlock": 101,
         "toBlock": None,
         "retry": 0,
-        // IDs reset on rollback, recreated partition starts at 0
-        "p": "0",
+        // Deleted partition ids are never reused; the recreated one takes the next id
+        "p": "2",
       },
     ])
 
@@ -867,14 +867,14 @@ describe("E2E rollback tests", () => {
         "fromBlock": 103,
         "toBlock": None,
         "retry": 0,
-        "p": "0",
+        "p": "3",
       },
       // DC partition (recreated fresh, no chunking since chunk history lost)
       {
         "fromBlock": 103,
         "toBlock": None,
         "retry": 0,
-        "p": "2",
+        "p": "5",
       },
     ])
 
@@ -922,7 +922,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     t.expect(
       payloads->Array.map(p => (p["p"], p["fromBlock"], p["toBlock"])),
       ~message="Should correctly continue fetching from block 105 after rolling back the db",
-    ).toEqual([("2", 105, None), ("0", 105, None)])
+    ).toEqual([("5", 105, None), ("3", 105, None)])
   })
 
   Async.it("Rollback of multichain indexer (single entity id change)", async t => {
@@ -1265,7 +1265,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           "fromBlock": 106,
           "toBlock": None,
           "retry": 0,
-          "p": "0",
+          "p": "2",
         },
       ],
     ))
@@ -1669,7 +1669,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           "fromBlock": 106,
           "toBlock": None,
           "retry": 0,
-          "p": "0",
+          "p": "2",
         }),
         // Chain 100: partition KEPT, chunk history preserved.
         // chunkRange=3 -> chunkSize=6, first uniform chunk is 106-111.
@@ -2430,7 +2430,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         "fromBlock": 115,
         "toBlock": None,
         "retry": 0,
-        "p": "0",
+        "p": "2",
       },
     ])
   })
@@ -2556,7 +2556,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ).toEqual([
         {
           "fromBlock": 118,
-          "p": "0",
+          "p": "2",
           "retry": 0,
           "toBlock": None,
         },
@@ -2672,7 +2672,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           "fromBlock": 101,
           "toBlock": None,
           "retry": 0,
-          "p": "0",
+          "p": "2",
         }),
       )
 
@@ -2928,7 +2928,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           {"fromBlock": 160, "toBlock": Some(165), "retry": 0, "p": "0"},
         ],
         // Chain 1337: partition deleted (lfb > target), recreated fresh
-        [{"fromBlock": 106, "toBlock": None, "retry": 0, "p": "0"}],
+        [{"fromBlock": 106, "toBlock": None, "retry": 0, "p": "2"}],
       ))
 
       sourceMock100.resolveGetItemsOrThrow(
@@ -2999,4 +2999,187 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ))
     },
   )
+  Async.it(
+    "Buffer prune during backfill composes with a pre-threshold reorg rollback",
+    async t => {
+      // End-to-end interplay of the two rollback flavours below the reorg
+      // threshold: fetched-ahead items get pruned while the lagging
+      // dynamic-contract partition's in-flight work keeps running, a reorg is
+      // then detected and resolved, and the indexer still processes every event
+      // exactly once. targetBufferSize 10 -> prune above 30 items, down to 15.
+      let sourceMock = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock.source]),
+          },
+        ],
+        ~targetBufferSize=10,
+      )
+      await Utils.delay(0)
+
+      // Below the reorg threshold the chain lags by maxReorgDepth (200), so with
+      // height 100_000 the first query runs 1..99_800.
+      sourceMock.resolveGetHeightOrThrow(100_000)
+      await Utils.delay(0)
+      await Utils.delay(0)
+      t.expect(
+        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+        ~message="Backfills up to the reorg threshold",
+      ).toEqual([{"fromBlock": 1, "toBlock": Some(99_800), "retry": 0, "p": "0"}])
+
+      let calls = []
+      let handler = async (
+        {event, context}: Internal.genericHandlerArgs<
+          Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>,
+          Indexer.handlerContext,
+        >,
+      ) => {
+        let call = event.block.number->Int.toString ++ "-" ++ event.logIndex->Int.toString
+        calls->Array.push(call)
+        context.\"SimpleEntity".set({id: "1", value: call})
+      }
+
+      // One ready item (block 500, sets firstEventBlock once processed), a
+      // dynamic contract registered at block 1000 (its partition becomes the
+      // lagging frontier at 999), and 35 fetched-ahead items stuck behind it:
+      // 36 stuck items exceed the 30-item high-water mark.
+      sourceMock.resolveGetItemsOrThrow(
+        Array.concat(
+          [
+            {
+              MockIndexer.Source.blockNumber: 500,
+              logIndex: 0,
+              handler,
+            },
+            {
+              blockNumber: 1000,
+              logIndex: 0,
+              contractRegister: async ({context}) => {
+                context.chain.\"SimpleNft".add(
+                  Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
+                )
+              },
+              handler,
+            },
+          ],
+          Array.fromInitializer(~length=35, i => {
+            MockIndexer.Source.blockNumber: 90_000 + i,
+            logIndex: 0,
+            handler,
+          }),
+        ),
+        ~latestFetchedBlockNumber=99_800,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(
+        (
+          calls->Utils.Array.copy,
+          await indexerMock.metric("envio_indexing_buffer_prune_items_total"),
+          sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+        ),
+        ~message=`Only the ready item is processed; no prune yet (nothing was
+        processed when the fetch tick ran) and the dynamic-contract partition
+        starts fetching from its registration block`,
+      ).toEqual((
+        ["500-0"],
+        [{value: "0", labels: Dict.make()}],
+        [{"fromBlock": 1000, "toBlock": Some(99_800), "retry": 0, "p": "2"}],
+      ))
+
+      // The dynamic-contract query returns a partial response: its response tick
+      // is the first one after the batch set firstEventBlock, so the prune fires
+      // now — 36 items minus the one that became ready at block 1000, minus 21
+      // pruned (down to the 15-item low-water mark). The partition's rolled-back
+      // range (90_014+) is held back while the buffer is above targetBufferSize,
+      // so the only new query is the dynamic-contract continuation chunk.
+      sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=5000)
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(
+        (
+          calls->Utils.Array.copy,
+          await indexerMock.metric("envio_indexing_buffer_prune_items_total"),
+          sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+        ),
+        ~message=`The prune drops the 21 closest-to-head items and the
+        rolled-back partition is not refetched while the buffer stays above
+        target`,
+      ).toEqual((
+        ["500-0", "1000-0"],
+        [{value: "21", labels: Dict.make()}],
+        [{"fromBlock": 5001, "toBlock": Some(41_000), "retry": 0, "p": "2"}],
+      ))
+
+      // The next response re-reports the recorded block 99_800 with a different
+      // hash: a reorg is detected while still below the reorg threshold. The
+      // detected block is the only recorded one, so depth finding has nothing
+      // to re-verify and the rollback executes right away, quiescing the
+      // response instead of applying it.
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=41_000,
+        ~prevRangeLastBlock={blockNumber: 99_800, blockHash: "0x99800-reorged"},
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await indexerMock.getRollbackReadyPromise()
+
+      t.expect(
+        (
+          sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+          await indexerMock.metric("envio_indexing_buffer_size"),
+        ),
+        ~message=`After the rollback only the dynamic-contract partition
+        re-requests its chunk: the buffer is still above targetBufferSize, so
+        the pruned range stays held back`,
+      ).toEqual((
+        [{"fromBlock": 5001, "toBlock": Some(41_000), "retry": 0, "p": "2"}],
+        [{value: "14", labels: Dict.fromArray([("chainId", "1337")])}],
+      ))
+
+      // Drive the dynamic-contract partition forward chunk by chunk with empty
+      // responses. Once its frontier passes the remaining buffered items they
+      // process, and the drained buffer releases the pruned range for
+      // refetching — the loop stops when the pruned partition re-requests.
+      let seenQueries = []
+      let guard = ref(0)
+      while (
+        !(seenQueries->Array.some(payload => payload["fromBlock"] == 90_014)) &&
+        guard.contents < 15
+      ) {
+        guard := guard.contents + 1
+        sourceMock.getItemsOrThrowCalls->Array.forEach(c =>
+          seenQueries->Array.push(c.payload)->ignore
+        )
+        sourceMock.resolveGetItemsOrThrow([])
+        await indexerMock.getBatchWritePromise()
+      }
+
+      t.expect(
+        (
+          calls->Utils.Array.copy,
+          seenQueries->Array.filter(payload => payload["fromBlock"] == 90_014),
+          await indexerMock.query(SimpleEntity),
+        ),
+        ~message=`Every buffered event processes exactly once, and the pruned
+        range is refetched only after the buffer drained below the target`,
+      ).toEqual((
+        Array.concat(
+          ["500-0", "1000-0"],
+          Array.fromInitializer(~length=14, i => (90_000 + i)->Int.toString ++ "-0"),
+        ),
+        // The dynamic-contract partition merged with the pruned one as it
+        // caught up, so the released range is requested by the merged partition.
+        [{"fromBlock": 90_014, "toBlock": Some(99_800), "retry": 0, "p": "3"}],
+        [{Indexer.Entities.SimpleEntity.id: "1", value: "90013-0"}],
+      ))
+    },
+  )
+
 })

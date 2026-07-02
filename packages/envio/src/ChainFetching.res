@@ -106,7 +106,13 @@ let rec onQueryResponse = async (
   ~scheduleProcessing,
   ~scheduleRollback,
 ) =>
-  if state->IndexerState.isStale(~stateId) {
+  // Stale epoch (reorg / realtime transition) invalidates every in-flight
+  // response; a buffer prune invalidates only the queries it rolled back, whose
+  // responses are recognized here by no longer being tracked as pending.
+  if (
+    state->IndexerState.isStale(~stateId) ||
+      !(state->IndexerState.getChainState(~chain)->ChainState.isQueryStillPending(~query))
+  ) {
     ()
   } else {
     let chainState = state->IndexerState.getChainState(~chain)
@@ -204,10 +210,14 @@ let rec onQueryResponse = async (
         newItems->Array.push(item)
       }
 
-      // Re-check staleness: contract registration is async, so the chain state
-      // may have rolled back by the time we apply the fetched items.
+      // Re-check validity: contract registration is async, so the chain state
+      // may have rolled back or pruned this query by the time we apply the
+      // fetched items.
       let proceed = (~newItemsWithDcs) =>
-        if !(state->IndexerState.isStale(~stateId)) {
+        if (
+          !(state->IndexerState.isStale(~stateId)) &&
+          chainState->ChainState.isQueryStillPending(~query)
+        ) {
           applyQueryResponse(
             state,
             ~chain,
