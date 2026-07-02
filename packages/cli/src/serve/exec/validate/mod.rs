@@ -158,7 +158,7 @@ pub fn plan_request(
         vars: build_variables(op.var_defs, variables_json)?,
         used_vars: RefCell::new(HashSet::new()),
         int_originals: scan.int_originals,
-        inf_floats: scan.inf_floats,
+        inf_float_originals: scan.inf_float_originals,
     };
 
     // Fragment reachability (undefined spreads, cycles) is checked before
@@ -347,9 +347,11 @@ struct Ctx<'a> {
     /// i64-overflowing int literals were rewritten to magic sentinel values
     /// before parsing; this maps each sentinel back to the original digits.
     int_originals: HashMap<i64, String>,
-    /// Float literals that overflow f64, in source order, for reconstructing
-    /// Hasura's error display of values the AST can no longer represent.
-    inf_floats: Vec<String>,
+    /// f64-overflowing float literals were rewritten to per-occurrence
+    /// finite sentinel values before parsing; this maps each sentinel's bit
+    /// pattern back to the original digits, for reconstructing Hasura's
+    /// error display of values the AST can no longer represent.
+    inf_float_originals: HashMap<u64, String>,
 }
 
 /// A value under coercion: either a GraphQL literal or a JSON value that

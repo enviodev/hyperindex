@@ -1,5 +1,6 @@
 use super::{invalid_query, GResult};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 
 // ---------------------------------------------------------------------------
 // Lexical pre-scan
@@ -16,7 +17,13 @@ use std::collections::{HashMap, HashSet};
 pub(super) struct Prescan {
     pub(super) rewritten: String,
     pub(super) int_originals: HashMap<i64, String>,
-    pub(super) inf_floats: Vec<String>,
+    /// f64-overflowing float literals were rewritten to per-occurrence
+    /// finite sentinel values before parsing; this maps each sentinel's bit
+    /// pattern back to the original digits. Keyed per occurrence (like
+    /// `int_originals`) rather than merely by sign, so two distinct
+    /// out-of-range float literals in the same query each report their own
+    /// text instead of collapsing to whichever one happened to come first.
+    pub(super) inf_float_originals: HashMap<u64, String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -208,23 +215,29 @@ pub(super) fn prescan(src: &str) -> GResult<Prescan> {
         }
     }
 
-    // Oversized int literals and f64-overflowing float literals.
+    // Oversized int literals and f64-overflowing float literals both get
+    // rewritten to unique sentinel literals so the parsed AST carries a
+    // value we can map back to the original text for error display.
+    enum Rewrite {
+        Int,
+        Float,
+    }
     let mut int_originals: HashMap<i64, String> = HashMap::new();
-    let mut inf_floats: Vec<String> = Vec::new();
-    let mut oversized: Vec<usize> = Vec::new();
-    let mut taken_values: HashSet<i64> = HashSet::new();
+    let mut inf_float_originals: HashMap<u64, String> = HashMap::new();
+    let mut taken_int_values: HashSet<i64> = HashSet::new();
+    let mut rewrites: Vec<(usize, Rewrite)> = Vec::new();
     for (idx, t) in toks.iter().enumerate() {
         match t.kind {
             TokKind::Int => match t.text.parse::<i64>() {
                 Ok(n) => {
-                    taken_values.insert(n);
+                    taken_int_values.insert(n);
                 }
-                Err(_) => oversized.push(idx),
+                Err(_) => rewrites.push((idx, Rewrite::Int)),
             },
             TokKind::Float => {
                 if let Ok(f) = t.text.parse::<f64>() {
                     if f.is_infinite() {
-                        inf_floats.push(t.text.to_string());
+                        rewrites.push((idx, Rewrite::Float));
                     }
                 }
             }
@@ -232,20 +245,43 @@ pub(super) fn prescan(src: &str) -> GResult<Prescan> {
         }
     }
 
-    let rewritten = if oversized.is_empty() {
+    let rewritten = if rewrites.is_empty() {
         src.to_string()
     } else {
-        let mut magic = i64::MAX;
+        let mut magic_int = i64::MAX;
+        // Each occurrence steps one f64 ULP closer to zero from MAX/MIN, so
+        // every rewritten literal gets its own exact, round-trippable
+        // sentinel value instead of all collapsing to the same infinity.
+        let mut magic_pos_float = f64::MAX;
+        let mut magic_neg_float = f64::MIN;
         let mut out = String::with_capacity(src.len());
         let mut pos = 0;
-        for idx in oversized {
+        for (idx, kind) in rewrites {
             let t = &toks[idx];
-            while taken_values.contains(&magic) || int_originals.contains_key(&magic) {
-                magic -= 1;
-            }
-            int_originals.insert(magic, t.text.to_string());
             out.push_str(&src[pos..t.start]);
-            out.push_str(&magic.to_string());
+            match kind {
+                Rewrite::Int => {
+                    while taken_int_values.contains(&magic_int)
+                        || int_originals.contains_key(&magic_int)
+                    {
+                        magic_int -= 1;
+                    }
+                    int_originals.insert(magic_int, t.text.to_string());
+                    out.push_str(&magic_int.to_string());
+                }
+                Rewrite::Float => {
+                    let magic = if t.text.starts_with('-') {
+                        &mut magic_neg_float
+                    } else {
+                        &mut magic_pos_float
+                    };
+                    while inf_float_originals.contains_key(&magic.to_bits()) {
+                        *magic = f64::from_bits(magic.to_bits() - 1);
+                    }
+                    inf_float_originals.insert(magic.to_bits(), t.text.to_string());
+                    let _ = write!(out, "{magic:e}");
+                }
+            }
             pos = t.end;
         }
         out.push_str(&src[pos..]);
@@ -255,7 +291,7 @@ pub(super) fn prescan(src: &str) -> GResult<Prescan> {
     Ok(Prescan {
         rewritten,
         int_originals,
-        inf_floats,
+        inf_float_originals,
     })
 }
 
@@ -287,6 +323,93 @@ mod tests {
         );
 
         let scan = prescan("{ E(where: {f: {_lt: 1e400}}) { id } }").unwrap();
-        assert_eq!(scan.inf_floats, vec!["1e400".to_string()]);
+        let (bits, orig) = scan.inf_float_originals.iter().next().unwrap();
+        assert_eq!(
+            (
+                scan.inf_float_originals.len(),
+                orig.as_str(),
+                scan.rewritten
+                    .contains(&format!("{:e}", f64::from_bits(*bits))),
+                q::parse_query::<String>(&scan.rewritten).is_ok(),
+            ),
+            (1, "1e400", true, true)
+        );
+
+        // Two distinct literals overflowing to the same-signed infinity must
+        // each keep their own original text (not collapse to one entry).
+        let scan =
+            prescan("{ E(where: {_and: [{f: {_lt: 1e400}}, {g: {_lt: 9e999}}]}) { id } }").unwrap();
+        let mut origs: Vec<&String> = scan.inf_float_originals.values().collect();
+        origs.sort();
+        assert_eq!(
+            (scan.inf_float_originals.len(), origs),
+            (2, vec![&"1e400".to_string(), &"9e999".to_string()])
+        );
+    }
+}
+
+#[cfg(test)]
+mod roundtrip_check {
+    use super::*;
+    use graphql_parser::query as q;
+
+    #[test]
+    fn inf_float_sentinel_roundtrips_bit_exact_through_the_real_parser() {
+        let scan = prescan(
+            "{ E(where: {_and: [{f: {_lt: 1e400}}, {g: {_lt: 9e999}}, {h: {_lt: -1e500}}]}) { id } }",
+        )
+        .unwrap();
+        assert_eq!(scan.inf_float_originals.len(), 3);
+
+        let doc = q::parse_query::<String>(&scan.rewritten).expect("rewritten text parses");
+        // Walk the AST to find every Float literal value actually produced
+        // by the real parser, and check each one's bit pattern is a key in
+        // inf_float_originals (i.e. round-tripped exactly).
+        let mut found_floats = Vec::new();
+        fn walk_value(v: &q::Value<String>, out: &mut Vec<f64>) {
+            match v {
+                q::Value::Float(f) => out.push(*f),
+                q::Value::Object(m) => {
+                    for v in m.values() {
+                        walk_value(v, out);
+                    }
+                }
+                q::Value::List(items) => {
+                    for v in items {
+                        walk_value(v, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        fn selection_set<'a>(
+            op: &'a q::OperationDefinition<'a, String>,
+        ) -> &'a q::SelectionSet<'a, String> {
+            match op {
+                q::OperationDefinition::SelectionSet(s) => s,
+                q::OperationDefinition::Query(q) => &q.selection_set,
+                q::OperationDefinition::Mutation(m) => &m.selection_set,
+                q::OperationDefinition::Subscription(s) => &s.selection_set,
+            }
+        }
+        for def in &doc.definitions {
+            if let q::Definition::Operation(op) = def {
+                for field_sel in &selection_set(op).items {
+                    if let q::Selection::Field(f) = field_sel {
+                        for (_, v) in &f.arguments {
+                            walk_value(v, &mut found_floats);
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(found_floats.len(), 3);
+        for f in found_floats {
+            assert!(
+                scan.inf_float_originals.contains_key(&f.to_bits()),
+                "parsed sentinel {f} (bits {:x}) not found in inf_float_originals -- text/reparse round trip lost precision",
+                f.to_bits()
+            );
+        }
     }
 }

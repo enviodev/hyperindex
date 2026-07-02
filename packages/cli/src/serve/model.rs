@@ -145,6 +145,25 @@ impl Table {
     }
 }
 
+/// Resolves a GraphQL field name to its db column, trying the original name
+/// first and then Table.res's `column_name_format` snake_case rewrite --
+/// column_name_format can rename either scalar fields or the `_id` suffix
+/// entity-ref columns, so a renamed column may appear under either form.
+/// `suffix` (e.g. "_id" for entity-reference columns) is appended after the
+/// snake-casing, matching how Table.res derives the column name.
+fn resolve_db_column<'a>(
+    field_name: &str,
+    suffix: &str,
+    columns: impl Iterator<Item = &'a super::pg_catalog::Column> + Clone,
+) -> Option<String> {
+    [
+        format!("{field_name}{suffix}"),
+        format!("{}{suffix}", to_snake_case(field_name)),
+    ]
+    .into_iter()
+    .find(|db| columns.clone().any(|c| &c.name == db))
+}
+
 pub struct ServerModel {
     /// Exposed tables in Hasura's root-field ordering (sorted by name).
     pub tables: Vec<Table>,
@@ -214,26 +233,17 @@ impl ServerModel {
             let mut api_by_db: HashMap<String, (String, Option<String>)> = HashMap::new();
             for rel_def in &entity.object_relationships {
                 let api = format!("{}_id", rel_def.field_name);
-                let db_candidates = [
-                    format!("{}_id", rel_def.field_name),
-                    format!("{}_id", to_snake_case(&rel_def.field_name)),
-                ];
-                for db in db_candidates {
-                    if rel.columns.iter().any(|c| c.name == db) {
-                        api_by_db.insert(db, (api.clone(), None));
-                        break;
-                    }
+                if let Some(db) = resolve_db_column(&rel_def.field_name, "_id", rel.columns.iter())
+                {
+                    api_by_db.insert(db, (api, None));
                 }
             }
             for (field_name, desc) in &entity.field_descriptions {
                 // Plain scalar fields: original or snake_case column name.
-                for db in [field_name.clone(), to_snake_case(field_name)] {
-                    if rel.columns.iter().any(|c| c.name == db) {
-                        api_by_db
-                            .entry(db)
-                            .or_insert((field_name.clone(), Some(desc.clone())));
-                        break;
-                    }
+                if let Some(db) = resolve_db_column(field_name, "", rel.columns.iter()) {
+                    api_by_db
+                        .entry(db)
+                        .or_insert((field_name.clone(), Some(desc.clone())));
                 }
             }
             // Scalar fields renamed by snake_case without descriptions:
@@ -302,17 +312,9 @@ impl ServerModel {
                         .object_relationships
                         .iter()
                         .any(|or| or.field_name == r.remote_field);
-                    let candidates = if is_entity_ref {
-                        [
-                            format!("{}_id", r.remote_field),
-                            format!("{}_id", to_snake_case(&r.remote_field)),
-                        ]
-                    } else {
-                        [r.remote_field.clone(), to_snake_case(&r.remote_field)]
-                    };
-                    let remote_db_column = candidates
-                        .into_iter()
-                        .find(|db| remote_rel.columns.iter().any(|c| &c.name == db))?;
+                    let suffix = if is_entity_ref { "_id" } else { "" };
+                    let remote_db_column =
+                        resolve_db_column(&r.remote_field, suffix, remote_rel.columns.iter())?;
                     Some(ArrayRelationship {
                         name: r.field_name.clone(),
                         remote_table: r.remote_entity.clone(),
