@@ -1,33 +1,34 @@
 # Soak load report
 
-Duration 66s, concurrency 24, target http://localhost:8082, 703 requests (10.6 req/s).
+Duration 57s, concurrency 24, target http://localhost:8081, 614 requests (10.9 req/s).
 
 ## Status codes
 
-- 200: 703 (100.00%)
+- 200: 614 (100.00%)
 
 Error rate (5xx + transport): **0.000%**
 
 ## Latency
 
-Overall p50 652.2ms, p99 14909.7ms (n=703).
+Overall p50 474.6ms, p99 14837.3ms (n=614).
 
 | window | start (s) | requests | errors | p50 (ms) | p99 (ms) |
 |---|---|---|---|---|---|
-| 0 | 0 | 203 | 0 | 443.7 | 57095.4 |
-| 1 | 10 | 127 | 0 | 461.0 | 14460.8 |
-| 2 | 20 | 65 | 0 | 772.2 | 15571.1 |
-| 3 | 30 | 117 | 0 | 766.2 | 14544.0 |
-| 4 | 40 | 112 | 0 | 662.4 | 14336.0 |
-| 5 | 50 | 79 | 0 | 859.6 | 11725.0 |
+| 0 | 0 | 210 | 0 | 345.0 | 27927.3 |
+| 1 | 8 | 57 | 0 | 696.4 | 11129.9 |
+| 2 | 15 | 120 | 0 | 559.4 | 13691.8 |
+| 3 | 23 | 76 | 0 | 713.6 | 25742.6 |
+| 4 | 30 | 62 | 0 | 792.2 | 15141.0 |
+| 5 | 38 | 89 | 0 | 472.7 | 13083.4 |
 
-p99 drift: window 1 (14460.8ms) -> window 5 (11725.0ms), x0.81 (threshold x2).
+p99 drift: window 1 (11129.9ms) -> window 5 (13083.4ms), x1.18 (threshold x2).
 
-## Resource usage (pid 17357)
+## Resource usage (pid 29637)
 
-RSS: start 1278MB, stabilized baseline 2052MB, final 1817MB, peak 2230MB, growth -11.4% (threshold 20%).
-fd count: start 42, stabilized baseline 74, final 73, growth -1.
+RSS: start 533MB, stabilized baseline 1381MB, final 1728MB, peak 1906MB, growth 25.1% (threshold 20%).
+fd count: start 40, stabilized baseline 71, final 72, growth 1.
 
 ## Result
 
-PASS
+FAIL:
+- RSS grew 25.1% from stabilized baseline (1381MB -> 1728MB), threshold 20%.
